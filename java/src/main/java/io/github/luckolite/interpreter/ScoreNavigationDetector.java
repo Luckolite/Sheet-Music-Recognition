@@ -74,6 +74,17 @@ final class ScoreNavigationDetector {
                 && following <= lineHeight * 1.3f;
     }
 
+    static List<PlayingTechniqueDetector.Word> withPdfDestinations(
+            List<PlayingTechniqueDetector.Word> words, List<TablatureDecoder.Word> nativeWords) {
+        var result = new ArrayList<>(words);
+        for (var word : nativeWords) {
+            if (word.text().equals("𝄋") || word.text().equals("𝄌"))
+                result.add(new PlayingTechniqueDetector.Word(
+                        word.text(), word.left(), word.top(), word.right(), word.bottom()));
+        }
+        return result;
+    }
+
     static List<ScorePlaybackDirection> detect(
             List<PlayingTechniqueDetector.Word> input,
             List<Glyph> glyphs,

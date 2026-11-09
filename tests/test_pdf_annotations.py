@@ -6,7 +6,8 @@ from contextlib import closing
 from pathlib import Path
 import tempfile
 import unittest
-from sheet_music_recognition.pdf_annotations import tab_words, tuning_header
+from unittest.mock import MagicMock, patch
+from sheet_music_recognition.pdf_annotations import _navigation_words, tab_words, tuning_header
 
 
 def fixture(stream=None):
@@ -65,3 +66,30 @@ class PdfTextTest(unittest.TestCase):
                     self.assertFalse(any(w['text'].startswith('Tuning') for w in tab_words(page)))
                 finally:
                     page.close()
+
+    def test_only_legacy_font_context_recovers_substituted_navigation_marks(self):
+        page = MagicMock()
+        page.get_charbox.return_value = (20, 260, 40, 280)
+        marks = {"\ue177": 0, "\ue178": 1, "\ue050": 2}
+
+        def search(char):
+            match = MagicMock()
+            match.get_next.side_effect = [(marks[char], 1), None]
+            return match
+
+        page.search.side_effect = search
+        fonts = [b"ABCDEZ+SegoeUISymbol", b"MuseJazz", b"MScore"]
+
+        def font_info(_, index, buffer, size, flags):
+            buffer.value = fonts[index]
+
+        with patch("pypdfium2.raw.FPDFText_GetFontInfo", side_effect=font_info):
+            text = "".join(marks)
+            words = _navigation_words(page, text, 100, 400)
+            self.assertEqual(["𝄋", "𝄌"], [w["text"] for w in words])
+            self.assertAlmostEqual(.2, words[0]["left"])
+            self.assertAlmostEqual(.3, words[0]["top"])
+            fonts[2] = b"Bravura"
+            self.assertEqual(["𝄌"], [w["text"] for w in _navigation_words(page, text, 100, 400)])
+            fonts[1] = b"Bravura"
+            self.assertEqual([], _navigation_words(page, text, 100, 400))

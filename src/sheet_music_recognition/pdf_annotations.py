@@ -1,6 +1,7 @@
 # Copyright 2026 Luckolite
 # SPDX-License-Identifier: Apache-2.0
 """Optional native PDF tablature text; geometry and symbol semantics remain in Java."""
+import ctypes
 import re
 
 _TOKEN = re.compile(r"-(?:[12]|(?i:full))|(?i:full|whammy|w/bar|bar|upstroke|downstroke|strum up|strum down)|-?(?:1 1/2|1/4|1/2|3/4|1\u00bd|[\u00bc\u00bd\u00be])|[\uE846\uE847]|<[0-9]{1,2}>|\([0-9]{1,2}\)|(?<![0-9])[0-9]{1,2}[bB][0-9]{1,2}(?:[rR][0-9]{1,2})?~*|(?<![0-9])(?:[0-9]{1,2}|[xX])(?:[/\\hHpP][0-9]{1,2})+~*|(?<![0-9])[0-9]{1,3}(?![0-9])~*|[xXHPT=]|[\uE1E7\uE241\uE243\uE245\uE4E3-\uE4E8\uE4A2\uEAB2\uE080-\uE089\uECA5\uECA6\uECB7]")
@@ -18,12 +19,53 @@ def tuning_words(header):
     return [dict(text=header, left=.01, top=.001, right=.9, bottom=.009)] if header else []
 
 
+def _navigation_words(textpage, text, width, height):
+    # MuseJazz's legacy code points are unrelated to the same slots in SMuFL.
+    # An old MuseScore export can carry them in a substituted Segoe UI Symbol font.
+    markers = {"\ue177": "𝄋", "\ue178": "𝄌"}
+    if not any(char in text for char in markers):
+        return []
+    from pypdfium2 import raw
+
+    def font_name(index):
+        buffer = ctypes.create_string_buffer(128)
+        raw.FPDFText_GetFontInfo(textpage.raw, index, buffer, len(buffer), None)
+        return re.sub(rb"^[A-Z]{6}\+", b"", buffer.value).replace(b" ", b"")
+
+    def positions(char):
+        search = textpage.search(char)
+        try:
+            while (match := search.get_next()) is not None:
+                yield match[0]
+        finally:
+            search.close()
+
+    # Require the legacy engraving font before trusting a substituted text font.
+    legacy = None
+    words = []
+    for char, symbol in markers.items():
+        if char not in text:
+            continue
+        for index in positions(char):
+            font = font_name(index)
+            if font == b"SegoeUISymbol" and legacy is None:
+                legacy = any(font_name(i) == b"MScore" for i in positions("\ue050"))
+            if font != b"MuseJazz" and not (font == b"SegoeUISymbol" and legacy):
+                continue
+            left, bottom, right, top = textpage.get_charbox(index)
+            if 0 <= left < right <= width and 0 <= bottom < top <= height:
+                words.append(dict(text=symbol, left=left / width, top=1 - top / height,
+                                  right=right / width, bottom=1 - bottom / height))
+    return words
+
+
 def tab_words(page, header=""):
     textpage = page.get_textpage()
     words = []
     try:
         width, height = page.get_width(), page.get_height()
         text = textpage.get_text_range()
+        words.extend(_navigation_words(textpage, text, width, height))
         tokens = set(_TOKEN.findall(text)) | {c for c in text if c in "0123456789"}
         for token in sorted(tokens, key=len, reverse=True):
             search = textpage.search(token)

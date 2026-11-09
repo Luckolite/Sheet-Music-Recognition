@@ -479,7 +479,7 @@ public final class SheetInterpreter {
                                                         : dynamicDetection.events())
                                         .withPlaybackDirections(
                                                 ScoreNavigationDetector.detect(
-                                                        words,
+                                                        ScoreNavigationDetector.withPdfDestinations(words, tabWords),
                                                         NavigationSignGlyphs.detect(
                                                                 gray, width, height, staffs),
                                                         staffs,

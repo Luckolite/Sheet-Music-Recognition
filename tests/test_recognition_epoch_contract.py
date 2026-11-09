@@ -15,9 +15,9 @@ class RecognitionEpochContractTest(unittest.TestCase):
         source = (root / "java/src/main/java/io/github/luckolite/interpreter/"
                   "GuideCacheIdentity.java").read_text(encoding="utf-8")
         revision = int(re.search(r"RECOGNITION_REVISION\s*=\s*(\d+)", source)[1])
-        # The frozen current source is recognition141; historical encodes below
+        # The frozen current source is recognition142; historical encodes below
         # must not mutate that independently versioned cache identity.
-        self.assertEqual(141, revision)
+        self.assertEqual(142, revision)
         self.assertEqual(revision, wire.RECOGNITION_REVISION)
         self.assertEqual(299, wire.GUIDE_VERSION)
 
