@@ -3109,7 +3109,7 @@
     "ExplicitEmptySignature.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/ExplicitEmptySignature.java",
       "source_sha256": "d75e36315a95241892e3ce05f895ec711ec11cc83e9e70bb57684074e7058ece",
-      "reviewed_app_commit": "e27524426f853c83ccd3827a2c52973759bb4b9a",
+      "reviewed_app_commit": "85c67c707d1bac8c1ce609f0ff5c854b2aa52872",
       "source_normalized_sha256": "354962a0a2c441c4a343b4ea4c64e41fa2dd01c1cc5c5525aa96734f0d5b8451",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/ExplicitEmptySignature.java"
     },
@@ -3746,7 +3746,7 @@
       "source_normalized_sha256": "d674b19da7b02cf244359c851169a9be5af4cf9cacc2a50d6aab6f0e496cc47f",
       "review_note": "Shared recognition and playback-direction changes ported with standalone adapters. Redistributable synthetic regressions cover the changed ink and direction rules.",
       "standalone_sha256": "cc694023bd9e082e76b7939f78faca123329ebf0c9c0db49f40a4c998921297a",
-      "reviewed_app_commit": "e27524426f853c83ccd3827a2c52973759bb4b9a",
+      "reviewed_app_commit": "85c67c707d1bac8c1ce609f0ff5c854b2aa52872",
       "scoped_reviewed_app_commit": "59008495d6250cb0790c1d2b5bd8f5952f0c9a98",
       "license": "Apache-2.0",
       "reviewed_app_base_commit": "e2831dddac0e6063be1b5b29316e48f9f0bb61bd",
@@ -3808,7 +3808,7 @@
       "standalone_sha256": "e38c26762afa9819679abcccc1ae984c0f29cec00614bb4cdecf520512482776",
       "license": "Apache-2.0",
       "recognition88_review_note": "Reviewed exact contextual global changes and namespace twins with original synthetic regressions. New helpers are selected explicitly by desktop decoder manifest; no models, private fixtures, schema, wire or audio changes.",
-      "reviewed_app_commit": "e27524426f853c83ccd3827a2c52973759bb4b9a",
+      "reviewed_app_commit": "85c67c707d1bac8c1ce609f0ff5c854b2aa52872",
       "reviewed_app_state": "Committed recognition130 source integration; cumulative app/Hub worker delivery pending goal completion.",
       "recognition89_review_note": "Reviewed global contextual changes and namespace twins, procedural original regressions, resource and preservation checks. No private fixtures, model, dependency, wire or audio changes.",
       "recognition90_review_note": "Complete interstaff bar cores and finite physically owned hairpin endpoints; original procedural regressions only. Models, dependencies, helpers, Guide291 and audio97 unchanged.",
@@ -5188,13 +5188,13 @@
     },
     "OmrScoreInterpreter.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/OmrScoreInterpreter.java",
-      "source_sha256": "4a2e1d08b82d2cd03cfe1846f725773924036992f638481e1b81fbe24522a8b2",
+      "source_sha256": "fcb9e3c4e1d7a77a7f9503eafad50b00fdb6a089986b7f5b99f31dad96d74bfc",
       "review_note": "Shared recognition and playback-direction changes ported with standalone adapters. Redistributable synthetic regressions cover the changed ink and direction rules.",
-      "source_normalized_sha256": "f1bee03eb7f045433d31d9cddc88cb69b23aadb288a60cc3ef41c63bdde06a7e",
+      "source_normalized_sha256": "fcb9e3c4e1d7a77a7f9503eafad50b00fdb6a089986b7f5b99f31dad96d74bfc",
       "reviewed_app_state": "Committed recognition130 source integration; cumulative app/Hub worker delivery pending goal completion.",
-      "standalone_sha256": "3b3367b12a87921aef447fe47f1c1d188d9e0343541b22a10c9eeacf86d35c75",
+      "standalone_sha256": "2b096d7ea1680ff5624d8e152a94bad9ee965a2f86e05bc2651f1614195af638",
       "reviewed_app_base_commit": "f35728a8aa54ad905276707014439af44502ea61",
-      "reviewed_app_commit": "e27524426f853c83ccd3827a2c52973759bb4b9a",
+      "reviewed_app_commit": "85c67c707d1bac8c1ce609f0ff5c854b2aa52872",
       "scoped_reviewed_app_commit": "619cf57ee08c59765af88152ec67286859c969bc",
       "license": "Apache-2.0",
       "cue_flag87_review_note": "Original procedural geometry only. Cue-size local glyph gap reuses unchanged own-stem and curved-flag checks. Existing scalar and wire semantics retained; no private raster/model/dependency change.",
@@ -5205,7 +5205,7 @@
       "recognition91_review_note": "Reviewed recognition91: observed terminal ribbon; boundary-crossing hairpin proposal completion (anchor coordinate-span <=4; new 4M proposal budget); complete raw beam following-rest voice. Existing admission fits and 145/225, model, Guide291 and audio97 unchanged. Original procedural tests only.",
       "reviewed_source_state": "Reviewed committed recognition138 violin-score repair.",
       "release130_review_note": "Reviewed platform adapter; see release130_source_review. No claim of whole-file token parity.",
-      "standalone_normalized_sha256": "fe41ea0e007e26847c6272142427cd71991cf28a7cefe0dcde1f73830784b897",
+      "standalone_normalized_sha256": "2b096d7ea1680ff5624d8e152a94bad9ee965a2f86e05bc2651f1614195af638",
       "current_source_review": "Allocate bounded shared-ledger caches only after an eligible independently owned remote head; exact split sibling capture retained. Existing cancellation zero-work contract restored;812 focused tests and1373 retained complete native note records preserved. Models, limits and layouts unchanged.",
       "release_transport_review": "For valid blank/no-staff inputs, unavailable context preserves the supplied measure count without inventing source observations or clock authority. The original strict whole-analysis server parity assertion remains enabled; an original two-measure blank control covers the early return. A generic comment replaces an internal review title.",
       "natural_cancellation_review": {
@@ -5215,7 +5215,7 @@
         "new_original_tests": 51,
         "focused_tests_passed": 330,
         "rollout": "Source only; cumulative paired packaging deferred during active goal.",
-        "reviewed_app_commit": "e27524426f853c83ccd3827a2c52973759bb4b9a",
+        "reviewed_app_commit": "85c67c707d1bac8c1ce609f0ff5c854b2aa52872",
         "additional_controls": "Actual bass clef and two-band pitch; wrong lane/missing dot and conflicting/unresolved same-onset votes.",
         "single_bar_fixture_review": "Existing12 controls preserve geometry with matching explicit prior (-1Bflat/-2BEflat);8guards preserve prior,4positive tests cancel;3new unknown-prior refusals."
       },
@@ -5224,7 +5224,7 @@
         "reviewed_app_base_commit": "c8206f732dbc4b1e09f8f4e184c252560a2712a2",
         "new_original_tests": 6,
         "scope": "Complete production prepaid before findComponents; unchanged per-part whole-crop bounds prepaid for each actual eligible part; no predicate/order/cap/model/layout change.",
-        "reviewed_app_commit": "e27524426f853c83ccd3827a2c52973759bb4b9a"
+        "reviewed_app_commit": "85c67c707d1bac8c1ce609f0ff5c854b2aa52872"
       },
       "rotated_augmentation_review": {
         "documentation": "docs/rotated-augmentation-bodies.md",
@@ -9703,7 +9703,7 @@
       "source_normalized_sha256": "d7dcf26a555ed64252a2e067012443e747dda0908b4ec48528e38a011693ff46",
       "review_note": "Shared recognition and playback-direction changes ported with standalone adapters. Redistributable synthetic regressions cover the changed ink and direction rules.",
       "standalone_sha256": "eb49345108bed32bc7c7ece98c50ce5036ad34de4b874c3ae7572ff1f9401abb",
-      "reviewed_app_commit": "e27524426f853c83ccd3827a2c52973759bb4b9a",
+      "reviewed_app_commit": "85c67c707d1bac8c1ce609f0ff5c854b2aa52872",
       "license": "Apache-2.0",
       "scoped_reviewed_app_commit": "59008495d6250cb0790c1d2b5bd8f5952f0c9a98",
       "reviewed_app_base_commit": "e2831dddac0e6063be1b5b29316e48f9f0bb61bd",

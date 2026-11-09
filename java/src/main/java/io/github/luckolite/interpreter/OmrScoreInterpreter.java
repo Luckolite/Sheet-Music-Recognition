@@ -1712,7 +1712,7 @@ final class OmrScoreInterpreter {
                             head.centerY,
                             physicalStaff.gap)) continue;
             float ledgerClearance = 1.8f;
-            // A detached head-like mark on the first ledger has no shaft to
+            // An undersized detached head-like mark near the staff has no shaft to
             // establish notation ownership. Its printed ledger must do so.
             if (gray != null
                     && physicalStaff != null
@@ -1720,7 +1720,8 @@ final class OmrScoreInterpreter {
                     && ((head.maxX - head.minX + 1 <= physicalStaff.pitchGap * .85f
                                     && head.maxY - head.minY + 1 <= physicalStaff.pitchGap * .85f
                                     && head.area <= physicalStaff.pitchGap * physicalStaff.pitchGap * .5f)
-                            || hasOpenCenter(labels, gray, width, height, head, physicalStaff.pitchGap))
+                            || (head.maxX - head.minX + 1 <= physicalStaff.pitchGap * 1.35f
+                                    && hasOpenCenter(labels, gray, width, height, head, physicalStaff.pitchGap)))
                     && attachedRawStem(gray, width, height, head, physicalStaff.pitchGap) == null)
                 ledgerClearance = .95f;
             if (gray != null
@@ -26290,7 +26291,6 @@ final class OmrScoreInterpreter {
         return false;
     }
 
-    /** Correct an interior second rail only when both adjacent stem intervals prove one beam. */
     /** A closed annotation counter attached to a long downstem is not a returning flag. */
     private static boolean stemEndsInClosedLetter(
             byte[] gray, int width, int height, Component head, float gap) {
@@ -26404,6 +26404,7 @@ final class OmrScoreInterpreter {
         return false;
     }
 
+    /** Correct an interior second rail only when both adjacent stem intervals prove one beam. */
     private static boolean oneBeamOnStaffRule(
             byte[] labels, byte[] gray, int width, int height,
             Component head, Staff staff, List<Component> heads) {
