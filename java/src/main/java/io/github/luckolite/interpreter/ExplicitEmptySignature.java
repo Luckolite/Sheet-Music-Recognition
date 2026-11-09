@@ -39,7 +39,7 @@ final class ExplicitEmptySignature {
             }
             int left = Math.round(clefRight + gap * .2f),
                     right = Math.round(digitLeft - gap * .15f);
-            if (right - left < gap * .4f) continue;
+            if (right - left + 1 < gap * .4f) continue;
             int threshold = BeamInkThreshold.at(gray, width, height, column, top, last, gap);
             int ink = 0, total = 0;
             for (int y = Math.max(0, Math.round(top - gap));

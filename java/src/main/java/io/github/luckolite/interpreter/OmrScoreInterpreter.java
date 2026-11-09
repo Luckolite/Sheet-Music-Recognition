@@ -1717,9 +1717,10 @@ final class OmrScoreInterpreter {
             if (gray != null
                     && physicalStaff != null
                     && !roundedLedgerGraces.contains(head)
-                    && head.maxX - head.minX + 1 <= physicalStaff.pitchGap * .85f
-                    && head.maxY - head.minY + 1 <= physicalStaff.pitchGap * .85f
-                    && head.area <= physicalStaff.pitchGap * physicalStaff.pitchGap * .5f
+                    && ((head.maxX - head.minX + 1 <= physicalStaff.pitchGap * .85f
+                                    && head.maxY - head.minY + 1 <= physicalStaff.pitchGap * .85f
+                                    && head.area <= physicalStaff.pitchGap * physicalStaff.pitchGap * .5f)
+                            || hasOpenCenter(labels, gray, width, height, head, physicalStaff.pitchGap))
                     && attachedRawStem(gray, width, height, head, physicalStaff.pitchGap) == null)
                 ledgerClearance = .95f;
             if (gray != null
@@ -1823,6 +1824,12 @@ final class OmrScoreInterpreter {
                 beamCount = 0;
             if (!unpitched && beamCount == 1 && !recoveredSingleBeamHeads.contains(head)
                     && isolatedHighStemOnStaffRules(labels, gray, width, height, head, rhythmStaff))
+                beamCount = 0;
+            if (!unpitched && beamCount == 1 && staff.count == 2
+                    && highQuarterTouchesUpperStaffBeam(gray, width, height, head, staff, heads, staffs))
+                beamCount = 0;
+            if (!unpitched && beamCount == 1 && !recoveredSingleBeamHeads.contains(head)
+                    && stemEndsInClosedLetter(gray, width, height, head, localGap))
                 beamCount = 0;
             if (!unpitched && beamCount == 2
                     && oneBeamOnStaffRule(beamLabels, gray, width, height, head, rhythmStaff, heads))
@@ -2084,6 +2091,11 @@ final class OmrScoreInterpreter {
                     && beamCount > 0
                     && hasHollowUnisonToRight(labels, gray, width, height, head, heads, staff.gap))
                 augmentationDots = 0;
+            if (!unpitched && augmentationDots > 0 && beamCount == 2
+                    && onlyNeighborOwnsBeamHook(gray, width, height, head, heads, localGap)) {
+                beamCount = 1;
+                admissions.add("UNJOINED_NEIGHBOR_BEAM_HOOK");
+            }
             if (paleChordRhythmHeads.getOrDefault(head, head) != head)
                 admissions.add("BORROWED_CHORD_RHYTHM_HEAD");
             if (recoveredSingleBeamHeads.contains(head))
@@ -26279,6 +26291,119 @@ final class OmrScoreInterpreter {
     }
 
     /** Correct an interior second rail only when both adjacent stem intervals prove one beam. */
+    /** A closed annotation counter attached to a long downstem is not a returning flag. */
+    private static boolean stemEndsInClosedLetter(
+            byte[] gray, int width, int height, Component head, float gap) {
+        if (gray == null) return false;
+        int[] stem = attachedRawStem(gray, width, height, head, gap);
+        if (stem == null || stem[2] != 1 || stem[1] - head.centerY < gap * 5.2f) return false;
+        int x = stem[0], tip = stem[1];
+        if (x < gap || x + gap >= width || tip < gap * 2.5f || tip + 2 >= height) return false;
+        int inner = x + Math.round(gap * .28f);
+        int left = x - Math.round(gap * .18f), right = x + Math.round(gap * .95f);
+        int first = tip - Math.round(gap * 2.4f);
+        int consecutive = 0, closesBy = -1;
+        boolean capAbove = false;
+        for (int y = first; y <= tip + 1; y++) {
+            int row = y * width;
+            boolean darkCenter = (gray[row + inner] & 255) < 150;
+            if (darkCenter) {
+                if (y <= closesBy) return true;
+                capAbove = true;
+                consecutive = 0;
+                continue;
+            }
+            boolean leftInk = false, rightInk = false;
+            for (int i = left; i < inner - 2; i++) leftInk |= (gray[row + i] & 255) < 150;
+            for (int i = inner + 2; i <= right; i++) rightInk |= (gray[row + i] & 255) < 150;
+            boolean white = (gray[row + inner - 1] & 255) > 190
+                    && (gray[row + inner] & 255) > 190 && (gray[row + inner + 1] & 255) > 190;
+            consecutive = capAbove && leftInk && rightInk && white ? consecutive + 1 : 0;
+            if (consecutive >= Math.ceil(gap * .8f)) closesBy = y + (int) Math.ceil(gap * .25f);
+        }
+        return false;
+    }
+
+    /** An isolated high bass stem can touch a rail already owned by the upper voice. */
+    private static boolean highQuarterTouchesUpperStaffBeam(
+            byte[] gray, int width, int height, Component head, Staff staff,
+            List<Component> heads, List<Staff> staffs) {
+        float gap = staff.pitchGap;
+        if (gray == null || staff.index != 1 || head.centerY > staff.top - 2.5f * gap) return false;
+        int[] stem = attachedRawStem(gray, width, height, head, gap);
+        if (stem == null || stem[2] != -1 || head.centerY - stem[1] < gap * 2.1f
+                || head.centerY - stem[1] > gap * 2.9f) return false;
+        for (Staff upper : staffs) {
+            if (upper.count != 2 || upper.index != 0 || Math.abs(upper.bottom - stem[1]) > gap * .3f)
+                continue;
+            int left = -1, right = width;
+            for (Component peer : heads) {
+                if (Math.abs(peer.centerX - head.centerX) > gap * 7
+                        || peer.centerY > upper.bottom - gap * 1.8f
+                        || peer.centerY < upper.top - gap * 1.5f) continue;
+                int[] owner = attachedRawStem(gray, width, height, peer, upper.pitchGap);
+                if (owner == null || owner[2] != 1 || Math.abs(owner[1] - stem[1]) > gap * .65f)
+                    continue;
+                if (owner[0] < stem[0] - gap * .8f) left = Math.max(left, owner[0]);
+                if (owner[0] > stem[0] + gap * .8f) right = Math.min(right, owner[0]);
+            }
+            if (left < 0 || right == width) continue;
+            int fullRows = 0;
+            for (int y = stem[1]; y <= stem[1] + Math.round(gap * .65f) && y < height; y++) {
+                int dark = 0;
+                for (int x = left; x <= right; x++) if ((gray[y * width + x] & 255) < 155) dark++;
+                if (dark >= (right - left + 1) * .94f) fullRows++;
+            }
+            if (fullRows >= gap * .30f) return true;
+        }
+        return false;
+    }
+
+    /** A neighboring secondary hook cannot shorten a dotted head across a printed white break. */
+    private static boolean onlyNeighborOwnsBeamHook(
+            byte[] gray, int width, int height, Component head, List<Component> heads, float gap) {
+        if (gray == null) return false;
+        int[] stem = attachedRawStem(gray, width, height, head, gap);
+        if (stem == null) return false;
+        for (Component peer : heads) {
+            float distance = Math.abs(peer.centerX - head.centerX);
+            if (distance < gap * .9f || distance > gap * 2.5f
+                    || Math.abs(peer.centerY - head.centerY) > gap * 1.25f) continue;
+            int[] other = attachedRawStem(gray, width, height, peer, gap);
+            if (other == null || other[2] != stem[2]
+                    || Math.abs(other[1] - stem[1]) > gap * .2f) continue;
+            int dx = stem[0] - other[0];
+            if (Math.abs(dx) < gap * .9f || Math.abs(dx) > gap * 2.5f) continue;
+            int side = Integer.signum(dx), towardHead = -stem[2];
+            if (Math.min(stem[0], other[0]) < gap || Math.max(stem[0], other[0]) >= width - gap
+                    || Math.min(stem[1], other[1]) < gap * 1.5f
+                    || Math.max(stem[1], other[1]) >= height - gap * 1.5f) continue;
+            boolean joined = true;
+            for (float fraction : new float[]{.2f, .5f, .8f}) {
+                int x = other[0] + Math.round(dx * fraction);
+                int tip = Math.round(other[1] + (stem[1] - other[1]) * fraction);
+                int dark = 0;
+                for (int k = 0; k <= Math.round(gap * .45f); k++)
+                    if ((gray[(tip + towardHead * k) * width + x] & 255) < 150) dark++;
+                if (dark < gap * .2f) joined = false;
+            }
+            if (!joined) continue;
+            int nearPeer = other[0] + side * Math.round(gap * .32f);
+            int farPeer = other[0] + side * Math.round(gap * .62f);
+            int flank = Math.max(2, Math.round(gap * .24f)), rows = 0;
+            for (int k = Math.round(gap * .58f); k <= Math.round(gap * 1.18f); k++) {
+                int a = (other[1] + towardHead * k) * width;
+                int b = (stem[1] + towardHead * k) * width;
+                boolean hook = (gray[a + nearPeer] & 255) < 140 && (gray[a + farPeer] & 255) < 140;
+                boolean open = (gray[b + stem[0] - flank] & 255) > 195
+                        && (gray[b + stem[0] + flank] & 255) > 195;
+                rows = hook && open ? rows + 1 : 0;
+                if (rows >= Math.ceil(gap * .24f)) return true;
+            }
+        }
+        return false;
+    }
+
     private static boolean oneBeamOnStaffRule(
             byte[] labels, byte[] gray, int width, int height,
             Component head, Staff staff, List<Component> heads) {
@@ -27169,8 +27294,9 @@ final class OmrScoreInterpreter {
                 if (n.event.measureIndex() == seed.event.measureIndex()
                         && n.event.staffIndex() == seed.event.staffIndex()
                         && n.event.staffCount() == seed.event.staffCount()
-                        && Math.abs(n.event.positionInMeasure() - seed.event.positionInMeasure())
-                                < .002f
+                        && (Math.abs(n.event.positionInMeasure() - seed.event.positionInMeasure())
+                                        < .002f
+                                || Math.abs(n.head.centerX - seed.head.centerX) <= gap * .12f)
                         && Math.abs(n.head.centerX - seed.head.centerX) < gap * 1.8f) group.add(j);
             }
             int seedDirection =

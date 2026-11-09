@@ -97,6 +97,11 @@ public final class ExplicitEmptySignatureTest {
     }
 
     @Test
+    public void narrowBlankSlotCountsBothEndpoints() {
+        assertTrue(ExplicitEmptySignature.matches(openFours(true, false), W, H, 76, 140, 96, 14));
+    }
+
+    @Test
     public void openFourPairDoesNotIgnoreAccidental() {
         assertFalse(blank(openFours(true, true)));
     }
