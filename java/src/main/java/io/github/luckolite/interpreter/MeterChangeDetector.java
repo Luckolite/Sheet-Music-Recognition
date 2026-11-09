@@ -813,24 +813,36 @@ public final class MeterChangeDetector {
         for (var candidate :
                 RawStaffLineDetector.detectFromStrength(
                         strength, Math.max(10, width / 80), height)) {
-            boolean represented = false;
-            for (var geometry : staffs) {
-                var existing = geometry.lines();
-                if (Math.abs(existing.center() - candidate.center())
-                        < Math.max(existing.gap(), candidate.gap()) * 2) {
-                    represented = true;
-                    break;
+            int match = -1;
+            float distance = Float.POSITIVE_INFINITY;
+            for (int index = 0; index < staffs.size(); index++) {
+                var existing = staffs.get(index).lines();
+                float delta = Math.abs(existing.center() - candidate.center());
+                if (delta < Math.max(existing.gap(), candidate.gap()) * 2 && delta < distance) {
+                    match = index;
+                    distance = delta;
                 }
             }
-            if (!represented && printedStaffSupport(gray, width, height, candidate, slope))
+            if (match >= 0 && Math.abs(slope) * width < candidate.gap()) continue;
+            int support = printedStaffSupport(gray, width, height, candidate, slope);
+            if (support == 0) continue;
+            if (match < 0) {
                 staffs.add(new SignatureStaff(candidate, slope));
+            } else {
+                var existing = staffs.get(match);
+                // A horizontal projection can select the wrong rail phase on a slanted scan.
+                // Use one frame for that staff, and require substantially stronger printed rails.
+                if (support > printedStaffSupport(gray, width, height, existing.lines(),
+                        existing.slope()) + width * .6f)
+                    staffs.set(match, new SignatureStaff(candidate, slope));
+            }
         }
         staffs.sort(java.util.Comparator.comparingInt(item -> item.lines().top()));
         return List.copyOf(staffs);
     }
 
     /** Require long thin printed rules; model labels alone cannot turn text or artwork into a staff. */
-    private static boolean printedStaffSupport(
+    private static int printedStaffSupport(
             byte[] gray,
             int width,
             int height,
@@ -840,6 +852,7 @@ public final class MeterChangeDetector {
         int flank = Math.max(2, Math.round(staff.gap() * .35f)), supported = 0;
         int supportBottom = height - 1 - flank,
                 minimumSupport = Math.max(24, Math.round(width * .2f));
+        int total = 0;
         for (int row : staff.rows()) {
             int hits = 0;
             for (int x = 0; x < width; x++) {
@@ -856,9 +869,12 @@ public final class MeterChangeDetector {
                     }
                 }
             }
-            if (hits >= minimumSupport) supported++;
+            if (hits >= minimumSupport) {
+                supported++;
+                total += hits;
+            }
         }
-        return supported >= 3;
+        return supported >= 3 ? total : 0;
     }
 
     /** Signature precedes the first note of its bar; repeated multi-rest rectangles use the first. */

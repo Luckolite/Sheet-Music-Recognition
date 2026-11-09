@@ -12,6 +12,8 @@ final class TempoChangeDetector {
             java.util.regex.Pattern.compile("([0-9]{2,3})[)\\]]?");
     private static final java.util.regex.Pattern DECIMAL_EQUATION =
             java.util.regex.Pattern.compile("^[Jj♩♪.]?\\s*=\\s*([0-9]{2,3})\\.([0-9]{1,17})$");
+    private static final java.util.regex.Pattern RANGE_EQUATION =
+            java.util.regex.Pattern.compile("^[^=0-9]*=\\s*([0-9]{2,3})\\s*[-–—]\\s*([0-9]{2,3})\\s*[)\\]]?$");
 
     private TempoChangeDetector() {}
 
@@ -460,6 +462,16 @@ final class TempoChangeDetector {
                         java.util.regex.Pattern.CASE_INSENSITIVE);
         for (var word : words) {
             if (word == null || word.text() == null) continue;
+            var range = printedTempoRange(word, gray, width, height);
+            if (range != null) {
+                // A whole OCR line owns both endpoints. Do not let a split numeral create
+                // an independent tempo event inside the same printed equation.
+                all.removeIf(token -> token != null && token.left() < word.right() && token.right() > word.left()
+                        && token.top() < word.bottom() && token.bottom() > word.top());
+                all.add(range.lower());
+                proved.put(range.lower(), range.equalsLeft());
+                continue;
+            }
             var decimal = DECIMAL_EQUATION.matcher(word.text().trim());
             if (decimal.matches()) {
                 double rate = Double.parseDouble(decimal.group(1) + "." + decimal.group(2));
@@ -617,6 +629,81 @@ final class TempoChangeDetector {
                 Comparator.comparingInt(ScoreTempoChange::measureIndex)
                         .thenComparingDouble(ScoreTempoChange::positionInMeasure));
         return List.copyOf(result);
+    }
+
+    private record TempoRange(MeasureNumberReconciler.NumberToken lower, int equalsLeft) { }
+
+    private record InkRun(int left, int right, int top, int bottom) {
+        int height() { return bottom - top + 1; }
+    }
+
+    /** A range is one tempo direction. Use its lower bound and verify the printed dash and equation. */
+    private static TempoRange printedTempoRange(
+            PlayingTechniqueDetector.Word word, byte[] gray, int width, int height) {
+        var syntax = RANGE_EQUATION.matcher(word.text().trim());
+        if (!syntax.matches() || !Float.isFinite(word.left()) || !Float.isFinite(word.right())
+                || !Float.isFinite(word.top()) || !Float.isFinite(word.bottom())
+                || word.left() < 0 || word.top() < 0 || word.right() > 1 || word.bottom() > 1)
+            return null;
+        int lower = Integer.parseInt(syntax.group(1)), upper = Integer.parseInt(syntax.group(2));
+        if (lower < 30 || upper < lower || upper > 400) return null;
+        int left = Math.round(word.left() * width), right = Math.round(word.right() * width);
+        int top = Math.round(word.top() * height), bottom = Math.round(word.bottom() * height);
+        if (left >= right || top >= bottom || (long) (right - left) * (bottom - top) > 500_000)
+            return null;
+        var runs = new ArrayList<InkRun>();
+        int start = -1, runTop = bottom, runBottom = top;
+        for (int x = left; x <= right; x++) {
+            int first = bottom, last = -1;
+            if (x < right) for (int y = top; y < bottom; y++) {
+                if ((gray[y * width + x] & 255) < 155) {
+                    first = Math.min(first, y);
+                    last = y;
+                }
+            }
+            if (last >= 0) {
+                if (start < 0) start = x;
+                runTop = Math.min(runTop, first);
+                runBottom = Math.max(runBottom, last);
+            } else if (start >= 0) {
+                runs.add(new InkRun(start, x - 1, runTop, runBottom));
+                start = -1;
+                runTop = bottom;
+                runBottom = top;
+            }
+        }
+        TempoRange result = null;
+        for (int index = 1; index + 1 < runs.size(); index++) {
+            var dash = runs.get(index);
+            var lastDigit = runs.get(index - 1);
+            var firstUpper = runs.get(index + 1);
+            int digitHeight = Math.min(lastDigit.height(), firstUpper.height());
+            if (digitHeight < 6 || dash.height() > digitHeight * .25f
+                    || dash.right() - dash.left() + 1 < dash.height() * 2
+                    || dash.top() <= Math.max(lastDigit.top(), firstUpper.top())
+                    || dash.bottom() >= Math.min(lastDigit.bottom(), firstUpper.bottom())) continue;
+            TempoRange candidate = null;
+            int digitTop = lastDigit.top(), digitBottom = lastDigit.bottom();
+            for (int i = index - 1; i >= 0 && i >= index - syntax.group(1).length(); i--) {
+                var firstDigit = runs.get(i);
+                if (firstDigit.height() < digitHeight * .65f) break;
+                digitTop = Math.min(digitTop, firstDigit.top());
+                digitBottom = Math.max(digitBottom, firstDigit.bottom());
+                var token = new MeasureNumberReconciler.NumberToken(lower,
+                        firstDigit.left() / (float) width, digitTop / (float) height,
+                        (lastDigit.right() + 1) / (float) width, (digitBottom + 1) / (float) height,
+                        word.left());
+                int equals = equalsSignLeft(token, gray, width, height);
+                if (equals < left || equals >= firstDigit.left()) continue;
+                double unit = printedBeatUnit(token, gray, width, height, equals, 200);
+                if (!Double.isFinite(unit)) unit = printedBeatUnit(token, gray, width, height, equals, 165);
+                if (Double.isFinite(unit)) candidate = new TempoRange(token, equals);
+            }
+            if (candidate == null) continue;
+            if (result != null) return null;
+            result = candidate;
+        }
+        return result;
     }
 
     private static boolean hasPrintedDecimalPoint(

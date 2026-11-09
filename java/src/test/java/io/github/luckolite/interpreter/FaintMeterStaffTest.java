@@ -146,7 +146,16 @@ public class FaintMeterStaffTest {
         tilted(-.035f);
     }
 
+    @Test
+    public void strongerTiltedRailsReplaceAnOverlappingHorizontalProjection() {
+        tilted(.035f, true);
+    }
+
     private static void tilted(float slope) {
+        tilted(slope, false);
+    }
+
+    private static void tilted(float slope, boolean horizontalAlias) {
         byte[] original = new byte[W * H], paper = paper();
         staff(original, paper, 80, 200);
         digits(paper, 80);
@@ -159,6 +168,12 @@ public class FaintMeterStaffTest {
                     gray[yy * W + x] = paper[y * W + x];
                 }
             }
+        if (horizontalAlias) {
+            for (int line = 0; line < 5; line++)
+                Arrays.fill(gray, (88 + line * 16) * W + 350, (88 + line * 16) * W + 550,
+                        (byte) 80);
+            assertEquals(1, RawStaffLineDetector.detect(gray, W, H).size());
+        }
         var crops = MeterChangeDetector.candidates(labels, gray, W, H);
         assertEquals(1, crops.size());
         var crop = crops.get(0);

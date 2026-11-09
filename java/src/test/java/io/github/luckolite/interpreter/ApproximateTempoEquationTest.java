@@ -8,6 +8,33 @@ import static org.junit.Assert.*;
 
 /** Original geometric equation controls; no source-score pixels. */
 public class ApproximateTempoEquationTest {
+    @Test
+    public void printedRangeSetsOneOpeningTempoAtItsLowerBound() throws Exception {
+        var p = rangedPage();
+        var tempos = read(p, "Moderato (= 86–96)", 98, 40, 270, 98);
+        assertEquals(List.of(new ScoreTempoChange(0, 0, 86, 1)), tempos);
+    }
+
+    @Test
+    public void rangeWithoutPrintedDashDoesNotSupplyATempo() throws Exception {
+        var p = rangedPage();
+        p.erase(208, 74, 12, 3);
+        assertTrue(read(p, "Moderato (= 86–96)", 98, 40, 270, 98).isEmpty());
+    }
+
+    private TempoUnitNoteTest.Page rangedPage() {
+        var p = page();
+        p.erase(164, 62, 64, 27);
+        p.digit();
+        p.rect(183, 62, 3, 27, (byte) 5);
+        p.rect(183, 62, 12, 3, (byte) 5);
+        p.rect(183, 74, 12, 3, (byte) 5);
+        p.rect(183, 86, 12, 3, (byte) 5);
+        p.rect(192, 74, 3, 15, (byte) 5);
+        p.rect(208, 74, 12, 3, (byte) 5);
+        return p;
+    }
+
     private TempoUnitNoteTest.Page page() {
         var p = new TempoUnitNoteTest.Page();
         p.erase(164, 62, 32, 27);
