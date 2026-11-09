@@ -27,11 +27,10 @@ Use your own image or PDF in place of `examples/scale.png`. JSON output (`-o`) i
 
 ## What it supports
 
-- Printed staff notation, including piano, violin, and ensemble scores, plus six- and seven-string guitar tab.
-- MusicXML for editing a reconstructed concert-pitch score. It does not reproduce the page layout or tab placement.
-- MIDI and synthesized MP3 for playback; JSON for note events and page geometry.
+- Reads printed staff notation and 6- or 7-string guitar tab.
+- Exports concert-pitch MusicXML for editing, MIDI and MP3 for playback, and JSON for note and page data.
 
-Recognition is experimental. Check the notes, rhythms, and symbols against the original before using an export.
+Recognition is experimental. Check exports against the original score.
 
 ## Develop
 
