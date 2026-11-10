@@ -183,7 +183,7 @@ class Interpreter:
             from .ocr import page_annotations
             words = self.ocr.words(gray)
             annotations = dict(page_annotations(words, annotations["tabWords"]), **annotations)
-        corrected = self.paper_whitening.correct(gray)
+        corrected = self.paper_whitening.correct(gray, labels)
         with tempfile.TemporaryDirectory(prefix="sheet-music-recognition-") as folder:
             page = Path(folder) / "page.page.gz"
             output = Path(folder) / "score.json"

@@ -4,17 +4,21 @@ package io.github.luckolite.interpreter;
 
 import java.nio.ByteBuffer;
 import java.security.MessageDigest;
+import java.util.Arrays;
 import java.util.Objects;
 
-/** Corrects decoder illumination while leaving the original segmentation raster authoritative. */
+/** Corrects decoder paper and faded ink while leaving the segmentation raster authoritative. */
 public final class PaperBackgroundWhitening {
     public static final String MODEL_ASSET = "paper_field_v1.onnx";
     public static final String MODEL_SHA256 =
             "dc27aec9f1d29cc423510277992523991fbbb568770a3acf73875107476ab460";
-    public static final String RASTER_POLICY = "original-segmentation-paper-field-decoder-v1";
+    public static final String RASTER_POLICY = "original-segmentation-paper-field-decoder-v2";
     private static final int MAX_PIXELS = 20_000_000;
     private static final int FIELD_SIDE = 960;
     private static final int RADIUS = 12;
+    private static final int MIN_FADED_TONE = 96;
+    private static final int MAX_FADED_TONE = 220;
+    private static final int MIN_PAPER_CONTRAST = 32;
 
     public interface Inference {
         Fields run(float[] features, int width, int height) throws Exception;
@@ -29,15 +33,26 @@ public final class PaperBackgroundWhitening {
 
     public static Result apply(byte[] original, int width, int height, Inference inference)
             throws Exception {
+        return apply(original, null, width, height, inference);
+    }
+
+    public static Result apply(
+            byte[] original, byte[] labels, int width, int height, Inference inference)
+            throws Exception {
         Objects.requireNonNull(original, "original");
         Objects.requireNonNull(inference, "inference");
         long size = (long) width * height;
         if (width < 1 || height < 1 || size > MAX_PIXELS || size != original.length) {
             throw new IllegalArgumentException("Invalid grayscale dimensions");
         }
+        if (labels != null && labels.length != size) {
+            throw new IllegalArgumentException("Notation labels must match grayscale dimensions");
+        }
         String rawHash = rasterSha256(original, width, height);
-        if (bright(original) || bright(close(original, width, height))) {
-            return new Result(original, false, rawHash, rawHash);
+        byte[] fullPaper = bright(original) ? null : close(original, width, height);
+        if (fullPaper == null || bright(fullPaper)) {
+            byte[] output = darkenFadedInk(original, labels, width, height, fullPaper);
+            return result(original, output, width, height, rawHash);
         }
         double scale = Math.min(1., FIELD_SIDE / (double) Math.max(width, height));
         int fieldWidth = Math.max(8, (int) Math.rint(width * scale));
@@ -54,7 +69,6 @@ public final class PaperBackgroundWhitening {
         validate(fields.paper(), fieldWidth, fieldHeight, .23f);
         validate(fields.contrast(), fieldWidth, fieldHeight, .35f);
         byte[] output = new byte[original.length];
-        boolean changed = false;
         for (int y = 0; y < height; y++) {
             for (int x = 0; x < width; x++) {
                 int index = y * width + x;
@@ -67,14 +81,55 @@ public final class PaperBackgroundWhitening {
                 float restored = 255f * (1f - ink / contrast);
                 int value = Math.max(0, Math.min(255, (int) Math.rint(restored)));
                 output[index] = (byte) value;
-                changed |= output[index] != original[index];
             }
         }
-        return new Result(
-                changed ? output : original,
-                changed,
-                rawHash,
-                changed ? rasterSha256(output, width, height) : rawHash);
+        return result(
+                original, darkenFadedInk(output, labels, width, height, null), width, height, rawHash);
+    }
+
+    private static Result result(byte[] original, byte[] output, int width, int height, String rawHash)
+            throws Exception {
+        if (output == original || Arrays.equals(output, original)) {
+            return new Result(original, false, rawHash, rawHash);
+        }
+        return new Result(output, true, rawHash, rasterSha256(output, width, height));
+    }
+
+    private static byte[] darkenFadedInk(
+            byte[] gray, byte[] labels, int width, int height, byte[] paper) {
+        if (labels == null) return gray;
+        byte[] output = gray;
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                int index = y * width + x;
+                int label = labels[index] & 255;
+                int tone = gray[index] & 255;
+                // The five foreground classes provide notation evidence. A nearby black
+                // core means this gray is likely the antialiased edge of a crisp stroke.
+                if (label < 1 || label > 5 || tone < MIN_FADED_TONE || tone >= MAX_FADED_TONE) {
+                    continue;
+                }
+                int core = darkestNeighbor(gray, width, height, x, y);
+                if (core < MIN_FADED_TONE) continue;
+                if (paper == null) paper = close(gray, width, height);
+                if ((paper[index] & 255) - tone < MIN_PAPER_CONTRAST) continue;
+                int gain = Math.min(core - MIN_FADED_TONE + 1,
+                        Math.min(MAX_FADED_TONE - tone, (255 - tone) / 2));
+                if (output == gray) output = gray.clone();
+                output[index] = (byte) (tone - gain);
+            }
+        }
+        return output;
+    }
+
+    private static int darkestNeighbor(byte[] gray, int width, int height, int x, int y) {
+        int darkest = 255;
+        for (int row = Math.max(0, y - 1); row <= Math.min(height - 1, y + 1); row++) {
+            for (int col = Math.max(0, x - 1); col <= Math.min(width - 1, x + 1); col++) {
+                darkest = Math.min(darkest, gray[row * width + col] & 255);
+            }
+        }
+        return darkest;
     }
 
     public static String rasterSha256(byte[] gray, int width, int height) throws Exception {

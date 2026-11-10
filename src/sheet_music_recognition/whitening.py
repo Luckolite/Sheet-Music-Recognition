@@ -1,6 +1,6 @@
 # Copyright 2026 Luckolite
 # SPDX-License-Identifier: Apache-2.0
-"""Pinned original-training paper correction for decoder grayscale."""
+"""Paper and faded-ink correction for decoder grayscale."""
 from dataclasses import dataclass
 import hashlib
 from pathlib import Path
@@ -10,8 +10,11 @@ import numpy as np
 
 MODEL_NAME = "paper_field_v1.onnx"
 MODEL_SHA256 = "dc27aec9f1d29cc423510277992523991fbbb568770a3acf73875107476ab460"
-RASTER_POLICY = "original-segmentation-paper-field-decoder-v1"
+RASTER_POLICY = "original-segmentation-paper-field-decoder-v2"
 MAX_PIXELS = 20_000_000
+MIN_FADED_TONE = 96
+MAX_FADED_TONE = 220
+MIN_PAPER_CONTRAST = 32
 
 
 @dataclass(frozen=True)
@@ -56,12 +59,15 @@ class PaperBackgroundWhitening:
                 raise ValueError("Invalid paper-field output")
         return paper[0, 0], contrast[0, 0]
 
-    def correct(self, gray):
+    def correct(self, gray, labels=None):
         if not isinstance(gray, np.ndarray) or gray.dtype != np.uint8 or gray.ndim != 2:
             raise ValueError("Expected uint8 grayscale image")
         height, width = gray.shape
         if not width or not height or gray.size > MAX_PIXELS:
             raise ValueError("Invalid grayscale dimensions")
+        if labels is not None and (not isinstance(labels, np.ndarray)
+                                   or labels.dtype != np.uint8 or labels.shape != gray.shape):
+            raise ValueError("Expected uint8 notation labels matching grayscale dimensions")
         import cv2
         raw_hash = raster_sha256(gray)
 
@@ -70,8 +76,12 @@ class PaperBackgroundWhitening:
             return bool(np.quantile(normalized, .1) > .94 and np.median(normalized) > .98)
 
         kernel = np.ones((25, 25), np.uint8)
-        if bright(gray) or bright(cv2.morphologyEx(gray, cv2.MORPH_CLOSE, kernel)):
-            return WhiteningResult(gray, False, raw_hash, raw_hash)
+        paper_estimate = None
+        if not bright(gray):
+            paper_estimate = cv2.morphologyEx(gray, cv2.MORPH_CLOSE, kernel)
+        if paper_estimate is None or bright(paper_estimate):
+            output = self._darken_faded_ink(gray, labels, kernel, paper_estimate)
+            return self._result(gray, output, raw_hash)
         scale = min(1., 960 / max(height, width))
         shape = (max(8, round(width * scale)), max(8, round(height * scale)))
         small = cv2.resize(gray.astype(np.float32), shape, interpolation=cv2.INTER_AREA) / 255
@@ -82,7 +92,39 @@ class PaperBackgroundWhitening:
         contrast = cv2.resize(contrast, (width, height), interpolation=cv2.INTER_LINEAR)
         ink = np.maximum(0, 1 - gray / (255 * paper))
         output = np.rint(255 * (1 - ink / contrast)).clip(0, 255).astype(np.uint8)
-        changed = not np.array_equal(output, gray)
-        if not changed:
+        output = self._darken_faded_ink(output, labels, kernel)
+        return self._result(gray, output, raw_hash)
+
+    @staticmethod
+    def _result(gray, output, raw_hash):
+        if output is gray or np.array_equal(output, gray):
             return WhiteningResult(gray, False, raw_hash, raw_hash)
         return WhiteningResult(output, True, raw_hash, raster_sha256(output))
+
+    @staticmethod
+    def _darken_faded_ink(gray, labels, kernel, paper=None):
+        if labels is None:
+            return gray
+        import cv2
+
+        # Classes 1 through 5 are the model's notation classes. Require existing ink
+        # and protect the antialiased edges around already dark strokes.
+        candidates = ((labels >= 1) & (labels <= 5)
+                      & (gray >= MIN_FADED_TONE) & (gray < MAX_FADED_TONE))
+        if not candidates.any():
+            return gray
+        core = cv2.erode(gray, np.ones((3, 3), np.uint8))
+        candidates &= core >= MIN_FADED_TONE
+        if not candidates.any():
+            return gray
+        if paper is None:
+            paper = cv2.morphologyEx(gray, cv2.MORPH_CLOSE, kernel)
+        tones = gray[candidates].astype(np.int16)
+        gain = np.minimum(core[candidates].astype(np.int16) - MIN_FADED_TONE + 1,
+                          np.minimum(MAX_FADED_TONE - tones, (255 - tones) // 2))
+        gain[paper[candidates].astype(np.int16) - tones < MIN_PAPER_CONTRAST] = 0
+        if not gain.any():
+            return gray
+        output = gray.copy()
+        output[candidates] = tones - gain
+        return output

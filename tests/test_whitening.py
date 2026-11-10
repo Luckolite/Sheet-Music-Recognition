@@ -29,6 +29,46 @@ class WhiteningTest(unittest.TestCase):
         self.assertEqual(int(result.decoder_gray.flat[3000]), 0)
         np.testing.assert_array_equal(gray, before)
 
+    def test_darkens_labeled_faded_strokes_on_white_paper(self):
+        gray = np.full((96, 128), 255, np.uint8)
+        labels = np.zeros_like(gray)
+        gray[32, 12:115] = 178
+        labels[32, 12:115] = 4
+        gray[20:47, 80] = 150
+        labels[20:47, 80] = 1
+        gray[52:57, 35:43] = 165
+        labels[52:57, 35:43] = 2
+        gray[70, 30:90] = 0
+        gray[71, 30:90] = 150
+        labels[70:72, 30:90] = 4
+        gray[12, 8] = 150
+        gray[4, 90] = 235
+        labels[4, 90] = 5
+        before = gray.copy()
+        before_labels = labels.copy()
+
+        result = PaperBackgroundWhitening('missing-model.onnx').correct(gray, labels)
+
+        self.assertTrue(result.changed)
+        self.assertNotEqual(result.raw_sha256, result.decoder_sha256)
+        self.assertEqual([140, 98, 120], result.decoder_gray[[32, 24, 54], [30, 80, 38]].tolist())
+        self.assertEqual([255, 0, 150, 150, 235],
+                         result.decoder_gray[[31, 70, 71, 12, 4], [30, 35, 35, 8, 90]].tolist())
+        np.testing.assert_array_equal(gray, before)
+        np.testing.assert_array_equal(labels, before_labels)
+
+    def test_polishes_remaining_faded_ink_after_whitening(self):
+        owner = PaperBackgroundWhitening()
+        owner._inference = lambda features: (np.full(features.shape[1:], .8, np.float32),
+                                             np.full(features.shape[1:], .8, np.float32))
+        gray = np.full((64, 96), 204, np.uint8)
+        labels = np.zeros_like(gray)
+        gray[30, 12:80] = 168
+        labels[30, 12:80] = 4
+        gray[37, 12:80] = 168
+        result = owner.correct(gray, labels)
+        self.assertEqual([255, 178, 199], result.decoder_gray[[0, 30, 37], [0, 20, 20]].tolist())
+
     def test_invalid_input(self):
         for gray in (np.zeros((0, 1), np.uint8), np.zeros((2, 2), np.float32),
                      np.zeros((2, 2, 3), np.uint8)):

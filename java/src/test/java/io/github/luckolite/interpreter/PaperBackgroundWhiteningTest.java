@@ -52,6 +52,61 @@ public class PaperBackgroundWhiteningTest {
     }
 
     @Test
+    public void darkensFadedNotationOnWhitePaperWithoutTouchingCrispInkOrSpeckling()
+            throws Exception {
+        int width = 128, height = 96;
+        byte[] source = new byte[width * height];
+        byte[] labels = new byte[source.length];
+        Arrays.fill(source, (byte) 255);
+        stroke(source, labels, width, 12, 32, 115, 33, 178, 4);
+        stroke(source, labels, width, 80, 20, 81, 47, 150, 1);
+        stroke(source, labels, width, 35, 52, 43, 57, 165, 2);
+        stroke(source, labels, width, 30, 70, 90, 71, 0, 4);
+        stroke(source, labels, width, 30, 71, 90, 72, 150, 4);
+        source[12 * width + 8] = (byte) 150;
+        stroke(source, labels, width, 90, 4, 91, 5, 235, 5);
+        byte[] before = source.clone();
+        byte[] beforeLabels = labels.clone();
+
+        var result =
+                PaperBackgroundWhitening.apply(
+                        source, labels, width, height,
+                        (features, w, h) -> {
+                            throw new AssertionError("White paper invoked the field model");
+                        });
+
+        byte[] output = result.decoderGray();
+        assertTrue(result.changed());
+        assertNotEquals(result.rawSha256(), result.decoderSha256());
+        assertEquals(140, output[32 * width + 30] & 255);
+        assertEquals(98, output[24 * width + 80] & 255);
+        assertEquals(120, output[54 * width + 38] & 255);
+        assertEquals(255, output[31 * width + 30] & 255);
+        assertEquals(0, output[70 * width + 35] & 255);
+        assertEquals(150, output[71 * width + 35] & 255);
+        assertEquals(150, output[12 * width + 8] & 255);
+        assertEquals(235, output[4 * width + 90] & 255);
+        assertArrayEquals(before, source);
+        assertArrayEquals(beforeLabels, labels);
+    }
+
+    @Test
+    public void polishesRemainingFadedInkAfterWhitening() throws Exception {
+        int width = 96, height = 64;
+        byte[] source = new byte[width * height];
+        byte[] labels = new byte[source.length];
+        Arrays.fill(source, (byte) 204);
+        stroke(source, labels, width, 12, 30, 80, 31, 168, 4);
+        stroke(source, labels, width, 12, 37, 80, 38, 168, 0);
+        var result =
+                PaperBackgroundWhitening.apply(
+                        source, labels, width, height, (features, w, h) -> fields(w, h, .8f, .8f));
+        assertEquals(255, result.decoderGray()[0] & 255);
+        assertEquals(178, result.decoderGray()[30 * width + 20] & 255);
+        assertEquals(199, result.decoderGray()[37 * width + 20] & 255);
+    }
+
+    @Test
     public void validatesDimensionsBeforeInference() throws Exception {
         try {
             PaperBackgroundWhitening.apply(
@@ -92,5 +147,14 @@ public class PaperBackgroundWhiteningTest {
             Arrays.fill(contrast[y], c);
         }
         return new PaperBackgroundWhitening.Fields(paper, contrast);
+    }
+
+    private static void stroke(
+            byte[] gray, byte[] labels, int width, int left, int top, int right, int bottom,
+            int tone, int label) {
+        for (int y = top; y < bottom; y++) {
+            Arrays.fill(gray, y * width + left, y * width + right, (byte) tone);
+            Arrays.fill(labels, y * width + left, y * width + right, (byte) label);
+        }
     }
 }
