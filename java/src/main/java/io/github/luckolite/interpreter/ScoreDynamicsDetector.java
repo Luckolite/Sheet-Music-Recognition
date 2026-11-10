@@ -787,7 +787,13 @@ final class ScoreDynamicsDetector {
                         && n <= w * Math.max(8, gap))
                     fragments.addAll(
                             ShadedHairpinFragments.pieces(owner, left, right, upper, lower));
-                if (!qualifiedShort && (w < gap * 4 || w < h * 4)
+                boolean compactSystemEnd = gray == ownershipGray && w < h * 4 && w >= h * 3
+                        && w >= gap * 4 && w <= gap * 8 && h <= gap * 2
+                        && top > owner.bottom() && hairpinDirection(upper, lower, gap) != 0
+                        && openHairpinInterior(gray, width, left, upper, lower, gap)
+                        && PrintedHairpinBoundary.atSystemEnd(
+                                gray, width, height, owner, measures, left, right);
+                if (!qualifiedShort && !compactSystemEnd && (w < gap * 4 || w < h * 4)
                         || h > gap * 3
                         || n > w * Math.max(8, gap)) continue;
 

@@ -178,4 +178,23 @@ public class BoundaryHairpinProposalTest {
         s.mirror();
         assertFalse(s.read(false));
     }
+
+    @Test
+    public void compactWedgeRequiresThePrintedSystemEnd() {
+        int width = 600, height = 350;
+        var staff = new PlayingTechniqueDetector.Staff(144, 200, 14, 0, 1);
+        var bars = List.of(new MeasureRegion(.2f, .6f, .35f, .65f),
+                new MeasureRegion(.6f, .9f, .35f, .65f));
+        byte[] gray = new byte[width * height];
+        Arrays.fill(gray, (byte) 255);
+        for (int y = 144; y <= 200; y += 14)
+            for (int x = 120; x <= 540; x++) gray[y * width + x] = 0;
+        assertFalse(PrintedHairpinBoundary.atSystemEnd(gray, width, height, staff, bars, 430, 525));
+        for (int y = 144; y <= 200; y++) {
+            gray[y * width + 360] = 0;
+            gray[y * width + 540] = 0;
+        }
+        assertTrue(PrintedHairpinBoundary.atSystemEnd(gray, width, height, staff, bars, 430, 525));
+        assertFalse(PrintedHairpinBoundary.atSystemEnd(gray, width, height, staff, bars, 265, 345));
+    }
 }

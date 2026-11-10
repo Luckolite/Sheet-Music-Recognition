@@ -174,6 +174,13 @@ public final class ScoreExpressionDetector {
                 staff =
                         PrintedDirectionWordStaff.find(
                                 staffs, score.measures(), score.notes(), gray, width, height, word);
+            if (staff == null && directions.stream().allMatch(d -> switch (d.kind()) {
+                case RITARDANDO, RALLENTANDO, RITENUTO, ACCELERANDO, A_TEMPO -> true;
+                default -> false;
+            })) {
+                staff = PrintedDirectionWordStaff.nearTempoWord(
+                        staffs, score.measures(), score.notes(), gray, width, height, word);
+            }
             ScoreNoteEvent closest =
                     staff == null ? null : closestDirectionNote(score, staff, width, height, x, x);
             boolean metricBoundary = false;

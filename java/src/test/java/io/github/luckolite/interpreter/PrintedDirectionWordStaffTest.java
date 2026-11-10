@@ -20,10 +20,14 @@ public class PrintedDirectionWordStaffTest {
     }
 
     static byte[] ink(int rails, int end) {
+        return ink(rails, 222, end);
+    }
+
+    static byte[] ink(int rails, int start, int end) {
         byte[] g = new byte[W * H];
         Arrays.fill(g, (byte) 255);
         for (int line = 0; line < rails; line++)
-            for (int x = 222; x < end; x++) g[(200 - line * 14) * W + x] = 30;
+            for (int x = start; x < end; x++) g[(200 - line * 14) * W + x] = 30;
         return g;
     }
 
@@ -94,5 +98,17 @@ public class PrintedDirectionWordStaffTest {
                 reference.expressiveEvents().get(0).start(),
                 result.expressiveEvents().get(0).start());
         assertEquals(NOTES, result.notes());
+    }
+
+    @Test
+    public void aboveStaffTempoCanUseTwoNearbyProofsBeyondTheWordEdge() {
+        var tempo = new PlayingTechniqueDetector.Word("a tempo", 300f / W, 117f / H, 390f / W, 132f / H);
+        assertNull(find(ink(5, 180, 315), true, tempo));
+        assertNotNull(PrintedDirectionWordStaff.nearTempoWord(
+                STAFFS, BARS, NOTES, ink(5, 180, 315), W, H, tempo));
+        assertNull(PrintedDirectionWordStaff.nearTempoWord(
+                STAFFS, BARS, NOTES, ink(4, 180, 315), W, H, tempo));
+        assertNull(PrintedDirectionWordStaff.nearTempoWord(
+                STAFFS, BARS, List.of(), ink(5, 180, 315), W, H, tempo));
     }
 }

@@ -6,6 +6,25 @@ package io.github.luckolite.interpreter;
 final class PrintedHairpinBoundary {
     private PrintedHairpinBoundary() {}
 
+    static boolean atSystemEnd(
+            byte[] gray,
+            int width,
+            int height,
+            PlayingTechniqueDetector.Staff owner,
+            java.util.List<MeasureRegion> measures,
+            int left,
+            int right) {
+        float center = (owner.top() + owner.bottom()) * .5f / height;
+        MeasureRegion last = null;
+        for (var region : measures) {
+            if (center >= region.top() && center <= region.bottom()
+                    && (last == null || region.right() > last.right())) last = region;
+        }
+        return last != null && left >= last.left() * width
+                && right <= last.right() * width && last.right() * width - right <= owner.gap() * 1.5f
+                && proved(gray, width, height, owner, last, right);
+    }
+
     static boolean proved(
             byte[] gray,
             int width,
