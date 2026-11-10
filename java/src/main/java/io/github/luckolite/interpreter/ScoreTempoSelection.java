@@ -19,6 +19,24 @@ public final class ScoreTempoSelection {
         return fallbackQuarterBpm;
     }
 
+    /**
+     * Resolve a saved metronome number against a printed opening mark. If the opening mark
+     * confirms that exact number in its own note unit, use its quarter-note rate. Otherwise
+     * keep the caller's already converted quarter-note fallback.
+     */
+    public static double playbackQuarterBpm(
+            int savedBpm, double fallbackQuarterBpm, List<ScoreTempoChange> printed) {
+        if (savedBpm >= 30 && savedBpm <= 400 && printed != null) {
+            for (var mark : printed) {
+                if (mark.measureIndex() != 0 || mark.positionInMeasure() != 0) continue;
+                if (Double.compare(savedBpm * mark.beatUnit(), mark.bpm()) == 0)
+                    return mark.bpm();
+                break;
+            }
+        }
+        return fallbackQuarterBpm;
+    }
+
     public static List<ScoreTempoChange> atOpeningTempo(
             double selectedQuarterBpm, List<ScoreTempoChange> printed) {
         if (printed == null || printed.isEmpty()) return List.of();

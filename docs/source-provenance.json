@@ -8322,13 +8322,14 @@
     },
     "ScoreTempoSelection.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/playback/ScoreTempoSelection.java",
-      "source_sha256": "10196f74cf0492c4e347d98c650d42b8b59b6140b733c3cbc20b90acacb68997",
-      "reviewed_app_commit": "650d1b3a312dcd7eb58f83945a6a3be321c9b4dd",
-      "source_normalized_sha256": "0b1d5ae2bf2302c74aa29192fcaca141e63cb0ed29d29609471677d795ec4bac",
-      "reviewed_source_state": "Music Sheets1.18.389 reviewed conversion tempo staging, preserving accepted1.18.388",
+      "source_sha256": "577156858c32a2ca080563b934cc9a25fce4dd837371ecd02682d85c0726f567",
+      "reviewed_app_commit": "8546401e27abf5d57b7373bf77a4e27649f05c88",
+      "source_normalized_sha256": "43509b9628e19ae6d20414ade4786f328a3d1c909929af08baa7f65428eda468",
+      "reviewed_source_state": "Opening playback pulse selection reviewed for Music Sheets 1.18.561",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/ScoreTempoSelection.java",
-      "standalone_sha256": "c1d684bd7b66c1334ef653395af28b2efc8f2ec8e58159ac50b701c82802c16e",
-      "tempo_unit_135_review": "Song meter-pulse values are converted to quarter-note clocks once. Existing APIs for explicitly selected printed pulses remain compatible. A new quarter-clock engraving entry retains pulse units and later tempo ratios."
+      "standalone_sha256": "e6c17e3e814901094c9cc9922d49fdab2a1ddc824d3b6afa43e04b98cb58334a",
+      "tempo_unit_135_review": "Song meter-pulse values are converted to quarter-note clocks once. Existing APIs for explicitly selected printed pulses remain compatible. A new quarter-clock engraving entry retains pulse units and later tempo ratios.",
+      "playback_pulse_review": "Matching printed pulse values are recovered on both sides. Android takes the meter string and computes its SheetTiming fallback. The standalone Java API takes the caller's already converted quarter-note fallback."
     },
     "ScoreTiePitchGuard.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/ScoreTiePitchGuard.java",
