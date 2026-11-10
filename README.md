@@ -1,13 +1,33 @@
-# Sheet-Music-Recognition
+# Sheet-Music-Recognition — Optical Music Recognition
 
-Convert sheet-music images and PDFs to MusicXML, MIDI, MP3, or JSON. Recognition runs locally.
+Convert sheet-music images and scanned PDFs to **MusicXML, MIDI, JSON and MP3**
+with offline optical music recognition (OMR). Sheet-Music-Recognition includes downloadable
+model weights, a Java decoder and a Python API and command-line tool, available
+as **`sheet-music-recognition`** (command) and **`sheet_music_recognition`** (Python import).
 
 [![Build and test](https://github.com/Luckolite/Sheet-Music-Recognition/actions/workflows/ci.yml/badge.svg)](https://github.com/Luckolite/Sheet-Music-Recognition/actions/workflows/ci.yml)
-[Developer docs](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/docs/README.md) · [Downloads](https://github.com/Luckolite/Sheet-Music-Recognition/releases)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/LICENSE)
+
+[Quick start](#install-and-use) · [Documentation](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/docs/README.md) · [Python / Java API](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/docs/integration.md) · [Model and limitations](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/models/MODEL_CARD.md) · [Downloads](https://github.com/Luckolite/Sheet-Music-Recognition/releases)
+
+**Code and weights are Apache-2.0 licensed, including commercial and closed-source use.**
+You do not need to publish your own code. Follow the [license and notice requirements](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/docs/licensing.md).
+
+**Experimental:** recognition can miss or add notes and misread rhythms or
+symbols. Check exports against the printed score. See the
+[model evaluation and limitations](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/models/MODEL_CARD.md#evaluation-and-limitations).
+
+## What it supports
+
+- **Scores.** Printed staff notation for piano, violin, and ensembles, including independently barred staves.
+- **Notation.** Notes, chords, rests, clefs, accidentals, ties, slurs, grace notes, and dynamics. Reads repeats and endings, plus changes in key, meter, and tempo.
+- **Playback.** MIDI and synthesized MP3 previews can follow recognized ritardandos, fermatas, tremolos, and piano pedal brackets. [Playback details](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/docs/expressive-performance.md)
+- **Guitar tab.** Six- and seven-string tab with tuning headers, written rhythms including triplets, and effects such as hammer-ons, pull-offs, slides, bends, and vibrato. When rhythm is missing, the reader estimates it. [Tab details](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/docs/guitar-tabs.md) · [Guitar effects](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/docs/tab-gestures.md)
+- **Exports.** MusicXML reconstructs an editable concert-pitch score and leaves out the original page layout and tab placement. JSON includes note events and page geometry. [Export formats](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/docs/integration.md)
 
 ## Install and use
 
-Install from source with Python 3.10 or 3.11 and JDK 17 or newer. Set `JAVA_HOME` or put the JDK tools on your PATH.
+Requires **Python 3.10 or 3.11** and **JDK 17+** on your PATH.
 
 ```sh
 git clone https://github.com/Luckolite/Sheet-Music-Recognition.git
@@ -15,23 +35,86 @@ cd Sheet-Music-Recognition
 python -m venv .venv
 ```
 
-Activate the environment: `.\.venv\Scripts\Activate.ps1` in PowerShell or `source .venv/bin/activate` on macOS/Linux. Then build, install, and try the included score:
+PyPI publication under the new name is pending. Install from source for now.
+Activate with `.venv\Scripts\Activate.ps1` on Windows or
+`source .venv/bin/activate` on macOS/Linux, then build the Java core and install
+with PDF input and MP3 export support:
 
 ```sh
 python scripts/build_java.py
 python -m pip install ".[pdf,audio]"
-sheet-music-recognition examples/scale.png -o score.json --musicxml score.musicxml
 ```
 
-Use your own image or PDF in place of `examples/scale.png`. JSON output (`-o`) is required. Add `--midi preview.mid` or `--mp3 preview.mp3` for playback, or run `sheet-music-recognition --help` for all options.
+### Read a score
 
-## What it supports
+```sh
+sheet-music-recognition score.png --output score.json --midi preview.mid --musicxml score.musicxml
+```
 
-- Reads printed staff notation and 6- or 7-string guitar tab.
-- Exports concert-pitch MusicXML for editing, MIDI and MP3 for playback, and JSON for note and page data.
+Use an image or PDF as input. JSON output is required; MIDI, MusicXML and MP3
+exports are optional. For example, with the extras installed:
 
-Recognition is experimental. Check exports against the original score.
+```sh
+sheet-music-recognition score.pdf --output score.json --mp3 preview.mp3
+```
 
-## Develop
+MP3 previews use a basic synthesized tone. The audio extra supplies an FFmpeg
+encoder. You can also use an existing FFmpeg installation.
 
-See the [Python and Java examples](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/docs/integration.md) and the [contribution guide](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/CONTRIBUTING.md). The code and bundled weights are [Apache-2.0 licensed](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/docs/licensing.md), including for commercial and closed-source use.
+Use `--pages 1,2,3` to select PDF pages, `--meter 3/4` for the initial meter,
+`--bpm 90` for the initial quarter-note tempo, or `--key-fifths 2` for two sharps.
+The default meter and tempo are 4/4 and 120 BPM. Run `sheet-music-recognition --help`
+for all options.
+
+Processing runs locally. See [API and output details](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/docs/integration.md) for
+Python/Java integration and export behavior, or [GitHub releases](https://github.com/Luckolite/Sheet-Music-Recognition/releases)
+for standalone JAR and model downloads.
+
+## Integration and model
+
+Use `Interpreter` and `write_musicxml` from Python, or `SheetInterpreter.analyze()`
+from Java. See [API examples and output format](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/docs/integration.md).
+An optional [native Java decoding service](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/docs/native-decoder.md) supports
+bounded, source-matched geometry and analysis requests from local workers.
+The Python reader runs bundled-model OCR automatically on images and scanned PDFs.
+The separate [shared Java OCR pipeline](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/docs/portable-ocr.md) and optional ONNX
+binding remain available for cross-platform evaluation. The optional
+[desktop ONNX segmentation adapter](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/docs/portable-segmentation.md) uses the pinned
+v3 conversion without changing the default Python model.
+
+The bundled v4 model comes from our own synthetic training lineage, without pretrained
+weights or commercial score scans. See the [model card](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/models/MODEL_CARD.md), [evaluation](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/models/evaluation.json),
+[training guide](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/training/README.md) and [source origins](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/docs/source-provenance.md).
+
+## Development
+
+Follow the source installation steps above, then run the checks:
+
+```sh
+python scripts/test_java.py
+python -m unittest discover -s tests
+python scripts/smoke_test.py
+```
+
+Use `python scripts/test_java.py --jobs 4` in place of the serial Java test
+command to run every class once across four isolated JVMs. Each parallel JVM
+defaults to a 512 MiB heap; per-batch logs and results are saved under
+`build/test-parallel`. A failed batch makes the command fail.
+
+Bug reports and contributions are welcome. Use shareable examples and keep private logs
+and commercial scores out of public posts. See [CONTRIBUTING.md](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/CONTRIBUTING.md).
+
+### Pickup caller integration regression
+
+After building the Java core, run the original numeric/content cases against the
+actual standalone pickup call:
+
+```sh
+python scripts/check_pickup_ingress.py --public . --classpath src/sheet_music_recognition/interpreter.jar --out build/pickup-ingress
+```
+
+Use a new output directory on each run. Maintainers can add `--app <app-worktree>`
+and use its matching core classpath to check the exact Android and native caller
+expressions too. This compiles source slices with current helper sources; it does
+not run Android, image recognition or a packaged worker. The fixtures contain no
+score images or private data.
