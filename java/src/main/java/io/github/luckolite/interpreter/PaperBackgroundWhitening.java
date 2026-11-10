@@ -113,13 +113,32 @@ public final class PaperBackgroundWhitening {
                 if (core < MIN_FADED_TONE) continue;
                 if (paper == null) paper = close(gray, width, height);
                 if ((paper[index] & 255) - tone < MIN_PAPER_CONTRAST) continue;
-                int gain = Math.min(core - MIN_FADED_TONE + 1,
-                        Math.min(MAX_FADED_TONE - tone, (255 - tone) / 2));
+                int gain = limitFadedInkGain(tone, core - MIN_FADED_TONE + 1);
                 if (output == gray) output = gray.clone();
                 output[index] = (byte) (tone - gain);
             }
         }
         return output;
+    }
+
+    static byte[] darkenFadedInk(byte[] gray, byte[] labels, int width, int height) {
+        return darkenFadedInk(gray, labels, width, height, null);
+    }
+
+    static boolean hasFadedInkCandidates(byte[] gray, int width, int height) {
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                int tone = gray[y * width + x] & 255;
+                if (tone >= MIN_FADED_TONE && tone < MAX_FADED_TONE
+                        && darkestNeighbor(gray, width, height, x, y) >= MIN_FADED_TONE) return true;
+            }
+        }
+        return false;
+    }
+
+    static int limitFadedInkGain(int tone, int gain) {
+        if (tone < MIN_FADED_TONE || tone >= MAX_FADED_TONE) return 0;
+        return Math.min(gain, Math.min(MAX_FADED_TONE - tone, (255 - tone) / 2));
     }
 
     private static int darkestNeighbor(byte[] gray, int width, int height, int x, int y) {

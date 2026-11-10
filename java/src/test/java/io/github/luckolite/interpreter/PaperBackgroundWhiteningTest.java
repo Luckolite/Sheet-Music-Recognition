@@ -14,6 +14,7 @@ public class PaperBackgroundWhiteningTest {
         for (int y = 20; y < 80; y += 12)
             Arrays.fill(source, y * 128 + 10, y * 128 + 118, (byte) 0);
         byte[] before = source.clone();
+        assertFalse(PaperBackgroundWhitening.hasFadedInkCandidates(source, 128, 96));
         var result =
                 PaperBackgroundWhitening.apply(
                         source,
@@ -67,6 +68,7 @@ public class PaperBackgroundWhiteningTest {
         stroke(source, labels, width, 90, 4, 91, 5, 235, 5);
         byte[] before = source.clone();
         byte[] beforeLabels = labels.clone();
+        assertTrue(PaperBackgroundWhitening.hasFadedInkCandidates(source, width, height));
 
         var result =
                 PaperBackgroundWhitening.apply(
