@@ -78,6 +78,15 @@ public class PageEdgeTempoSpanTest extends TempoSpanResolutionTest {
     }
 
     @Test
+    public void physicalGapDoesNotCloseATempoSpanWithConsecutiveBarNumbers() {
+        var pages = List.of(first(), next(5, List.of(new ScoreTempoChange(0, 0, 150))));
+        var omitted = ScorePageTimeline.physicalAdjacency(pages, List.of(0, 2));
+        var event = PrintedTempoSpanPages.resolve(pages, omitted).get(0).expressiveEvents().get(0);
+        assertEquals(Kind.UNRESOLVED_DIRECTION, event.kind());
+        assertTrue(event.end().isEmpty());
+    }
+
+    @Test
     public void numberingGapDoesNotBridge() {
         assertTrue(
                 resolve(first(), next(6, List.of(new ScoreTempoChange(0, 0, 150))))

@@ -39,6 +39,13 @@ def _route(beats, directions):
     return _bridge(data+encode(directions, [], len(beats)))
 
 
+def source_pages_adjacent(previous, following):
+    if 'sourcePage' not in previous and 'sourcePage' not in following:
+        return True
+    first, second = previous.get('sourcePage'), following.get('sourcePage')
+    return type(first) is int and type(second) is int and first >= 0 and second == first + 1
+
+
 def arrangement_ranges(pages):
     data = struct.pack('>ii', 0x4e415031, len(pages))
     for page in pages:

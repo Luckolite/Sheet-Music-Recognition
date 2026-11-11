@@ -5,6 +5,7 @@ import copy
 import math
 import re
 import struct
+from .navigation import source_pages_adjacent
 
 SOURCE = 'printed-tempo-dash-span'
 END = 'printed-tempo-dash-end-v1:'
@@ -87,7 +88,8 @@ def resolve_pages(pages):
         count = len(page['measureBeats'])
         marks = sorted(score.get('tempoChanges', []), key=lambda t: (t['measureIndex'], t['positionInMeasure']))
         next_page = result[i + 1] if i + 1 < len(result) else None
-        adjacent = bool(next_page and next_page['measureBeats'])
+        adjacent = bool(next_page and next_page['measureBeats']
+                        and source_pages_adjacent(page, next_page))
         first = score.get('firstMeasureNumber', 0)
         following = next_page.get('score', {}).get('firstMeasureNumber', 0) if next_page else 0
         if first > 0 and following > 0 and first + count != following:

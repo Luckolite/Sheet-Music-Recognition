@@ -6874,13 +6874,14 @@
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/PrintedTempoCaption.java"
     },
     "PrintedTempoSpanPages.java": {
+      "physical_page_review": "Page-edge continuations require consecutive physical pages when source identity is known. The Android conversion caller passes its selection roster, and standalone tempo export reads decoded sourcePage identities.",
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/PrintedTempoSpanPages.java",
-      "source_sha256": "e69f14e71624c6f74f7646852614fb6f3fb708c66f8dc04409453e16d5c39921",
-      "source_normalized_sha256": "190e840517a8d1859fe8e4d329b5851abef36115e951a33a51dde912340bab4e",
-      "standalone_sha256": "014362f22bc1458321b6b87a5b7dfa3d8f8c47b632bbf6d28224d35eb381d4bb",
+      "source_sha256": "5b635db257ec5edba246e9b0c05ff5d4a9c47a41d1a57bea637427788f6976b3",
+      "source_normalized_sha256": "5b635db257ec5edba246e9b0c05ff5d4a9c47a41d1a57bea637427788f6976b3",
+      "standalone_sha256": "a59c436a4027decbaac7b93348649d9ba0c5baee143b67847d20a916ad04e176",
       "reviewed_source_state": "Committed combined source snapshot; paired package deployment and whole-library accuracy acceptance pending.",
       "review_note": "Global recognition/performance repairs; namespace-equivalent portable helpers and separately reviewed caller adapters. Original synthetic regressions; no private score assets.",
-      "reviewed_app_commit": "c0374eebf5c075b83813a66051faa22bcb431360",
+      "reviewed_app_commit": "c70b72893e7ef2b116b963a055c41b5f87e8dc5d",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/PrintedTempoSpanPages.java"
     },
     "PrintedTempoSpans.java": {
@@ -7674,16 +7675,17 @@
       "reviewed_app_state": "Reviewed recognition102 source committed; cumulative matched rollout deferred during active goal."
     },
     "ScoreDynamicContinuation.java": {
+      "physical_page_review": "Page-edge continuations require consecutive physical pages when source identity is known. The Android conversion caller passes its selection roster, and standalone tempo export reads decoded sourcePage identities.",
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/ScoreDynamicContinuation.java",
-      "source_sha256": "13d0ba2e61e3058ad0e6b65f94dfedc024d235d339bced37e6cec0af3753a83b",
-      "source_normalized_sha256": "13d0ba2e61e3058ad0e6b65f94dfedc024d235d339bced37e6cec0af3753a83b",
-      "reviewed_app_commit": "5d7dba1aad17d58d558cef9be40df4ab133096eb",
+      "source_sha256": "ce3d70f43cb1e38f220bf73e3cc5c154fde648fe4d621205a8bb0bedf1441650",
+      "source_normalized_sha256": "ce3d70f43cb1e38f220bf73e3cc5c154fde648fe4d621205a8bb0bedf1441650",
+      "reviewed_app_commit": "c70b72893e7ef2b116b963a055c41b5f87e8dc5d",
       "reviewed_source_state": "committed-app-source",
       "review_note": "Reviewed global text/source-owner repair and original regressions; see docs/audited-ownership-repairs.md. Package-only Java port, except public timeline visibility and the pure written-tie helper API name/visibility. Existing models and record layouts are unchanged.",
-      "standalone_sha256": "c707b55d76110e71703aa9d7d9e89355ffcfd67ee635b50f308df6637b147a91",
+      "standalone_sha256": "9036a12e1c8a67f356d26eb77b2502121af59adf47143134fd18f964305a8a74",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/ScoreDynamicContinuation.java",
       "license": "Apache-2.0",
-      "standalone_normalized_sha256": "c707b55d76110e71703aa9d7d9e89355ffcfd67ee635b50f308df6637b147a91",
+      "standalone_normalized_sha256": "9036a12e1c8a67f356d26eb77b2502121af59adf47143134fd18f964305a8a74",
       "recognition139_review_note": "Reviewed app fix merged with the existing standalone adapters and formatting."
     },
     "ScoreDynamicsDetector.java": {
@@ -8058,13 +8060,14 @@
       "current_source_review": "Reviewed current source and standalone counterpart for the cumulative source-bound beam, notation, key, articulation and bounded context batch. Original procedural regressions only; physical source observations and model facts do not establish complete musical authority."
     },
     "ScorePageTimeline.java": {
+      "physical_page_review": "Page-edge continuations require consecutive physical pages when source identity is known. The Android conversion caller passes its selection roster, and standalone tempo export reads decoded sourcePage identities.",
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/ScorePageTimeline.java",
-      "source_sha256": "36f6d9f4b32163a6300880a342580477a17109ce6076193733d0ce4aca4823ee",
-      "reviewed_app_commit": "f976eec8bc8c5f07ae7a775fb9b62af5aeafaf24",
-      "source_normalized_sha256": "1a4702a98403f57534ff875f43d6dab815ca6ead08547d84be5e6fa9109d9eeb",
+      "source_sha256": "a554ede08fe583fbc8e4540f798c5f96ef620022ef011a520ce55f704936d73d",
+      "reviewed_app_commit": "c70b72893e7ef2b116b963a055c41b5f87e8dc5d",
+      "source_normalized_sha256": "a554ede08fe583fbc8e4540f798c5f96ef620022ef011a520ce55f704936d73d",
       "license": "Apache-2.0",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/ScorePageTimeline.java",
-      "standalone_sha256": "74b0e317b0679995885fa99d1e84b6d800f000c2b4ff9baf5859aed96ff5ede2",
+      "standalone_sha256": "151ed2d771d98665edd0dff8de913839c4f63217bac511e7be89deeaae6874b9",
       "reviewed_source_state": "committed-app-source",
       "review_note": "Reviewed global text/source-owner repair and original regressions; see docs/audited-ownership-repairs.md. Package-only Java port, except public timeline visibility and the pure written-tie helper API name/visibility. Existing models and record layouts are unchanged."
     },

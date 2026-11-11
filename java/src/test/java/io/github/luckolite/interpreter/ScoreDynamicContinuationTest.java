@@ -44,6 +44,33 @@ public class ScoreDynamicContinuationTest {
     }
 
     @Test
+    public void lexicalRampStopsAtAnOmittedPhysicalPage() {
+        var first = page(1, 1, 1, List.of(ramp(0, 1, 1)), true);
+        var last = page(2, 2, 1, List.of(level(1, 0, 1, 6)), false);
+        var pages = List.of(first, last);
+        var adjacent = ScorePageTimeline.physicalAdjacency(pages, List.of(0, 1));
+        var omitted = ScorePageTimeline.physicalAdjacency(pages, List.of(0, 2));
+        assertEquals(2, ScoreDynamicContinuation.join(pages, adjacent).get(0).endMeasureIndex());
+        assertEquals(first.dynamicChanges().get(0), ScoreDynamicContinuation.join(pages, omitted).get(0));
+    }
+
+    @Test
+    public void matchingHairpinFragmentsRemainSeparateAcrossAnOmittedPage() {
+        var outgoing = ramp(0, 1, 1);
+        var incoming = new ScoreDynamicChange(0, 0, 0, 1, 1, .5f, 0, 1);
+        var left = new ArrayList<ScoreExpressiveEvent>();
+        var right = new ArrayList<ScoreExpressiveEvent>();
+        ScoreDynamicContinuation.addHairpinEdge(left, outgoing, false, 1, .9f);
+        ScoreDynamicContinuation.addHairpinEdge(right, incoming, true, 1, .1f);
+        var pages = List.of(page(1, 1, 1, List.of(outgoing), false).withExpressiveEvents(left),
+                page(2, 2, 1, List.of(incoming), false).withExpressiveEvents(right));
+        var adjacent = ScorePageTimeline.physicalAdjacency(pages, List.of(0, 1));
+        var omitted = ScorePageTimeline.physicalAdjacency(pages, List.of(0, 2));
+        assertEquals(1, ScoreDynamicContinuation.join(pages, adjacent).size());
+        assertEquals(List.of(outgoing, incoming.offset(1)), ScoreDynamicContinuation.join(pages, omitted));
+    }
+
+    @Test
     public void lexicalCrescendoReachesNextPagePrintedArrival() {
         var result =
                 join(

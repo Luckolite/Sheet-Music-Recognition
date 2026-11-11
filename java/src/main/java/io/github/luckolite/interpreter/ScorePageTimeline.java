@@ -9,6 +9,24 @@ public final class ScorePageTimeline {
 
     private ScorePageTimeline() {}
 
+    /** The index refers to the later page of an adjacent pair in the input list. */
+    static java.util.function.IntPredicate physicalAdjacency(
+            java.util.List<ScorePageInterpretation> pages, java.util.List<Integer> physicalPages) {
+        if (physicalPages != null && physicalPages.size() != pages.size())
+            throw new IllegalArgumentException("Physical page roster does not match the score");
+        return current -> {
+            var earlier = pages.get(current - 1).clockContextSource().origin();
+            var later = pages.get(current).clockContextSource().origin();
+            if (!earlier.documentSha256().isEmpty() && !later.documentSha256().isEmpty()
+                    && !earlier.documentSha256().equals(later.documentSha256()))
+                return false;
+            int from = physicalPages == null ? earlier.physicalPageIndex() : physicalPages.get(current - 1);
+            int to = physicalPages == null ? later.physicalPageIndex() : physicalPages.get(current);
+            // Legacy callers with no page identity retain their input list's adjacency.
+            return from == -1 && to == -1 || from >= 0 && to == from + 1;
+        };
+    }
+
     /** Physical trailing pages can be excluded without changing the arrangement's final bar. */
     public static int lastEnabledPage(int[] counts, PageRange range) {
         if (counts == null || range == null) return -1;

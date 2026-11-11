@@ -4,7 +4,7 @@
 
 from collections import Counter
 
-from .navigation import arrangement_ranges
+from .navigation import arrangement_ranges, source_pages_adjacent
 from .typed_events import event_kind, validate_unpitched
 
 
@@ -39,8 +39,7 @@ def resolve_boundary_ties(document):
     restarts = None
     for index in range(1, len(pages)):
         before, after = pages[index - 1], pages[index]
-        if ("sourcePage" in before or "sourcePage" in after) and (
-                before.get("sourcePage", -2) + 1 != after.get("sourcePage", -2)):
+        if not source_pages_adjacent(before, after):
             continue
         events = list(after["events"])
         candidates = {}

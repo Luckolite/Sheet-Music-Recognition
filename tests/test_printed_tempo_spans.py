@@ -49,6 +49,17 @@ class PrintedTempoSpanTests(unittest.TestCase):
         self.assertAlmostEqual(4.8, performed['expressivePerformance'][0]['durationSeconds'])
         self.assertTrue(has_open(resolve_pages(doc['pages'])[0]['score']['expressiveEvents'][0]))
 
+    def test_omitted_physical_page_keeps_tempo_span_open_and_omits_xml_dashes(self):
+        doc = document()
+        doc['pages'][0]['sourcePage'] = 0
+        doc['pages'][1]['sourcePage'] = 2
+        performed = perform_expressions(doc, 100)
+        self.assertAlmostEqual(8, performed['expressivePerformance'][0]['durationSeconds'])
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder)/'synthetic.musicxml'
+            write_musicxml(doc, path)
+            self.assertEqual([], ET.parse(path).findall('.//dashes'))
+
     def test_conflicting_current_mark_is_not_order_dependent(self):
         for values in ((100, 110), (110, 100)):
             doc = document()

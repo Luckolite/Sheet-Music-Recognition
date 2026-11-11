@@ -8,6 +8,11 @@ import static io.github.luckolite.interpreter.ScoreExpressiveEvent.*;
 /** Resolves an open extension only against the immediately adjacent page's proved opening tempo. */
 final class PrintedTempoSpanPages {
     static List<ScorePageInterpretation> resolve(List<ScorePageInterpretation> pages) {
+        return resolve(pages, ScorePageTimeline.physicalAdjacency(pages, null));
+    }
+
+    static List<ScorePageInterpretation> resolve(
+            List<ScorePageInterpretation> pages, java.util.function.IntPredicate physicalAdjacency) {
         var result = new ArrayList<>(pages);
         double carried = Double.NaN;
         for (int i = 0; i < pages.size(); i++) {
@@ -27,6 +32,7 @@ final class PrintedTempoSpanPages {
             boolean adjacent =
                     next != null
                             && !next.measures().isEmpty()
+                            && physicalAdjacency.test(i + 1)
                             && !(page.firstMeasureNumber() > 0
                                     && next.firstMeasureNumber() > 0
                                     && page.firstMeasureNumber() + page.measures().size()

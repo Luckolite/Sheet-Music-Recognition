@@ -141,15 +141,26 @@ public final class ScoreDynamicContinuation {
 
     /** Sequential page assembly; printed movement restarts remain separate continuation scopes. */
     public static List<ScoreDynamicChange> join(List<ScorePageInterpretation> pages) {
+        return join(pages, ScorePageTimeline.physicalAdjacency(pages, null));
+    }
+
+    static List<ScoreDynamicChange> join(
+            List<ScorePageInterpretation> pages, java.util.function.IntPredicate adjacent) {
         int[] offsets = new int[pages.size()];
         for (int p = 1; p < pages.size(); p++)
             offsets[p] = offsets[p - 1] + pages.get(p - 1).measures().size();
-        return join(pages, offsets);
+        return join(pages, offsets, adjacent);
     }
 
     /** Offsets belong to the caller's selected arrangement and may retain an excerpt's origin. */
     public static List<ScoreDynamicChange> join(
             List<ScorePageInterpretation> pages, int[] offsets) {
+        return join(pages, offsets, ScorePageTimeline.physicalAdjacency(pages, null));
+    }
+
+    private static List<ScoreDynamicChange> join(
+            List<ScorePageInterpretation> pages, int[] offsets,
+            java.util.function.IntPredicate adjacent) {
         Objects.requireNonNull(pages);
         if (offsets.length != pages.size())
             throw new IllegalArgumentException("Page offset count differs");
@@ -164,6 +175,7 @@ public final class ScoreDynamicContinuation {
                 if (change.direction() != 0 && !change.fixedTarget()
                         && change.endMeasureIndex() == page.measures().size() - 1
                         && change.endPosition() >= .95f && p + 1 < pages.size()
+                        && adjacent.test(p + 1)
                         && offsets[p + 1] == offsets[p] + page.measures().size()
                         && !interruptedOnPage(change, page)) {
                     var next = incoming(page, pages.get(p + 1), change);
@@ -186,7 +198,7 @@ public final class ScoreDynamicContinuation {
                         && change.endPosition() == 1
                         && lexical(change, page.expressiveEvents())
                         && !interruptedOnPage(change, page)) {
-                    var arrival = arrival(pages, offsets, p, change);
+                    var arrival = arrival(pages, offsets, adjacent, p, change);
                     if (arrival != null)
                         global =
                                 new ScoreDynamicChange(
@@ -245,12 +257,13 @@ public final class ScoreDynamicContinuation {
     private static ScoreDynamicChange arrival(
             List<ScorePageInterpretation> pages,
             int[] offsets,
+            java.util.function.IntPredicate adjacent,
             int from,
             ScoreDynamicChange change) {
         for (int p = from + 1; p < pages.size(); p++) {
             var previous = pages.get(p - 1);
             var page = pages.get(p);
-            if (page.measures().isEmpty()
+            if (!adjacent.test(p) || page.measures().isEmpty()
                     || offsets[p] != offsets[p - 1] + previous.measures().size()
                     || page.firstMeasureNumber() > 0
                             && previous.firstMeasureNumber() > 0
