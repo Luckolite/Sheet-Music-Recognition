@@ -8,6 +8,7 @@ import xml.etree.ElementTree as ET
 from sheet_music_recognition.boundary_ties import resolve_boundary_ties
 from sheet_music_recognition.midi import write_midi
 from sheet_music_recognition.musicxml import write_musicxml
+from test_navigation_midi import note_intervals
 
 
 def document():
@@ -69,3 +70,44 @@ class BoundaryTieTests(unittest.TestCase):
             write_musicxml(document(), xml)
             self.assertEqual(1, midi.read_bytes().count(bytes((0x90, 60))))
             self.assertEqual(['start', 'stop'], [n.attrib['type'] for n in ET.parse(xml).findall('.//tie')])
+
+    def test_arrangement_restart_exports_two_attacks_and_no_tie(self):
+        doc = document()
+        for page in doc['pages']:
+            page['score']['firstMeasureNumber'] = 1
+        with tempfile.TemporaryDirectory() as folder:
+            midi, xml = Path(folder)/'test.mid', Path(folder)/'test.musicxml'
+            write_midi(doc, midi)
+            write_musicxml(doc, xml)
+            self.assertEqual([(60, 0, 1920), (60, 1920, 3840)], note_intervals(midi.read_bytes()))
+            self.assertEqual([], ET.parse(xml).findall('.//tie'))
+
+    def test_numbered_continuation_retains_tie(self):
+        doc = document()
+        for start, page in enumerate(doc['pages'], 1):
+            page['score']['firstMeasureNumber'] = start
+        self.assertTrue(resolve_boundary_ties(doc)['pages'][1]['events'][0]['tiedFromPrevious'])
+
+    def test_following_printed_number_can_identify_an_unnumbered_restart(self):
+        doc = document()
+        doc['pages'][0]['score']['firstMeasureNumber'] = 12
+        doc['pages'].append(dict(sourcePage=3, events=[], measureBeats=[4], totalBeats=4,
+                                 score=dict(firstMeasureNumber=3)))
+        self.assertFalse(resolve_boundary_ties(doc)['pages'][1]['events'][0]['tiedFromPrevious'])
+
+    def test_ambiguous_predecessors_preserve_the_incoming_pitch_in_either_order(self):
+        doc = document()
+        outgoing = doc['pages'][0]['events']
+        outgoing.append(dict(outgoing[0], midi=61))
+        for _ in range(2):
+            result = resolve_boundary_ties(doc)['pages'][1]['events'][0]
+            self.assertEqual(60, result['midi'])
+            self.assertFalse(result['tiedFromPrevious'])
+            outgoing.reverse()
+
+    def test_one_predecessor_cannot_join_two_incoming_notes(self):
+        doc = document()
+        incoming = doc['pages'][1]['events']
+        incoming.append(dict(incoming[0], sourceNoteIndex=1))
+        events = resolve_boundary_ties(doc)['pages'][1]['events']
+        self.assertEqual([False, False], [event['tiedFromPrevious'] for event in events])

@@ -467,10 +467,8 @@ def perform_expressions(document, bpm):
             or any(performance_pairs(page.get('score', {}).get('tremoloSource')) for page in pages)):
         return None
     # Use the same arrangement boundaries as ordinary navigation export.
-    from .navigation import _bridge as navigation_bridge
-    data = struct.pack('>ii', 0x4e415031, len(pages))
-    data += b''.join(struct.pack('>ii', len(page['measureBeats']), page.get('score', {}).get('firstMeasureNumber', 0)) for page in pages)
-    ranges = navigation_bridge(data)
+    from .navigation import arrangement_ranges
+    ranges = arrangement_ranges(pages)
     played, evidence = [], []
     for group in ranges:
         page, result = _perform_one(pages[group['firstPage']:group['pageAfterLast']], bpm, group['firstPage'])

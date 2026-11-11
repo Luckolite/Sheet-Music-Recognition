@@ -39,6 +39,14 @@ def _route(beats, directions):
     return _bridge(data+encode(directions, [], len(beats)))
 
 
+def arrangement_ranges(pages):
+    data = struct.pack('>ii', 0x4e415031, len(pages))
+    for page in pages:
+        data += struct.pack('>ii', len(page['measureBeats']),
+                            page.get('score', {}).get('firstMeasureNumber', 0))
+    return _bridge(data)
+
+
 def project_navigation(document, bpm=120):
     pages=document['pages']
     for page in pages:
@@ -48,10 +56,7 @@ def project_navigation(document, bpm=120):
         return document
     if len(pages)<=1:
         return _project_one(document,bpm)
-    data=struct.pack('>ii',0x4e415031,len(pages))
-    for page in pages:
-        data+=struct.pack('>ii',len(page['measureBeats']),page.get('score',{}).get('firstMeasureNumber',0))
-    ranges=_bridge(data)
+    ranges=arrangement_ranges(pages)
     output,diagnostics,occurrences=[],[],[]
     for index, part in enumerate(ranges):
         first,last=part['firstPage'],part['pageAfterLast']
