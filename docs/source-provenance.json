@@ -17145,6 +17145,16 @@
     "validation": "Three original full Omr caller scenes plus38 relevant retained controls pass; original normal caller has1 expected ownership failure and2 refusal passes. Whole producer final qualification pending.",
     "boundary": "No model weights, wire layouts, private images, assets or library state changed. Recognition136/Guide299/audio101 retained."
   },
+  "physical_page_tie_adjacency_review": {
+    "app_commit": "e64355f492a53c261fd825ced204c2231139b485",
+    "scope": "Android conversion passes physical page indices into tie assembly. Retained records can supply their original page identity. Separate documents and nonadjacent physical pages cannot supply adjacent tie endpoints.",
+    "app_normalized_sha256": {
+      "app/src/main/java/com/musicsheets/app/pdf/SheetConversionScore.java": "7a985aab3a076ab1ef8be5b79d36400673004b3097b287f5b2869b300fa3ac28",
+      "app/src/main/java/com/musicsheets/app/pdf/SheetConverter.java": "1281fbd249df310aba8027160fb2ac9b4d70c0d75bfb9c0b5819d53aad0e205a",
+      "app/src/main/java/com/musicsheets/app/pdf/SheetView.java": "5e4a7907451c3e8f58225d9c1e86c8356646bbe5c50dcc15bb0908cac9a79fa3"
+    },
+    "standalone": "The decoded sourcePage check in boundary_ties.py already requires consecutive physical pages. The synthetic export regression exercises that check through both MIDI and MusicXML."
+  },
   "ordinary_composite_conversion_review": {
     "app_commit": "ab38d822",
     "scope": "Android SheetMusicXml RhythmWriter prefers an exact ordinary decomposition before inferred ratios. Explicit source ratios and active groups retain their rules. Render44 refreshes derived conversion output.",

@@ -71,16 +71,19 @@ class BoundaryTieTests(unittest.TestCase):
             self.assertEqual(1, midi.read_bytes().count(bytes((0x90, 60))))
             self.assertEqual(['start', 'stop'], [n.attrib['type'] for n in ET.parse(xml).findall('.//tie')])
 
-    def test_arrangement_restart_exports_two_attacks_and_no_tie(self):
-        doc = document()
-        for page in doc['pages']:
-            page['score']['firstMeasureNumber'] = 1
-        with tempfile.TemporaryDirectory() as folder:
-            midi, xml = Path(folder)/'test.mid', Path(folder)/'test.musicxml'
-            write_midi(doc, midi)
-            write_musicxml(doc, xml)
-            self.assertEqual([(60, 0, 1920), (60, 1920, 3840)], note_intervals(midi.read_bytes()))
-            self.assertEqual([], ET.parse(xml).findall('.//tie'))
+    def test_discontinuous_pages_export_two_attacks_and_no_tie(self):
+        for physical, printed in ((2, 1), (3, 3)):
+            with self.subTest(physical=physical, printed=printed):
+                doc = document()
+                doc['pages'][0]['score']['firstMeasureNumber'] = 1
+                doc['pages'][1]['sourcePage'] = physical
+                doc['pages'][1]['score']['firstMeasureNumber'] = printed
+                with tempfile.TemporaryDirectory() as folder:
+                    midi, xml = Path(folder)/'test.mid', Path(folder)/'test.musicxml'
+                    write_midi(doc, midi)
+                    write_musicxml(doc, xml)
+                    self.assertEqual([(60, 0, 1920), (60, 1920, 3840)], note_intervals(midi.read_bytes()))
+                    self.assertEqual([], ET.parse(xml).findall('.//tie'))
 
     def test_numbered_continuation_retains_tie(self):
         doc = document()
