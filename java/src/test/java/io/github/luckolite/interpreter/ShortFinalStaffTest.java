@@ -24,7 +24,7 @@ public class ShortFinalStaffTest {
     }
 
     private boolean proved(byte[] gray) {
-        return ShortFinalStaff.proved(gray, W, H, ROWS, 16, LEFT, RIGHT, 0);
+        return ShortFinalStaff.proved(null, gray, W, H, ROWS, 16, LEFT, RIGHT, 0);
     }
 
     @Test public void shortFinalRulesPassWithoutPageWideThreshold() {
@@ -33,6 +33,27 @@ public class ShortFinalStaffTest {
 
     @Test public void aSingleBarDoesNotRelaxTheWidthGuard() {
         assertFalse(proved(page(false)));
+    }
+
+    @Test public void singleClosingBarNeedsAnOpeningClefAndDistinctPrintedAttacks() {
+        byte[] gray = page(false), labels = new byte[gray.length];
+        for (int row : ROWS)
+            for (int x = LEFT; x <= RIGHT; x++) labels[row * W + x] = 4;
+        for (int y = 100; y <= 162; y++)
+            for (int x = 78; x <= 83; x++) {
+                gray[y * W + x] = 0;
+                labels[y * W + x] = OmrMeasurePostProcessor.CLEF_OR_KEY;
+            }
+        for (int y = 139; y <= 146; y++)
+            for (int x = 146; x <= 154; x++) {
+                gray[y * W + x] = 0;
+                labels[y * W + x] = OmrMeasurePostProcessor.NOTEHEAD;
+                labels[y * W + x + 40] = OmrMeasurePostProcessor.NOTEHEAD;
+            }
+        assertFalse(ShortFinalStaff.proved(labels, gray, W, H, ROWS, 16, LEFT, RIGHT, 0));
+        for (int y = 139; y <= 146; y++)
+            for (int x = 186; x <= 194; x++) gray[y * W + x] = 0;
+        assertTrue(ShortFinalStaff.proved(labels, gray, W, H, ROWS, 16, LEFT, RIGHT, 0));
     }
 
     @Test public void labelsAloneCannotInventPrintedRules() {

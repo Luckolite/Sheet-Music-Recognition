@@ -8,6 +8,10 @@ import static org.junit.Assert.*;
 
 public class TempoEqualsFringeTest {
     private double unit(boolean dotted) {
+        return unit(dotted, false, false);
+    }
+
+    private double unit(boolean dotted, boolean spaced, boolean punctuation) {
         int w = 300, h = 160;
         byte[] gray = new byte[w * h];
         Arrays.fill(gray, (byte) 255);
@@ -16,13 +20,17 @@ public class TempoEqualsFringeTest {
             for (int x = 99; x <= 115; x++)
                 if (Math.pow((x - 107) / 8.0, 2) + Math.pow((y - 79) / 5.0, 2) <= 1)
                     gray[y * w + x] = 0;
-        int equals = dotted ? 140 : 120;
+        int equals = spaced ? 145 : dotted ? 140 : 120;
         for (int y : new int[] {70, 78})
             for (int yy = y; yy < y + 3; yy++)
                 for (int x = equals; x < equals + 14; x++) gray[yy * w + x] = 0;
-        if (dotted)
-            for (int y = 77; y <= 81; y++) for (int x = 121; x <= 125; x++) gray[y * w + x] = 0;
-        else
+        if (dotted) {
+            int dotLeft = spaced ? 129 : 121;
+            int dotTop = spaced ? 75 : 77;
+            int dotWidth = punctuation ? 2 : 5;
+            for (int y = dotTop; y < dotTop + 5; y++)
+                for (int x = dotLeft; x < dotLeft + dotWidth; x++) gray[y * w + x] = 0;
+        } else
             for (int y = 78; y <= 80; y++)
                 for (int x = 118; x < 120; x++) gray[y * w + x] = (byte) 180;
         for (int y = 60; y <= 80; y++) for (int x = 170; x < 173; x++) gray[y * w + x] = 0;
@@ -45,5 +53,11 @@ public class TempoEqualsFringeTest {
     @Test
     public void completeDotBeforeEqualsIsPreserved() {
         assertEquals(1.5, unit(true), .001);
+    }
+
+    @Test
+    public void aSpacedRoundDotSurvivesWithoutPromotingNarrowPunctuation() {
+        assertEquals(1.5, unit(true, true, false), .001);
+        assertEquals(1, unit(true, true, true), .001);
     }
 }

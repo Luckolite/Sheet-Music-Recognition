@@ -247,7 +247,7 @@ final class OmrMeasurePostProcessor {
                 }
             }
             if (right - left >= Math.max(width / 4, Math.round(gap * 18f))
-                    || ShortFinalStaff.proved(gray, width, height, rows, gap, left, right, slope)) {
+                    || ShortFinalStaff.proved(labels, gray, width, height, rows, gap, left, right, slope)) {
                 List<Integer> boundaries =
                         findBoundaries(
                                 labels, gray, width, height, rows, gap, left, right, slope, track);

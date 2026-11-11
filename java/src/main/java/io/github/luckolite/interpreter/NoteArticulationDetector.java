@@ -2086,6 +2086,7 @@ final class NoteArticulationDetector {
                                         note.gap,
                                         glyph.pixels)) continue;
                         if (raw && candidate == NoteArticulation.TENUTO) {
+                            if (pairedEquationStroke(glyph, note, gray, width, height)) continue;
                             if (octaveDashInk == null) {
                                 var frames =
                                         new java.util.LinkedHashMap<
@@ -3808,6 +3809,33 @@ final class NoteArticulationDetector {
                     || high[x] - low[x] + 1 > Math.max(3, Math.ceil(gap * .25f))) return 0;
         }
         return NoteArticulation.TENUTO;
+    }
+
+    /** A separated, matching stroke above the staff belongs to an equals sign. */
+    private static boolean pairedEquationStroke(
+            Glyph glyph, Anchor note, byte[] gray, int width, int height) {
+        int span = glyph.right - glyph.left + 1;
+        int flank = Math.max(2, Math.round(note.gap * .12f));
+        if (!Float.isFinite(note.staffTop) || glyph.bottom > note.staffTop - note.gap * .55f
+                || span < note.gap * .7f || glyph.bottom - glyph.top + 1 > note.gap * .28f
+                || glyph.left < flank || glyph.right + flank >= width) return false;
+        int distanceLimit = Math.max(3, Math.round(note.gap * .55f));
+        for (int direction : new int[] {-1, 1}) {
+            int edge = direction < 0 ? glyph.top : glyph.bottom;
+            boolean separated = false;
+            for (int distance = 1; distance <= distanceLimit; distance++) {
+                int y = edge + direction * distance;
+                if (y < 0 || y >= height || y >= note.staffTop - note.gap * .4f) break;
+                int row = y * width, dark = 0;
+                for (int x = glyph.left; x <= glyph.right; x++)
+                    if ((gray[row + x] & 255) <= 180) dark++;
+                if (dark < span * .15f) separated = true;
+                if (separated && distance >= 2 && dark >= span * .85f
+                        && (gray[row + glyph.left - flank] & 255) > 180
+                        && (gray[row + glyph.right + flank] & 255) > 180) return true;
+            }
+        }
+        return false;
     }
 
     /** Recover one complete dark body inside a detached blurred component. */

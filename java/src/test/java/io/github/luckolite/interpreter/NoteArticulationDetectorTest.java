@@ -61,6 +61,17 @@ public class NoteArticulationDetectorTest {
     }
 
     @Test
+    public void aTempoEquationDoesNotCreateATenuto() {
+        byte[] p = paper(), labels = new byte[p.length];
+        var note = new NoteArticulationDetector.Anchor(300, 300, 12, 0, null, 272, 320, 0, 1);
+        for (int y = 258; y <= 259; y++) line(p, 294, y, 306, y);
+        assertEquals(NoteArticulation.TENUTO,
+                NoteArticulationDetector.detect(labels, p, W, H, List.of(note))[0]);
+        for (int y = 253; y <= 254; y++) line(p, 294, y, 307, y);
+        assertEquals(0, NoteArticulationDetector.detect(labels, p, W, H, List.of(note))[0]);
+    }
+
+    @Test
     public void rejectsBowingSlursLedgerLinesAndDurationDots() {
         byte[] p = paper();
         line(p, 294, 270, 300, 283);

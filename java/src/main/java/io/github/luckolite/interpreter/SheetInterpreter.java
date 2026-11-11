@@ -360,7 +360,7 @@ public final class SheetInterpreter {
                     meters.add(meter);
         if (ocr == null)
             for (var meter :
-                    MeterChangeDetector.rasterMeterReadings(
+                    MeterFontMatcher.standaloneReadings(
                             labels, gray, width, height, measures, notes))
                 if (meters.stream()
                         .noneMatch(explicit -> explicit.measureIndex() == meter.measureIndex()))

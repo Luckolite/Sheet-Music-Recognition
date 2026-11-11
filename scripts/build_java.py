@@ -63,6 +63,9 @@ def main():
     resources = resource_snapshots()
     for source,data in resources:
         digest.update(source.relative_to(ROOT/'java/src/main/resources').as_posix().encode()+b'\0'+data+b'\0')
+    meter_font_name = 'io/github/luckolite/interpreter/Bravura.otf'
+    meter_font = (ROOT / 'java/assets/Bravura.otf').read_bytes()
+    digest.update(meter_font_name.encode() + b'\0' + meter_font + b'\0')
     # Compile exactly the bytes fingerprinted, even if live sources change mid-build.
     generated=ROOT/'build/source-snapshots'/digest.hexdigest()
     compiled=[]
@@ -74,6 +77,7 @@ def main():
     resource=classes/'io/github/luckolite/interpreter/native-decoder-sha256.txt'
     resource.parent.mkdir(parents=True,exist_ok=True)
     resource.write_text(digest.hexdigest(),encoding='utf-8')
+    (classes / meter_font_name).write_bytes(meter_font)
     for source,data in resources:
         destination=classes/source.relative_to(ROOT/'java/src/main/resources')
         destination.parent.mkdir(parents=True,exist_ok=True)

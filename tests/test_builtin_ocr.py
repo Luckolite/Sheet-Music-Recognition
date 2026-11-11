@@ -12,13 +12,35 @@ import numpy as np
 from PIL import Image
 
 from sheet_music_recognition.ocr import LocalOcr, tempo_numbers, rest_count_numbers
-from sheet_music_recognition.reader import grayscale, java_executable, write_page
+from sheet_music_recognition.reader import Interpreter, grayscale, java_executable, write_page
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 class BuiltinOcrTests(unittest.TestCase):
+    def test_compound_meter_tempo_and_short_system_from_print(self):
+        fixture = ROOT / 'tests/fixtures/compound-meter-score/page.png'
+        with Image.open(fixture) as image:
+            page = Interpreter().interpret(image, page_index=0)
+        self.assertEqual([4, 3, 3], page['measureBeats'])
+        self.assertEqual([(0, 4, 4), (1, 6, 8)], [
+            (change['measureIndex'], change['numerator'], change['denominator'])
+            for change in page['score']['meterChanges']])
+        self.assertEqual([(0, 100, 1), (1, 108, 1.5)], [
+            (mark['measureIndex'], mark['bpm'], mark['beatUnit'])
+            for mark in page['score']['tempoChanges']])
+        expected = [(0, 60, 1 / 3), (1 / 3, 62, 1 / 3), (2 / 3, 64, 1 / 3),
+                    (1, 65, 1), (2, 67, 1.5), (3.5, 69, .5), (4, 67, .5),
+                    (4.5, 65, .5), (5, 64, .5), (5.5, 62, 1.5),
+                    (7, 64, 1), (8, 65, 1.5), (9.5, 67, .5)]
+        self.assertEqual(len(expected), len(page['events']))
+        for event, (onset, pitch, duration) in zip(page['events'], expected):
+            self.assertEqual(pitch, event['midi'])
+            self.assertAlmostEqual(onset, event['startBeat'], places=5)
+            self.assertAlmostEqual(duration, event['durationBeats'], places=5)
+        self.assertFalse(any(note['articulations'] & 8 for note in page['score']['notes']))
+
     def test_isolated_rest_count_is_offered_without_reading_a_verse_heading(self):
         # Original synthetic boxes; Java still requires a note-free heavy rest bar.
         words = [dict(text="2", left=.30, top=.20, right=.32, bottom=.22),

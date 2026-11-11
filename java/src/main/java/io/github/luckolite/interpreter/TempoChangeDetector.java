@@ -1164,6 +1164,12 @@ final class TempoChangeDetector {
             for (int[] dot : parts) {
                 int dw = dot[1] - dot[0] + 1, dh = dot[3] - dot[2] + 1;
                 float gap = dot[0] - note[1], dy = Math.abs((dot[2] + dot[3]) * .5f - cy);
+                boolean closeDot = gap < unit * .6f && dy <= unit * .22f;
+                boolean spacedRoundDot =
+                        gap <= unit * .8f
+                                && dy <= unit * .3f
+                                && equalsLeft - dot[1] >= unit * .2f
+                                && Math.abs(dw - dh) <= Math.max(dw, dh) * .3f;
                 // The light fringe of '=' can extend left of its dark-core bound.
                 // It is clipped by this search window, unlike a complete printed dot.
                 // A score stem clipped at a vertical edge is not a complete tempo dot.
@@ -1171,12 +1177,11 @@ final class TempoChangeDetector {
                         && dot[2] > top
                         && dot[3] < bottom
                         && gap > 0
-                        && gap < unit * .6f
+                        && (closeDot || spacedRoundDot)
                         && dw >= 2
                         && dh >= 2
                         && dw <= unit * .35f
                         && dh <= unit * .35f
-                        && dy <= unit * .22f
                         && dot[4] >= dw * dh * .45f) return beat * 1.5;
             }
             return beat;
