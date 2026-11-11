@@ -3671,11 +3671,11 @@
     },
     "GlissandoPerformance.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/GlissandoPerformance.java",
-      "source_sha256": "1ab9c359bd085fed2fdb1ccd70cee71eefcd54578a9a46886b267ac0f13bad63",
-      "source_normalized_sha256": "1ab9c359bd085fed2fdb1ccd70cee71eefcd54578a9a46886b267ac0f13bad63",
-      "reviewed_app_commit": "650d1b3a312dcd7eb58f83945a6a3be321c9b4dd",
-      "reviewed_app_state": "Reviewed source snapshot based on accepted app869 /1.18.396; executable-token parity after standalone package/diagnostic adaptation.",
-      "review_note": "Global explicit tuplet ratio, octave endpoint ownership, branched-letter tie rejection and bounded wavy gliss recognition/performance. Original synthetic tests; JDK-only new helpers, unchanged models/dependencies. Source snapshot hash identifies the uncommitted app changes beyond the recorded base commit.",
+      "source_sha256": "04fa427d98896c49bb4f8a4c11571260d580a6b2651b47497c878ef3b5c5e68e",
+      "source_normalized_sha256": "04fa427d98896c49bb4f8a4c11571260d580a6b2651b47497c878ef3b5c5e68e",
+      "reviewed_app_commit": "c744d1b99380f89a1bcc6f7fe6143226b12d97ea",
+      "reviewed_app_state": "Shared ornament timing reviewed against the committed Android and desktop renderer.",
+      "review_note": "Glissando timing supports sustained pitch sweeps and bounded white-key attacks. Connected slides adapt to the interval. Synthetic pitch and timing regressions use no private score or recording.",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/GlissandoPerformance.java"
     },
     "GlyphInkContrast.java": {

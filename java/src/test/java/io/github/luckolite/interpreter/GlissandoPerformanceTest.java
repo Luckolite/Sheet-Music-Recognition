@@ -52,4 +52,32 @@ public class GlissandoPerformanceTest {
         assertNull(GlissPitchTarget.next(source, List.of(source, target, chord)));
         assertNull(GlissPitchTarget.next(source, List.of(source, target.withLeadingRest(.25f))));
     }
+    @Test public void fastWideSweepSpreadsAttacksWithoutInventingTheDestination() {
+        var steps = GlissandoPerformance.whiteKeys(60, 96, .12, .018);
+        assertTrue(steps.size() > 1 && steps.size() < 22);
+        assertEquals(60, steps.get(0).midi());
+        double cursor = 0;
+        int previous = 59;
+        for (var step : steps) {
+            assertEquals(cursor, step.offset(), 1e-12);
+            assertTrue(step.duration() >= .018 - 1e-12);
+            assertTrue(step.midi() > previous && step.midi() < 96);
+            cursor += step.duration();
+            previous = step.midi();
+        }
+        assertEquals(.12, cursor, 1e-12);
+        assertEquals(List.of(new GlissandoPerformance.Step(0, .01, 60)),
+                GlissandoPerformance.whiteKeys(60, 96, .01, .018));
+    }
+
+    @Test public void continuousGlissAndConnectedSlideReachTheirWrittenPitch() {
+        assertEquals(1, GlissandoPerformance.continuousRatio(.5, .25, 1), 0);
+        assertEquals(Math.sqrt(.5), GlissandoPerformance.continuousRatio(.5, .625, 1), 1e-12);
+        assertEquals(.5, GlissandoPerformance.continuousRatio(.5, 1, 1), 0);
+        assertEquals(.5, GlissandoPerformance.approachRatio(.5, 0, 1, true), 0);
+        assertTrue(GlissandoPerformance.approachRatio(.5, .18, 1, true) < 1);
+        assertEquals(1, GlissandoPerformance.approachRatio(.5, .18, 1, false), 0);
+        assertEquals(1, GlissandoPerformance.approachRatio(.5, .06, .1, true), 0);
+    }
+
 }
