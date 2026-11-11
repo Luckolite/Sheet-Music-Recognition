@@ -178,9 +178,12 @@ final class ScoreNavigationDetector {
             float best = Float.MAX_VALUE;
             for (var staff : staffs) {
                 float distance = (staff.top() - mark.bottom() * height) / staff.gap();
-                // OCR boxes and staff rules round independently on the raster.
-                // Keep the six-space bound with at most one physical pixel of tolerance.
-                if (distance < -1.2f || distance > 6 + 1f / staff.gap()) continue;
+                float limit =
+                        mark.kind() == ScorePlaybackDirection.Kind.SEGNO
+                                ? NavigationSegnoGlyphs.MAX_STAFF_DISTANCE
+                                : 6f;
+                // Glyph boxes and staff rules round independently on the raster.
+                if (distance < -1.2f || distance > limit + 1f / staff.gap()) continue;
                 if (Math.abs(distance) < best) {
                     best = Math.abs(distance);
                     owner = staff;

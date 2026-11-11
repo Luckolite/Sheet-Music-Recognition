@@ -7,6 +7,11 @@ import java.util.List;
 
 /** Staff-local raw candidates; the full crossed body and both dots must verify a segno. */
 final class NavigationSegnoGlyphs {
+    // A system heading can place the Segno slightly above the usual six-space band.
+    static final float MAX_STAFF_DISTANCE = 6.25f;
+    private static final float MAX_BODY_HEIGHT = 4.5f;
+    private static final float MAX_BODY_WIDTH = 3.6f;
+
     private NavigationSegnoGlyphs() {}
 
     static List<ScoreNavigationDetector.Glyph> detect(
@@ -20,9 +25,11 @@ final class NavigationSegnoGlyphs {
         for (var staff : staffs) {
             float gap = staff.gap();
             if (gap < 5 || !Float.isFinite(gap)) continue;
-            // Boundary ownership accepts a sign ending six gaps above the staff.
-            // Its full body can extend another 3.5 gaps upward; do not clip that proof.
-            int top = Math.max(0, Math.round(staff.top() - gap * 10));
+            // Boundary ownership can accept a sign ending just over six gaps above the staff.
+            // Leave room for a destination printed larger than the notes on its staff.
+            int top =
+                    Math.max(0, Math.round(staff.top()
+                            - gap * (MAX_STAFF_DISTANCE + MAX_BODY_HEIGHT + .25f)));
             int bottom = Math.min(height - 1, Math.round(staff.top() - gap * .5f));
             if (bottom <= top) continue;
             for (int threshold : new int[] {80, 140}) {
@@ -54,14 +61,15 @@ final class NavigationSegnoGlyphs {
                     float w = r - l + 1, h = b - t + 1;
                     if (t == 0
                             || b == rows - 1
-                            || staff.top() - (top + b) > gap * 6
+                            || staff.top() - (top + b) > gap * MAX_STAFF_DISTANCE + 1
                             || w < gap
-                            || w > gap * 3
+                            || w > gap * MAX_BODY_WIDTH
                             || h < gap * 1.6f
-                            || h > gap * 3.5f
+                            || h > gap * MAX_BODY_HEIGHT
                             || w / h < .55f
                             || w / h > .95f) continue;
-                    if (!SegnoFragmentInk.matches(gray, width, height, l, top + t, r, top + b, gap))
+                    float glyphGap = Math.max(gap, Math.max(w / 3f, h / 3.5f));
+                    if (!SegnoFragmentInk.matches(gray, width, height, l, top + t, r, top + b, glyphGap))
                         continue;
                     float cx = (l + r) * .5f / width, cy = (2 * top + t + b) * .5f / height;
                     if (result.stream()

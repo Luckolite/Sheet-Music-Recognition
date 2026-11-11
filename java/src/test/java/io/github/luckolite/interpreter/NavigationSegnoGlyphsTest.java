@@ -115,6 +115,27 @@ public class NavigationSegnoGlyphsTest {
     }
 
     @Test
+    public void raisedSegnoResolvesToTheSystemOpening() {
+        raisedGlyph();
+        var lowerStaff = List.of(new PlayingTechniqueDetector.Staff(180, 244, 16, 0, 1));
+        var glyphs = NavigationSegnoGlyphs.detect(gray, W, H, lowerStaff);
+        var measures = List.of(new MeasureRegion(.2f, .65f, .68f, .96f));
+        assertEquals(
+                List.of(new ScorePlaybackDirection(0, ScorePlaybackDirection.Kind.SEGNO)),
+                ScoreNavigationDetector.detect(List.of(), glyphs, lowerStaff, measures, W, H));
+    }
+
+    @Test
+    public void largerSegnoStillRequiresBothDots() {
+        var smallStaff = List.of(new PlayingTechniqueDetector.Staff(194, 238, 11, 0, 1));
+        body();
+        dot(128, 102);
+        assertEquals(List.of(), NavigationSegnoGlyphs.detect(gray, W, H, smallStaff));
+        dot(99, 108);
+        assertEquals(1, NavigationSegnoGlyphs.detect(gray, W, H, smallStaff).size());
+    }
+
+    @Test
     public void expandedProofBandDoesNotExpandBoundaryOwnership() {
         raisedGlyph();
         assertEquals(
