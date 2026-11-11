@@ -56,13 +56,24 @@ def prepare_slides(document):
     return result
 
 
+def _linear_context(note, visit_id):
+    return dict(visitId=visit_id, attack=not note.get('tiedFromPrevious', False),
+                clippedEntry=False, clippedRelease=False)
+
+
+def mark_linear_slide_visits(pages, visit_id):
+    """Keep written clocks in a linear arrangement alongside routed arrangements."""
+    return [dict(page, events=[dict(note, _slideContext=_linear_context(note, visit_id))
+                               if note.get('_slideOrigins') else note
+                               for note in page['events']]) for page in pages]
+
+
 def _context(note, projected):
     value = note.get('_slideContext')
     if value is None:
         if projected:
             raise ValueError('Projected slide endpoint lacks attack and visit context')
-        return dict(visitId='linear', attack=not note.get('tiedFromPrevious', False),
-                    clippedEntry=False, clippedRelease=False)
+        return _linear_context(note, 'linear')
     if (not isinstance(value, dict) or not isinstance(value.get('visitId'), str)
             or not value['visitId']
             or any(type(value.get(k)) is not bool

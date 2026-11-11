@@ -4,6 +4,7 @@
 import unittest
 from unittest.mock import patch
 from test_continuous_slide_context import document, occurrence
+from sheet_music_recognition.midi import performed_document, performance_events
 from sheet_music_recognition.slide_performance import prepare_slides, resolve_slides
 from sheet_music_recognition.navigation import _project_one, project_navigation
 
@@ -33,3 +34,23 @@ class ContinuousSlideNavigationQualifiedTests(unittest.TestCase):
         targets=[n for n in played['pages'][0]['events']if n.get('_continuousSlide')]
         self.assertEqual([1.,7.],[n['startBeat']for n in targets])
         self.assertEqual([5.,5.],[n['durationBeats']for n in targets])
+
+    def test_linear_and_repeating_arrangements_keep_their_own_slide_visits(self):
+        linear = document()['pages'][0]
+        repeated = document()['pages'][0]
+        for page in (linear, repeated):
+            page['score']['firstMeasureNumber'] = 1
+        repeated['score']['playbackDirections'] = [
+            dict(measureBoundary=0, kind=4), dict(measureBoundary=2, kind=5)]
+        for pages, expected_starts in (([linear, repeated], [[1.], [1., 7.]]),
+                                       ([repeated, linear], [[1., 7.], [1.]])):
+            with self.subTest(expected_starts=expected_starts):
+                source = dict(pages=pages)
+                played, _, _ = performed_document(source)
+                self.assertEqual(expected_starts, [
+                    [note['startBeat'] for note in page['events'] if note.get('_continuousSlide')]
+                    for page in played['pages']])
+                _, messages, _ = performance_events(source)
+                self.assertEqual(3, sum(message[0] & 0xf0 == 0x90 and message[1] == 74
+                                        for _, _, message in messages))
+                self.assertTrue(any(message[0] & 0xf0 == 0xe0 for _, _, message in messages))

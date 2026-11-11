@@ -12,6 +12,7 @@ from bisect import bisect_left, bisect_right
 from pathlib import Path
 from .runtime import java_executable
 from .semantic_wire import encode
+from .slide_performance import mark_linear_slide_visits
 from .typed_events import event_kind, validate_unpitched
 
 
@@ -64,7 +65,7 @@ def project_navigation(document, bpm=120):
 def _project_one(document, bpm=120, source_page_offset=0):
     pages = document['pages']
     if not any(page.get('score', {}).get('playbackDirections') for page in pages):
-        return document  # Linear MIDI export still needs no Java process or inference imports.
+        return dict(document, pages=mark_linear_slide_visits(pages, f'linear:{source_page_offset}'))
     beats, directions, notes, tempos = [], [], [], []
     offset = 0.0
     for page_index, page in enumerate(pages):
