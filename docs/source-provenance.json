@@ -6532,13 +6532,14 @@
       "reviewed_source_state": "Committed paired recognition44 source review; final cumulative package/deployment/runtime checks remain pending."
     },
     "PrintedRepeatDocument.java": {
+      "physical_page_review": "Printed repeats and endings are assembled only within consecutive physical pages. Conversion supplies the selected page roster and playback uses retained source identity. The existing traversal validation still governs admission.",
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/PrintedRepeatDocument.java",
-      "source_sha256": "1f2eb1e7d7f6fc7d4610921949d9914fb2f3ba68cc9dc2a053fdd03928a4391d",
-      "source_normalized_sha256": "1f2eb1e7d7f6fc7d4610921949d9914fb2f3ba68cc9dc2a053fdd03928a4391d",
-      "standalone_sha256": "ef30d14099dc1fd0bd2daa3c484e71a749b9d87ea29876714c69e9445f0c32b2",
+      "source_sha256": "6b35b36129af38ce7667462dc24539bb30b8ee6983bcd6cd7c944ad479f3f159",
+      "source_normalized_sha256": "6b35b36129af38ce7667462dc24539bb30b8ee6983bcd6cd7c944ad479f3f159",
+      "standalone_sha256": "0256ef39025ea0f2aee3c5b1d87d8f3b44b3291016cc41441d9b9d5d60d25884",
       "reviewed_source_state": "Reviewed committed recognition138 violin-score repair.",
       "review_note": "Shared recognition and playback-direction changes ported with standalone adapters. Redistributable synthetic regressions cover the changed ink and direction rules.",
-      "reviewed_app_commit": "c54aa86d1633b88b9ffc28a7f79e65b4e7c7d5d6",
+      "reviewed_app_commit": "6af4648f488a8c325520e69531d00200a8299fd7",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/PrintedRepeatDocument.java"
     },
     "PrintedRepeatGlyphs.java": {

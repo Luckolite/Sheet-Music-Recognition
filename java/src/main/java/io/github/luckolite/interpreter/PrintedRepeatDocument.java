@@ -3,6 +3,7 @@
 package io.github.luckolite.interpreter;
 
 import java.util.*;
+import java.util.function.IntPredicate;
 
 /** Joins optical navigation evidence across proved consecutive page numbers. */
 final class PrintedRepeatDocument {
@@ -35,7 +36,16 @@ final class PrintedRepeatDocument {
             List<ScorePlaybackDirection> existing,
             int count,
             ScoreMeterMap meter) {
-        var candidate = assemble(pages);
+        return validated(pages, existing, count, meter, ScorePageTimeline.physicalAdjacency(pages, null));
+    }
+
+    static Result validated(
+            List<ScorePageInterpretation> pages,
+            List<ScorePlaybackDirection> existing,
+            int count,
+            ScoreMeterMap meter,
+            IntPredicate adjacent) {
+        var candidate = assemble(pages, adjacent);
         var groups = new LinkedHashMap<String, List<ScorePlaybackDirection>>();
         for (var direction : candidate.directions())
             groups.computeIfAbsent(
@@ -74,6 +84,10 @@ final class PrintedRepeatDocument {
     }
 
     static Result assemble(List<ScorePageInterpretation> pages) {
+        return assemble(pages, ScorePageTimeline.physicalAdjacency(pages, null));
+    }
+
+    private static Result assemble(List<ScorePageInterpretation> pages, IntPredicate adjacent) {
         var directions = new ArrayList<ScorePlaybackDirection>();
         var resolved = new HashSet<String>();
         int offset = 0;
@@ -81,7 +95,7 @@ final class PrintedRepeatDocument {
         ScorePageInterpretation previous = null;
         for (int page = 0; page < pages.size(); page++) {
             var score = pages.get(page);
-            if (previous != null && !continues(previous, score)) {
+            if (previous != null && (!adjacent.test(page) || !continues(previous, score))) {
                 flush(group, directions, resolved);
                 group.clear();
             }

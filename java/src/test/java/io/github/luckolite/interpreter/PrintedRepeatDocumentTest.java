@@ -84,6 +84,36 @@ public class PrintedRepeatDocumentTest {
     }
 
     @Test
+    public void omittedPhysicalPageKeepsRepeatAndEndingsUnresolved() {
+        var pages = pages(5, true, true);
+        var meter = new ScoreMeterMap(4, List.of());
+        var adjacent = ScorePageTimeline.physicalAdjacency(pages, List.of(0, 1));
+        var omitted = ScorePageTimeline.physicalAdjacency(pages, List.of(0, 2));
+        assertEquals(4, PrintedRepeatDocument.validated(pages, List.of(), 8, meter, adjacent)
+                .directions().size());
+        var gap = PrintedRepeatDocument.validated(pages, List.of(), 8, meter, omitted);
+        assertTrue(gap.directions().isEmpty());
+        assertTrue(gap.resolvedIds().isEmpty());
+    }
+
+    @Test
+    public void retainedPhysicalGapTakesPrecedenceOverPrintedBarNumbers() {
+        var pages = pages(5, true, true);
+        var first = withPhysicalPage(pages.get(0), 0);
+        assertEquals(4, PrintedRepeatDocument.assemble(List.of(first, withPhysicalPage(pages.get(1), 1)))
+                .directions().size());
+        assertTrue(PrintedRepeatDocument.assemble(List.of(first, withPhysicalPage(pages.get(1), 2)))
+                .directions().isEmpty());
+    }
+
+    private static ScorePageInterpretation withPhysicalPage(ScorePageInterpretation page, int index) {
+        var origin = new ScoreClockContextSource.Origin("a".repeat(64), index, 3, 0, 0, "", "");
+        return page.withClockContextSource(new ScoreClockContextSource(
+                origin, 0, 4, 0, List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+                List.of(), List.of(), List.of()));
+    }
+
+    @Test
     public void absentContinuationDoesNotGuessSpan() {
         assertTrue(PrintedRepeatDocument.assemble(pages(5, false, true)).directions().isEmpty());
     }
