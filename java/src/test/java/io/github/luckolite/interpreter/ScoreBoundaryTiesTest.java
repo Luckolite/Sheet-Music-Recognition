@@ -7,6 +7,25 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public final class ScoreBoundaryTiesTest {
+    @Test
+    public void ambiguousOutgoingShouldersDoNotChooseAnAccidental() {
+        var sharp = note(0, 2, 8, 1);
+        var flat = note(0, 2, 8, -1);
+        var current = note(1, 2, 2, ScoreNoteEvent.ACCIDENTAL_FROM_KEY);
+        for (var notes : List.of(List.of(sharp, flat, current), List.of(flat, sharp, current))) {
+            var result = ScoreBoundaryTies.resolve(notes, List.of(), List.of(1));
+            assertEquals(current, result.get(2));
+        }
+    }
+
+    @Test
+    public void oneOutgoingShoulderCannotTieToTwoNotes() {
+        var earlier = note(0, 2, 8, 1);
+        var current = note(1, 2, 2, ScoreNoteEvent.ACCIDENTAL_FROM_KEY);
+        var notes = List.of(earlier, current, current);
+        assertEquals(notes, ScoreBoundaryTies.resolve(notes, List.of(), List.of(1)));
+    }
+
     private ScoreNoteEvent note(int bar, int pitch, int evidence, int accidental) {
         return new ScoreNoteEvent(
                         bar,

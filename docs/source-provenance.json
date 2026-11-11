@@ -7567,12 +7567,12 @@
     },
     "ScoreBoundaryTies.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/ScoreBoundaryTies.java",
-      "source_sha256": "ff081f3e2fb814af951a457b26b67c5611efe0c060541f401216a5c47842cdeb",
-      "reviewed_app_commit": "dbdc5217403ea059b9ac984a2a1c47b3b548107b",
-      "source_normalized_sha256": "e320b97bde5043afdc6896ec5d5a42b13176bc13a0dec8dab61709a21695d965",
-      "reviewed_app_state": "Reviewed recognition109 source committed; cumulative matched rollout deferred during active goal.",
+      "source_sha256": "69f2be5a7c528a5bedc71a32d897d21d54d6af38208a4ee4147593ca0f4e8bd7",
+      "reviewed_app_commit": "6ee9998a39c20ba3acf96e2adb885a235cf3185d",
+      "source_normalized_sha256": "3a41e081273ff9e77bcfee169bc1a71db6ac628518dd9a091ceaa3f32c609ffc",
+      "reviewed_app_state": "Android and standalone Java tie matching require unique owners at both ends. Android conversion uses ScorePageTimeline to exclude arrangement starts from eligible page breaks. Standalone Python exports use the same arrangement boundaries through NavigationBridge. Synthetic tests cover both kinds of ambiguity, a restart and a genuine continuation. The app change is committed locally.",
       "review_note": "Reviewed uncommitted 882 worktree based on 650d1b3a312dcd7eb58f83945a6a3be321c9b4dd; full executable-token parity after package/diagnostics adaptation. Original synthetic geometry and framing controls; no private score, log, library, model, dependency or signing material. Reuse private lazy read-only sharp/flat key-order tables; preserve explicit-accidental/key-presence branches, sign selection, letter/fifths arithmetic, traversal and full tied-note construction. Original synthetic all-key/all-letter and early-return regression. Apache-2.0/JDK-only; no model or record-layout changes. Explicit PITCHED/UNPITCHED kind preserves all22 prior fields and source occurrence ownership; unpitched heads do not supply tonal identity. Actual standalone port and original synthetic regression are selected for the same batch. Physical typed analysis marker-23, guide282/80-byte note and recognition revision4 are reviewed separately from the unchanged protocol1. Models and production dependencies are unchanged. App904 resolves a proven predecessor's accidental from the already-resolved source occurrence, so a three-page true-tie chain preserves sharp/flat inheritance. Endpoint/rest/register/staff/kind checks and all23 components remain unchanged outside the correction. An original eighteen-case scalar regression covers true boundaries, breaks, explicit contradictions, key changes, input immutability and prior-field parity; no private score is included.",
-      "standalone_sha256": "3e86659829a87d65acb7341c9101186edc7523d702b8685817eba425e9b6ce28",
+      "standalone_sha256": "7da76a066e85969b4911d003846e4f564511226312f4320cdec02b64048542a4",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/ScoreBoundaryTies.java",
       "license": "Apache-2.0"
     },
