@@ -10,6 +10,11 @@ Contributions are under Apache-2.0. By submitting material, you confirm you have
 
 Follow the [source install](README.md#install-and-use) first.
 
+While iterating, select exact Java test class names with repeatable `--test`
+arguments. For example, run `python scripts/test_java.py --test ShortFinalStaffTest`.
+Build the Java sources again after changing production Java code. Run the full
+checks below before publishing a change.
+
 ```sh
 python scripts/test_java.py --jobs 4
 python -m unittest discover -s tests

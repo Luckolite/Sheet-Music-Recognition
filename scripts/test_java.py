@@ -96,7 +96,23 @@ def main(argv=None):
                         help='isolated JVM batches (default: unchanged serial runner)')
     parser.add_argument('--heap-mb', type=int, choices=(256, 384, 512, 768, 1024), default=512,
                         help='maximum heap per parallel JVM in MiB (default: 512)')
+    parser.add_argument('--test', action='append', default=[], metavar='CLASS',
+                        help='run this exact test class (repeatable, default: all classes)')
     options = parser.parse_args(argv)
+    test_root = ROOT / 'java/src/test/java'
+    sources = sorted(test_root.rglob('*.java'))
+    test_names = [source.stem for source in sources if source.name.endswith('Test.java')]
+    compiler_options = []
+    if options.test:
+        requested = set(options.test)
+        unknown = requested.difference(test_names)
+        if unknown:
+            parser.error('unknown test class: ' + ', '.join(sorted(unknown)))
+        test_names = [name for name in test_names if name in requested]
+        sources = [source for source in sources
+                   if not source.name.endswith('Test.java') or source.stem in requested]
+        compiler_options = ['-sourcepath', str(test_root)]
+    class_names = ['io.github.luckolite.interpreter.' + name for name in test_names]
     dependencies = json.loads((ROOT / 'scripts/test-dependencies.json').read_text())
     jars = []
     for name, info in dependencies.items():
@@ -107,8 +123,6 @@ def main(argv=None):
         if hashlib.sha256(path.read_bytes()).hexdigest() != info['sha256']:
             raise SystemExit('Test dependency checksum mismatch: ' + name)
         jars.append(path)
-    sources = sorted((ROOT / 'java/src/test/java').rglob('*.java'))
-    tests = [source for source in sources if source.name.endswith('Test.java')]
     classes = ROOT / 'build/test-classes'
     # Old implicit production classes can shadow the newly built core because
     # the runner places test output first. Always compile into a fresh directory.
@@ -125,16 +139,16 @@ def main(argv=None):
     source_list.write_text('\n'.join('"' + p.relative_to(ROOT).as_posix() + '"' for p in sources),
                            encoding='utf-8')
     subprocess.run([jdk_tool('javac'), '--release', '17', '-encoding', 'UTF-8', '-cp', cp,
+                    *compiler_options,
                     '-d', str(classes), '@' + str(source_list)], cwd=ROOT, check=True)
     if options.jobs > 1:
-        return run_parallel(jdk_tool('java'), os.pathsep.join([str(classes), cp]),
-                            ['io.github.luckolite.interpreter.' + p.stem for p in tests],
+        return run_parallel(jdk_tool('java'), os.pathsep.join([str(classes), cp]), class_names,
                             ROOT, options.jobs, options.heap_mb)
     # The growing regression suite exceeds Windows' command-line limit. Java 17
     # reads the same arguments from a file without splitting or omitting tests.
     arguments = ['-cp', os.pathsep.join([str(classes), cp]),
                  'org.junit.runner.JUnitCore',
-                 *['io.github.luckolite.interpreter.' + p.stem for p in tests]]
+                 *class_names]
     runner_list = ROOT / 'build/test-runner-args.txt'
     runner_list.write_text('\n'.join('"' + argument.replace('\\', '\\\\').replace('"', '\\"') + '"'
                                     for argument in arguments), encoding='utf-8')

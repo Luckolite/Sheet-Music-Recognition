@@ -48,17 +48,20 @@ jobs:
           PY
       - run: python scripts/build_java.py
       - run: python scripts/verify_package.py
-      - run: python -m pip install . twine
       - run: python -m pip wheel . --no-deps -w dist
-      - run: python -m twine check --strict dist/*
       - name: Test installed wheel
         run: |
-          python -m pip install --force-reinstall --no-deps dist/*.whl
+          wheels=(dist/*.whl)
+          test "${#wheels[@]}" -eq 1
+          wheel="${wheels[0]}"
+          test -f "$wheel"
+          python -m pip install "$wheel" twine
+          python -m twine check --strict "$wheel"
           python -m pip check
           sheet-music-recognition --help
           python -m sheet_music_recognition.cli --help
           sheet-music-recognition examples/scale.png --output base-install-smoke.json --midi base-install-smoke.mid --musicxml base-install-smoke.musicxml
-          python -m pip install ".[pdf,audio]"
+          python -m pip install "$wheel[pdf,audio]"
           python scripts/smoke_test.py
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
