@@ -34,8 +34,8 @@ def _bridge(data):
 
 
 def _route(beats, directions):
-    data = struct.pack('>ii', 0x4e415631, len(beats))
-    data += b''.join(struct.pack('>f', value) for value in beats)
+    data = struct.pack('>ii', 0x4e415632, len(beats))
+    data += b''.join(struct.pack('>d', value) for value in beats)
     return _bridge(data+encode(directions, [], len(beats)))
 
 
@@ -44,6 +44,25 @@ def source_pages_adjacent(previous, following):
         return True
     first, second = previous.get('sourcePage'), following.get('sourcePage')
     return type(first) is int and type(second) is int and first >= 0 and second == first + 1
+
+
+def require_retained_navigation(pages, occurrences):
+    gaps = []
+    boundary = 0
+    for previous, following in zip(pages, pages[1:]):
+        boundary += len(previous['measureBeats'])
+        if not source_pages_adjacent(previous, following):
+            gaps.append(boundary)
+    if not gaps:
+        return
+    if occurrences is None:
+        raise ValueError('Navigation across a partial score requires source occurrences')
+    for previous, following in zip(occurrences, occurrences[1:]):
+        departure, destination = previous['end'], following['start']
+        gap = bisect_right(gaps, destination['measureIndex'])
+        if (gap < len(gaps)
+                and (gaps[gap], 0) < (departure['measureIndex'], departure['quarterBeatOffset'])):
+            raise ValueError('A navigation return crosses omitted score pages; include those pages to export playback')
 
 
 def arrangement_ranges(pages):
@@ -128,6 +147,7 @@ def _project_one(document, bpm=120, source_page_offset=0):
         raise ValueError('Navigation traversal is incomplete: '+str(route['diagnostics']))
     if route['diagnostics']:
         raise ValueError('Navigation performance is unresolved: '+str(route['diagnostics']))
+    require_retained_navigation(pages, route['occurrences'])
     tempos.sort(key=lambda item: item[0])
     output_notes, output_tempos, spans = [], [], []
     prior_end = None

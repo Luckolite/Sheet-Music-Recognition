@@ -12887,6 +12887,17 @@
     "native_packaged_runtime_qualified": false,
     "reviewed_app_commit": "da1fd953b71cf1b539052c0d16f3b26eb615ac53"
   },
+  "standalone_fractional_navigation_review": {
+    "documentation": "docs/navigation-performance-admission.md",
+    "reviewed_app_commit": "f73f765c41cf059de576aec7d4c524d076e45c51",
+    "review_note": "Android already constructs exact playback clocks and checks physical page adjacency for reconstructed repeats. The standalone transport now keeps fractional durations and qualifies backward jumps against retained pages in ordinary and expressive export.",
+    "public_normalized_sha256": {
+      "java/src/main/java/io/github/luckolite/interpreter/NavigationBridge.java": "d7f48a30f156e190cc663780d4ad824d3db0afa7c6ff8c2bac8ed4d364cb1c5d",
+      "java/src/main/java/io/github/luckolite/interpreter/PerformanceBridge.java": "f9709ceda120f14ee4487692737ff93b08bfdea03268820b9800b7b4ddbb5a96",
+      "src/sheet_music_recognition/navigation.py": "2e18d04292bc0abff227c83d8446d8bc6dbe1da11e25c5dbfdaf71971a3e5599",
+      "src/sheet_music_recognition/performance.py": "e89ef8b108bdbdaca603f249c2336a8dc1408ab8f0d1133837f727a1ac204c91"
+    }
+  },
   "nonbinary_tuplet_wavy_gliss_review": {
     "base_app_commit": "650d1b3a312dcd7eb58f83945a6a3be321c9b4dd",
     "accepted_app_version": "869 /1.18.396",

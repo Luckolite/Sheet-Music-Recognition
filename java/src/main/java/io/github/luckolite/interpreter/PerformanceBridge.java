@@ -40,7 +40,7 @@ public final class PerformanceBridge {
             int measures = count(in, 100000);
             var durations = new ArrayList<Double>();
             for (int i = 0; i < measures; i++) durations.add(in.readDouble());
-            var meter = ScoreMeterMap.fromPerformedDurations(durations);
+            var meter = ScoreMeterMap.fromExactPerformedDurations(durations);
             var numeric = new ArrayList<ScoreTempoChange>();
             int n = count(in, 100000);
             for (int i = 0; i < n; i++)

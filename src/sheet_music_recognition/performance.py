@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 from .runtime import java_executable
+from .navigation import arrangement_ranges, require_retained_navigation
 from .printed_tempo_spans import preserve_end, resolve_pages, has_open
 from .semantic_wire import encode
 from .typed_events import event_kind, validate_unpitched
@@ -382,6 +383,7 @@ def _perform_one(pages, bpm, slide_group=0):
     for identifier, members in bindings.items():
         data += _text(identifier)+struct.pack('>i', len(members))+b''.join(_text(sounds[i]['id']) for i in sorted(members))
     result = _bridge(data+encode(directions, expressions, len(beats)))
+    require_retained_navigation(pages, result.get('navigationOccurrences'))
     slide_visits = {}
     if any(payload.get('_slideOrigins') for payload in payloads):
         route = result.get('navigationOccurrences')
@@ -467,7 +469,6 @@ def perform_expressions(document, bpm):
             or any(performance_pairs(page.get('score', {}).get('tremoloSource')) for page in pages)):
         return None
     # Use the same arrangement boundaries as ordinary navigation export.
-    from .navigation import arrangement_ranges
     ranges = arrangement_ranges(pages)
     played, evidence = [], []
     for group in ranges:

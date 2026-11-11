@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 from sheet_music_recognition.midi import write_midi
+from test_navigation_midi import document, direction, note, note_intervals
 
 
 def unresolved(expressive=False):
@@ -27,6 +28,37 @@ class NavigationAdmissionTest(unittest.TestCase):
 
     def test_actual_expressive_bridge_refuses_unexpanded_measure_repeat(self):
         self.refuses_before_output(unresolved(True))
+
+    def test_partial_score_requires_retained_pages_between_repeat_edges(self):
+        for expressive in (False, True):
+            for later_page, local_repeat, expected in (
+                (2, None, [60, 62, 60, 62]),
+                (3, None, None),
+                (3, 0, [60, 60, 62]),
+                (3, 1, [60, 62, 62]),
+            ):
+                with self.subTest(expressive=expressive, later_page=later_page, local=local_repeat):
+                    pages = [document([4], [note(0, pitch, 4)], [])['pages'][0]
+                             for pitch in (60, 62)]
+                    for page, physical in zip(pages, (1, later_page)):
+                        page.update(sourcePage=physical)
+                        page['score']['firstMeasureNumber'] = physical
+                    if local_repeat is None:
+                        pages[0]['score']['playbackDirections'] = [direction(0, 4)]
+                        pages[1]['score']['playbackDirections'] = [direction(1, 5)]
+                    else:
+                        pages[local_repeat]['score']['playbackDirections'] = [direction(0, 4), direction(1, 5)]
+                    if expressive:
+                        pages[0]['score']['expressiveEvents'] = unresolved(True)['pages'][0]['score']['expressiveEvents']
+                    with tempfile.TemporaryDirectory() as folder:
+                        path = Path(folder) / 'selected-pages.mid'
+                        if expected is None:
+                            with self.assertRaisesRegex(ValueError, 'crosses omitted score pages'):
+                                write_midi(dict(pages=pages), path)
+                            self.assertFalse(path.exists())
+                        else:
+                            write_midi(dict(pages=pages), path)
+                            self.assertEqual(expected, [pitch for pitch, _, _ in note_intervals(path.read_bytes())])
 
     def test_python_refuses_legacy_complete_route_with_diagnostics(self):
         # Protocol-value control for the retained old-bridge diagnostic defense.

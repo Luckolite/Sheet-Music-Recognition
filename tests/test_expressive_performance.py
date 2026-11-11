@@ -42,6 +42,25 @@ def rest_fermata_document(duration=4, supplied_scope='UNRESOLVED'):
 
 
 class ExpressivePerformanceTests(unittest.TestCase):
+    def test_fractional_repeat_endpoint_uses_the_exact_expressive_clock(self):
+        closing_span = 5 / 6
+        doc = document([expression('RITENUTO')])
+        page = doc['pages'][0]
+        page['measureBeats'] = [4, closing_span]
+        page['totalBeats'] = sum(page['measureBeats'])
+        page['events'][0]['durationBeats'] = 4
+        page['events'][1].update(startBeat=4, durationBeats=closing_span)
+        page['score']['playbackDirections'] = [
+            dict(measureBoundary=0, kind=4),
+            dict(measureBoundary=1, kind=5,
+                 details=dict(eventId='fractional-repeat-end', quarterBeatOffset=closing_span)),
+        ]
+        _, events, end = performance_events(doc, 120)
+        attacks = [(beat, message[1]) for beat, _, message in events
+                   if message[0] & 0xf0 == 0x90 and message[2]]
+        self.assertEqual([(0, 69), (2400, 71), (2900, 69), (5300, 71)], attacks)
+        self.assertEqual(5800, end)
+
     def test_raw_rest_fermata_resolves_only_exact_silent_slot(self):
         doc=rest_fermata_document();original=copy.deepcopy(doc);events,end=_sample_events(doc,120)
         self.assertFalse(any(msg[0]&0xf0==0x90 for _,msg in events));self.assertEqual(4*SAMPLE_RATE,end)

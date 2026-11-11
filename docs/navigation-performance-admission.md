@@ -20,6 +20,11 @@ actual app early entries and ordinary/expressive MIDI refusal before output.
 The Python legacy-bridge defense has a separate protocol-value control.
 Existing navigation and MIDI originals retain event order and timing.
 
+Standalone playback checks performed return jumps against the selected physical
+PDF pages. A return over an omitted page would replay incomplete musical
+material, so both ordinary and expressive export ask for the missing pages.
+Repeats contained within a retained section continue to play.
+
 These changes prevent execution of an unqualified route. They do not implement
 musical-content expansion for percent repeat shorthand or qualify native notation
 engines. Generated scalar fixtures contain no score scans, model assets or private

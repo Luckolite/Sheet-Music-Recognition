@@ -11,36 +11,24 @@ public final class NavigationBridge {
     private NavigationBridge() {}
 
     static ScoreNavigationPlan read(DataInputStream input) throws IOException {
-        if (input.readInt() != 0x4e415631) throw new IOException("Not a NAV1 request");
+        int version = input.readInt();
+        boolean exact = version == 0x4e415632;
+        if (!exact && version != 0x4e415631) throw new IOException("Not a navigation request");
         int count = input.readInt();
         if (count < 0 || count > 100000) throw new IOException("Invalid source measure count");
-        var meters = new ArrayList<ScoreMeterChange>();
-        float opening = 4, previous = -1;
+        var durations = new ArrayList<Double>(count);
         for (int m = 0; m < count; m++) {
-            float beats = input.readFloat();
-            if (!Float.isFinite(beats) || beats < .125f || beats > 128)
+            double beats = exact ? input.readDouble() : input.readFloat();
+            if (!Double.isFinite(beats) || beats < .125 || beats > 128)
                 throw new IOException("Invalid measure beats");
-            if (m == 0) opening = beats;
-            if (beats != previous) {
-                ScoreMeterChange change = null;
-                for (int denominator = 1; denominator <= 32; denominator *= 2) {
-                    double numerator = beats * denominator / 4.0;
-                    if (numerator == Math.rint(numerator) && numerator >= 1 && numerator <= 32) {
-                        change = new ScoreMeterChange(m, (int) numerator, denominator);
-                        break;
-                    }
-                }
-                if (change == null)
-                    throw new IOException("Measure beats cannot represent a supported meter");
-                meters.add(change);
-                previous = beats;
-            }
+            durations.add(beats);
         }
         var directions = ScoreSemanticWire.readDirections(input, count);
         if (!ScoreSemanticWire.readExpressions(input, count).isEmpty())
-            throw new IOException("NAV1 carries navigation only, not expressive realization");
+            throw new IOException("Navigation request contains expressive realization");
         if (input.read() != -1) throw new IOException("Trailing navigation request bytes");
-        return ScoreNavigationPlan.create(count, directions, new ScoreMeterMap(opening, meters));
+        return ScoreNavigationPlan.create(
+                count, directions, ScoreMeterMap.fromExactPerformedDurations(durations));
     }
 
     static Object readArrangements(DataInputStream input) throws IOException {

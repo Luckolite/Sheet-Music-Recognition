@@ -70,6 +70,23 @@ def note_intervals(data):
 
 
 class NavigationMidiTest(unittest.TestCase):
+    def test_repeat_preserves_fractional_pickup_and_closing_spans(self):
+        for first, last, intervals in (
+            (1 / 3, 4, [(60, 0, 160), (62, 160, 2080), (60, 2080, 2240), (62, 2240, 4160)]),
+            (4, 2 / 3, [(60, 0, 1920), (62, 1920, 2240), (60, 2240, 4160), (62, 4160, 4480)]),
+            (.1875, 4, [(60, 0, 90), (62, 90, 2010), (60, 2010, 2100), (62, 2100, 4020)]),
+        ):
+            with self.subTest(first=first, last=last), tempfile.TemporaryDirectory() as folder:
+                doc = document([first, last], [note(0, 60, first), note(first, 62, last)],
+                               [direction(0, 4), direction(2, 5)])
+                played = project_navigation(doc)['pages'][0]
+                self.assertAlmostEqual(2 * (first + last), played['totalBeats'], places=12)
+                path = Path(folder) / 'fractional-repeat.mid'
+                write_midi(doc, path)
+                data = path.read_bytes()
+                self.assertEqual(intervals, note_intervals(data))
+                self.assertEqual(intervals[-1][2], final_tick(data))
+
     def test_tied_marker_cannot_bridge_a_whole_silent_source_bar(self):
         doc=document([4,4,4],[note(0,60,4),note(8,60,4,True)],[])
         with tempfile.TemporaryDirectory() as folder:
