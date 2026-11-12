@@ -1,6 +1,6 @@
 # Python and Java API
 
-[Install from source](../README.md#install-and-use) before running these examples.
+[Install the interpreter](../README.md#install-and-use) before running these examples.
 
 ## Python
 
@@ -17,7 +17,29 @@ with Image.open("examples/scale.png") as image:
 write_musicxml({"pages": [page]}, "score.musicxml")
 ```
 
-For a PDF, the [CLI](../README.md#install-and-use) handles rendering, page order, and state across pages. Use `--pages 1,3` to select pages in reading order. `--meter 3/4`, `--bpm 90`, and `--key-fifths 2` set the starting meter, quarter-note tempo, and key fallback (sharps positive, flats negative).
+### Read a PDF
+
+Install the `pdf` extra and use the same interpreter to recognize an entire
+document. The method also accepts an image file path.
+
+```python
+from sheet_music_recognition import Interpreter, write_musicxml
+
+reader = Interpreter()
+score = reader.interpret_document(
+    "score.pdf",
+    pages=[1, 3],
+    progress=lambda done, total, page: print(f"Read page {page} ({done}/{total})"),
+)
+write_musicxml(score, "score.musicxml")
+```
+
+Omit `pages` to read the whole document. Page numbers are one-based, unique,
+and increasing. The result keeps the physical page numbers, inherits key and
+meter from previously read pages, and resolves ties across adjacent read pages.
+Set the initial `meter`, quarter-note `bpm`, and `key_fifths` as needed. The
+progress callback runs after each selected page, before final document assembly.
+Reuse one interpreter per worker.
 
 ### Export saved JSON
 
@@ -54,7 +76,10 @@ Java decodes the supplied pixels; the Python reader also runs the model and OCR.
 
 ## JSON output
 
-The CLI document contains `schemaVersion`, `inputName`, `initialBpm`, `initialMeter`, `initialKeyFifths`, and `pages`.
+The CLI and `interpret_document()` return the same document shape. Use the
+[v1 JSON Schema](schema/score-v1.json) to validate the envelope and overlay
+fields. Additional decoder fields may appear within v1. See the
+[browser review example](../examples/review/README.md) for a coordinate overlay.
 
 | Page field | Use |
 | --- | --- |
@@ -70,7 +95,9 @@ Measure indices and event times are local to each page. Measure boxes use normal
 
 ## Supply your own annotations
 
-Python normally runs local OCR. Use `--annotations file.json` to supply a JSON array with one object per selected page, or pass a single object as `annotations=` to `interpret()`.
+Python normally runs local OCR. Pass one object per selected page to
+`interpret_document(annotations=...)` or supply a JSON array to the CLI with
+`--annotations file.json`. Pass a single object to `interpret(annotations=...)`.
 
 ```json
 [

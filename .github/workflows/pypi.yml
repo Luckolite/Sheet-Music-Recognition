@@ -60,7 +60,7 @@ jobs:
           python -m pip check
           sheet-music-recognition --help
           python -m sheet_music_recognition.cli --help
-          sheet-music-recognition examples/scale.png --output base-install-smoke.json --midi base-install-smoke.mid --musicxml base-install-smoke.musicxml
+          sheet-music-recognition --demo --output base-install-smoke.json --midi base-install-smoke.mid --musicxml base-install-smoke.musicxml
           python -m pip install "$wheel[pdf,audio]"
           python scripts/smoke_test.py
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

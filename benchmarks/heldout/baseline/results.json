@@ -1,0 +1,101 @@
+{
+  "run": {
+    "packageVersion": "0.2.0",
+    "modelSha256": "92ab7c34c27cb704d95f0cde247b3611d1563fdf1c114b9f9817abb18a7b6a93",
+    "decoderSourceSha256": "d8392d700b2a56faf5b613b129e65073ad4d133453d8197f09521a1e4506cfd2",
+    "system": "Windows-10-10.0.26300-SP0",
+    "processor": "Intel64 Family 6 Model 165 Stepping 5, GenuineIntel",
+    "threads": 2
+  },
+  "pages": {
+    "angled-accidentals": {
+      "referenceNotes": 10,
+      "predictedNotes": 18,
+      "pitch": {
+        "matched": 5
+      },
+      "rhythm": {
+        "matched": 7
+      },
+      "exact": {
+        "matched": 5,
+        "missed": 5,
+        "extra": 13
+      },
+      "recognitionSeconds": 20.69
+    },
+    "clean-melody": {
+      "referenceNotes": 11,
+      "predictedNotes": 12,
+      "pitch": {
+        "matched": 8
+      },
+      "rhythm": {
+        "matched": 9
+      },
+      "exact": {
+        "matched": 7,
+        "missed": 4,
+        "extra": 5
+      },
+      "recognitionSeconds": 17.544
+    },
+    "faint-ledgers": {
+      "referenceNotes": 10,
+      "predictedNotes": 12,
+      "pitch": {
+        "matched": 6
+      },
+      "rhythm": {
+        "matched": 8
+      },
+      "exact": {
+        "matched": 6,
+        "missed": 4,
+        "extra": 6
+      },
+      "recognitionSeconds": 17.451
+    },
+    "piano-chords": {
+      "referenceNotes": 18,
+      "predictedNotes": 22,
+      "pitch": {
+        "matched": 10
+      },
+      "rhythm": {
+        "matched": 11
+      },
+      "exact": {
+        "matched": 9,
+        "missed": 9,
+        "extra": 13
+      },
+      "recognitionSeconds": 31.402
+    }
+  },
+  "microAverage": {
+    "referenceNotes": 49,
+    "predictedNotes": 64,
+    "pitch": {
+      "matched": 29,
+      "precision": 0.453125,
+      "recall": 0.5918367346938775,
+      "f1": 0.5132743362831859
+    },
+    "rhythm": {
+      "matched": 35,
+      "precision": 0.546875,
+      "recall": 0.7142857142857143,
+      "f1": 0.6194690265486725
+    },
+    "exact": {
+      "matched": 27,
+      "precision": 0.421875,
+      "recall": 0.5510204081632653,
+      "f1": 0.4778761061946903,
+      "missed": 22,
+      "extra": 37
+    },
+    "secondsPerPage": 21.772
+  }
+}

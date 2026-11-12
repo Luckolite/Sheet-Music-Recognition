@@ -91,6 +91,7 @@ def main():
     data.mkdir(exist_ok=True)
     for source in (ROOT / 'models/music_sheets_v4_float16.tflite', ROOT / 'models/paper_field_v1.onnx', ROOT / 'LICENSE', ROOT / 'NOTICE'):
         shutil.copyfile(source, data / source.name)
+    shutil.copyfile(ROOT / 'examples/scale.png', data / 'scale.png')
     print(target)
 
 

@@ -1,0 +1,700 @@
+{
+  "schemaVersion": 1,
+  "inputName": "scale.png",
+  "initialBpm": 120,
+  "initialMeter": [
+    4,
+    4
+  ],
+  "initialKeyFifths": 0,
+  "pages": [
+    {
+      "schemaVersion": 1,
+      "width": 2048,
+      "height": 235,
+      "score": {
+        "measures": [
+          {
+            "left": 0.049804688,
+            "right": 0.2006836,
+            "top": 0.26234043,
+            "bottom": 0.7334043
+          },
+          {
+            "left": 0.20751953,
+            "right": 0.33935547,
+            "top": 0.26234043,
+            "bottom": 0.7334043
+          }
+        ],
+        "notes": [
+          {
+            "measureIndex": 0,
+            "positionInMeasure": 0.1783592,
+            "staffStep": 2,
+            "staffIndex": 0,
+            "staffCount": 1,
+            "pageY": 0.5557639,
+            "tiedFromPrevious": false,
+            "augmentationDots": 0,
+            "beamCount": 0,
+            "writtenAccidental": 2,
+            "unbeamedDurationBeats": 1.0,
+            "tupletDivisor": 1,
+            "followingRestBeats": 0.0,
+            "articulations": 0,
+            "clefBottomDiatonic": 30,
+            "crossStaffBeam": false,
+            "leadingRestBeats": 0.0,
+            "compactOpening": false,
+            "octaveShift": 0,
+            "boundaryTies": 2,
+            "tupletNormalNotes": 1,
+            "stemDirection": 1,
+            "visualSize": "FULL"
+          },
+          {
+            "measureIndex": 0,
+            "positionInMeasure": 0.39654186,
+            "staffStep": 3,
+            "staffIndex": 0,
+            "staffCount": 1,
+            "pageY": 0.5263708,
+            "tiedFromPrevious": false,
+            "augmentationDots": 0,
+            "beamCount": 0,
+            "writtenAccidental": 2,
+            "unbeamedDurationBeats": 1.0,
+            "tupletDivisor": 1,
+            "followingRestBeats": 0.0,
+            "articulations": 0,
+            "clefBottomDiatonic": 30,
+            "crossStaffBeam": false,
+            "leadingRestBeats": 0.0,
+            "compactOpening": false,
+            "octaveShift": 0,
+            "boundaryTies": 0,
+            "tupletNormalNotes": 1,
+            "stemDirection": 1,
+            "visualSize": "FULL"
+          },
+          {
+            "measureIndex": 0,
+            "positionInMeasure": 0.61417365,
+            "staffStep": 4,
+            "staffIndex": 0,
+            "staffCount": 1,
+            "pageY": 0.4974396,
+            "tiedFromPrevious": false,
+            "augmentationDots": 0,
+            "beamCount": 0,
+            "writtenAccidental": 2,
+            "unbeamedDurationBeats": 1.0,
+            "tupletDivisor": 1,
+            "followingRestBeats": 0.0,
+            "articulations": 0,
+            "clefBottomDiatonic": 30,
+            "crossStaffBeam": false,
+            "leadingRestBeats": 0.0,
+            "compactOpening": false,
+            "octaveShift": 0,
+            "boundaryTies": 0,
+            "tupletNormalNotes": 1,
+            "stemDirection": -1,
+            "visualSize": "FULL"
+          },
+          {
+            "measureIndex": 0,
+            "positionInMeasure": 0.83209485,
+            "staffStep": 5,
+            "staffIndex": 0,
+            "staffCount": 1,
+            "pageY": 0.46891716,
+            "tiedFromPrevious": false,
+            "augmentationDots": 0,
+            "beamCount": 0,
+            "writtenAccidental": 2,
+            "unbeamedDurationBeats": 1.0,
+            "tupletDivisor": 1,
+            "followingRestBeats": 0.0,
+            "articulations": 0,
+            "clefBottomDiatonic": 30,
+            "crossStaffBeam": false,
+            "leadingRestBeats": 0.0,
+            "compactOpening": false,
+            "octaveShift": 0,
+            "boundaryTies": 0,
+            "tupletNormalNotes": 1,
+            "stemDirection": -1,
+            "visualSize": "FULL"
+          },
+          {
+            "measureIndex": 1,
+            "positionInMeasure": 0.05940495,
+            "staffStep": 6,
+            "staffIndex": 0,
+            "staffCount": 1,
+            "pageY": 0.43966052,
+            "tiedFromPrevious": false,
+            "augmentationDots": 0,
+            "beamCount": 0,
+            "writtenAccidental": 2,
+            "unbeamedDurationBeats": 1.0,
+            "tupletDivisor": 1,
+            "followingRestBeats": 0.0,
+            "articulations": 0,
+            "clefBottomDiatonic": 30,
+            "crossStaffBeam": false,
+            "leadingRestBeats": 0.0,
+            "compactOpening": false,
+            "octaveShift": 0,
+            "boundaryTies": 0,
+            "tupletNormalNotes": 1,
+            "stemDirection": -1,
+            "visualSize": "FULL"
+          },
+          {
+            "measureIndex": 1,
+            "positionInMeasure": 0.3085102,
+            "staffStep": 7,
+            "staffIndex": 0,
+            "staffCount": 1,
+            "pageY": 0.4101841,
+            "tiedFromPrevious": false,
+            "augmentationDots": 0,
+            "beamCount": 0,
+            "writtenAccidental": 2,
+            "unbeamedDurationBeats": 1.0,
+            "tupletDivisor": 1,
+            "followingRestBeats": 0.0,
+            "articulations": 0,
+            "clefBottomDiatonic": 30,
+            "crossStaffBeam": false,
+            "leadingRestBeats": 0.0,
+            "compactOpening": false,
+            "octaveShift": 0,
+            "boundaryTies": 0,
+            "tupletNormalNotes": 1,
+            "stemDirection": -1,
+            "visualSize": "FULL"
+          },
+          {
+            "measureIndex": 1,
+            "positionInMeasure": 0.55780345,
+            "staffStep": 8,
+            "staffIndex": 0,
+            "staffCount": 1,
+            "pageY": 0.38066658,
+            "tiedFromPrevious": false,
+            "augmentationDots": 0,
+            "beamCount": 0,
+            "writtenAccidental": 2,
+            "unbeamedDurationBeats": 1.0,
+            "tupletDivisor": 1,
+            "followingRestBeats": 0.0,
+            "articulations": 0,
+            "clefBottomDiatonic": 30,
+            "crossStaffBeam": false,
+            "leadingRestBeats": 0.0,
+            "compactOpening": false,
+            "octaveShift": 0,
+            "boundaryTies": 0,
+            "tupletNormalNotes": 1,
+            "stemDirection": -1,
+            "visualSize": "FULL"
+          },
+          {
+            "measureIndex": 1,
+            "positionInMeasure": 0.80680406,
+            "staffStep": 9,
+            "staffIndex": 0,
+            "staffCount": 1,
+            "pageY": 0.35190058,
+            "tiedFromPrevious": false,
+            "augmentationDots": 0,
+            "beamCount": 0,
+            "writtenAccidental": 2,
+            "unbeamedDurationBeats": 1.0,
+            "tupletDivisor": 1,
+            "followingRestBeats": 0.0,
+            "articulations": 0,
+            "clefBottomDiatonic": 30,
+            "crossStaffBeam": false,
+            "leadingRestBeats": 0.0,
+            "compactOpening": false,
+            "octaveShift": 0,
+            "boundaryTies": 0,
+            "tupletNormalNotes": 1,
+            "stemDirection": -1,
+            "visualSize": "FULL"
+          }
+        ],
+        "firstMeasureNumber": 0,
+        "keyChanges": [
+          {
+            "measureIndex": 0,
+            "fifths": 0
+          }
+        ],
+        "tempoChanges": [],
+        "meterChanges": [
+          {
+            "measureIndex": 0,
+            "numerator": 4,
+            "denominator": 4
+          }
+        ],
+        "rests": [],
+        "techniqueChanges": [],
+        "dynamicChanges": [],
+        "playbackDirections": [],
+        "expressiveEvents": [],
+        "slurSource": {
+          "spans": [],
+          "noteOrigins": [
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          "candidates": []
+        },
+        "openingPickup": false,
+        "tremoloSource": {
+          "pairs": [],
+          "noteOrigins": [
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ]
+        },
+        "multiRestGroups": [],
+        "beamSource": {
+          "groups": [],
+          "detachedColumns": [],
+          "noteOrigins": [
+            {
+              "pageIndex": 0,
+              "noteIndex": 0
+            },
+            {
+              "pageIndex": 0,
+              "noteIndex": 1
+            },
+            {
+              "pageIndex": 0,
+              "noteIndex": 2
+            },
+            {
+              "pageIndex": 0,
+              "noteIndex": 3
+            },
+            {
+              "pageIndex": 0,
+              "noteIndex": 4
+            },
+            {
+              "pageIndex": 0,
+              "noteIndex": 5
+            },
+            {
+              "pageIndex": 0,
+              "noteIndex": 6
+            },
+            {
+              "pageIndex": 0,
+              "noteIndex": 7
+            }
+          ]
+        },
+        "clockContextSource": {
+          "origin": {
+            "documentSha256": "3e9205cc2223f79f421b668d228aed5c501cb3ca136ab05eb09afc24d2a47cbd",
+            "physicalPageIndex": 0,
+            "physicalPageCount": 1,
+            "width": 2048,
+            "height": 235,
+            "rasterSha256": "6ed572e9b5daa1c09ec70c34b04e68e48477fd7bfb8d878212ea4c21ec8c1d0b",
+            "labelsSha256": "3d7d13b6445396c09718191625142da8c824e9695e5122a9a35cd4e39235f2a4",
+            "annotationRasterSha256": "e1f7f3cd5ea774dee954030df3e8fea7b9b2b4695a084146829d3210c6f43dc8"
+          },
+          "noteCount": 8,
+          "measureCount": 2,
+          "restCount": 0,
+          "partWords": [],
+          "numbers": [],
+          "meters": [],
+          "printedValues": [
+            {
+              "noteIndex": 0,
+              "measure": 0,
+              "staff": 0,
+              "staffs": 1,
+              "kind": "UNKNOWN",
+              "baseBeats": 1.0,
+              "dots": 0,
+              "beams": 0,
+              "route": "OPAQUE_DEFAULT",
+              "originalExit": "OPAQUE_DEFAULT_QUARTER",
+              "admissionFlags": 1,
+              "selectedMembers": 0,
+              "parentMembers": 0,
+              "parentLeaves": 0,
+              "residualMembers": 0,
+              "selectedSha256": "",
+              "parentSha256": "",
+              "model": "NONE",
+              "status": "OBSERVATION"
+            },
+            {
+              "noteIndex": 1,
+              "measure": 0,
+              "staff": 0,
+              "staffs": 1,
+              "kind": "UNKNOWN",
+              "baseBeats": 1.0,
+              "dots": 0,
+              "beams": 0,
+              "route": "OPAQUE_DEFAULT",
+              "originalExit": "OPAQUE_DEFAULT_QUARTER",
+              "admissionFlags": 1,
+              "selectedMembers": 0,
+              "parentMembers": 0,
+              "parentLeaves": 0,
+              "residualMembers": 0,
+              "selectedSha256": "",
+              "parentSha256": "",
+              "model": "NONE",
+              "status": "OBSERVATION"
+            },
+            {
+              "noteIndex": 2,
+              "measure": 0,
+              "staff": 0,
+              "staffs": 1,
+              "kind": "UNKNOWN",
+              "baseBeats": 1.0,
+              "dots": 0,
+              "beams": 0,
+              "route": "OPAQUE_DEFAULT",
+              "originalExit": "OPAQUE_DEFAULT_QUARTER",
+              "admissionFlags": 1,
+              "selectedMembers": 0,
+              "parentMembers": 0,
+              "parentLeaves": 0,
+              "residualMembers": 0,
+              "selectedSha256": "",
+              "parentSha256": "",
+              "model": "NONE",
+              "status": "OBSERVATION"
+            },
+            {
+              "noteIndex": 3,
+              "measure": 0,
+              "staff": 0,
+              "staffs": 1,
+              "kind": "UNKNOWN",
+              "baseBeats": 1.0,
+              "dots": 0,
+              "beams": 0,
+              "route": "OPAQUE_DEFAULT",
+              "originalExit": "OPAQUE_DEFAULT_QUARTER",
+              "admissionFlags": 1,
+              "selectedMembers": 0,
+              "parentMembers": 0,
+              "parentLeaves": 0,
+              "residualMembers": 0,
+              "selectedSha256": "",
+              "parentSha256": "",
+              "model": "NONE",
+              "status": "OBSERVATION"
+            },
+            {
+              "noteIndex": 4,
+              "measure": 1,
+              "staff": 0,
+              "staffs": 1,
+              "kind": "UNKNOWN",
+              "baseBeats": 1.0,
+              "dots": 0,
+              "beams": 0,
+              "route": "OPAQUE_DEFAULT",
+              "originalExit": "OPAQUE_DEFAULT_QUARTER",
+              "admissionFlags": 1,
+              "selectedMembers": 0,
+              "parentMembers": 0,
+              "parentLeaves": 0,
+              "residualMembers": 0,
+              "selectedSha256": "",
+              "parentSha256": "",
+              "model": "NONE",
+              "status": "OBSERVATION"
+            },
+            {
+              "noteIndex": 5,
+              "measure": 1,
+              "staff": 0,
+              "staffs": 1,
+              "kind": "UNKNOWN",
+              "baseBeats": 1.0,
+              "dots": 0,
+              "beams": 0,
+              "route": "OPAQUE_DEFAULT",
+              "originalExit": "OPAQUE_DEFAULT_QUARTER",
+              "admissionFlags": 1,
+              "selectedMembers": 0,
+              "parentMembers": 0,
+              "parentLeaves": 0,
+              "residualMembers": 0,
+              "selectedSha256": "",
+              "parentSha256": "",
+              "model": "NONE",
+              "status": "OBSERVATION"
+            },
+            {
+              "noteIndex": 6,
+              "measure": 1,
+              "staff": 0,
+              "staffs": 1,
+              "kind": "UNKNOWN",
+              "baseBeats": 1.0,
+              "dots": 0,
+              "beams": 0,
+              "route": "OPAQUE_DEFAULT",
+              "originalExit": "OPAQUE_DEFAULT_QUARTER",
+              "admissionFlags": 1,
+              "selectedMembers": 0,
+              "parentMembers": 0,
+              "parentLeaves": 0,
+              "residualMembers": 0,
+              "selectedSha256": "",
+              "parentSha256": "",
+              "model": "NONE",
+              "status": "OBSERVATION"
+            },
+            {
+              "noteIndex": 7,
+              "measure": 1,
+              "staff": 0,
+              "staffs": 1,
+              "kind": "UNKNOWN",
+              "baseBeats": 1.0,
+              "dots": 0,
+              "beams": 0,
+              "route": "OPAQUE_DEFAULT",
+              "originalExit": "OPAQUE_DEFAULT_QUARTER",
+              "admissionFlags": 1,
+              "selectedMembers": 0,
+              "parentMembers": 0,
+              "parentLeaves": 0,
+              "residualMembers": 0,
+              "selectedSha256": "",
+              "parentSha256": "",
+              "model": "NONE",
+              "status": "OBSERVATION"
+            }
+          ],
+          "glyphLedgers": [
+            {
+              "measure": -1,
+              "semanticLabel": 2,
+              "population": 1415,
+              "coveredUnique": 1415,
+              "noteMembers": 1415,
+              "nonRhythmicMembers": 0,
+              "restMembers": 0,
+              "unknownMembers": 0,
+              "coverageSha256": "f20c139651e2a6586eb8f1541c3e8dd81f3923d8756a7edd66b3ad3ded4ffea4",
+              "producerRoute": "GENUINE_NOTEHEAD_LABEL_EMISSIONS_NOT_ALL_RHYTHMIC_LABELS",
+              "status": "OBSERVATION"
+            }
+          ],
+          "restValues": [],
+          "voiceGroups": [],
+          "syncAnchors": [],
+          "missing": [
+            {
+              "requirement": "PART_CONTINUITY",
+              "measure": -1
+            },
+            {
+              "requirement": "METER_SCOPE",
+              "measure": -1
+            },
+            {
+              "requirement": "PRINTED_VALUES",
+              "measure": -1
+            },
+            {
+              "requirement": "RHYTHMIC_GLYPH_CLOSURE",
+              "measure": -1
+            },
+            {
+              "requirement": "VOICE_OWNERSHIP",
+              "measure": -1
+            },
+            {
+              "requirement": "REST_OWNERSHIP",
+              "measure": -1
+            },
+            {
+              "requirement": "SYNCHRONIZED_ANCHORS",
+              "measure": -1
+            }
+          ]
+        }
+      },
+      "events": [
+        {
+          "measureIndex": 0,
+          "staffIndex": 0,
+          "staffCount": 1,
+          "boundaryTies": 2,
+          "boundaryPitch": 32,
+          "boundaryAccidental": 2,
+          "sourceNoteIndex": 0,
+          "midi": 67,
+          "clefInferred": false,
+          "startBeat": 0.0,
+          "durationBeats": 1.0,
+          "durationFallback": false,
+          "tiedFromPrevious": false,
+          "x": 157.11299,
+          "y": 130.60452
+        },
+        {
+          "measureIndex": 0,
+          "staffIndex": 0,
+          "staffCount": 1,
+          "midi": 69,
+          "clefInferred": false,
+          "startBeat": 1.0,
+          "durationBeats": 1.0,
+          "durationFallback": false,
+          "tiedFromPrevious": false,
+          "x": 224.53143,
+          "y": 123.69714,
+          "sourceNoteIndex": 1
+        },
+        {
+          "measureIndex": 0,
+          "staffIndex": 0,
+          "staffCount": 1,
+          "midi": 71,
+          "clefInferred": false,
+          "startBeat": 2.0,
+          "durationBeats": 1.0,
+          "durationFallback": false,
+          "tiedFromPrevious": false,
+          "x": 291.77966,
+          "y": 116.89831,
+          "sourceNoteIndex": 2
+        },
+        {
+          "measureIndex": 0,
+          "staffIndex": 0,
+          "staffCount": 1,
+          "midi": 72,
+          "clefInferred": false,
+          "startBeat": 3.0,
+          "durationBeats": 1.0,
+          "durationFallback": false,
+          "tiedFromPrevious": false,
+          "x": 359.1173,
+          "y": 110.19553,
+          "sourceNoteIndex": 3
+        },
+        {
+          "measureIndex": 1,
+          "staffIndex": 0,
+          "staffCount": 1,
+          "midi": 74,
+          "clefInferred": false,
+          "startBeat": 4.0,
+          "durationBeats": 1.0,
+          "durationFallback": false,
+          "tiedFromPrevious": false,
+          "x": 441.03934,
+          "y": 103.32022,
+          "sourceNoteIndex": 4
+        },
+        {
+          "measureIndex": 1,
+          "staffIndex": 0,
+          "staffCount": 1,
+          "midi": 76,
+          "clefInferred": false,
+          "startBeat": 5.0,
+          "durationBeats": 1.0,
+          "durationFallback": false,
+          "tiedFromPrevious": false,
+          "x": 508.29776,
+          "y": 96.39326,
+          "sourceNoteIndex": 5
+        },
+        {
+          "measureIndex": 1,
+          "staffIndex": 0,
+          "staffCount": 1,
+          "midi": 77,
+          "clefInferred": false,
+          "startBeat": 6.0,
+          "durationBeats": 1.0,
+          "durationFallback": false,
+          "tiedFromPrevious": false,
+          "x": 575.60693,
+          "y": 89.45665,
+          "sourceNoteIndex": 6
+        },
+        {
+          "measureIndex": 1,
+          "staffIndex": 0,
+          "staffCount": 1,
+          "midi": 79,
+          "clefInferred": false,
+          "startBeat": 7.0,
+          "durationBeats": 1.0,
+          "durationFallback": false,
+          "tiedFromPrevious": false,
+          "x": 642.8371,
+          "y": 82.69663,
+          "sourceNoteIndex": 7
+        }
+      ],
+      "tablatureWarnings": [],
+      "measureBeats": [
+        4.0,
+        4.0
+      ],
+      "totalBeats": 8.0,
+      "paperWhitening": {
+        "policy": "original-segmentation-paper-field-decoder-v2",
+        "modelSha256": "dc27aec9f1d29cc423510277992523991fbbb568770a3acf73875107476ab460",
+        "segmentationRasterSha256": "24a31be84200a1b390a9c2e2969d09ed58658265fb19e8940878b9d82d9362e1",
+        "annotationRasterSha256": "24a31be84200a1b390a9c2e2969d09ed58658265fb19e8940878b9d82d9362e1",
+        "decoderRasterSha256": "7b2ebc2e5c2e5d5290285671d9ab366c7228658e35cf697c7fa08edf2d73f528",
+        "changed": true
+      },
+      "modelSha256": "92ab7c34c27cb704d95f0cde247b3611d1563fdf1c114b9f9817abb18a7b6a93",
+      "initialMeter": [
+        4,
+        4
+      ],
+      "initialKeyFifths": 0,
+      "warnings": [
+        "Experimental recognition: review pitches, accidentals, ties and timing.",
+        "OCR can miss small or faint text; the initial meter is an argument, not an automatic reading."
+      ],
+      "sourcePage": 1
+    }
+  ]
+}

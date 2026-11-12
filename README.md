@@ -8,7 +8,7 @@ as **`sheet-music-recognition`** (command) and **`sheet_music_recognition`** (Py
 [![Build and test](https://github.com/Luckolite/Sheet-Music-Recognition/actions/workflows/ci.yml/badge.svg)](https://github.com/Luckolite/Sheet-Music-Recognition/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/LICENSE)
 
-[Quick start](#install-and-use) · [Documentation](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/docs/README.md) · [Python / Java API](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/docs/integration.md) · [Model and limitations](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/models/MODEL_CARD.md) · [Downloads](https://github.com/Luckolite/Sheet-Music-Recognition/releases)
+[Quick start](#install-and-use) · [Review demo](examples/review/README.md) · [Benchmark](benchmarks/heldout/README.md) · [Documentation](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/docs/README.md) · [Python / Java API](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/docs/integration.md) · [Model and limitations](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/models/MODEL_CARD.md) · [Downloads](https://github.com/Luckolite/Sheet-Music-Recognition/releases)
 
 **Code and weights are Apache-2.0 licensed, including commercial and closed-source use.**
 You do not need to publish your own code. Follow the [license and notice requirements](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/docs/licensing.md).
@@ -17,33 +17,23 @@ You do not need to publish your own code. Follow the [license and notice require
 symbols. Check exports against the printed score. See the
 [model evaluation and limitations](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/models/MODEL_CARD.md#evaluation-and-limitations).
 
-## What it supports
-
-- **Scores.** Printed staff notation for piano, violin, and ensembles, including independently barred staves.
-- **Notation.** Notes, chords, rests, clefs, accidentals, ties, slurs, grace notes, and dynamics. Reads repeats and endings, plus changes in key, meter, and tempo.
-- **Playback.** MIDI and synthesized MP3 previews can follow recognized ritardandos, fermatas, tremolos, and piano pedal brackets. [Playback details](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/docs/expressive-performance.md)
-- **Guitar tab.** Six- and seven-string tab with tuning headers, written rhythms including triplets, and effects such as hammer-ons, pull-offs, slides, bends, and vibrato. When rhythm is missing, the reader estimates it. [Tab details](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/docs/guitar-tabs.md) · [Guitar effects](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/docs/tab-gestures.md)
-- **Exports.** MusicXML reconstructs an editable concert-pitch score and leaves out the original page layout and tab placement. JSON includes note events and page geometry. [Export formats](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/docs/integration.md)
-
 ## Install and use
 
-Requires **Python 3.10 or 3.11** and **JDK 17+** on your PATH.
+Requires **Python 3.10 or 3.11** and **Java 17+** on your PATH (or via `JAVA_HOME`).
+
+PyPI publication under the new name is pending. Until it is live, follow
+[the source installation steps](#development) and run the demo command below.
 
 ```sh
-git clone https://github.com/Luckolite/Sheet-Music-Recognition.git
-cd Sheet-Music-Recognition
-python -m venv .venv
+python -m pip install "sheet-music-recognition[pdf,audio]"
+sheet-music-recognition --demo --output scale.json --musicxml scale.musicxml --midi scale.mid --mp3 scale.mp3
 ```
 
-PyPI publication under the new name is pending. Install from source for now.
-Activate with `.venv\Scripts\Activate.ps1` on Windows or
-`source .venv/bin/activate` on macOS/Linux, then build the Java core and install
-with PDF input and MP3 export support:
+| Original sample | Rendered MusicXML |
+| --- | --- |
+| ![Original two-measure scale](examples/scale.png) | ![Engraved MusicXML from the conversion](examples/review/scale-rendered.png) |
 
-```sh
-python scripts/build_java.py
-python -m pip install ".[pdf,audio]"
-```
+[Play or download the MP3](https://raw.githubusercontent.com/Luckolite/Sheet-Music-Recognition/main/examples/review/scale.mp3) · [Inspect the note overlay](examples/review/README.md) · [Download the sample MusicXML](examples/review/scale.musicxml)
 
 ### Read a score
 
@@ -70,6 +60,14 @@ Processing runs locally. See [API and output details](https://github.com/Luckoli
 Python/Java integration and export behavior, or [GitHub releases](https://github.com/Luckolite/Sheet-Music-Recognition/releases)
 for standalone JAR and model downloads.
 
+## What it supports
+
+- **Scores.** Printed staff notation for piano, violin, and ensembles, including independently barred staves.
+- **Notation.** Notes, chords, rests, clefs, accidentals, ties, slurs, grace notes, and dynamics. Reads repeats and endings, plus changes in key, meter, and tempo.
+- **Playback.** MIDI and synthesized MP3 previews can follow recognized ritardandos, fermatas, tremolos, and piano pedal brackets. [Playback details](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/docs/expressive-performance.md)
+- **Guitar tab.** Six- and seven-string tab with tuning headers, written rhythms including triplets, and effects such as hammer-ons, pull-offs, slides, bends, and vibrato. When rhythm is missing, the reader estimates it. [Tab details](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/docs/guitar-tabs.md) · [Guitar effects](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/docs/tab-gestures.md)
+- **Exports.** MusicXML reconstructs an editable concert-pitch score and leaves out the original page layout and tab placement. JSON includes note events and page geometry. [Export formats](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/docs/integration.md)
+
 ## Integration and model
 
 Use `Interpreter` and `write_musicxml` from Python, or `SheetInterpreter.analyze()`
@@ -88,7 +86,15 @@ weights or commercial score scans. See the [model card](https://github.com/Lucko
 
 ## Development
 
-Follow the source installation steps above, then run the checks:
+To build from source, clone the repository and activate a Python 3.10 or 3.11
+virtual environment. With JDK 17+ installed, run:
+
+```sh
+python scripts/build_java.py
+python -m pip install ".[pdf,audio]"
+```
+
+Then run the checks:
 
 ```sh
 python scripts/test_java.py

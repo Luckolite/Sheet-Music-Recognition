@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/Luckolite/Sheet-Music-Recognition/main/docs/schema/score-v1.json",
+  "title": "Sheet Music Recognition score document v1",
+  "type": "object",
+  "required": ["schemaVersion", "inputName", "initialBpm", "initialMeter", "initialKeyFifths", "pages"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "inputName": { "type": "string" },
+    "initialBpm": { "type": "number", "minimum": 15, "maximum": 400 },
+    "initialMeter": {
+      "type": "array",
+      "prefixItems": [
+        { "type": "integer", "minimum": 1, "maximum": 32 },
+        { "enum": [1, 2, 4, 8, 16, 32] }
+      ],
+      "minItems": 2,
+      "items": false
+    },
+    "initialKeyFifths": { "type": "integer", "minimum": -7, "maximum": 7 },
+    "pages": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/page" } }
+  },
+  "$defs": {
+    "page": {
+      "type": "object",
+      "required": ["schemaVersion", "sourcePage", "width", "height", "score", "events", "measureBeats", "totalBeats", "warnings"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "sourcePage": { "type": "integer", "minimum": 1 },
+        "width": { "type": "integer", "minimum": 1 },
+        "height": { "type": "integer", "minimum": 1 },
+        "modelSha256": { "type": "string" },
+        "score": {
+          "type": "object",
+          "required": ["measures", "notes"],
+          "properties": {
+            "measures": { "type": "array", "items": { "$ref": "#/$defs/measure" } },
+            "notes": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["measureIndex"],
+                "properties": { "measureIndex": { "type": "integer", "minimum": 0 } }
+              }
+            },
+            "rests": { "type": "array", "items": { "type": "object" } }
+          }
+        },
+        "events": { "type": "array", "items": { "$ref": "#/$defs/event" } },
+        "measureBeats": { "type": "array", "items": { "type": "number" } },
+        "totalBeats": { "type": "number" },
+        "warnings": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "measure": {
+      "type": "object",
+      "required": ["left", "top", "right", "bottom"],
+      "properties": {
+        "left": { "type": "number" },
+        "top": { "type": "number" },
+        "right": { "type": "number" },
+        "bottom": { "type": "number" }
+      }
+    },
+    "event": {
+      "type": "object",
+      "required": ["measureIndex", "sourceNoteIndex", "startBeat", "durationBeats", "x", "y"],
+      "properties": {
+        "measureIndex": { "type": "integer", "minimum": 0 },
+        "sourceNoteIndex": { "type": "integer", "minimum": 0 },
+        "staffIndex": { "type": "integer", "minimum": 0 },
+        "midi": { "type": "integer" },
+        "kind": { "type": "string" },
+        "startBeat": { "type": "number" },
+        "durationBeats": { "type": "number" },
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "clefInferred": { "type": "boolean" },
+        "durationFallback": { "type": "boolean" }
+      }
+    }
+  }
+}

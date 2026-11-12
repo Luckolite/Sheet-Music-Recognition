@@ -3,11 +3,9 @@
 """Local image/PDF to JSON, with optional MIDI, MP3 and MusicXML exports."""
 import argparse
 import json
-import hashlib
-import io
 from pathlib import Path
 import sys
-from PIL import Image
+from .document import interpret_document
 from .reader import Interpreter
 from .midi import write_midi
 from .musicxml import write_musicxml
@@ -15,7 +13,8 @@ from .musicxml import write_musicxml
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("input", type=Path)
+    parser.add_argument("input", type=Path, nargs="?", help="Image or PDF to recognize")
+    parser.add_argument("--demo", action="store_true", help="Recognize the bundled sample score")
     parser.add_argument("--output", "-o", required=True, type=Path)
     parser.add_argument("--midi", type=Path)
     parser.add_argument("--mp3", type=Path, help="Optional synthesized audio preview")
@@ -31,6 +30,10 @@ def main():
     parser.add_argument("--pages", help="One-based comma-separated PDF pages, in reading order")
     parser.add_argument("--annotations", type=Path, help="JSON list of annotation objects, one per selected page")
     args = parser.parse_args()
+    if args.demo == (args.input is not None):
+        parser.error("Provide an input file or use --demo")
+    if args.demo:
+        args.input = Path(__file__).parent / "data" / "scale.png"
     try:
         meter = tuple(int(n) for n in args.meter.split("/"))
         if len(meter) != 2:
@@ -43,85 +46,26 @@ def main():
         outputs = [p for p in (args.output, args.midi, args.mp3, args.musicxml) if p]
         if len({p.resolve() for p in outputs}) != len(outputs):
             raise ValueError("JSON, MIDI, MP3 and MusicXML outputs must be different files")
-        initial_meter = meter
         for output in outputs:
             if output and output.resolve() == args.input.resolve():
                 raise ValueError("Output must not overwrite the input score")
-        if args.midi and args.midi.resolve() == args.output.resolve():
-            raise ValueError("JSON and MIDI outputs must be different files")
         if args.ffmpeg and not args.mp3:
             raise ValueError("--ffmpeg requires --mp3")
         if args.mp3:
             from .audio import find_ffmpeg
             find_ffmpeg(args.ffmpeg)  # Fail before expensive recognition if unavailable.
+        pages = [int(number) for number in args.pages.split(",")] if args.pages else None
         engine = Interpreter(args.model, args.threads)
-        results = []
-        source_bytes = args.input.read_bytes()
-        source_sha = hashlib.sha256(source_bytes).hexdigest()
-        source_pages = 1
-        key = args.key_fifths
 
-        def process(image, page_number, native_words=None):
-            nonlocal key, meter
-            index = len(results)
-            if annotations is not None and index >= len(annotations):
-                raise ValueError("One annotation object is required for every selected page")
-            print(f"Reading page {page_number}", file=sys.stderr)
-            page = engine.interpret(image, meter=meter, key_fifths=key, width=args.width,
-                                    page_index=page_number - 1,
-                                    annotations=annotations[index] if annotations is not None else ({"tabWords": native_words} if native_words else None))
-            from .clock_context import bind_document
-            score = page["score"]
-            score["clockContextSource"] = bind_document(score.get("clockContextSource"),
-                    len(score["notes"]),len(score["measures"]),len(score.get("rests",[])),
-                    source_sha,page_number-1,source_pages)
-            page["sourcePage"] = page_number
-            results.append(page)
-            if page["score"]["keyChanges"]:
-                key = page["score"]["keyChanges"][-1]["fifths"]
-            if page["score"]["meterChanges"]:
-                last = max(page["score"]["meterChanges"], key=lambda x: x["measureIndex"])
-                meter = (last["numerator"], last["denominator"])
+        def progress(_completed, _total, source_page):
+            print(f"Read page {source_page}", file=sys.stderr)
 
-        if args.input.suffix.lower() == ".pdf":
-            try:
-                import pypdfium2 as pdfium
-            except ImportError as error:
-                raise ValueError("PDF input needs the pdf extra: pip install 'sheet-music-recognition[pdf]'") from error
-            pdf = pdfium.PdfDocument(source_bytes)
-            source_pages = len(pdf)
-            try:
-                pages = [int(n) - 1 for n in args.pages.split(",")] if args.pages else list(range(len(pdf)))
-                if not pages or any(n < 0 or n >= len(pdf) for n in pages):
-                    raise ValueError("PDF page number out of range")
-                if pages != sorted(set(pages)):
-                    raise ValueError("Choose unique PDF pages in increasing reading order")
-                from .pdf_annotations import tab_words, tuning_header
-                first = pdf[0]
-                try:
-                    header = tuning_header(first)
-                finally:
-                    first.close()
-                for number in pages:
-                    page = pdf[number]
-                    bitmap = page.render(scale=2400 / page.get_width())
-                    try:
-                        process(bitmap.to_pil(), number + 1, tab_words(page, header))
-                    finally:
-                        bitmap.close()
-                        page.close()
-            finally:
-                pdf.close()
-        else:
-            if args.pages:
-                raise ValueError("--pages is for PDF input")
-            with Image.open(io.BytesIO(source_bytes)) as image:
-                process(image, 1)
-        if annotations is not None and len(annotations) != len(results):
-            raise ValueError("Annotation count must match the number of selected pages")
-        document = {"schemaVersion": 1, "inputName": args.input.name, "initialBpm": args.bpm, "initialMeter": initial_meter, "initialKeyFifths": args.key_fifths, "pages": results}
-        from .boundary_ties import resolve_boundary_ties
-        document = resolve_boundary_ties(document)
+        document = interpret_document(
+            engine, args.input, pages=pages, meter=meter, bpm=args.bpm,
+            key_fifths=args.key_fifths, width=args.width,
+            annotations=annotations, progress=progress,
+        )
+        results = document["pages"]
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(document, indent=2, allow_nan=False) + "\n", encoding="utf-8")
         if args.midi:

@@ -119,6 +119,20 @@ class Interpreter:
         self.ocr = None
         self.paper_whitening = PaperBackgroundWhitening(threads=threads)
 
+    def interpret_document(self, source, *, pages=None, meter=(4, 4), bpm=120,
+                           key_fifths=0, width=2048, annotations=None, progress=None):
+        """Recognize an image or PDF path and return the CLI's score document.
+
+        PDF page numbers are one-based and strictly increasing. By default,
+        all pages are read. If supplied, progress(completed, total, source_page)
+        runs synchronously after each selected page is recognized.
+        """
+        from .document import interpret_document
+
+        return interpret_document(self, source, pages=pages, meter=meter, bpm=bpm,
+                                  key_fifths=key_fifths, width=width,
+                                  annotations=annotations, progress=progress)
+
     def predict(self, gray):
         if not isinstance(gray, np.ndarray) or gray.ndim != 2 or gray.dtype != np.uint8:
             raise ValueError("Expected a 2D uint8 grayscale array")

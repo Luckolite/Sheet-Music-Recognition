@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sheet Music Recognition · Score review</title>
+  <link rel="stylesheet" href="review.css">
+  <script src="review.js" defer></script>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Score review</h1>
+      <p>Inspect recognized notes on the source page and find measures that used a clef or duration fallback.</p>
+    </header>
+    <div class="controls">
+      <label>Recognition JSON <input id="score" type="file" accept=".json,application/json"></label>
+      <label>Source page image <input id="source" type="file" accept="image/*"></label>
+      <label>Page <select id="page" disabled></select></label>
+    </div>
+    <p id="status" role="status">Loading the example…</p>
+    <div class="panels">
+    <section aria-labelledby="source-title">
+      <h2 id="source-title">Source and detections</h2>
+      <div id="preview" class="preview" hidden>
+        <img id="image" alt="Source sheet music">
+        <div id="overlay"></div>
+      </div>
+      <p id="note" aria-live="polite">Select a note to see its pitch and timing.</p>
+      <ul id="review"></ul>
+    </section>
+    <section id="sample-exports" aria-labelledby="export-title">
+      <h2 id="export-title">Rendered MusicXML</h2>
+      <div class="preview"><img src="scale-rendered.png" alt="Engraved result of the sample conversion"></div>
+      <audio controls preload="none" src="scale.mp3" aria-label="Synthesized playback of the sample score"></audio>
+      <p class="downloads"><a href="scale.musicxml" download>MusicXML</a> <a href="scale.mid" download>MIDI</a> <a href="scale.json" download>JSON</a></p>
+    </section>
+    </div>
+  </main>
+</body>
+</html>

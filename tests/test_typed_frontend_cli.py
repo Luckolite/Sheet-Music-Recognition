@@ -104,6 +104,22 @@ class TypedFrontendCliTests(unittest.TestCase):
         self.assertEqual([2,6],[p['sourcePage'] for p in value['pages']])
         self.assertEqual([1,5],[p['score']['slurSource']['candidates'][0]['start']['pageIndex']
                               for p in value['pages']])
+        progress = []
+        with patch.object(reader,'grayscale',return_value=np.full((8,8),255,dtype=np.uint8)), \
+             patch.object(reader.subprocess,'run',side_effect=self.bridge_run):
+            document = self.engine.interpret_document(
+                self.image, pages=[2, 6], annotations=[{}, {}],
+                progress=lambda *event: progress.append(event),
+            )
+        self.assertEqual(value, document)
+        self.assertEqual([(1, 2, 2), (2, 2, 6)], progress)
+        with patch.object(self.engine, 'interpret') as interpret:
+            for selection in ([], [0], [7], [2, 2], [6, 2], [True]):
+                with self.assertRaises(ValueError):
+                    self.engine.interpret_document(self.image, pages=selection)
+            with self.assertRaisesRegex(ValueError, 'Annotation count'):
+                self.engine.interpret_document(self.image, pages=[2, 6], annotations=[{}])
+            interpret.assert_not_called()
     def test_invalid_page_identity_rejects_before_pixels_or_inference(self):
         with patch.object(reader,'grayscale') as pixels:
             for page in (-1,100001,True,1.5,'2'):
