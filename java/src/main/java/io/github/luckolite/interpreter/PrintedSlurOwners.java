@@ -128,7 +128,11 @@ final class PrintedSlurOwners {
         }
     }
 
-    private record Candidate(Location head, double distance) {}
+    private record Candidate(Location head, double distance, boolean wideChord) {
+        Candidate(Location head, double distance) {
+            this(head, distance, false);
+        }
+    }
 
     private PrintedSlurOwners() {}
 
@@ -289,6 +293,12 @@ final class PrintedSlurOwners {
         if (ambiguous(start)) return new Binding(Status.AMBIGUOUS_START, Optional.empty());
         if (ambiguous(end)) return new Binding(Status.AMBIGUOUS_END, Optional.empty());
         Location a = start.get(0).head(), b = end.get(0).head();
+        if (start.get(0).wideChord()
+                && !hasFacingEndpoint(bow.end(), b, bow.above(), heads, gray, width, height, track))
+            return new Binding(Status.NO_END_OWNER, Optional.empty());
+        if (end.get(0).wideChord()
+                && !hasFacingEndpoint(bow.start(), a, bow.above(), heads, gray, width, height, track))
+            return new Binding(Status.NO_START_OWNER, Optional.empty());
         if (a.owner() == b.owner()) return new Binding(Status.SAME_OWNER, Optional.empty());
         if (a.staffIndex() != b.staffIndex() || a.staffCount() != b.staffCount())
             return new Binding(Status.DIFFERENT_LANES, Optional.empty());
@@ -438,16 +448,20 @@ final class PrintedSlurOwners {
         float gap = track.at(cap.x())[1];
         var first = values.get(0).head();
         Location outer = first;
+        boolean wideChord = false;
         for (var candidate : values) {
             if (candidate.distance() - values.get(0).distance() >= .2) break;
             var head = candidate.head();
             if (head.owner() == first.owner()) continue;
+            float separation = Math.abs(head.y() - first.y()) / gap;
             if (head.grace() || first.grace() || head.staffIndex() != first.staffIndex()
                     || head.staffCount() != first.staffCount()
                     || Math.abs(head.x() - first.x()) > gap * .18f
-                    || Math.abs(head.y() - first.y()) < gap * .7f
-                    || Math.abs(head.y() - first.y()) > gap * 2.5f)
+                    || separation < .7f || separation > 4.75f
+                    || separation > 2.5f
+                            && !sharedChordStem(gray, width, height, first, head, gap))
                 return values;
+            wideChord |= separation > 2.5f;
             if (above ? head.y() < outer.y() : head.y() > outer.y()) outer = head;
         }
         double clearance = (above ? outer.y() - cap.y() : cap.y() - outer.y()) / gap;
@@ -455,7 +469,36 @@ final class PrintedSlurOwners {
                 || !headBody(gray, width, height, outer, gap)
                 || clearance > 1.65 && !shaftSupports(cap, outer, above, gray, width, height, gap,
                         values.stream().map(Candidate::head).toList())) return values;
-        return List.of(new Candidate(outer, values.get(0).distance()));
+        return List.of(new Candidate(outer, values.get(0).distance(), wideChord));
+    }
+
+    private static boolean hasFacingEndpoint(
+            PrintedSlurContours.Point cap, Location head, boolean above,
+            List<? extends Location> heads, byte[] gray, int width, int height,
+            StaffPitchTrack track) {
+        float gap = track.at(cap.x())[1];
+        float clearance = above ? head.y() - cap.y() : cap.y() - head.y();
+        return clearance <= 4 * gap
+                || shaftSupports(cap, head, above, gray, width, height, gap, heads);
+    }
+
+    private static boolean sharedChordStem(
+            byte[] gray, int width, int height, Location a, Location b, float gap) {
+        if (!headBody(gray, width, height, a, gap) || !headBody(gray, width, height, b, gap))
+            return false;
+        Location high = a.y() < b.y() ? a : b;
+        Location low = high == a ? b : a;
+        return stemReaches(gray, width, height, high, low, gap, -1)
+                || stemReaches(gray, width, height, low, high, gap, 1);
+    }
+
+    private static boolean stemReaches(
+            byte[] gray, int width, int height, Location from, Location to, float gap,
+            int direction) {
+        var stem = PairedTremoloInk.stem(gray, width, height, from.x(), from.y(), gap, direction);
+        if (stem == null || direction * (to.y() - stem.endY()) < 0) return false;
+        float offset = direction * (stem.x() - to.x());
+        return offset >= gap * .2f && offset <= gap * .7f;
     }
 
     /** Both facing shaft tips must independently surround a compact returning bow. */
