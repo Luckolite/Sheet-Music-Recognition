@@ -430,14 +430,7 @@ final class OctaveMarkDetector {
                 words.addAll(ledgerAttachedWords(gray, width, height, boxes, gap, below));
                 for (var box : bareBoxes) {
                     if (centeredInStaff(box, staffs)) continue;
-                    int bw = box.right - box.left + 1, bh = box.bottom - box.top + 1;
-                    if (bw < gap * .3f
-                            || bw > gap * 1.6f
-                            || bh < gap * .65f
-                            || bh > gap * 2.3f
-                            || bh < bw * .9f
-                            || OctaveClefDigit.holes(gray, width, box.left, box.top, bw, bh) != 2)
-                        continue;
+                    if (!bareEightShape(gray, width, box, gap)) continue;
                     float dashRight =
                             dashEnd(
                                     gray,
@@ -894,6 +887,30 @@ final class OctaveMarkDetector {
                 && Math.abs(centers[0] - centers[2]) < gap * .65f;
     }
 
+    private static boolean bareEightShape(byte[] gray, int width, InkBox box, float gap) {
+        int height = box.bottom - box.top + 1;
+        int span = box.right - box.left + 1;
+        if (height < gap * .65f || height > gap * 2.3f || span < gap * .3f) return false;
+        int maxWidth = (int) Math.min(gap * 1.6f, height / .9f);
+        if (span <= maxWidth) {
+            return OctaveClefDigit.holes(gray, width, box.left, box.top, span, height) == 2;
+        }
+        if (span - maxWidth > gap * .75f) return false;
+        // The first dash may touch the eight. Only a thin right-hand extension can be trimmed.
+        int top = box.bottom, bottom = box.top;
+        for (int y = box.top; y <= box.bottom; y++) {
+            for (int x = box.left + maxWidth; x <= box.right; x++) {
+                if ((gray[y * width + x] & 255) < 165) {
+                    top = Math.min(top, y);
+                    bottom = Math.max(bottom, y);
+                }
+            }
+        }
+        return top <= bottom
+                && bottom - top + 1 <= gap * .32f
+                && OctaveClefDigit.holes(gray, width, box.left, box.top, maxWidth, height) == 2;
+    }
+
     private static List<InkBox> attachedEightBoxes(
             byte[] gray, int w, int h, int top, int bottom, float gap) {
         int band = bottom - top + 1;
@@ -1239,6 +1256,57 @@ final class OctaveMarkDetector {
                 if (direction != 0 && candidate != direction) return 0;
                 direction = candidate;
             }
+        if (direction != 0 || dashRight < 0) return direction;
+        return dottedHookDirection(gray, width, height, end, y1, y2, gap);
+    }
+
+    private static int dottedHookDirection(
+            byte[] gray, int width, int height, int end, int top, int bottom, float gap) {
+        int direction = 0;
+        int radius = Math.max(1, Math.round(gap * .2f));
+        for (int x = Math.max(2, end - radius); x <= Math.min(width - 1, end + radius); x++) {
+            for (int y = top; y <= bottom; y++) {
+                if (!endsHorizontalDashes(gray, width, x, y, gap)) continue;
+                for (int step = -1; step <= 1; step += 2) {
+                    if (!hasDottedHook(gray, width, height, x, y, step, gap)) continue;
+                    if (direction != 0 && direction != step) return 0;
+                    direction = step;
+                }
+            }
+        }
         return direction;
+    }
+
+    private static boolean endsHorizontalDashes(byte[] gray, int width, int x, int y, float gap) {
+        int row = y * width;
+        int left = Math.max(1, x - Math.round(gap * 1.2f));
+        int column = x;
+        while (column >= left && (gray[row + column] & 255) < 165) column--;
+        if (x - column < 2 || column < left) return false;
+        while (column >= left && (gray[row + column] & 255) >= 165) column--;
+        return column >= left && (gray[row + column - 1] & 255) < 165;
+    }
+
+    private static boolean hasDottedHook(
+            byte[] gray, int width, int height, int x, int y, int step, float gap) {
+        int maxRun = Math.max(3, Math.round(gap * .45f));
+        int minInk = Math.max(2, Math.round(gap * .1f));
+        int limit = y + step * Math.round(gap * 2.25f);
+        if (limit < 0 || limit >= height) return false;
+        int row = y;
+        while (row != limit && (gray[row * width + x] & 255) < 165) row += step;
+        if (Math.abs(row - y) > maxRun) return false;
+        // Three compact, separated dashes must continue from the horizontal chain's last dash.
+        for (int dash = 0; dash < 3; dash++) {
+            int start = row;
+            while (row != limit && (gray[row * width + x] & 255) >= 165) row += step;
+            int space = Math.abs(row - start);
+            if (space < 2 || space > maxRun || row == limit) return false;
+            start = row;
+            while (row != limit && (gray[row * width + x] & 255) < 165) row += step;
+            int ink = Math.abs(row - start);
+            if (ink < minInk || ink > maxRun || row == limit) return false;
+        }
+        return true;
     }
 }

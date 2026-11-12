@@ -48,6 +48,18 @@ public class BareOctaveSpanTest {
     }
 
     @Test
+    public void bareEightCanTouchTheFirstDash() {
+        mark(90, true);
+        for (int x = 64; x <= 76; x++) gray[93 * W + x] = 0;
+        var result =
+                apply(
+                        List.of(note(40, 170), note(100, 170), note(180, 170), note(240, 170)),
+                        List.of(new PlayingTechniqueDetector.Staff(150, 198, 12, 0, 1)));
+        assertEquals(
+                List.of(0, 1, 1, 0), result.stream().map(ScoreNoteEvent::octaveShift).toList());
+    }
+
+    @Test
     public void bareEightBelowStaffLowersTheOctave() {
         mark(220, true);
         var result =
@@ -76,6 +88,21 @@ public class BareOctaveSpanTest {
                                 new PlayingTechniqueDetector.Staff(100, 148, 12, 0, 1),
                                 new PlayingTechniqueDetector.Staff(250, 298, 12, 0, 1)));
         assertEquals(List.of(0, 1), result.stream().map(ScoreNoteEvent::octaveShift).toList());
+    }
+
+    @Test
+    public void dottedEndHookOwnsTheFartherStaffItPointsTo() {
+        mark(155, true);
+        for (int y : new int[] {163, 169, 175})
+            for (int dy = 0; dy < 3; dy++)
+                for (int x = 205; x <= 206; x++) gray[(y + dy) * W + x] = 0;
+        var result =
+                apply(
+                        List.of(note(100, 108), note(100, 255), note(225, 255)),
+                        List.of(
+                                new PlayingTechniqueDetector.Staff(80, 128, 12, 0, 1),
+                                new PlayingTechniqueDetector.Staff(235, 283, 12, 0, 1)));
+        assertEquals(List.of(0, 1, 0), result.stream().map(ScoreNoteEvent::octaveShift).toList());
     }
 
     @Test

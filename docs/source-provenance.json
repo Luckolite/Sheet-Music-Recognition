@@ -5135,16 +5135,17 @@
     },
     "OctaveMarkDetector.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/OctaveMarkDetector.java",
-      "source_sha256": "42e1c6e878836c26ffe0a06bcf457cd4354c90c781a879df63075c3b96602628",
-      "source_normalized_sha256": "42e1c6e878836c26ffe0a06bcf457cd4354c90c781a879df63075c3b96602628",
+      "source_sha256": "9f6fd065a3e84dc2886ff6152923804d41658e2a64999ca5765a2695ab75d62b",
+      "source_normalized_sha256": "e9f5ebd4785d0158cfcf276a42a6a25a1a295717a6aaf10853488d3559d33ede",
       "review_note": "Intrinsic octave bass clefs, complete contested ledger ownership, grace accidentals, independently rooted beam/slur separation, and below-staff full octave-word ownership. Original procedural/licensed-font regressions; no private score pixels, model changes or song-specific rules.",
-      "reviewed_source_state": "working-tree",
-      "standalone_sha256": "22d6c9875750183ee2d696b8a302a5868e693a4977d7cdbc17878b9ab7b90419",
-      "reviewed_app_commit": "bfdbf8ffd34400e72afacb03560270a4d888e0b6",
-      "scoped_reviewed_app_commit": "bfdbf8ffd34400e72afacb03560270a4d888e0b6",
+      "reviewed_source_state": "committed",
+      "standalone_sha256": "0e777cdec0f55b2334b26ea8143b5705e9ef0d9e0daf9bdc281fa3492707afef",
+      "reviewed_app_commit": "18fc7383d4cbf646494ee2b9496137b4a59c3b5c",
+      "scoped_reviewed_app_commit": "18fc7383d4cbf646494ee2b9496137b4a59c3b5c",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/OctaveMarkDetector.java",
       "license": "Apache-2.0",
-      "staff_expression_review": "Printed adjacent staff rules resolve interstaff accent ownership; exact accepted octave-leader ink cannot also be tenuto. Missing/ambiguous evidence preserves prior behavior. Original procedural and previously licensed generated glyph fixtures; no commercial score assets."
+      "staff_expression_review": "Printed adjacent staff rules resolve interstaff accent ownership; exact accepted octave-leader ink cannot also be tenuto. Missing/ambiguous evidence preserves prior behavior. Original procedural and previously licensed generated glyph fixtures; no commercial score assets.",
+      "dotted_bracket_review": "A dotted end hook establishes the owning staff. A thin attached first dash can be trimmed when testing the numeral shape. The remaining dash chain and both enclosed counters are required. Both namespaces use equivalent source. Procedural regressions contain no private score pixels."
     },
     "OctaveWordShapes.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/OctaveWordShapes.java",
