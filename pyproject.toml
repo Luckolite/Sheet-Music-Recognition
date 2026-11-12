@@ -3,7 +3,7 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "sheet-music-recognition"
+name = "score-reader"
 version = "0.2.0"
 description = "Experimental offline optical music recognition (OMR): sheet-music images and PDFs to MusicXML, MIDI, JSON and MP3, with Python and Java"
 readme = "README.md"
@@ -21,6 +21,8 @@ pdf = ["pypdfium2>=4.30,<5"]
 audio = ["imageio-ffmpeg>=0.5,<0.7"]
 
 [project.scripts]
+score-reader = "sheet_music_recognition.cli:main"
+sheet-interpreter = "sheet_music_recognition.cli:main"
 sheet-music-recognition = "sheet_music_recognition.cli:main"
 
 [project.urls]

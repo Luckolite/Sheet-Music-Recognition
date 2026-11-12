@@ -42,7 +42,7 @@ jobs:
           import os, tomllib
           with open('pyproject.toml', 'rb') as stream:
               project = tomllib.load(stream)['project']
-          assert project['name'] == 'sheet-music-recognition'
+          assert project['name'] == 'score-reader'
           expected = os.environ['REQUESTED_VERSION'] or os.environ['RELEASE_TAG'].removeprefix('v')
           assert project['version'] == expected, 'Release and package versions differ'
           PY
@@ -58,9 +58,12 @@ jobs:
           python -m pip install "$wheel" twine
           python -m twine check --strict "$wheel"
           python -m pip check
+          score-reader --help
           sheet-music-recognition --help
-          python -m sheet_music_recognition.cli --help
-          sheet-music-recognition --demo --output base-install-smoke.json --midi base-install-smoke.mid --musicxml base-install-smoke.musicxml
+          sheet-interpreter --help
+          python -m sheet_interpreter.cli --help
+          python -c 'from sheet_interpreter import Interpreter; from sheet_music_recognition import Interpreter as Current; assert Interpreter is Current'
+          score-reader --demo --output base-install-smoke.json --midi base-install-smoke.mid --musicxml base-install-smoke.musicxml
           python -m pip install "$wheel[pdf,audio]"
           python scripts/smoke_test.py
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -75,7 +78,7 @@ jobs:
     timeout-minutes: 10
     environment:
       name: pypi
-      url: https://pypi.org/project/sheet-music-recognition/
+      url: https://pypi.org/project/score-reader/
     permissions:
       id-token: write
     steps:

@@ -58,7 +58,7 @@ def interpret_document(engine, source, *, pages=None, meter=(4, 4), bpm=120,
         try:
             import pypdfium2 as pdfium
         except ImportError as error:
-            raise ValueError("PDF input needs the pdf extra: pip install 'sheet-music-recognition[pdf]'") from error
+            raise ValueError("PDF input needs the pdf extra: pip install 'score-reader[pdf]'") from error
         from .pdf_annotations import tab_words, tuning_header
 
         pdf = pdfium.PdfDocument(source_bytes)

@@ -3,7 +3,7 @@
 Convert sheet-music images and scanned PDFs to **MusicXML, MIDI, JSON and MP3**
 with offline optical music recognition (OMR). Sheet-Music-Recognition includes downloadable
 model weights, a Java decoder and a Python API and command-line tool, available
-as **`sheet-music-recognition`** (command) and **`sheet_music_recognition`** (Python import).
+as **`score-reader`** (PyPI package and command) and **`sheet_music_recognition`** (Python import).
 
 [![Build and test](https://github.com/Luckolite/Sheet-Music-Recognition/actions/workflows/ci.yml/badge.svg)](https://github.com/Luckolite/Sheet-Music-Recognition/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/LICENSE)
@@ -18,8 +18,8 @@ You do not need to publish your own code. Follow the [license and notice require
 Requires **Python 3.10 or 3.11** and **Java 17+** on your PATH (or via `JAVA_HOME`).
 
 ```sh
-python -m pip install "sheet-music-recognition[pdf,audio]"
-sheet-music-recognition --demo --output scale.json --musicxml scale.musicxml --midi scale.mid --mp3 scale.mp3
+python -m pip install "score-reader[pdf,audio]"
+score-reader --demo --output scale.json --musicxml scale.musicxml --midi scale.mid --mp3 scale.mp3
 ```
 
 | Original sample | Rendered MusicXML |
@@ -31,14 +31,14 @@ sheet-music-recognition --demo --output scale.json --musicxml scale.musicxml --m
 ### Read a score
 
 ```sh
-sheet-music-recognition score.png --output score.json --midi preview.mid --musicxml score.musicxml
+score-reader score.png --output score.json --midi preview.mid --musicxml score.musicxml
 ```
 
 Use an image or PDF as input. JSON output is required; MIDI, MusicXML and MP3
 exports are optional. For example, with the extras installed:
 
 ```sh
-sheet-music-recognition score.pdf --output score.json --mp3 preview.mp3
+score-reader score.pdf --output score.json --mp3 preview.mp3
 ```
 
 MP3 previews use a basic synthesized tone. The audio extra supplies an FFmpeg
@@ -46,7 +46,7 @@ encoder. You can also use an existing FFmpeg installation.
 
 Use `--pages 1,2,3` to select PDF pages, `--meter 3/4` for the initial meter,
 `--bpm 90` for the initial quarter-note tempo, or `--key-fifths 2` for two sharps.
-The default meter and tempo are 4/4 and 120 BPM. Run `sheet-music-recognition --help`
+The default meter and tempo are 4/4 and 120 BPM. Run `score-reader --help`
 for all options.
 
 Processing runs locally. See [API and output details](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/docs/integration.md) for
