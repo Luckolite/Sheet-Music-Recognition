@@ -15,46 +15,48 @@ You do not need to publish your own code. Follow the [license and notice require
 
 ## Install and use
 
-To try sheet-music recognition on Android, import a score image or PDF and generate
-a play-along track. [Music Sheets on Google Play](https://play.google.com/store/apps/details?id=com.musicsheets)
+### Run the demo
 
 Requires **Python 3.10 or 3.11** and **Java 17+** on your PATH (or via `JAVA_HOME`).
 
 ```sh
 python -m pip install "score-reader[pdf,audio]"
-score-reader --demo --output scale.json --musicxml scale.musicxml --midi scale.mid --mp3 scale.mp3
+score-reader --demo -o scale.json --musicxml scale.musicxml --midi scale.mid --mp3 scale.mp3
 ```
 
-| Original sample | Rendered MusicXML |
+| Input image | Recognized score |
 | --- | --- |
 | ![Original two-measure scale](https://raw.githubusercontent.com/Luckolite/Sheet-Music-Recognition/main/examples/scale.png) | ![Engraved MusicXML from the conversion](https://raw.githubusercontent.com/Luckolite/Sheet-Music-Recognition/main/examples/review/scale-rendered.png) |
 
-[Play or download the MP3](https://raw.githubusercontent.com/Luckolite/Sheet-Music-Recognition/main/examples/review/scale.mp3) · [Inspect the note overlay](https://github.com/Luckolite/Sheet-Music-Recognition/tree/main/examples/review) · [Download the sample MusicXML](https://raw.githubusercontent.com/Luckolite/Sheet-Music-Recognition/main/examples/review/scale.musicxml)
+[Listen to the preview](https://raw.githubusercontent.com/Luckolite/Sheet-Music-Recognition/main/examples/review/scale.mp3) · [Inspect detected notes](https://github.com/Luckolite/Sheet-Music-Recognition/tree/main/examples/review) · [Download MusicXML](https://raw.githubusercontent.com/Luckolite/Sheet-Music-Recognition/main/examples/review/scale.musicxml)
 
 ### Read a score
 
 ```sh
-score-reader score.png --output score.json --midi preview.mid --musicxml score.musicxml
+# Image to MusicXML and MIDI
+score-reader score.png -o score.json --musicxml score.musicxml --midi score.mid
+
+# PDF to an audio preview
+score-reader score.pdf -o score.json --mp3 score.mp3
 ```
 
-Use an image or PDF as input. JSON output is required; MIDI, MusicXML and MP3
-exports are optional. For example, with the extras installed:
+Processing runs locally. Every conversion writes JSON. Add `--musicxml`,
+`--midi`, or `--mp3` for the exports you need. MP3 uses a synthesized tone
+and requires FFmpeg, which the `audio` extra supplies.
 
-```sh
-score-reader score.pdf --output score.json --mp3 preview.mp3
-```
+| Option | What it sets |
+| --- | --- |
+| `--pages 1,3` | PDF pages to read |
+| `--meter 3/4` | Initial meter (default 4/4) |
+| `--bpm 90` | Initial quarter-note tempo (default 120 BPM) |
+| `--key-fifths 2` | Starting key signature with two sharps |
 
-MP3 previews use a basic synthesized tone. The audio extra supplies an FFmpeg
-encoder. You can also use an existing FFmpeg installation.
+Run `score-reader --help` for all options. [API and output details](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/docs/integration.md) · [Standalone JAR and model downloads](https://github.com/Luckolite/Sheet-Music-Recognition/releases)
 
-Use `--pages 1,2,3` to select PDF pages, `--meter 3/4` for the initial meter,
-`--bpm 90` for the initial quarter-note tempo, or `--key-fifths 2` for two sharps.
-The default meter and tempo are 4/4 and 120 BPM. Run `score-reader --help`
-for all options.
+### Try it on Android
 
-Processing runs locally. See [API and output details](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/docs/integration.md) for
-Python/Java integration and export behavior, or [GitHub releases](https://github.com/Luckolite/Sheet-Music-Recognition/releases)
-for standalone JAR and model downloads.
+Import the sample PDF or a score of your own into Music Sheets and generate a
+play-along track. [Music Sheets on Google Play](https://play.google.com/store/apps/details?id=com.musicsheets) · [Sample PDF](https://raw.githubusercontent.com/Luckolite/Sheet-Music-Recognition/main/examples/scale.pdf)
 
 ## What it supports
 
