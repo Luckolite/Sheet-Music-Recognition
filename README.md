@@ -77,43 +77,4 @@ The bundled v4 model comes from our own synthetic training lineage, without pret
 weights or commercial score scans. See the [model card](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/models/MODEL_CARD.md), [evaluation](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/models/evaluation.json),
 [training guide](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/training/README.md) and [source origins](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/docs/source-provenance.md).
 
-## Development
-
-To build from source, clone the repository and activate a Python 3.10 or 3.11
-virtual environment. With JDK 17+ installed, run:
-
-```sh
-python scripts/build_java.py
-python -m pip install ".[pdf,audio]"
-```
-
-Then run the checks:
-
-```sh
-python scripts/test_java.py
-python -m unittest discover -s tests
-python scripts/smoke_test.py
-```
-
-Use `python scripts/test_java.py --jobs 4` in place of the serial Java test
-command to run every class once across four isolated JVMs. Each parallel JVM
-defaults to a 512 MiB heap; per-batch logs and results are saved under
-`build/test-parallel`. A failed batch makes the command fail.
-
-Bug reports and contributions are welcome. Use shareable examples and keep private logs
-and commercial scores out of public posts. See [CONTRIBUTING.md](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/CONTRIBUTING.md).
-
-### Pickup caller integration regression
-
-After building the Java core, run the original numeric/content cases against the
-actual standalone pickup call:
-
-```sh
-python scripts/check_pickup_ingress.py --public . --classpath src/sheet_music_recognition/interpreter.jar --out build/pickup-ingress
-```
-
-Use a new output directory on each run. Maintainers can add `--app <app-worktree>`
-and use its matching core classpath to check the exact Android and native caller
-expressions too. This compiles source slices with current helper sources; it does
-not run Android, image recognition or a packaged worker. The fixtures contain no
-score images or private data.
+See the [contributor guide](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/CONTRIBUTING.md) for source builds, tests, and bug reports.

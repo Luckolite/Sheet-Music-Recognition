@@ -6,9 +6,17 @@ For a fix, add a regression when practical. Use rules that work across scores an
 
 Contributions are under Apache-2.0. By submitting material, you confirm you have the rights to contribute it under that license.
 
-## Run the checks
+## Build from source
 
-Follow the [source install](README.md#install-and-use) first.
+Clone the repository and activate a Python 3.10 or 3.11 virtual environment.
+With JDK 17+ installed, run:
+
+```sh
+python scripts/build_java.py
+python -m pip install ".[pdf,audio]"
+```
+
+## Run the checks
 
 While iterating, select exact Java test class names with repeatable `--test`
 arguments. For example, run `python scripts/test_java.py --test ShortFinalStaffTest`.
@@ -21,6 +29,10 @@ python -m unittest discover -s tests
 python scripts/smoke_test.py
 python scripts/verify_package.py
 ```
+
+`--jobs 4` runs the Java tests across four isolated JVMs with 512 MiB heaps
+by default. Logs and results are saved under `build/test-parallel`. Omit
+`--jobs` to run the suite serially.
 
 For changes to the pickup-measure caller, also run this after building the JAR. Use a fresh output directory each time.
 
