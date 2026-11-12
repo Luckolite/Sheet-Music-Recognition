@@ -16,8 +16,10 @@ section, .controls { background: white; border: 1px solid #ced7ce; border-radius
 .controls { display: flex; flex-wrap: wrap; gap: 1rem 2rem; }
 label { display: grid; gap: .45rem; font-weight: 600; }
 input, select { max-width: 100%; font: inherit; font-size: .85rem; }
-.preview { position: relative; }
+.preview { overflow: hidden; }
 .preview img { width: 100%; height: auto; display: block; }
+.source-frame { position: relative; }
+.preview.sample .source-frame { width: 265%; }
 #overlay { position: absolute; inset: 0; pointer-events: none; }
 .measure { position: absolute; border: 2px dashed #9b5516; background: #f5b77e22; }
 .marker {

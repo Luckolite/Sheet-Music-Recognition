@@ -5,6 +5,7 @@
 const element = (id) => document.getElementById(id);
 const pageSelect = element("page");
 const image = element("image");
+const preview = element("preview");
 const status = element("status");
 const overlay = element("overlay");
 const review = element("review");
@@ -23,7 +24,8 @@ function fallbackReasons(event) {
 function render() {
   const page = score.pages[Number(pageSelect.value)];
   const source = usingSample ? "../scale.png" : uploadedImages.get(page.sourcePage);
-  element("preview").hidden = !source;
+  preview.hidden = !source;
+  preview.classList.toggle("sample", usingSample);
   if (source) image.src = source;
   overlay.replaceChildren();
   review.replaceChildren();
@@ -57,7 +59,9 @@ function render() {
     const pitch = event.midi == null ? "Unpitched event" : `MIDI ${event.midi}`;
     const detail = [
       pitch, `measure ${event.measureIndex + 1}`,
-      `onset ${event.startBeat} beats`, `duration ${event.durationBeats} beats`, ...reasons,
+      `onset ${event.startBeat} beats`,
+      `duration ${event.durationBeats} ${event.durationBeats === 1 ? "beat" : "beats"}`,
+      ...reasons,
     ].join(" · ");
     const marker = document.createElement("button");
     marker.className = reasons.length ? "marker review" : "marker";
