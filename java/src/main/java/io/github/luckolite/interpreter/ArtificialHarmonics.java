@@ -160,10 +160,14 @@ final class ArtificialHarmonics {
         // The shaft and adjacent rails can skew the outside contour. The closed counter
         // still has to occupy the fourth's position, inside half a staff step.
         float radius = gap * .7f, tolerance = gap * .24f;
+        int shift = Math.round(gap * .36f);
+        float pixelCenter = (float) Math.floor(stoppedY) + .5f;
         return labels != null && labels.length == (long) w * h
                 && enclosedCounter(gray, w, h, x, touchY, radius, tolerance)
                 && !enclosedCounter(gray, w, h, x, stoppedY - gap, radius, tolerance)
-                && symbolDiamond(labels, gray, w, h, x, touchY + Math.round(gap * .36f), gap);
+                && (symbolDiamond(labels, gray, w, h, x, touchY + shift, gap)
+                        || symbolDiamond(labels, gray, w, h, x,
+                                pixelCenter - 1.5f * gap + shift, gap));
     }
 
     /** An unbeamed touch must share the printed shaft with the stopped quarter note. */

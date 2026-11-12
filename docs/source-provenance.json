@@ -1618,6 +1618,12 @@
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/ActiveScoreNotes.java"
     },
     "ArtificialHarmonics.java": {
+      "diamond_pixel_center_review": {
+        "reviewed_app_commit": "7ea4db88c30302d0db185ad5c11ce7ced2d75fdf",
+        "app_blob_sha256": "73dff320d66b9abf6e101a2777f0ba96c9b318e97773392b5681c3511000ffae",
+        "standalone_lf_sha256": "875ad4473ae7d9d0932064b3c4c1edb2476b38cc83b3e913f156f80bf7a683fb",
+        "scope": "Alternate pixel-center sampling for the guarded crowded-diamond proof. Production diffs match."
+      },
       "crowded_diamond_counter_review": {
         "reviewed_app_commit": "691e1654871aba1bdde22aedee95eb90e069165e",
         "app_blob_sha256": "495f8c219cb57aeb4066a86b492eb1b241710542d4f8788a73da950cc89e943b",
