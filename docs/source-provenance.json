@@ -4417,6 +4417,14 @@
       "current_source_review": "Reviewed current source and standalone counterpart for the cumulative source-bound beam, notation, key, articulation and bounded context batch. Original procedural regressions only; physical source observations and model facts do not establish complete musical authority."
     },
     "MeasureNumberReconciler.java": {
+      "unanchored_split_review": {
+        "reviewed_app_commit": "5bebe8ff6a799eaaeb6919f937f64741bb71d6e2",
+        "app_blob_sha256": {
+          "app/src/main/java/com/musicsheets/app/pdf/MeasureNumberReconciler.java": "e0ebe97b5ac464e537f3468a191b0be1f5599d78ecc070fc7a41c3098d610450"
+        },
+        "standalone_lf_sha256": "0c5d288e7d232d67615a8a6adbc48595fd78e765c5c117eb54fc369f216ba110",
+        "scope": "Unanchored measure-count split guard and raster wiring. Broader source differences remain subject to review."
+      },
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/MeasureNumberReconciler.java",
       "source_sha256": "56aefe6bbf5386667dbb3d86f9fa07e511dc3e3487bcc067acc1a61abe4006c2",
       "reviewed_app_commit": "21815e0e7f8fc53e0cc41b9667eae3f9be85d4f7",
@@ -6397,6 +6405,14 @@
       "reviewed_app_commit": "28889c6160420f03f1ce778e652db95fef25b034"
     },
     "PrintedMeasureRhythmGuard.java": {
+      "unanchored_split_review": {
+        "reviewed_app_commit": "5bebe8ff6a799eaaeb6919f937f64741bb71d6e2",
+        "app_blob_sha256": {
+          "app/src/main/java/com/musicsheets/app/pdf/PrintedMeasureRhythmGuard.java": "033261ee39c7aae301662a5023af5f7749da9f003d4f71476871734f69ff2a20"
+        },
+        "standalone_lf_sha256": "74d50c0927e56c4f6dd1d9510946b858b8e8075bfb1bcde76613406ec036f5f6",
+        "scope": "Unanchored measure-count split guard and raster wiring. Broader source differences remain subject to review."
+      },
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/PrintedMeasureRhythmGuard.java",
       "source_sha256": "e1e19d5ec75b7fac594c292acd5f63781543053692f6d7716cde96d8209316e4",
       "reviewed_app_commit": "77c8e3ca3217affaaddcc4a0762cb18298e658f8",
@@ -8675,6 +8691,15 @@
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/SharedStemBeamOwnership.java"
     },
     "SheetInterpreter.java": {
+      "unanchored_split_review": {
+        "reviewed_app_commit": "5bebe8ff6a799eaaeb6919f937f64741bb71d6e2",
+        "app_blob_sha256": {
+          "app/src/main/java/com/musicsheets/app/pdf/OmrMeasureAnalyzer.java": "cdf5f473523cc302470186cf9b26a1f9199aa434c5c3be2832be58955c2ea3ad",
+          "tools/native-worker/NativePageGuide.java": "cdb7cab6dbb946f8252f77c1a0e59f962a30e34e1f9651428cc80b268f57d8a7"
+        },
+        "standalone_lf_sha256": "ea9a1427a00b8f91265e86718d833783bd5557d427b6bbb0965ab0f8a08fa321",
+        "scope": "Unanchored measure-count split guard and raster wiring. Broader source differences remain subject to review."
+      },
       "source_path": "tools/native-worker/NativePageGuide.java",
       "source_sha256": "e1f07c8f8ab2deaddd6bee09c4196d547ed76d10ad10a8e697a2c06ce6dbf100",
       "source_normalized_sha256": "05da4b40b6ee8ed29a2abcf85fbe965041ebb88d9387f4443dd69e2fa26174a6",

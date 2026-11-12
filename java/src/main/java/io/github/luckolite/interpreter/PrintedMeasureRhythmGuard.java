@@ -38,6 +38,97 @@ final class PrintedMeasureRhythmGuard {
         return preserveCompleteRuns(raw, aligned, notes, gray, width, height);
     }
 
+    /** A count inferred from other systems cannot insert a barline across clear paper. */
+    static boolean paperContradictsSingleSplit(
+            List<MeasureRegion> original, List<MeasureRegion> fitted,
+            byte[] gray, int width, int height) {
+        if (original.size() != 2 || fitted.size() != 3 || gray == null
+                || gray.length != (long) width * height) return false;
+        var first = original.get(0);
+        var second = original.get(1);
+        if (!sameRow(first, second) || second.left() <= first.right()) return false;
+        boolean splitFirst = second.equals(fitted.get(2));
+        if (!splitFirst && !first.equals(fitted.get(0))) return false;
+        var originalBar = splitFirst ? first : second;
+        var a = fitted.get(splitFirst ? 0 : 1);
+        var b = fitted.get(splitFirst ? 1 : 2);
+        if (a.left() != originalBar.left() || b.right() != originalBar.right()
+                || !sameRow(a, originalBar) || !sameRow(b, originalBar)
+                || b.left() <= a.right()) return false;
+        int left = Math.max(0, Math.round(first.left() * width));
+        int right = Math.min(width, Math.round(second.right() * width));
+        int top = Math.max(0, Math.round(Math.min(first.top(), second.top()) * height));
+        int bottom = Math.min(height, Math.round(Math.max(first.bottom(), second.bottom()) * height));
+        int w = right - left, h = bottom - top;
+        if (w < 24 || h < 20) return false;
+        var raster = new byte[w * h];
+        for (int y = 0; y < h; y++)
+            System.arraycopy(gray, (top + y) * width + left, raster, y * w, w);
+        var staffs = RawStaffLineDetector.detect(raster, w, h);
+        if (staffs.size() != 1) return false;
+        var staff = staffs.get(0);
+        float floor = top + staff.bottom(), gap = staff.gap();
+        float seam = (first.right() + second.left()) * width * .5f;
+        float cut = (a.right() + b.left()) * width * .5f;
+        if ((b.left() - a.right()) * width > gap
+                || (second.left() - first.right()) * width > gap * 2) return false;
+        var seamRails = PrintedDirectionStaff.printedRules(gray, width, height, seam, floor, gap);
+        if (seamRails == null || !staffSpaceColumn(gray, width, height, seam, seamRails))
+            return false;
+        int from = Math.round(cut - gap * .5f), to = Math.round(cut + gap * .5f);
+        if (from < left || to >= right) return false;
+        int[] rules = new int[5];
+        int radius = Math.max(2, Math.round(gap * .26f));
+        for (int rule = 0; rule < rules.length; rule++) {
+            int hint = Math.round(floor - (4 - rule) * gap);
+            if (hint - radius < top || hint + radius >= bottom) return false;
+            int darkest = -1;
+            for (int y = hint - radius; y <= hint + radius; y++) {
+                int ink = 0;
+                for (int x = from; x <= to; x++)
+                    ink += 255 - (gray[y * width + x] & 255);
+                if (ink > darkest) {
+                    darkest = ink;
+                    rules[rule] = y;
+                }
+            }
+            if (darkest < (to - from + 1) * 100
+                    || rule > 0 && Math.abs(rules[rule] - rules[rule - 1] - gap) > gap * .26f)
+                return false;
+        }
+        int clear = 0;
+        for (int space = 0; space < 4; space++) {
+            boolean paper = true;
+            int step = rules[space + 1] - rules[space];
+            for (int y = rules[space] + Math.round(step * .3f);
+                    y <= rules[space] + Math.round(step * .7f); y++)
+                for (int x = from; x <= to; x++)
+                    if ((gray[y * width + x] & 255) < 225) paper = false;
+            if (paper) clear++;
+        }
+        return clear >= 3;
+    }
+
+    private static boolean staffSpaceColumn(
+            byte[] gray, int width, int height, float center, float[] rails) {
+        float gap = rails[1], top = rails[0] - 4 * gap;
+        if (top < 0 || rails[0] >= height) return false;
+        for (int x = Math.max(0, Math.round(center - gap * .35f));
+                x <= Math.min(width - 1, Math.round(center + gap * .35f)); x++) {
+            boolean complete = true;
+            for (int space = 0; space < 4; space++) {
+                int first = Math.round(top + (space + .3f) * gap);
+                int last = Math.round(top + (space + .7f) * gap);
+                int ink = 0;
+                for (int y = first; y <= last; y++)
+                    if ((gray[y * width + x] & 255) < 160) ink++;
+                if (ink < (last - first + 1) * .9f) complete = false;
+            }
+            if (complete) return true;
+        }
+        return false;
+    }
+
     /** A partial split must not divide one independently complete written bar. */
     static List<MeasureRegion> preservePartialWrittenBars(
             List<MeasureRegion> raw,

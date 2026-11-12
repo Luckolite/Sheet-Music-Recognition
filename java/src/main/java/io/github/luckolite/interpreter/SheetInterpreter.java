@@ -244,7 +244,7 @@ public final class SheetInterpreter {
         var rawMeasures = measures;
         // Unnumbered systems still need the same bounded geometry repair as the native reader.
         measures =
-                MeasureNumberReconciler.reconcile(measures, numbers, rests, labels, width, height);
+                MeasureNumberReconciler.reconcile(measures, numbers, rests, labels, gray, width, height);
         recognizedRests.expanded(rawMeasures, measures);
         measures =
                 PrintedMeasureRhythmGuard.reconcile(

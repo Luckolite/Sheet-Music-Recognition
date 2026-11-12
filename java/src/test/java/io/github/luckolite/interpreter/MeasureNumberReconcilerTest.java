@@ -465,6 +465,36 @@ public final class MeasureNumberReconcilerTest {
         assertEquals(18, corrected.size());
     }
 
+    private static long inferredSplitCount(boolean originalSeam, boolean cutHasInk) {
+        int width = 1000, height = 1200;
+        float top = .70f;
+        List<MeasureRegion> detected = regularPage(5, 3);
+        detected.add(new MeasureRegion(.10f, .35f, top, top + .06f));
+        detected.add(new MeasureRegion(.354f, .896f, top, top + .06f));
+        byte[] labels = new byte[width * height], gray = new byte[labels.length];
+        java.util.Arrays.fill(gray, (byte) 255);
+        int firstLine = 850, gap = 12, lastLine = firstLine + 4 * gap;
+        for (int y = firstLine; y <= lastLine; y += gap)
+            java.util.Arrays.fill(gray, y * width + 100, y * width + 897, (byte) 0);
+        for (int y = firstLine; y <= lastLine; y++) {
+            if (originalSeam) gray[y * width + 352] = 0;
+            if (cutHasInk) gray[y * width + 625] = 0;
+        }
+        return MeasureNumberReconciler.reconcile(detected, List.of(), List.of(), labels, gray,
+                width, height).stream().filter(item -> item.top() == top).count();
+    }
+
+    @Test
+    public void clearPaperBesideAnIntactSeamVetoesTheInferredSplit() {
+        assertEquals(2, inferredSplitCount(true, false));
+    }
+
+    @Test
+    public void printedCutAndUncorroboratedOriginalSeamRetainTheFittedCount() {
+        assertEquals(3, inferredSplitCount(true, true));
+        assertEquals(3, inferredSplitCount(false, false));
+    }
+
     @Test
     public void naturallyShortFinalSystemIsNotExpandedToTheDominantCount() {
         List<MeasureRegion> detected = regularPage(5, 3);

@@ -28,7 +28,18 @@ final class MeasureNumberReconciler {
             byte[] labels,
             int width,
             int height) {
-        var fitted = reconcile(detected, tokens, multiMeasureRests);
+        return reconcile(detected, tokens, multiMeasureRests, labels, null, width, height);
+    }
+
+    static List<MeasureRegion> reconcile(
+            List<MeasureRegion> detected,
+            List<NumberToken> tokens,
+            List<NumberToken> multiMeasureRests,
+            byte[] labels,
+            byte[] gray,
+            int width,
+            int height) {
+        var fitted = fitMeasures(detected, tokens, multiMeasureRests, gray, width, height);
         var rawRows = rows(detected);
         var fittedRows = rows(fitted);
         if (rawRows.isEmpty()
@@ -70,9 +81,19 @@ final class MeasureNumberReconciler {
             List<MeasureRegion> detected,
             List<NumberToken> tokens,
             List<NumberToken> multiMeasureRests) {
+        return fitMeasures(detected, tokens, multiMeasureRests, null, 0, 0);
+    }
+
+    private static List<MeasureRegion> fitMeasures(
+            List<MeasureRegion> detected,
+            List<NumberToken> tokens,
+            List<NumberToken> multiMeasureRests,
+            byte[] gray,
+            int width,
+            int height) {
         List<MeasureRegion> safeDetected = detected == null ? List.of() : detected;
         if (tokens == null || tokens.isEmpty())
-            return stabilizeAndExpandUnanchored(safeDetected, multiMeasureRests);
+            return stabilizeAndExpandUnanchored(safeDetected, multiMeasureRests, gray, width, height);
         List<Row> anchorLayout = rows(safeDetected);
         for (Row row : anchorLayout) {
             for (NumberToken rest : assignedRestTokens(row, anchorLayout, multiMeasureRests))
@@ -86,7 +107,7 @@ final class MeasureNumberReconciler {
         // Printed-number jumps include the silent bars represented by a confirmed multi-rest.
         List<NumberToken> anchors = trustedAnchors(tokens, anchorLayout);
         if (anchors.size() < 2)
-            return stabilizeAndExpandUnanchored(safeDetected, multiMeasureRests);
+            return stabilizeAndExpandUnanchored(safeDetected, multiMeasureRests, gray, width, height);
         // Even if semantic segmentation missed every staff, a trusted run of printed system
         // numbers can still supply approximate rows. augmentedRows intentionally supports this;
         // returning early for an empty detection list made that recovery path unreachable.
@@ -378,8 +399,10 @@ final class MeasureNumberReconciler {
     /** Multi-measure rests are independent optical evidence and remain meaningful even when the
      * page does not print enough system numbers to form a trusted sequence. */
     private static List<MeasureRegion> stabilizeAndExpandUnanchored(
-            List<MeasureRegion> detected, List<NumberToken> multiMeasureRests) {
-        List<MeasureRegion> stabilized = stabilizeSystemCounts(detected, multiMeasureRests);
+            List<MeasureRegion> detected, List<NumberToken> multiMeasureRests,
+            byte[] gray, int width, int height) {
+        List<MeasureRegion> stabilized =
+                stabilizeSystemCounts(detected, multiMeasureRests, gray, width, height);
         if (multiMeasureRests == null || multiMeasureRests.isEmpty()) return stabilized;
         List<MeasureRegion> result = new ArrayList<>();
         for (Row row : rows(stabilized))
@@ -396,7 +419,8 @@ final class MeasureNumberReconciler {
      * wide merged measure. Short coda/final systems remain untouched.
      */
     private static List<MeasureRegion> stabilizeSystemCounts(
-            List<MeasureRegion> source, List<NumberToken> multiMeasureRests) {
+            List<MeasureRegion> source, List<NumberToken> multiMeasureRests,
+            byte[] gray, int width, int height) {
         List<Row> layout = rows(source);
         if (layout.size() < 5) return List.copyOf(source);
 
@@ -439,17 +463,19 @@ final class MeasureNumberReconciler {
             }
             float narrowest = Float.MAX_VALUE, widest = 0f;
             for (MeasureRegion measure : row.measures) {
-                float width = measure.right() - measure.left();
-                narrowest = Math.min(narrowest, width);
-                widest = Math.max(widest, width);
+                float spanWidth = measure.right() - measure.left();
+                narrowest = Math.min(narrowest, spanWidth);
+                widest = Math.max(widest, spanWidth);
             }
             // One false stem boundary can safely be repaired from the dominant row count. A row
             // with five extra candidates may instead contain genuinely shorter measures (as in
             // Transcendence 15-20), so never collapse it wholesale without printed anchors.
             boolean falseExtra = count == dominant + 1 && narrowest < referenceWidth * .46f;
             boolean missedBoundary = count + 1 == dominant && widest > referenceWidth * 1.65f;
-            result.addAll(
-                    falseExtra || missedBoundary ? fitCount(row.measures, dominant) : row.measures);
+            var fitted = falseExtra || missedBoundary ? fitCount(row.measures, dominant) : row.measures;
+            if (missedBoundary && PrintedMeasureRhythmGuard.paperContradictsSingleSplit(
+                    row.measures, fitted, gray, width, height)) fitted = row.measures;
+            result.addAll(fitted);
         }
         return List.copyOf(result);
     }
