@@ -17,14 +17,19 @@ public class SymbolTouchHarmonicsTest {
     }
 
     private void draw(boolean diamond, int stemShade) {
-        for (int y = Y - 45; y <= Y - 15; y++)
+        draw(diamond, stemShade, 30);
+    }
+
+    private void draw(boolean diamond, int stemShade, int touchOffset) {
+        int touchY = Y - touchOffset;
+        for (int y = touchY - 15; y <= touchY + 15; y++)
             for (int x = X - 15; x <= X + 15; x++) {
                 double radius =
                         diamond
-                                ? (Math.abs(x - X) + Math.abs(y - (Y - 30))) / 12d
+                                ? (Math.abs(x - X) + Math.abs(y - touchY)) / 12d
                                 : Math.sqrt(
                                         Math.pow((x - X) / 12d, 2)
-                                                + Math.pow((y - (Y - 30)) / 7d, 2));
+                                                + Math.pow((y - touchY) / 7d, 2));
                 if (radius >= .65 && radius <= 1.1) {
                     gray[y * W + x] = 0;
                     labels[y * W + x] = OmrMeasurePostProcessor.SYMBOL;
@@ -158,6 +163,13 @@ public class SymbolTouchHarmonicsTest {
         Arrays.fill(gray, (byte) 255);
         Arrays.fill(labels, (byte) 0);
         draw(false, 0);
+        assertEquals(List.of(n), apply(labels, List.of(n)));
+    }
+
+    @Test
+    public void adjacentThirdTouchDoesNotBecomeAFourthTouch() {
+        draw(true, 0, G);
+        var n = stopped(0, ScoreNoteEvent.DURATION_QUARTER).withStemDirection(-1);
         assertEquals(List.of(n), apply(labels, List.of(n)));
     }
 

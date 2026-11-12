@@ -97,7 +97,7 @@ final class ArtificialHarmonics {
                             && n.unbeamedDurationBeats() == ScoreNoteEvent.DURATION_QUARTER
                             && n.stemDirection() != 0
                             && joinedQuarterStem(gray, w, h, x, y, gap, n.stemDirection())
-                            && symbolDiamond(labels, gray, w, h, x, y - 1.5f * gap, gap);
+                            && quarterTouchDiamond(labels, gray, w, h, x, y, gap);
             if (!strictDiamond
                     && !symbolTouch
                     && !joinedQuarterTouch
@@ -151,6 +151,19 @@ final class ArtificialHarmonics {
         return labels != null
                 && labels.length == (long) w * h
                 && diamondEvidence(gray, labels, w, h, x, y, gap, true);
+    }
+
+    private static boolean quarterTouchDiamond(
+            byte[] labels, byte[] gray, int w, int h, float x, float stoppedY, float gap) {
+        float touchY = stoppedY - 1.5f * gap;
+        if (symbolDiamond(labels, gray, w, h, x, touchY, gap)) return true;
+        // The shaft and adjacent rails can skew the outside contour. The closed counter
+        // still has to occupy the fourth's position, inside half a staff step.
+        float radius = gap * .7f, tolerance = gap * .24f;
+        return labels != null && labels.length == (long) w * h
+                && enclosedCounter(gray, w, h, x, touchY, radius, tolerance)
+                && !enclosedCounter(gray, w, h, x, stoppedY - gap, radius, tolerance)
+                && symbolDiamond(labels, gray, w, h, x, touchY + Math.round(gap * .36f), gap);
     }
 
     /** An unbeamed touch must share the printed shaft with the stopped quarter note. */
@@ -326,7 +339,7 @@ final class ArtificialHarmonics {
                     // its small opening occupies less of a fixed center sample rectangle.
                     if (labels != null
                             && hit == total
-                            && enclosedCounter(g, w, h, cx, cy, r)
+                            && enclosedCounter(g, w, h, cx, cy, r, r * .4f)
                             && diamondExterior(g, w, h, cx, cy, r, gap, y + 1.5f * gap))
                         return true;
                     int clear = 0, inside = 0;
@@ -456,7 +469,9 @@ final class ArtificialHarmonics {
         return farThickness <= limit;
     }
 
-    private static boolean enclosedCounter(byte[] gray, int w, int h, float cx, float cy, float r) {
+    private static boolean enclosedCounter(
+            byte[] gray, int w, int h, float cx, float cy, float r,
+            float verticalTolerance) {
         int left = (int) Math.floor(cx - r), top = (int) Math.floor(cy - r);
         int right = (int) Math.ceil(cx + r), bottom = (int) Math.ceil(cy + r);
         if (left < 0 || top < 0 || right >= w || bottom >= h) return false;
@@ -498,7 +513,7 @@ final class ArtificialHarmonics {
                         && maxX > minX
                         && maxY > minY
                         && Math.abs(left + sumX / (float) area - cx) <= r * .4f
-                        && Math.abs(top + sumY / (float) area - cy) <= r * .4f) return true;
+                        && Math.abs(top + sumY / (float) area - cy) <= verticalTolerance) return true;
             }
         return false;
     }

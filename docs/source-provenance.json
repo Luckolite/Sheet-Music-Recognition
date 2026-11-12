@@ -1618,6 +1618,12 @@
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/ActiveScoreNotes.java"
     },
     "ArtificialHarmonics.java": {
+      "crowded_diamond_counter_review": {
+        "reviewed_app_commit": "691e1654871aba1bdde22aedee95eb90e069165e",
+        "app_blob_sha256": "495f8c219cb57aeb4066a86b492eb1b241710542d4f8788a73da950cc89e943b",
+        "standalone_lf_sha256": "6c6469846680efb2892e53af7bd2ae8c50aa0a4125e4853bf2decfd11e81343f",
+        "scope": "Hollow-counter pitch check for crowded unbeamed harmonic diamonds. Production diffs match. Desktop uses the shared recognizer."
+      },
       "unbeamed_shared_shaft_review": {
         "reviewed_app_commit": "945a3d01bc5e520c76bc86781d5a9e22b1ac1c1b",
         "app_blob_sha256": "6c028e7a6ef76ee99b805dccf4a79275a691c669b892ea7d01bfea0b0e6093f5",
