@@ -54,6 +54,7 @@ and requires FFmpeg, which the `audio` extra supplies.
 | `--meter 3/4` | Initial meter (default 4/4) |
 | `--bpm 90` | Initial quarter-note tempo (default 120 BPM) |
 | `--key-fifths 2` | Starting key signature with two sharps |
+| `--instrument violin` | Resolve printed open-string harmonics using standard violin tuning |
 
 Run `score-reader --help` for all options. [API and output details](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/docs/integration.md) · [Standalone JAR and model downloads](https://github.com/Luckolite/Sheet-Music-Recognition/releases)
 

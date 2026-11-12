@@ -170,8 +170,10 @@ class Interpreter:
         return labels
 
     def interpret(self, image, *, meter=(4, 4), key_fifths=0, width=2048, annotations=None,
-                  page_index=None):
+                  page_index=None, instrument=None):
         """Recognize an image; optional page_index is its zero-based physical source page."""
+        if instrument not in (None, "violin"):
+            raise ValueError("instrument must be None or 'violin' (standard tuning)")
         if page_index is not None and (type(page_index) is not int or not 0 <= page_index <= 100000):
             raise ValueError("page_index must be a zero-based physical page in 0..100000")
         if len(meter) != 2 or not all(isinstance(n, int) for n in meter):
@@ -210,6 +212,8 @@ class Interpreter:
                 command.extend(["--decoder-gray", str(decoder_raster)])
             if page_index is not None:
                 command.extend(["--page-index", str(page_index)])
+            if instrument is not None:
+                command.extend(["--instrument", instrument])
             run = subprocess.run(command, capture_output=True, text=True)
             if run.returncode:
                 raise RuntimeError("Decoder failed: " + run.stderr.strip())

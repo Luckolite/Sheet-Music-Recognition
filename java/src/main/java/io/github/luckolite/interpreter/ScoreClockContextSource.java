@@ -22,6 +22,12 @@ public record ScoreClockContextSource(
         List<VoiceGroup> voiceGroups,
         List<SyncAnchor> syncAnchors,
         List<Missing> missing) {
+    ScoreClockContextSource withNoteCount(int count) {
+        if (count < noteCount) throw new IllegalArgumentException("Existing note owners must remain");
+        return new ScoreClockContextSource(origin, count, measureCount, restCount, partWords, numbers,
+                meters, printedValues, glyphLedgers, restValues, voiceGroups, syncAnchors, missing);
+    }
+
     public enum Status {
         UNKNOWN,
         OBSERVATION,

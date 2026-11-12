@@ -12,7 +12,7 @@ from .clock_context import bind_document
 
 
 def interpret_document(engine, source, *, pages=None, meter=(4, 4), bpm=120,
-                       key_fifths=0, width=2048, annotations=None, progress=None):
+                       key_fifths=0, width=2048, annotations=None, progress=None, instrument=None):
     """Recognize a file. Call progress(completed, total, source_page) after each page."""
     source = Path(source)
     if not 15 <= bpm <= 400:
@@ -37,8 +37,9 @@ def interpret_document(engine, source, *, pages=None, meter=(4, 4), bpm=120,
         page_annotations = annotations[len(results)] if annotations is not None else (
             {"tabWords": native_words} if native_words else None
         )
+        context = {} if instrument is None else {"instrument": instrument}
         page = engine.interpret(image, meter=meter, key_fifths=key, width=width,
-                                page_index=page_number - 1, annotations=page_annotations)
+                                page_index=page_number - 1, annotations=page_annotations, **context)
         score = page["score"]
         score["clockContextSource"] = bind_document(
             score.get("clockContextSource"), len(score["notes"]), len(score["measures"]),

@@ -8,7 +8,7 @@ import java.util.*;
 final class ArtificialHarmonics {
     private ArtificialHarmonics() {}
 
-    record ThirdTouch(ScoreNoteEvent stop, float x, float y, float gap) {}
+    record TouchHead(ScoreNoteEvent stop, float x, float y, float gap) {}
     record ThirdPitch(int writtenMidi, int touchMidi, int soundingMidi) {}
 
     static Map<ScoreNoteEvent, ThirdPitch> resolveThirdPitches(
@@ -58,14 +58,14 @@ final class ArtificialHarmonics {
         return accidental;
     }
 
-    static List<ThirdTouch> thirdTouches(
+    static List<TouchHead> thirdTouches(
             byte[] labels, byte[] gray, int width, int height, ScorePageInterpretation score) {
         if (score.notes().isEmpty()) return List.of();
         var byMeasure = new HashMap<Integer, List<ScoreNoteEvent>>();
         for (var n : score.notes())
             byMeasure.computeIfAbsent(n.measureIndex(), unused -> new ArrayList<>()).add(n);
         var staffs = OmrScoreInterpreter.techniqueStaffs(labels, gray, width, height, score.measures());
-        var result = new ArrayList<ThirdTouch>();
+        var result = new ArrayList<TouchHead>();
         for (var stop : score.notes()) {
             if (stop.kind() != ScoreNoteEvent.Kind.PITCHED || stop.octaveShift() != 0
                     || stop.clefBottomDiatonic() == ScoreNoteEvent.CLEF_UNKNOWN
@@ -97,7 +97,7 @@ final class ArtificialHarmonics {
                         && enclosedCounter(gray, width, height, x, touchY, gap * .7f, gap * .24f)
                         && symbolDiamond(labels, gray, width, height, x, touchY, gap)
                         && !quarterTouchDiamond(labels, gray, width, height, x, y, gap))
-                    result.add(new ThirdTouch(stop, x, touchY, gap));
+                    result.add(new TouchHead(stop, x, touchY, gap));
                 break;
             }
         }
@@ -242,7 +242,7 @@ final class ArtificialHarmonics {
         return List.copyOf(result);
     }
 
-    private static boolean symbolDiamond(
+    static boolean symbolDiamond(
             byte[] labels, byte[] gray, int w, int h, float x, float y, float gap) {
         return labels != null
                 && labels.length == (long) w * h

@@ -19693,7 +19693,7 @@ final class OmrScoreInterpreter {
 
     static Map<ScoreNoteEvent, Integer> harmonicTouchAccidentals(
             byte[] labels, byte[] gray, int width, int height, ScorePageInterpretation score,
-            List<ArtificialHarmonics.ThirdTouch> touches) {
+            List<ArtificialHarmonics.TouchHead> touches) {
         if (touches.isEmpty()) return Map.of();
         var candidates = new ArrayList<AccidentalCandidate>();
         for (byte label : new byte[] {OmrMeasurePostProcessor.CLEF_OR_KEY, OmrMeasurePostProcessor.SYMBOL})

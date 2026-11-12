@@ -24,6 +24,8 @@ def main():
     parser.add_argument("--meter", default="4/4", help="Initial meter; read by the caller (default: 4/4)")
     parser.add_argument("--bpm", type=float, default=120, help="Initial quarter-note BPM for exports")
     parser.add_argument("--key-fifths", type=int, default=0, help="Fallback key: sharps positive, flats negative")
+    parser.add_argument("--instrument", choices=("violin",),
+                        help="Use standard violin tuning to resolve printed open-string harmonics")
     parser.add_argument("--width", type=int, default=2048)
     parser.add_argument("--threads", type=int, default=2)
     parser.add_argument("--model", type=Path, help="Custom TFLite model with the documented tensor contract")
@@ -63,7 +65,7 @@ def main():
         document = interpret_document(
             engine, args.input, pages=pages, meter=meter, bpm=args.bpm,
             key_fifths=args.key_fifths, width=args.width,
-            annotations=annotations, progress=progress,
+            annotations=annotations, progress=progress, instrument=args.instrument,
         )
         results = document["pages"]
         args.output.parent.mkdir(parents=True, exist_ok=True)

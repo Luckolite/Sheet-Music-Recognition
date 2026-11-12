@@ -13,11 +13,12 @@ public final class Main {
     private Main() {}
 
     public static void main(String[] args) throws Exception {
-        if (args.length < 5 || args.length > 9 || args.length % 2 != 1)
+        if (args.length < 5 || args.length > 11 || args.length % 2 != 1)
             throw new IllegalArgumentException(
-                    "Expected page, output, meter, key and optional page-index/decoder-gray pairs");
+                    "Expected page, output, meter, key and optional page-index, decoder-gray and instrument pairs");
         int physicalPage = -1;
         Path decoderRaster = null;
+        boolean standardViolin = false;
         for (int i = 5; i < args.length; i += 2) {
             if (args[i].equals("--page-index") && physicalPage == -1) {
                 physicalPage = Integer.parseInt(args[i + 1]);
@@ -25,7 +26,9 @@ public final class Main {
                     throw new IllegalArgumentException("Physical source page must be 0..100000");
             } else if (args[i].equals("--decoder-gray") && decoderRaster == null) {
                 decoderRaster = Path.of(args[i + 1]);
-            } else throw new IllegalArgumentException("Unknown or duplicate decoder option");
+            } else if (args[i].equals("--instrument") && !standardViolin && args[i + 1].equals("violin")) {
+                standardViolin = true;
+            } else throw new IllegalArgumentException("Unknown, invalid or duplicate decoder option");
         }
         int numerator = Integer.parseInt(args[2]), denominator = Integer.parseInt(args[3]);
         var initialMeter = new ScoreMeterChange(0, numerator, denominator);
@@ -270,6 +273,12 @@ public final class Main {
             attachWrittenPlacements(score.notes(), events, beats, cadences);
         }
         attachNotePerformance(score.notes(), events);
+        if (standardViolin) {
+            var recovered = OpenStringHarmonics.recover(
+                    labels, gray, decoderGray == null ? gray : decoderGray, width, height,
+                    score, annotations.words(), initialKey);
+            score = appendOpenStringHarmonics(score, events, recovered, height);
+        }
         var result = new LinkedHashMap<String, Object>();
         result.put("schemaVersion", 1);
         result.put("width", width);
@@ -280,6 +289,43 @@ public final class Main {
         result.put("measureBeats", beats);
         result.put("totalBeats", starts[beats.length]);
         Files.writeString(Path.of(args[1]), json(result) + "\n", StandardCharsets.UTF_8);
+    }
+
+    private static ScorePageInterpretation appendOpenStringHarmonics(
+            ScorePageInterpretation score, List<Map<String, Object>> events,
+            List<OpenStringHarmonics.Recovery> recovered, int height) {
+        if (recovered.isEmpty()) return score;
+        var notes = new ArrayList<>(score.notes());
+        var owners = new ArrayList<>(java.util.stream.IntStream.range(0, notes.size()).boxed().toList());
+        for (var harmonic : recovered) {
+            var anchor = events.get(harmonic.owner());
+            if (Boolean.TRUE.equals(anchor.get("durationFallback"))) continue;
+            var note = harmonic.note();
+            var event = new LinkedHashMap<String, Object>();
+            event.put("measureIndex", note.measureIndex());
+            event.put("staffIndex", note.staffIndex());
+            event.put("staffCount", note.staffCount());
+            event.put("sourceNoteIndex", notes.size());
+            event.put("midi", harmonic.soundingMidi());
+            event.put("writtenMidi", harmonic.touchMidi());
+            event.put("harmonicTouchMidi", harmonic.touchMidi());
+            event.put("openStringMidi", harmonic.openMidi());
+            event.put("clefInferred", false);
+            event.put("startBeat", anchor.get("startBeat"));
+            event.put("durationBeats", anchor.get("durationBeats"));
+            event.put("durationFallback", false);
+            event.put("tiedFromPrevious", false);
+            event.put("x", anchor.get("x"));
+            event.put("y", note.pageY() * height);
+            if (anchor.containsKey("writtenPlacement"))
+                event.put("writtenPlacement", anchor.get("writtenPlacement"));
+            events.add(event);
+            notes.add(note);
+            owners.add(-1);
+        }
+        if (notes.size() == score.notes().size()) return score;
+        return score.withNotes(notes, owners).withClockContextSource(
+                score.clockContextSource().withNoteCount(notes.size()));
     }
 
     static Map<String, Object> noteIdentity(ScoreNoteEvent note, int key) throws IOException {
