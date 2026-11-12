@@ -15,11 +15,11 @@ You do not need to publish your own code. Follow the [license and notice require
 
 ## Install & Use
 
-### Android Demo
+### 📱 Android Demo
 
 Import a PDF or image, and generate a play-along track. Available on [Google Play](https://play.google.com/store/apps/details?id=com.musicsheets) · [Sample PDF](https://raw.githubusercontent.com/Luckolite/Sheet-Music-Recognition/main/examples/scale.pdf)
 
-### Python/Java Demo
+### 🐍 Python/Java Demo
 
 Requires **Python 3.10 or 3.11** and **Java 17+** on your PATH (or via `JAVA_HOME`).
 
