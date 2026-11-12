@@ -19691,6 +19691,41 @@ final class OmrScoreInterpreter {
         }
     }
 
+    static Map<ScoreNoteEvent, Integer> harmonicTouchAccidentals(
+            byte[] labels, byte[] gray, int width, int height, ScorePageInterpretation score,
+            List<ArtificialHarmonics.ThirdTouch> touches) {
+        if (touches.isEmpty()) return Map.of();
+        var candidates = new ArrayList<AccidentalCandidate>();
+        for (byte label : new byte[] {OmrMeasurePostProcessor.CLEF_OR_KEY, OmrMeasurePostProcessor.SYMBOL})
+            for (var component : findComponents(labels, width, height, label))
+                candidates.add(new AccidentalCandidate(component, label));
+        var result = new java.util.IdentityHashMap<ScoreNoteEvent, Integer>();
+        for (var touch : touches) {
+            var stop = touch.stop();
+            var bar = score.measures().get(stop.measureIndex());
+            var head = accidentalReferenceHead(touch.x(), touch.y(), touch.gap());
+            var heads = new ArrayList<Component>();
+            heads.add(head);
+            for (var n : score.notes()) {
+                if (n.measureIndex() != stop.measureIndex() || n.staffIndex() != stop.staffIndex())
+                    continue;
+                float x = (bar.left() + n.positionInMeasure() * (bar.right() - bar.left())) * width;
+                if (Math.abs(x - touch.x()) <= touch.gap() * 4.5f)
+                    heads.add(accidentalReferenceHead(x, n.pageY() * height, touch.gap()));
+            }
+            var choice = chooseWrittenAccidental(
+                    labels, width, height, candidates, head, touch.gap(), heads, gray);
+            if (!choice.ambiguous()) result.put(stop, choice.accidental());
+        }
+        return result;
+    }
+
+    private static Component accidentalReferenceHead(float x, float y, float gap) {
+        return new Component(Math.round(gap * gap * .35f),
+                Math.round(x - gap * .6f), Math.round(x + gap * .6f),
+                Math.round(y - gap * .4f), Math.round(y + gap * .4f), x, y);
+    }
+
     private static WrittenAccidentalChoice chooseWrittenAccidental(
             byte[] labels,
             int width,

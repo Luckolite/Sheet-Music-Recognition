@@ -174,6 +174,28 @@ public class SymbolTouchHarmonicsTest {
     }
 
     @Test
+    public void chromaticThirdUsesTheKeyWithoutChangingTheWrittenNote() {
+        draw(true, 0, G);
+        for (int yy = 80; yy <= 160; yy += G)
+            for (int xx = 10; xx < W - 10; xx++) {
+                gray[yy * W + xx] = 0;
+                if (labels[yy * W + xx] == 0)
+                    labels[yy * W + xx] = OmrMeasurePostProcessor.STAFF;
+            }
+        var stop = stopped(0, ScoreNoteEvent.DURATION_QUARTER).withStemDirection(-1);
+        var partner = new ScoreNoteEvent(0, X / (float) W, 4, 0, 1, 120f / H, false,
+                0, 0, ScoreNoteEvent.ACCIDENTAL_FROM_KEY, ScoreNoteEvent.DURATION_QUARTER)
+                .withStemDirection(-1);
+        var score = new ScorePageInterpretation(
+                List.of(new MeasureRegion(0, 1, .24f, .84f)), List.of(stop, partner),
+                1, List.of(), List.of(), List.of());
+        assertEquals(new ArtificialHarmonics.ThirdPitch(64, 68, 92),
+                ArtificialHarmonics.resolveThirdPitches(labels, gray, W, H, score, 4).get(stop));
+        assertTrue(ArtificialHarmonics.resolveThirdPitches(labels, gray, W, H, score, 0).isEmpty());
+        assertEquals(stop, score.notes().get(0));
+    }
+
+    @Test
     public void hollowStoppedNoteDoesNotUseSymbolFallback() {
         draw(true, 0);
         var n = stopped(2, ScoreNoteEvent.DURATION_HALF);

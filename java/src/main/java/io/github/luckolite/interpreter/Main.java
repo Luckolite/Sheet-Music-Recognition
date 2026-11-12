@@ -179,6 +179,8 @@ public final class Main {
             if (Double.isFinite(closing)) beats[beats.length - 1] = (float) closing;
         }
         boolean[] cadences = PrintedCadenceDurations.apply(score, labels, gray, width, height, beats);
+        var harmonicPitches = ArtificialHarmonics.resolveThirdPitches(
+                labels, decoderGray == null ? gray : decoderGray, width, height, score, initialKey);
         double[] starts = new double[beats.length + 1];
         for (int i = 0; i < beats.length; i++) starts[i + 1] = starts[i] + beats[i];
         var events = new ArrayList<Map<String, Object>>();
@@ -190,6 +192,12 @@ public final class Main {
                 int key = initialKey;
                 for (var k : score.keyChanges()) if (k.measureIndex() <= bar) key = k.fifths();
                 var identity = noteIdentity(note, key);
+                var harmonic = harmonicPitches.get(note);
+                if (harmonic != null) {
+                    identity.put("writtenMidi", harmonic.writtenMidi());
+                    identity.put("harmonicTouchMidi", harmonic.touchMidi());
+                    identity.put("midi", harmonic.soundingMidi());
+                }
                 boolean guessed = (Boolean) identity.get("clefInferred");
                 double duration =
                         ScoreNoteTiming.resolvedWrittenDurationBeats(

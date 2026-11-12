@@ -8,6 +8,102 @@ import java.util.*;
 final class ArtificialHarmonics {
     private ArtificialHarmonics() {}
 
+    record ThirdTouch(ScoreNoteEvent stop, float x, float y, float gap) {}
+    record ThirdPitch(int writtenMidi, int touchMidi, int soundingMidi) {}
+
+    static Map<ScoreNoteEvent, ThirdPitch> resolveThirdPitches(
+            byte[] labels, byte[] gray, int width, int height, ScorePageInterpretation score,
+            int initialKey) {
+        var touches = thirdTouches(labels, gray, width, height, score);
+        var accidentals =
+                OmrScoreInterpreter.harmonicTouchAccidentals(labels, gray, width, height, score, touches);
+        var result = new IdentityHashMap<ScoreNoteEvent, ThirdPitch>();
+        for (var touch : touches) {
+            var stop = touch.stop();
+            Integer accidental = accidentals.get(stop);
+            if (accidental == null) continue;
+            int step = stop.diatonicPitchIdentity(), key = initialKey;
+            for (var change : score.keyChanges())
+                if (change.measureIndex() <= stop.measureIndex()) key = change.fifths();
+            if (accidental == ScoreNoteEvent.ACCIDENTAL_FROM_KEY)
+                accidental = carriedTouchAccidental(score, stop, step + 2, accidentals);
+            int written = ScoreTiePitchGuard.writtenMidi(step, stop.writtenAccidental(), key);
+            int touched = ScoreTiePitchGuard.writtenMidi(step + 2, accidental, key);
+            if (touched - written == 4 && written + 28 <= 127)
+                result.put(stop, new ThirdPitch(written, touched, written + 28));
+        }
+        return result;
+    }
+
+    private static int carriedTouchAccidental(
+            ScorePageInterpretation score, ScoreNoteEvent stop, int step,
+            Map<ScoreNoteEvent, Integer> touchAccidentals) {
+        float closest = -1;
+        int accidental = ScoreNoteEvent.ACCIDENTAL_FROM_KEY;
+        for (var prior : score.notes()) {
+            float position = prior.positionInMeasure();
+            if (prior.measureIndex() != stop.measureIndex() || prior.staffIndex() != stop.staffIndex()
+                    || position <= closest || position >= stop.positionInMeasure() - .005f
+                    || prior.kind() != ScoreNoteEvent.Kind.PITCHED) continue;
+            int written = prior.diatonicPitchIdentity();
+            int mark = written == step ? prior.writtenAccidental()
+                    : written + 2 == step ? touchAccidentals.getOrDefault(
+                            prior, ScoreNoteEvent.ACCIDENTAL_FROM_KEY)
+                    : ScoreNoteEvent.ACCIDENTAL_FROM_KEY;
+            if (mark != ScoreNoteEvent.ACCIDENTAL_FROM_KEY) {
+                closest = position;
+                accidental = mark;
+            }
+        }
+        return accidental;
+    }
+
+    static List<ThirdTouch> thirdTouches(
+            byte[] labels, byte[] gray, int width, int height, ScorePageInterpretation score) {
+        if (score.notes().isEmpty()) return List.of();
+        var byMeasure = new HashMap<Integer, List<ScoreNoteEvent>>();
+        for (var n : score.notes())
+            byMeasure.computeIfAbsent(n.measureIndex(), unused -> new ArrayList<>()).add(n);
+        var staffs = OmrScoreInterpreter.techniqueStaffs(labels, gray, width, height, score.measures());
+        var result = new ArrayList<ThirdTouch>();
+        for (var stop : score.notes()) {
+            if (stop.kind() != ScoreNoteEvent.Kind.PITCHED || stop.octaveShift() != 0
+                    || stop.clefBottomDiatonic() == ScoreNoteEvent.CLEF_UNKNOWN
+                    || stop.stemDirection() == 0 || stop.beamCount() != 0
+                    || stop.unbeamedDurationBeats() != ScoreNoteEvent.DURATION_QUARTER
+                    || stop.tiedFromPrevious() || stop.boundaryTies() != 0) continue;
+            var region = score.measures().get(stop.measureIndex());
+            float span = (region.right() - region.left()) * width;
+            float x = region.left() * width + stop.positionInMeasure() * span;
+            float y = stop.pageY() * height;
+            for (var staff : staffs) {
+                float gap = staff.gap();
+                if (staff.index() != stop.staffIndex() || staff.count() != stop.staffCount()
+                        || staff.top() / height < region.top() - .02f
+                        || staff.bottom() / height > region.bottom() + .02f) continue;
+                boolean partner = false, rival = false;
+                for (var other : byMeasure.get(stop.measureIndex())) {
+                    if (other == stop || other.staffIndex() != stop.staffIndex()
+                            || Math.abs(other.positionInMeasure() - stop.positionInMeasure()) * span
+                                    > gap * .45f) continue;
+                    int steps = other.staffStep() - stop.staffStep();
+                    partner |= steps >= 4 && steps <= 6 && other.kind() == ScoreNoteEvent.Kind.PITCHED
+                            && other.stemDirection() == stop.stemDirection();
+                    rival |= steps == 2 || steps == 3;
+                }
+                float touchY = y - gap;
+                if (partner && !rival
+                        && joinedQuarterStem(gray, width, height, x, y, gap, stop.stemDirection())
+                        && enclosedCounter(gray, width, height, x, touchY, gap * .7f, gap * .24f)
+                        && symbolDiamond(labels, gray, width, height, x, touchY, gap)
+                        && !quarterTouchDiamond(labels, gray, width, height, x, y, gap))
+                    result.add(new ThirdTouch(stop, x, touchY, gap));
+                break;
+            }
+        }
+        return List.copyOf(result);
+    }
+
     private static final class ProbeSigns {
         private static final int[] VALUES = {-1, 1};
     }

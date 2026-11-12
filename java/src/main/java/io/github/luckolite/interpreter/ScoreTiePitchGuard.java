@@ -183,16 +183,19 @@ final class ScoreTiePitchGuard {
         for (ScoreKeyChange key : keys)
             if (key.measureIndex() <= note.measureIndex()) fifths = key.fifths();
         if (fifths == Integer.MIN_VALUE) return Integer.MIN_VALUE;
-        int diatonic = note.diatonicPitchIdentity();
+        return writtenMidi(note.diatonicPitchIdentity(), note.writtenAccidental(), fifths)
+                + note.octaveShift() * 12;
+    }
+
+    static int writtenMidi(int diatonic, int accidental, int fifths) {
         int letter = Math.floorMod(diatonic, 7), octave = Math.floorDiv(diatonic, 7);
-        int accidental = note.writtenAccidental();
         if (accidental == ScoreNoteEvent.ACCIDENTAL_FROM_KEY) {
             accidental = 0;
             int[] order = fifths >= 0 ? SHARP_ORDER : FLAT_ORDER;
             for (int k = 0; k < Math.abs(fifths); k++)
                 if (order[k] == letter) accidental = fifths > 0 ? 1 : -1;
         }
-        return (octave + 1 + note.octaveShift()) * 12
+        return (octave + 1) * 12
                 + LETTER_SEMITONES[letter]
                 + ScoreNoteEvent.accidentalSemitones(accidental);
     }
