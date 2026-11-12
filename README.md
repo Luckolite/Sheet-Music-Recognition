@@ -15,6 +15,11 @@ You do not need to publish your own code. Follow the [license and notice require
 
 ## Install and use
 
+### Try it on Android
+
+Import the sample PDF or a score of your own into Music Sheets and generate a
+play-along track. [Music Sheets on Google Play](https://play.google.com/store/apps/details?id=com.musicsheets) · [Sample PDF](https://raw.githubusercontent.com/Luckolite/Sheet-Music-Recognition/main/examples/scale.pdf)
+
 ### Run the demo
 
 Requires **Python 3.10 or 3.11** and **Java 17+** on your PATH (or via `JAVA_HOME`).
@@ -52,11 +57,6 @@ and requires FFmpeg, which the `audio` extra supplies.
 | `--key-fifths 2` | Starting key signature with two sharps |
 
 Run `score-reader --help` for all options. [API and output details](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/docs/integration.md) · [Standalone JAR and model downloads](https://github.com/Luckolite/Sheet-Music-Recognition/releases)
-
-### Try it on Android
-
-Import the sample PDF or a score of your own into Music Sheets and generate a
-play-along track. [Music Sheets on Google Play](https://play.google.com/store/apps/details?id=com.musicsheets) · [Sample PDF](https://raw.githubusercontent.com/Luckolite/Sheet-Music-Recognition/main/examples/scale.pdf)
 
 ## What it supports
 
