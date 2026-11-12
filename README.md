@@ -17,7 +17,7 @@ You do not need to publish your own code. Follow the [license and notice require
 
 ### 📱 Android Demo
 
-Import a PDF or image, and generate a play-along track. Available on [Google Play](https://play.google.com/store/apps/details?id=com.musicsheets) · [Sample PDF](https://raw.githubusercontent.com/Luckolite/Sheet-Music-Recognition/main/examples/scale.pdf)
+Import a PDF or image, then generate a play-along track. Download on [Google Play](https://play.google.com/store/apps/details?id=com.musicsheets) · [Sample PDF](https://raw.githubusercontent.com/Luckolite/Sheet-Music-Recognition/main/examples/scale.pdf)
 
 ### 🐍 Python/Java Demo
 
