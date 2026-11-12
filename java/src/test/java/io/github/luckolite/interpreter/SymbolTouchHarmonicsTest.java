@@ -141,6 +141,27 @@ public class SymbolTouchHarmonicsTest {
     }
 
     @Test
+    public void unbeamedQuarterUsesTheSharedPrintedShaft() {
+        draw(true, 0);
+        var n = stopped(0, ScoreNoteEvent.DURATION_QUARTER).withStemDirection(-1);
+        assertEquals(List.of(n), apply(null, List.of(n)));
+        assertEquals(List.of(n.withOctaveShift(2)), apply(labels, List.of(n)));
+        assertEquals(List.of(n.withStemDirection(1)), apply(labels, List.of(n.withStemDirection(1))));
+    }
+
+    @Test
+    public void detachedDiamondAndOrdinaryFourthCannotShiftAQuarterNote() {
+        var n = stopped(0, ScoreNoteEvent.DURATION_QUARTER).withStemDirection(-1);
+        draw(true, 0);
+        erase(Y - 16, Y - 8);
+        assertEquals(List.of(n), apply(labels, List.of(n)));
+        Arrays.fill(gray, (byte) 255);
+        Arrays.fill(labels, (byte) 0);
+        draw(false, 0);
+        assertEquals(List.of(n), apply(labels, List.of(n)));
+    }
+
+    @Test
     public void hollowStoppedNoteDoesNotUseSymbolFallback() {
         draw(true, 0);
         var n = stopped(2, ScoreNoteEvent.DURATION_HALF);

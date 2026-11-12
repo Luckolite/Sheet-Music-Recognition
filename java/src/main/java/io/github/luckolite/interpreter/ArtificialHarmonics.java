@@ -91,8 +91,16 @@ final class ArtificialHarmonics {
                             && n.beamCount() >= 2
                             && n.unbeamedDurationBeats() < ScoreNoteEvent.DURATION_HALF
                             && symbolDiamond(labels, gray, w, h, x, y - 1.5f * gap, gap);
+            boolean joinedQuarterTouch =
+                    pairedTouch == null
+                            && n.beamCount() == 0
+                            && n.unbeamedDurationBeats() == ScoreNoteEvent.DURATION_QUARTER
+                            && n.stemDirection() != 0
+                            && joinedQuarterStem(gray, w, h, x, y, gap, n.stemDirection())
+                            && symbolDiamond(labels, gray, w, h, x, y - 1.5f * gap, gap);
             if (!strictDiamond
                     && !symbolTouch
+                    && !joinedQuarterTouch
                     && !(pairedTouch != null
                             && n.beamCount() >= 2
                             && ((pairedTouch.beamCount() == 0
@@ -102,7 +110,8 @@ final class ArtificialHarmonics {
                             && diamond(gray, w, h, x, y - 1.5f * gap, gap, true))) continue;
             // Require the stopped stem, or a paired beamed lower note when a crowded touch
             // diamond interrupts that stem and the decoded upper fourth is a spurious half note.
-            if (!stem(
+            if (!joinedQuarterTouch
+                    && !stem(
                             gray,
                             w,
                             h,
@@ -142,6 +151,26 @@ final class ArtificialHarmonics {
         return labels != null
                 && labels.length == (long) w * h
                 && diamondEvidence(gray, labels, w, h, x, y, gap, true);
+    }
+
+    /** An unbeamed touch must share the printed shaft with the stopped quarter note. */
+    private static boolean joinedQuarterStem(
+            byte[] gray, int w, int h, float x, float y, float gap, int direction) {
+        for (int offset = Math.round(gap * .35f); offset <= Math.round(gap * .9f); offset++) {
+            int column = Math.round(x) + direction * offset;
+            if (!darkRun(gray, w, h, column, y - gap * 1.45f, y - gap * .2f)) continue;
+            if (direction > 0
+                    ? darkRun(gray, w, h, column, y - gap * 2.15f, y - gap * 1.45f)
+                    : darkRun(gray, w, h, column, y + gap * .2f, y + gap * 1.15f)) return true;
+        }
+        return false;
+    }
+
+    private static boolean darkRun(
+            byte[] gray, int w, int h, int x, float from, float to) {
+        int start = Math.round(from), end = Math.round(to), ink = 0;
+        for (int y = start; y <= end; y++) if (dark(gray, w, h, x, y)) ink++;
+        return ink >= (end - start + 1) * .9f;
     }
 
     private static boolean paleJoinedStem(byte[] gray, int w, int h, float x, float y, float gap) {

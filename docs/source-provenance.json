@@ -1618,6 +1618,12 @@
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/ActiveScoreNotes.java"
     },
     "ArtificialHarmonics.java": {
+      "unbeamed_shared_shaft_review": {
+        "reviewed_app_commit": "945a3d01bc5e520c76bc86781d5a9e22b1ac1c1b",
+        "app_blob_sha256": "6c028e7a6ef76ee99b805dccf4a79275a691c669b892ea7d01bfea0b0e6093f5",
+        "standalone_lf_sha256": "e6fff1eab9056f7f24727f31cb0343194e5e411d867ceca0e5791aa60a5627ad",
+        "scope": "Unbeamed artificial-harmonic repair. Production diffs match. Existing desktop adapter calls the shared recognizer."
+      },
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/ArtificialHarmonics.java",
       "source_sha256": "adaca14e82c27010cc16ed04da3a5fcd274847b7fa08232c488ba2c62a5d7967",
       "reviewed_app_commit": "abdad95ab53c8481049a8f1c7b25442779a46404",
