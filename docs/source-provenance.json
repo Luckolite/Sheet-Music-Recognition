@@ -5189,14 +5189,14 @@
     },
     "OmrScoreInterpreter.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/OmrScoreInterpreter.java",
-      "source_sha256": "fcb9e3c4e1d7a77a7f9503eafad50b00fdb6a089986b7f5b99f31dad96d74bfc",
+      "source_sha256": "644f4e90c498f18d85d2aeb8748de557d42a9a1d3f2ea3fefd05a380926a5da3",
       "review_note": "Shared recognition and playback-direction changes ported with standalone adapters. Redistributable synthetic regressions cover the changed ink and direction rules.",
-      "source_normalized_sha256": "fcb9e3c4e1d7a77a7f9503eafad50b00fdb6a089986b7f5b99f31dad96d74bfc",
+      "source_normalized_sha256": "2fde2ae7caecc7b8549332cc5b558ed9dfd9c9f2a7c4afe0c9ab0aa204957c25",
       "reviewed_app_state": "Committed recognition130 source integration; cumulative app/Hub worker delivery pending goal completion.",
-      "standalone_sha256": "2b096d7ea1680ff5624d8e152a94bad9ee965a2f86e05bc2651f1614195af638",
+      "standalone_sha256": "23ac617dd9c0d34d727b1fdd24072e046cc475ea16c67f51b3419946e082e56a",
       "reviewed_app_base_commit": "f35728a8aa54ad905276707014439af44502ea61",
-      "reviewed_app_commit": "85c67c707d1bac8c1ce609f0ff5c854b2aa52872",
-      "scoped_reviewed_app_commit": "619cf57ee08c59765af88152ec67286859c969bc",
+      "reviewed_app_commit": "17bb4862f61247cbbe9c5046b576653e9c2a7ded",
+      "scoped_reviewed_app_commit": "17bb4862f61247cbbe9c5046b576653e9c2a7ded",
       "license": "Apache-2.0",
       "cue_flag87_review_note": "Original procedural geometry only. Cue-size local glyph gap reuses unchanged own-stem and curved-flag checks. Existing scalar and wire semantics retained; no private raster/model/dependency change.",
       "seeded_flag_pocket_review_note": "Semantic admission uses existing flag-pocket geometry only when a recognized other head has an attached raw shaft matching the same column and direction. Legacy faded-recovery overload delegates with null owner, retaining its behavior. Eight original semantic-seed methods include independent grace shafts; both released curved/straight entrance classes pass. No thresholds, private raster/model/dependency or layout changes.",
@@ -5204,9 +5204,9 @@
       "recognition88_review_note": "Reviewed exact contextual global changes and namespace twins with original synthetic regressions. New helpers are selected explicitly by desktop decoder manifest; no models, private fixtures, schema, wire or audio changes.",
       "recognition89_review_note": "Reviewed global contextual changes and namespace twins, procedural original regressions, resource and preservation checks. No private fixtures, model, dependency, wire or audio changes.",
       "recognition91_review_note": "Reviewed recognition91: observed terminal ribbon; boundary-crossing hairpin proposal completion (anchor coordinate-span <=4; new 4M proposal budget); complete raw beam following-rest voice. Existing admission fits and 145/225, model, Guide291 and audio97 unchanged. Original procedural tests only.",
-      "reviewed_source_state": "Reviewed committed recognition138 violin-score repair.",
+      "reviewed_source_state": "committed",
       "release130_review_note": "Reviewed platform adapter; see release130_source_review. No claim of whole-file token parity.",
-      "standalone_normalized_sha256": "2b096d7ea1680ff5624d8e152a94bad9ee965a2f86e05bc2651f1614195af638",
+      "standalone_normalized_sha256": "b6f68eecf111c9a4ae242bb2ebdca894c49ba6bb5bf60b3e72b74c7798c1a45b",
       "current_source_review": "Allocate bounded shared-ledger caches only after an eligible independently owned remote head; exact split sibling capture retained. Existing cancellation zero-work contract restored;812 focused tests and1373 retained complete native note records preserved. Models, limits and layouts unchanged.",
       "release_transport_review": "For valid blank/no-staff inputs, unavailable context preserves the supplied measure count without inventing source observations or clock authority. The original strict whole-analysis server parity assertion remains enabled; an original two-measure blank control covers the early return. A generic comment replaces an internal review title.",
       "natural_cancellation_review": {
@@ -5255,7 +5255,8 @@
       "complete_clef_review": "Whole connected two-counter prefix with exact integer-cell waist supplements existing dimensions; complete in-row raw-connected authenticated clef cohort uses unchanged full-G authority and rejects head/key/accidental rivals. Original OFL fonts only. Known legacy narrow-route B limitation explicitly retained/ignored, not claimed fixed.",
       "closed_phrase_clock_review": "Same-pass complete printed beam ownership resolves remote/shared-stem phrase caps and cross-staff written clock. Asymmetric arches have independent IDs preserving old arcs. Literal unique opposed-stem single-beam partners sustain independently of faster bass attacks. Optional bounded proofs preserve legacy on refusal. One existing clock capture follows final value projection. Original procedural regressions only; no score data, observers, weights or layouts.",
       "opposed_pair_ingress_review": "Early legacy cross-staff ownership stays before tie/rest handling. The identical additive opposed-pair proof runs once after original printed stem directions, before extra voices. Full-caller originals reproduce the omitted late ownership; no ink or value thresholds change.",
-      "recognition139_review_note": "Reviewed app fix merged with the existing standalone adapters and formatting."
+      "recognition139_review_note": "Reviewed app fix merged with the existing standalone adapters and formatting.",
+      "stacked_opening_meter_review": "A larger semantic head fragment in a system header can belong to a repeated pair of full printed meter digits after key ink. The common geometry preserves an independent stem and requires matching dense numeral shapes before removing the fragment. The Android and standalone sources differ in namespace, formatting, and logging only."
     },
     "OnnxOcrInference.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/OnnxOcrInference.java",

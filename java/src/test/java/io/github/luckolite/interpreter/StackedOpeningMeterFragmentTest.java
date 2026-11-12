@@ -72,4 +72,30 @@ public class StackedOpeningMeterFragmentTest {
         for (int y = 45; y <= 105; y++) ink(118, y, 1);
         assertEquals(2, normalized()[105 * W + 115]);
     }
+
+    private byte[] widerHeader(boolean key) {
+        digit(81);
+        digit(113);
+        for (int y = 96; y <= 109; y++)
+            for (int x = 111; x <= 121; x++)
+                if (gray[y * W + x] == 0) ink(x, y, 2);
+        if (key)
+            for (int y = 88; y <= 128; y++)
+                for (int x = 53; x <= 63; x++) ink(x, y, 3);
+        firstNote();
+        var afterKey = List.of(new MeasureRegion(55f / W, 560f / W, 60f / H, 170f / H));
+        return OmrScoreInterpreter.normalizeHeaderSymbols(labels, gray, W, H, afterKey);
+    }
+
+    @Test
+    public void fullSizeRepeatedDigitsAfterAKeySignatureOwnTheirCorner() {
+        byte[] clean = widerHeader(true);
+        assertEquals(0, clean[101 * W + 115]);
+        assertEquals(2, clean[128 * W + 184]);
+    }
+
+    @Test
+    public void aDistantCornerWithoutHeaderInkKeepsItsHeadLabel() {
+        assertEquals(2, widerHeader(false)[101 * W + 115]);
+    }
 }

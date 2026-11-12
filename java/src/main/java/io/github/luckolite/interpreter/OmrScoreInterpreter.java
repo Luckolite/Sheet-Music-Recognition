@@ -676,7 +676,8 @@ final class OmrScoreInterpreter {
                                 labels, gray, width, height, head, staffs, headerGlyphs));
         notationHeads.removeIf(head -> inlineEightMeterFragment(gray, width, height, head, staffs));
         notationHeads.removeIf(
-                head -> isStackedOpeningMeterFragment(gray, width, height, head, staffs, measures));
+                head -> isStackedOpeningMeterFragment(
+                        gray, width, height, head, staffs, measures, headerGlyphs));
         notationHeads.removeIf(
                 head ->
                         commonTimeGlyphBounds(
@@ -3671,7 +3672,8 @@ final class OmrScoreInterpreter {
                     && isRoundedHeaderMeter(labels, gray, width, height, head, staffs, glyphs))
                 bounds = new int[] {head.minX, head.maxX, head.minY, head.maxY};
             if (bounds == null
-                    && isStackedOpeningMeterFragment(gray, width, height, head, staffs, measures))
+                    && isStackedOpeningMeterFragment(
+                            gray, width, height, head, staffs, measures, glyphs))
                 bounds = new int[] {head.minX, head.maxX, head.minY, head.maxY};
             if (bounds == null && isHeavyRestBarFragment(gray, width, height, head, staffs))
                 bounds = new int[] {head.minX, head.maxX, head.minY, head.maxY};
@@ -6151,14 +6153,15 @@ final class OmrScoreInterpreter {
             int height,
             Component head,
             List<Staff> staffs,
-            List<MeasureRegion> measures) {
+            List<MeasureRegion> measures,
+            List<Component> headerGlyphs) {
         if (gray == null) return false;
         Staff staff = nearestHeadStaff(staffs, head.centerY);
         if (staff == null) return false;
         float gap = staff.gap;
-        if (head.area > gap * gap * .3f
-                || head.maxX - head.minX + 1 > gap * .65f
-                || head.maxY - head.minY + 1 > gap * .85f
+        if (head.area > gap * gap * .5f
+                || head.maxX - head.minX + 1 > gap * .85f
+                || head.maxY - head.minY + 1 > gap
                 || head.centerY < staff.top + gap * .9f
                 || head.centerY > staff.top + gap * 2.2f) return false;
         int[] stem = attachedRawStem(gray, width, height, head, gap);
@@ -6168,11 +6171,12 @@ final class OmrScoreInterpreter {
                 && (stem[1] < staff.top - gap * .25f || stem[1] > staff.bottom + gap * .25f))
             return false;
         boolean opening = false;
+        boolean nearLeft = false;
         for (MeasureRegion measure : measures)
             if (head.centerY >= measure.top() * height - gap
                     && head.centerY <= measure.bottom() * height + gap
                     && head.centerX >= measure.left() * width - gap * .5f
-                    && head.centerX <= measure.left() * width + gap * 2.6f) {
+                    && head.centerX <= measure.left() * width + gap * 4.25f) {
                 boolean earlier = false;
                 for (MeasureRegion other : measures)
                     if (other.left() < measure.left()
@@ -6180,16 +6184,32 @@ final class OmrScoreInterpreter {
                         earlier = true;
                 if (!earlier) {
                     opening = true;
+                    nearLeft = head.centerX <= measure.left() * width + gap * 2.6f;
                     break;
                 }
             }
         if (!opening) return false;
+        boolean compact = nearLeft
+                && head.area <= gap * gap * .3f
+                && head.maxX - head.minX + 1 <= gap * .65f
+                && head.maxY - head.minY + 1 <= gap * .85f;
+        // A larger corner can occur farther into a header after key-signature ink.
+        // In that case require both complete, densely printed matching digits.
+        if (!compact && headerGlyphs.stream().noneMatch(glyph ->
+                head.minX - glyph.maxX >= gap * .9f
+                        && head.minX - glyph.maxX <= gap * 6
+                        && glyph.maxY - glyph.minY >= gap * 1.8f
+                        && glyph.area >= gap * gap * .4f
+                        && glyph.centerY >= staff.top - gap
+                        && glyph.centerY <= staff.bottom + gap)) return false;
         int left = Math.max(0, Math.round(head.minX - gap * 1.2f));
         int right = Math.min(width - 1, Math.round(head.maxX + gap * .45f));
-        int top = Math.max(0, Math.round(head.centerY - gap * 1.45f));
-        int bottom = Math.min(height - 1, Math.round(head.centerY + gap * .4f));
+        int top = Math.max(0, Math.round(compact ? head.centerY - gap * 1.45f : staff.top));
+        int bottom = Math.min(height - 1, Math.round(
+                compact ? head.centerY + gap * .4f : staff.top + gap * 2) - (compact ? 0 : 1));
         if (right - left < gap * 1.1f || bottom - top < gap * 1.5f) return false;
-        for (int shift = Math.round(gap * 2.05f); shift <= Math.round(gap * 2.4f); shift++) {
+        for (int shift = Math.round(gap * (compact ? 2.05f : 1.9f));
+                shift <= Math.round(gap * (compact ? 2.4f : 2.15f)); shift++) {
             if (bottom + shift >= height || bottom + shift > staff.bottom + gap * .4f) continue;
             int overlap = 0,
                     union = 0,
@@ -6217,11 +6237,12 @@ final class OmrScoreInterpreter {
                     if (a && b) overlap++;
                 }
             }
-            if (upper > gap * gap * .55f
-                    && lower > gap * gap * .55f
-                    && maxX - minX > gap * 1.1f
-                    && maxY - minY > gap * 1.2f
-                    && overlap > union * .77f) return true;
+            float density = gap * gap * (compact ? .55f : .75f);
+            if (upper > density
+                    && lower > density
+                    && maxX - minX > gap * (compact ? 1.1f : 1.35f)
+                    && maxY - minY > gap * (compact ? 1.2f : 1.4f)
+                    && overlap > union * (compact ? .77f : .8f)) return true;
         }
         return false;
     }
