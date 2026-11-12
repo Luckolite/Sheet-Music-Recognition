@@ -178,6 +178,7 @@ public final class Main {
                     ScoreOpeningDuration.provedClosingQuarterBeats(score, beats[beats.length - 1]);
             if (Double.isFinite(closing)) beats[beats.length - 1] = (float) closing;
         }
+        boolean[] cadences = PrintedCadenceDurations.apply(score, labels, gray, width, height, beats);
         double[] starts = new double[beats.length + 1];
         for (int i = 0; i < beats.length; i++) starts[i + 1] = starts[i] + beats[i];
         var events = new ArrayList<Map<String, Object>>();
@@ -221,7 +222,8 @@ public final class Main {
                 event.putAll(identity);
                 double startBeat =
                         starts[bar]
-                                + ScoreNoteTiming.beatInMeasure(note, score.notes(), beats[bar]);
+                                + (cadences[bar] ? 0
+                                        : ScoreNoteTiming.beatInMeasure(note, score.notes(), beats[bar]));
                 if (note.kind() == ScoreNoteEvent.Kind.UNPITCHED
                         && (!Double.isFinite(startBeat)
                                 || startBeat < 0
@@ -257,7 +259,7 @@ public final class Main {
                 event.put("y", note.pageY() * height);
                 events.add(event);
             }
-            attachWrittenPlacements(score.notes(), events, beats);
+            attachWrittenPlacements(score.notes(), events, beats, cadences);
         }
         attachNotePerformance(score.notes(), events);
         var result = new LinkedHashMap<String, Object>();
@@ -341,11 +343,22 @@ public final class Main {
     /** Optional source engraving context; existing event clocks remain the playback clock. */
     static void attachWrittenPlacements(
             List<ScoreNoteEvent> notes, List<Map<String, Object>> events, float[] beats) {
+        attachWrittenPlacements(notes, events, beats, new boolean[beats.length]);
+    }
+
+    private static void attachWrittenPlacements(
+            List<ScoreNoteEvent> notes, List<Map<String, Object>> events, float[] beats,
+            boolean[] cadences) {
         if (notes.stream().noneMatch(n -> (n.articulations() & NoteOrnament.GRACE) != 0)) return;
         if (notes.size() != events.size())
             throw new IllegalArgumentException("Written placement needs one event per source head");
         for (int i = 0; i < notes.size(); i++) {
             var note = notes.get(i);
+            if (cadences[note.measureIndex()]) {
+                events.get(i).put("writtenPlacement", new ScoreNoteTiming.WrittenPlacement(
+                        0, beats[note.measureIndex()], -1, -1, false, 0));
+                continue;
+            }
             var placement =
                     ScoreNoteTiming.writtenPlacement(note, notes, beats[note.measureIndex()]);
             if (placement.isPresent()) events.get(i).put("writtenPlacement", placement.get());
