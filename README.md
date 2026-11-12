@@ -15,6 +15,9 @@ You do not need to publish your own code. Follow the [license and notice require
 
 ## Install and use
 
+To try sheet-music recognition on Android, import a score image or PDF and generate
+a play-along track. [Music Sheets on Google Play](https://play.google.com/store/apps/details?id=com.musicsheets)
+
 Requires **Python 3.10 or 3.11** and **Java 17+** on your PATH (or via `JAVA_HOME`).
 
 ```sh
