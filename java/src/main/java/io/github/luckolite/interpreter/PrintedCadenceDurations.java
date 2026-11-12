@@ -72,13 +72,36 @@ final class PrintedCadenceDurations {
             double last = chord.stream().mapToDouble(ScoreNoteEvent::positionInMeasure).max().orElseThrow();
             if (first < .15 || last > .8 || (last - first) * span > gap * .4) return false;
             float left = measure.left() * width, right = measure.right() * width;
-            if (!emptyOutsideChord(gray, width, staff, left, right,
-                    left + first * span, left + last * span)) return false;
             boolean sameSystem = next != null && Math.abs(next.top() - measure.top()) * height < gap;
             float boundary = sameSystem ? (right + next.left() * width) * .5f : right;
-            return boundaryProved(gray, width, staff, boundary, sameSystem && nextHasMeter);
+            double firstX = left + first * span, lastX = left + last * span;
+            if (completeCadence(gray, width, staff, left, right, firstX, lastX, boundary,
+                    sameSystem && nextHasMeter, false))
+                return true;
+            // Near a sloping edge the page-wide rails can be several pixels off.
+            // Reuse a local five-rule reading before allowing an interrupted stroke.
+            float[] rails = PrintedDirectionStaff.printedRules(
+                    gray, width, height, left + span * .25f, staff.bottom(), gap);
+            if (rails == null) return false;
+            float localTop = rails[0] - rails[1] * 4;
+            if (localTop < 0 || rails[0] >= height) return false;
+            var local = new PlayingTechniqueDetector.Staff(
+                    localTop, rails[0], rails[1], staff.index(), staff.count());
+            return completeCadence(gray, width, local, left, right, firstX, lastX, boundary,
+                    sameSystem && nextHasMeter, !sameSystem);
         }
         return false;
+    }
+
+    private static boolean completeCadence(
+            byte[] gray, int width, PlayingTechniqueDetector.Staff staff,
+            float left, float right, double first, double last,
+            float boundary, boolean nextHasMeter, boolean terminal) {
+        int stroke = boundaryColumn(gray, width, staff, boundary, nextHasMeter, terminal);
+        // A thick terminal bar may be bounded by its right edge in the measure geometry.
+        // Start the exclusion at the first proved stroke, before counting any interior ink.
+        return stroke >= 0 && emptyOutsideChord(gray, width, staff, left,
+                Math.min(right, stroke + staff.gap() * .45f), first, last);
     }
 
     private static boolean emptyOutsideChord(
@@ -101,17 +124,18 @@ final class PrintedCadenceDurations {
         return Math.abs(row - Math.round(row)) > .17f;
     }
 
-    private static boolean boundaryProved(
+    private static int boundaryColumn(
             byte[] gray, int width, PlayingTechniqueDetector.Staff staff,
-            float boundary, boolean nextHasMeter) {
+            float boundary, boolean nextHasMeter, boolean terminal) {
         float gap = staff.gap();
         int left = Math.max(0, Math.round(boundary - gap));
         int right = Math.min(width - 1, Math.round(boundary + gap));
         var darkness = new float[right - left + 1];
         var strokes = new boolean[darkness.length];
+        var interrupted = new boolean[darkness.length];
         for (int x = left; x <= right; x++) {
             int samples = 0, sum = 0;
-            boolean crossesStaff = true;
+            int spaces = 0;
             for (int space = 0; space < 4; space++) {
                 int local = 0, dark = 0;
                 for (int y = Math.round(staff.top() + (space + .2f) * gap);
@@ -122,24 +146,27 @@ final class PrintedCadenceDurations {
                     if (value < 155) dark++;
                 }
                 samples += local;
-                crossesStaff &= dark >= local * .7f;
+                if (dark >= local * .7f) spaces |= 1 << space;
             }
+            boolean crossesStaff = spaces == 0b1111;
             darkness[x - left] = sum / (float) samples;
-            if (nextHasMeter && crossesStaff && Math.abs(x - boundary) <= gap * .65f) return true;
+            if (nextHasMeter && crossesStaff && Math.abs(x - boundary) <= gap * .65f) return x;
             strokes[x - left] = crossesStaff && darkness[x - left] < 95;
+            interrupted[x - left] = terminal && (spaces == 0b1101 || spaces == 0b1011)
+                    && darkness[x - left] < 95;
         }
         // Two thin rules can touch at the staff lines. Compare the raw space profile
         // for a lighter valley separating both full-height strokes.
         for (int a = 0; a < darkness.length; a++) {
-            if (!strokes[a]) continue;
+            if (!strokes[a] && !interrupted[a]) continue;
             for (int b = a + Math.max(3, Math.round(gap * .24f));
                     b < darkness.length && b - a <= gap * .85f; b++) {
-                if (!strokes[b]
+                if (!(strokes[a] && (strokes[b] || interrupted[b]) || interrupted[a] && strokes[b])
                         || Math.abs(left + (a + b) * .5f - boundary) > gap * .65f) continue;
                 for (int x = a + 1; x < b; x++)
-                    if (darkness[x] - Math.max(darkness[a], darkness[b]) >= 24) return true;
+                    if (darkness[x] - Math.max(darkness[a], darkness[b]) >= 24) return left + a;
             }
         }
-        return false;
+        return -1;
     }
 }

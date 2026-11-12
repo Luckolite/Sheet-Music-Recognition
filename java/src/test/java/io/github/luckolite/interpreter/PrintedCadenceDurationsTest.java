@@ -77,4 +77,40 @@ public class PrintedCadenceDurationsTest {
         assertArrayEquals(new float[] {4, 4, 4},
                 durations(List.of(note(.35f, 74)), List.of()), 0);
     }
+
+    private void localTerminalBar(boolean hasCompanion, boolean interrupted) {
+        Arrays.fill(gray, (byte) 255);
+        for (int y = 54; y <= 118; y += 16)
+            Arrays.fill(gray, y * WIDTH + 20, y * WIDTH + 570, (byte) 0);
+        for (int y = 54; y <= 118; y++) {
+            Arrays.fill(gray, y * WIDTH + 329, y * WIDTH + 338, (byte) 0);
+            if (hasCompanion && (!interrupted || y < 70 || y > 86))
+                Arrays.fill(gray, y * WIDTH + 322, y * WIDTH + 325, (byte) 0);
+        }
+    }
+
+    private float[] terminalDurations() {
+        var measures = List.of(
+                new MeasureRegion(30f / WIDTH, 240f / WIDTH, .14f, .7f),
+                new MeasureRegion(258f / WIDTH, 338f / WIDTH, .14f, .7f));
+        var score = new ScorePageInterpretation(
+                measures, List.of(note(.38f, 94)), 1, List.of(), List.of(), List.of());
+        float[] beats = {4, 4};
+        PrintedCadenceDurations.apply(score, gray, WIDTH, HEIGHT, staffs, beats);
+        return beats;
+    }
+
+    @Test
+    public void localRailsSeparateAThickFinalBarFromInteriorInk() {
+        localTerminalBar(true, false);
+        assertArrayEquals(new float[] {4, 2}, terminalDurations(), 0);
+    }
+
+    @Test
+    public void interruptedTerminalStrokeNeedsAnIntactCompanion() {
+        localTerminalBar(true, true);
+        assertArrayEquals(new float[] {4, 2}, terminalDurations(), 0);
+        localTerminalBar(false, false);
+        assertArrayEquals(new float[] {4, 4}, terminalDurations(), 0);
+    }
 }
