@@ -13,12 +13,11 @@ as **`score-reader`** (PyPI package and command) and **`sheet_music_recognition`
 **Code and weights are Apache-2.0 licensed, including commercial and closed-source use.**
 You do not need to publish your own code. Follow the [license and notice requirements](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/docs/licensing.md).
 
-## Install and use
+## Install & Use
 
-### Try it on Android
+### Android Demo
 
-Import the sample PDF or a score of your own into Music Sheets and generate a
-play-along track. [Music Sheets on Google Play](https://play.google.com/store/apps/details?id=com.musicsheets) · [Sample PDF](https://raw.githubusercontent.com/Luckolite/Sheet-Music-Recognition/main/examples/scale.pdf)
+Import a PDF or image, and generate a play-along track. Available on [Google Play](https://play.google.com/store/apps/details?id=com.musicsheets) · [Sample PDF](https://raw.githubusercontent.com/Luckolite/Sheet-Music-Recognition/main/examples/scale.pdf)
 
 ### Run the demo
 
