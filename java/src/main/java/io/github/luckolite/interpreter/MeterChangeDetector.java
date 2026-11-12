@@ -90,7 +90,7 @@ public final class MeterChangeDetector {
                 || gray == null
                 || labels.length != width * height
                 || gray.length != width * height) return List.of();
-        var readings = new java.util.TreeMap<Integer, java.util.Set<Integer>>();
+        var readings = new java.util.TreeMap<Integer, java.util.Set<ScoreMeterChange>>();
         for (var geometry : signatureStaffs(labels, gray, width, height))
             for (var reading :
                     CommonTimeMeter.candidates(
@@ -108,7 +108,7 @@ public final class MeterChangeDetector {
                                 crop, labels, gray, width, height, measure, measures, notes))
                     continue;
                 readings.computeIfAbsent(measure, ignored -> new java.util.HashSet<>())
-                        .add(reading.numerator());
+                        .add(new ScoreMeterChange(measure, reading.numerator(), reading.numerator()));
             }
         for (var proof : PairedInlineCommonTime.prove(labels, gray, width, height, measures)) {
             boolean precedes = true;
@@ -117,10 +117,12 @@ public final class MeterChangeDetector {
                     precedes = false;
             if (precedes)
                 readings.computeIfAbsent(proof.measureIndex(), ignored -> new java.util.HashSet<>())
-                        .add(4);
+                        .add(new ScoreMeterChange(proof.measureIndex(), 4, 4));
         }
         if (numeric)
             for (var crop : candidates(labels, gray, width, height, measures, notes)) {
+                int measure = followingMeasure(crop, width, height, measures);
+                if (measure < 0) continue;
                 boolean four = false;
                 for (int x = crop.left(); x < crop.right() && !four; x++)
                     four =
@@ -132,15 +134,25 @@ public final class MeterChangeDetector {
                                     crop.firstLine(),
                                     Math.round(crop.firstLine() + 4 * crop.gap()),
                                     crop.gap());
-                if (!four) continue;
-                int measure = followingMeasure(crop, width, height, measures);
-                if (measure >= 0)
-                    readings.computeIfAbsent(measure, ignored -> new java.util.HashSet<>()).add(4);
+                if (four)
+                    readings.computeIfAbsent(measure, ignored -> new java.util.HashSet<>())
+                            .add(new ScoreMeterChange(measure, 4, 4));
+                int middle = (crop.left() + crop.right()) / 2;
+                int end = Math.min(crop.right(), Math.round(middle + crop.gap() * .65f));
+                for (int x = middle; x < end; x++) {
+                    if (!OmrMeasurePostProcessor.twoOverFourCounters(
+                            gray, width, height, x, crop.firstLine(),
+                            Math.round(crop.firstLine() + 4 * crop.gap()), crop.gap())) continue;
+                    readings.computeIfAbsent(measure, ignored -> new java.util.HashSet<>())
+                            .add(new ScoreMeterChange(measure, 2, 4));
+                    break;
+                }
             }
         var result = new ArrayList<ScoreMeterChange>();
-        for (var entry : readings.entrySet())
-            for (int value : new java.util.TreeSet<>(entry.getValue()))
-                result.add(new ScoreMeterChange(entry.getKey(), value, value));
+        var meterOrder = java.util.Comparator.comparingInt(ScoreMeterChange::numerator)
+                .thenComparingInt(ScoreMeterChange::denominator);
+        for (var values : readings.values())
+            values.stream().sorted(meterOrder).forEach(result::add);
         return List.copyOf(result);
     }
 

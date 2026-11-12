@@ -4459,6 +4459,12 @@
     },
     "MeterChangeDetector.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/MeterChangeDetector.java",
+      "opening_two_over_four_review": {
+        "reviewed_app_commit": "70adedbb6dc2f86bf9bc0018da6bd80e8c131ceb",
+        "app_blob_sha256": "356c7e42121fd7a06fa3db644bab09a160ddad55d60c4f98c3bb178851d0feca",
+        "standalone_lf_sha256": "47f66703935a1da16c1195c672a2a359ce7b28403490ca80e23022fdf85b597b",
+        "scope": "Opening two-over-four repair. The production patches match after path normalization. Broader source differences remain subject to review."
+      },
       "source_sha256": "8763a19b693b107795397d7dad0ec8b436b4b55aacd951fea218f0ae053d7fe0",
       "review_note": "Append complete component seeds after existing projected crops; preserve existing crop order, caller eligibility and total 48-crop budget. No numeric meter value is inferred from semantic labels.",
       "source_normalized_sha256": "154ce8c49d216235987cf54b9ec6fb3a223ad9d7687aa888e40c3a2e163593b5",
@@ -5160,6 +5166,12 @@
     },
     "OmrMeasurePostProcessor.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/OmrMeasurePostProcessor.java",
+      "opening_two_over_four_review": {
+        "reviewed_app_commit": "70adedbb6dc2f86bf9bc0018da6bd80e8c131ceb",
+        "app_blob_sha256": "7d4ee5d245a52e340600bffd4de48a9157d1dd14d3ac94b9bb944ae2316bc816",
+        "standalone_lf_sha256": "eb03c7b77d6f48f31a0d6281a8ec89dcec114bace3aedf3a12f7651d573ed40c",
+        "scope": "Opening two-over-four repair. The production patches match after path normalization. Broader source differences remain subject to review."
+      },
       "source_sha256": "812d46bd10d7b2319492029116143ae33190b30e608018863dfb041497094476",
       "source_normalized_sha256": "812d46bd10d7b2319492029116143ae33190b30e608018863dfb041497094476",
       "review_note": "Reviewed global text/source-owner repair and original regressions; see docs/audited-ownership-repairs.md. Package-only Java port, except public timeline visibility and the pure written-tie helper API name/visibility. Existing models and record layouts are unchanged.",
@@ -5189,6 +5201,12 @@
     },
     "OmrScoreInterpreter.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/OmrScoreInterpreter.java",
+      "opening_two_over_four_review": {
+        "reviewed_app_commit": "70adedbb6dc2f86bf9bc0018da6bd80e8c131ceb",
+        "app_blob_sha256": "0841c5a2ed6a3ec566544859988ca7c0fbf2e4b01df5faf6bacb493a3057b95a",
+        "standalone_lf_sha256": "af1d3947016efcc690381c794ec3de40e791468ea8730295f96baf70b2273130",
+        "scope": "Opening two-over-four repair. The production patches match after path normalization. Broader source differences remain subject to review."
+      },
       "source_sha256": "644f4e90c498f18d85d2aeb8748de557d42a9a1d3f2ea3fefd05a380926a5da3",
       "review_note": "Shared recognition and playback-direction changes ported with standalone adapters. Redistributable synthetic regressions cover the changed ink and direction rules.",
       "source_normalized_sha256": "2fde2ae7caecc7b8549332cc5b558ed9dfd9c9f2a7c4afe0c9ab0aa204957c25",

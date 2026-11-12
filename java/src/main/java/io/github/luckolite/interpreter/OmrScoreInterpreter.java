@@ -3675,6 +3675,10 @@ final class OmrScoreInterpreter {
                     && isStackedOpeningMeterFragment(
                             gray, width, height, head, staffs, measures, glyphs))
                 bounds = new int[] {head.minX, head.maxX, head.minY, head.maxY};
+            if (bounds == null
+                    && isOpeningTwoOverFourFragment(
+                            gray, width, height, head, staffs, measures, glyphs))
+                bounds = new int[] {head.minX, head.maxX, head.minY, head.maxY};
             if (bounds == null && isHeavyRestBarFragment(gray, width, height, head, staffs))
                 bounds = new int[] {head.minX, head.maxX, head.minY, head.maxY};
             if (bounds == null
@@ -6139,6 +6143,59 @@ final class OmrScoreInterpreter {
                         && maxY - minY > gap * 1.2f
                         && intersection > union * .72f) return true;
             }
+        return false;
+    }
+
+    /** A small fragment of a printed numerator can look like a head to the semantic model. */
+    private static boolean isOpeningTwoOverFourFragment(
+            byte[] gray,
+            int width,
+            int height,
+            Component head,
+            List<Staff> staffs,
+            List<MeasureRegion> measures,
+            List<Component> glyphs) {
+        Staff staff = nearestHeadStaff(staffs, head.centerY);
+        if (staff == null || staff.count != 1) return false;
+        float gap = staff.gap;
+        if (gap < 6
+                || head.area > gap * gap * .24f
+                || head.maxX - head.minX + 1 > gap * .75f
+                || head.maxY - head.minY + 1 > gap * .65f
+                || head.minY < staff.top + gap * .32f
+                || head.maxY > staff.top + gap * 1.95f) return false;
+        int[] stem = attachedRawStem(gray, width, height, head, gap);
+        if (stem != null
+                && (stem[1] < staff.top - gap * .25f || stem[1] > staff.bottom + gap * .25f))
+            return false;
+        float firstBar = Float.POSITIVE_INFINITY;
+        for (MeasureRegion measure : measures)
+            if (staff.top >= measure.top() * height - gap
+                    && staff.bottom <= measure.bottom() * height + gap)
+                firstBar = Math.min(firstBar, measure.left() * width);
+        if (head.centerX < firstBar - gap * .7f || head.centerX > firstBar + gap * 2.5f)
+            return false;
+
+        // A separate key glyph and clef establish the opening header before the numeric proof.
+        boolean hasKey = false, hasClef = false;
+        for (Component glyph : glyphs) {
+            float distance = head.minX - glyph.maxX;
+            float span = glyph.maxY - glyph.minY + 1;
+            if (distance < gap * .65f || glyph.centerY < staff.top - gap
+                    || glyph.centerY > staff.bottom + gap) continue;
+            if (distance <= gap * 2.5f && span >= gap * 1.7f && span <= gap * 3.8f)
+                hasKey = true;
+            if (distance <= gap * 5.25f && span >= gap * 4.5f
+                    && glyph.maxX - glyph.minX + 1 >= gap * 1.1f)
+                hasClef = true;
+        }
+        if (!hasKey || !hasClef) return false;
+        int firstLine = Math.round(staff.top), lastLine = Math.round(staff.bottom);
+        for (int column = Math.round(head.centerX + gap * .23f);
+                column <= Math.min(width - 1, Math.round(head.centerX + gap * .85f));
+                column++)
+            if (OmrMeasurePostProcessor.twoOverFourCounters(
+                    gray, width, height, column, firstLine, lastLine, gap)) return true;
         return false;
     }
 

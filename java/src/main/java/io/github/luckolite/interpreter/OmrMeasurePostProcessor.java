@@ -2698,6 +2698,43 @@ final class OmrMeasurePostProcessor {
         return true;
     }
 
+    /** A two has an open upper bowl, a descending stroke and a broad foot. */
+    static boolean twoOverFourCounters(
+            byte[] gray, int width, int height, int column, int top, int bottom, float gap) {
+        var counters = triangularStaffCounters(gray, width, height, column, top, bottom, gap, true, true);
+        if (counters.size() != 1) return false;
+        float counterY = counters.get(0)[1];
+        if (counterY < top + gap * 2.8f || counterY > top + gap * 3.55f) return false;
+        int bowlRows = 0, diagonalRows = 0, footRows = 0;
+        for (int y = Math.max(0, Math.round(top + gap * .3f));
+                y <= Math.min(height - 1, Math.round(top + gap * 1.92f)); y++) {
+            float row = (y - top) / gap;
+            if (row <= .85f) {
+                if (separatedNumeralInk(gray, width, y, column, gap)) bowlRows++;
+                continue;
+            }
+            if (onMeterRule(y, top, gap, Math.max(1, Math.round(gap * .15f)))) continue;
+            int left = Math.max(0, Math.round(column - gap * 1.5f));
+            int right = Math.min(width - 1, Math.round(column + gap * .6f));
+            int start = right + 1, end = left - 1, ink = 0;
+            for (int x = left; x <= right; x++) {
+                if ((gray[y * width + x] & 255) > 160) continue;
+                start = Math.min(start, x);
+                end = x;
+                ink++;
+            }
+            if (start <= left || end >= right || ink != end - start + 1) continue;
+            if (row <= 1.52f
+                    && ink >= gap * .32f && ink <= gap * .9f
+                    && (start + end) * .5f < column - gap * .2f) diagonalRows++;
+            if (row >= 1.65f && ink >= gap * 1.2f
+                    && start < column - gap * .8f && end >= column) footRows++;
+        }
+        return bowlRows >= Math.max(2, Math.round(gap * .24f))
+                && diagonalRows >= Math.max(2, Math.round(gap * .15f))
+                && footRows >= Math.max(2, Math.round(gap * .12f));
+    }
+
     private static boolean separatedNumeralInk(
             byte[] gray, int width, int y, int column, float gap) {
         int left = Math.max(0, column - Math.round(gap * 1.4f));
