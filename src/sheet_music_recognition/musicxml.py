@@ -318,13 +318,15 @@ def emit_note(measure, duration, voice, event=None, chord=False, stop=False, sta
             if endpoint is not None:
                 f32 = parenthesized_note_group.f32
                 decimal = lambda value: format(Decimal(str(f32(value))), 'f')
+                # The reference staff is 7 mm high. MusicXML font sizes use points.
+                size_points = endpoint['height'] / 1.6 * (7 * 72 / 25.4)
                 element(notation, 'other-notation', 'music-sheets-parenthesis-group:' + endpoint['id'],
                         type='start' if left else 'stop', number=endpoint['number'],
                         id=endpoint['id'] + ('-left' if left else '-right'),
                         smufl='noteheadParenthesisLeft' if left else 'noteheadParenthesisRight',
                         **{'relative-x': decimal(endpoint['x'] * 10),
                            'relative-y': decimal(-endpoint['y'] * 10),
-                           'font-size': decimal(f32(endpoint['height'] / f32(1.6)) * 100) + '%'})
+                           'font-size': decimal(size_points)})
         if natural_harmonic:
             element(element(notation, 'technical'), 'harmonic')
             element(notation.find('technical/harmonic'), 'natural')
@@ -395,6 +397,8 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
     document = resolve_boundary_ties(document)
     from .printed_tempo_spans import resolve_pages, preserve_end, SOURCE, GRADUAL
     document = dict(document, pages=resolve_pages(document['pages']))
+    from .navigation import tempo_restart_pages
+    tempo_restarts = tempo_restart_pages(document['pages'])
     from . import slur_export
     retained_slurs = slur_export.retained_spans(document['pages'], include_candidates=True)
     retained_slur_ties = set()
@@ -443,6 +447,7 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
                 if change['measureIndex'] == index:
                     current_meter = (change['numerator'], change['denominator'])
             bar = dict(start=offset+local_start, length=length, meter=current_meter, key=current_key,
+                       resetTempo=index == 0 and page_index in tempo_restarts,
                        tempos=[dict(c, _sourceTempoOnset=source_tempo_clock.onset(page, c))
                                for c in score.get('tempoChanges', []) if c['measureIndex'] == index])
             bars.append(bar)
@@ -815,9 +820,6 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
             measure = element(part, 'measure', number=first_number+index)
             attributes = element(measure, 'attributes')
             element(attributes, 'divisions', DIVISIONS)
-            for group in printed_rest_groups:
-                if group['firstBar'] == index and same_staff(group):
-                    element(element(attributes, 'measure-style'), 'multiple-rest', group['measureCount'])
             element(element(attributes, 'key'), 'fifths', bar['key'])
             time = element(attributes, 'time')
             numerator, denominator = bar['meter']
@@ -829,8 +831,11 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
             if bar['start'] in clef_changes:
                 clef_export.write(attributes, clef_changes[bar['start']])
                 emitted_clefs.add(bar['start'])
+            for group in printed_rest_groups:
+                if group['firstBar'] == index and same_staff(group):
+                    element(element(attributes, 'measure-style'), 'multiple-rest', group['measureCount'])
             tempos = list(bar['tempos'])
-            if index == 0 and not any(t['positionInMeasure'] == 0 for t in tempos):
+            if (index == 0 or bar['resetTempo']) and not any(t['positionInMeasure'] == 0 for t in tempos):
                 tempos.insert(0, dict(bpm=bpm, positionInMeasure=0))
             for tempo in tempos:
                 unit, dots, marked_bpm = tempo_mark(tempo)

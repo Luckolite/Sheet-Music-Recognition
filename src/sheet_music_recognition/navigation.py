@@ -73,30 +73,46 @@ def arrangement_ranges(pages):
     return _bridge(data)
 
 
+def tempo_restart_pages(pages):
+    """Return starts that can need a reset from a previous arrangement's tempo."""
+    if (not any(page.get('score', {}).get('firstMeasureNumber', 0) > 0 for page in pages[1:])
+            or not any(page.get('score', {}).get('tempoChanges') for page in pages)):
+        return set()
+    return {part['firstPage'] for part in arrangement_ranges(pages)[1:]}
+
+
 def project_navigation(document, bpm=120):
     pages=document['pages']
     for page in pages:
         for note in page['events']:
             validate_unpitched(note)
     if not any(page.get('score', {}).get('playbackDirections') for page in pages):
-        return document
+        restarts = tempo_restart_pages(pages)
+        if not restarts:
+            return document
+        return dict(document, pages=[dict(page, _resetInitialTempo=True) if i in restarts else page
+                                     for i, page in enumerate(pages)])
     if len(pages)<=1:
         return _project_one(document,bpm)
     ranges=arrangement_ranges(pages)
     output,diagnostics,occurrences=[],[],[]
     for index, part in enumerate(ranges):
         first,last=part['firstPage'],part['pageAfterLast']
-        played=_project_one(dict(document,pages=pages[first:last]),bpm,first)
+        played=_project_one(dict(document,pages=pages[first:last]),bpm,first,reset_tempo=index > 0)
         output.extend(played['pages']);diagnostics.extend(played.get('navigationDiagnostics',[]))
         occurrences.extend(dict(occurrence,arrangementIndex=index,sourceFirstPage=first)
                            for occurrence in played.get('navigationOccurrences',[]))
     return dict(document,pages=output,navigationDiagnostics=diagnostics,navigationOccurrences=occurrences)
 
 
-def _project_one(document, bpm=120, source_page_offset=0):
+def _project_one(document, bpm=120, source_page_offset=0, *, reset_tempo=False):
     pages = document['pages']
     if not any(page.get('score', {}).get('playbackDirections') for page in pages):
-        return dict(document, pages=mark_linear_slide_visits(pages, f'linear:{source_page_offset}'))
+        pages = mark_linear_slide_visits(pages, f'linear:{source_page_offset}')
+        if reset_tempo and pages:
+            pages[0] = dict(pages[0], _resetInitialTempo=True)
+        return dict(document, pages=pages)
+    from .source_tempo_clock import onset as tempo_onset
     beats, directions, notes, tempos = [], [], [], []
     offset = 0.0
     for page_index, page in enumerate(pages):
@@ -127,7 +143,9 @@ def _project_one(document, bpm=120, source_page_offset=0):
                 raise ValueError('Invalid decoded tempo anchor')
             if not math.isfinite(change['bpm']) or not 15 <= change['bpm'] <= 1600:
                 raise ValueError('Invalid decoded tempo')
-            tempos.append((offset+starts[m]+local[m]*position, change['bpm']))
+            written = tempo_onset(page, change)
+            tempos.append((offset+starts[m]+(local[m]*position if written is None else written),
+                           change['bpm']))
         beats.extend(local); offset += starts[-1]
     starts = [0.0]
     for value in beats: starts.append(starts[-1]+value)

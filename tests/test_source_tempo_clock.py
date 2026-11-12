@@ -9,6 +9,7 @@ from unittest.mock import patch
 import xml.etree.ElementTree as ET
 from sheet_music_recognition.source_tempo_clock import onset, rhythmic_changes
 from sheet_music_recognition.musicxml import write_musicxml, DIVISIONS
+from sheet_music_recognition.midi import performance_events
 
 
 def document():
@@ -16,7 +17,7 @@ def document():
     note=dict(measureIndex=0,positionInMeasure=.46,staffIndex=0,staffCount=1,staffStep=0,
               articulations=0,leadingRestBeats=1.5)
     event=dict(measureIndex=0,staffIndex=0,staffCount=1,sourceNoteIndex=0,midi=60,
-               startBeat=1.5,durationBeats=1,durationFallback=False)
+               startBeat=1.5,durationBeats=1,durationFallback=False,tiedFromPrevious=False)
     tempo=dict(measureIndex=0,positionInMeasure=.374,bpm=96,beatUnit=.5)
     caption=dict(eventId='original-owned-tempo',kind='UNRESOLVED_DIRECTION',scope='SCORE',
         start=dict(measureIndex=0,quarterBeatOffset=1.5),end=None,staffIndex=0,staffCount=1,
@@ -63,6 +64,49 @@ class SourceTempoClockTests(unittest.TestCase):
         before=copy.deepcopy(self.page);self.assertEqual(dict(self.tempo,positionInMeasure=.375),rhythmic_changes(self.page)[0]);self.assertEqual(before,self.page)
     def test_unknown_numeric_record_stays_unchanged(self):
         self.page['score']['expressiveEvents']=[];self.assertIs(self.tempo,rhythmic_changes(self.page)[0])
+
+    def midi_tempos(self, document):
+        _, messages, _ = performance_events(document)
+        return [(tick, int.from_bytes(message[3:], 'big')) for tick, _, message in messages
+                if message.startswith(b'\xff\x51\x03')]
+
+    def test_linear_and_repeated_preview_use_the_proved_tempo_onset(self):
+        self.assertEqual([(0, 500000), (720, 625000)], self.midi_tempos(self.doc))
+        self.page['score']['playbackDirections'] = [dict(kind=4, measureBoundary=0),
+                                                    dict(kind=5, measureBoundary=1)]
+        before = copy.deepcopy(self.doc)
+        self.assertEqual([(720, 625000), (2640, 625000)],
+                         [(tick, rate) for tick, rate in self.midi_tempos(self.doc) if rate == 625000])
+        self.assertEqual(before, self.doc)
+
+    def test_preview_without_owner_keeps_the_visual_offset(self):
+        self.page['score']['expressiveEvents'] = []
+        self.assertIn((718, 625000), self.midi_tempos(self.doc))
+
+    def test_separate_arrangement_resets_tempo_but_continuation_inherits(self):
+        self.page['score']['firstMeasureNumber'] = 1
+        next_page = copy.deepcopy(self.page)
+        next_page['score'].update(tempoChanges=[], expressiveEvents=[])
+        self.doc['pages'].append(next_page)
+        for number in (1, 2):
+            with self.subTest(first_measure=number):
+                next_page['score']['firstMeasureNumber'] = number
+                before = copy.deepcopy(self.doc)
+                self.assertEqual(number == 1, (1920, 500000) in self.midi_tempos(self.doc))
+                with tempfile.TemporaryDirectory() as folder:
+                    path = Path(folder) / 'arrangement.musicxml'
+                    write_musicxml(self.doc, path)
+                    bars = ET.parse(path).findall('part/measure')
+                self.assertEqual(number == 1, bars[1].find('direction/sound') is not None)
+                self.assertEqual(before, self.doc)
+
+    def test_linear_arrangement_resets_after_repeating_arrangement(self):
+        self.page['score'].update(firstMeasureNumber=1, playbackDirections=[
+            dict(kind=4, measureBoundary=0), dict(kind=5, measureBoundary=1)])
+        next_page = copy.deepcopy(self.page)
+        next_page['score'].update(tempoChanges=[], expressiveEvents=[], playbackDirections=[])
+        self.doc['pages'].append(next_page)
+        self.assertIn((3840, 500000), self.midi_tempos(self.doc))
 
     def test_real_xml_writer_aligns_visible_and_sound_offsets(self):
         before=copy.deepcopy(self.doc)

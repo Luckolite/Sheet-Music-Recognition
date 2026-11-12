@@ -65,6 +65,8 @@ class ParenthesisOriginals(unittest.TestCase):
             with self.assertRaises(ValueError):semantic_wire.encode([],[mark],1,296)
     def test_three_notes_export_one_pair(self):
         root=self.export();marks=root.findall('.//other-notation');self.assertEqual(['start','stop'],[m.get('type')for m in marks]);self.assertEqual(marks[0].text,marks[1].text);self.assertEqual([],root.findall('.//notehead'));self.assertEqual([],root.findall('.//words'))
+        for mark, height in zip(marks, (self.pair.geometry[4], self.pair.geometry[5])):
+            self.assertAlmostEqual(height / 1.6 * 7 * 72 / 25.4, float(mark.get('font-size')), places=5)
     def test_group_export_does_not_change_written_notes(self):
         root=self.export();self.page['score']['expressiveEvents']=[];old=self.export()
         for tag in ['pitch','duration','type','tie','tied']:

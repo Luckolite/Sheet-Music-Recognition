@@ -28,6 +28,8 @@ class PrintedMultiRestExportOriginalTest(unittest.TestCase):
     def test_explicit_four_bar_hrest_exports_one_group_and_four_full_rests(self):
         root=self.export(self.group_document());self.assertEqual(['4'],[x.text for x in root.findall('.//multiple-rest')]);self.assertEqual(4,len(root.findall('.//rest')))
         self.assertEqual(['40320']*4,[x.text for x in root.findall('.//note/duration')])
+        self.assertEqual(['divisions', 'key', 'time', 'clef', 'measure-style'],
+                         [node.tag for node in root.find('part/measure/attributes')])
     def test_ordinary_four_rest_bars_are_not_collapsed(self):
         doc=self.group_document();del doc['pages'][0]['score']['multiRestGroups'];root=self.export(doc)
         self.assertEqual([],root.findall('.//multiple-rest'));self.assertEqual(4,len(root.findall('.//rest')))

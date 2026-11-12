@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from .boundary_ties import resolve_boundary_ties
 from .navigation import project_navigation
+from .source_tempo_clock import onset as tempo_onset
 from .typed_events import event_kind, validate_unpitched
 from .tie_owners import releasing_links, sound_lanes
 from .typed_performance import unpitched_intervals
@@ -121,12 +122,17 @@ def _performance_events_prepared(document, bpm, expressive_document, unpitched_p
             percussion.append((start, end, unpitched_preview.percussion_note, velocity, attack, reference))
     source_rows = []
     for page in document["pages"]:
+        if page.get('_resetInitialTempo'):
+            events.append((round(offset * ppq), 0, b"\xff\x51\x03" + tempo.to_bytes(3, "big")))
         starts = [0.0]
         for beats in page["measureBeats"]:
             starts.append(starts[-1] + beats)
         for change in page["score"]["tempoChanges"]:
             bar = change["measureIndex"]
-            beat = offset + starts[bar] + page["measureBeats"][bar] * change["positionInMeasure"]
+            written = tempo_onset(page, change)
+            if written is None:
+                written = page["measureBeats"][bar] * change["positionInMeasure"]
+            beat = offset + starts[bar] + written
             micros = round(60_000_000 / change["bpm"])
             events.append((round(beat * ppq), 0, b"\xff\x51\x03" + micros.to_bytes(3, "big")))
         for note in sorted(page["events"], key=lambda n: n["startBeat"]):
