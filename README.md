@@ -8,7 +8,7 @@ as **`score-reader`** (PyPI package and command) and **`sheet_music_recognition`
 [![Build and test](https://github.com/Luckolite/Sheet-Music-Recognition/actions/workflows/ci.yml/badge.svg)](https://github.com/Luckolite/Sheet-Music-Recognition/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/LICENSE)
 
-[Quick start](#install-and-use) · [Review demo](https://github.com/Luckolite/Sheet-Music-Recognition/tree/main/examples/review) · [Benchmark](https://github.com/Luckolite/Sheet-Music-Recognition/tree/main/benchmarks/heldout) · [Documentation](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/docs/README.md) · [Python / Java API](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/docs/integration.md) · [Downloads](https://github.com/Luckolite/Sheet-Music-Recognition/releases)
+[Quick start](#install--use) · [Review demo](https://github.com/Luckolite/Sheet-Music-Recognition/tree/main/examples/review) · [Benchmark](https://github.com/Luckolite/Sheet-Music-Recognition/tree/main/benchmarks/heldout) · [Documentation](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/docs/README.md) · [Python / Java API](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/docs/integration.md) · [Downloads](https://github.com/Luckolite/Sheet-Music-Recognition/releases)
 
 **Code and weights are Apache-2.0 licensed, including commercial and closed-source use.**
 You do not need to publish your own code. Follow the [license and notice requirements](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/docs/licensing.md).

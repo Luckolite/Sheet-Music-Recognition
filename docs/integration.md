@@ -1,6 +1,6 @@
 # Python and Java API
 
-[Install the interpreter](../README.md#install-and-use) before running these examples.
+[Install the interpreter](../README.md#install--use) before running these examples.
 
 ## Python
 

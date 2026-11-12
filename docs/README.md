@@ -1,6 +1,6 @@
 # Developer docs
 
-- [Install and convert a score](../README.md#install-and-use)
+- [Install and convert a score](../README.md#install--use)
 - [Use the Python or Java API](integration.md)
 - [Report a bug or run the tests](../CONTRIBUTING.md)
 - [Use or redistribute the code and weights](licensing.md)
