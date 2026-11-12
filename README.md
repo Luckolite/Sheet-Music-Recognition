@@ -8,7 +8,7 @@ as **`sheet-music-recognition`** (command) and **`sheet_music_recognition`** (Py
 [![Build and test](https://github.com/Luckolite/Sheet-Music-Recognition/actions/workflows/ci.yml/badge.svg)](https://github.com/Luckolite/Sheet-Music-Recognition/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/LICENSE)
 
-[Quick start](#install-and-use) · [Review demo](examples/review/README.md) · [Benchmark](benchmarks/heldout/README.md) · [Documentation](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/docs/README.md) · [Python / Java API](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/docs/integration.md) · [Downloads](https://github.com/Luckolite/Sheet-Music-Recognition/releases)
+[Quick start](#install-and-use) · [Review demo](https://github.com/Luckolite/Sheet-Music-Recognition/tree/main/examples/review) · [Benchmark](https://github.com/Luckolite/Sheet-Music-Recognition/tree/main/benchmarks/heldout) · [Documentation](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/docs/README.md) · [Python / Java API](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/docs/integration.md) · [Downloads](https://github.com/Luckolite/Sheet-Music-Recognition/releases)
 
 **Code and weights are Apache-2.0 licensed, including commercial and closed-source use.**
 You do not need to publish your own code. Follow the [license and notice requirements](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/docs/licensing.md).
@@ -17,9 +17,6 @@ You do not need to publish your own code. Follow the [license and notice require
 
 Requires **Python 3.10 or 3.11** and **Java 17+** on your PATH (or via `JAVA_HOME`).
 
-PyPI publication under the new name is pending. Until it is live, follow
-[the source installation steps](#development) and run the demo command below.
-
 ```sh
 python -m pip install "sheet-music-recognition[pdf,audio]"
 sheet-music-recognition --demo --output scale.json --musicxml scale.musicxml --midi scale.mid --mp3 scale.mp3
@@ -27,9 +24,9 @@ sheet-music-recognition --demo --output scale.json --musicxml scale.musicxml --m
 
 | Original sample | Rendered MusicXML |
 | --- | --- |
-| ![Original two-measure scale](examples/scale.png) | ![Engraved MusicXML from the conversion](examples/review/scale-rendered.png) |
+| ![Original two-measure scale](https://raw.githubusercontent.com/Luckolite/Sheet-Music-Recognition/main/examples/scale.png) | ![Engraved MusicXML from the conversion](https://raw.githubusercontent.com/Luckolite/Sheet-Music-Recognition/main/examples/review/scale-rendered.png) |
 
-[Play or download the MP3](https://raw.githubusercontent.com/Luckolite/Sheet-Music-Recognition/main/examples/review/scale.mp3) · [Inspect the note overlay](examples/review/README.md) · [Download the sample MusicXML](examples/review/scale.musicxml)
+[Play or download the MP3](https://raw.githubusercontent.com/Luckolite/Sheet-Music-Recognition/main/examples/review/scale.mp3) · [Inspect the note overlay](https://github.com/Luckolite/Sheet-Music-Recognition/tree/main/examples/review) · [Download the sample MusicXML](https://raw.githubusercontent.com/Luckolite/Sheet-Music-Recognition/main/examples/review/scale.musicxml)
 
 ### Read a score
 
