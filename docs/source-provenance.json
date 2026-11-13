@@ -9475,16 +9475,16 @@
     },
     "TempoChangeDetector.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/TempoChangeDetector.java",
-      "source_sha256": "9affd34adf50f018140d27c6e4c6a0fb8abb5b8944033813eb6f722720183073",
-      "source_normalized_sha256": "9affd34adf50f018140d27c6e4c6a0fb8abb5b8944033813eb6f722720183073",
+      "source_sha256": "9b4e232304dfaccf5c0acf7a36f81d38b40925ae5947ec66c35e3ea0e8ac8137",
+      "source_normalized_sha256": "9b4e232304dfaccf5c0acf7a36f81d38b40925ae5947ec66c35e3ea0e8ac8137",
       "review_note": "Own an elevated complete opening metronome equation through an independently printed part caption, paired header rows, unique staff and clear corridor. Recover clipped meter crop staff geometry only with agreeing bilateral printed-rule witnesses and owned stacked ink. Add blank context around isolated OCR digits without changing source pixels, scale consensus or font thresholds. Sixty-six original procedural and licensed-font regressions; no private score assets, song predicates, model or wire-layout changes.",
       "reviewed_source_state": "working-tree",
-      "standalone_sha256": "03aafcc1168b157bfdf74c23240da5d8d0c802b4e2258f1eb2395baaaa441aca",
-      "reviewed_app_commit": "2337b2246d60df5c93552ccc9dc6d1a14f621844",
+      "standalone_sha256": "8b8a9b3ecb0b37992a40a493686883be9e25d6727488895059f1effc21cf0014",
+      "reviewed_app_commit": "6146b74ac936d1e7dc2afa95418b1a6faa43b18e",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/TempoChangeDetector.java",
-      "standalone_normalized_sha256": "03aafcc1168b157bfdf74c23240da5d8d0c802b4e2258f1eb2395baaaa441aca",
+      "standalone_normalized_sha256": "8b8a9b3ecb0b37992a40a493686883be9e25d6727488895059f1effc21cf0014",
       "license": "Apache-2.0",
-      "current_source_review": "Isolated two/three-digit OCR may retain one terminal parenthesis or bracket. Preserve exact original boxes and every optical equals/beat/attachment proof. Original geometric controls only; no private glyphs or score assets.",
+      "current_source_review": "Small hollow metronome pulse and elevated system ownership match after namespace and formatting. Standalone keeps its existing fast return when either input of both subsequent contextual loops is empty, so the same ordinary result is returned.",
       "reviewed_app_state": "Reviewed and committed recognition 147 sources. Original synthetic controls cover tempo dots, paired equation strokes, and a compact staff with real musical ink."
     },
     "TerminalCreditStroke.java": {
