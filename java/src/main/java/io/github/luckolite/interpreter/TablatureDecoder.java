@@ -365,6 +365,7 @@ public final class TablatureDecoder {
 
     /** OCR boxes are normalized page coordinates. Unknown glyphs never become open strings. */
     public static List<Staff> withWords(List<Staff> staffs, List<Word> words, int w, int h) {
+        if (staffs.isEmpty()) return List.of();
         words = TabTextSource.joinDigits(staffs, words, w, h);
         var result = new ArrayList<Staff>();
         for (Staff staff : staffs) {

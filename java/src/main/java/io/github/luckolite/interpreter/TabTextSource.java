@@ -17,6 +17,7 @@ public final class TabTextSource {
 
     private static final class DigitPattern {
         private static final Pattern VALUE = Pattern.compile("[0-9]");
+        private static final Pattern COMPOUND = Pattern.compile("[0-9]{2,3}");
     }
 
     public static List<String> tokens(String text) {
@@ -58,9 +59,12 @@ public final class TabTextSource {
         var sorted = new ArrayList<>(input);
         sorted.sort(
                 Comparator.comparingInt((TablatureDecoder.Word v) -> v.text().length()).reversed());
+        var singleDigits = input.stream()
+                .filter(word -> DigitPattern.VALUE.matcher(word.text()).matches())
+                .toList();
         var out = new ArrayList<TablatureDecoder.Word>();
         for (var v : sorted) {
-            if (crossesDigitRows(v, input)) continue;
+            if (crossesDigitRows(v, singleDigits)) continue;
             float area = (v.right() - v.left()) * (v.bottom() - v.top());
             boolean covered = false;
             for (var old : out) {
@@ -89,12 +93,11 @@ public final class TabTextSource {
     }
 
     private static boolean crossesDigitRows(
-            TablatureDecoder.Word word, List<TablatureDecoder.Word> input) {
-        if (!word.text().matches("[0-9]{2,3}")) return false;
+            TablatureDecoder.Word word, List<TablatureDecoder.Word> singleDigits) {
+        if (!DigitPattern.COMPOUND.matcher(word.text()).matches()) return false;
         var digits = new ArrayList<TablatureDecoder.Word>();
-        for (var v : input)
-            if (v.text().matches("[0-9]")
-                    && v.left() >= word.left() - .00001f
+        for (var v : singleDigits)
+            if (v.left() >= word.left() - .00001f
                     && v.right() <= word.right() + .00001f
                     && v.top() >= word.top() - .00001f
                     && v.bottom() <= word.bottom() + .00001f) digits.add(v);
@@ -113,8 +116,8 @@ public final class TabTextSource {
                 float cy = tab.top() + string * tab.gap();
                 var lane = new ArrayList<TablatureDecoder.Word>();
                 for (var v : words)
-                    if (DigitPattern.VALUE.matcher(v.text()).matches()
-                            && Math.abs((v.top() + v.bottom()) * .5f * h - cy) < tab.gap() * .35f)
+                    if (Math.abs((v.top() + v.bottom()) * .5f * h - cy) < tab.gap() * .35f
+                            && DigitPattern.VALUE.matcher(v.text()).matches())
                         lane.add(v);
                 lane.sort(Comparator.comparingDouble(TablatureDecoder.Word::left));
                 for (int i = 0; i + 1 < lane.size(); i++) {
