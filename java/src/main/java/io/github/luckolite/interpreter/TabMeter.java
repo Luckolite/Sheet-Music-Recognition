@@ -15,14 +15,14 @@ public final class TabMeter {
             int w,
             int h) {
         var changes = new ArrayList<>(score.meterChanges());
-        for (var tab : tabs)
-            if (tab.standardTop() < 0) {
+        var standalone = tabs.stream().filter(tab -> tab.standardTop() < 0).toList();
+        if (!standalone.isEmpty()) {
+            var meterWords = words.stream().filter(TabMeter::meterDigit).toList();
+            for (var tab : standalone) {
+                if (meterWords.size() < 2) break;
                 var digits = new ArrayList<TablatureDecoder.Word>();
-                for (var v : words)
-                    if (v.text().length() == 1
-                            && v.text().charAt(0) >= 0xe080
-                            && v.text().charAt(0) <= 0xe089
-                            && v.top() * h >= tab.top() - tab.gap()
+                for (var v : meterWords)
+                    if (v.top() * h >= tab.top() - tab.gap()
                             && v.bottom() * h <= tab.bottom() + tab.gap()) digits.add(v);
                 for (var a : digits)
                     for (var b : digits)
@@ -51,6 +51,7 @@ public final class TabMeter {
                             }
                         }
             }
+        }
         changes.sort(Comparator.comparingInt(ScoreMeterChange::measureIndex));
         return TabTempo.apply(
                 new ScorePageInterpretation(
@@ -73,5 +74,10 @@ public final class TabMeter {
                 words,
                 w,
                 h);
+    }
+
+    private static boolean meterDigit(TablatureDecoder.Word word) {
+        String text = word.text();
+        return text.length() == 1 && text.charAt(0) >= 0xe080 && text.charAt(0) <= 0xe089;
     }
 }

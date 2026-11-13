@@ -371,6 +371,9 @@ public class TabTextRhythmTest {
                         .get(0)
                         .bpm(),
                 0);
+        var tempoOnly = TabMeter.apply(score, List.of(staff(List.of())), words, W, H);
+        assertEquals(score.meterChanges(), tempoOnly.meterChanges());
+        assertEquals(132, tempoOnly.tempoChanges().get(0).bpm(), 0);
         assertTrue(
                 TabTempo.apply(score, List.of(staff(List.of())), words.subList(1, 3), W, H)
                         .tempoChanges()
