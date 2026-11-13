@@ -5318,7 +5318,7 @@
     },
     "OmrScoreInterpreter.java": {
       "head_edge_ledger_review": {
-        "reviewed_app_commit": "20daa7ea02c35fe12a6c3ecd9fe4bf17b5f3a0da",
+        "reviewed_app_commit": "b029dfbb",
         "app_lf_sha256": "0c5ddcd901b52488148f08bc345d3d297ea6426a9fd52df6a2da24fb7a25c0e0",
         "standalone_lf_sha256": "e65ddb78677aa56ddb058f5a7931801164f6b0d644a27f39c1fdb340b48f2e46",
         "scope": "Matching printed ledgers at the inward edge of a filled head. The app also guards a flat override reproduced only in desktop. Broader source drift remains open."
@@ -5378,11 +5378,11 @@
         "standalone_lf_sha256": "af1d3947016efcc690381c794ec3de40e791468ea8730295f96baf70b2273130",
         "scope": "Opening two-over-four repair. The production patches match after path normalization. Broader source differences remain subject to review."
       },
-      "source_sha256": "644f4e90c498f18d85d2aeb8748de557d42a9a1d3f2ea3fefd05a380926a5da3",
+      "source_sha256": "2c4d78898a0d776d9a92cab391bad2bb759f4918b35f056e1d54963b023959ee",
       "review_note": "Shared recognition and playback-direction changes ported with standalone adapters. Redistributable synthetic regressions cover the changed ink and direction rules.",
-      "source_normalized_sha256": "2fde2ae7caecc7b8549332cc5b558ed9dfd9c9f2a7c4afe0c9ab0aa204957c25",
+      "source_normalized_sha256": "6d6c2eddb3d8b1a563d13a8e69aedfc80e854eb89c40e43087f27c6c47295f3a",
       "reviewed_app_state": "Committed recognition130 source integration; cumulative app/Hub worker delivery pending goal completion.",
-      "standalone_sha256": "23ac617dd9c0d34d727b1fdd24072e046cc475ea16c67f51b3419946e082e56a",
+      "standalone_sha256": "c802196e6378bac421069dd919d7aa4de49adab7ab1ee224b90adde50b9c0ab8",
       "reviewed_app_base_commit": "f35728a8aa54ad905276707014439af44502ea61",
       "reviewed_app_commit": "17bb4862f61247cbbe9c5046b576653e9c2a7ded",
       "scoped_reviewed_app_commit": "17bb4862f61247cbbe9c5046b576653e9c2a7ded",
@@ -5395,7 +5395,7 @@
       "recognition91_review_note": "Reviewed recognition91: observed terminal ribbon; boundary-crossing hairpin proposal completion (anchor coordinate-span <=4; new 4M proposal budget); complete raw beam following-rest voice. Existing admission fits and 145/225, model, Guide291 and audio97 unchanged. Original procedural tests only.",
       "reviewed_source_state": "committed",
       "release130_review_note": "Reviewed platform adapter; see release130_source_review. No claim of whole-file token parity.",
-      "standalone_normalized_sha256": "b6f68eecf111c9a4ae242bb2ebdca894c49ba6bb5bf60b3e72b74c7798c1a45b",
+      "standalone_normalized_sha256": "fd7f13a140ed13a095aa8c798c1652fed18ddcff371cab39f730c0a9e2be119d",
       "current_source_review": "Allocate bounded shared-ledger caches only after an eligible independently owned remote head; exact split sibling capture retained. Existing cancellation zero-work contract restored;812 focused tests and1373 retained complete native note records preserved. Models, limits and layouts unchanged.",
       "release_transport_review": "For valid blank/no-staff inputs, unavailable context preserves the supplied measure count without inventing source observations or clock authority. The original strict whole-analysis server parity assertion remains enabled; an original two-measure blank control covers the early return. A generic comment replaces an internal review title.",
       "natural_cancellation_review": {
@@ -5445,7 +5445,8 @@
       "closed_phrase_clock_review": "Same-pass complete printed beam ownership resolves remote/shared-stem phrase caps and cross-staff written clock. Asymmetric arches have independent IDs preserving old arcs. Literal unique opposed-stem single-beam partners sustain independently of faster bass attacks. Optional bounded proofs preserve legacy on refusal. One existing clock capture follows final value projection. Original procedural regressions only; no score data, observers, weights or layouts.",
       "opposed_pair_ingress_review": "Early legacy cross-staff ownership stays before tie/rest handling. The identical additive opposed-pair proof runs once after original printed stem directions, before extra voices. Full-caller originals reproduce the omitted late ownership; no ink or value thresholds change.",
       "recognition139_review_note": "Reviewed app fix merged with the existing standalone adapters and formatting.",
-      "stacked_opening_meter_review": "A larger semantic head fragment in a system header can belong to a repeated pair of full printed meter digits after key ink. The common geometry preserves an independent stem and requires matching dense numeral shapes before removing the fragment. The Android and standalone sources differ in namespace, formatting, and logging only."
+      "stacked_opening_meter_review": "A larger semantic head fragment in a system header can belong to a repeated pair of full printed meter digits after key ink. The common geometry preserves an independent stem and requires matching dense numeral shapes before removing the fragment. The Android and standalone sources differ in namespace, formatting, and logging only.",
+      "recognition151_review_note": "The standalone now shares the app's raw single-spine guard before promoting a flat to sharp. The ledger phase and raster-rest refinements are ported. Standalone keeps neutral harmonic fields through intermediary constructors and short-circuits the same tie raster predicates."
     },
     "OnnxOcrInference.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/OnnxOcrInference.java",
@@ -7118,15 +7119,15 @@
     },
     "PrintedTupletBeamOwner.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/PrintedTupletBeamOwner.java",
-      "source_sha256": "c94e9d9a6077278747d05cc70a834c99f04ec7887cdc3893fa37cb55f1e9d9c2",
-      "source_normalized_sha256": "b44db2f25843668316f97813e42eff641a5512f3968982fb7ecac35e7792d8d6",
-      "reviewed_app_commit": "19218a38af75221e5aa5c9847273484b1eb9d3f4",
+      "source_sha256": "5bdadf105072c14cf561e76a8874a632703ae4654eced5bf0e98bf11f244a0b7",
+      "source_normalized_sha256": "d015b3642316427ef551b5259c9d9cd9fdc72437e543c913752baf799a57ff08",
+      "reviewed_app_commit": "b029dfbb",
       "reviewed_source_state": "Committed global dense-tuplet search performance fix; namespace-only standalone adaptation, generated regression and unchanged acceptance predicates reviewed.",
       "review_note": "Compute final-stem tip candidates once per connected-head check. Reject numeral shape, occlusion, contrast and joined-text failures before invoking the unchanged synchronous beam-owner predicate. Every accepted numeral still passes all original proofs in the same raster order. The only production caller is the pure ownership predicate in TripletRhythmDetector. No helper dependencies, models, weights, record layouts or recognition cache revision changed. Original generated filled-beam control rejects 1911 unnecessary owner calls; a valid-shape control still requires ownership. Private score pixels/logs stay outside this repository.",
       "reviewed_app_state": "Committed global dense-tuplet search performance fix; namespace-only standalone adaptation, generated regression and unchanged acceptance predicates reviewed.",
       "scoped_reviewed_app_commit": "19218a38af75221e5aa5c9847273484b1eb9d3f4",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/PrintedTupletBeamOwner.java",
-      "standalone_sha256": "159bfa5e4fe284db5843417cfe98e72eab20abb90312b94f2d1c232f56b992b4",
+      "standalone_sha256": "795186fc1a61d0e16047f9700e94f7dfbef742fbb3a27150e7869608c11d7456",
       "literal_tuplet_review": {
         "documentation": "docs/literal-tuplet-ownership.md",
         "reviewed_app_base_commit": "da1fd953b71cf1b539052c0d16f3b26eb615ac53",
@@ -7144,7 +7145,9 @@
         "scope": "Post-all-legacy complete literal quarter proof, genuine full rectifier ordinal identity, one optional64M/64M pool per detector invocation. No Source authority, model or record-layout change.",
         "rollout": "Source only; matched cumulative packaging deferred during active goal.",
         "app_commit": "14b533bf0297b0b36b3910858e847bf5012e9a2d"
-      }
+      },
+      "recognition151_review_note": "Both paths use the same connected-tip ownership, literal context and bounded quarter-rest accounting. Standalone reduces unbudgeted scanning after the same 94-percent coverage threshold becomes decisive.",
+      "standalone_normalized_sha256": "a4fba30812ee37abf5a020199f91fdf422d68a27a7c7750502eebeba2d196a7b"
     },
     "PrintedVoiceMeasureCut.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/PrintedVoiceMeasureCut.java",
@@ -8114,13 +8117,15 @@
     },
     "ScoreNavigationDetector.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/ScoreNavigationDetector.java",
-      "source_sha256": "6b632b07c06f80e68d2795b8fb6f96516756a9161a305d6549b579f409b78129",
-      "source_normalized_sha256": "6b632b07c06f80e68d2795b8fb6f96516756a9161a305d6549b579f409b78129",
+      "source_sha256": "268ae6457d01ad5867eb55e7ee373a902212713b7cccb66dd6fdc83ffc2f1756",
+      "source_normalized_sha256": "32db9f457e2a9c3a2e1a604bb8765e1f0c679ed46de743a6ee0b0591a1991f01",
       "review_note": "Shared recognition and playback-direction changes ported with standalone adapters. Redistributable synthetic regressions cover the changed ink and direction rules.",
       "standalone_sha256": "95c4bac807ad3bcf2e9f296029f8b503b5d52dee57e18b8678b961a8aa466f05",
       "reviewed_source_state": "Reviewed barline anchoring for vertically repeated Segno destinations.",
-      "reviewed_app_commit": "b86f5bfc27481eae234e8bcc9db919491c08f71a",
-      "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/ScoreNavigationDetector.java"
+      "reviewed_app_commit": "b029dfbb",
+      "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/ScoreNavigationDetector.java",
+      "recognition151_review_note": "Both include raised Segno destinations and PDF navigation evidence. Standalone also retains its previously published shared-barline Segno rule from 143532a8; this is an existing standalone-only boundary behavior.",
+      "standalone_normalized_sha256": "6a7f844830063e41350400b9eef91fc7f0fe7d76e3f8e54becd69977e494e92e"
     },
     "ScoreNavigationNoteProjection.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/ScoreNavigationNoteProjection.java",
@@ -8870,7 +8875,7 @@
     },
     "SheetInterpreter.java": {
       "unanchored_split_review": {
-        "reviewed_app_commit": "5bebe8ff6a799eaaeb6919f937f64741bb71d6e2",
+        "reviewed_app_commit": "b029dfbb",
         "app_blob_sha256": {
           "app/src/main/java/com/musicsheets/app/pdf/OmrMeasureAnalyzer.java": "cdf5f473523cc302470186cf9b26a1f9199aa434c5c3be2832be58955c2ea3ad",
           "tools/native-worker/NativePageGuide.java": "cdb7cab6dbb946f8252f77c1a0e59f962a30e34e1f9651428cc80b268f57d8a7"
@@ -8879,9 +8884,9 @@
         "scope": "Unanchored measure-count split guard and raster wiring. Broader source differences remain subject to review."
       },
       "source_path": "tools/native-worker/NativePageGuide.java",
-      "source_sha256": "e1f07c8f8ab2deaddd6bee09c4196d547ed76d10ad10a8e697a2c06ce6dbf100",
-      "source_normalized_sha256": "05da4b40b6ee8ed29a2abcf85fbe965041ebb88d9387f4443dd69e2fa26174a6",
-      "standalone_sha256": "ae55a2f70c8be9c11a3dd33e6e9f29ba035b54dacb7abb9d29e25e1ef059c1cd",
+      "source_sha256": "18c5b530fa7f67807122ccb4eec2f441fa0232f77840fb5d47d0a7693085f845",
+      "source_normalized_sha256": "b378b99af8d836d7ee4819a625103d58785a79c3d57f606f934f6657994940ab",
+      "standalone_sha256": "ec753795b32e1b0bd88567dfc6ebcd42cb69472a976a891d9b3e20146e7d5775",
       "license": "Apache-2.0",
       "review_note": "Shared recognition and playback-direction changes ported with standalone adapters. Redistributable synthetic regressions cover the changed ink and direction rules.",
       "reviewed_app_commit": "0ecbc5d99dd1311d7b7a0d1e1dfe7c8630c74889",
@@ -8896,14 +8901,15 @@
       "recognition103_review_note": "Recognition103 preserves accepted multi-rest origin identity when logical bars are inserted or removed. Reindexing runs after rhythm reconciliation and only relocates previously accepted identity; it adds no admission, rest count, timing, record, wire, Guide292, model, OCR, or dependency change. The 12 procedural originals are mirrored once in app and once in standalone, yielding 12 unique regressions and 24 invocations; 17 existing controls per namespace remain controls. No private score material.",
       "reviewed_source_state": "Reviewed committed recognition138 violin-score repair.",
       "release130_review_note": "Reviewed platform adapter; see release130_source_review. No claim of whole-file token parity.",
-      "standalone_normalized_sha256": "c8b91fad8a85719380ceffe795dbb0b4e222d99f30390a1b5d6eb7586c40dcea",
+      "standalone_normalized_sha256": "134d4b2c36be0fbef7e4debb4d331d0e2e351667261a13060fbaa53c404cb04a",
       "current_source_review": "Reviewed current source and standalone counterpart for the cumulative source-bound beam, notation, key, articulation and bounded context batch. Original procedural regressions only; physical source observations and model facts do not establish complete musical authority.",
       "qualified_dynamic_source_adapter_review": "Retain standalone caller-owned inference, existing strip acquisition, glyph and supplement ordering. Bind source before actual OCR, normalize final dynamic words from actual crop/scale origins, and preserve exact original expression acquisition. Additive semantic adapter for native source-identity repair; no whole-wrapper copy.",
       "recognition127_clock_adapter_review": "Reviewed equivalent final lifecycle change: bind existing full clock context before PrintedBeamSource.apply; native and standalone inference/word/port adapters remain separate. No full-wrapper token-parity claim, generic clock weakening, models or layouts change.",
       "recognition134_review": "Pass original Analysis to the optional complete-member opening-layout proof; all existing platform-specific pipeline adapters retained.",
       "closed_phrase_clock_review": "Same-pass complete printed beam ownership resolves remote/shared-stem phrase caps and cross-staff written clock. Asymmetric arches have independent IDs preserving old arcs. Literal unique opposed-stem single-beam partners sustain independently of faster bass attacks. Optional bounded proofs preserve legacy on refusal. One existing clock capture follows final value projection. Original procedural regressions only; no score data, observers, weights or layouts.",
       "recognition140_review_note": "Reviewed decoder-only illumination correction and namespace twins; original segmentation/OCR/annotation authority retained. Recognition140 cache invalidation, guide299/audio102 record layouts unchanged. Original synthetic regressions and model lineage only.",
-      "paper_ink_policy_review": "The native caller passes original notation labels to the Java paper polisher. The standalone reader applies the equivalent Python policy before the Java decoder. Both use unchanged source pixels for segmentation and OCR."
+      "paper_ink_policy_review": "The native caller passes original notation labels to the Java paper polisher. The standalone reader applies the equivalent Python policy before the Java decoder. Both use unchanged source pixels for segmentation and OCR.",
+      "recognition151_review_note": "Reviewed adapter parity for shared raw annotation input, measure reconciliation, printed octave spans and tuplet pairs, original-raster arpeggios, harmonic touch, and cadence capture. Native worker and standalone retain their respective OCR acquisition and transport adapters."
     },
     "SheetWrittenTieLinks.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/SheetWrittenTieLinks.java",
@@ -9653,11 +9659,11 @@
     },
     "TripletRhythmDetector.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/TripletRhythmDetector.java",
-      "source_sha256": "a7d0cfc64efe91d179c52e1d6980b3c41cf836a1e2ae7f9b99a8ee68c3b664f3",
-      "source_normalized_sha256": "a7d0cfc64efe91d179c52e1d6980b3c41cf836a1e2ae7f9b99a8ee68c3b664f3",
+      "source_sha256": "db577ccc05e25a12d8610038b13d38f878b126a327951e15c5b40b874e72a0f9",
+      "source_normalized_sha256": "8a796660805ca552eac6f01127fc6072ebe0d6c874926a5a875aa247147cdf7f",
       "review_note": "Shared recognition and playback-direction changes ported with standalone adapters. Redistributable synthetic regressions cover the changed ink and direction rules.",
-      "standalone_sha256": "c60e4dd8fce263c0351c8f302df677bfb8beef1a5b30f39ef395dc32aa9437cb",
-      "reviewed_app_commit": "c54aa86d1633b88b9ffc28a7f79e65b4e7c7d5d6",
+      "standalone_sha256": "3a94ab0baa6516d42b5b6e7572b424e788c1b0f09eb111df9d44c0387c6f2365",
+      "reviewed_app_commit": "b029dfbb",
       "reviewed_app_base_commit": "e9ed7bb25697a8d657285ebd9bdef7bb8df15880",
       "scoped_reviewed_app_commit": "cb837eed837cdbe6f36214e34e0079053adae02c",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/TripletRhythmDetector.java",
@@ -9689,7 +9695,9 @@
         "scope": "Invocation-owned full-roster literal head/shaft/beam proof and independent local numeral witness after complete original recognizer failure; no Source authority/model/layout/cap change.",
         "rollout": "Source only; matched cumulative packaging deferred during active goal.",
         "reviewed_app_commit": "c8206f732dbc4b1e09f8f4e184c252560a2712a2"
-      }
+      },
+      "recognition151_review_note": "Both include complete bracket and beam ownership, evidence-gated neutral pairs, source rest offsets, and correct chord/voice clocks. Standalone retains indexed groups and work reuse while preserving source note fields in ratio and rest copies.",
+      "standalone_normalized_sha256": "3a94ab0baa6516d42b5b6e7572b424e788c1b0f09eb111df9d44c0387c6f2365"
     },
     "TupletConsensusFont.java": {
       "source_path": "app/src/test/java/com/musicsheets/app/pdf/TupletConsensusFont.java",

@@ -2202,6 +2202,8 @@ final class OmrScoreInterpreter {
                                 && rawSharpFromSeed(
                                         gray, width, height, localAccidentals, head, accidentalGap)
                         || writtenAccidental == ScoreNoteEvent.ACCIDENTAL_FLAT
+                                && !hasSingleUpperFlatSpine(
+                                        gray, width, (Component) writtenChoice.glyph, accidentalGap)
                                 && completeRawSharpFromSeed(
                                         gray, width, height, localAccidentals, head, accidentalGap))
                     writtenAccidental = ScoreNoteEvent.ACCIDENTAL_SHARP;
@@ -18375,6 +18377,26 @@ final class OmrScoreInterpreter {
             Component head,
             float gap) {
         return rawSharpFromSeedEvidence(gray, width, height, candidates, head, gap, false);
+    }
+
+    private static boolean hasSingleUpperFlatSpine(
+            byte[] gray, int width, Component glyph, float gap) {
+        if (gray == null || glyph == null
+                || glyph.maxX - glyph.minX + 1 > gap * 1.2f
+                || glyph.maxY - glyph.minY + 1 < gap * 1.55f) return false;
+        int upperRows = Math.round(gap * .36f);
+        int spineWidth = Math.round(gap * .29f);
+        for (int y = glyph.minY; y < glyph.minY + upperRows; y++) {
+            boolean spine = false;
+            for (int x = glyph.minX; x <= glyph.maxX; x++) {
+                int value = gray[y * width + x] & 255;
+                if (x < glyph.minX + spineWidth) {
+                    if (value < 180) spine = true;
+                } else if (value < 205) return false;
+            }
+            if (!spine) return false;
+        }
+        return true;
     }
 
     private static boolean completeRawSharpFromSeed(
