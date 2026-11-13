@@ -15,6 +15,10 @@ MAX_PIXELS = 20_000_000
 MIN_FADED_TONE = 96
 MAX_FADED_TONE = 220
 MIN_PAPER_CONTRAST = 32
+_PAPER_KERNEL = np.ones((25, 25), np.uint8)
+_INK_KERNEL = np.ones((3, 3), np.uint8)
+_PAPER_KERNEL.setflags(write=False)
+_INK_KERNEL.setflags(write=False)
 
 
 @dataclass(frozen=True)
@@ -75,8 +79,9 @@ class PaperBackgroundWhitening:
         paper, contrast = self._session.run(["paper", "contrast"], {"features": features[None]})
         expected = (1, 1, features.shape[1], features.shape[2])
         for field, minimum in ((paper, .23), (contrast, .35)):
-            if (field.shape != expected or not np.isfinite(field).all()
-                    or float(field.min()) < minimum - .00001 or float(field.max()) > 1.00001):
+            # NumPy min/max propagate NaN, which fails these inclusive bounds.
+            if (field.shape != expected or not float(field.min()) >= minimum - .00001
+                    or not float(field.max()) <= 1.00001):
                 raise ValueError("Invalid paper-field output")
         return paper[0, 0], contrast[0, 0]
 
@@ -92,7 +97,7 @@ class PaperBackgroundWhitening:
         import cv2
         raw_hash = raster_sha256(gray)
 
-        kernel = np.ones((25, 25), np.uint8)
+        kernel = _PAPER_KERNEL
         paper_estimate = None
         if not _bright_paper(gray):
             paper_estimate = cv2.morphologyEx(gray, cv2.MORPH_CLOSE, kernel)
@@ -126,7 +131,7 @@ class PaperBackgroundWhitening:
         np.rint(corrected, out=corrected)
         np.clip(corrected, 0, 255, out=corrected)
         output = corrected.astype(np.uint8)
-        output = self._darken_faded_ink(output, labels, kernel)
+        self._darken_faded_ink(output, labels, kernel, in_place=True)
         return self._result(gray, output, raw_hash)
 
     @staticmethod
@@ -136,7 +141,7 @@ class PaperBackgroundWhitening:
         return WhiteningResult(output, True, raw_hash, raster_sha256(output))
 
     @staticmethod
-    def _darken_faded_ink(gray, labels, kernel, paper=None):
+    def _darken_faded_ink(gray, labels, kernel, paper=None, *, in_place=False):
         if labels is None:
             return gray
         import cv2
@@ -148,7 +153,7 @@ class PaperBackgroundWhitening:
         cv2.bitwise_and(candidates, eligible, dst=candidates)
         if cv2.countNonZero(candidates) == 0:
             return gray
-        core = cv2.erode(gray, np.ones((3, 3), np.uint8))
+        core = cv2.erode(gray, _INK_KERNEL)
         cv2.inRange(core, MIN_FADED_TONE, 255, dst=eligible)
         cv2.bitwise_and(candidates, eligible, dst=candidates)
         if cv2.countNonZero(candidates) == 0:
@@ -162,6 +167,6 @@ class PaperBackgroundWhitening:
         gain[paper[candidates].astype(np.int16) - tones < MIN_PAPER_CONTRAST] = 0
         if not gain.any():
             return gray
-        output = gray.copy()
+        output = gray if in_place else gray.copy()
         output[candidates] = tones - gain
         return output

@@ -106,6 +106,21 @@ class WhiteningTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 PaperBackgroundWhitening().correct(gray)
 
+    def test_inference_rejects_nonfinite_fields(self):
+        from unittest.mock import Mock
+
+        features = np.zeros((2, 8, 8), np.float32)
+        paper = np.full((1, 1, 8, 8), .8, np.float32)
+        owner = PaperBackgroundWhitening()
+        owner._session = Mock()
+        for invalid in (np.nan, np.inf, -np.inf):
+            with self.subTest(invalid=invalid):
+                contrast = paper.copy()
+                contrast.flat[20] = invalid
+                owner._session.run.return_value = (paper, contrast)
+                with self.assertRaisesRegex(ValueError, "Invalid paper-field output"):
+                    owner._inference(features)
+
     def test_model_hash_is_checked(self):
         from pathlib import Path
         import tempfile
