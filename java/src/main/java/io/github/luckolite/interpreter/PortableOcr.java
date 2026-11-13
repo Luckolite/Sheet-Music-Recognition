@@ -338,50 +338,41 @@ public final class PortableOcr {
     }
 
     static OcrText.Box inkBoundsGray(byte[] pixels, int width, OcrText.Box region) {
-        int l = region.right, r = -1, t = region.bottom, b = -1;
-        // A row's outermost ink is sufficient to update the crop bounds.
-        for (int y = region.top; y < region.bottom; y++) {
-            int row = y * width;
-            int first = region.left;
-            while (first < region.right && (pixels[row + first] & 255) >= 190) first++;
-            if (first == region.right) continue;
-            l = Math.min(l, first);
-            t = Math.min(t, y);
-            b = y;
-            int last = region.right - 1;
-            while (last > r && last > first && (pixels[row + last] & 255) >= 190) last--;
-            r = Math.max(r, last);
-        }
-        return r < l ? region : new OcrText.Box(l, t, r + 1, b + 1);
+        return inkBounds(width, region, index -> (pixels[index] & 255) < 190);
     }
 
     /** Remove detector padding without searching beyond the CTC-assigned text area.
      * This is still an alignment estimate where neighboring glyphs overlap. */
     static OcrText.Box inkBounds(int[] pixels, int width, OcrText.Box region) {
+        return inkBounds(width, region, index -> isColorInk(pixels[index]));
+    }
+
+    private static boolean isColorInk(int color) {
+        return (channel(color, 0) + channel(color, 8) + channel(color, 16)) / 3 < 190;
+    }
+
+    private static OcrText.Box inkBounds(int width, OcrText.Box region, IntPredicate isInk) {
         int l = region.right, r = -1, t = region.bottom, b = -1;
-        for (int y = region.top; y < region.bottom; y++)
-            for (int x = region.left; x < region.right; x++) {
-                int color = pixels[y * width + x];
-                if ((channel(color, 0) + channel(color, 8) + channel(color, 16)) / 3 < 190) {
-                    l = Math.min(l, x);
-                    r = Math.max(r, x);
-                    t = Math.min(t, y);
-                    b = Math.max(b, y);
-                }
-            }
+        // A row's outermost ink is sufficient to update the crop bounds.
+        for (int y = region.top; y < region.bottom; y++) {
+            int row = y * width;
+            int first = region.left;
+            while (first < region.right && !isInk.test(row + first)) first++;
+            if (first == region.right) continue;
+            l = Math.min(l, first);
+            t = Math.min(t, y);
+            b = y;
+            int last = region.right - 1;
+            while (last > r && last > first && !isInk.test(row + last)) last--;
+            r = Math.max(r, last);
+        }
         return r < l ? region : new OcrText.Box(l, t, r + 1, b + 1);
     }
 
     /** A detector may enclose both stacked meter digits. Split only tall crops with
      * two substantial ink bands and a genuine empty horizontal gutter, not dots. */
     static List<OcrText.Box> splitStackedRows(int[] pixels, int width, OcrText.Box box) {
-        return splitStackedRows(
-                width,
-                box,
-                index -> {
-                    int color = pixels[index];
-                    return (channel(color, 0) + channel(color, 8) + channel(color, 16)) / 3 < 190;
-                });
+        return splitStackedRows(width, box, index -> isColorInk(pixels[index]));
     }
 
     static List<OcrText.Box> splitStackedGrayRows(byte[] pixels, int width, OcrText.Box box) {
