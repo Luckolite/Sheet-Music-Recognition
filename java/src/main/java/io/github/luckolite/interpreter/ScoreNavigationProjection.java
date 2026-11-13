@@ -409,7 +409,9 @@ public final class ScoreNavigationProjection {
                         n.tupletNormalNotes())
                 .withStemDirection(n.stemDirection())
                 .withKind(n.kind())
-                .withVisualSize(n.visualSize());
+                .withVisualSize(n.visualSize())
+                .withHarmonicSemitones(n.harmonicSemitones())
+                .withOpenStringTouch(n.openStringTouch());
     }
 
     // Source dynamics are evaluated below in musical time, not page distance or bar count.
