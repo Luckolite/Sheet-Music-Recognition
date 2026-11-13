@@ -251,7 +251,10 @@ public final class MusicalOcr {
                             Integer.parseInt(parts[1])));
         }
         var accepted =
-                MeterChangeDetector.filterWholeNoteOcrReadings(found, notes, measures.size());
+                MeterChangeDetector.filterWholeNoteOcrReadings(
+                        MeterChangeDetector.filterContradictedOcrMeters(
+                                found, rasterMeasures, notes, measures.size()),
+                        notes, measures.size());
         var acceptedHeaderReadings =
                 headerReadings.stream()
                         .filter(

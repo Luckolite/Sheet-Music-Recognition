@@ -7,6 +7,23 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class WholeNoteMeterOcrTest {
+    @Test public void onlyAnUncorroboratedInteriorHalfNoteMeterMayBeRejected() {
+        var reading = List.of(new ScoreMeterChange(1, 3, 2));
+        var notes = new ArrayList<ScoreNoteEvent>();
+        for (int measure = 1; measure <= 2; measure++)
+            for (int beat = 0; beat < 4; beat++)
+                notes.add(new ScoreNoteEvent(measure, .06f + beat * .25f, 4, 0, 1, .5f,
+                        false, 0, 0, ScoreNoteEvent.ACCIDENTAL_FROM_KEY, 1));
+        assertTrue(MeterChangeDetector.filterContradictedOcrMeters(
+                reading, java.util.Set.of(), notes, 3).isEmpty());
+        assertEquals(reading, MeterChangeDetector.filterContradictedOcrMeters(
+                reading, java.util.Set.of(1), notes, 3));
+        assertEquals(reading, MeterChangeDetector.filterContradictedOcrMeters(
+                reading, java.util.Set.of(), notes, 2));
+        assertEquals(reading, MeterChangeDetector.filterContradictedOcrMeters(
+                reading, java.util.Set.of(), List.of(), 3));
+    }
+
     @Test
     public void repeatedThreeBeatBarsRejectSpuriousOneOverFour() {
         assertTrue(filtered(1, 4, 3).isEmpty());

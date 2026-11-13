@@ -280,6 +280,25 @@ public final class MeterChangeDetector {
         return Math.abs(left - right) < .04;
     }
 
+    /** An OCR-only change can be a clef or other stacked ink in the same header slot. */
+    public static List<ScoreMeterChange> filterContradictedOcrMeters(
+            List<ScoreMeterChange> readings,
+            java.util.Set<Integer> rasterMeasures,
+            List<ScoreNoteEvent> notes,
+            int measureCount) {
+        var accepted = new ArrayList<ScoreMeterChange>(readings.size());
+        for (int i = 0; i < readings.size(); i++) {
+            var choice = readings.get(i);
+            int next = i + 1 < readings.size() ? readings.get(i + 1).measureIndex() : measureCount;
+            if (choice.measureIndex() == 0 || choice.denominator() != 2
+                    || rasterMeasures.contains(choice.measureIndex())
+                    || !contradictedByWrittenBars(choice, notes, next)) {
+                accepted.add(choice);
+            }
+        }
+        return List.copyOf(accepted);
+    }
+
     /** Tiny stem/rest crops can OCR as 1/1, 2/1, 1/2 or 1/4. Reject those readings only
      * when multiple complete written bars contradict them. Other readings remain
      * unchanged: missed beams can make even genuine compound bars disagree. */
