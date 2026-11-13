@@ -87,6 +87,20 @@ public class ScoreMeterMapTest {
     }
 
     @Test
+    public void lastChangeAtTheSameMeasureOwnsItsBoundaryAndSpan() {
+        var map = new ScoreMeterMap(4, List.of(
+                new ScoreMeterChange(2, 3, 4),
+                new ScoreMeterChange(0, 6, 8),
+                new ScoreMeterChange(2, 7, 8)));
+        assertEquals(4, map.beatsInMeasure(-1), 0);
+        assertEquals(3, map.beatsInMeasure(0), 0);
+        assertEquals(6, map.startBeat(2), 0);
+        assertEquals(3.5, map.beatsInMeasure(2), 0);
+        assertEquals(2, map.measurePosition(6), 0);
+        assertEquals(2.5, map.measurePosition(7.75), 0);
+    }
+
+    @Test
     public void nonFiniteOpeningFallsBackAndBoundaryFractionsClamp() {
         var map = new ScoreMeterMap(Float.NaN, null);
         assertEquals(4, map.beatsInMeasure(0), 0);

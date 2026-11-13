@@ -9,7 +9,9 @@ import java.util.List;
 /** Converts logical bars to cumulative quarter-note beats without assuming equal bar lengths. */
 public final class ScoreMeterMap {
     private final float opening;
-    private final List<ScoreMeterChange> changes;
+    private final int[] changeMeasures;
+    private final float[] changeSpans;
+    private final double[] changeStarts;
     private final double[] performedStarts;
     private final boolean exactAnchorMode;
     private final double[] exactSpans;
@@ -20,7 +22,22 @@ public final class ScoreMeterMap {
         if (changes != null)
             for (ScoreMeterChange change : changes) if (change != null) ordered.add(change);
         ordered.sort(Comparator.comparingInt(ScoreMeterChange::measureIndex));
-        this.changes = List.copyOf(ordered);
+        this.changeMeasures = new int[ordered.size()];
+        this.changeSpans = new float[ordered.size()];
+        this.changeStarts = new double[ordered.size()];
+        int previous = 0;
+        float beats = this.opening;
+        double total = 0;
+        for (int i = 0; i < ordered.size(); i++) {
+            var change = ordered.get(i);
+            int measure = change.measureIndex();
+            total += (measure - previous) * (double) beats;
+            previous = measure;
+            beats = change.quarterBeats();
+            changeMeasures[i] = measure;
+            changeSpans[i] = beats;
+            changeStarts[i] = total;
+        }
         this.performedStarts = null;
         this.exactAnchorMode = false;
         this.exactSpans = null;
@@ -32,7 +49,9 @@ public final class ScoreMeterMap {
 
     private ScoreMeterMap(double[] starts, double[] exactSpans) {
         this.opening = starts.length > 1 ? (float) (starts[1] - starts[0]) : 4;
-        this.changes = List.of();
+        this.changeMeasures = null;
+        this.changeSpans = null;
+        this.changeStarts = null;
         this.performedStarts = starts;
         this.exactAnchorMode = exactSpans != null;
         this.exactSpans = exactSpans;
@@ -109,12 +128,8 @@ public final class ScoreMeterMap {
     public float beatsInMeasure(int measure) {
         if (performedStarts != null)
             return Math.max(Float.MIN_VALUE, (float) quarterBeatsInMeasure(measure));
-        float beats = opening;
-        for (ScoreMeterChange change : changes) {
-            if (change.measureIndex() > measure) break;
-            beats = change.quarterBeats();
-        }
-        return beats;
+        int change = changeAtMeasure(measure);
+        return change < 0 ? opening : changeSpans[change];
     }
 
     public double startBeat(int measure) {
@@ -124,16 +139,21 @@ public final class ScoreMeterMap {
                     ? performedStarts[target]
                     : performedStarts[last] + (target - last) * quarterBeatsInMeasure(last);
         }
-        int target = Math.max(0, measure), previous = 0;
-        double total = 0;
-        float beats = opening;
-        for (ScoreMeterChange change : changes) {
-            if (change.measureIndex() > target) break;
-            total += (change.measureIndex() - previous) * (double) beats;
-            previous = change.measureIndex();
-            beats = change.quarterBeats();
+        int target = Math.max(0, measure);
+        int change = changeAtMeasure(target);
+        return change < 0
+                ? target * (double) opening
+                : changeStarts[change] + (target - changeMeasures[change]) * (double) changeSpans[change];
+    }
+
+    private int changeAtMeasure(int measure) {
+        int low = 0, high = changeMeasures.length;
+        while (low < high) {
+            int middle = low + ((high - low) >>> 1);
+            if (changeMeasures[middle] <= measure) low = middle + 1;
+            else high = middle;
         }
-        return total + (target - previous) * (double) beats;
+        return low - 1;
     }
 
     public double beatAt(int measure, double fraction) {
@@ -153,17 +173,16 @@ public final class ScoreMeterMap {
             index = -index - 2;
             return index + (target - performedStarts[index]) / quarterBeatsInMeasure(index);
         }
-        int previous = 0;
-        double total = 0;
-        float beats = opening;
-        for (ScoreMeterChange change : changes) {
-            double next = total + (change.measureIndex() - previous) * (double) beats;
-            if (target < next) return previous + (target - total) / beats;
-            total = next;
-            previous = change.measureIndex();
-            beats = change.quarterBeats();
+        int low = 0, high = changeStarts.length;
+        while (low < high) {
+            int middle = low + ((high - low) >>> 1);
+            if (changeStarts[middle] <= target) low = middle + 1;
+            else high = middle;
         }
-        return previous + (target - total) / beats;
+        int change = low - 1;
+        return change < 0
+                ? target / opening
+                : changeMeasures[change] + (target - changeStarts[change]) / changeSpans[change];
     }
 
     /** Explicit audio frame only; legacy factories and float note inference stay unchanged. */
