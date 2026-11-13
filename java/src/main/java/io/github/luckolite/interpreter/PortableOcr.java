@@ -348,6 +348,12 @@ public final class PortableOcr {
     }
 
     private static boolean isColorInk(int color) {
+        int alpha = color >>> 24;
+        int channelSum = (color & 255) + ((color >>> 8) & 255) + ((color >>> 16) & 255);
+        int darkness = alpha * (3 * 255 - channelSum);
+        int threshold = 3 * 255 * (255 - 190);
+        if (darkness != threshold) return darkness > threshold;
+        // At exact equality, preserve the rounding of the original channel conversions.
         return (channel(color, 0) + channel(color, 8) + channel(color, 16)) / 3 < 190;
     }
 
