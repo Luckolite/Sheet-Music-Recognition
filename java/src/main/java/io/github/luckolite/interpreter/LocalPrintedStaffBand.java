@@ -48,8 +48,7 @@ final class LocalPrintedStaffBand {
             float slope,
             StaffPitchTrack track) {
         return matchesAtDistance(
-                gray, w, h, x, top, gap, threshold, first, last, slope, track, false, 1, 1.4f,
-                false);
+                gray, w, h, x, top, gap, threshold, first, last, slope, track, false, false);
     }
 
     static boolean matchesBeyondStem(
@@ -65,11 +64,7 @@ final class LocalPrintedStaffBand {
             float slope,
             StaffPitchTrack track) {
         return matchesAtDistance(
-                        gray, w, h, x, top, gap, threshold, first, last, slope, track, true, 2,
-                        1.4f, false)
-                || matchesAtDistance(
-                        gray, w, h, x, top, gap, threshold, first, last, slope, track, true, 1,
-                        1.4f, false);
+                gray, w, h, x, top, gap, threshold, first, last, slope, track, true, false);
     }
 
     // The extra rounded pixel needs a typical rule budget; one beam cannot inflate it.
@@ -86,11 +81,7 @@ final class LocalPrintedStaffBand {
             float slope,
             StaffPitchTrack track) {
         return matchesAtDistance(
-                        gray, w, h, x, top, gap, threshold, first, last, slope, track, true, 2,
-                        1.4f, true)
-                || matchesAtDistance(
-                        gray, w, h, x, top, gap, threshold, first, last, slope, track, true, 1,
-                        1.4f, true);
+                gray, w, h, x, top, gap, threshold, first, last, slope, track, true, true);
     }
 
     private static boolean matchesAtDistance(
@@ -106,8 +97,6 @@ final class LocalPrintedStaffBand {
             float slope,
             StaffPitchTrack track,
             boolean bright,
-            int firstGaps,
-            float massRatio,
             boolean medianReference) {
         if (track != null) {
             float[] frame = track.at(x);
@@ -125,47 +114,143 @@ final class LocalPrintedStaffBand {
         int bandLine = Math.round((cy - top) / gap);
         if (bandLine < 0 || bandLine > 4 || Math.abs(cy - top - bandLine * gap) > gap * .3f)
             return false;
-        float[] near = sample(gray, w, h, x, cy, gap, threshold);
-        if (near == null || near[2] < 60 || (bright ? near[2] < 185 : near[2] >= 185)) return false;
-        int start = Math.round(gap * firstGaps), span = Math.round(gap * 2);
-        if (x - start - span < 1 || x + start + span >= w - 1) return false;
+        int nearStart = Math.round(gap), span = Math.round(gap * 2);
+        boolean nearFits = referenceFits(w, x, nearStart, span);
+        boolean farFits = bright && referenceFits(w, x, span, span);
+        if (!nearFits && !farFits) return false;
+        var sample = new RuleSample();
+        if (!sample.read(gray, w, h, x, cy, gap, threshold)
+                || sample.paper < 60 || (bright ? sample.paper < 185 : sample.paper >= 185))
+            return false;
+        float nearMass = sample.mass;
+        int overlap = nearFits && farFits && nearStart < span ? nearStart : 0;
+        int firstDistance = nearFits ? nearStart : span;
+        int distances = span + (overlap == 0 ? 0 : span - overlap);
+        var scratch = new ReferenceScratch(
+                span, medianReference, track != null, overlap, firstDistance, distances);
+        if (farFits
+                && referencesMatch(gray, w, h, x, top, gap, threshold, slope, track,
+                        cy, bandLine, sample, nearMass, span, span, scratch)) return true;
+        return nearFits && (!farFits || span != nearStart)
+                && referencesMatch(gray, w, h, x, top, gap, threshold, slope, track,
+                        cy, bandLine, sample, nearMass, nearStart, span, scratch);
+    }
+
+    private static boolean referenceFits(int width, int x, int start, int span) {
+        return (long) x - start - span >= 1 && (long) x + start + span < width - 1;
+    }
+
+    private static final class ReferenceScratch {
+        final float[] phases = new float[4];
+        final float[] referenceMasses, masses, offsets;
+        final float[][] frames;
+        final int overlap, firstDistance, distances;
+        float[] cachedMasses, cachedOffsets;
+
+        ReferenceScratch(
+                int span, boolean median, boolean curved, int overlap,
+                int firstDistance, int distances) {
+            referenceMasses = median ? new float[4] : null;
+            masses = new float[span * 2];
+            offsets = new float[span * 2];
+            frames = curved ? new float[distances * 2][] : null;
+            this.overlap = overlap;
+            this.firstDistance = firstDistance;
+            this.distances = distances;
+        }
+
+        void remember(int index, float mass, float offset) {
+            if (cachedMasses == null) {
+                cachedMasses = new float[10 * overlap];
+                cachedOffsets = new float[10 * overlap];
+            }
+            cachedMasses[index] = mass;
+            cachedOffsets[index] = offset;
+        }
+    }
+
+    private static boolean referencesMatch(
+            byte[] gray, int w, int h, int x, float top, float gap, int threshold, float slope,
+            StaffPitchTrack track, float cy, int bandLine, RuleSample sample, float nearMass,
+            int start, int span, ReferenceScratch scratch) {
         int references = 0;
         float largestMass = 0;
-        float[] phases = new float[4], referenceMasses = new float[4];
+        float[] phases = scratch.phases, referenceMasses = scratch.referenceMasses;
+        float[] masses = scratch.masses, offsets = scratch.offsets;
+        float[][] referenceFrames = scratch.frames;
+        boolean far = start == span;
+        int columns = span * 2;
+        int minimumSamples = (int) Math.ceil(columns * .55f);
+        int minimumSide = (int) Math.ceil(span * .4f);
+        float phaseTolerance = Math.max(1, gap * .1f);
+        int overlapStart = span - start, overlapEnd = overlapStart + scratch.overlap;
+        int remainingLines = 4;
         for (int line = 0; line < 5; line++) {
             if (line == bandLine) continue;
+            if (references + remainingLines < 3) return false;
+            remainingLines--;
             float seed = top + line * gap;
-            float[] masses = new float[span * 2], offsets = new float[span * 2];
-            int n = 0, left = 0, right = 0;
-            for (int side : new int[] {-1, 1})
-                for (int i = 0; i < span; i++) {
-                    int sampleX = x + side * (start + i);
-                    float localSeed = seed + slope * side * (start + i);
-                    if (track != null) {
-                        float[] frame = track.at(sampleX);
+            int n = 0;
+            boolean enoughSamples = true;
+            for (int side = -1, column = 0; side <= 1; side += 2) {
+                int sideStart = n;
+                int sideIndex = side > 0 ? 1 : 0;
+                int cacheBase = (2 * line + sideIndex) * scratch.overlap - overlapStart;
+                int frameBase = start - scratch.firstDistance + sideIndex * scratch.distances;
+                for (int i = 0; i < span; i++, column++) {
+                    if (n - sideStart + span - i < minimumSide
+                            || n + (columns - column) < minimumSamples) break;
+                    int distance = start + i;
+                    int cached = i >= overlapStart && i < overlapEnd ? cacheBase + i : -1;
+                    if (!far && cached >= 0 && scratch.cachedMasses != null
+                            && scratch.cachedMasses[cached] != 0) {
+                        if (scratch.cachedMasses[cached] > 0) {
+                            masses[n] = scratch.cachedMasses[cached];
+                            offsets[n++] = scratch.cachedOffsets[cached];
+                        }
+                        continue;
+                    }
+                    int sampleX = x + side * distance;
+                    float localSeed = seed + slope * side * distance;
+                    if (referenceFrames != null) {
+                        int frameIndex = frameBase + i;
+                        float[] frame = referenceFrames[frameIndex];
+                        if (frame == null) referenceFrames[frameIndex] = frame = track.at(sampleX);
                         localSeed = frame[0] - (4 - line) * frame[1];
                     }
-                    var a = sample(gray, w, h, x + side * (start + i), localSeed, gap, threshold);
-                    if (a == null) continue;
-                    masses[n] = a[1];
-                    offsets[n++] = a[0] - localSeed;
-                    if (side < 0) left++;
-                    else right++;
+                    if (!sample.read(gray, w, h, sampleX, localSeed, gap, threshold)) {
+                        if (far && cached >= 0) scratch.remember(cached, -1, 0);
+                        continue;
+                    }
+                    masses[n] = sample.mass;
+                    offsets[n] = sample.center - localSeed;
+                    if (far && cached >= 0) scratch.remember(cached, masses[n], offsets[n]);
+                    n++;
                 }
-            if (n < span * 2 * .55f || left < span * .4f || right < span * .4f) continue;
-            Arrays.sort(masses, 0, n);
+                if (n - sideStart < minimumSide
+                        || n + (side < 0 ? span : 0) < minimumSamples) {
+                    enoughSamples = false;
+                    break;
+                }
+            }
+            if (!enoughSamples) continue;
             Arrays.sort(offsets, 0, n);
-            float phase = offsets[n / 2];
-            int agreeing = 0;
-            for (int i = 0; i < n; i++)
-                if (Math.abs(offsets[i] - phase) <= Math.max(1, gap * .1f)) agreeing++;
-            if (agreeing < n * .85f) continue;
-            referenceMasses[references] = masses[n / 2];
+            int middle = n / 2;
+            float phase = offsets[middle];
+            int allowedOutliers = n - (int) Math.ceil(n * .85f);
+            for (int i = 0; i < middle && allowedOutliers >= 0
+                    && Math.abs(offsets[i] - phase) > phaseTolerance; i++) allowedOutliers--;
+            for (int i = n - 1; i > middle && allowedOutliers >= 0
+                    && Math.abs(offsets[i] - phase) > phaseTolerance; i--) allowedOutliers--;
+            if (allowedOutliers < 0) continue;
+            Arrays.sort(masses, 0, n);
+            float medianMass = masses[middle];
+            if (referenceMasses != null) referenceMasses[references] = medianMass;
             phases[references++] = phase;
-            largestMass = Math.max(largestMass, masses[n / 2]);
+            largestMass = Math.max(largestMass, medianMass);
         }
         if (references < 3 || largestMass <= 0) return false;
-        if (medianReference) {
+        if (referenceMasses != null) {
             Arrays.sort(referenceMasses, 0, references);
             largestMass = referenceMasses[references / 2];
         }
@@ -176,50 +261,109 @@ final class LocalPrintedStaffBand {
             if (Math.abs(phases[i] - phase) <= gap * .15f) agreeing++;
         return agreeing >= 3
                 && Math.abs(cy - top - bandLine * gap - phase) <= gap * .2f
-                && near[1] <= largestMass * massRatio;
+                && nearMass <= largestMass * 1.4f;
     }
 
     /** Center, ink deficit, and local paper level of a narrow isolated source rule. */
-    private static float[] sample(
-            byte[] gray, int w, int h, int x, float seed, float gap, int threshold) {
-        if (x < 0 || x >= w) return null;
-        int lo = Math.max(1, Math.round(seed - gap * .6f)),
-                hi = Math.min(h - 2, Math.round(seed + gap * .6f));
-        if (hi <= lo) return null;
-        int[] values = new int[hi - lo + 1];
-        for (int y = lo; y <= hi; y++) values[y - lo] = gray[y * w + x] & 255;
-        Arrays.sort(values);
-        int paper = values[(values.length - 1) * 85 / 100];
-        float[] best = null;
-        float distance = Float.POSITIVE_INFINITY;
-        int start = -1;
-        for (int y = lo; y <= hi + 1; y++) {
-            boolean ink = y <= hi && (gray[y * w + x] & 255) < threshold;
-            if (ink && start < 0) start = y;
-            if (!ink && start >= 0) {
-                int length = y - start;
-                float center = (start + y - 1) * .5f;
-                if (start > lo
-                        && y <= hi
-                        && length <= Math.ceil(gap * .4f)
-                        && Math.abs(center - seed) <= gap * .3f
-                        && (gray[(start - 1) * w + x] & 255) >= threshold
-                        && (gray[y * w + x] & 255) >= threshold
-                        && Math.abs(center - seed) < distance) {
-                    int mass = 0, dark = 255;
-                    for (int yy = start - 1; yy <= y; yy++) {
-                        int value = gray[yy * w + x] & 255;
-                        mass += Math.max(0, paper - value);
-                        dark = Math.min(dark, value);
-                    }
-                    if (paper - dark >= 24) {
-                        best = new float[] {center, mass, paper};
-                        distance = Math.abs(center - seed);
-                    }
-                }
-                start = -1;
+    private static final class RuleSample {
+        private int[] values = new int[0];
+        private int[] brightest = new int[0];
+        float center;
+        int mass, paper;
+
+        boolean read(byte[] gray, int w, int h, int x, float seed, float gap, int threshold) {
+            if (x < 0 || x >= w) return false;
+            int lo = Math.max(1, Math.round(seed - gap * .6f)),
+                    hi = Math.min(h - 2, Math.round(seed + gap * .6f));
+            if (hi - lo < 2) return false;
+            int size = hi - lo + 1;
+            if (values.length < size) values = new int[size];
+            int pixel = lo * w + x;
+            int lightest = values[0] = gray[pixel] & 255;
+            int lightestCount = 1, darkest = 255;
+            for (int i = 1; i < size - 1; i++) {
+                int value = gray[pixel + w] & 255;
+                pixel += w;
+                values[i] = value;
+                darkest = Math.min(darkest, value);
+                if (value > lightest) {
+                    lightest = value;
+                    lightestCount = 1;
+                } else if (value == lightest) lightestCount++;
             }
+            int endTone = values[size - 1] = gray[pixel + w] & 255;
+            if (endTone > lightest) {
+                lightest = endTone;
+                lightestCount = 1;
+            } else if (endTone == lightest) lightestCount++;
+            if (darkest >= threshold || lightest - darkest < 24) return false;
+            int rank = (size - 1) * 85 / 100;
+            if (rank >= size - lightestCount) {
+                paper = lightest;
+            } else {
+                paper = paperTone(size, size - rank);
+            }
+            if (paper - darkest < 24) return false;
+            float bestCenter = 0;
+            int bestMass = 0;
+            float distance = Float.POSITIVE_INFINITY;
+            double maximumLength = Math.ceil(gap * .4f);
+            float maximumDistance = gap * .3f;
+            int start = -1;
+            for (int y = lo; y <= hi; y++) {
+                boolean ink = values[y - lo] < threshold;
+                if (ink && start < 0) start = y;
+                if (!ink && start >= 0) {
+                    int length = y - start;
+                    float center = (start + y - 1) * .5f;
+                    float delta = Math.abs(center - seed);
+                    if (start > lo
+                            && length <= maximumLength
+                            && delta <= maximumDistance
+                            && delta < distance) {
+                        int mass = Math.max(0, paper - values[start - 1 - lo])
+                                + Math.max(0, paper - values[y - lo]);
+                        int dark = 255;
+                        for (int yy = start; yy < y; yy++) {
+                            int value = values[yy - lo];
+                            mass += Math.max(0, paper - value);
+                            dark = Math.min(dark, value);
+                        }
+                        if (paper - dark >= 24) {
+                            bestCenter = center;
+                            bestMass = mass;
+                            distance = delta;
+                        }
+                    }
+                    start = -1;
+                }
+            }
+            center = bestCenter;
+            mass = bestMass;
+            return bestMass != 0;
         }
-        return best;
+
+        private int paperTone(int size, int count) {
+            // Typical staff windows need only a few of the brightest pixels.
+            if (count > 8) {
+                if (brightest.length < size) brightest = new int[size];
+                System.arraycopy(values, 0, brightest, 0, size);
+                Arrays.sort(brightest, 0, size);
+                return brightest[size - count];
+            }
+            if (brightest.length < count) brightest = new int[count];
+            Arrays.fill(brightest, 0, count, -1);
+            for (int i = 0; i < size; i++) {
+                int tone = values[i];
+                if (tone <= brightest[count - 1]) continue;
+                int at = count - 1;
+                while (at > 0 && tone > brightest[at - 1]) {
+                    brightest[at] = brightest[at - 1];
+                    at--;
+                }
+                brightest[at] = tone;
+            }
+            return brightest[count - 1];
+        }
     }
 }
