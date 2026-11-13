@@ -53,7 +53,8 @@ def write_page(path, labels, gray, annotations=None):
         raise ValueError("Expected same-size uint8 mask and grayscale arrays")
     if annotations is not None and not isinstance(annotations, dict):
         raise ValueError("Each page's annotations must be an object")
-    with gzip.open(path, "wb") as stream:
+    # The decoder reads this temporary file once. Favor fast compression.
+    with gzip.open(path, "wb", compresslevel=3) as stream:
         stream.write(struct.pack(">III", 0x52535031, width, height))
         stream.write(labels.tobytes())
         stream.write(gray.tobytes())

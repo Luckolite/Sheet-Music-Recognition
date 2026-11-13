@@ -373,16 +373,25 @@ def _perform_one(pages, bpm, slide_group=0):
                 direction['details']['end']['measureIndex'] += len(beats)
             directions.append(direction)
         beats.extend(local); offset += starts[-1]
-    data = struct.pack('>idi', 0x45585031, bpm, len(beats))
-    data += b''.join(struct.pack('>d', value) for value in beats)+struct.pack('>i', len(numeric))
-    data += b''.join(struct.pack('>ifdd', c['measureIndex'], c['positionInMeasure'], c['bpm'], c.get('beatUnit', 1)) for c in numeric)
+    data = bytearray(struct.pack('>idi', 0x45585031, bpm, len(beats)))
+    for value in beats:
+        data += struct.pack('>d', value)
+    data += struct.pack('>i', len(numeric))
+    for change in numeric:
+        data += struct.pack('>ifdd', change['measureIndex'], change['positionInMeasure'],
+                            change['bpm'], change.get('beatUnit', 1))
     data += struct.pack('>i', len(sounds))
     for sound in sounds:
-        data += _text(sound['id'])+struct.pack('>ddii', sound['start'], sound['end'], sound['staff'], sound['count'])
+        data += _text(sound['id'])
+        data += struct.pack('>ddii', sound['start'], sound['end'], sound['staff'], sound['count'])
     data += struct.pack('>i', len(bindings))
     for identifier, members in bindings.items():
-        data += _text(identifier)+struct.pack('>i', len(members))+b''.join(_text(sounds[i]['id']) for i in sorted(members))
-    result = _bridge(data+encode(directions, expressions, len(beats)))
+        data += _text(identifier)
+        data += struct.pack('>i', len(members))
+        for member in sorted(members):
+            data += _text(sounds[member]['id'])
+    data += encode(directions, expressions, len(beats))
+    result = _bridge(data)
     require_retained_navigation(pages, result.get('navigationOccurrences'))
     slide_visits = {}
     if any(payload.get('_slideOrigins') for payload in payloads):
