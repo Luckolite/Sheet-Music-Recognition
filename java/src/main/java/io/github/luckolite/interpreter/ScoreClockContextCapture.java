@@ -25,12 +25,19 @@ final class ScoreClockContextCapture {
     static String members(List<Integer> pixels) {
         try {
             var hash = MessageDigest.getInstance("SHA-256");
+            byte[] chunk = new byte[4 * Math.min(pixels.size(), 1024)];
+            int used = 0;
             for (int p : pixels) {
-                hash.update((byte) (p >>> 24));
-                hash.update((byte) (p >>> 16));
-                hash.update((byte) (p >>> 8));
-                hash.update((byte) p);
+                chunk[used++] = (byte) (p >>> 24);
+                chunk[used++] = (byte) (p >>> 16);
+                chunk[used++] = (byte) (p >>> 8);
+                chunk[used++] = (byte) p;
+                if (used == chunk.length) {
+                    hash.update(chunk);
+                    used = 0;
+                }
             }
+            if (used != 0) hash.update(chunk, 0, used);
             return RasterEvidenceIdentity.hex(hash.digest());
         } catch (NoSuchAlgorithmException impossible) {
             throw new AssertionError(impossible);
