@@ -4561,17 +4561,17 @@
         "standalone_lf_sha256": "47f66703935a1da16c1195c672a2a359ce7b28403490ca80e23022fdf85b597b",
         "scope": "Opening two-over-four repair. The production patches match after path normalization. Broader source differences remain subject to review."
       },
-      "source_sha256": "8763a19b693b107795397d7dad0ec8b436b4b55aacd951fea218f0ae053d7fe0",
+      "source_sha256": "e3aa8502a0cd5c1b1f9f949c14820cbd946127b874db9aa5e803b901f4d085d6",
       "review_note": "Append complete component seeds after existing projected crops; preserve existing crop order, caller eligibility and total 48-crop budget. No numeric meter value is inferred from semantic labels.",
-      "source_normalized_sha256": "154ce8c49d216235987cf54b9ec6fb3a223ad9d7687aa888e40c3a2e163593b5",
-      "standalone_sha256": "ec58cbbef60dbfc0685b7442563e3be31a18f1bf0cc5edb6d00298f85b3d1266",
-      "reviewed_app_commit": "da56b947204188761f0acf74a5aab722b358f68e",
+      "source_normalized_sha256": "e3aa8502a0cd5c1b1f9f949c14820cbd946127b874db9aa5e803b901f4d085d6",
+      "standalone_sha256": "4821d67e54e9ac0e1b2828cea0e9df5afb31adcf6d93b4356f0eac134945800a",
+      "reviewed_app_commit": "e1619e89",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/MeterChangeDetector.java",
       "license": "Apache-2.0",
       "recognition95_review_note": "Reviewed recognition95: preserve positively recognized printed multi-rest identity through the score, source selections, joins, Guide292 MRG1 cache/native/Python/Hub records, MusicXML and compact layout without changing logical rest timing. Complete raw two-bulb rest recovery uses finite upper-cap ownership and a prepaid optional raster work bound. Raw-proved returning-pitch slur candidates require a same-part nonoverlapping intervening different-pitch attack; exact ties retain precedence and candidate XML endpoints must share the emitted part. Original synthetic regressions only; models, dependencies and audio97 unchanged.",
       "reviewed_app_state": "Reviewed recognition95 source committed; cumulative matched rollout deferred during active goal.",
-      "standalone_normalized_sha256": "1ec2828e491f5937b25cdeb55d52f4f1078bea13154fbbef4a51cd831082571f",
-      "current_source_review": "Shared complete doublebar and aligned independently complete common-time glyph copies prove inline4/4 and own only their exact normalized head-label crops. Existing standalone clef/cavity route unchanged. Original procedural controls only."
+      "standalone_normalized_sha256": "4821d67e54e9ac0e1b2828cea0e9df5afb31adcf6d93b4356f0eac134945800a",
+      "current_source_review": "Shared OCR-only half-note meter admissibility and written-bar contradiction. Standalone uses equivalent read-only stream results and its own package, retaining the same raster and note authority."
     },
     "MeterComponentSeeds.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/MeterComponentSeeds.java",
