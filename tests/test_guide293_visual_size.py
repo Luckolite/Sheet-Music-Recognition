@@ -56,9 +56,51 @@ class Guide293VisualSizeTests(unittest.TestCase):
         for n in s['notes']:n.pop('visualSize')
         raw=wire.encode(s)
         self.assertEqual(wire.GUIDE_VERSION,struct.unpack_from('>i',raw)[0]);self.assertIn(293,wire.SUPPORTED_GUIDE_VERSIONS)
-        self.assertEqual(0,raw[32+80]);self.assertEqual(0,raw[32+81+80])
+        self.assertEqual(0,raw[33+80]);self.assertEqual(0,raw[33+88+80])
         full=copy.deepcopy(s)
         for n in full['notes']:n['visualSize']='FULL'
         self.assertEqual(wire.encode(s,292),wire.encode(full,292))
+
+class Guide301OpenStringTouchTests(unittest.TestCase):
+    def test_open_string_touch_follows_offset_and_legacy_writer_refuses_it(self):
+        s = score()
+        s["notes"][0]["openStringTouch"] = dict(staffStep=-2, pageY=.5, writtenAccidental=0)
+        raw = wire.encode(s, 301)
+        self.assertEqual(301, struct.unpack_from(">i", raw)[0])
+        self.assertEqual((-2, .5, 0), struct.unpack_from(">bfb", raw, 32 + 82))
+        self.assertEqual((127, 0, 0), struct.unpack_from(">bfb", raw, 32 + 88 + 82))
+        with self.assertRaisesRegex(ValueError, "guide301"):
+            wire.encode(s, 300)
+
+    def test_touch_must_be_bounded_and_belong_to_a_pitched_anchor(self):
+        for change in (dict(staffStep=36), dict(pageY=float("nan")), dict(writtenAccidental=4)):
+            with self.subTest(change=change):
+                s = score()
+                s["notes"][0]["openStringTouch"] = dict(dict(staffStep=0, pageY=.5, writtenAccidental=2), **change)
+                with self.assertRaisesRegex(ValueError, "open-string touch"):
+                    wire.encode(s)
+        s = score()
+        s["notes"][0].update(kind="UNPITCHED", openStringTouch=dict(staffStep=0, pageY=.5, writtenAccidental=2))
+        with self.assertRaisesRegex(ValueError, "open-string touch owner"):
+            wire.encode(s)
+
+
+class Guide302CadenceTests(unittest.TestCase):
+    def test_cadence_capacity_follows_measure_geometry(self):
+        s = score()
+        s["measures"][0]["cadenceQuarterBeats"] = 2
+        raw = wire.encode(s, 302)
+        self.assertEqual(2, raw[24])
+        with self.assertRaisesRegex(ValueError, "guide302"):
+            wire.encode(s, 301)
+
+    def test_bad_cadence_capacity_is_refused(self):
+        for value in (True, -1, 3, 1.5):
+            with self.subTest(value=value):
+                s = score()
+                s["measures"][0]["cadenceQuarterBeats"] = value
+                with self.assertRaisesRegex(ValueError, "cadence duration"):
+                    wire.encode(s, 302)
+
 
 if __name__=='__main__':unittest.main()

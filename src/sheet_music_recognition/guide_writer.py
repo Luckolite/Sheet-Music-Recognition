@@ -17,8 +17,8 @@ from . import semantic_wire
 
 # Recognition revisions 264/265/266/267/268/269/270/271/272/273/274/275 retain the complete framed 263 record layout.
 RECOGNITION_REVISION = 149
-GUIDE_VERSION = 299
-SUPPORTED_GUIDE_VERSIONS = (260, 261, 262, 263, 264, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296, 297, 298, 299)
+GUIDE_VERSION = 302
+SUPPORTED_GUIDE_VERSIONS = (260, 261, 262, 263, 264, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296, 297, 298, 299, 300, 301, 302)
 MAX_GUIDE_BYTES = 128 * 1024 * 1024
 
 
@@ -74,8 +74,22 @@ def encode(score, guide_version=GUIDE_VERSION):
     output = io.BytesIO()
     _pack(output, "i", guide_version)
     measures = score["measures"]
-    _records(output, measures, (("left", "f"), ("right", "f"),
-                                ("top", "f"), ("bottom", "f")), 10_000)
+    measure_fields = (("left", "f"), ("right", "f"), ("top", "f"), ("bottom", "f"))
+    if guide_version >= 302:
+        measure_fields += (("cadenceQuarterBeats", "B"),)
+    if not isinstance(measures, list) or len(measures) > 10_000:
+        raise ValueError("Invalid guide measure count")
+    normalized_measures = []
+    for row in measures:
+        if not isinstance(row, dict):
+            raise ValueError("Invalid guide measure")
+        cadence = row.get("cadenceQuarterBeats", 0)
+        if type(cadence) is not int or cadence not in (0, 1, 2):
+            raise ValueError("Invalid printed cadence duration")
+        if guide_version < 302 and cadence:
+            raise ValueError("Printed cadences require guide302")
+        normalized_measures.append(dict(row, cadenceQuarterBeats=cadence))
+    _records(output, normalized_measures, measure_fields, 10_000)
     _pack(output, "i", _field(score, "firstMeasureNumber"))
     note_fields = (
         ("measureIndex", "i"), ("positionInMeasure", "f"), ("staffStep", "i"),
@@ -95,6 +109,10 @@ def encode(score, guide_version=GUIDE_VERSION):
         note_fields += (("kind", "B"),)
     if guide_version >= 293:
         note_fields += (("visualSize", "B"),)
+    if guide_version >= 300:
+        note_fields += (("harmonicSemitones", "B"),)
+    if guide_version >= 301:
+        note_fields += (("touchStep", "b"), ("touchY", "f"), ("touchAccidental", "b"))
     notes = score["notes"]
     if not isinstance(notes, list) or any(not isinstance(row, dict)
             or not _valid_boundary_ties(row.get("boundaryTies", 0)) for row in notes):
@@ -141,10 +159,31 @@ def encode(score, guide_version=GUIDE_VERSION):
             raise ValueError("Invalid note visual size")
         if guide_version < 293 and size != "FULL":
             raise ValueError("Cue visual size requires guide293")
+        harmonic = row.get("harmonicSemitones", 0)
+        if (type(harmonic) is not int or not 0 <= harmonic <= 36
+                or harmonic and kind != "PITCHED"):
+            raise ValueError("Invalid sounding harmonic offset")
+        if guide_version < 300 and harmonic:
+            raise ValueError("Sounding harmonic offsets require guide300")
+        touch = row.get("openStringTouch")
+        step, y, accidental = 127, 0, 0
+        if touch is not None:
+            if guide_version < 301:
+                raise ValueError("Open-string touches require guide301")
+            if not isinstance(touch, dict) or kind != "PITCHED":
+                raise ValueError("Invalid open-string touch owner")
+            step, y, accidental = (touch.get("staffStep"), touch.get("pageY"),
+                                   touch.get("writtenAccidental"))
+            if (type(step) is not int or not -35 <= step <= 35
+                    or type(y) not in (int, float) or not 0 <= y <= 1
+                    or type(accidental) is not int or not -2 <= accidental <= 3):
+                raise ValueError("Invalid open-string touch")
         normalized_notes.append(dict(row, boundaryTies=row.get("boundaryTies", 0),
                                      tupletNormalNotes=normal, stemDirection=stem,
                                      kind=0 if kind == "PITCHED" else 1,
-                                     visualSize=0 if size == "FULL" else 1))
+                                     visualSize=0 if size == "FULL" else 1,
+                                     harmonicSemitones=harmonic, touchStep=step,
+                                     touchY=y, touchAccidental=accidental))
     _records(output, normalized_notes, note_fields, 250_000)
     _signature_records(output, score["keyChanges"], (("measureIndex", "i"), ("fifths", "i")), len(measures), guide_version)
     _records(output, score["tempoChanges"], (("measureIndex", "i"),

@@ -134,7 +134,7 @@ class TypedTabTieWriterTests(unittest.TestCase):
 
             before = copy.deepcopy(original)
 
-            data = wire.encode(original)
+            data = wire.encode(original, 284)
 
             self.assertEqual(flags, struct.unpack_from('>i', data, 99)[0])
 

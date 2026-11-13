@@ -18,7 +18,7 @@ class RecognitionEpochContractTest(unittest.TestCase):
         # Historical encodes leave the current recognition identity intact.
         self.assertEqual(149, revision)
         self.assertEqual(revision, wire.RECOGNITION_REVISION)
-        self.assertEqual(299, wire.GUIDE_VERSION)
+        self.assertEqual(302, wire.GUIDE_VERSION)
 
     def test_recognition_epoch_does_not_relabel_wire_records(self):
         original = dict(measures=[dict(left=.1, right=.9, top=.2, bottom=.3)],
