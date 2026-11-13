@@ -108,11 +108,15 @@ class TypedFrontendCliTests(unittest.TestCase):
         progress = []
         with patch.object(reader,'grayscale',return_value=np.full((8,8),255,dtype=np.uint8)), \
              patch.object(reader.subprocess,'run',side_effect=self.bridge_run), \
-             patch.object(self.engine,'interpret',wraps=self.engine.interpret):
+             patch.object(self.engine,'interpret',wraps=self.engine.interpret), \
+             patch('sheet_music_recognition.pdf_annotations.tuning_header') as header, \
+             patch('sheet_music_recognition.pdf_annotations.tab_words') as native_words:
             document = self.engine.interpret_document(
                 self.image, pages=[2, 6], annotations=[{}, {}],
                 progress=lambda *event: progress.append(event),
             )
+            header.assert_not_called()
+            native_words.assert_not_called()
         self.assertEqual(value, document)
         self.assertEqual([(1, 2, 2), (2, 2, 6)], progress)
         with patch.object(self.engine, 'interpret') as interpret:
@@ -169,6 +173,26 @@ class TypedFrontendCliTests(unittest.TestCase):
         self.assertEqual([(1, (4, 4), 0, 0, None), (2, (3, 8), -2, 1, None)], contexts)
         self.assertEqual([(1, 2, 1), (2, 2, 2)], progress)
         self.assertEqual([1, 2], [page['sourcePage'] for page in result['pages']])
+
+        def fail_second(image, width, supplied):
+            if supplied['page'] == 2:
+                raise ValueError('second page preparation failed')
+            return prepare(image, width, supplied)
+
+        for decoder_fails in (False, True):
+            with self.subTest(decoder_fails=decoder_fails):
+                next_ready.set()
+                progress.clear()
+                contexts.clear()
+                outcome = ValueError('first page decode failed') if decoder_fails else decode
+                expected = 'first page decode failed' if decoder_fails else 'second page preparation failed'
+                with patch.object(self.engine, '_prepare_page', side_effect=fail_second), \
+                     patch.object(self.engine, '_decode_page', side_effect=outcome):
+                    with self.assertRaisesRegex(ValueError, expected):
+                        self.engine.interpret_document(
+                            source, annotations=[{'page': 1}, {'page': 2}],
+                            progress=lambda *event: progress.append(event))
+                self.assertEqual([] if decoder_fails else [(1, 2, 1)], progress)
 
     def test_raster_ocr_overlaps_prediction_and_whitening(self):
         ocr_started = Event()

@@ -71,21 +71,25 @@ def interpret_document(engine, source, *, pages=None, meter=(4, 4), bpm=120,
             if selected != sorted(set(selected)):
                 raise ValueError("Choose unique PDF pages in increasing reading order")
             check_annotations(len(selected))
-            first = pdf[0]
-            try:
-                header = tuning_header(first)
-            finally:
-                first.close()
+            header = ""
+            if annotations is None:
+                first = pdf[0]
+                try:
+                    header = tuning_header(first)
+                finally:
+                    first.close()
+
             def render(number, index, consume):
                 page = pdf[number - 1]
                 try:
                     bitmap = page.render(scale=2400 / page.get_width())
                     try:
                         with bitmap.to_pil() as image:
-                            native_words = tab_words(page, header)
-                            supplied = annotations[index] if annotations is not None else (
-                                {"tabWords": native_words} if native_words else None
-                            )
+                            if annotations is None:
+                                native_words = tab_words(page, header)
+                                supplied = {"tabWords": native_words} if native_words else None
+                            else:
+                                supplied = annotations[index]
                             return consume(image, supplied)
                     finally:
                         bitmap.close()
@@ -109,6 +113,7 @@ def interpret_document(engine, source, *, pages=None, meter=(4, 4), bpm=120,
                             if index + 1 < len(selected):
                                 prepared = prepare(selected[index + 1], index + 1)
                         except Exception:
+                            # Surface the current page's outcome before the next page's failure.
                             accept(pending.result(), number, source_count, len(selected))
                             raise
                         accept(pending.result(), number, source_count, len(selected))
