@@ -172,22 +172,28 @@ class Interpreter:
         labels = np.zeros_like(gray)
         confidence = np.zeros_like(gray)
         white_prediction = None
+        ch, cw = min(320, height), min(320, width)
+        edge = self.edge[:ch, :cw]
+        wins = np.empty((ch, cw), dtype=bool)
+        columns = [slice(left, left + cw) for left in tile_starts(width)]
         tensor = np.empty((1, 3, 320, 320), dtype=np.float32)
         if height < 320 or width < 320:
             tensor.fill(255)
+        tensor_pixels = tensor[0, :, :ch, :cw]
         # Only the reviewed bundled graph has the deterministic-output contract.
         # Custom models keep one inference call per tile, including stateful models.
         reuse_white = getattr(self, "model_sha256", None) == MODEL_SHA256
         for top in tile_starts(height):
-            for left in tile_starts(width):
-                ch, cw = min(320, height - top), min(320, width - left)
-                tile = gray[top:top + ch, left:left + cw]
+            rows = slice(top, top + ch)
+            for column in columns:
+                region = rows, column
+                tile = gray[region]
                 # The fixed padding is white too, so only inspect source pixels.
-                exact_white = reuse_white and bool(np.all(tile == 255))
+                exact_white = reuse_white and tile.min() == 255
                 if exact_white and white_prediction is not None:
                     prediction = white_prediction
                 else:
-                    tensor[0, :, :ch, :cw] = tile
+                    tensor_pixels[...] = tile
                     self.runtime.set_tensor(self.input["index"], tensor)
                     self.runtime.invoke()
                     prediction = self.runtime.get_tensor(self.output["index"])[0]
@@ -197,12 +203,11 @@ class Interpreter:
                         # Cache owned, validated labels in the destination dtype.
                         white_prediction = prediction.astype(np.uint8)
                         prediction = white_prediction
-                region = np.s_[top:top + ch, left:left + cw]
-                edge = self.edge[:ch, :cw]
-                wins = edge >= confidence[region]
+                tile_confidence = confidence[region]
+                np.greater_equal(edge, tile_confidence, out=wins)
                 # Validated class IDs and the tile's maximum edge weight (160) fit in uint8.
                 np.copyto(labels[region], prediction[:ch, :cw], where=wins, casting="unsafe")
-                np.copyto(confidence[region], edge, where=wins, casting="unsafe")
+                np.copyto(tile_confidence, edge, where=wins, casting="unsafe")
         return labels
 
     def interpret(self, image, *, meter=(4, 4), key_fifths=0, width=2048, annotations=None,
