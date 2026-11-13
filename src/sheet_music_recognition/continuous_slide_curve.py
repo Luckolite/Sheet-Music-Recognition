@@ -3,6 +3,7 @@
 """Continuous approach bends on the final emitted MIDI tempo clock."""
 import bisect
 import math
+from functools import cached_property
 
 
 def _clock(tempo_events, ppq):
@@ -38,52 +39,74 @@ def _clock(tempo_events, ppq):
     return seconds_at, tick_at, ticks
 
 
+class SlideClock:
+    """Reuse the final MIDI tempo map for every continuous slide in one export."""
+
+    def __init__(self, tempo_events, ppq):
+        self.tempo_events = tempo_events
+        self.ppq = ppq
+
+    @cached_property
+    def timing(self):
+        return _clock(self.tempo_events, self.ppq)
+
+    def gated_end(self, start, end, gate):
+        """APP gate scales elapsed frame/time duration, not written beat duration."""
+        if (type(start) is not int or type(end) is not int or start < 0 or end <= start
+                or type(self.ppq) is not int or self.ppq <= 0
+                or type(gate) not in (int, float) or gate not in (.28, .5, .75, 1.)):
+            raise ValueError('Invalid continuous slide articulation gate')
+        if gate == 1:
+            return end
+        seconds_at, tick_at, _ = self.timing
+        begin = seconds_at(start)
+        release = tick_at(begin+(seconds_at(end)-begin)*gate)
+        # Positive half-up rounding matches the APP frame gate, to MIDI tick resolution.
+        return min(end, max(start+1, math.floor(release+.5)))
+
+    def curve(self, start, end, source_midi, target_midi):
+        """Return RPN semitone range and (tick, 14-bit bend) samples, excluding note end.
+
+        Tempo events use the MIDI writer's exact (tick, priority, bytes) representation.
+        Equal-tick tempos retain stable writer order; the last controls following time.
+        """
+        if (type(start) is not int or type(end) is not int or start < 0 or end <= start
+                or type(self.ppq) is not int or self.ppq <= 0
+                or any(type(p) is not int or not 0 <= p <= 127 for p in (source_midi, target_midi))):
+            raise ValueError('Continuous slide requires finite MIDI endpoints and ticks')
+        seconds_at, tick_at, ticks = self.timing
+
+        begin = seconds_at(start)
+        duration = seconds_at(end)-begin
+        ramp = max(.001, min(.16, .3*duration))
+        delta = source_midi-target_midi
+        semitones = max(1, abs(delta))
+        finish = min(end-1, math.ceil(tick_at(begin+ramp)))
+        sample_ticks = {start, finish}
+        sample_ticks.update(min(finish, max(start, round(tick_at(begin+ramp*i/64)))) for i in range(65))
+        first_change = bisect.bisect_right(ticks, start)
+        last_change = bisect.bisect_right(ticks, finish)
+        sample_ticks.update(ticks[first_change:last_change])
+        samples = []
+        for tick in sorted(sample_ticks):
+            age = seconds_at(tick)-begin
+            t = min(1., max(0., age/ramp))
+            offset = delta*(1-t*t*(3-2*t))
+            scale = 8191 if offset >= 0 else 8192
+            bend = round(8192+offset/semitones*scale)
+            if not 0 <= bend <= 16383 or not math.isfinite(offset):
+                raise ValueError('Continuous slide bend exceeds declared RPN range')
+            samples.append((tick, bend))
+            if t == 1:
+                break
+        return semitones, samples
+
+
 def gated_end(start, end, gate, tempo_events, ppq=480):
-    """APP gate scales elapsed frame/time duration, not written beat duration."""
-    if (type(start) is not int or type(end) is not int or start < 0 or end <= start
-            or type(ppq) is not int or ppq <= 0
-            or type(gate) not in (int, float) or gate not in (.28, .5, .75, 1.)):
-        raise ValueError('Invalid continuous slide articulation gate')
-    if gate == 1:
-        return end
-    seconds_at, tick_at, _ = _clock(tempo_events, ppq)
-    begin = seconds_at(start)
-    release = tick_at(begin+(seconds_at(end)-begin)*gate)
-    # Positive half-up rounding matches the APP frame gate, to MIDI tick resolution.
-    return min(end, max(start+1, math.floor(release+.5)))
+    """Scale a slide's elapsed time by its articulation gate."""
+    return SlideClock(tempo_events, ppq).gated_end(start, end, gate)
 
 
 def curve(start, end, source_midi, target_midi, tempo_events, ppq=480):
-    """Return RPN semitone range and (tick, 14-bit bend) samples, excluding note end.
-
-    Tempo events use the MIDI writer's exact (tick, priority, bytes) representation.
-    Equal-tick tempos retain stable writer order; the last controls following time.
-    """
-    if (type(start) is not int or type(end) is not int or start < 0 or end <= start
-            or type(ppq) is not int or ppq <= 0
-            or any(type(p) is not int or not 0 <= p <= 127 for p in (source_midi, target_midi))):
-        raise ValueError('Continuous slide requires finite MIDI endpoints and ticks')
-    seconds_at, tick_at, ticks = _clock(tempo_events, ppq)
-
-    begin = seconds_at(start)
-    duration = seconds_at(end)-begin
-    ramp = max(.001, min(.16, .3*duration))
-    delta = source_midi-target_midi
-    semitones = max(1, abs(delta))
-    finish = min(end-1, math.ceil(tick_at(begin+ramp)))
-    sample_ticks = {start, finish}
-    sample_ticks.update(min(finish, max(start, round(tick_at(begin+ramp*i/64)))) for i in range(65))
-    sample_ticks.update(tick for tick in ticks if start < tick <= finish)
-    samples = []
-    for tick in sorted(sample_ticks):
-        age = seconds_at(tick)-begin
-        t = min(1., max(0., age/ramp))
-        offset = delta*(1-t*t*(3-2*t))
-        scale = 8191 if offset >= 0 else 8192
-        bend = round(8192+offset/semitones*scale)
-        if not 0 <= bend <= 16383 or not math.isfinite(offset):
-            raise ValueError('Continuous slide bend exceeds declared RPN range')
-        samples.append((tick, bend))
-        if t == 1:
-            break
-    return semitones, samples
+    """Return the semitone range and MIDI bend samples for one slide."""
+    return SlideClock(tempo_events, ppq).curve(start, end, source_midi, target_midi)

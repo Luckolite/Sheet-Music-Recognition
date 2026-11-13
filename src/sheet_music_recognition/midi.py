@@ -12,7 +12,7 @@ from .typed_events import event_kind, validate_unpitched
 from .tie_owners import releasing_links, sound_lanes
 from .typed_performance import unpitched_intervals
 from .guitar_effect import validate as validate_guitar, pitch_offset as guitar_pitch_offset
-from .continuous_slide_curve import curve as continuous_slide_curve, gated_end
+from .continuous_slide_curve import SlideClock
 from .slide_performance import prepare_slides, resolve_slides
 
 
@@ -205,10 +205,10 @@ def _performance_events_prepared(document, bpm, expressive_document, unpitched_p
         elif part in held_parts:
             pedal_spans.append((part, held_parts.pop(part), control['tick']))
     performed = []
-    final_tempos = tuple(events)
+    slide_clock = SlideClock(tuple(events), ppq)
     for start, end, pitch, step, effect, gliss, attack, part, continuous in tones:
         if continuous is not None:
-            end = gated_end(start, end, continuous.get('gate', 1), final_tempos, ppq)
+            end = slide_clock.gated_end(start, end, continuous.get('gate', 1))
         if gliss is not None:
             performed.extend((a, b, midi, effect, attack if a == start else None, part, None) for a, b, midi in
                              white_key_gliss(start, end, pitch, gliss["targetMidi"]))
@@ -253,7 +253,7 @@ def _performance_events_prepared(document, bpm, expressive_document, unpitched_p
         sounding_end = start + max(1, round((end-start) * (.12 if kind == "dead" else .45 if effect.get("palmMute") else 1)))
         if expressive:
             # RPN 0: +/-24 semitones, confined to this note's exclusive channel.
-            bend_range, continuous_bends = (continuous_slide_curve(start, end, continuous['sourceMidi'], pitch, final_tempos, ppq)
+            bend_range, continuous_bends = (slide_clock.curve(start, end, continuous['sourceMidi'], pitch)
                                             if continuous is not None else (24, None))
             for controller, value in ((101, 0), (100, 0), (6, bend_range), (38, 0), (101, 127), (100, 127)):
                 events.append((start, 1, bytes([0xB0 | channel, controller, value])))
