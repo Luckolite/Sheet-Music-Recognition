@@ -3,8 +3,29 @@
 package io.github.luckolite.interpreter;
 
 /** Captured first/final measure spans, separate from printed meter and note records. */
-public record ScoreBoundaryClock(double openingQuarterBeats, double closingQuarterBeats) {
+public record ScoreBoundaryClock(double openingQuarterBeats, double closingQuarterBeats,
+        java.util.Map<Integer, Integer> sourceCadences) {
+    public ScoreBoundaryClock(double openingQuarterBeats, double closingQuarterBeats) {
+        this(openingQuarterBeats, closingQuarterBeats, java.util.Map.of());
+    }
+
+    public ScoreBoundaryClock withSourceCadences(java.util.Map<Integer, Integer> cadences) {
+        return new ScoreBoundaryClock(openingQuarterBeats, closingQuarterBeats, cadences);
+    }
+
+    public static java.util.Map<Integer, Integer> cadences(java.util.List<MeasureRegion> regions) {
+        var result = new java.util.LinkedHashMap<Integer, Integer>();
+        for (int i = 0; i < regions.size(); i++) {
+            int duration = regions.get(i).cadenceQuarterBeats();
+            if (duration != 0) result.put(i, duration);
+        }
+        return java.util.Map.copyOf(result);
+    }
     public ScoreBoundaryClock {
+        sourceCadences = sourceCadences == null ? java.util.Map.of() : java.util.Map.copyOf(sourceCadences);
+        for (var entry : sourceCadences.entrySet())
+            if (entry.getKey() < 0 || entry.getValue() < 1 || entry.getValue() > 2)
+                throw new IllegalArgumentException("Invalid printed cadence");
         if (!Double.isFinite(openingQuarterBeats)
                 || !Double.isFinite(closingQuarterBeats)
                 || openingQuarterBeats < 0
@@ -24,9 +45,11 @@ public record ScoreBoundaryClock(double openingQuarterBeats, double closingQuart
 
     public ScoreMeterMap meter(ScorePageInterpretation source, float openingNominal) {
         var nominal = new ScoreMeterMap(openingNominal, source.meterChanges());
-        if (!retained()) return nominal;
-        return nominal.withBoundaryQuarterBeats(
-                openingQuarterBeats, closingQuarterBeats, source.measures().size());
+        int count = source.measures().size();
+        var bounded = retained() ? nominal.withBoundaryQuarterBeats(openingQuarterBeats, closingQuarterBeats, count)
+                : nominal;
+        var cadences = sourceCadences.isEmpty() ? cadences(source.measures()) : sourceCadences;
+        return bounded.withSourceCadences(cadences, count);
     }
 
     /** Resolve once from every current source part, before selection or engraved reflow. */

@@ -132,7 +132,7 @@ public final class Main {
                     ScoreOpeningDuration.provedClosingQuarterBeats(score, beats[beats.length - 1]);
             if (Double.isFinite(closing)) beats[beats.length - 1] = (float) closing;
         }
-        boolean[] cadences = PrintedCadenceDurations.apply(score, labels, gray, width, height, beats);
+        boolean[] cadences = PrintedCadenceDurations.apply(score, beats);
         var harmonicPitches = ArtificialHarmonics.resolveThirdPitches(
                 labels, decoderGray == null ? gray : decoderGray, width, height, score, initialKey);
         double[] starts = new double[beats.length + 1];

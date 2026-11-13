@@ -9,39 +9,58 @@ import java.util.List;
 final class PrintedCadenceDurations {
     private PrintedCadenceDurations() {}
 
-    static boolean[] apply(
-            ScorePageInterpretation score, byte[] labels, byte[] gray,
-            int width, int height, float[] beats) {
-        if (score.notes().isEmpty()) return new boolean[beats.length];
+    static ScorePageInterpretation capture(
+            ScorePageInterpretation score, byte[] labels, byte[] gray, int width, int height) {
+        if (score.notes().isEmpty()) return score;
         var staffs = OmrScoreInterpreter.techniqueStaffs(labels, gray, width, height, score.measures());
-        return apply(score, gray, width, height, staffs, beats);
+        return capture(score, gray, width, height, staffs);
     }
 
-    static boolean[] apply(
+    static ScorePageInterpretation capture(
             ScorePageInterpretation score, byte[] gray, int width, int height,
-            List<PlayingTechniqueDetector.Staff> staffs, float[] beats) {
-        var notes = new ArrayList<List<ScoreNoteEvent>>(beats.length);
-        for (int i = 0; i < beats.length; i++) notes.add(new ArrayList<>());
+            List<PlayingTechniqueDetector.Staff> staffs) {
+        int count = score.measures().size();
+        var notes = new ArrayList<List<ScoreNoteEvent>>(count);
+        for (int i = 0; i < count; i++) notes.add(new ArrayList<>());
         for (var note : score.notes()) notes.get(note.measureIndex()).add(note);
-        var rests = new boolean[beats.length];
+        var rests = new boolean[count];
         for (var rest : score.rests()) rests[rest.measureIndex()] = true;
-        var meter = new boolean[beats.length];
+        var meter = new boolean[count];
         for (var change : score.meterChanges()) {
             if (change.measureIndex() < meter.length) meter[change.measureIndex()] = true;
         }
-        var shortened = new boolean[beats.length];
-        for (int i = 0; i < beats.length; i++) {
+        var regions = new ArrayList<>(score.measures());
+        boolean changed = false;
+        for (int i = 0; i < count; i++) {
             var chord = notes.get(i);
             if (rests[i] || chord.isEmpty()) continue;
             float duration = chord.get(0).unbeamedDurationBeats();
-            if ((duration != 1 && duration != 2) || duration >= beats[i]) continue;
+            if (duration != 1 && duration != 2) continue;
             if (!chord.stream().allMatch(note -> exactCadenceNote(note, duration))) continue;
             var measure = score.measures().get(i);
-            var next = i + 1 < beats.length ? score.measures().get(i + 1) : null;
+            var next = i + 1 < count ? score.measures().get(i + 1) : null;
             if (!proved(gray, width, height, measure, next, staffs, chord,
                     next != null && meter[i + 1])) continue;
-            beats[i] = duration;
-            shortened[i] = true;
+            regions.set(i, new MeasureRegion(measure.left(), measure.right(), measure.top(),
+                    measure.bottom(), (int) duration));
+            changed = true;
+        }
+        if (!changed) return score;
+        return new ScorePageInterpretation(regions, score.notes(), score.firstMeasureNumber(),
+                score.keyChanges(), score.tempoChanges(), score.meterChanges(), score.rests(),
+                score.techniqueChanges(), score.dynamicChanges(), score.playbackDirections(),
+                score.expressiveEvents(), score.slurSource(), score.openingPickup(), score.tremoloSource(),
+                score.multiRestGroups(), score.beamSource(), score.clockContextSource());
+    }
+
+    static boolean[] apply(ScorePageInterpretation score, float[] beats) {
+        var shortened = new boolean[beats.length];
+        for (int i = 0; i < beats.length; i++) {
+            int duration = score.measures().get(i).cadenceQuarterBeats();
+            if (duration > 0 && duration < beats[i]) {
+                beats[i] = duration;
+                shortened[i] = true;
+            }
         }
         return shortened;
     }

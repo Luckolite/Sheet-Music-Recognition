@@ -4527,9 +4527,13 @@
     },
     "MeasureRegion.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/MeasureRegion.java",
-      "source_sha256": "ae17f8cd3eab964214cf791e5ba136896e7ad5d626713201838fcfcf30028a62",
-      "source_normalized_sha256": "ae17f8cd3eab964214cf791e5ba136896e7ad5d626713201838fcfcf30028a62",
-      "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/MeasureRegion.java"
+      "source_sha256": "d05f35bcacc12bc4d208253b778e409893b8f74e4a5fa5b2c8dbf70d03df8405",
+      "source_normalized_sha256": "d05f35bcacc12bc4d208253b778e409893b8f74e4a5fa5b2c8dbf70d03df8405",
+      "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/MeasureRegion.java",
+      "standalone_sha256": "78677098b28223d4777ec2caa61b2ca91dda1c31e61bdb57454d275537a6db13",
+      "standalone_normalized_sha256": "78677098b28223d4777ec2caa61b2ca91dda1c31e61bdb57454d275537a6db13",
+      "reviewed_app_commit": "2aec089b",
+      "current_source_review": "Retained printed cadence capacity and boundary timing use the same fields and limits. Standalone retains its indexed meter lookup."
     },
     "MergedPartialBeamMaskTest.java": {
       "source_path": "app/src/test/java/com/musicsheets/app/pdf/MergedPartialBeamMaskTest.java",
@@ -7750,13 +7754,15 @@
     },
     "ScoreBoundaryClock.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/ScoreBoundaryClock.java",
-      "source_sha256": "66fc5362771625cdfaec3df529dd3278d4e522275a3cf86617034594cbe37af4",
-      "source_normalized_sha256": "5c665a3eb47defb8412613a89206363d37d68500e037ed2385fb3fe4c127922e",
+      "source_sha256": "50785c5f5e70416369f6ff1e032667d79a7dfb53a4e4a911eb15e373d91cc753",
+      "source_normalized_sha256": "50785c5f5e70416369f6ff1e032667d79a7dfb53a4e4a911eb15e373d91cc753",
       "reviewed_source_state": "Committed combined source snapshot; paired package deployment and whole-library accuracy acceptance pending.",
       "review_note": "Global recognition/performance repairs; namespace-equivalent portable helpers and separately reviewed caller adapters. Original synthetic regressions; no private score assets.",
-      "standalone_sha256": "b32c4f5892ce5dea15798fcd19819659e0342c702532305f54c151947ef157ae",
-      "reviewed_app_commit": "c0374eebf5c075b83813a66051faa22bcb431360",
-      "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/ScoreBoundaryClock.java"
+      "standalone_sha256": "e8072ebc52df8445e3089c238ac34651942ed347fdbe30d338728a2dde9c0b6b",
+      "reviewed_app_commit": "2aec089b",
+      "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/ScoreBoundaryClock.java",
+      "standalone_normalized_sha256": "e8072ebc52df8445e3089c238ac34651942ed347fdbe30d338728a2dde9c0b6b",
+      "current_source_review": "Retained printed cadence capacity and boundary timing use the same fields and limits. Standalone retains its indexed meter lookup."
     },
     "ScoreBoundaryTies.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/ScoreBoundaryTies.java",
@@ -8041,13 +8047,15 @@
     },
     "ScoreMeterMap.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/ScoreMeterMap.java",
-      "source_sha256": "61494885d6ee414d7af3592e620112dd4d745f30b697f0ca17342e3dca74d5b5",
-      "reviewed_app_commit": "bcc029d88d122ff3e4e0c33c83442e0c015cf30a",
-      "source_normalized_sha256": "1eb0d6bec6635d3618b95008ad4a93a5b13c1914a4beba5ceeeda2d10b4fb282",
+      "source_sha256": "956e73bbcff2c52289c3fa7ef8fca79025344628c54758930f9d809c8297e1a5",
+      "reviewed_app_commit": "2aec089b",
+      "source_normalized_sha256": "956e73bbcff2c52289c3fa7ef8fca79025344628c54758930f9d809c8297e1a5",
       "review_note": "Reviewed package translation and required AOSP formatting only; parent exact-format comparison passed. Shared full-Current literal rest clocks/target ownership and opt-in binary64 frame semantics; original JDK-only procedural regressions, no score/model/app-history material.",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/ScoreMeterMap.java",
       "license": "Apache-2.0",
-      "standalone_sha256": "ed41a585a44c685d95d3ac2ebd29d0ec06269a50b34de167632aaf7c91b65970"
+      "standalone_sha256": "005fae1621e950ac6c3bb1f1f4ea0110c42e3353bce7792f9ac9e800aeabd667",
+      "standalone_normalized_sha256": "005fae1621e950ac6c3bb1f1f4ea0110c42e3353bce7792f9ac9e800aeabd667",
+      "current_source_review": "Retained printed cadence capacity and boundary timing use the same fields and limits. Standalone retains its indexed meter lookup."
     },
     "ScoreMeterProducerSource.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/ScoreMeterProducerSource.java",

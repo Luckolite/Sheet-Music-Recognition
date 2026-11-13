@@ -8,6 +8,21 @@ import static org.junit.Assert.*;
 
 /** Entirely synthetic standalone boundary-clock controls. */
 public class ScoreBoundaryClockTest {
+    @Test
+    public void retainedCadenceShortensOnlyItsOwnMeasure() {
+        var regions = List.of(
+                new MeasureRegion(.1f, .2f, .2f, .4f),
+                new MeasureRegion(.21f, .46f, .2f, .4f, 2),
+                new MeasureRegion(.47f, .75f, .2f, .4f));
+        var score = new ScorePageInterpretation(regions, List.of());
+        var meter = ScoreBoundaryClock.legacy().meter(score, 4);
+        assertEquals(4, meter.startBeat(1), 0);
+        assertEquals(6, meter.startBeat(2), 0);
+        assertEquals(10, meter.startBeat(3), 0);
+        assertTrue(meter.hasSourceCadence(1));
+        assertFalse(meter.hasSourceCadence(2));
+    }
+
     static final List<MeasureRegion> SHORT =
             List.of(
                     new MeasureRegion(.1f, .2f, .2f, .4f),

@@ -15,6 +15,7 @@ public final class ScoreMeterMap {
     private final double[] performedStarts;
     private final boolean exactAnchorMode;
     private final double[] exactSpans;
+    private final java.util.Set<Integer> sourceCadenceMeasures;
 
     public ScoreMeterMap(float opening, List<ScoreMeterChange> changes) {
         this.opening = Float.isFinite(opening) ? Math.max(.125f, Math.min(128, opening)) : 4;
@@ -41,6 +42,7 @@ public final class ScoreMeterMap {
         this.performedStarts = null;
         this.exactAnchorMode = false;
         this.exactSpans = null;
+        this.sourceCadenceMeasures = java.util.Set.of();
     }
 
     private ScoreMeterMap(double[] starts) {
@@ -48,6 +50,11 @@ public final class ScoreMeterMap {
     }
 
     private ScoreMeterMap(double[] starts, double[] exactSpans) {
+        this(starts, exactSpans, java.util.Set.of());
+    }
+
+    private ScoreMeterMap(double[] starts, double[] exactSpans,
+            java.util.Set<Integer> sourceCadenceMeasures) {
         this.opening = starts.length > 1 ? (float) (starts[1] - starts[0]) : 4;
         this.changeMeasures = null;
         this.changeSpans = null;
@@ -55,6 +62,7 @@ public final class ScoreMeterMap {
         this.performedStarts = starts;
         this.exactAnchorMode = exactSpans != null;
         this.exactSpans = exactSpans;
+        this.sourceCadenceMeasures = java.util.Set.copyOf(sourceCadenceMeasures);
     }
 
     /** Exact performed segment lengths, not newly recognized printed time signatures. */
@@ -114,6 +122,29 @@ public final class ScoreMeterMap {
             spans.add(span);
         }
         return fromPerformedDurations(spans);
+    }
+
+    /** Apply source-proved capacities after the ordinary meter and boundary decisions. */
+    public ScoreMeterMap withSourceCadences(java.util.Map<Integer, Integer> cadences, int measureCount) {
+        if (cadences.isEmpty()) return this;
+        var spans = new ArrayList<Double>(measureCount);
+        var proved = new java.util.HashSet<Integer>();
+        for (int i = 0; i < measureCount; i++) {
+            double duration = quarterBeatsInMeasure(i);
+            int cadence = cadences.getOrDefault(i, 0);
+            if (cadence > 0 && cadence <= duration) {
+                duration = cadence;
+                proved.add(i);
+            }
+            spans.add(duration);
+        }
+        if (proved.isEmpty()) return this;
+        var frame = exactAnchorMode ? fromExactPerformedDurations(spans) : fromPerformedDurations(spans);
+        return new ScoreMeterMap(frame.performedStarts, frame.exactSpans, proved);
+    }
+
+    public boolean hasSourceCadence(int measure) {
+        return sourceCadenceMeasures.contains(measure);
     }
 
     public double quarterBeatsInMeasure(int measure) {

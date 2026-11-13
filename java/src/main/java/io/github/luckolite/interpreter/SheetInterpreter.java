@@ -643,6 +643,6 @@ public final class SheetInterpreter {
                                 clockPartSource,
                                 meterEvidence.provenance(),
                                 tabSourceGray));
-        return finalInterpretation;
+        return PrintedCadenceDurations.capture(finalInterpretation, labels, gray, width, height);
     }
 }

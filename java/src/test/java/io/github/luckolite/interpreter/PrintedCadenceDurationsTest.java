@@ -41,7 +41,8 @@ public class PrintedCadenceDurationsTest {
                 new MeasureRegion(340f / WIDTH, 560f / WIDTH, .14f, .7f));
         var score = new ScorePageInterpretation(measures, chord, 1, List.of(), List.of(), meters);
         float[] beats = {4, 4, 4};
-        PrintedCadenceDurations.apply(score, gray, WIDTH, HEIGHT, staffs, beats);
+        PrintedCadenceDurations.apply(
+                PrintedCadenceDurations.capture(score, gray, WIDTH, HEIGHT, staffs), beats);
         return beats;
     }
 
@@ -107,7 +108,8 @@ public class PrintedCadenceDurationsTest {
         var score = new ScorePageInterpretation(
                 measures, List.of(note(.38f, 94)), 1, List.of(), List.of(), List.of());
         float[] beats = {4, 4};
-        PrintedCadenceDurations.apply(score, gray, WIDTH, HEIGHT, staffs, beats);
+        PrintedCadenceDurations.apply(
+                PrintedCadenceDurations.capture(score, gray, WIDTH, HEIGHT, staffs), beats);
         return beats;
     }
 

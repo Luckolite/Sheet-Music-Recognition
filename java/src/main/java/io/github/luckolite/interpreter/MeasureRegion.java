@@ -1,7 +1,15 @@
 // Copyright 2026 Luckolite
 // SPDX-License-Identifier: Apache-2.0
-// Adapted from Music Sheets: standalone package and platform-independent diagnostics.
 package io.github.luckolite.interpreter;
 
-/** Normalized page geometry for one optically recognized measure. */
-public record MeasureRegion(float left, float right, float top, float bottom) {}
+/** Normalized page geometry and optional proved short-cadence length. */
+public record MeasureRegion(float left, float right, float top, float bottom, int cadenceQuarterBeats) {
+    public MeasureRegion(float left, float right, float top, float bottom) {
+        this(left, right, top, bottom, 0);
+    }
+
+    public MeasureRegion {
+        if (cadenceQuarterBeats < 0 || cadenceQuarterBeats > 2)
+            throw new IllegalArgumentException("Invalid printed cadence duration");
+    }
+}
