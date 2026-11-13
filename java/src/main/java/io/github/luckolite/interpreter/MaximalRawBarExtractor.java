@@ -571,105 +571,130 @@ final class MaximalRawBarExtractor {
         // be omitted from the logical work total.
         long work = 0;
         if (cells > workBudget / 2) return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), 0);
-        int[][] runTop = new int[laneWidth][spanHeight], runBottom = new int[laneWidth][spanHeight];
-        @SuppressWarnings("unchecked")
-        List<Integer>[] darkRows = (List<Integer>[]) new List<?>[laneWidth];
-        @SuppressWarnings("unchecked")
-        List<int[]>[] staffSplitRuns = joined ? (List<int[]>[]) new List<?>[laneWidth] : null;
+        // Runs are separated by at least one light row.
+        int runCapacity = (spanHeight + 1) / 2;
+        int[][] runTops = new int[laneWidth][runCapacity];
+        int[][] runBottoms = new int[laneWidth][runCapacity];
+        int[] runCounts = new int[laneWidth];
+        int[][] staffSplitRuns = joined ? new int[laneWidth][runCapacity * 2] : null;
+        int[] staffSplitCounts = joined ? new int[laneWidth] : null;
         for (int x = lane.left; x <= lane.right; x++) {
-            darkRows[x - lane.left] = new ArrayList<>();
-            int lastDark = -1;
-            for (int y = spanTop; y <= spanBottom; y++) {
+            int column = x - lane.left;
+            int[] columnTops = runTops[column], columnBottoms = runBottoms[column];
+            int runCount = 0;
+            boolean inRun = false;
+            int[] split = joined ? staffSplitRuns[column] : null;
+            int splitCount = 0, splitStart = -1;
+            int pixel = spanTop * width + x;
+            for (int y = spanTop; y <= spanBottom; y++, pixel += width) {
                 if (work >= workBudget)
                     return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), work);
                 work++;
-                if (dark(gray, width, x, y, joined ? null : staffPixels)) {
-                    if (lastDark < 0) {
+                boolean rawInk = (gray[pixel] & 255) < DARK_LIMIT;
+                boolean staffInk = rawInk && staffPixels != null && staffPixels.contains(pixel);
+                if (rawInk && (joined || !staffInk)) {
+                    if (!inRun) {
                         if (work >= workBudget)
                             return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), work);
                         work++;
-                        lastDark = y;
-                        // Store one entry per complete raw run, not every ink pixel.
-                        darkRows[x - lane.left].add(y);
+                        columnTops[runCount] = y;
+                        inRun = true;
                     }
-                } else lastDark = -1;
-                runTop[x - lane.left][y - spanTop] = lastDark;
-            }
-            int nextDark = -1;
-            for (int y = spanBottom; y >= spanTop; y--) {
-                if (work >= workBudget)
-                    return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), work);
-                work++;
-                if (dark(gray, width, x, y, joined ? null : staffPixels)) {
-                    if (nextDark < 0) nextDark = y;
-                } else nextDark = -1;
-                runBottom[x - lane.left][y - spanTop] = nextDark;
-            }
-            if (joined) {
-                // A witnessed staff core can join two complete raw bars into one
-                // vertical run. Preserve the full raster, but index the separate
-                // nonstaff intervals as candidate body cross-sections. This does
-                // not erase or relabel staff pixels; they remain in the independent
-                // carrier set and are never inserted into a body member list.
-                staffSplitRuns[x - lane.left] = new ArrayList<>();
-                int start = -1;
-                for (int y = spanTop; y <= spanBottom; y++) {
-                    if (work >= workBudget)
-                        return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), work);
-                    work++;
-                    boolean ink = dark(gray, width, x, y, staffPixels);
-                    if (ink && start < 0) start = y;
-                    if (!ink && start >= 0) {
-                        staffSplitRuns[x - lane.left].add(new int[] {start, y - 1});
-                        start = -1;
+                } else if (inRun) {
+                    columnBottoms[runCount++] = y - 1;
+                    inRun = false;
+                }
+                // Keep complete nonstaff intervals alongside the untouched raw runs.
+                if (split != null) {
+                    if (rawInk && !staffInk) {
+                        if (splitStart < 0) splitStart = y;
+                    } else if (splitStart >= 0) {
+                        split[splitCount++] = splitStart;
+                        split[splitCount++] = y - 1;
+                        splitStart = -1;
                     }
                 }
-                if (start >= 0) staffSplitRuns[x - lane.left].add(new int[] {start, spanBottom});
+            }
+            if (inRun) columnBottoms[runCount++] = spanBottom;
+            runCounts[column] = runCount;
+            // Retain the established logical work charge for the former reverse scan.
+            if (spanHeight > workBudget - work)
+                return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), workBudget);
+            work += spanHeight;
+            if (split != null) {
+                if (spanHeight > workBudget - work)
+                    return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), workBudget);
+                work += spanHeight;
+                if (splitStart >= 0) {
+                    split[splitCount++] = splitStart;
+                    split[splitCount++] = spanBottom;
+                }
+                staffSplitCounts[column] = splitCount;
             }
         }
         List<Body> rawCandidates = new ArrayList<>();
+        int[] widths = new int[laneWidth], tops = new int[laneWidth], bottoms = new int[laneWidth];
+        double[] offsets = new double[laneWidth];
+        int[] firstRun = new int[laneWidth];
+        int[] firstSplit = joined ? new int[laneWidth] : null;
+        long[] remaining = joined ? new long[1] : null;
         // Enumerate all raw intercepts over the entire lane for every already-supported slope.
         for (int tick = -13; tick <= 13; tick++) {
             if (tick == 0 || Math.abs(tick) < 2) continue;
+            double slope = tick * .05;
+            double norm = Math.sqrt(1 + slope * slope);
+            for (int column = 0; column < laneWidth; column++)
+                offsets[column] = slope * (lane.left + column - mid);
+            java.util.Arrays.fill(firstRun, 0);
+            if (joined) java.util.Arrays.fill(firstSplit, 0);
             for (int intercept = lane.top; intercept <= lane.bottom; intercept++) {
                 if (laneWidth > workBudget - work)
                     return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), work);
                 work += laneWidth;
-                int[] widths = new int[lane.right - lane.left + 1];
-                int[] tops = new int[widths.length], bottoms = new int[widths.length];
-                for (int x = lane.left; x <= lane.right; x++) {
-                    int y = (int) Math.rint(intercept + tick * .05 * (x - mid));
-                    int at = x - lane.left;
+                for (int at = 0; at < laneWidth; at++) {
+                    int runCount = runCounts[at];
+                    if (runCount == 0) continue;
+                    // Only nonzero widths expose a cross-section to later scans.
+                    widths[at] = 0;
+                    int y = (int) Math.rint(intercept + offsets[at]);
                     if (y - radius < spanTop || y + radius > spanBottom) continue;
                     // A centered raw cross-section is one contiguous body, not a sum of nearby ink.
-                    List<Integer> ys = darkRows[at];
-                    int lo = lowerBound(ys, y - radius), hi = upperBound(ys, y + radius);
+                    int[] columnTops = runTops[at], columnBottoms = runBottoms[at];
+                    // Rounded rows are nondecreasing as the intercept advances.
+                    int lo = firstRun[at], firstRow = y - radius, lastRow = y + radius;
+                    while (lo < runCount && columnTops[lo] < firstRow) lo++;
+                    firstRun[at] = lo;
                     int best = 0, bestTop = -1, bestBottom = -1, bestDistance = Integer.MAX_VALUE;
                     boolean tie = false;
-                    for (int k = lo; k < hi; k++) {
+                    for (int k = lo; k < runCount && columnTops[k] <= lastRow; k++) {
                         if (work >= workBudget)
                             return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), work);
                         work++;
-                        int yy = ys.get(k),
-                                t = runTop[at][yy - spanTop],
-                                b = runBottom[at][yy - spanTop];
+                        int t = columnTops[k], b = columnBottoms[k];
                         // Never accept a clipped slice of a neighboring raw stroke. A candidate
                         // axis must contain a complete vertical cross-section at each x. When an
                         // independently witnessed staff core joins several bars into one raw run,
                         // use only complete nonstaff sub-runs inside this same axis window.
                         int top = t, bottom = b;
-                        if (t < y - radius || b > y + radius) {
+                        if (b > lastRow) {
                             if (!joined) continue;
                             int selectedTop = -1,
                                     selectedBottom = -1,
                                     selectedDistance = Integer.MAX_VALUE;
                             boolean splitTie = false;
-                            for (int[] segment : staffSplitRuns[at]) {
-                                if (work >= workBudget)
-                                    return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), work);
-                                work++;
-                                int st = segment[0], sb = segment[1];
-                                if (st < y - radius || sb > y + radius) continue;
+                            int[] segments = staffSplitRuns[at];
+                            int splitEnd = staffSplitCounts[at];
+                            int splitWork = splitEnd / 2;
+                            if (splitWork > workBudget - work)
+                                return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), workBudget);
+                            work += splitWork;
+                            int segment = firstSplit[at];
+                            while (segment < splitEnd && segments[segment] < firstRow) segment += 2;
+                            firstSplit[at] = segment;
+                            for (; segment < splitEnd; segment += 2) {
+                                int st = segments[segment], sb = segments[segment + 1];
+                                // Split intervals are ordered and disjoint.
+                                if (sb > lastRow) break;
                                 int sn = sb - st + 1;
                                 if (sn < minWidth || sn > maxWidth) continue;
                                 int sd = Math.abs((st + sb) / 2 - y);
@@ -708,7 +733,7 @@ final class MaximalRawBarExtractor {
                     }
                 }
                 if (joined) {
-                    long[] remaining = {workBudget - work};
+                    remaining[0] = workBudget - work;
                     boolean admitted =
                             RawStaffBarPartition.apply(
                                     widths,
@@ -732,18 +757,12 @@ final class MaximalRawBarExtractor {
                     while (x <= lane.right && widths[x - lane.left] > 0) x++;
                     int last = x - 1;
                     if (last - first + 1 < minLength) continue;
-                    int firstWidth = widths[first - lane.left],
-                            lastWidth = widths[last - lane.left];
-                    int interiorMax = 0;
-                    for (int q = first + 1; q < last; q++) {
-                        if (work >= workBudget)
-                            return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), work);
-                        work++;
-                        interiorMax = Math.max(interiorMax, widths[q - lane.left]);
-                    }
-                    // Both visible ends must taper relative to the interior. A clipped/unclosed
-                    // body abstains.
-                    if (interiorMax == 0) continue;
+                    // Every interior column in this contiguous run has positive width.
+                    int interiorColumns = last - first - 1;
+                    if (interiorColumns <= 0) continue;
+                    if (interiorColumns > workBudget - work)
+                        return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), workBudget);
+                    work += interiorColumns;
                     long sideWork = 4L * (last - first + 1);
                     if (sideWork > workBudget - work)
                         return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), work);
@@ -756,37 +775,42 @@ final class MaximalRawBarExtractor {
                             last,
                             lane.left,
                             mid,
-                            tick * .05,
+                            slope,
                             intercept)) continue;
-                    List<Integer> pixels = new ArrayList<>();
-                    int thickMax = 0;
-                    for (int q = first; q <= last; q++) {
-                        if (work >= workBudget)
-                            return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), work);
-                        work++;
-                        int at = q - lane.left;
-                        thickMax = Math.max(thickMax, widths[at]);
-                        for (int yy = tops[at]; yy <= bottoms[at]; yy++) {
-                            if (work >= workBudget)
-                                return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), work);
-                            work++;
-                            pixels.add(yy * width + q);
-                        }
+                    int size = 0, minY = spanBottom, maxY = spanTop;
+                    boolean connected = true;
+                    for (int q = first - lane.left; q <= last - lane.left; q++) {
+                        size += bottoms[q] - tops[q] + 1;
+                        minY = Math.min(minY, tops[q]);
+                        maxY = Math.max(maxY, bottoms[q]);
+                        if (q > first - lane.left
+                                && (tops[q] > bottoms[q - 1] + 1 || tops[q - 1] > bottoms[q] + 1))
+                            connected = false;
                     }
-                    long bodyWork =
-                            25L * pixels.size() + pixels.size() * ceilLog2(pixels.size() + 1L);
-                    // Side scans, set/queue construction and neighbor probes, cap projections,
-                    // plus sorting the projected cap slices.
+                    long pixelWork = (long) size + last - first + 1;
+                    if (pixelWork > workBudget - work)
+                        return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), workBudget);
+                    work += pixelWork;
+                    // Keep the original conservative charge, including the former flood fill.
+                    long bodyWork = 25L * size + size * ceilLog2(size + 1L);
                     if (bodyWork > workBudget - work)
                         return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), work);
                     work += bodyWork;
-                    if (!connected8(pixels, width)) continue;
-                    int[] caps = projectedCapWidths(pixels, width, mid, tick * .05, intercept);
-                    if (caps == null
-                            || caps[0] < 1
-                            || caps[1] < 1
-                            || first == lane.left
-                            || last == lane.right) continue;
+                    if (!connected || first == lane.left || last == lane.right) continue;
+                    var slices = new java.util.HashMap<Integer, Set<Integer>>();
+                    for (int q = first; q <= last; q++) {
+                        int at = q - lane.left, dx = q - mid;
+                        double projectedX = offsets[at];
+                        for (int yy = tops[at]; yy <= bottoms[at]; yy++)
+                            addProjectedPixel(slices, dx, yy - intercept, slope, norm, projectedX);
+                    }
+                    int[] caps = capWidths(slices);
+                    if (caps == null || caps[0] < 1 || caps[1] < 1) continue;
+                    List<Integer> pixels = new ArrayList<>(size);
+                    for (int q = first; q <= last; q++) {
+                        int at = q - lane.left;
+                        for (int yy = tops[at]; yy <= bottoms[at]; yy++) pixels.add(yy * width + q);
+                    }
                     Body candidate =
                             new Body(
                                     tick,
@@ -798,28 +822,32 @@ final class MaximalRawBarExtractor {
                                     caps[1],
                                     caps[2],
                                     0,
-                                    minY(pixels, width),
-                                    maxY(pixels, width));
+                                    minY,
+                                    maxY);
                     long aliasBuild = pixels.size();
                     if (aliasBuild > workBudget - work)
                         return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), work);
                     work += aliasBuild;
-                    Set<Integer> candidatePixels = new HashSet<>(pixels);
                     int aliasIndex = -1;
                     for (int i = 0; i < rawCandidates.size(); i++) {
                         Body prior = rawCandidates.get(i);
+                        int priorSize = prior.rawPixels.size();
+                        if (priorSize > workBudget - work)
+                            return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), workBudget);
+                        work += priorSize;
+                        if (!boundsOverlap(candidate, prior)) continue;
+                        int required = (Math.min(priorSize, size) + 1) / 2;
                         int overlap = 0;
                         for (int q : prior.rawPixels) {
-                            if (work >= workBudget)
-                                return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), work);
-                            work++;
-                            if (candidatePixels.contains(q)) overlap++;
+                            int pixelX = q % width;
+                            if (pixelX < first || pixelX > last) continue;
+                            int y = q / width, column = pixelX - lane.left;
+                            if (y >= tops[column] && y <= bottoms[column] && ++overlap >= required) {
+                                aliasIndex = i;
+                                break;
+                            }
                         }
-                        int smaller = Math.min(prior.rawPixels.size(), pixels.size());
-                        if (smaller > 0 && overlap / (double) smaller >= .50) {
-                            aliasIndex = i;
-                            break;
-                        }
+                        if (aliasIndex >= 0) break;
                     }
                     if (aliasIndex < 0) rawCandidates.add(candidate);
                     else if (pixels.size() > rawCandidates.get(aliasIndex).rawPixels.size())
@@ -836,51 +864,52 @@ final class MaximalRawBarExtractor {
             return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), work);
         work += aliasWork;
         rawCandidates.sort(Comparator.comparingInt((Body b) -> b.rawPixels.size()).reversed());
-        List<Body> maximal = new ArrayList<>();
+        List<Body> maximal = new ArrayList<>(rawCandidates.size());
         for (Body candidate : rawCandidates) {
             boolean alias = false;
             if (candidate.rawPixels.size() > workBudget - work)
                 return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), work);
             work += candidate.rawPixels.size(); // candidate membership set construction
-            Set<Integer> pixels = new HashSet<>(candidate.rawPixels);
+            boolean indexed = false;
             for (Body kept : maximal) {
+                int keptSize = kept.rawPixels.size();
+                if (keptSize > workBudget - work)
+                    return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), workBudget);
+                work += keptSize;
+                if (!boundsOverlap(candidate, kept)) continue;
+                if (!indexed) {
+                    indexColumns(candidate, width, lane.left, tops, bottoms);
+                    indexed = true;
+                }
+                int required = (Math.min(keptSize, candidate.rawPixels.size()) + 1) / 2;
                 int overlap = 0;
-                for (int p : kept.rawPixels) {
-                    if (work >= workBudget)
-                        return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), work);
-                    work++;
-                    if (pixels.contains(p)) overlap++;
+                for (int pixel : kept.rawPixels) {
+                    int x = pixel % width;
+                    if (x < candidate.firstX || x > candidate.lastX) continue;
+                    int y = pixel / width, column = x - lane.left;
+                    if (y >= tops[column] && y <= bottoms[column] && ++overlap >= required) {
+                        alias = true;
+                        break;
+                    }
                 }
-                int smaller = Math.min(kept.rawPixels.size(), candidate.rawPixels.size());
-                if (smaller > 0 && overlap / (double) smaller >= .50) {
-                    alias = true;
-                    break;
-                }
+                if (alias) break;
             }
             if (!alias) maximal.add(candidate);
             if (maximal.size() > MAX_BODIES)
                 return new Discovery(Status.TOO_MANY_BODIES, List.of(), work);
         }
-        List<Body> withContacts = new ArrayList<>();
+        List<Body> withContacts = new ArrayList<>(maximal.size());
         for (Body b : maximal) {
             long buildWork = b.rawPixels.size();
             if (buildWork > workBudget - work)
                 return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), work);
             work += buildWork;
-            Set<Integer> owned = new HashSet<>(b.rawPixels);
-            Set<Integer> contacts = new HashSet<>();
-            for (int pixel : b.rawPixels) {
-                if (workBudget - work < 10)
-                    return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), work);
-                work += 10; // bounded 3x3 raw contact neighborhood per body pixel
-                int px = pixel % width, py = pixel / width;
-                for (int yy = Math.max(0, py - 1); yy <= Math.min(height - 1, py + 1); yy++)
-                    for (int xx = Math.max(0, px - 1); xx <= Math.min(width - 1, px + 1); xx++) {
-                        int q = yy * width + xx;
-                        if (!owned.contains(q) && dark(gray, width, xx, yy, staffPixels))
-                            contacts.add(q);
-                    }
-            }
+            // Charge the same complete per-pixel neighborhoods before allocating scratch.
+            long affordable = Math.min(buildWork, (workBudget - work) / 10);
+            work += affordable * 10;
+            if (affordable < buildWork)
+                return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), work);
+            int contacts = countContacts(b, gray, width, height, lane.left, tops, bottoms, staffPixels);
             withContacts.add(
                     new Body(
                             b.slopeTick,
@@ -891,7 +920,7 @@ final class MaximalRawBarExtractor {
                             b.firstCapWidth,
                             b.lastCapWidth,
                             b.maxWidth,
-                            contacts.size(),
+                            contacts,
                             b.minY,
                             b.maxY));
         }
@@ -901,23 +930,56 @@ final class MaximalRawBarExtractor {
         return new Discovery(Status.CANDIDATES, withContacts, work);
     }
 
-    private static boolean connected8(List<Integer> pixels, int width) {
-        Set<Integer> remaining = new HashSet<>(pixels);
-        if (remaining.isEmpty()) return false;
-        List<Integer> todo = new ArrayList<>();
-        int seed = remaining.iterator().next();
-        remaining.remove(seed);
-        todo.add(seed);
-        for (int i = 0; i < todo.size(); i++) {
-            int p = todo.get(i), x = p % width, y = p / width;
-            for (int yy = y - 1; yy <= y + 1; yy++)
-                for (int xx = x - 1; xx <= x + 1; xx++) {
-                    if (xx < 0 || yy < 0) continue;
-                    int q = yy * width + xx;
-                    if (remaining.remove(q)) todo.add(q);
-                }
+    private static void indexColumns(Body body, int width, int laneLeft, int[] tops, int[] bottoms) {
+        // Discovery stores pixels in column order with one contiguous interval per column.
+        int column = -1;
+        for (int pixel : body.rawPixels) {
+            int at = pixel % width - laneLeft, y = pixel / width;
+            if (at != column) {
+                column = at;
+                tops[at] = y;
+            }
+            bottoms[at] = y;
         }
-        return remaining.isEmpty();
+    }
+
+    private static int countContacts(
+            Body body, byte[] gray, int width, int height, int laneLeft,
+            int[] tops, int[] bottoms, Set<Integer> staffPixels) {
+        indexColumns(body, width, laneLeft, tops, bottoms);
+        int contacts = 0;
+        for (int x = body.firstX - 1; x <= body.lastX + 1; x++) {
+            int top = height, bottom = -1;
+            for (int neighbor = Math.max(body.firstX, x - 1);
+                    neighbor <= Math.min(body.lastX, x + 1); neighbor++) {
+                top = Math.min(top, tops[neighbor - laneLeft]);
+                bottom = Math.max(bottom, bottoms[neighbor - laneLeft]);
+            }
+            // Adjacent body intervals are 8-connected, so their expanded neighborhoods
+            // form one contiguous interval in this column.
+            int start = Math.max(0, top - 1), end = Math.min(height - 1, bottom + 1);
+            if (x >= body.firstX && x <= body.lastX) {
+                contacts += countContactInk(gray, width, x, start, tops[x - laneLeft] - 1, staffPixels);
+                start = bottoms[x - laneLeft] + 1;
+            }
+            contacts += countContactInk(gray, width, x, start, end, staffPixels);
+        }
+        return contacts;
+    }
+
+    private static int countContactInk(
+            byte[] gray, int width, int x, int start, int end, Set<Integer> staffPixels) {
+        int count = 0;
+        for (int y = start, pixel = y * width + x; y <= end; y++, pixel += width) {
+            if ((gray[pixel] & 255) < DARK_LIMIT && (staffPixels == null || !staffPixels.contains(pixel)))
+                count++;
+        }
+        return count;
+    }
+
+    private static boolean boundsOverlap(Body a, Body b) {
+        return a.firstX <= b.lastX && b.firstX <= a.lastX
+                && a.minY <= b.maxY && b.minY <= a.maxY;
     }
 
     /** Side edges follow one digital axis; caps taper into a broad, coherent interior. */
@@ -960,26 +1022,6 @@ final class MaximalRawBarExtractor {
         return true;
     }
 
-    private static int lowerBound(List<Integer> values, int target) {
-        int lo = 0, hi = values.size();
-        while (lo < hi) {
-            int m = (lo + hi) >>> 1;
-            if (values.get(m) < target) lo = m + 1;
-            else hi = m;
-        }
-        return lo;
-    }
-
-    private static int upperBound(List<Integer> values, int target) {
-        int lo = 0, hi = values.size();
-        while (lo < hi) {
-            int m = (lo + hi) >>> 1;
-            if (values.get(m) <= target) lo = m + 1;
-            else hi = m;
-        }
-        return lo;
-    }
-
     private static long ceilLog2(long n) {
         if (n <= 1) return 1;
         return 64 - Long.numberOfLeadingZeros(n - 1);
@@ -990,18 +1032,36 @@ final class MaximalRawBarExtractor {
         double norm = Math.sqrt(1 + slope * slope);
         java.util.Map<Integer, Set<Integer>> slices = new java.util.HashMap<>();
         for (int p : pixels) {
-            int x = p % width, y = p / width;
-            double u = ((x - mid) + slope * (y - intercept)) / norm;
-            double v = ((y - intercept) - slope * (x - mid)) / norm;
-            slices.computeIfAbsent((int) Math.rint(u), k -> new HashSet<>())
-                    .add((int) Math.rint(v));
+            int dx = p % width - mid, dy = p / width - intercept;
+            addProjectedPixel(slices, dx, dy, slope, norm, slope * dx);
         }
+        return capWidths(slices);
+    }
+
+    private static void addProjectedPixel(
+            java.util.Map<Integer, Set<Integer>> slices, int dx, int dy,
+            double slope, double norm, double projectedX) {
+        int u = (int) Math.rint((dx + slope * dy) / norm);
+        int v = (int) Math.rint((dy - projectedX) / norm);
+        slices.computeIfAbsent(u, ignored -> new HashSet<>()).add(v);
+    }
+
+    private static int[] capWidths(java.util.Map<Integer, Set<Integer>> slices) {
         if (slices.size() < 3) return null;
-        List<Integer> keys = slices.keySet().stream().sorted().toList();
-        int left = slices.get(keys.get(0)).size(),
-                right = slices.get(keys.get(keys.size() - 1)).size(),
-                max = 0;
-        for (int key : keys) max = Math.max(max, slices.get(key).size());
+        int first = Integer.MAX_VALUE, last = Integer.MIN_VALUE;
+        int left = 0, right = 0, max = 0;
+        for (var slice : slices.entrySet()) {
+            int position = slice.getKey(), size = slice.getValue().size();
+            if (position < first) {
+                first = position;
+                left = size;
+            }
+            if (position > last) {
+                last = position;
+                right = size;
+            }
+            max = Math.max(max, size);
+        }
         return new int[] {left, right, max};
     }
 
@@ -1027,7 +1087,7 @@ final class MaximalRawBarExtractor {
             boolean joined) {
         if (discovery.status() != Status.CANDIDATES || gray == null || lane == null)
             return discovery;
-        String digest = bodiesSha256(discovery.bodies());
+        String digest = discovery.bodiesSha256();
         SourceIdentity identity =
                 new SourceIdentity(
                         sha256(gray),
@@ -1058,13 +1118,12 @@ final class MaximalRawBarExtractor {
     private static String staffSha256(Set<Integer> staff) {
         try {
             MessageDigest md = MessageDigest.getInstance("SHA-256");
-            if (staff != null)
-                for (int value : staff.stream().mapToInt(Integer::intValue).sorted().toArray()) {
-                    md.update((byte) (value >>> 24));
-                    md.update((byte) (value >>> 16));
-                    md.update((byte) (value >>> 8));
-                    md.update((byte) value);
-                }
+            if (staff != null && !staff.isEmpty()) {
+                var bytes = java.nio.ByteBuffer.allocate(1024);
+                for (int value : staff.stream().mapToInt(Integer::intValue).sorted().toArray())
+                    updateInt(md, bytes, value);
+                md.update(bytes.array(), 0, bytes.position());
+            }
             return RasterEvidenceIdentity.hex(md.digest());
         } catch (NoSuchAlgorithmException impossible) {
             throw new AssertionError(impossible);
@@ -1074,37 +1133,34 @@ final class MaximalRawBarExtractor {
     static String bodiesSha256(List<Body> bodies) {
         try {
             MessageDigest md = MessageDigest.getInstance("SHA-256");
+            if (bodies.isEmpty()) return RasterEvidenceIdentity.hex(md.digest());
+            var bytes = java.nio.ByteBuffer.allocate(1024);
             for (Body body : bodies) {
-                updateInt(md, body.slopeTick());
-                updateInt(md, body.firstX());
-                updateInt(md, body.lastX());
-                updateInt(md, body.centerAtLaneMid());
-                updateInt(md, body.firstCapWidth());
-                updateInt(md, body.lastCapWidth());
-                updateInt(md, body.maxWidth());
-                updateInt(md, body.unassignedContactPixels());
-                updateInt(md, body.minY());
-                updateInt(md, body.maxY());
-                updateInt(md, body.rawPixels().size());
-                for (int pixel : body.rawPixels()) updateInt(md, pixel);
+                updateInt(md, bytes, body.slopeTick());
+                updateInt(md, bytes, body.firstX());
+                updateInt(md, bytes, body.lastX());
+                updateInt(md, bytes, body.centerAtLaneMid());
+                updateInt(md, bytes, body.firstCapWidth());
+                updateInt(md, bytes, body.lastCapWidth());
+                updateInt(md, bytes, body.maxWidth());
+                updateInt(md, bytes, body.unassignedContactPixels());
+                updateInt(md, bytes, body.minY());
+                updateInt(md, bytes, body.maxY());
+                updateInt(md, bytes, body.rawPixels().size());
+                for (int pixel : body.rawPixels()) updateInt(md, bytes, pixel);
             }
+            md.update(bytes.array(), 0, bytes.position());
             return RasterEvidenceIdentity.hex(md.digest());
         } catch (NoSuchAlgorithmException impossible) {
             throw new AssertionError(impossible);
         }
     }
 
-    private static void updateInt(MessageDigest md, int value) {
-        md.update((byte) (value >>> 24));
-        md.update((byte) (value >>> 16));
-        md.update((byte) (value >>> 8));
-        md.update((byte) value);
-    }
-
-    private static boolean dark(
-            byte[] gray, int width, int x, int y, java.util.Set<Integer> staffPixels) {
-        int index = y * width + x;
-        return (staffPixels == null || !staffPixels.contains(index))
-                && (gray[index] & 255) < DARK_LIMIT;
+    private static void updateInt(MessageDigest md, java.nio.ByteBuffer bytes, int value) {
+        if (!bytes.hasRemaining()) {
+            md.update(bytes.array());
+            bytes.clear();
+        }
+        bytes.putInt(value);
     }
 }
