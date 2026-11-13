@@ -44,20 +44,24 @@ def resolve_boundary_ties(document):
         events = list(after["events"])
         candidates = {}
         claims = Counter()
+        outgoing = None
         for number, current in enumerate(events):
             if event_kind(current) == 'UNPITCHED':
                 continue
             incoming = current.get("boundaryTies", 0) & 3
             if not incoming or abs(current["startBeat"]) > .04:
                 continue
-            for previous_index, previous in enumerate(before["events"]):
-                if event_kind(previous) == 'UNPITCHED':
+            if outgoing is None:
+                outgoing = [(i, event) for i, event in enumerate(before["events"])
+                            if event.get("boundaryTies", 0) & 12 and event_kind(event) != 'UNPITCHED']
+            current_ties = current["boundaryTies"]
+            tab_typed = bool(current_ties & 16)
+            for previous_index, previous in outgoing:
+                previous_ties = previous["boundaryTies"]
+                if not ((previous_ties >> 2) & incoming):
                     continue
-                if not _compatible_boundary_ties(previous.get("boundaryTies", 0), current.get("boundaryTies", 0)):
+                if not _compatible_boundary_ties(previous_ties, current_ties):
                     continue
-                if not (((previous.get("boundaryTies", 0) & 15) >> 2) & incoming):
-                    continue
-                tab_typed = bool(current.get("boundaryTies", 0) & 16)
                 if (not tab_typed and (previous.get("boundaryPitch") is None
                         or previous["boundaryPitch"] != current.get("boundaryPitch"))
                         or previous["staffIndex"] != current["staffIndex"]
