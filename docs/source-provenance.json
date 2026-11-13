@@ -5251,6 +5251,12 @@
     },
     "OmrScoreInterpreter.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/OmrScoreInterpreter.java",
+      "two_rail_fragment_review": {
+        "reviewed_app_commit": "37780ae185f2f3be9994f90ad387726c8ab1b72e",
+        "app_lf_sha256": "c9090419c7198aa205d6da9e06922a349ac06f308ab65d2f6549d6f779036bd1",
+        "standalone_lf_sha256": "6c8bf2fbdb68a7e7c08f1bb377cebd3be6cdf6ed8aa7ffac61098d85dac661f2",
+        "scope": "Matching two continuous raw beam rails, exposed seam and directly rooted fragments, including interrupted owner shafts. Broader decoder provenance remains open."
+      },
       "owned_sloped_beam_fragments_review": {
         "reviewed_app_commit": "2c7a647fea468439102954c5a79ccb8d899970d6",
         "app_lf_sha256": "7cea919f87f8ac8e91cbac6a63a849f3740559d50351a7e2c144e2e137e47e80",
@@ -8095,17 +8101,17 @@
     },
     "ScoreNoteTiming.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/ScoreNoteTiming.java",
-      "source_sha256": "d16732c3b0db21a8e0532334152ea2bd7b9fe3f0572050092aa58bd1b39340c5",
+      "source_sha256": "ad10ab68f0391c278c4fdcb84c330cbd4cf63cc266370944a4a7a575997f855e",
       "review_note": "Global recognition/performance repairs; namespace-equivalent portable helpers and separately reviewed caller adapters. Original synthetic regressions; no private score assets.",
-      "source_normalized_sha256": "d16732c3b0db21a8e0532334152ea2bd7b9fe3f0572050092aa58bd1b39340c5",
+      "source_normalized_sha256": "ad10ab68f0391c278c4fdcb84c330cbd4cf63cc266370944a4a7a575997f855e",
       "reviewed_app_state": "Reviewed six-class interpreter worktree extension; package/diagnostic token parity verified against standalone port.",
       "reviewed_source_state": "Committed combined source snapshot; paired package deployment and whole-library accuracy acceptance pending.",
-      "standalone_sha256": "62f57d975ea3d08d3fb373c2bec2a6acd58b34fb168e3146ad3b0eee30ff7f9d",
+      "standalone_sha256": "a6c1e42f5f0e4a28510327cecdf24aaa574d730f8bae21fd9fd9c40342b1bde4",
       "reviewed_app_commit": "06a423201200de304e89e74a6f3c09deece2883f",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/ScoreNoteTiming.java",
       "license": "Apache-2.0",
       "closed_phrase_clock_review": "Same-pass complete printed beam ownership resolves remote/shared-stem phrase caps and cross-staff written clock. Asymmetric arches have independent IDs preserving old arcs. Literal unique opposed-stem single-beam partners sustain independently of faster bass attacks. Optional bounded proofs preserve legacy on refusal. One existing clock capture follows final value projection. Original procedural regressions only; no score data, observers, weights or layouts.",
-      "standalone_normalized_sha256": "62f57d975ea3d08d3fb373c2bec2a6acd58b34fb168e3146ad3b0eee30ff7f9d",
+      "standalone_normalized_sha256": "a6c1e42f5f0e4a28510327cecdf24aaa574d730f8bae21fd9fd9c40342b1bde4",
       "recognition139_review_note": "Reviewed app fix merged with the existing standalone adapters and formatting. Reviewed namespace-equivalent dotted-triplet timing. The standalone caller also retains the inferred ratio for MusicXML written values."
     },
     "ScoreOpeningDuration.java": {

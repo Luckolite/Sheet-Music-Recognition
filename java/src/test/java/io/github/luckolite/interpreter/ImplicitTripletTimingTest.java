@@ -76,7 +76,7 @@ public class ImplicitTripletTimingTest {
     public void repeatedDottedSixteenthsHoldTheirClockThroughIncompleteReads() {
         var notes = new ArrayList<ScoreNoteEvent>();
         for (int i = 0; i < 16; i++) {
-            int beams = i % 2 == 0 || i > 5 ? 2 : 3;
+            int beams = i == 6 || (i % 2 != 0 && i <= 5) ? 3 : 2;
             int dots = i % 2 == 0 && i != 4 ? 1 : 0;
             notes.add(
                     new ScoreNoteEvent(
@@ -95,6 +95,36 @@ public class ImplicitTripletTimingTest {
         }
         assertNotEquals(
                 .125, ScoreNoteTiming.resolvedWrittenDurationBeats(notes.get(15), notes, 6), .0001);
+    }
+
+    @Test
+    public void repeatedDottedSixteenthsCanEndWithAPrintedQuarter() {
+        var notes = new ArrayList<ScoreNoteEvent>();
+        for (int i = 0; i < 12; i++) {
+            int beams = i == 3 || i == 9 ? 3 : 2;
+            notes.add(new ScoreNoteEvent(
+                            1, .04f + i * .07f, 3, 0, 1, .5f, false,
+                            i % 2 == 0 ? 1 : 0, beams, ScoreNoteEvent.ACCIDENTAL_FROM_KEY, 0, 1)
+                    .withStemDirection(-1));
+        }
+        var quarter = new ScoreNoteEvent(
+                        1, .91f, 3, 0, 1, .5f, false,
+                        0, 0, ScoreNoteEvent.ACCIDENTAL_FROM_KEY, 1, 1)
+                .withStemDirection(-1);
+        notes.add(quarter);
+        for (int i = 0; i < 12; i++) {
+            var note = notes.get(i);
+            assertEquals((i / 2) * .5 + (i % 2 == 0 ? 0 : .375),
+                    ScoreNoteTiming.beatInMeasure(note, notes, 4), .0001);
+            assertEquals(i % 2 == 0 ? .375 : .125,
+                    ScoreNoteTiming.resolvedWrittenDurationBeats(note, notes, 4), .0001);
+        }
+        assertEquals(3, ScoreNoteTiming.beatInMeasure(quarter, notes, 4), .0001);
+        assertEquals(1, ScoreNoteTiming.resolvedWrittenDurationBeats(quarter, notes, 4), .0001);
+
+        notes.set(11, notes.get(11).withStemDirection(1));
+        assertNotEquals(.125,
+                ScoreNoteTiming.resolvedWrittenDurationBeats(notes.get(11), notes, 4), .0001);
     }
 
     @Test

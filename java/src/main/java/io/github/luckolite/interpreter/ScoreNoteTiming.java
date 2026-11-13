@@ -1676,17 +1676,25 @@ public final class ScoreNoteTiming {
 
     /**
      * Repeated dotted sixteenths and thirty-seconds provide an exact binary clock.
-     * Require a full bar and independent witnesses for both subdivisions. Incomplete
+     * Require independent witnesses for both subdivisions and account for the entire
+     * bar, including a printed terminal quarter when present. Incomplete
      * beam/dot reads may support the attack clock without changing the decoded glyphs.
      */
     private static double[] repeatedDottedSixteenths(List<RhythmGroup> groups, double beats) {
         int count = groups.size();
+        RhythmGroup ending = groups.isEmpty() ? null : groups.get(groups.size() - 1);
+        boolean terminalQuarter = ending != null && ending.notes.stream().allMatch(note ->
+                note.beamCount() == 0 && note.augmentationDots() == 0
+                        && note.unbeamedDurationBeats() == 1 && note.tupletDivisor() == 1
+                        && note.leadingRestBeats() == 0 && note.followingRestBeats() == 0
+                        && !note.crossStaffBeam() && !note.tiedFromPrevious() && !grace(note));
+        if (terminalQuarter) count--;
         if (count < 12
                 || count % 2 != 0
-                || count != beats * 4
+                || count != (beats - (terminalQuarter ? 1 : 0)) * 4
                 || groups.get(0).position > .18f
                 || groups.get(count - 1).position < .8f) return null;
-        int dotted = 0, shortNotes = 0, stem = 0;
+        int dotted = 0, shortNotes = 0, stem = 0, overreadDottedColumns = 0;
         for (int i = 0; i < count; i++) {
             RhythmGroup group = groups.get(i);
             boolean longSlot = i % 2 == 0;
@@ -1702,7 +1710,9 @@ public final class ScoreNoteTiming {
                         || note.followingRestBeats() > 0
                         || note.tiedFromPrevious()
                         || grace(note)
-                        || note.beamCount() > (longSlot ? 2 : 3)
+                        || (terminalQuarter && note.beamCount() < 1)
+                        || note.beamCount() > 3
+                        || (longSlot && note.beamCount() == 3 && note.augmentationDots() != 1)
                         || note.augmentationDots() > (longSlot ? 1 : 0)
                         || note.unbeamedDurationBeats() > 1) return null;
             }
@@ -1711,12 +1721,16 @@ public final class ScoreNoteTiming {
             if (direction == 0) return null;
             if (longSlot) stem = direction;
             else if (direction != stem) return null;
+            if (longSlot && group.beamCount() == 3 && ++overreadDottedColumns > 1) return null;
             if (longSlot && group.beamCount() == 2 && group.augmentationDots() == 1) dotted++;
             if (!longSlot && group.beamCount() == 3) shortNotes++;
         }
-        if (dotted * 8 < count * 3 || shortNotes < 3 || shortNotes * 6 < count) return null;
-        double[] durations = new double[count];
+        if (terminalQuarter) {
+            if (dotted * 2 != count || shortNotes < 2) return null;
+        } else if (dotted * 8 < count * 3 || shortNotes < 3 || shortNotes * 6 < count) return null;
+        double[] durations = new double[groups.size()];
         for (int i = 0; i < count; i++) durations[i] = i % 2 == 0 ? .375 : .125;
+        if (terminalQuarter) durations[count] = 1;
         return durations;
     }
 

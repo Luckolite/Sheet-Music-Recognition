@@ -23466,22 +23466,27 @@ final class OmrScoreInterpreter {
             Staff staff = nearestHeadStaff(staffs, fragment.centerY);
             if (staff == null) continue;
             float gap = staff.gap;
-            if (gap < 8 || fragment.area > gap * gap * .65f
+            if (gap < 8 || fragment.area > gap * gap * .8f
                     || fragment.maxX - fragment.minX + 1 > gap * 1.25f
-                    || fragment.maxY - fragment.minY + 1 > gap * .8f) continue;
+                    || fragment.maxY - fragment.minY + 1 > gap * 1.05f) continue;
             int[] borrowed = attachedRawStem(gray, width, height, fragment, gap, 2, 170);
+            // A clipped shaft can still own a fragment if both continuous rails prove it.
+            boolean interruptedShaft = borrowed == null;
+            int stemGap = interruptedShaft ? Math.round(gap * .7f) : 2;
+            if (interruptedShaft)
+                borrowed = attachedRawStem(gray, width, height, fragment, gap, stemGap, 170);
             if (borrowed == null) continue;
             for (Component owner : heads) {
                 if (Math.abs(owner.centerX - fragment.centerX) > gap * 1.8f
                         || Math.abs(owner.centerY - fragment.centerY) < gap * 2.2f
-                        || Math.abs(owner.centerY - fragment.centerY) > gap * 5
+                        || Math.abs(owner.centerY - fragment.centerY) > gap * 8
                         || !filledBeamEndpointCore(gray, width, height, owner, gap)) continue;
-                int[] shaft = attachedRawStem(gray, width, height, owner, gap, 2, 170);
+                int[] shaft = attachedRawStem(gray, width, height, owner, gap, stemGap, 170);
                 if (shaft == null || shaft[2] == borrowed[2]
                         || Math.abs(shaft[0] - borrowed[0]) > gap * .2f
                         || (fragment.centerY - owner.centerY) * shaft[2] < gap * 2.2f
-                        || Math.abs(shaft[1] - fragment.centerY) > gap * 1.25f) continue;
-                if (ownsSlopedBeamFragment(gray, width, height, fragment, owner, shaft, heads, gap)) {
+                        || Math.abs(shaft[1] - fragment.centerY) > gap * 2.3f) continue;
+                if (ownsSlopedBeamFragment(gray, width, height, fragment, owner, shaft, heads, gap, interruptedShaft)) {
                     rejected.add(fragment);
                     break;
                 }
@@ -23492,7 +23497,7 @@ final class OmrScoreInterpreter {
 
     private static boolean ownsSlopedBeamFragment(
             byte[] gray, int width, int height, Component fragment, Component owner,
-            int[] shaft, List<Component> heads, float gap) {
+            int[] shaft, List<Component> heads, float gap, boolean interruptedShaft) {
         for (Component peer : heads) {
             float separation = Math.abs(peer.centerX - owner.centerX);
             if (separation < gap * 2 || separation > gap * 4
@@ -23500,16 +23505,24 @@ final class OmrScoreInterpreter {
                     || !filledBeamEndpointCore(gray, width, height, peer, gap)) continue;
             int[] other = attachedRawStem(gray, width, height, peer, gap, 2, 170);
             if (other == null || other[2] != shaft[2]
-                    || Math.abs(other[1] - peer.centerY) < gap * 3.4f
-                    || !completeSlopedBeam(gray, width, height, shaft, other, gap)) continue;
+                    || Math.abs(other[1] - peer.centerY) < gap * 3.4f) continue;
             if (fragment.centerX < Math.min(shaft[0], other[0])
                     || fragment.centerX > Math.max(shaft[0], other[0])) continue;
             float slope = (other[1] - shaft[1]) / (float) (other[0] - shaft[0]);
             float railY = shaft[1] + slope * (fragment.centerX - shaft[0])
                     - shaft[2] * Math.round(gap * .25f);
             float offset = (railY - fragment.centerY) * shaft[2];
+            if (Math.abs(shaft[0] - fragment.centerX) <= gap * .55f
+                    && offset >= -gap * .2f && offset <= gap * 2
+                    && doubleRailFragment(gray, width, height, shaft, other, fragment, gap))
+                return true;
+            if (interruptedShaft || fragment.area > gap * gap * .65f
+                    || fragment.maxY - fragment.minY + 1 > gap * .8f
+                    || Math.abs(owner.centerY - fragment.centerY) > gap * 5
+                    || Math.abs(shaft[1] - fragment.centerY) > gap * 1.25f
+                    || !completeSlopedBeam(gray, width, height, shaft, other, gap)) continue;
             if (Math.abs(offset) <= gap * .24f) return true;
-            if (fragment.area <= gap * gap * .28f && offset >= gap * .55f && offset <= gap
+            if (interruptedShaft || fragment.area <= gap * gap * .28f && offset >= gap * .55f && offset <= gap
                     && Math.abs(shaft[0] - fragment.centerX) <= gap * .85f) {
                 int first = Math.round(fragment.centerX);
                 boolean rooted = true;
@@ -23527,6 +23540,50 @@ final class OmrScoreInterpreter {
             }
         }
         return false;
+    }
+
+    /** Two separated primary rails and a raw connection from the mask to their shaft. */
+    private static boolean doubleRailFragment(
+            byte[] gray, int width, int height, int[] shaft, int[] other,
+            Component fragment, float gap) {
+        int span = Math.abs(other[0] - shaft[0]);
+        if (span < gap * 1.7f || span > gap * 5) return false;
+        float slope = (other[1] - shaft[1]) / (float) (other[0] - shaft[0]);
+        if (Math.abs(slope) > .4f) return false;
+        int direction = shaft[2];
+        int start = Math.min(shaft[0], other[0]);
+        int end = Math.max(shaft[0], other[0]);
+        int margin = Math.round(gap * .28f), gaps = 0;
+        for (int x = start + margin; x <= end - margin; x++) {
+            int tip = Math.round(shaft[1] + slope * (x - shaft[0]));
+            if (!beamCore(gray, width, height, x, tip - direction * Math.round(gap * .25f), 2)
+                    || !beamCore(gray, width, height, x, tip - direction * Math.round(gap), 2))
+                gaps++;
+        }
+        if (gaps > 1) return false;
+        int exposedSeam = 0;
+        for (int x = start + margin; x <= end - margin; x++) {
+            int y = Math.round(shaft[1] + slope * (x - shaft[0]))
+                    - direction * Math.round(gap * .68f);
+            if (y < 1 || y >= height - 1) return false;
+            if ((gray[(y - 1) * width + x] & 255) >= 165
+                    || (gray[y * width + x] & 255) >= 165
+                    || (gray[(y + 1) * width + x] & 255) >= 165) exposedSeam++;
+        }
+        if (exposedSeam < span * .25f) return false;
+        int center = Math.round(fragment.centerX);
+        for (int x = Math.min(center, shaft[0]); x <= Math.max(center, shaft[0]); x++)
+            if (!beamCore(gray, width, height, x,
+                    Math.round(fragment.centerY + slope * (x - fragment.centerX)), 1)) return false;
+        return true;
+    }
+
+    private static boolean beamCore(
+            byte[] gray, int width, int height, int x, int y, int radius) {
+        if (y - radius < 0 || y + radius >= height) return false;
+        for (int dy = -radius; dy <= radius; dy++)
+            if ((gray[(y + dy) * width + x] & 255) >= 165) return false;
+        return true;
     }
 
     private static int transportedPairedBeamCount(
