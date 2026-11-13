@@ -133,14 +133,15 @@ class PaperBackgroundWhitening:
 
         # Classes 1 through 5 are the model's notation classes. Require existing ink
         # and protect the antialiased edges around already dark strokes.
-        candidates = ((labels >= 1) & (labels <= 5)
-                      & (gray >= MIN_FADED_TONE) & (gray < MAX_FADED_TONE))
-        if not candidates.any():
+        candidates = cv2.inRange(gray, MIN_FADED_TONE, MAX_FADED_TONE - 1)
+        cv2.bitwise_and(candidates, cv2.inRange(labels, 1, 5), dst=candidates)
+        if cv2.countNonZero(candidates) == 0:
             return gray
         core = cv2.erode(gray, np.ones((3, 3), np.uint8))
-        candidates &= core >= MIN_FADED_TONE
-        if not candidates.any():
+        cv2.bitwise_and(candidates, cv2.inRange(core, MIN_FADED_TONE, 255), dst=candidates)
+        if cv2.countNonZero(candidates) == 0:
             return gray
+        candidates = candidates != 0
         if paper is None:
             paper = cv2.morphologyEx(gray, cv2.MORPH_CLOSE, kernel)
         tones = gray[candidates].astype(np.int16)
