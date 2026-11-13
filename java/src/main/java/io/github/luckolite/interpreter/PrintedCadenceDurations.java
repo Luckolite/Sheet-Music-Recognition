@@ -146,7 +146,7 @@ final class PrintedCadenceDurations {
         return Math.abs(row - Math.round(row)) > .17f;
     }
 
-    private static int boundaryColumn(
+    static int boundaryColumn(
             byte[] gray, int width, PlayingTechniqueDetector.Staff staff,
             float boundary, boolean nextHasMeter, boolean terminal) {
         float gap = staff.gap();

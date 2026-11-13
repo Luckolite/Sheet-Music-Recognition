@@ -24,6 +24,15 @@ final class PrintedMeasureRhythmGuard {
         fitted = preserveShiftedBoundary(raw, fitted, gray, width, height);
         fitted = rejectUnprintedRows(raw, fitted, labels, gray, width, height);
         fitted = preserveFinalRestRow(raw, fitted, labels, gray, width, height);
+        if (gray != null && !fitted.isEmpty()) {
+            int last = fitted.size() - 1;
+            var cadence = terminalHalfNoteCadence(fitted.get(last), labels, gray, width, height);
+            if (!cadence.isEmpty()) {
+                var withCadence = new ArrayList<>(fitted.subList(0, last));
+                withCadence.addAll(cadence);
+                fitted = withCadence;
+            }
+        }
         final var guarded = fitted;
         boolean split = raw.stream().anyMatch(region -> fragments(region, guarded).size() == 2);
         if (!split && mergedOpening(raw, fitted).isEmpty()) return fitted;
@@ -36,6 +45,56 @@ final class PrintedMeasureRhythmGuard {
         if (!split) return preserved;
         var aligned = alignPrintedSeparators(raw, preserved, notes, gray, width, height);
         return preserveCompleteRuns(raw, aligned, notes, gray, width, height);
+    }
+
+    private static List<MeasureRegion> terminalHalfNoteCadence(
+            MeasureRegion region, byte[] labels, byte[] gray, int width, int height) {
+        int left = Math.round(region.left() * width), right = Math.round(region.right() * width);
+        float gap = (region.bottom() - region.top()) * height / 8.2f;
+        if (gap < 6 || right - left < gap * 16 || right + 2 * gap >= width) return List.of();
+        float bottom = region.bottom() * height - 2.1f * gap;
+        var rails = PrintedDirectionStaff.printedRules(gray, width, height, right - 2 * gap, bottom, gap);
+        if (rails == null)
+            rails = PrintedDirectionStaff.printedRules(gray, width, height, right - 2.5f * gap, bottom, gap);
+        if (rails == null) return List.of();
+        var staff = new PlayingTechniqueDetector.Staff(rails[0] - 4 * rails[1], rails[0], rails[1], 0, 1);
+        int top = Math.round(staff.top()), base = Math.round(staff.bottom());
+        if (top < 0 || base >= height) return List.of();
+        gap = staff.gap();
+        int closing = PrintedCadenceDurations.boundaryColumn(
+                gray, width, staff, right + gap * .35f, false, true);
+        if (closing < 0) return List.of();
+
+        int firstRule = -1, lastRule = -1;
+        for (int x = Math.round(right - gap * 8); x <= right - gap * 3; x++) {
+            if (!OmrMeasurePostProcessor.verticalRuleAt(gray, width, x, top, base, gap)
+                    || ClosedHeadBarlineGuard.attached(gray, width, height, x, top, base, gap)) continue;
+            if (lastRule >= 0 && x - lastRule > 1) return List.of();
+            if (firstRule < 0) firstRule = x;
+            lastRule = x;
+        }
+        if (firstRule < 0 || lastRule - firstRule > gap) return List.of();
+        int cut = (firstRule + lastRule) / 2;
+        var analysis = OmrScoreInterpreter.analyze(labels, gray, width, height, List.of(region));
+        float split = (cut - left) / (float) (right - left);
+        // A rest in the preceding bar does not invalidate a proved cadence chord.
+        if (analysis.rests().stream().anyMatch(rest -> rest.positionInMeasure() >= split))
+            return List.of();
+        var chord = analysis.notes().stream().filter(n -> n.positionInMeasure() > split).toList();
+        if (chord.isEmpty() || chord.size() > 3 || analysis.notes().size() - chord.size() < 8
+                || !chord.stream().allMatch(n -> n.kind() == ScoreNoteEvent.Kind.PITCHED
+                        && n.staffCount() == 1 && n.beamCount() == 0 && n.tupletDivisor() == 1
+                        && n.unbeamedDurationBeats() == 2
+                        && n.augmentationDots() == chord.get(0).augmentationDots()
+                        && n.augmentationDots() <= 1
+                        && Math.abs(n.positionInMeasure() - chord.get(0).positionInMeasure()) <= .012f))
+            return List.of();
+        int padding = Math.max(2, Math.round(gap * .45f));
+        return List.of(
+                new MeasureRegion(region.left(), (cut - padding) / (float) width,
+                        region.top(), region.bottom()),
+                new MeasureRegion((cut + padding) / (float) width, Math.max(right, closing) / (float) width,
+                        region.top(), region.bottom()));
     }
 
     /** A count inferred from other systems cannot insert a barline across clear paper. */

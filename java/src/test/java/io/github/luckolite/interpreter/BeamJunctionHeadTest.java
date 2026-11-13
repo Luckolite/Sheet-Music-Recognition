@@ -116,4 +116,20 @@ public class BeamJunctionHeadTest {
         page(true, false, true, false);
         assertEquals(2, notes(false).size());
     }
+
+    @Test
+    public void solidBeamBetweenTwoDownstemsDoesNotAddAnAttack() {
+        Arrays.fill(gray, (byte) 255);
+        for (int y = 80; y <= 144; y += 16)
+            for (int x = 15; x < 305; x++) ink(x, y, 4);
+        ellipse(111, 96, 12, 10, true);
+        ellipse(151, 104, 12, 10, true);
+        for (int x : new int[] {101, 141})
+            for (int y = x == 101 ? 96 : 104; y <= 180; y++)
+                for (int dx = 0; dx < 3; dx++) ink(x + dx, y, 1);
+        for (int y = 160; y <= 180; y++)
+            for (int x = 101; x <= 143; x++) ink(x, y, 1);
+        ellipse(124, 170, 8, 6, true);
+        assertEquals(2, notes(true).size());
+    }
 }
