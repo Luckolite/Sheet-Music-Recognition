@@ -69,10 +69,11 @@ public class ScoreNoteEventKindTest {
                 Arrays.stream(ScoreNoteEvent.class.getRecordComponents())
                         .map(RecordComponent::getName)
                         .toList();
-        assertEquals(24, fields.size());
+        assertEquals(26, fields.size());
         assertEquals(LEGACY_FIELDS, fields.subList(0, 22));
         assertEquals("kind", fields.get(22));
         assertEquals("visualSize", fields.get(23));
+        assertEquals(List.of("harmonicSemitones", "openStringTouch"), fields.subList(24, 26));
         ScoreNoteEvent legacy = (ScoreNoteEvent) constructor(22).newInstance(LEGACY_VALUES);
         ScoreNoteEvent legacyKind =
                 (ScoreNoteEvent) constructor(23).newInstance(appendKind(LEGACY_VALUES));
@@ -92,7 +93,7 @@ public class ScoreNoteEventKindTest {
                 Set.of(5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23);
         Set<Integer> observed =
                 Arrays.stream(ScoreNoteEvent.class.getConstructors())
-                        .filter(c -> c.getParameterCount() != 24)
+                        .filter(c -> c.getParameterCount() <= 23)
                         .map(Constructor::getParameterCount)
                         .collect(Collectors.toSet());
         assertEquals("No existing constructor may disappear", expected, observed);
@@ -112,6 +113,8 @@ public class ScoreNoteEventKindTest {
                     "Legacy constructor defaults visual size to FULL",
                     ScoreNoteEvent.VisualSize.FULL,
                     legacy.visualSize());
+            assertEquals(0, legacy.harmonicSemitones());
+            assertNull(legacy.openStringTouch());
         }
     }
 
@@ -148,6 +151,10 @@ public class ScoreNoteEventKindTest {
                 source,
                 source.withVisualSize(ScoreNoteEvent.VisualSize.CUE),
                 Map.of("visualSize", ScoreNoteEvent.VisualSize.CUE));
+        var pitched = source.withKind(ScoreNoteEvent.Kind.PITCHED);
+        var touch = new ScoreNoteEvent.OpenStringTouch(4, .5f, 0);
+        assertCopy(pitched, pitched.withHarmonicSemitones(24), Map.of("harmonicSemitones", 24));
+        assertCopy(pitched, pitched.withOpenStringTouch(touch), Map.of("openStringTouch", touch));
         assertEquals("Copies cannot mutate their source", before, values(source));
         Set<String> copies =
                 Arrays.stream(ScoreNoteEvent.class.getDeclaredMethods())
@@ -170,7 +177,9 @@ public class ScoreNoteEventKindTest {
                         "withClef",
                         "withArticulations",
                         "withKind",
-                        "withVisualSize"),
+                        "withVisualSize",
+                        "withHarmonicSemitones",
+                        "withOpenStringTouch"),
                 copies);
     }
 
