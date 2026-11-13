@@ -26,17 +26,19 @@ public final class ExactRasterMemo<T> {
         if (width < 1 || height < 1 || (long) width * height != pixels.length)
             throw new IllegalArgumentException("raster size");
         MessageDigest digest = MessageDigest.getInstance("SHA-256");
-        ByteBuffer chunk = ByteBuffer.allocate(16384);
+        var chunk = ByteBuffer.allocate(16384);
         chunk.putInt(width).putInt(height);
-        for (int pixel : pixels) {
-            if (chunk.remaining() < 4) {
-                digest.update(chunk.array(), 0, chunk.position());
-                chunk.clear();
-            }
-            chunk.putInt(pixel);
-        }
         digest.update(chunk.array(), 0, chunk.position());
-        String key = java.util.Arrays.toString(digest.digest());
+        chunk.clear();
+        var integers = chunk.asIntBuffer();
+        for (int offset = 0; offset < pixels.length; ) {
+            int count = Math.min(integers.capacity(), pixels.length - offset);
+            integers.clear();
+            integers.put(pixels, offset, count);
+            digest.update(chunk.array(), 0, count * Integer.BYTES);
+            offset += count;
+        }
+        String key = RasterEvidenceIdentity.hex(digest.digest());
         T found = entries.get(key);
         if (found != null) {
             hits++;
