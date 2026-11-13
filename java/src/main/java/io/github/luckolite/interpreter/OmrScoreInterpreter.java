@@ -22435,7 +22435,14 @@ final class OmrScoreInterpreter {
 
     private static List<Component> fadedAugmentationDots(
             byte[] gray, int width, int height, Component head, float gap, boolean intermediate) {
+        long cutoffTones = intermediate ? fadedDotCutoffTones(gray, width, height, head, gap) : -1L;
         List<Component> result = new ArrayList<>();
+        float minBodySpan = gap * .28f, maxBodySpan = gap * .68f;
+        float minBodyArea = gap * gap * .055f;
+        float minCoreSpan = gap * .18f, minCoreArea = gap * gap * .025f;
+        float maxCenterOffset = gap * .15f;
+        int lastBodyCutoff = -1, lastCoreCutoff = -1;
+        List<Component> bodies = List.of(), cores = List.of();
         for (int level = 0; level < (intermediate ? 31 : 4); level++) {
             int bodyThreshold =
                     intermediate
@@ -22451,36 +22458,69 @@ final class OmrScoreInterpreter {
                             || bodyThreshold == 180
                             || bodyThreshold == 195
                             || bodyThreshold == 205)) continue;
-            List<Component> cores =
-                    findDarkDotComponents(gray, width, height, head, gap, bodyThreshold - 25);
-            for (Component body :
-                    findDarkDotComponents(gray, width, height, head, gap, bodyThreshold)) {
+            int bodyCutoff = equivalentFadedDotCutoff(cutoffTones, bodyThreshold);
+            if (bodyCutoff != lastBodyCutoff) {
+                bodies = findDarkDotComponents(gray, width, height, head, gap, bodyCutoff);
+                lastBodyCutoff = bodyCutoff;
+            }
+            int coreCutoff = equivalentFadedDotCutoff(cutoffTones, bodyThreshold - 25);
+            // Keep one result per qualifying level, even when two levels share a mask.
+            for (Component body : bodies) {
                 float w = body.maxX - body.minX + 1, h = body.maxY - body.minY + 1;
-                if (Math.min(w, h) < gap * .28f
-                        || Math.max(w, h) > gap * .68f
-                        || Math.max(w, h) > Math.min(w, h) * 1.5f
-                        || body.area < gap * gap * .055f
+                float narrow = Math.min(w, h), wide = Math.max(w, h);
+                if (narrow < minBodySpan
+                        || wide > maxBodySpan
+                        || wide > narrow * 1.5f
+                        || body.area < minBodyArea
                         || body.area < w * h * .55f
                         || body.area >= w * h) continue;
+                if (coreCutoff != lastCoreCutoff) {
+                    cores = findDarkDotComponents(gray, width, height, head, gap, coreCutoff);
+                    lastCoreCutoff = coreCutoff;
+                }
+                float minOwnedArea = body.area * .25f, maxOwnedArea = body.area * .85f;
                 for (Component core : cores) {
                     float cw = core.maxX - core.minX + 1, ch = core.maxY - core.minY + 1;
                     if (core.minX < body.minX
                             || core.maxX > body.maxX
                             || core.minY < body.minY
                             || core.maxY > body.maxY
-                            || Math.min(cw, ch) < gap * .18f
+                            || Math.min(cw, ch) < minCoreSpan
                             || Math.max(cw, ch) > Math.min(cw, ch) * 1.5f + .5f
-                            || core.area < gap * gap * .025f
-                            || core.area < body.area * .25f
-                            || core.area > body.area * .85f
-                            || Math.abs(core.centerX - body.centerX) > gap * .15f
-                            || Math.abs(core.centerY - body.centerY) > gap * .15f) continue;
+                            || core.area < minCoreArea
+                            || core.area < minOwnedArea
+                            || core.area > maxOwnedArea
+                            || Math.abs(core.centerX - body.centerX) > maxCenterOffset
+                            || Math.abs(core.centerY - body.centerY) > maxCenterOffset) continue;
                     result.add(body);
                     break;
                 }
             }
         }
         return result;
+    }
+
+    /** Record only tones that can change the mask across the faint-dot cutoffs. */
+    private static long fadedDotCutoffTones(
+            byte[] gray, int width, int height, Component head, float gap) {
+        int left = Math.max(0, Math.round(head.maxX + gap * .08f));
+        int right = Math.min(width - 1, Math.round(head.maxX + gap * 2.3f));
+        int top = Math.max(0, Math.round(head.centerY - gap * .92f));
+        int bottom = Math.min(height - 1, Math.round(head.centerY + gap * .92f));
+        long tones = 0;
+        for (int y = top; y <= bottom; y++) {
+            int row = y * width;
+            for (int x = left; x <= right; x++) {
+                int tone = (gray[row + x] & 255) - 150;
+                if (tone > 0 && tone <= 55) tones |= 1L << tone;
+            }
+        }
+        return tones;
+    }
+
+    private static int equivalentFadedDotCutoff(long tones, int cutoff) {
+        long mask = (1L << (cutoff - 149)) - 1;
+        return 150 + Math.max(0, 63 - Long.numberOfLeadingZeros(tones & mask));
     }
 
     /** Resolve isolated raw ink against local shaded paper; normal dot owners still apply. */
@@ -22490,23 +22530,42 @@ final class OmrScoreInterpreter {
         int right = Math.min(width - 1, Math.round(head.maxX + gap * 2.3f));
         int top = Math.max(0, Math.round(head.centerY - gap * 1.4f));
         int bottom = Math.min(height - 1, Math.round(head.centerY + gap * 1.4f));
-        int[] histogram = new int[256];
-        int count = 0;
-        for (int y = top; y <= bottom; y++)
-            for (int x = left; x <= right; x++) {
-                histogram[gray[y * width + x] & 255]++;
-                count++;
+        if (left > right || top > bottom) return List.of();
+        int span = right - left + 1;
+        int count = span * (bottom - top + 1);
+        int upperRank = (int) (count * 15L / 100) + 1;
+        int first = top * width + left;
+        // Confirm bright paper by rank before allocating a histogram.
+        if ((gray[first + span / 2] & 255) >= 185) {
+            int bright = 0;
+            for (int y = top, row = first; y <= bottom; y++, row += width) {
+                int hits = 0;
+                for (int pixel = row, end = row + span; pixel < end; pixel++)
+                    hits += ((gray[pixel] & 255) + 71) >>> 8;
+                bright += hits;
+                if (bright >= upperRank) return List.of();
+                if (hits * 2 < span) break;
             }
-        int target = Math.max(1, (count * 85 + 99) / 100), paper = 0, seen = histogram[0];
-        while (seen < target && paper < 255) seen += histogram[++paper];
-        if (paper < 60 || paper >= 185) return List.of();
-        List<Component> result = new ArrayList<>();
-        for (int deficit : new int[] {35, 50, 65, 80, 95}) {
-            int threshold = paper - deficit;
-            if (threshold < 20) continue;
-            result.addAll(findDarkDotComponents(gray, width, height, head, gap, threshold));
         }
-        return result;
+        int[] histogram = new int[256];
+        for (int y = top, row = first; y <= bottom; y++, row += width)
+            for (int pixel = row, end = row + span; pixel < end; pixel++)
+                histogram[gray[pixel] & 255]++;
+        int paper = 255;
+        for (; paper >= 60; paper--) {
+            upperRank -= histogram[paper];
+            if (upperRank <= 0) break;
+        }
+        if (paper < 60 || paper >= 185) return List.of();
+        List<Component> result = null;
+        int minThreshold = Math.max(20, paper - 95);
+        for (int threshold = paper - 35; threshold >= minThreshold; threshold -= 15) {
+            var components = findDarkDotComponents(gray, width, height, head, gap, threshold);
+            if (components.isEmpty()) continue;
+            if (result == null) result = new ArrayList<>();
+            result.addAll(components);
+        }
+        return result == null ? List.of() : result;
     }
 
     /** A core inside another oval or continuing printed ink retains that complete owner. */
@@ -22711,103 +22770,135 @@ final class OmrScoreInterpreter {
         int top = Math.max(0, Math.round(head.centerY - gap * .92f));
         int bottom = Math.min(height - 1, Math.round(head.centerY + gap * .92f));
         int localWidth = right - left + 1, localHeight = bottom - top + 1;
-        if (localWidth <= 0 || localHeight <= 0) return List.of();
+        // No component can be enclosed by a window without an interior.
+        if (localWidth < 3 || localHeight < 3) return List.of();
         // A real dot can touch a thin staff rule after downsampling. Remove only
         // rows supported across the entire search width, never a rounded local mark.
-        boolean[] ruleRows = new boolean[localHeight];
-        for (int y = 0; y < localHeight; ) {
-            int start = y;
-            while (y < localHeight) {
-                int ink = 0;
-                for (int x = left; x <= right; x++)
-                    if ((gray[(top + y) * width + x] & 255) <= threshold) ink++;
-                if (ink < localWidth * .90f) break;
-                y++;
+        boolean[] ruleRows = threshold <= 70 ? new boolean[localHeight] : null;
+        if (ruleRows != null) {
+            int maxRuleHeight = Math.max(2, Math.round(gap * .23f));
+            int maxLight = localWidth - (int) Math.ceil(localWidth * .90f);
+            int start = 0;
+            for (int y = 0, row = top * width; y < localHeight; y++, row += width) {
+                int light = 0;
+                for (int pixel = row + left, end = row + right; pixel <= end; pixel++) {
+                    if ((gray[pixel] & 255) > threshold && ++light > maxLight) break;
+                }
+                if (light <= maxLight) continue;
+                if (y - start <= maxRuleHeight) java.util.Arrays.fill(ruleRows, start, y, true);
+                start = y + 1;
             }
-            if (threshold <= 70 && y > start && y - start <= Math.max(2, Math.round(gap * .23f)))
-                java.util.Arrays.fill(ruleRows, start, y, true);
-            if (y == start) y++;
+            if (localHeight - start <= maxRuleHeight)
+                java.util.Arrays.fill(ruleRows, start, localHeight, true);
         }
-        boolean[] visited = new boolean[localWidth * localHeight];
-        int[] stack = new int[visited.length];
-        List<Component> result = new ArrayList<>();
-        for (int localOrigin = 0; localOrigin < visited.length; localOrigin++) {
-            int originX = localOrigin % localWidth, originY = localOrigin / localWidth;
-            if (visited[localOrigin]
-                    || ruleRows[originY]
-                    || (gray[(top + originY) * width + left + originX] & 0xff) > threshold)
-                continue;
-            int stackSize = 0;
-            stack[stackSize++] = localOrigin;
-            visited[localOrigin] = true;
-            int area = 0, minX = right, maxX = left, minY = bottom, maxY = top;
-            long sumX = 0, sumY = 0;
-            double momentX = 0, momentY = 0, momentXX = 0, momentYY = 0, momentXY = 0;
-            while (stackSize > 0) {
-                int current = stack[--stackSize];
-                int lx = current % localWidth, ly = current / localWidth;
-                int x = left + lx, y = top + ly;
-                area++;
-                sumX += x;
-                sumY += y;
-                double localX = x - left, localY = y - top;
-                momentX += localX;
-                momentY += localY;
-                momentXX += localX * localX;
-                momentYY += localY * localY;
-                momentXY += localX * localY;
-                minX = Math.min(minX, x);
-                maxX = Math.max(maxX, x);
-                minY = Math.min(minY, y);
-                maxY = Math.max(maxY, y);
-                for (int dy = -1; dy <= 1; dy++)
-                    for (int dx = -1; dx <= 1; dx++) {
-                        int nx = lx + dx, ny = ly + dy;
-                        if ((dx == 0 && dy == 0)
-                                || nx < 0
-                                || nx >= localWidth
-                                || ny < 0
-                                || ny >= localHeight) continue;
-                        int next = ny * localWidth + nx;
-                        if (!visited[next]
-                                && !ruleRows[ny]
-                                && (gray[(top + ny) * width + left + nx] & 0xff) <= threshold) {
-                            visited[next] = true;
+        int pixelCount = localWidth * localHeight;
+        int rasterStart = top * width + left;
+        int lastColumn = localWidth - 1, lastRow = localHeight - 1;
+        float minRuleCutArea = gap * gap * .06f;
+        boolean[] examined = null;
+        int[] stack = null;
+        List<Component> result = null;
+        for (int originY = 0, localRow = 0, rasterRow = rasterStart;
+                originY < localHeight;
+                originY++, localRow += localWidth, rasterRow += width) {
+            if (ruleRows != null && ruleRows[originY]) continue;
+            int localEnd = localRow + localWidth;
+            for (int localOrigin = localRow, rasterPixel = rasterRow;
+                    localOrigin < localEnd;
+                    localOrigin++, rasterPixel++) {
+                if (examined != null && examined[localOrigin]) continue;
+                if ((gray[rasterPixel] & 0xff) > threshold) {
+                    if (examined != null) examined[localOrigin] = true;
+                    continue;
+                }
+                if (examined == null) {
+                    examined = new boolean[pixelCount];
+                    java.util.Arrays.fill(examined, 0, localOrigin, true);
+                    stack = new int[Math.min(32, pixelCount)];
+                }
+                int stackSize = 0;
+                stack[stackSize++] = localOrigin;
+                examined[localOrigin] = true;
+                int area = 0, minX = lastColumn, maxX = 0, minY = lastRow, maxY = 0;
+                long sumX = 0, sumY = 0;
+                double momentX = 0, momentY = 0, momentXX = 0, momentYY = 0, momentXY = 0;
+                boolean touchesBoundary = false;
+                while (stackSize > 0) {
+                    int current = stack[--stackSize];
+                    int ly = current / localWidth, lx = current - ly * localWidth;
+                    if (!touchesBoundary) {
+                        touchesBoundary = lx == 0 || lx == lastColumn
+                                || ly == 0 || ly == lastRow;
+                        if (!touchesBoundary) {
+                            area++;
+                            sumX += lx;
+                            sumY += ly;
+                            double localX = lx, localY = ly;
+                            momentX += localX;
+                            momentY += localY;
+                            momentXX += localX * localX;
+                            momentYY += localY * localY;
+                            momentXY += localX * localY;
+                            minX = Math.min(minX, lx);
+                            maxX = Math.max(maxX, lx);
+                            minY = Math.min(minY, ly);
+                            maxY = Math.max(maxY, ly);
+                        }
+                    }
+                    int firstX = Math.max(0, lx - 1), lastX = Math.min(lastColumn, lx + 1);
+                    int firstY = Math.max(0, ly - 1), lastY = Math.min(lastRow, ly + 1);
+                    // At most eight neighbors can be pushed from a single pixel.
+                    if (stack.length - stackSize < 8 && stack.length < pixelCount) {
+                        int growth = Math.max(8, stack.length);
+                        stack = java.util.Arrays.copyOf(
+                                stack, stack.length + Math.min(growth, pixelCount - stack.length));
+                    }
+                    int neighborRow = firstY * localWidth + firstX;
+                    int rasterNeighbor = rasterStart + firstY * width + firstX;
+                    for (int ny = firstY; ny <= lastY;
+                            ny++, neighborRow += localWidth, rasterNeighbor += width) {
+                        if (ruleRows != null && ruleRows[ny]) continue;
+                        int next = neighborRow, raster = rasterNeighbor;
+                        for (int nx = firstX; nx <= lastX; nx++, next++, raster++) {
+                            if (examined[next]) continue;
+                            examined[next] = true;
+                            if ((gray[raster] & 0xff) > threshold) continue;
                             stack[stackSize++] = next;
                         }
                     }
-            }
-            // Square bounds can hide a diagonal stroke. Require a round complete
-            // ink body at this actual cutoff, using the existing dark-core law.
-            // Scale covariance by population before comparing: division can round a
-            // genuine three-pixel L-shaped dot past the exact ratio-three boundary.
-            double xx = area * momentXX - momentX * momentX;
-            double yy = area * momentYY - momentY * momentY;
-            double xy = area * momentXY - momentX * momentY;
-            double spread = xx + yy;
-            if (area >= 3
-                    && spread > 0
-                    && 4 * ((xx - yy) * (xx - yy) + 4 * xy * xy) > spread * spread) continue;
-            // Removing a rule can expose the tiny end of a curved flag. A newly
-            // separated mark needs a substantial round core to count as a dot.
-            boolean ruleCut =
-                    minY > top && ruleRows[minY - top - 1]
-                            || maxY < bottom && ruleRows[maxY - top + 1];
-            if (ruleCut && area < gap * gap * .06f) continue;
-            // A component cut by the search window is not an isolated dot. In particular the
-            // protruding end of a whole note's ledger line used to become a false dot here.
-            if (minX > left && maxX < right && minY > top && maxY < bottom)
+                }
+                // Flood the entire component so a clipped mark cannot leave a false dot.
+                if (touchesBoundary) continue;
+                // Removing a rule can expose the tiny end of a curved flag. A newly
+                // separated mark needs a substantial round core to count as a dot.
+                boolean ruleCut = ruleRows != null
+                        && (ruleRows[minY - 1] || ruleRows[maxY + 1]);
+                if (ruleCut && area < minRuleCutArea) continue;
+                // Square bounds can hide a diagonal stroke. Require a round complete
+                // ink body at this actual cutoff, using the existing dark-core law.
+                // Scale covariance by population before comparing: division can round a
+                // genuine three-pixel L-shaped dot past the exact ratio-three boundary.
+                if (area >= 3) {
+                    double xx = area * momentXX - momentX * momentX;
+                    double yy = area * momentYY - momentY * momentY;
+                    double xy = area * momentXY - momentX * momentY;
+                    double spread = xx + yy;
+                    if (spread > 0 && 4 * ((xx - yy) * (xx - yy) + 4 * xy * xy) > spread * spread)
+                        continue;
+                }
+                if (result == null) result = new ArrayList<>();
                 result.add(
                         new Component(
                                 area,
-                                minX,
-                                maxX,
-                                minY,
-                                maxY,
-                                sumX / (float) area,
-                                sumY / (float) area));
+                                left + minX,
+                                left + maxX,
+                                top + minY,
+                                top + maxY,
+                                (sumX + (long) area * left) / (float) area,
+                                (sumY + (long) area * top) / (float) area));
+            }
         }
-        return result;
+        return result == null ? List.of() : result;
     }
 
     /** Three parallel slashes can sit above or below a stemless whole note. */
