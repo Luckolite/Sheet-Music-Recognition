@@ -15,18 +15,22 @@ _TEMPO_NUMBER = re.compile(
 )
 
 
-def measure_numbers(words):
-    """Offer isolated numbers; the decoder validates system placement and sequence."""
-    result = []
+def _isolated_numbers(words, max_digits=None):
     for word in words:
         value = str(word.get("text", "")).strip()
-        if not value.isascii() or not value.isdigit() or not 1 <= len(value) <= 4:
-            continue
-        number = int(value)
-        if 1 <= number <= 9999:
-            result.append(dict(value=number, left=word["left"], top=word["top"],
-                               right=word["right"], bottom=word["bottom"]))
-    return result
+        if (max_digits is None or len(value) <= max_digits) and value.isascii() and value.isdigit():
+            yield word, int(value), len(value)
+
+
+def _number_box(word, number):
+    return dict(value=number, left=word["left"], top=word["top"],
+                right=word["right"], bottom=word["bottom"])
+
+
+def measure_numbers(words):
+    """Offer isolated numbers; the decoder validates system placement and sequence."""
+    return [_number_box(word, number)
+            for word, number, _ in _isolated_numbers(words, max_digits=4) if number >= 1]
 
 
 def tempo_numbers(words):
@@ -34,6 +38,8 @@ def tempo_numbers(words):
     result = []
     for word in words:
         value = str(word.get("text", ""))
+        if "=" not in value:
+            continue
         # OCR can join the adjacent chord symbol to the tempo direction.
         # Keep the BPM box separate; arbitrary trailing prose remains rejected.
         match = _TEMPO_NUMBER.search(value)
@@ -54,23 +60,21 @@ def tempo_numbers(words):
 
 def rest_count_numbers(words):
     """Offer isolated numerals to the decoder's multi-measure-rest geometry check."""
-    result = []
-    for word in words:
-        value = str(word.get("text", "")).strip()
-        if not value.isascii() or not value.isdigit():
-            continue
-        count = int(value)
-        if 2 <= count <= 32:
-            result.append(dict(value=count, left=word["left"], top=word["top"],
-                               right=word["right"], bottom=word["bottom"]))
-    return result
+    return [_number_box(word, number)
+            for word, number, _ in _isolated_numbers(words) if 2 <= number <= 32]
 
 
 def page_annotations(words, tab_words):
     """Keep musical OCR separate from native PDF tablature annotations."""
-    return {"words": list(words), "tabWords": list(tab_words),
-            "measureNumbers": measure_numbers(words), "tempoNumbers": tempo_numbers(words),
-            "restCounts": rest_count_numbers(words)}
+    words = list(words)
+    measures, rests = [], []
+    for word, number, digits in _isolated_numbers(words):
+        if digits <= 4 and number >= 1:
+            measures.append(_number_box(word, number))
+        if 2 <= number <= 32:
+            rests.append(_number_box(word, number))
+    return {"words": words, "tabWords": list(tab_words),
+            "measureNumbers": measures, "tempoNumbers": tempo_numbers(words), "restCounts": rests}
 
 
 class LocalOcr:
@@ -105,7 +109,10 @@ class LocalOcr:
             numeric = value.strip("-–—")
             if numeric.isdigit():
                 value = numeric
-            if score < .5 or not value or len(value.encode("utf-8")) > 10000:
+            if score < .5 or not value:
+                continue
+            byte_length = len(value) if value.isascii() else len(value.encode("utf-8"))
+            if byte_length > 10000:
                 continue
             left = max(0.0, min(1.0, float(low[0]) / width))
             right = max(0.0, min(1.0, float(high[0]) / width))

@@ -16,6 +16,14 @@ class SeparateOcrChannelsTest(unittest.TestCase):
     def test_empty_native_channel_retains_directions(self):
         a=page_annotations([self.word('8va')],[])
         self.assertEqual('8va',a['words'][0]['text']);self.assertEqual([],a['tabWords'])
+
+    def test_measure_and_rest_tokens_keep_distinct_digit_limits(self):
+        words = [self.word(text) for text in ('00002', '32', '33', '0')]
+        annotations = page_annotations(iter(words), [])
+        self.assertEqual(words, annotations['words'])
+        self.assertEqual([32, 33], [token['value'] for token in annotations['measureNumbers']])
+        self.assertEqual([2, 32], [token['value'] for token in annotations['restCounts']])
+
     def test_lists_are_independent_of_inputs(self):
         words=[self.word('8vb')];tabs=[self.word('3')];a=page_annotations(words,tabs)
         a['words'].clear();a['tabWords'].clear()
