@@ -290,15 +290,15 @@ final class ScoreClockContextCapture {
         if (producer != null
                 && producer.rawSha().equals(raw)
                 && producer.labelSha().equals(semantic)) {
-            // Exact full-record equality is allowed only with a unique original and final owner.
+            // Only a unique original and final rhythmic record can carry the evidence.
             // Changed or ambiguous downstream records retain missing authority rather than
             // borrowing it.
             var used = new HashSet<Integer>();
             var originalCounts = new HashMap<ScoreNoteEvent, Integer>();
             var finalOwners = new HashMap<ScoreNoteEvent, Integer>();
-            for (var n : analysis.notes()) originalCounts.merge(n, 1, Integer::sum);
+            for (var n : analysis.notes()) originalCounts.merge(rhythmOwner(n), 1, Integer::sum);
             for (int n = 0; n < finalScore.notes().size(); n++) {
-                var event = finalScore.notes().get(n);
+                var event = rhythmOwner(finalScore.notes().get(n));
                 if (finalOwners.containsKey(event)) finalOwners.put(event, -2);
                 else finalOwners.put(event, n);
             }
@@ -308,8 +308,8 @@ final class ScoreClockContextCapture {
                 if (exhausted) break;
                 if (read.note() >= analysis.notes().size()) continue;
                 var original = analysis.notes().get(read.note());
-                if (originalCounts.getOrDefault(original, 0) != 1) continue;
-                int owner = finalOwners.getOrDefault(original, -1);
+                if (originalCounts.getOrDefault(rhythmOwner(original), 0) != 1) continue;
+                int owner = finalOwners.getOrDefault(rhythmOwner(original), -1);
                 if (owner < 0 || !used.add(owner)) continue;
                 var printed = read.writtenValue();
                 ValueRoute route =
@@ -375,18 +375,18 @@ final class ScoreClockContextCapture {
                 && analysis.clockContextSource().origin().rasterSha256().equals(raw)
                 && analysis.clockContextSource().origin().labelsSha256().equals(semantic)) {
             // Managed native analysis transports the compact issuer records, not private objects.
-            // Rebind only unique, entirely unchanged final note records in this same raster frame.
+            // Rebind only unique rhythmic records in this same raster frame.
             var context = analysis.clockContextSource();
             var counts = new HashMap<ScoreNoteEvent, Integer>();
             var finalOwners = new HashMap<ScoreNoteEvent, Integer>();
-            for (var n : analysis.notes()) counts.merge(n, 1, Integer::sum);
+            for (var n : analysis.notes()) counts.merge(rhythmOwner(n), 1, Integer::sum);
             for (int n = 0; n < finalScore.notes().size(); n++) {
-                var event = finalScore.notes().get(n);
+                var event = rhythmOwner(finalScore.notes().get(n));
                 if (finalOwners.containsKey(event)) finalOwners.put(event, -2);
                 else finalOwners.put(event, n);
             }
             for (var value : context.printedValues()) {
-                var event = analysis.notes().get(value.noteIndex());
+                var event = rhythmOwner(analysis.notes().get(value.noteIndex()));
                 int owner = finalOwners.getOrDefault(event, -1);
                 if (owner < 0 || counts.getOrDefault(event, 0) != 1) continue;
                 values.add(
@@ -437,4 +437,10 @@ final class ScoreClockContextCapture {
                 List.of(),
                 missing);
     }
+
+    private static ScoreNoteEvent rhythmOwner(ScoreNoteEvent note) {
+        // An octave direction changes sounding register; the printed head and rhythm are the same.
+        return note.octaveShift() == 0 ? note : note.withOctaveShift(0);
+    }
+
 }

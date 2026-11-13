@@ -430,7 +430,8 @@ final class OctaveMarkDetector {
                 words.addAll(ledgerAttachedWords(gray, width, height, boxes, gap, below));
                 for (var box : bareBoxes) {
                     if (centeredInStaff(box, staffs)) continue;
-                    if (!bareEightShape(gray, width, box, gap)) continue;
+                    boolean closedEight = bareEightShape(gray, width, box, gap);
+                    if (!closedEight && (below || !brokenEightShape(gray, width, box, gap))) continue;
                     float dashRight =
                             dashEnd(
                                     gray,
@@ -444,6 +445,7 @@ final class OctaveMarkDetector {
                     if (dashRight < 0) continue;
                     int hookDirection =
                             hookDirection(gray, width, height, dashRight, box.top, box.bottom, gap);
+                    if (!closedEight && hookDirection <= 0) continue;
                     // A bare numeral has no va/vb suffix. Use only the nearest stave;
                     // do not apply the same inter-system mark to both adjacent rows.
                     PlayingTechniqueDetector.Staff nearest = null;
@@ -885,6 +887,43 @@ final class OctaveMarkDetector {
         // Italic brackets lean across their height; compare curvature after removing that slope.
         return ((centers[0] + centers[2]) * .5f - centers[1]) * sign + .5f > gap * .06f
                 && Math.abs(centers[0] - centers[2]) < gap * .65f;
+    }
+
+    /** Recover a broken loop only if one short bridge restores the second counter. */
+    private static boolean brokenEightShape(byte[] gray, int width, InkBox box, float gap) {
+        int w = box.right - box.left + 1, h = box.bottom - box.top + 1;
+        if (w < gap * .8f || w > gap * 1.85f || h < gap * 1.15f || h > gap * 2.3f
+                || OctaveClefDigit.holes(gray, width, box.left, box.top, w, h) != 1) return false;
+        var patch = new byte[w * h];
+        for (int y = 0; y < h; y++)
+            System.arraycopy(gray, (box.top + y) * width + box.left, patch, y * w, w);
+        int bridge = Math.max(2, Math.round(gap * .43f));
+        for (int y = 0; y < h; y++) {
+            for (int x = 1; x < w - 1; x++) {
+                int at = y * w + x;
+                if ((patch[at - 1] & 255) >= 165 || (patch[at] & 255) < 165) continue;
+                int end = x;
+                while (end < w && (patch[y * w + end] & 255) >= 165) end++;
+                if (end < w && end - x <= bridge)
+                    java.util.Arrays.fill(patch, at, y * w + end, (byte) 0);
+                x = end;
+            }
+        }
+        if (OctaveClefDigit.holes(patch, w, 0, 0, w, h) == 2) return true;
+        for (int y = 0; y < h; y++)
+            System.arraycopy(gray, (box.top + y) * width + box.left, patch, y * w, w);
+        for (int y = 1; y < h - 1; y++) {
+            for (int x = 0; x < w; x++) {
+                if ((patch[y * w + x] & 255) < 165) continue;
+                int start = y;
+                int end = y;
+                while (end < h && (patch[end * w + x] & 255) >= 165) end++;
+                if ((patch[(start - 1) * w + x] & 255) < 165 && end < h
+                        && end - start <= bridge)
+                    for (int row = start; row < end; row++) patch[row * w + x] = 0;
+            }
+        }
+        return OctaveClefDigit.holes(patch, w, 0, 0, w, h) == 2;
     }
 
     private static boolean bareEightShape(byte[] gray, int width, InkBox box, float gap) {
