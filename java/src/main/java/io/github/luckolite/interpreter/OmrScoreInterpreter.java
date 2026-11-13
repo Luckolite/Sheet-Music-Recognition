@@ -1029,6 +1029,7 @@ final class OmrScoreInterpreter {
                 reducedPairBorrowedShaftHeads(
                         gray, width, height, heads, staffs, recoveredBeamCapGraces));
         rejectedBeamHeads.addAll(ownedSlopedBeamFragments(gray, width, height, heads, staffs));
+        rejectedBeamHeads.addAll(filledBeamBandHeads(gray, width, height, heads, staffs));
         heads.removeAll(rejectedBeamHeads);
         heads.removeAll(outlinedHookHeads(gray, width, height, heads, staffs));
         heads.removeAll(isolatedBeamTipHeads(gray, width, height, heads, staffs));
@@ -23676,6 +23677,59 @@ final class OmrScoreInterpreter {
     }
 
     /** Small beam masks may trace back up the very shaft that owns the beam. */
+    private static List<Component> filledBeamBandHeads(
+            byte[] gray, int width, int height, List<Component> heads, List<Staff> staffs) {
+        var rejected = new ArrayList<Component>();
+        if (gray == null) return rejected;
+        for (Component fragment : heads) {
+            var staff = nearestHeadStaff(staffs, fragment.centerY);
+            if (staff == null) continue;
+            float gap = staff.gap;
+            if (gap < 8 || fragment.area > gap * gap * .7f
+                    || fragment.maxY - fragment.minY + 1 > gap
+                    || fragment.maxX - fragment.minX + 1 > gap * 1.65f) continue;
+            int[] attached = attachedRawStem(gray, width, height, fragment, gap, 2, 170);
+            for (int direction : new int[] {-1, 1}) {
+                if (attached != null && attached[2] == direction) continue;
+                int[] left = null, right = null;
+                for (Component owner : heads) {
+                    float dx = owner.centerX - fragment.centerX;
+                    float dy = (fragment.centerY - owner.centerY) * direction;
+                    if (Math.abs(dx) > gap * 3.6f || dy < gap * 3.5f || dy > gap * 6
+                            || owner.area < 1.8f * fragment.area
+                            || owner.maxX - owner.minX + 1 < gap
+                            || owner.maxY - owner.minY + 1 < gap) continue;
+                    int[] shaft = attachedRawStem(gray, width, height, owner, gap, 2, 170);
+                    if (shaft == null || shaft[2] != direction
+                            || (shaft[1] - fragment.centerY) * direction < gap * .2f
+                            || (shaft[1] - fragment.centerY) * direction > gap * 1.1f) continue;
+                    if (shaft[0] < fragment.centerX && (left == null || shaft[0] > left[0])) left = shaft;
+                    if (shaft[0] > fragment.centerX && (right == null || shaft[0] < right[0])) right = shaft;
+                }
+                if (left == null || right == null || right[0] - left[0] < gap * 2
+                        || right[0] - left[0] > gap * 4.1f
+                        || attached != null && Math.min(Math.abs(attached[0] - left[0]),
+                                Math.abs(attached[0] - right[0])) > 2) continue;
+                float slope = (right[1] - left[1]) / (float) (right[0] - left[0]);
+                if (Math.abs(slope) > .28f) continue;
+                int margin = Math.round(gap * .24f), radius = Math.round(gap * .4f);
+                boolean filled = true;
+                for (int x = left[0] + margin; x <= right[0] - margin; x++) {
+                    int y = Math.round(fragment.centerY + slope * (x - fragment.centerX));
+                    if (!beamCore(gray, width, height, x, y, radius)) {
+                        filled = false;
+                        break;
+                    }
+                }
+                if (filled) {
+                    rejected.add(fragment);
+                    break;
+                }
+            }
+        }
+        return rejected;
+    }
+
     private static List<Component> ownedSlopedBeamFragments(
             byte[] gray, int width, int height, List<Component> heads, List<Staff> staffs) {
         List<Component> rejected = new ArrayList<>();
