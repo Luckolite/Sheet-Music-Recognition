@@ -15,11 +15,16 @@ public final class TabTempo {
             int w,
             int h) {
         var changes = new ArrayList<>(score.tempoChanges());
-        var tokens = TabTextSource.disjoint(words);
+        // Without a standalone staff and both printed operands there is no
+        // tempo candidate to disambiguate.
+        boolean hasCandidate = tabs.stream().anyMatch(tab -> !(tab.standardTop() >= 0))
+                && words.stream().anyMatch(TabTempo::beatSymbol)
+                && words.stream().anyMatch(word -> word.text().equals("="));
+        var tokens = hasCandidate ? TabTextSource.disjoint(words) : List.<TablatureDecoder.Word>of();
         for (var tab : tabs) {
             if (tab.standardTop() >= 0) continue;
             for (var note : tokens) {
-                if (!note.text().equals("\uECA5") && !note.text().equals("\uECA6")) continue;
+                if (!beatSymbol(note)) continue;
                 if (note.bottom() * h > tab.top() || note.top() * h < tab.top() - tab.gap() * 6)
                     continue;
                 for (var eq : tokens) {
@@ -109,5 +114,9 @@ public final class TabTempo {
                         score.openingPickup(),
                         score.tremoloSource()).withBeamSource(score.beamSource())
                 .carryMultiRestGroupsFrom(score);
+    }
+
+    private static boolean beatSymbol(TablatureDecoder.Word word) {
+        return word.text().equals("\uECA5") || word.text().equals("\uECA6");
     }
 }
