@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.github.luckolite.interpreter;
 
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 
@@ -189,22 +190,23 @@ public final class SheetInterpreter {
                 throw new IllegalArgumentException("Labels must be in 0..5");
         Objects.requireNonNull(annotations);
         byte[] tabSourceGray = gray;
+        var sourceNumbers = annotations.measureNumbers.stream().map(NumberToken::internal).toList();
         var sourceAnnotations =
-                ScorePageAnnotationSource.fromReader(
+                ScorePageAnnotationSource.fromRawReader(
                         gray,
                         width,
                         height,
                         annotations.words.stream()
                                 .map(
                                         w ->
-                                                new TablatureDecoder.Word(
+                                                new ScorePageAnnotationSource.ReaderWord(
                                                         w.text(),
                                                         w.left(),
                                                         w.top(),
                                                         w.right(),
                                                         w.bottom()))
                                 .toList(),
-                        annotations.measureNumbers.stream().map(NumberToken::internal).toList());
+                        sourceNumbers);
         var prepared = preparedTabs == null
                 ? TablatureDecoder.prepare(gray, width, height, annotations.words, annotations.tabWords)
                 : preparedTabs;
@@ -220,9 +222,7 @@ public final class SheetInterpreter {
         var measures = geometry.measures();
         labels = geometry.labels();
         measures = TablatureDecoder.reconcileMeasures(measures, tabs, width, height);
-        var numbers =
-                new java.util.ArrayList<>(
-                        annotations.measureNumbers.stream().map(NumberToken::internal).toList());
+        var numbers = new java.util.ArrayList<>(sourceNumbers);
         if (MeasureNumberReconciler.firstMeasureNumber(measures, numbers) == 0 && ocr != null)
             for (var token :
                     ocr.supplementSystemMeasureNumbers(
@@ -305,10 +305,11 @@ public final class SheetInterpreter {
         }
         notes = ArtificialHarmonics.apply(labels, gray, width, height, measures, notes, staffs);
         notes = ScoreTiePitchGuard.apply(notes, score.keyChanges());
-        var dynamicEvidence = new java.util.ArrayList<>(words);
+        List<PlayingTechniqueDetector.Word> dynamicEvidence = words;
         DirectionWordProvenance.Acquisition dynamicAcquisition = null;
         MusicalOcr.SuddenDynamicAcquisition suddenAcquisition = null;
         if (ocr != null) {
+            dynamicEvidence = new java.util.ArrayList<>(words);
             suddenAcquisition =
                     ocr.acquiredDynamicsWithSuddenSource(
                             annotationGray, width, height, staffs, words);
@@ -327,8 +328,9 @@ public final class SheetInterpreter {
                             annotationGray, width, height, staffs, measures, notes, dynamicWords);
         if (suddenAcquisition != null)
             dynamicWords = suddenAcquisition.normalize(dynamicWords, gray, width, height);
-        var techniqueWords = new java.util.ArrayList<>(words);
-        if (ocr != null)
+        List<PlayingTechniqueDetector.Word> techniqueWords = words;
+        if (ocr != null) {
+            techniqueWords = new java.util.ArrayList<>(words);
             techniqueWords.addAll(
                     ocr.contextualDirections(
                             annotationGray,
@@ -339,9 +341,9 @@ public final class SheetInterpreter {
                             notes,
                             dynamicWords,
                             words));
-        if (ocr != null)
             techniqueWords.addAll(
                     ocr.techniques(annotationGray, width, height, staffs, measures, notes));
+        }
         var articulationWords = new java.util.ArrayList<>(techniqueWords);
         for (var word : dynamicWords)
             if (!ExpressiveDirectionText.parse(word.text()).isEmpty()
@@ -354,24 +356,24 @@ public final class SheetInterpreter {
                 ocr == null
                         ? new MusicalOcr.MeterEvidence(List.of(), List.of())
                         : ocr.meterEvidence(labels, annotationGray, width, height, measures, notes);
-        if (ocr != null)
-            for (var meter : meterEvidence.changes())
-                if (meters.stream()
-                        .noneMatch(explicit -> explicit.measureIndex() == meter.measureIndex()))
-                    meters.add(meter);
-        if (ocr == null)
-            for (var meter :
-                    MeterFontMatcher.standaloneReadings(
-                            labels, gray, width, height, measures, notes))
-                if (meters.stream()
-                        .noneMatch(explicit -> explicit.measureIndex() == meter.measureIndex()))
-                    meters.add(meter);
+        var inferredMeters = ocr != null
+                ? meterEvidence.changes()
+                : MeterFontMatcher.standaloneReadings(labels, gray, width, height, measures, notes);
+        if (!inferredMeters.isEmpty()) {
+            var occupiedMeasures = new HashSet<Integer>();
+            for (var meter : meters) occupiedMeasures.add(meter.measureIndex());
+            for (var meter : inferredMeters)
+                if (occupiedMeasures.add(meter.measureIndex())) meters.add(meter);
+        }
         meters.sort(java.util.Comparator.comparingInt(ScoreMeterChange::measureIndex));
         var dynamicDetection =
                 ScoreDynamicsDetector.detectWithEvidence(
                         dynamicWords, staffs, measures, notes, gray, width, height);
-        var tempoWords = new java.util.ArrayList<>(words);
-        if (ocr != null) tempoWords.addAll(ocr.tempoWords(annotationGray, width, height));
+        List<PlayingTechniqueDetector.Word> tempoWords = words;
+        if (ocr != null) {
+            tempoWords = new java.util.ArrayList<>(words);
+            tempoWords.addAll(ocr.tempoWords(annotationGray, width, height));
+        }
         var decoded =
                 TablatureDecoder.apply(
                         new ScorePageInterpretation(
