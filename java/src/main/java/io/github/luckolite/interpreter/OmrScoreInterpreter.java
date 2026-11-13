@@ -12452,6 +12452,17 @@ final class OmrScoreInterpreter {
         if (upper == null || lower == null) return nearest;
         // A head within a third staff is not between these two candidates.
         if (nearest != upper && nearest != lower) return nearest;
+        // A long shaft and its short rules can identify the following solo staff.
+        if (gray != null && upper.count == 1 && lower.count == 1
+                && lower.top - head.centerY >= lower.gap * 4.5f
+                && lower.top - head.centerY <= lower.gap * 6.5f
+                && head.centerY - upper.bottom >= upper.gap * 4.5f
+                && printedFilledOval(gray, width, head, lower.gap)) {
+            int[] raw = attachedRawStem(gray, width, height, head, lower.gap);
+            if (raw != null && raw[2] == 1 && raw[1] >= lower.top + lower.gap * 2
+                    && Math.abs(raw[0] - head.minX) <= lower.gap * .25f
+                    && highSoloStaffLedgerShaft(gray, width, height, head, lower, raw)) return lower;
+        }
         boolean adjacentParts = upper.count == lower.count && upper.index + 1 == lower.index;
         boolean adjacentSoloRows = upper.count == 1 && lower.count == 1;
         if (!adjacentParts && !adjacentSoloRows) return nearest;
@@ -12475,6 +12486,32 @@ final class OmrScoreInterpreter {
         if (upward >= minimum && upward >= downward + advantage) return upper;
         if (downward >= minimum && downward >= upward + advantage) return lower;
         return nearest;
+    }
+
+    private static boolean highSoloStaffLedgerShaft(
+            byte[] gray, int width, int height, Component head, Staff lower, int[] shaft) {
+        float gap = lower.gap;
+        int left = shaft[0] + Math.round(gap * .25f);
+        int right = Math.round(head.centerX + gap * .65f);
+        if (left < 0 || right >= width || right - left < gap * .7f) return false;
+        int rules = 0;
+        for (int i = 1; i <= 4; i++) {
+            int expected = Math.round(lower.top - i * gap);
+            int tolerance = Math.round(gap * .25f);
+            boolean found = false;
+            for (int y = Math.max(1, expected - tolerance); y <= Math.min(height - 2, expected + tolerance); y++) {
+                if ((gray[y * width + shaft[0]] & 255) >= 170) continue;
+                int ink = 0;
+                for (int x = left; x <= right; x++)
+                    if ((gray[y * width + x] & 255) < 165) ink++;
+                if (ink >= (right - left + 1) * .82f) {
+                    found = true;
+                    break;
+                }
+            }
+            if (found) rules++;
+        }
+        return rules >= 3;
     }
 
     /** A complete distant ledger chain can be stronger than proximity to another staff. */
