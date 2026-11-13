@@ -5245,6 +5245,12 @@
     },
     "OmrScoreInterpreter.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/OmrScoreInterpreter.java",
+      "owned_sloped_beam_fragments_review": {
+        "reviewed_app_commit": "2c7a647fea468439102954c5a79ccb8d899970d6",
+        "app_lf_sha256": "7cea919f87f8ac8e91cbac6a63a849f3740559d50351a7e2c144e2e137e47e80",
+        "standalone_lf_sha256": "25145acc89ec2ce85f45e7a27e75a732bacc475b15b175ff69171177dfaa7727",
+        "scope": "Matching complete sloped beam and borrowed-shaft fragment proof. Broader decoder provenance remains open."
+      },
       "long_same_staff_beam_endpoint_review": {
         "reviewed_app_commit": "f4c0a1038d3e02749a9e92f3b89ae38e5f1a78e5",
         "app_lf_sha256": "7e9953c954d0e953ffbdb22dd77b5ac75d857548be06f2c1e4b521d582bd4e07",

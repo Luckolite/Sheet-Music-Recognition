@@ -78,7 +78,17 @@ public class IsolatedBeamProbeTest {
         Object[] args = {gray, width, height, right, frame.newInstance(53f, 117f, (float) gap),
                 java.util.List.of(left, right), new MeasureRegion(0, 1, 0, 1)};
         assertEquals(true, proof.invoke(null, args));
+
+        Object fragment = constructor.newInstance(100, 97, 110, 96, 104, 105f, 99f);
+        var classify = decoder.getDeclaredMethod("ownedSlopedBeamFragments", byte[].class,
+                int.class, int.class, java.util.List.class, java.util.List.class);
+        classify.setAccessible(true);
+        Object[] candidates = {gray, width, height, java.util.List.of(left, right, fragment),
+                java.util.List.of(args[4])};
+        assertEquals(java.util.List.of(fragment), classify.invoke(null, candidates));
+
         for (int y = 96; y <= 110; y++) gray[y * width + 87] = (byte) 255;
+        assertEquals(java.util.List.of(), classify.invoke(null, candidates));
         assertEquals(false, proof.invoke(null, args));
     }
 
