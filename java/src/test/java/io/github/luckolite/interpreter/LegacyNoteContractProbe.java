@@ -32,14 +32,18 @@ public final class LegacyNoteContractProbe {
                         new StringBuilder("constructor=").append(constructor.getParameterCount());
                 for (RecordComponent component : ScoreNoteEvent.class.getRecordComponents()) {
                     if (component.getName().equals("kind")
-                            || component.getName().equals("visualSize")) continue;
+                            || component.getName().equals("visualSize")
+                            || component.getName().equals("harmonicSemitones")
+                            || component.getName().equals("openStringTouch")) continue;
                     value.append('|')
                             .append(component.getName())
                             .append('=')
                             .append(component.getAccessor().invoke(note));
                 }
                 if (note.kind() != ScoreNoteEvent.Kind.PITCHED
-                        || note.visualSize() != ScoreNoteEvent.VisualSize.FULL)
+                        || note.visualSize() != ScoreNoteEvent.VisualSize.FULL
+                        || note.harmonicSemitones() != 0
+                        || note.openStringTouch() != null)
                     throw new AssertionError("legacy constructor changed typed defaults");
                 value.append("|identity=").append(note.diatonicPitchIdentity());
                 value.append("|durationScale=").append(note.durationScale());

@@ -130,7 +130,11 @@ public final class Pitched902HelperParityProbe {
         String serialized = values.toString();
         if (serialized.contains("visualSize=CUE"))
             throw new AssertionError("legacy pitched helper changed ordinary glyph size");
-        String legacySerialized = serialized.replace(", visualSize=FULL", "");
+        String legacySerialized = serialized.replace(", visualSize=FULL", "")
+                .replace(", harmonicSemitones=0, openStringTouch=null", "");
+        if (legacySerialized.contains("harmonicSemitones=")
+                || legacySerialized.contains("openStringTouch="))
+            throw new AssertionError("legacy pitched helper introduced harmonic metadata");
         String digest =
                 HexFormat.of()
                         .formatHex(
