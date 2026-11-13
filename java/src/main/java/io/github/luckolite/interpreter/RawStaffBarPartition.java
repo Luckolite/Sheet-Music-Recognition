@@ -63,7 +63,7 @@ final class RawStaffBarPartition {
             boolean[] excludeStaffMembers) {
         int n = widths.length;
         boolean any = false;
-        boolean[] columnContact = new boolean[n];
+        boolean[] columnContact = null;
         // Distinct finite strokes must never constrain one another's width through
         // an intervening staff-only column. Such a column is UNKNOWN as bar ink.
         for (int i = 0; i < n; i++)
@@ -73,14 +73,19 @@ final class RawStaffBarPartition {
                     if (reason != null) reason.append("BUDGET_FILTER");
                     return false;
                 }
-                boolean exposed = false;
+                boolean exposed = false, contact = false;
                 int x = firstX + i;
-                for (int y = top[i]; y <= bottom[i]; y++) {
-                    if (staff.contains(y * pageWidth + x)) columnContact[i] = true;
+                for (int y = top[i], pixel = y * pageWidth + x;
+                        y <= bottom[i]; y++, pixel += pageWidth) {
+                    if (staff.contains(pixel)) contact = true;
                     else exposed = true;
-                    if (exposed && columnContact[i]) break;
+                    if (exposed && contact) break;
                 }
                 if (!exposed) widths[i] = 0;
+                else if (contact) {
+                    if (columnContact == null) columnContact = new boolean[n];
+                    columnContact[i] = true;
+                }
             }
         SegmentScratch scratch = null;
         for (int from = 0; from < n; ) {
@@ -90,7 +95,7 @@ final class RawStaffBarPartition {
             boolean contact = false, withinCap = true;
             do {
                 withinCap &= widths[to] <= cap;
-                contact |= columnContact[to];
+                contact |= columnContact != null && columnContact[to];
                 to++;
             } while (to < n && widths[to] > 0);
             int len = to - from;
@@ -102,9 +107,9 @@ final class RawStaffBarPartition {
             if (contact) {
                 if (scratch == null || scratch.widths.length < len)
                     scratch = new SegmentScratch(len, reason != null);
-                scratch.load(widths, top, bottom, from, len);
-                ok = applyOne(scratch, len, from, columnContact, firstX + from, pageWidth, gap, cap,
-                        staff, budget);
+                scratch.reset();
+                ok = applyOne(scratch, widths, top, bottom, len, from, columnContact,
+                        firstX + from, pageWidth, gap, cap, staff, budget);
                 if (ok && scratch.coowned && excludeStaffMembers != null)
                     Arrays.fill(excludeStaffMembers, from, to, true);
             }
@@ -114,10 +119,21 @@ final class RawStaffBarPartition {
             // A failed write used to leave the affordable prefix in the caller's arrays.
             int written = (int) Math.min(budget[0], len);
             if (!ok) Arrays.fill(widths, from, from + written, 0);
-            else if (contact) {
-                System.arraycopy(scratch.widths, 0, widths, from, written);
-                System.arraycopy(scratch.top, 0, top, from, written);
-                System.arraycopy(scratch.bottom, 0, bottom, from, written);
+            else if (contact && !scratch.coowned) {
+                // Only contact columns can change. Their original endpoints
+                // and staff bounds identify the anchor of each retained band.
+                for (int i = 0; i < written; i++) {
+                    int column = from + i;
+                    if (!columnContact[column]) continue;
+                    int width = scratch.widths[i];
+                    if (width > 0) {
+                        if (top[column] >= scratch.staffTop[i])
+                            top[column] = bottom[column] - width + 1;
+                        else if (bottom[column] <= scratch.staffBottom[i])
+                            bottom[column] = top[column] + width - 1;
+                    }
+                    widths[column] = width;
+                }
             }
             if (!take(budget, len)) {
                 if (reason != null) reason.append("BUDGET_WRITE");
@@ -131,15 +147,13 @@ final class RawStaffBarPartition {
     }
 
     private static final class SegmentScratch {
-        final int[] widths, top, bottom;
+        final int[] widths;
         final int[] staffTop, staffBottom, exposedTop, exposedBottom;
         final StringBuilder reason;
         boolean coowned;
 
         SegmentScratch(int length, boolean diagnostics) {
             widths = new int[length];
-            top = new int[length];
-            bottom = new int[length];
             staffTop = new int[length];
             staffBottom = new int[length];
             exposedTop = new int[length];
@@ -147,20 +161,18 @@ final class RawStaffBarPartition {
             reason = diagnostics ? new StringBuilder() : null;
         }
 
-        void load(int[] widths, int[] top, int[] bottom, int from, int length) {
-            System.arraycopy(widths, from, this.widths, 0, length);
-            System.arraycopy(top, from, this.top, 0, length);
-            System.arraycopy(bottom, from, this.bottom, 0, length);
+        void reset() {
             if (reason != null) reason.setLength(0);
             coowned = false;
         }
     }
 
     private static boolean applyOne(
-            SegmentScratch scratch, int n, int from, boolean[] columnContact,
+            SegmentScratch scratch, int[] inputWidths, int[] inputTop, int[] inputBottom,
+            int n, int from, boolean[] columnContact,
             int firstX, int pageWidth, int gap, int cap,
             Set<Integer> staff, long[] budget) {
-        int[] widths = scratch.widths, top = scratch.top, bottom = scratch.bottom;
+        int[] widths = scratch.widths;
         StringBuilder reason = scratch.reason;
         int min = Math.max(3, (int) Math.ceil(.2 * gap));
         int lower = min,
@@ -176,31 +188,26 @@ final class RawStaffBarPartition {
         // The run arrays and stripe are read-only operands until all exposed widths
         // constrain the same finite physical band; no inferred white is introduced.
         for (int i = 0; i < n; i++) {
-            if (!take(budget, 1)) {
-                if (reason != null) reason.append("BUDGET_WIDTH_PROFILE");
+            int column = from + i;
+            int a = inputTop[column], b = inputBottom[column], width = inputWidths[column];
+            int length = Math.max(0, b - a + 1);
+            long available = budget[0];
+            // Segments contain only nonzero widths. A short budget still
+            // distinguishes the column charge from the pixel scan.
+            if (!take(budget, 1L + length)) {
+                if (reason != null)
+                    reason.append(available < 1 ? "BUDGET_WIDTH_PROFILE" : "BUDGET_CONTACT_SCAN");
                 return false;
             }
-            if (widths[i] == 0) {
-                exposedRun = 0;
-                joinedRun = 0;
-                coownedPossible = false;
-                continue;
-            }
-            int length = Math.max(0, bottom[i] - top[i] + 1);
-            if (length > 0 && !take(budget, length)) {
-                if (reason != null) reason.append("BUDGET_CONTACT_SCAN");
-                return false;
-            }
-            boolean contact = columnContact[from + i];
-            int residual = length, bodyTop = top[i], bodyBottom = bottom[i];
+            boolean contact = columnContact[column];
+            int residual = length, bodyTop = a, bodyBottom = b;
             int firstStaff = Integer.MAX_VALUE, lastStaff = -1;
             if (contact) {
                 residual = 0;
                 bodyTop = Integer.MAX_VALUE;
                 bodyBottom = -1;
                 int x = firstX + i;
-                for (int y = top[i], pixel = y * pageWidth + x;
-                        y <= bottom[i]; y++, pixel += pageWidth) {
+                for (int y = a, pixel = y * pageWidth + x; y <= b; y++, pixel += pageWidth) {
                     if (staff.contains(pixel)) {
                         if (y < firstStaff) firstStaff = y;
                         lastStaff = y;
@@ -210,8 +217,6 @@ final class RawStaffBarPartition {
                         bodyBottom = y;
                     }
                 }
-            }
-            if (contact) {
                 staffTop[i] = firstStaff;
                 staffBottom[i] = lastStaff;
                 exposedTop[i] = bodyTop;
@@ -221,9 +226,9 @@ final class RawStaffBarPartition {
                     && (length > 2 * cap || residual < min || residual > cap
                             || bodyBottom < bodyTop || bodyBottom - bodyTop + 1 > cap))
                 coownedPossible = false;
-            if (!contact && widths[i] >= min && widths[i] <= cap) {
-                lower = Math.max(lower, widths[i] - 1);
-                upper = Math.min(upper, widths[i] + 1);
+            if (!contact && width >= min && width <= cap) {
+                lower = Math.max(lower, width - 1);
+                upper = Math.min(upper, width + 1);
                 longest = Math.max(longest, ++exposedRun);
             } else {
                 exposedRun = 0;
@@ -238,10 +243,9 @@ final class RawStaffBarPartition {
             // Avoid rescanning every weak/partial candidate. A separate co-owned run
             // is considered only when one continuous witnessed staff contact covers
             // all but the same short cap allowance used by the exposed-run minimum.
-            int minimumBodyLength = Math.max(2, (int) Math.rint(.45 * 1.4 * gap));
             if (coownedPossible
-                    && n >= minimumBodyLength
-                    && longestJoined >= Math.max(3, n - min + 1)) {
+                    && longestJoined >= Math.max(3, n - min + 1)
+                    && n >= Math.max(2, (int) Math.rint(.45 * 1.4 * gap))) {
                 if (reason != null) reason.append("COOWNED_COMPLETE_RUN");
                 scratch.coowned = true;
                 return true;
@@ -269,7 +273,8 @@ final class RawStaffBarPartition {
                         if (reason != null) reason.append("BUDGET_RECONSTRUCT");
                         return false;
                     }
-                    charge += 1L + Math.max(0L, (long) bottom[i] - top[i] + 1);
+                    int column = from + i;
+                    charge += 1L + Math.max(0L, (long) inputBottom[column] - inputTop[column] + 1);
                     if (charge > budget[0]) {
                         budget[0] = -1;
                         if (reason != null) reason.append("BUDGET_RECONSTRUCT_SCAN");
@@ -281,14 +286,13 @@ final class RawStaffBarPartition {
                 i--;
                 continue;
             }
-            if (!take(budget, 1)) {
-                if (reason != null) reason.append("BUDGET_RECONSTRUCT");
-                return false;
-            }
-            int a = top[i], b = bottom[i], lo = staffTop[i], hi = staffBottom[i];
+            int a = inputTop[from + i], b = inputBottom[from + i];
+            int lo = staffTop[i], hi = staffBottom[i];
             long length = (long) b - a + 1;
-            if (!take(budget, length)) {
-                if (reason != null) reason.append("BUDGET_RECONSTRUCT_SCAN");
+            long available = budget[0];
+            if (!take(budget, 1 + length)) {
+                if (reason != null)
+                    reason.append(available < 1 ? "BUDGET_RECONSTRUCT" : "BUDGET_RECONSTRUCT_SCAN");
                 return false;
             }
             // A sparse carrier center cannot be inflated into a stripe. Every residual
@@ -306,6 +310,17 @@ final class RawStaffBarPartition {
             int leading = Math.min(firstWidth - lower, upper - lower + 1);
             if (leading > 0 && !take(budget, leading)) return false;
             int exposedFirst = exposedTop[i], exposedLast = exposedBottom[i];
+            if (!above && firstWidth <= lastWidth) {
+                // Bottom-anchored bands reject narrower widths at the same first
+                // exposed pixel. Their scan and width charges can be paid together.
+                int firstComplete = b - exposedFirst + 1;
+                int rejectedWidths = (int) (Math.min(lastWidth + 1L, firstComplete) - firstWidth);
+                if (rejectedWidths > 0) {
+                    if (!take(budget, (long) rejectedWidths * (2L + exposedFirst - a)))
+                        return false;
+                    firstWidth += rejectedWidths;
+                }
+            }
             int suffixCursor = exposedFirst;
             int x = firstX + i;
             for (int thick = firstWidth; thick <= lastWidth; thick++) {
@@ -340,8 +355,6 @@ final class RawStaffBarPartition {
                 widths[i] = 0;
                 continue;
             }
-            top[i] = above ? a : b - acceptedWidth + 1;
-            bottom[i] = below ? b : a + acceptedWidth - 1;
             widths[i] = acceptedWidth;
         }
         return true;
