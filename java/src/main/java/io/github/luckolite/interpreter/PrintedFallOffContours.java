@@ -223,7 +223,7 @@ final class PrintedFallOffContours {
             boolean[] ink = new boolean[(int) area];
             for (int yy = 0; yy < h; yy++)
                 for (int xx = 0; xx < w; xx++)
-                    ink[yy * w + xx] = rules.sample(left + xx, top + yy) < 205;
+                    ink[yy * w + xx] = rules.isInk(left + xx, top + yy);
             int[] queue = new int[(int) area];
             for (int pixel = 0; pixel < ink.length; pixel++) {
                 if (!ink[pixel]) continue;

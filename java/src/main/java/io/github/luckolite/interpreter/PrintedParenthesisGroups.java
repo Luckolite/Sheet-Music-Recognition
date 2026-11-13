@@ -81,37 +81,17 @@ final class PrintedParenthesisGroups {
             if (maxGap == 0) continue;
             top = Math.max(1, top);
             bottom = Math.min(height - 2, bottom);
-            LiteralStaffContrast.Field field = null;
-            if (calibrated) {
-                float[] phase = frame.track().at(width * .5f);
-                var catalog =
-                        LiteralStaffContrast.catalog(
-                                gray, width, height, phase[0] - 4 * phase[1], phase[1], references);
-                if (references.refused()) return List.of();
-                if (catalog.isEmpty()) continue;
-                var observed = catalog.get().field(left, right, references);
-                if (references.refused()) return List.of();
-                if (observed.isEmpty()) continue;
-                field = observed.get();
-                top = field.firstY();
-                bottom = field.lastY();
-            }
             int w = right - left + 1, h = bottom - top + 1;
             long area = (long) w * h;
             if (w < 3 || h < 3 || area > 1_000_000) continue;
-            long profileWork =
-                    calibrated ? 0 : (long) w * 5 * ((long) Math.ceil(.7 * maxGap) + 4) * 32;
+            long profileWork = (long) w * 5 * ((long) Math.ceil(.7 * maxGap) + 4) * 32;
             if (!work.take(area * 16 + profileWork + frame.heads().size() * 64L)) return List.of();
             var rules = new PrintedCurveRuleInk(null, gray, width, height, 205, frame.track());
             boolean[] ink = new boolean[(int) area];
             int[] queue = new int[(int) area];
             for (int y = 0; y < h; y++)
                 for (int x = 0; x < w; x++)
-                    ink[y * w + x] =
-                            calibrated
-                                    ? field.cell(x + left, y + top).kind()
-                                            == LiteralStaffContrast.Kind.EXTRA_CORE
-                                    : rules.sample(x + left, y + top) < 205;
+                    ink[y * w + x] = rules.isInk(x + left, y + top);
             for (int pixel = 0; pixel < ink.length; pixel++)
                 if (ink[pixel]) {
                     int count = 1, l = w, r = -1, t = h, b = -1;

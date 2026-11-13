@@ -51,11 +51,22 @@ final class DetachedCompactTieRidge {
                 || last.x - first.x > gap * 4.5f) return false;
         var rules = new PrintedCurveRuleInk(labels, gray, width, height, 205, track);
         byte[] residual = new byte[gray.length];
-        for (int y = 0; y < height; y++)
-            for (int x = 0; x < width; x++) residual[y * width + x] = (byte) rules.sample(x, y);
+        // Pixels already above the rule threshold cannot affect either crossing or the tie mask.
+        for (int y = 0, at = 0; y < height; y++) {
+            for (int x = 0; x < width; x++, at++) {
+                int original = gray[at] & 255;
+                residual[at] = original >= 205 ? gray[at] : (byte) rules.sample(x, y);
+            }
+        }
         if (!rules.corroboratedCrossing()) return false;
         boolean[] seen = new boolean[gray.length];
         int[] queue = new int[gray.length];
+        float headDistance = last.x - first.x;
+        float maxThickness = Math.max(3, gap * .45f);
+        float residualA = first.y - (a[0] - staffStep * a[1] * .5f);
+        float residualB = last.y - (b[0] - staffStep * b[1] * .5f);
+        int[] paper = new int[18], stroke = new int[(int) (gap * .45f) + 1];
+        float[] sampled = null;
         int qualified = 0;
         for (int seed = 0; seed < residual.length; seed++) {
             if (seen[seed] || (residual[seed] & 255) >= 165) continue;
@@ -64,21 +75,21 @@ final class DetachedCompactTieRidge {
             queue[0] = seed;
             seen[seed] = true;
             while (take < count) {
-                int at = queue[take++], x = at % width, y = at / width;
+                int at = queue[take++], y = at / width, x = at - y * width;
                 left = Math.min(left, x);
                 right = Math.max(right, x);
                 top = Math.min(top, y);
                 bottom = Math.max(bottom, y);
                 head |= labels[at] == OmrMeasurePostProcessor.NOTEHEAD;
-                for (int dy = -1; dy <= 1; dy++)
-                    for (int dx = -1; dx <= 1; dx++) {
-                        int xx = x + dx, yy = y + dy;
-                        if (xx < 0 || yy < 0 || xx >= width || yy >= height) continue;
-                        int next = yy * width + xx;
+                int firstX = Math.max(0, x - 1), lastX = Math.min(width - 1, x + 1);
+                int firstY = Math.max(0, y - 1), lastY = Math.min(height - 1, y + 1);
+                for (int yy = firstY, row = firstY * width; yy <= lastY; yy++, row += width) {
+                    for (int next = row + firstX; next <= row + lastX; next++) {
                         if (seen[next] || (residual[next] & 255) >= 165) continue;
                         seen[next] = true;
                         queue[count++] = next;
                     }
+                }
             }
             // Every cell of the complete residual component participates in the proof.
             // Never crop a staff, letter, stem, beam or larger phrase into a convenient cap.
@@ -100,7 +111,7 @@ final class DetachedCompactTieRidge {
             Arrays.fill(min, height);
             Arrays.fill(max, -1);
             for (int i = 0; i < count; i++) {
-                int at = queue[i], x = at % width - left, y = at / width;
+                int at = queue[i], y = at / width, x = at - y * width - left;
                 min[x] = Math.min(min[x], y);
                 max[x] = Math.max(max[x], y);
                 cells[x]++;
@@ -108,10 +119,11 @@ final class DetachedCompactTieRidge {
             boolean complete = true;
             float[] center = new float[span], relative = new float[span];
             int thick = 0;
+            boolean above = true, below = true;
             for (int x = 0; x < span; x++) {
                 if (cells[x] == 0
                         || max[x] - min[x] + 1 != cells[x]
-                        || cells[x] > Math.max(3, gap * .45f)) {
+                        || cells[x] > maxThickness) {
                     complete = false;
                     break;
                 }
@@ -122,61 +134,56 @@ final class DetachedCompactTieRidge {
                     complete = false;
                     break;
                 }
-                float t = (left + x - first.x) / (last.x - first.x);
-                float residualA = first.y - (a[0] - staffStep * a[1] * .5f);
-                float residualB = last.y - (b[0] - staffStep * b[1] * .5f);
+                float t = (left + x - first.x) / headDistance;
                 float base = f[0] - staffStep * f[1] * .5f + residualA * (1 - t) + residualB * t;
                 relative[x] = (center[x] - base) / f[1];
                 if (!Float.isFinite(relative[x])) {
                     complete = false;
                     break;
                 }
-                if (!contrastedColumn(gray, width, height, left + x, min[x], max[x], f[1])) {
+                above &= max[x] <= f[0] - 4 * f[1] - f[1] * .18f
+                        && -relative[x] >= .25f && -relative[x] <= 2.6f;
+                below &= min[x] >= f[0] + f[1] * .18f
+                        && relative[x] >= .25f && relative[x] <= 2.6f;
+                if ((!above && !below)
+                        || !contrastedColumn(
+                                gray, width, height, left + x, min[x], max[x], f[1], paper, stroke)) {
                     complete = false;
                     break;
                 }
             }
             if (!complete || cells[0] > thick * .7f || cells[span - 1] > thick * .7f) continue;
-            for (int side : new int[] {-1, 1}) {
-                boolean outside = true;
-                for (int x = 0; x < span; x++) {
-                    float[] f = track.at(left + x);
-                    float rule = side < 0 ? f[0] - 4 * f[1] : f[0];
-                    if (side < 0 ? max[x] > rule - f[1] * .18f : min[x] < rule + f[1] * .18f)
-                        outside = false;
-                    if (side * relative[x] < .25f || side * relative[x] > 2.6f) outside = false;
-                }
-                if (!outside || !rounded(relative, side)) continue;
-                float[] sampled = new float[50];
-                for (int x = 0; x < 50; x++) sampled[x] = center[Math.round(x * (span - 1) / 49f)];
-                if (TieArcBranchInk.outwardStems(
-                        residual, width, height, left, right, sampled, side, gap, 165)) continue;
-                if (++qualified > 1) return false;
-            }
+            int side = above ? -1 : 1;
+            if (!rounded(relative, side)) continue;
+            if (sampled == null) sampled = new float[50];
+            for (int x = 0; x < sampled.length; x++)
+                sampled[x] = center[Math.round(x * (span - 1) / 49f)];
+            if (TieArcBranchInk.outwardStems(
+                    residual, width, height, left, right, sampled, side, gap, 165)) continue;
+            if (++qualified > 1) return false;
         }
         return qualified == 1;
     }
 
     /** Raw local paper must contrast with most of the stroke, not one dark speckle. */
     private static boolean contrastedColumn(
-            byte[] gray, int width, int height, int x, int top, int bottom, float gap) {
-        int[] paper = new int[18];
+            byte[] gray, int width, int height, int x, int top, int bottom, float gap,
+            int[] paper, int[] stroke) {
         int count = 0;
         for (float scale : new float[] {.2f, .3f, .4f}) {
             int distance = Math.max(2, Math.round(gap * scale));
-            for (int dx = -1; dx <= 1; dx++)
-                for (int y : new int[] {top - distance, bottom + distance}) {
-                    int xx = x + dx;
-                    if (xx < 0 || xx >= width || y < 0 || y >= height) continue;
-                    paper[count++] = gray[y * width + xx] & 255;
-                }
+            int upper = top - distance, lower = bottom + distance;
+            for (int xx = Math.max(0, x - 1); xx <= Math.min(width - 1, x + 1); xx++) {
+                if (upper >= 0) paper[count++] = gray[upper * width + xx] & 255;
+                if (lower < height) paper[count++] = gray[lower * width + xx] & 255;
+            }
         }
         if (count < 12) return false;
         Arrays.sort(paper, 0, count);
-        int[] stroke = new int[bottom - top + 1];
+        int length = bottom - top + 1;
         for (int y = top; y <= bottom; y++) stroke[y - top] = gray[y * width + x] & 255;
-        Arrays.sort(stroke);
-        return paper[(count - 1) * 2 / 3] - stroke[stroke.length / 2] >= 20;
+        Arrays.sort(stroke, 0, length);
+        return paper[(count - 1) * 2 / 3] - stroke[length / 2] >= 20;
     }
 
     private static boolean rounded(float[] p, int side) {

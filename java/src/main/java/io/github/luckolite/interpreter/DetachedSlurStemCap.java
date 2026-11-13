@@ -84,8 +84,9 @@ final class DetachedSlurStemCap {
         for (int y = refined + side; y != end; y += side) {
             boolean clear = true;
             for (int xx = x - 1; xx <= x + 1; xx++)
-                if ((ruleInk == null ? gray[y * width + xx] & 255 : ruleInk.sample(xx, y))
-                        < threshold) clear = false;
+                if (ruleInk == null
+                        ? (gray[y * width + xx] & 255) < threshold
+                        : ruleInk.isInk(xx, y)) clear = false;
             blank = clear ? blank + 1 : 0;
             if (blank >= blankRows) separated = true;
         }
@@ -213,15 +214,17 @@ final class DetachedSlurStemCap {
                     hi = Math.min(height - 1, (int) Math.ceil(previous + gap));
             float nearest = Float.NaN, best = Float.POSITIVE_INFINITY;
             for (int y = lo; y <= hi; ) {
-                if ((ruleInk == null ? gray[y * width + xx] & 255 : ruleInk.sample(xx, y))
-                        >= threshold) {
+                if (ruleInk == null
+                        ? (gray[y * width + xx] & 255) >= threshold
+                        : !ruleInk.isInk(xx, y)) {
                     y++;
                     continue;
                 }
-                int start = y;
+                int start = y++;
                 while (y <= hi
-                        && (ruleInk == null ? gray[y * width + xx] & 255 : ruleInk.sample(xx, y))
-                                < threshold) y++;
+                        && (ruleInk == null
+                                ? (gray[y * width + xx] & 255) < threshold
+                                : ruleInk.isInk(xx, y))) y++;
                 float candidate = (start + y - 1) * .5f, delta = Math.abs(candidate - previous);
                 if (start > lo
                         && y <= hi
@@ -232,6 +235,8 @@ final class DetachedSlurStemCap {
                     nearest = candidate;
                     best = delta;
                 }
+                // The probe that closed the run already found this row clear.
+                y++;
             }
             if (!Float.isFinite(nearest)) return Float.NaN;
             previous = nearest;

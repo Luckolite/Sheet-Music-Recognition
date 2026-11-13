@@ -1954,6 +1954,10 @@ public final class PrintedBeamSource {
         var lane = a.binding.lane();
         if (lane.id() != b.binding.lane().id()) return 0;
         boolean verified = lane.track() != null && lane.track().verifiedAt(x);
+        if (verified) {
+            int original = raw[y * w + x] & 255;
+            if (original < 165) return lane.ink().removesInk(x, y, original) ? 1 : 0;
+        }
         var sa = a.candidates.get(0).shaft();
         var sb = b.candidates.get(0).shaft();
         double ax = (sa.left() + sa.right()) * .5,
@@ -1962,7 +1966,6 @@ public final class PrintedBeamSource {
         double gap = a.binding.gap() + (b.binding.gap() - a.binding.gap()) * f,
                 bottom = a.binding.bottom() + (b.binding.bottom() - a.binding.bottom()) * f;
         long context = ((long) a.id << 38) | ((long) b.id << 25) | x;
-        if (verified && (raw[y * w + x] & 255) < 165) return lane.ink().sample(x, y) >= 165 ? 1 : 0;
         if (verified) {
             work.take(16);
             var at = lane.track().at(x);
@@ -2003,6 +2006,7 @@ public final class PrintedBeamSource {
         var lane = a.binding.lane();
         if (lane.id() != b.binding.lane().id()) return 0;
         boolean verified = lane.track() != null && lane.track().verifiedAt(x);
+        if (verified) return lane.ink().removesInk(x, y) ? 1 : 0;
         var sa = a.candidates.get(0).shaft();
         var sb = b.candidates.get(0).shaft();
         double ax = (sa.left() + sa.right()) * .5,
@@ -2011,7 +2015,6 @@ public final class PrintedBeamSource {
         double gap = a.binding.gap() + (b.binding.gap() - a.binding.gap()) * f,
                 bottom = a.binding.bottom() + (b.binding.bottom() - a.binding.bottom()) * f;
         long context = Long.MIN_VALUE | ((long) a.id << 38) | ((long) b.id << 25) | x;
-        if (verified) return (raw[y * w + x] & 255) < 165 && lane.ink().sample(x, y) >= 165 ? 1 : 0;
         var cached = lane.witnesses().get(context);
         if (cached == null) {
             work.take((long) Math.ceil(gap * 10));

@@ -28,24 +28,7 @@ final class ObservedRuleSlideInk {
             tracks[index] = track;
             PrintedCurveRuleInk rule =
                     new PrintedCurveRuleInk(null, gray, width, height, 150, track);
-            for (int x = 0; x < width; x++) {
-                if (!track.verifiedAt(x)) continue;
-                float[] frame = track.at(x);
-                float top = frame[0] - 4 * frame[1];
-                for (int line = 0; line < 5; line++) {
-                    float center = top + line * frame[1];
-                    int lo = Math.max(0, (int) Math.ceil(center - frame[1] * .45f));
-                    int hi = Math.min(height - 1, (int) Math.floor(center + frame[1] * .45f));
-                    for (int y = lo; y <= hi; y++) {
-                        int at = y * width + x, value = rule.sample(x, y);
-                        int previous = (clean == null ? gray[at] : clean[at]) & 255;
-                        if (value > previous) {
-                            if (clean == null) clean = gray.clone();
-                            clean[at] = (byte) value;
-                        }
-                    }
-                }
-            }
+            clean = rule.lightenRuleBands(clean);
         }
         return clean == null ? null : new Prepared(clean, tracks);
     }
@@ -121,16 +104,15 @@ final class ObservedRuleSlideInk {
         int pixels = 0, columns = 0;
         for (int x = left; x <= right; x++) {
             double center = stroke.leftY() + (x - stroke.left()) * slope;
-            boolean ink = false;
-            for (int y = Math.max(0, (int) Math.ceil(center - 1.3));
-                    y <= Math.min(height - 1, (int) Math.floor(center + 1.3));
-                    y++)
-                if ((clean[y * width + x] & 255) < 150) {
-                    pixels++;
-                    ink = true;
-                }
-            if (ink) columns++;
+            int top = Math.max(0, (int) Math.ceil(center - 1.3));
+            int bottom = Math.min(height - 1, (int) Math.floor(center + 1.3));
+            int columnPixels = 0;
+            for (int y = top, at = top * width + x; y <= bottom; y++, at += width)
+                if ((clean[at] & 255) < 150) columnPixels++;
+            if (columnPixels == 0) continue;
+            pixels += columnPixels;
+            if (++columns >= 4 && pixels >= 8) return true;
         }
-        return pixels >= 8 && columns >= 4;
+        return false;
     }
 }
