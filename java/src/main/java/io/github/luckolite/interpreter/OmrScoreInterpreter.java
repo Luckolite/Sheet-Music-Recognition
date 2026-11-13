@@ -1742,7 +1742,7 @@ final class OmrScoreInterpreter {
                             head,
                             physicalStaff,
                             roundedLedgerGraces.contains(head),
-                            staffs)
+                            staffs, heads)
                     && !(recoveredShadedChordHeads.contains(head)
                             && ShadedChordHeadRecovery.hasLedgerRails(
                                     gray,
@@ -13193,6 +13193,13 @@ final class OmrScoreInterpreter {
      * head: require ledger evidence for both actual tones.
      */
     private static boolean hasHeadLedgerSupport(
+            byte[] labels, byte[] gray, int width, int height, Component head,
+            Staff staff, boolean roundedGrace, List<Staff> staffs) {
+        return hasHeadLedgerSupport(labels, gray, width, height, head, staff,
+                roundedGrace, staffs, List.of());
+    }
+
+    private static boolean hasHeadLedgerSupport(
             byte[] labels,
             byte[] gray,
             int width,
@@ -13200,7 +13207,7 @@ final class OmrScoreInterpreter {
             Component head,
             Staff staff,
             boolean roundedGrace,
-            List<Staff> staffs) {
+            List<Staff> staffs, List<Component> heads) {
         List<Component> parts = sideBySideSeconds(labels, width, head, staff.gap);
         if (parts.isEmpty()) parts = List.of(head);
         for (Component part : parts) {
@@ -13208,6 +13215,9 @@ final class OmrScoreInterpreter {
                 return false;
             // Existing admissions retain their original physical evidence and ownership.
             if (hasInnerLedgerInk(gray, width, height, part, staff, roundedGrace)) continue;
+            if (upperLedgerChord(gray, width, height, part, staff, heads)
+                    && !competingPrintedCore(labels, gray, width, height, part, staff, staffs))
+                continue;
             if (!(completeUpperLedgerChain(gray, width, height, part, staff)
                             || completeFourUpperLedgerChain(gray, width, height, part, staff))
                     || !completeUpperLedgerBody(gray, width, height, part, staff.pitchGap)
@@ -13215,6 +13225,51 @@ final class OmrScoreInterpreter {
                 return false;
         }
         return true;
+    }
+
+    /** An upper filled chord head can share a shaft through several short ledgers. */
+    private static boolean upperLedgerChord(
+            byte[] gray, int width, int height, Component head, Staff staff, List<Component> heads) {
+        float gap = staff.pitchGap;
+        if (gray == null || staff.top - head.centerY < gap * 3
+                || !filledBeamEndpointCore(gray, width, height, head, gap)) return false;
+        int[] shaft = attachedRawStem(gray, width, height, head, gap, 2, 170);
+        if (shaft == null || shaft[2] != 1 || shaft[1] < staff.top + gap * 2) return false;
+        boolean lowerOwner = false;
+        for (Component lower : heads) {
+            if (lower.centerY - head.centerY < gap * 2.7f
+                    || lower.centerY - head.centerY > gap * 5.2f
+                    || Math.abs(lower.centerX - head.centerX) > gap * .36f
+                    || !filledBeamEndpointCore(gray, width, height, lower, gap)) continue;
+            if (shaft[0] >= lower.minX - 2 && shaft[0] <= lower.minX + gap * .35f
+                    && shaft[1] >= lower.maxY + gap * 1.8f) {
+                lowerOwner = true;
+                break;
+            }
+        }
+        if (!lowerOwner) return false;
+        int cx = Math.round(head.centerX);
+        int from = Math.max(0, cx - Math.round(gap * .65f));
+        int to = Math.min(width - 1, cx + Math.round(gap * .65f));
+        int rules = 0;
+        for (int step = 1; staff.top - gap * step > head.centerY + gap * .35f; step++) {
+            int line = Math.round(staff.top - gap * step);
+            boolean found = false;
+            int tolerance = Math.round(gap * .25f);
+            for (int y = Math.max(0, line - tolerance);
+                    y <= Math.min(height - 1, line + tolerance); y++) {
+                if (!shortLedgerRule(gray, width, y, head, gap)
+                        || !ShadedLedgerRule.thin(gray, width, height, to, y, gap)) continue;
+                int ink = 0;
+                for (int x = from; x <= to; x++) if ((gray[y * width + x] & 255) < 165) ink++;
+                if (ink >= (to - from + 1) * .9f) {
+                    found = true;
+                    break;
+                }
+            }
+            if (found) rules++;
+        }
+        return rules >= 2;
     }
 
     private static int[] ledgerInkLimits(
@@ -23466,6 +23521,16 @@ final class OmrScoreInterpreter {
             Staff staff = nearestHeadStaff(staffs, fragment.centerY);
             if (staff == null) continue;
             float gap = staff.gap;
+            if (gap >= 8 && fragment.area > gap * gap * .8f
+                    && fragment.area <= gap * gap * 1.3f
+                    && fragment.maxX - fragment.minX + 1 > gap * 1.45f
+                    && fragment.maxX - fragment.minX + 1 <= gap * 1.85f
+                    && fragment.maxY - fragment.minY + 1 <= gap
+                    && attachedRawStem(gray, width, height, fragment, gap, 2, 170) == null
+                    && coveredBeamMask(gray, width, height, fragment, heads, gap)) {
+                rejected.add(fragment);
+                continue;
+            }
             if (gap < 8 || fragment.area > gap * gap * .8f
                     || fragment.maxX - fragment.minX + 1 > gap * 1.25f
                     || fragment.maxY - fragment.minY + 1 > gap * 1.05f) continue;
