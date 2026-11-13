@@ -2,8 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """Bundled, offline OCR for raster score text and scanned tablature frets."""
 
-import numpy as np
 import re
+from itertools import repeat
+
+import numpy as np
 
 
 def measure_numbers(words):
@@ -84,8 +86,12 @@ class LocalOcr:
         if result.boxes is None or result.txts is None:
             return []
         words = []
-        scores = result.scores if result.scores is not None else [1.0] * len(result.txts)
-        for box, value, score in zip(result.boxes, result.txts, scores):
+        scores = result.scores if result.scores is not None else repeat(1.0)
+        if len(result.boxes) == 0:
+            return words
+        minima = result.boxes.min(axis=1)
+        maxima = result.boxes.max(axis=1)
+        for low, high, value, score in zip(minima, maxima, result.txts, scores):
             value = value.strip()
             # A tab string crossing a fret can be read as a leading minus sign.
             # Negative frets do not exist, so retain the printed digit evidence.
@@ -94,10 +100,12 @@ class LocalOcr:
                 value = numeric
             if score < .5 or not value or len(value.encode("utf-8")) > 10000:
                 continue
-            left = max(0.0, min(1.0, float(np.min(box[:, 0])) / width))
-            right = max(0.0, min(1.0, float(np.max(box[:, 0])) / width))
-            top = max(0.0, min(1.0, float(np.min(box[:, 1])) / height))
-            bottom = max(0.0, min(1.0, float(np.max(box[:, 1])) / height))
+            left = max(0.0, min(1.0, float(low[0]) / width))
+            right = max(0.0, min(1.0, float(high[0]) / width))
+            top = max(0.0, min(1.0, float(low[1]) / height))
+            bottom = max(0.0, min(1.0, float(high[1]) / height))
             if left < right and top < bottom:
                 words.append(dict(text=value, left=left, top=top, right=right, bottom=bottom))
-        return words[:10000]
+                if len(words) == 10000:
+                    break
+        return words
