@@ -7,6 +7,8 @@ import math
 import struct
 import subprocess
 import tempfile
+from bisect import bisect_left
+from collections import defaultdict
 from pathlib import Path
 from .runtime import java_executable
 from .navigation import arrangement_ranges, require_retained_navigation
@@ -240,23 +242,56 @@ def _resolve_pedal(expression, page):
     return expression
 
 
-def _active_seconds(performance, beat):
-    seconds, end, bpm = 0., 0., performance['openingBpm']
-    for segment in performance['segments']:
-        first, last, a, b = (segment[k] for k in ('startBeat', 'endBeat', 'startBpm', 'endBpm'))
-        length = min(beat, last)-first
-        if length > 0:
-            slope = (b-a)/(last-first)
-            seconds += 60*length/a if abs(slope) < 1e-12 else 60/slope*math.log1p(slope*length/a)
-        end, bpm = last, b
-        if beat <= last:
-            return seconds
-    return seconds+max(0, beat-end)*60/bpm
+def _integrate_tempo(length, bpm, slope):
+    if abs(slope) < 1e-12:
+        return 60 * length / bpm
+    return 60 / slope * math.log1p(slope * length / bpm)
 
 
-def _seconds(performance, beat, after):
-    return _active_seconds(performance, beat)+sum(h['seconds'] for h in performance['holds']
-        if h['beat'] < beat or after and math.isclose(h['beat'], beat, abs_tol=1e-8))
+class _PlaybackClock:
+    """Index the Java bridge's ordered tempo segments and holds once per route."""
+
+    def __init__(self, performance):
+        self.segment_ends = []
+        self.segments = []
+        self.active_prefix = [0.]
+        self.final_bpm = performance['openingBpm']
+        for segment in performance['segments']:
+            first, last = segment['startBeat'], segment['endBeat']
+            start_bpm, self.final_bpm = segment['startBpm'], segment['endBpm']
+            slope = (self.final_bpm - start_bpm) / (last - first)
+            self.segment_ends.append(last)
+            self.segments.append((first, start_bpm, slope))
+            self.active_prefix.append(
+                self.active_prefix[-1] + _integrate_tempo(last - first, start_bpm, slope))
+
+        self.hold_beats = []
+        self.hold_prefix = [0.]
+        self.sustained_beats = defaultdict(list)
+        for hold in performance['holds']:
+            beat = hold['beat']
+            self.hold_beats.append(beat)
+            self.hold_prefix.append(self.hold_prefix[-1] + hold['seconds'])
+            for target in hold['sustainedTargets']:
+                self.sustained_beats[target].append(beat)
+
+    def seconds(self, beat, after):
+        segment = bisect_left(self.segment_ends, beat)
+        active = self.active_prefix[segment]
+        if segment < len(self.segments):
+            first, bpm, slope = self.segments[segment]
+            if beat > first:
+                active += _integrate_tempo(beat - first, bpm, slope)
+        else:
+            end = self.segment_ends[-1] if self.segment_ends else 0.
+            active += max(0, beat - end) * 60 / self.final_bpm
+
+        hold = bisect_left(self.hold_beats, beat)
+        if after:
+            while hold < len(self.hold_beats) and math.isclose(
+                    self.hold_beats[hold], beat, abs_tol=1e-8):
+                hold += 1
+        return active + self.hold_prefix[hold]
 
 
 def _perform_one(pages, bpm, slide_group=0):
@@ -393,6 +428,7 @@ def _perform_one(pages, bpm, slide_group=0):
     data += encode(directions, expressions, len(beats))
     result = _bridge(data)
     require_retained_navigation(pages, result.get('navigationOccurrences'))
+    clock = _PlaybackClock(result)
     slide_visits = {}
     if any(payload.get('_slideOrigins') for payload in payloads):
         route = result.get('navigationOccurrences')
@@ -418,6 +454,7 @@ def _perform_one(pages, bpm, slide_group=0):
     for interval in result['notes']:
         payload = payloads[interval['sourceIndex']]
         identifier = interval['performanceId']; start, end = interval['startBeat'], interval['endBeat']
+        sustained_beats = clock.sustained_beats.get(identifier, ())
         subdivision = payload.get('tremoloBeats', 0)
         if subdivision not in (0, .5, .25, .125, .0625):
             raise ValueError('Unsupported tremolo subdivision')
@@ -429,9 +466,9 @@ def _perform_one(pages, bpm, slide_group=0):
             (ordinal, start+ordinal*subdivision if subdivision else start,
              min(end,start+(ordinal+1)*subdivision) if subdivision else end) for ordinal in range(count))
         for ordinal, a, b in windows:
-            held = any(identifier in hold['sustainedTargets'] and
-                       (a < hold['beat'] <= b+1e-8 if pair else math.isclose(hold['beat'], b, abs_tol=1e-8)) for hold in result['holds'])
-            start_seconds, end_seconds = _seconds(result, a, True), _seconds(result, b, held)
+            held = any(a < hold <= b+1e-8 if pair else math.isclose(hold, b, abs_tol=1e-8)
+                       for hold in sustained_beats)
+            start_seconds, end_seconds = clock.seconds(a, True), clock.seconds(b, held)
             note = dict(payload)
             note.update(startBeat=start_seconds*2, durationBeats=(end_seconds-start_seconds)*2,
                         tiedFromPrevious=False, measureIndex=0,
@@ -445,9 +482,7 @@ def _perform_one(pages, bpm, slide_group=0):
                     attack=not interval['clippedEntry'] and ordinal == 0 and not payload.get('tiedFromPrevious', False),
                     clippedEntry=interval['clippedEntry'] or ordinal != 0,
                     clippedRelease=interval['clippedRelease'] or b != end,
-                    held=any(identifier in hold['sustainedTargets']
-                             and interval['startBeat'] < hold['beat'] <= interval['endBeat']
-                             for hold in result['holds']))
+                    held=any(start < hold <= end for hold in sustained_beats))
             if event_kind(note) == 'UNPITCHED':
                 note['_unpitchedAttackId'] = identifier
                 note['_unpitchedContinuation'] = False
@@ -462,7 +497,7 @@ def _perform_one(pages, bpm, slide_group=0):
     duration = result['durationSeconds']*2
     return dict(events=events, measureBeats=[duration] if duration else [], totalBeats=duration,
                 score=dict(tempoChanges=[]), pedalControls=[dict(control,
-                    beat=_seconds(result, control['beat'], True)*2) for control in result['pedalControls']]), result
+                    beat=clock.seconds(control['beat'], True)*2) for control in result['pedalControls']]), result
 
 
 def perform_expressions(document, bpm):

@@ -6,7 +6,7 @@ import math
 import struct
 import unittest
 import numpy as np
-from sheet_music_recognition.performance import perform_expressions
+from sheet_music_recognition.performance import _PlaybackClock, perform_expressions
 from sheet_music_recognition.midi import performance_events
 from sheet_music_recognition.audio import _sample_events, _pcm_blocks, SAMPLE_RATE
 
@@ -42,6 +42,29 @@ def rest_fermata_document(duration=4, supplied_scope='UNRESOLVED'):
 
 
 class ExpressivePerformanceTests(unittest.TestCase):
+    def test_indexed_clock_preserves_both_sides_of_a_hold(self):
+        clock = _PlaybackClock(dict(
+            openingBpm=120,
+            segments=[
+                dict(startBeat=0, endBeat=2, startBpm=120, endBpm=120),
+                dict(startBeat=2, endBeat=4, startBpm=120, endBpm=60),
+            ],
+            holds=[
+                dict(beat=2, seconds=.25, sustainedTargets=['first']),
+                dict(beat=4, seconds=.5, sustainedTargets=['last']),
+            ],
+        ))
+        self.assertEqual(clock.seconds(2, False), 1)
+        self.assertEqual(clock.seconds(2, True), 1.25)
+        just_before = math.nextafter(2., 0.)
+        self.assertEqual(clock.seconds(just_before, False), just_before / 2)
+        self.assertEqual(clock.seconds(just_before, True), just_before / 2 + .25)
+        ramp = 2 * math.log(2)
+        self.assertEqual(clock.seconds(4, False), 1 + ramp + .25)
+        self.assertEqual(clock.seconds(4, True), 1 + ramp + .75)
+        self.assertEqual(clock.seconds(5, False), 1 + ramp + 1 + .75)
+        self.assertEqual(clock.sustained_beats['first'], [2])
+
     def test_fractional_repeat_endpoint_uses_the_exact_expressive_clock(self):
         closing_span = 5 / 6
         doc = document([expression('RITENUTO')])
