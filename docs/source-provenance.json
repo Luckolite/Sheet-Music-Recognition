@@ -1618,6 +1618,12 @@
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/ActiveScoreNotes.java"
     },
     "ArtificialHarmonics.java": {
+      "unlabelled_harmonic_touch_review": {
+        "reviewed_app_commit": "6dd91dd984d49f549d1916941090eae5643c3653",
+        "app_lf_sha256": "7505f7f5c8faf0df1b6881b36f32325bc6dda1c00edbf72b023163e872b22561",
+        "standalone_lf_sha256": "e0d16b84a27efdba5077012e050e84c8d7872a7345fd57f4e8a187981592b8e1",
+        "scope": "Matching shared-shaft diamond proof for beamed harmonics without a separate upper head. A crossing rule can split the enclosed counter into two pockets. Broader source drift remains open."
+      },
       "shaft_paired_fourth_review": {
         "reviewed_app_commit": "d6d553226d54481b0d5d92200a3338f8b41a98c4",
         "app_lf_sha256": "c1f5d97d3cd7297d4e031ba847836a8b060d7f094bc724f3ddde576d7d7ebd54",
