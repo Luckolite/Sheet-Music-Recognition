@@ -3,7 +3,11 @@
 // Adapted from Music Sheets: standalone package and platform-independent diagnostics.
 package io.github.luckolite.interpreter;
 
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.VarHandle;
+import java.nio.ByteOrder;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
@@ -12,6 +16,10 @@ import java.util.Map;
 /** Recovers long five-line staffs directly from page pixels when the semantic mask is incomplete. */
 final class RawStaffLineDetector {
     private static final int DARK = 170;
+    private static final VarHandle GRAY_WORDS =
+            MethodHandles.byteArrayViewVarHandle(long[].class, ByteOrder.nativeOrder());
+    private static final long BYTE_HIGH_BITS = 0x8080808080808080L;
+    private static final long BRIGHT_LOW_BITS = 0x0101010101010101L * (DARK + 1 - 128);
 
     private RawStaffLineDetector() {}
 
@@ -31,24 +39,46 @@ final class RawStaffLineDetector {
 
     private record Candidate(int[] rows, float gap, float score) {}
     private record RuleProbe(int row, int flank, int minimumRun) {}
+    private static final Comparator<Candidate> BY_DESCENDING_SCORE =
+            Comparator.comparingDouble(Candidate::score).reversed();
 
     static List<StaffLines> detect(byte[] gray, int width, int height) {
-        if (gray == null || width <= 0 || height <= 0 || gray.length != (long) width * height)
+        if (gray == null || width < 24 || height < 5 || gray.length != (long) width * height)
             return List.of();
 
+        int minimumStrength = Math.max(24, Math.round(width * .25f));
         int[] rowStrength = new int[height];
-        for (int y = 0; y < height; y++) {
-            int offset = y * width;
-            for (int x = 0; x < width; x++) if ((gray[offset + x] & 0xff) <= DARK) rowStrength[y]++;
+        int rowsNeeded = 5;
+        for (int y = 0, rowStart = 0; y < height; y++, rowStart += width) {
+            int strength = countDarkRow(gray, rowStart, width);
+            rowStrength[y] = strength;
+            if (rowsNeeded > 0) {
+                if (strength >= minimumStrength) rowsNeeded--;
+                if (height - 1 - y < rowsNeeded) return List.of();
+            }
         }
 
-        int minimumStrength = Math.max(24, Math.round(width * .25f));
-        List<StaffLines> result =
-                new ArrayList<>(
-                        detectFromStrength(
-                                rowStrength, minimumStrength, height, false, gray, width));
+        List<StaffLines> detected =
+                detectFromStrength(rowStrength, minimumStrength, height, false, gray, width);
+        if (detected.size() < 4) return detected;
+        List<StaffLines> result = new ArrayList<>(detected);
         retainDominantStaffScale(result, gray, width, height);
         return List.copyOf(result);
+    }
+
+    private static int countDarkRow(byte[] gray, int start, int width) {
+        int at = start, end = start + width, strength = 0;
+        int wordEnd = start + width - width % Long.BYTES;
+        for (; at < wordEnd; at += Long.BYTES) {
+            long word = (long) GRAY_WORDS.get(gray, at);
+            // Set each high bit before subtracting so no byte can borrow from its neighbor.
+            long bright = ((word | BYTE_HIGH_BITS) - BRIGHT_LOW_BITS) & word & BYTE_HIGH_BITS;
+            strength += Long.BYTES - Long.bitCount(bright);
+        }
+        for (; at < end; at++) {
+            strength += ((gray[at] & 0xff) - (DARK + 1)) >>> 31;
+        }
+        return strength;
     }
 
     /** Finds five-line groups in an already deskewed projection. Shared with the semantic
@@ -486,6 +516,7 @@ final class RawStaffLineDetector {
         List<Integer> peaks = localPeaks(rowStrength, minimumStrength, quarterBudget);
         List<Candidate> candidates =
                 staffCandidates(peaks, rowStrength, minimumStrength, height, quarterBudget);
+        if (quarterBudget == null && candidates.isEmpty()) return List.of();
 
         // Highest-confidence candidate wins when nearby notation creates multiple possible groups
         // around one staff. Staffs cannot overlap, so accepting the best groups first avoids an
@@ -494,27 +525,30 @@ final class RawStaffLineDetector {
                 quarterBudget,
                 candidates,
                 (quarterBudget == null || quarterBudget.allocate(1, 256)
-                        ? Comparator.comparingDouble(Candidate::score).reversed()
+                        ? BY_DESCENDING_SCORE
                         : null));
         List<StaffLines> result =
                 (quarterBudget == null || quarterBudget.allocate(1, 256)
                         ? new ArrayList<>()
                         : null);
         Map<RuleProbe, Boolean> ruleEvidence = gray == null ? null : new HashMap<>();
+        int minimumRuleSupport = Math.max(24, Math.round(width * .12f));
         {
             if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 64);
             for (Candidate candidate : candidates) {
                 if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
 
+                int top = candidate.rows()[0], bottom = candidate.rows()[4];
+                float gap = candidate.gap();
                 boolean overlaps = false;
                 {
                     if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 64);
                     for (StaffLines accepted : result) {
                         if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
 
-                        float margin = Math.min(candidate.gap(), accepted.gap()) * .75f;
-                        if (candidate.rows()[0] <= accepted.bottom() + margin
-                                && candidate.rows()[4] >= accepted.top() - margin) {
+                        float margin = Math.min(gap, accepted.gap()) * .75f;
+                        if (top <= accepted.bottom() + margin
+                                && bottom >= accepted.top() - margin) {
                             overlaps = true;
                             break;
                         }
@@ -522,13 +556,14 @@ final class RawStaffLineDetector {
                 }
 
                 if (!overlaps && gray != null
-                        && !hasPrintedRules(candidate, gray, width, height, ruleEvidence)) continue;
+                        && !hasPrintedRules(candidate, gray, width, height, minimumRuleSupport,
+                                ruleEvidence)) continue;
                 if (!overlaps)
                     FaintQuarterRestInk.add(
                             quarterBudget,
                             result,
                             (quarterBudget == null || quarterBudget.allocate(1, 256)
-                                    ? new StaffLines(candidate.rows(), candidate.gap())
+                                    ? new StaffLines(candidate.rows(), gap)
                                     : null));
             }
         }
@@ -549,10 +584,9 @@ final class RawStaffLineDetector {
 
     /** Shadows can form periodic dark projection peaks without any thin printed rules. */
     private static boolean hasPrintedRules(
-            Candidate candidate, byte[] gray, int width, int height,
+            Candidate candidate, byte[] gray, int width, int height, int minimum,
             Map<RuleProbe, Boolean> evidence) {
         int flank = Math.max(2, Math.round(candidate.gap() * .32f));
-        int minimum = Math.max(24, Math.round(width * .12f));
         int minimumRun = Math.max(12, Math.round(candidate.gap() * 3));
         for (int row : candidate.rows()) {
             var probe = new RuleProbe(row, flank, minimumRun);
@@ -585,20 +619,26 @@ final class RawStaffLineDetector {
     private static boolean printedRuleAt(
             byte[] gray, int width, int height, int y, int probe,
             int minimum, int minimumRun, int inkLimit) {
-        if (y < probe || y >= height - probe) return false;
-        int row = y * width, above = (y - probe) * width, below = (y + probe) * width;
-        int count = 0, run = 0;
+        if (y < probe || y >= height - probe || minimum > width || minimumRun > width)
+            return false;
+        int row = y * width, flankOffset = probe * width;
+        int end = row + width, remaining = minimum, run = 0;
         boolean continuous = false;
-        for (int x = 0; x < width; x++) {
-            int ink = gray[row + x] & 255;
+        for (int at = row; at < end; at++) {
+            int ink = gray[at] & 255;
             if (ink <= inkLimit
-                    && (gray[above + x] & 255) >= ink + 12
-                    && (gray[below + x] & 255) >= ink + 12) {
-                count++;
-                if (++run >= minimumRun) continuous = true;
+                    && (gray[at - flankOffset] & 255) >= ink + 12
+                    && (gray[at + flankOffset] & 255) >= ink + 12) {
+                remaining--;
+                if (!continuous && ++run >= minimumRun) continuous = true;
                 // Require both a continuous segment and aggregate page-wide support.
-                if (count >= minimum && continuous) return true;
-            } else run = 0;
+                if (remaining <= 0 && continuous) return true;
+            } else {
+                run = 0;
+                int columnsLeft = end - at - 1;
+                if (columnsLeft < remaining || (!continuous && columnsLeft < minimumRun))
+                    return false;
+            }
         }
         return false;
     }
@@ -764,7 +804,8 @@ final class RawStaffLineDetector {
             for (int row = 0; row < strength.length; row++) {
                 if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
 
-                if (strength[row] < minimumStrength) continue;
+                int rowStrength = strength[row];
+                if (rowStrength < minimumStrength) continue;
                 boolean maximum = true, prominent = false;
                 {
                     if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
@@ -773,17 +814,23 @@ final class RawStaffLineDetector {
                             check++) {
                         if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
 
-                        if (strength[check] > strength[row]) maximum = false;
-                        if (strength[check] < strength[row]) prominent = true;
+                        if (strength[check] > rowStrength) {
+                            maximum = false;
+                            if (quarterBudget == null) break;
+                        }
+                        if (strength[check] < rowStrength) prominent = true;
                     }
                 }
 
-                if (maximum && prominent)
-                    FaintQuarterRestInk.add(
+                if (maximum && prominent) {
+                    if (quarterBudget == null) mergePeak(raw, row, strength, null);
+                    else FaintQuarterRestInk.add(
                             quarterBudget, raw, FaintQuarterRestInk.boxInt(quarterBudget, row));
+                }
             }
         }
 
+        if (quarterBudget == null) return raw;
         // A thick or antialiased staff line may have two equally dark center rows. Keep only its
         // strongest center before looking for the five-line periodic pattern.
         List<Integer> merged =
@@ -795,22 +842,21 @@ final class RawStaffLineDetector {
             for (int row : raw) {
                 if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
 
-                if (merged.isEmpty() || row - merged.get(merged.size() - 1) > 3) {
-                    FaintQuarterRestInk.add(
-                            quarterBudget, merged, FaintQuarterRestInk.boxInt(quarterBudget, row));
-                } else {
-                    int prior = merged.get(merged.size() - 1);
-                    if (strength[row] > strength[prior])
-                        FaintQuarterRestInk.set(
-                                quarterBudget,
-                                merged,
-                                merged.size() - 1,
-                                FaintQuarterRestInk.boxInt(quarterBudget, row));
-                }
+                mergePeak(merged, row, strength, quarterBudget);
             }
         }
 
         return merged;
+    }
+
+    private static void mergePeak(
+            List<Integer> peaks, int row, int[] strength, FaintQuarterRestInk.Budget budget) {
+        int last = peaks.size() - 1;
+        if (last < 0 || row - peaks.get(last) > 3) {
+            FaintQuarterRestInk.add(budget, peaks, FaintQuarterRestInk.boxInt(budget, row));
+        } else if (strength[row] > strength[peaks.get(last)]) {
+            FaintQuarterRestInk.set(budget, peaks, last, FaintQuarterRestInk.boxInt(budget, row));
+        }
     }
 
     private static List<Candidate> staffCandidates(
@@ -831,19 +877,34 @@ final class RawStaffLineDetector {
                         ? new ArrayList<>()
                         : null);
         float maximumGap = Math.max(40f, height * .035f);
-        int[] scratchRows = quarterBudget == null && peaks.size() >= 5 ? new int[5] : null;
+        float minimumScore = minimumStrength * 4.5f;
+        int peakCount = peaks.size();
+        int[] peakRows = null;
+        int[] scratchRows = null;
+        int[] rangeStarts = null;
+        if (quarterBudget == null && peakCount >= 5) {
+            peakRows = new int[peakCount];
+            for (int i = 0; i < peakCount; i++) peakRows[i] = peaks.get(i);
+            scratchRows = new int[5];
+            rangeStarts = new int[3];
+        }
         {
             if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
-            for (int first = 0; first + 4 < peaks.size(); first++) {
+            for (int first = 0; first + 4 < peakCount; first++) {
                 if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
 
-                int top = peaks.get(first);
+                int top = peakRows == null ? peaks.get(first) : peakRows[first];
+                int topStrength = quarterBudget == null ? strength[top] : 0;
+                if (scratchRows != null) {
+                    scratchRows[0] = top;
+                    Arrays.fill(rangeStarts, first + 1);
+                }
                 {
                     if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
-                    for (int last = first + 4; last < peaks.size(); last++) {
+                    for (int last = first + 4; last < peakCount; last++) {
                         if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
 
-                        int bottom = peaks.get(last);
+                        int bottom = peakRows == null ? peaks.get(last) : peakRows[last];
                         float gap = (bottom - top) / 4f;
                         if (gap < 2.5f) continue;
                         if (gap > maximumGap) break;
@@ -855,11 +916,8 @@ final class RawStaffLineDetector {
                                         : (quarterBudget.allocate(6, 72)
                                         ? new int[] {top, -1, -1, -1, bottom}
                                         : null);
-                        if (quarterBudget == null) {
-                            rows[0] = top;
-                            rows[4] = bottom;
-                        }
                         float error = 0f;
+                        int totalStrength = quarterBudget == null ? topStrength + strength[bottom] : 0;
                         int previousIndex = first;
                         boolean complete = true;
                         {
@@ -871,18 +929,28 @@ final class RawStaffLineDetector {
 
                                 float expected = top + line * gap;
                                 int bestIndex = -1;
+                                int bestRow = -1;
                                 float bestDistance = Float.MAX_VALUE;
                                 {
                                     if (quarterBudget != null)
                                         FaintQuarterRestInk.charge(quarterBudget, 1, 0);
                                     int start = previousIndex + 1;
-                                    if (quarterBudget == null)
-                                        start = firstPeakInRange(peaks, start, last, expected, tolerance);
+                                    if (rangeStarts != null) {
+                                        int cursor = rangeStarts[line - 1];
+                                        // Reuse the lower bound, correcting for float rounding.
+                                        while (cursor > first + 1
+                                                && expected - peakRows[cursor - 1] <= tolerance)
+                                            cursor--;
+                                        while (cursor < last && expected - peakRows[cursor] > tolerance)
+                                            cursor++;
+                                        rangeStarts[line - 1] = cursor;
+                                        start = Math.max(start, cursor);
+                                    }
                                     for (int index = start; index < last; index++) {
                                         if (quarterBudget != null)
                                             FaintQuarterRestInk.charge(quarterBudget, 1, 0);
 
-                                        int row = peaks.get(index);
+                                        int row = peakRows == null ? peaks.get(index) : peakRows[index];
                                         float distance = Math.abs(row - expected);
                                         if (quarterBudget == null && row > expected
                                                 && (distance > tolerance || distance > bestDistance))
@@ -892,18 +960,23 @@ final class RawStaffLineDetector {
                                                 || (distance == bestDistance
                                                         && bestIndex >= 0
                                                         && strength[row]
-                                                                > strength[peaks.get(bestIndex)])) {
+                                                                > strength[bestRow])) {
                                             bestIndex = index;
+                                            bestRow = row;
                                             bestDistance = distance;
+                                            // Below the float precision boundary, distinct rows cannot tie at zero.
+                                            if (quarterBudget == null && distance == 0f
+                                                    && row < (1 << 24) - 1) break;
                                         }
                                     }
                                 }
 
-                                if (bestIndex < 0) {
+                                if (bestIndex < 0 || (quarterBudget == null && last - bestIndex < 4 - line)) {
                                     complete = false;
                                     break;
                                 }
-                                rows[line] = peaks.get(bestIndex);
+                                rows[line] = bestRow;
+                                if (quarterBudget == null) totalStrength += strength[bestRow];
                                 previousIndex = bestIndex;
                                 // Evenly spaced printed lines need not land on integer pixels. Do
                                 // not
@@ -916,25 +989,27 @@ final class RawStaffLineDetector {
 
                         if (!complete) continue;
 
-                        int totalStrength = 0;
-                        {
-                            if (quarterBudget != null)
-                                FaintQuarterRestInk.charge(quarterBudget, 1, 64);
+                        if (quarterBudget != null) {
+                            FaintQuarterRestInk.charge(quarterBudget, 1, 64);
                             for (int row : rows) {
-                                if (quarterBudget != null)
-                                    FaintQuarterRestInk.charge(quarterBudget, 1, 0);
+                                FaintQuarterRestInk.charge(quarterBudget, 1, 0);
                                 totalStrength += strength[row];
                             }
                         }
 
                         float score = totalStrength - error * minimumStrength * .75f;
-                        if (score >= minimumStrength * 4.5f)
+                        if (score < minimumScore) continue;
+                        if (quarterBudget == null) {
+                            rows[4] = bottom;
+                            result.add(new Candidate(rows.clone(), gap, score));
+                        } else {
                             FaintQuarterRestInk.add(
                                     quarterBudget,
                                     result,
-                                    (quarterBudget == null || quarterBudget.allocate(1, 256)
-                                            ? new Candidate(quarterBudget == null ? rows.clone() : rows, gap, score)
+                                    (quarterBudget.allocate(1, 256)
+                                            ? new Candidate(rows, gap, score)
                                             : null));
+                        }
                     }
                 }
             }
@@ -943,13 +1018,4 @@ final class RawStaffLineDetector {
         return result;
     }
 
-    private static int firstPeakInRange(
-            List<Integer> peaks, int start, int end, float expected, float tolerance) {
-        while (start < end) {
-            int middle = (start + end) >>> 1;
-            if (expected - peaks.get(middle) > tolerance) start = middle + 1;
-            else end = middle;
-        }
-        return start;
-    }
 }
