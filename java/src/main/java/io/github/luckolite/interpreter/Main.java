@@ -39,7 +39,8 @@ public final class Main {
         int width, height;
         var annotations = SheetInterpreter.Annotations.EMPTY;
         try (var in =
-                new DataInputStream(new GZIPInputStream(Files.newInputStream(Path.of(args[0]))))) {
+                new DataInputStream(new BufferedInputStream(
+                        new GZIPInputStream(Files.newInputStream(Path.of(args[0])), 32 * 1024)))) {
             if (in.readInt() != 0x52535031) throw new IOException("Not an RSP1 page");
             width = in.readInt();
             height = in.readInt();
@@ -61,25 +62,12 @@ public final class Main {
                 var numbers = readNumbers(in);
                 var tempos = readNumbers(in);
                 var rests = readNumbers(in);
-                var words = new ArrayList<SheetInterpreter.Word>();
-                int count = readCount(in);
-                for (int i = 0; i < count; i++) {
-                    int length = readCount(in);
-                    byte[] text = in.readNBytes(length);
-                    if (text.length != length) throw new EOFException();
-                    words.add(
-                            new SheetInterpreter.Word(
-                                    new String(text, StandardCharsets.UTF_8),
-                                    in.readFloat(),
-                                    in.readFloat(),
-                                    in.readFloat(),
-                                    in.readFloat()));
-                }
+                var words = readWords(in, readCount(in));
                 var meters = new ArrayList<ScoreMeterChange>();
-                count = readCount(in);
+                int count = readCount(in);
                 for (int i = 0; i < count; i++)
                     meters.add(new ScoreMeterChange(in.readInt(), in.readInt(), in.readInt()));
-                var nativeTabWords = new ArrayList<SheetInterpreter.Word>();
+                List<SheetInterpreter.Word> nativeTabWords = List.of();
                 int next = in.read();
                 if (next != -1) {
                     count =
@@ -89,18 +77,7 @@ public final class Main {
                                     | in.readUnsignedByte();
                     if (count < 0 || count > 10000)
                         throw new IOException("Annotation limit exceeded");
-                    for (int i = 0; i < count; i++) {
-                        int length = readCount(in);
-                        byte[] text = in.readNBytes(length);
-                        if (text.length != length) throw new EOFException();
-                        nativeTabWords.add(
-                                new SheetInterpreter.Word(
-                                        new String(text, StandardCharsets.UTF_8),
-                                        in.readFloat(),
-                                        in.readFloat(),
-                                        in.readFloat(),
-                                        in.readFloat()));
-                    }
+                    nativeTabWords = readWords(in, count);
                 }
                 if (in.read() != -1) throw new IOException("Unexpected trailing bytes");
                 annotations =
@@ -515,6 +492,20 @@ public final class Main {
                 && start.doubleValue() >= 0
                 && Double.isFinite(duration.doubleValue())
                 && duration.doubleValue() > 0;
+    }
+
+    private static List<SheetInterpreter.Word> readWords(DataInputStream in, int count)
+            throws IOException {
+        var words = new ArrayList<SheetInterpreter.Word>(count);
+        for (int i = 0; i < count; i++) {
+            int length = readCount(in);
+            byte[] text = in.readNBytes(length);
+            if (text.length != length) throw new EOFException();
+            words.add(new SheetInterpreter.Word(
+                    new String(text, StandardCharsets.UTF_8),
+                    in.readFloat(), in.readFloat(), in.readFloat(), in.readFloat()));
+        }
+        return words;
     }
 
     private static int readCount(DataInputStream in) throws IOException {
