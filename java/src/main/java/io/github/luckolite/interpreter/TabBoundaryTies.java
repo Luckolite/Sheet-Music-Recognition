@@ -5,13 +5,25 @@ package io.github.luckolite.interpreter;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /** Optical system shoulders with explicit string/fret/tuning identity. */
 public final class TabBoundaryTies {
     private TabBoundaryTies() {}
 
     private record Edge(TablatureDecoder.Fret fret, int note, int directions) {}
+
+    private record VoiceMeasure(int measure, int staff, int staffCount) {}
+
+    private static final class EdgePositions {
+        float firstNote = Float.POSITIVE_INFINITY;
+        float lastNote = Float.NEGATIVE_INFINITY;
+        float firstRest = Float.POSITIVE_INFINITY;
+        float lastRest = Float.NEGATIVE_INFINITY;
+        boolean hasRest;
+    }
 
     public static ScorePageInterpretation apply(
             ScorePageInterpretation score,
@@ -46,11 +58,12 @@ public final class TabBoundaryTies {
         // Mixed or paired notation owns its own rhythmic/tie evidence.
         if (systems.stream().anyMatch(t -> t.standardTop() >= 0)) return score;
         byte[] clean = TabFretRaster.clean(gray, width, height, systems);
+        var positions = edgePositions(score);
         var incoming = new ArrayList<List<Edge>>();
         var outgoing = new ArrayList<List<Edge>>();
         for (var system : systems) {
-            incoming.add(edges(score, system, clean, width, height, true));
-            outgoing.add(edges(score, system, clean, width, height, false));
+            incoming.add(edges(score, system, clean, width, height, true, positions));
+            outgoing.add(edges(score, system, clean, width, height, false, positions));
         }
         var notes = new ArrayList<>(score.notes());
         // Only actual adjacent systems can establish a within-page predecessor.
@@ -76,7 +89,9 @@ public final class TabBoundaryTies {
                             || (start.directions() & end.directions()) == 0) continue;
                     var a = score.notes().get(start.note());
                     var b = score.notes().get(end.note());
-                    if (samePitchVoice(a, b) && uninterrupted(score, a, b))
+                    // Edge collection already proved both sides free of intervening notes/rests.
+                    if (samePitchVoice(a, b) && a.measureIndex() + 1 == b.measureIndex()
+                            && noDirectionAt(score, b.measureIndex()))
                         notes.set(end.note(), tied(notes.get(end.note())));
                 }
         }
@@ -123,7 +138,8 @@ public final class TabBoundaryTies {
             byte[] clean,
             int width,
             int height,
-            boolean incoming) {
+            boolean incoming,
+            Map<VoiceMeasure, EdgePositions> positions) {
         if (tab.frets().isEmpty() || tab.bars().size() < 2) return List.of();
         var bars = new ArrayList<>(tab.bars());
         bars.sort(Float::compare);
@@ -151,7 +167,7 @@ public final class TabBoundaryTies {
             if (note.kind() != ScoreNoteEvent.Kind.PITCHED
                     || !allowedMarks(note.articulations(), incoming)
                     || note.clefBottomDiatonic() == ScoreNoteEvent.CLEF_UNKNOWN
-                    || !clearSide(score, note, incoming)) continue;
+                    || !clearSide(positions, note, incoming)) continue;
             int directions = shoulders(clean, width, height, tab, fret, boundary, incoming);
             if (directions != 0) result.add(new Edge(fret, mapped, directions));
         }
@@ -254,36 +270,37 @@ public final class TabBoundaryTies {
         return tuning;
     }
 
-    private static boolean uninterrupted(
-            ScorePageInterpretation score, ScoreNoteEvent a, ScoreNoteEvent b) {
-        if (a.measureIndex() + 1 != b.measureIndex()
-                || !clearSide(score, a, false)
-                || !clearSide(score, b, true)) return false;
-        for (var direction : score.playbackDirections())
-            if (direction.measureBoundary() == b.measureIndex()) return false;
-        return true;
+    private static Map<VoiceMeasure, EdgePositions> edgePositions(ScorePageInterpretation score) {
+        var positions = new HashMap<VoiceMeasure, EdgePositions>();
+        for (var note : score.notes()) {
+            float at = note.positionInMeasure();
+            if (Float.isNaN(at)) continue;
+            var key = new VoiceMeasure(note.measureIndex(), note.staffIndex(), note.staffCount());
+            var edge = positions.computeIfAbsent(key, unused -> new EdgePositions());
+            edge.firstNote = Math.min(edge.firstNote, at);
+            edge.lastNote = Math.max(edge.lastNote, at);
+        }
+        for (var rest : score.rests()) {
+            float at = rest.positionInMeasure();
+            if (Float.isNaN(at)) continue;
+            var key = new VoiceMeasure(rest.measureIndex(), rest.staffIndex(), rest.staffCount());
+            var edge = positions.computeIfAbsent(key, unused -> new EdgePositions());
+            edge.firstRest = Math.min(edge.firstRest, at);
+            edge.lastRest = Math.max(edge.lastRest, at);
+            edge.hasRest = true;
+        }
+        return positions;
     }
 
     private static boolean clearSide(
-            ScorePageInterpretation score, ScoreNoteEvent note, boolean incoming) {
+            Map<VoiceMeasure, EdgePositions> positions, ScoreNoteEvent note, boolean incoming) {
         if (incoming ? note.leadingRestBeats() > 0 : note.followingRestBeats() > 0) return false;
-        for (var other : score.notes()) {
-            if (other.staffIndex() != note.staffIndex()
-                    || other.staffCount() != note.staffCount()
-                    || other.measureIndex() != note.measureIndex()) continue;
-            if (incoming
-                    ? other.positionInMeasure() < note.positionInMeasure() - .018f
-                    : other.positionInMeasure() > note.positionInMeasure() + .018f) return false;
-        }
-        for (var rest : score.rests()) {
-            if (rest.staffIndex() != note.staffIndex()
-                    || rest.staffCount() != note.staffCount()
-                    || rest.measureIndex() != note.measureIndex()) continue;
-            if (incoming
-                    ? rest.positionInMeasure() <= note.positionInMeasure() + .018f
-                    : rest.positionInMeasure() >= note.positionInMeasure() - .018f) return false;
-        }
-        return true;
+        float at = note.positionInMeasure();
+        var edge = positions.get(new VoiceMeasure(note.measureIndex(), note.staffIndex(), note.staffCount()));
+        if (edge == null) return true;
+        return incoming
+                ? !(edge.firstNote < at - .018f || edge.hasRest && edge.firstRest <= at + .018f)
+                : !(edge.lastNote > at + .018f || edge.hasRest && edge.lastRest >= at - .018f);
     }
 
     private static ScoreNoteEvent tied(ScoreNoteEvent n) {
