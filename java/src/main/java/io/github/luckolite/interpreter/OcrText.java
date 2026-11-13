@@ -71,7 +71,10 @@ public record OcrText(String text, List<Block> blocks, Grouping grouping) {
 
         @Override
         public int hashCode() {
-            return Objects.hash(left, top, right, bottom);
+            int hash = 31 + left;
+            hash = 31 * hash + top;
+            hash = 31 * hash + right;
+            return 31 * hash + bottom;
         }
 
         @Override

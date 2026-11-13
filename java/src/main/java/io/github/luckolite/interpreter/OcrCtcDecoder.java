@@ -26,6 +26,7 @@ public final class OcrCtcDecoder {
         if (blankIndex < 0 || blankIndex >= vocabularySize)
             throw new IllegalArgumentException("Invalid CTC dictionary/blank index");
         var tokens = new ArrayList<Token>();
+        var text = new StringBuilder();
         int previous = blankIndex;
         float total = 0;
         String runText = null;
@@ -53,6 +54,7 @@ public final class OcrCtcDecoder {
                 if (best != blankIndex) {
                     runConfidence = Math.max(0, Math.min(1, bestProbability));
                     runText = dictionary.get(best);
+                    text.append(runText);
                     runStart = t;
                     total += runConfidence;
                 }
@@ -61,8 +63,6 @@ public final class OcrCtcDecoder {
         }
         if (previous != blankIndex)
             tokens.add(new Token(runText, runStart, probabilities.length, runConfidence));
-        var text = new StringBuilder();
-        for (var token : tokens) text.append(token.text());
         return new Result(text.toString(), tokens, tokens.isEmpty() ? 0 : total / tokens.size());
     }
 }

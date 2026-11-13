@@ -503,7 +503,8 @@ public final class PortableOcr {
                                     text.toString(),
                                     inkBounds(rasterWidth, wordBox, isInk),
                                     symbols));
-                    symbols = new ArrayList<>();
+                    // Element snapshots its symbols, so the next word can reuse the buffer.
+                    symbols.clear();
                     text.setLength(0);
                 }
                 continue;
