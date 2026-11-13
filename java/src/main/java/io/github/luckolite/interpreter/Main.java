@@ -3,6 +3,7 @@
 package io.github.luckolite.interpreter;
 
 import java.io.*;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.util.*;
@@ -68,8 +69,8 @@ public final class Main {
                 var tempos = readNumbers(in);
                 var rests = readNumbers(in);
                 var words = readWords(in, readCount(in));
-                var meters = new ArrayList<ScoreMeterChange>();
                 int count = readCount(in);
+                var meters = new ArrayList<ScoreMeterChange>(count);
                 for (int i = 0; i < count; i++)
                     meters.add(new ScoreMeterChange(in.readInt(), in.readInt(), in.readInt()));
                 List<SheetInterpreter.Word> nativeTabWords = List.of();
@@ -501,12 +502,13 @@ public final class Main {
     private static List<SheetInterpreter.Word> readWords(DataInputStream in, int count)
             throws IOException {
         var words = new ArrayList<SheetInterpreter.Word>(count);
+        byte[] text = new byte[0];
         for (int i = 0; i < count; i++) {
             int length = readCount(in);
-            byte[] text = in.readNBytes(length);
-            if (text.length != length) throw new EOFException();
+            if (length > text.length) text = new byte[Math.max(length, text.length * 2)];
+            in.readFully(text, 0, length);
             words.add(new SheetInterpreter.Word(
-                    new String(text, StandardCharsets.UTF_8),
+                    new String(text, 0, length, StandardCharsets.UTF_8),
                     in.readFloat(), in.readFloat(), in.readFloat(), in.readFloat()));
         }
         return words;
@@ -521,16 +523,21 @@ public final class Main {
     private static List<SheetInterpreter.NumberToken> readNumbers(DataInputStream in)
             throws IOException {
         int count = readCount(in);
-        var result = new ArrayList<SheetInterpreter.NumberToken>();
-        for (int i = 0; i < count; i++)
+        var result = new ArrayList<SheetInterpreter.NumberToken>(count);
+        if (count == 0) return result;
+        var record = ByteBuffer.allocate(6 * Integer.BYTES);
+        for (int i = 0; i < count; i++) {
+            in.readFully(record.array());
+            record.clear();
             result.add(
                     new SheetInterpreter.NumberToken(
-                            in.readInt(),
-                            in.readFloat(),
-                            in.readFloat(),
-                            in.readFloat(),
-                            in.readFloat(),
-                            in.readFloat()));
+                            record.getInt(),
+                            record.getFloat(),
+                            record.getFloat(),
+                            record.getFloat(),
+                            record.getFloat(),
+                            record.getFloat()));
+        }
         return result;
     }
 
