@@ -4881,13 +4881,16 @@
     },
     "NativeDynamicGlyphs.java": {
       "source_path": "tools/native-worker/NativeDynamicGlyphs.java",
-      "source_sha256": "2199810075e7ea22891425c75af5daebe4f5ead4d259215bf6e993a0b217e47b",
-      "reviewed_app_commit": "ed704d71e4325db9061414f44e5b881cfae1e8e1",
-      "source_normalized_sha256": "b99b48b9a405047b03d05a122e8b31c43d7b2d4f6a67568c0ad9e67f4a4e40fe",
+      "source_sha256": "584b0af4d222d7ec723b73d6c90e89b685c5336e77004a92bad7287ebd3eaabf",
+      "reviewed_app_commit": "c3e502461ef5a4f8e8a0ba7ae4c2cca2f33c0607",
+      "source_normalized_sha256": "584b0af4d222d7ec723b73d6c90e89b685c5336e77004a92bad7287ebd3eaabf",
       "review_note": "Retain complete visually supported compound literals and reconcile qualified fp contributors. Existing standalone GlyphResources access, verified-literal handling and ordinary match thresholds are preserved.",
-      "standalone_sha256": "ab943641e44f1b8472d618130c5be2929bd0ec17b1dd764bbc0b72c8bd46bf4b",
+      "standalone_sha256": "55c1224b4782d833c0aa84eabd407fd1f949d1bb1cfa330283d3c08804fe3bd9",
       "reviewed_source_state": "committed",
-      "license": "Apache-2.0"
+      "license": "Apache-2.0",
+      "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/NativeDynamicGlyphs.java",
+      "standalone_normalized_sha256": "55c1224b4782d833c0aa84eabd407fd1f949d1bb1cfa330283d3c08804fe3bd9",
+      "current_source_review": "Shared dynamic classification and all 13 PNG masks match. Desktop loads its templates from packaged asset files, standalone from classpath glyph resources."
     },
     "NativeEnglishDirectionEvidence.java": {
       "source_path": "tools/native-worker/NativeEnglishDirectionEvidence.java",
