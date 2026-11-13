@@ -60,14 +60,15 @@ public final class TabTextSource {
         var sorted = new ArrayList<>(input);
         sorted.sort(
                 Comparator.comparingInt((TablatureDecoder.Word v) -> v.text().length()).reversed());
-        var singleDigits = input.stream()
-                .filter(word -> DigitPattern.VALUE.matcher(word.text()).matches())
-                .toList();
+        var digitBands = wordBands();
+        for (var word : input) {
+            if (DigitPattern.VALUE.matcher(word.text()).matches())
+                digitBands.get(wordBand(word.top())).add(word);
+        }
         var out = new ArrayList<TablatureDecoder.Word>();
-        var bands = new ArrayList<List<TablatureDecoder.Word>>(WORD_BANDS);
-        for (int i = 0; i < WORD_BANDS; i++) bands.add(new ArrayList<>());
+        var bands = wordBands();
         for (var v : sorted) {
-            if (crossesDigitRows(v, singleDigits)) continue;
+            if (crossesDigitRows(v, digitBands)) continue;
             float area = (v.right() - v.left()) * (v.bottom() - v.top());
             int first = wordBand(v.top()), last = wordBand(v.bottom());
             if (covered(v, area * .7f, first, last, bands)) continue;
@@ -83,7 +84,13 @@ public final class TabTextSource {
     }
 
     private static int wordBand(float y) {
-        return Math.min(WORD_BANDS - 1, (int) (y * WORD_BANDS));
+        return Math.max(0, Math.min(WORD_BANDS - 1, (int) (y * WORD_BANDS)));
+    }
+
+    private static List<List<TablatureDecoder.Word>> wordBands() {
+        var bands = new ArrayList<List<TablatureDecoder.Word>>(WORD_BANDS);
+        for (int i = 0; i < WORD_BANDS; i++) bands.add(new ArrayList<>());
+        return bands;
     }
 
     private static boolean covered(
@@ -103,14 +110,17 @@ public final class TabTextSource {
     }
 
     private static boolean crossesDigitRows(
-            TablatureDecoder.Word word, List<TablatureDecoder.Word> singleDigits) {
+            TablatureDecoder.Word word, List<List<TablatureDecoder.Word>> digitBands) {
         if (!DigitPattern.COMPOUND.matcher(word.text()).matches()) return false;
         var digits = new ArrayList<TablatureDecoder.Word>();
-        for (var v : singleDigits)
-            if (v.left() >= word.left() - .00001f
-                    && v.right() <= word.right() + .00001f
-                    && v.top() >= word.top() - .00001f
-                    && v.bottom() <= word.bottom() + .00001f) digits.add(v);
+        float top = word.top() - .00001f, bottom = word.bottom() + .00001f;
+        int last = wordBand(bottom);
+        for (int band = wordBand(top); band <= last; band++)
+            for (var v : digitBands.get(band))
+                if (v.left() >= word.left() - .00001f
+                        && v.right() <= word.right() + .00001f
+                        && v.top() >= top
+                        && v.bottom() <= bottom) digits.add(v);
         for (var a : digits)
             for (var b : digits)
                 if (Math.abs((a.top() + a.bottom() - b.top() - b.bottom()) * .5f)

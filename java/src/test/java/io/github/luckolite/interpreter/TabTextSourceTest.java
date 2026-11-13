@@ -40,6 +40,14 @@ public class TabTextSourceTest {
     }
 
     @Test
+    public void compoundCanContainDigitStartingJustOutsideItsBand() {
+        var first = new TablatureDecoder.Word("1", .1f, .312495f, .12f, .32f);
+        var second = new TablatureDecoder.Word("2", .1f, .35f, .12f, .36f);
+        var compound = new TablatureDecoder.Word("12", .1f, .3125f, .12f, .36f);
+        assertEquals(List.of(first, second), TabTextSource.disjoint(List.of(compound, first, second)));
+    }
+
+    @Test
     public void nativeRhythmVocabularyIncludesLettersDotsAndMusicalGlyphs() {
         assertTrue(
                 TabTextSource.tokens("Q E S W H T Q. E.. ♩ ♪ 𝅝 𝅗𝅥 𝅘𝅥 𝅘𝅥𝅮 𝅘𝅥𝅯 𝅘𝅥𝅰 𝄻 𝄼 𝄽 𝄾 𝄿 𝅀")
