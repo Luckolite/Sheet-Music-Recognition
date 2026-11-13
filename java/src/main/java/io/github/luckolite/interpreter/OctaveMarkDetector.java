@@ -431,7 +431,11 @@ final class OctaveMarkDetector {
                 for (var box : bareBoxes) {
                     if (centeredInStaff(box, staffs)) continue;
                     boolean closedEight = bareEightShape(gray, width, box, gap);
-                    if (!closedEight && (below || !brokenEightShape(gray, width, box, gap))) continue;
+                    var attached = !below && !closedEight && boxes.contains(box)
+                            ? verticallyAttachedEight(gray, width, box, gap) : null;
+                    if (attached != null) box = attached;
+                    if (!closedEight && attached == null && (below || !brokenEightShape(gray, width, box, gap)))
+                        continue;
                     float dashRight =
                             dashEnd(
                                     gray,
@@ -887,6 +891,26 @@ final class OctaveMarkDetector {
         // Italic brackets lean across their height; compare curvature after removing that slope.
         return ((centers[0] + centers[2]) * .5f - centers[1]) * sign + .5f > gap * .06f
                 && Math.abs(centers[0] - centers[2]) < gap * .65f;
+    }
+
+    /** Trim a thin vertical attachment from a two-counter numeral above the staff. */
+    private static InkBox verticallyAttachedEight(byte[] gray, int width, InkBox box, float gap) {
+        int w = box.right - box.left + 1, h = box.bottom - box.top + 1;
+        if (h < gap * 2.3f || w < gap * .8f || w > gap * 1.65f) return null;
+        for (int y = box.top + Math.round(gap * 1.35f); y <= box.top + Math.round(gap * 1.85f); y++) {
+            if (box.bottom - y < gap * .65f) break;
+            int narrow = 0;
+            for (int row = y + 1; row <= box.bottom; row++) {
+                int ink = 0;
+                for (int x = box.left; x <= box.right; x++)
+                    if ((gray[row * width + x] & 255) < 165) ink++;
+                if (ink > 0 && ink <= gap * .45f) narrow++;
+            }
+            if (narrow < (box.bottom - y) * .8f) continue;
+            var cap = new InkBox(box.left, box.top, box.right, y, box.area);
+            if (bareEightShape(gray, width, cap, gap)) return cap;
+        }
+        return null;
     }
 
     /** Recover a broken loop only if one short bridge restores the second counter. */

@@ -60,6 +60,24 @@ public class BareOctaveSpanTest {
     }
 
     @Test
+    public void eightWithVerticalAttachmentNeedsTheTerminalHook() {
+        for (int y = 90; y <= 109; y++)
+            for (int x = 55; x <= 67; x++)
+                if (x <= 57 || x >= 65 || y <= 92 || y >= 107 || y >= 98 && y <= 101)
+                    gray[y * W + x] = 0;
+        for (int y = 108; y <= 122; y++)
+            for (int x = 60; x <= 62; x++) gray[y * W + x] = 0;
+        for (int x = 76; x <= 204; x += 8)
+            for (int xx = x; xx < x + 3; xx++) gray[96 * W + xx] = 0;
+        var notes = List.of(note(100, 170), note(240, 170));
+        var staff = List.of(new PlayingTechniqueDetector.Staff(150, 198, 12, 0, 1));
+        assertEquals(notes, apply(notes, staff));
+        for (int y = 96; y <= 110; y++)
+            for (int x = 206; x <= 207; x++) gray[y * W + x] = 0;
+        assertEquals(List.of(1, 0), apply(notes, staff).stream().map(ScoreNoteEvent::octaveShift).toList());
+    }
+
+    @Test
     public void bareEightBelowStaffLowersTheOctave() {
         mark(220, true);
         var result =
