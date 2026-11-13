@@ -216,26 +216,29 @@ public final class TabFretRaster {
                     minY = Math.min(minY, py);
                     maxY = Math.max(maxY, py);
                     edge |= px == 0 || py == 0 || px == cw - 1 || py == ch - 1;
-                    for (int d : new int[] {-1, 1, -cw, cw}) {
-                        int next = p + d;
-                        if (next < 0
-                                || next >= seen.length
-                                || Math.abs(next % cw - px) + Math.abs(next / cw - py) != 1
-                                || seen[next]) continue;
-                        if ((clean[(c.top() + next / cw) * w + c.left() + next % cw] & 255)
-                                >= 160) {
-                            seen[next] = true;
-                            queue[end++] = next;
-                        }
-                    }
+                    int source = (c.top() + py) * w + c.left() + px;
+                    if (px > 0) end = enqueueLight(clean, source - 1, p - 1, seen, queue, end);
+                    if (px + 1 < cw) end = enqueueLight(clean, source + 1, p + 1, seen, queue, end);
+                    if (py > 0) end = enqueueLight(clean, source - w, p - cw, seen, queue, end);
+                    if (py + 1 < ch) end = enqueueLight(clean, source + w, p + cw, seen, queue, end);
                 }
                 if (!edge
                         && area > cw * ch * .15f
                         && maxY - minY > ch * .5f
                         && sumY / (float) area > ch * .38f
-                        && sumY / (float) area < ch * .62f) holes++;
+                        && sumY / (float) area < ch * .62f
+                        && ++holes > 1) return false;
             }
         return holes == 1;
+    }
+
+    private static int enqueueLight(
+            byte[] clean, int source, int next, boolean[] seen, int[] queue, int end) {
+        if (!seen[next] && (clean[source] & 255) >= 160) {
+            seen[next] = true;
+            queue[end++] = next;
+        }
+        return end;
     }
 
     private static boolean obscured(byte[] gray, int w, int h, float x, float cy, float gap) {
