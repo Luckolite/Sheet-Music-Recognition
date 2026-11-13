@@ -43,6 +43,28 @@ class DynamicColumnClockTests(unittest.TestCase):
         self.assertEqual([('P1',1,'ff',0),('P1',2,'ff',0)],self.xml(d))
     def test_duplicate_same_column_level_emits_once(self):
         d=document();p=d['pages'][0];p['score']['dynamicChanges']*=2;self.assertEqual([('P1',1,'ff',0)],self.xml(d))
+    def test_fortepiano_requires_printed_evidence_at_the_exact_attack(self):
+        import struct
+        d = self.shared()
+        score = d['pages'][0]['score']
+        first = score['dynamicChanges'][0]
+        first['decibels'] = 3
+        score['dynamicChanges'].append(dict(first, decibels=-8))
+        separate = [('P1', 1, 'f', 0), ('P1', 1, 'p', 0),
+                    ('P2', 1, 'f', 0), ('P2', 1, 'p', 0)]
+        self.assertEqual(separate, self.xml(d))
+        bits = struct.unpack('>i', struct.pack('>f', first['positionInMeasure']))[0]
+        target = f'printed-fortepiano:0:{bits}:0:2'
+        score['expressiveEvents'] = [dict(
+            kind='UNRESOLVED_DIRECTION', scope='UNRESOLVED', qualifierText='fp',
+            staffIndex=0, staffCount=2, targetEventId=target, eventId=target,
+            start=None, end=None, strength='UNSPECIFIED',
+            evidence=[dict(sourceId='printed-fortepiano', printedText='fp',
+                           staffIndex=0, staffCount=2, pageIndex=0, visualX=.15)])]
+        self.assertEqual([('P1', 1, 'fp', 0), ('P2', 1, 'fp', 0)], self.xml(d))
+        score['expressiveEvents'][0]['targetEventId'] = f'printed-fortepiano:0:{bits + 1}:0:2'
+        self.assertEqual(separate, self.xml(d))
+
     def test_other_staff_cannot_supply_dynamic_clock(self):
         d=document();d['pages'][0]['score']['dynamicChanges'][0].update(staffIndex=1,staffCount=2);self.assertEqual([],self.xml(d))
     def shared(self,lower_position=.17,lower_beat=0):

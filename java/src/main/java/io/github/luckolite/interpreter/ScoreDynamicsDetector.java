@@ -557,6 +557,7 @@ final class ScoreDynamicsDetector {
             byte[] ownershipGray,
             boolean paperProposals) {
         List<ScoreDynamicChange> result = new ArrayList<>();
+        var compounds = new HashMap<ScoreDynamicChange, PlayingTechniqueDetector.Word>();
         var arrivalLevels = new ArrayList<PrintedHairpinArrival.Level>();
         var openPairs = new LinkedHashMap<ScoreDynamicChange, OpenHairpinPairs.Shape>();
         List<CompleteOpposedHairpinPair.Shape> completeOpposedShapes = List.of();
@@ -635,7 +636,7 @@ final class ScoreDynamicsDetector {
                                 anchor,
                                 established.measure());
             if (compound) {
-                addCompound(result, target, anchor, measures, notes, width, height, common != null);
+                addCompound(result, compounds, word, target, anchor, measures, notes, width, height, common != null);
                 continue;
             }
             add(
@@ -1171,6 +1172,10 @@ final class ScoreDynamicsDetector {
                                     c.fixedTarget(),
                                     false));
             } else scoped.add(c);
+            var compound = compounds.get(c);
+            if (compound != null)
+                for (int i = first; i < scoped.size(); i++)
+                    events.add(ScoreDynamicContinuation.compoundEvidence(scoped.get(i), compound.left()));
             var word = openWords.get(c);
             if (word != null)
                 for (int i = first; i < scoped.size(); i++)
@@ -1796,6 +1801,8 @@ final class ScoreDynamicsDetector {
     /** One visual compound, one actual note onset, and one ordered attack/sustain pair. */
     private static void addCompound(
             List<ScoreDynamicChange> result,
+            Map<ScoreDynamicChange, PlayingTechniqueDetector.Word> compounds,
+            PlayingTechniqueDetector.Word word,
             PlayingTechniqueDetector.Staff owner,
             float anchor,
             List<MeasureRegion> measures,
@@ -1839,6 +1846,7 @@ final class ScoreDynamicsDetector {
         // Independent near-position deduplication must not split this atomic pair.
         result.add(attack);
         result.add(sustain);
+        compounds.put(attack, word);
     }
 
     private static void add(

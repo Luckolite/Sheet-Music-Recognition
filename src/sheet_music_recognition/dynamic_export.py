@@ -2,7 +2,26 @@
 # SPDX-License-Identifier: Apache-2.0
 """Absolute dynamics at explicitly owned, exact source note columns."""
 import math
+import struct
 from .technique_export import position
+
+
+COMPOUND_SOURCE = 'printed-fortepiano'
+
+
+def compound_binding(mark):
+    if (mark.get('kind') != 'UNRESOLVED_DIRECTION' or mark.get('scope') != 'UNRESOLVED'
+            or mark.get('qualifierText') != 'fp' or mark.get('start') is not None
+            or mark.get('end') is not None):
+        return None
+    staff, count = mark.get('staffIndex'), mark.get('staffCount')
+    target = mark.get('targetEventId')
+    if (isinstance(target, str) and target.startswith(COMPOUND_SOURCE + ':')
+            and any(e.get('sourceId') == COMPOUND_SOURCE and e.get('printedText') == 'fp'
+                    and e.get('staffIndex') == staff and e.get('staffCount') == count
+                    for e in mark.get('evidence', []))):
+        return target
+    return None
 
 
 def plan(page, rendered, bars, page_identity):
@@ -11,7 +30,13 @@ def plan(page, rendered, bars, page_identity):
     if len(notes) != len(events) or len(rendered) != len(notes):
         return []
     result, seen = [], set()
-    for index, change in enumerate(page.get('score', {}).get('dynamicChanges', [])):
+    score = page.get('score', {})
+    bindings = {compound_binding(mark) for mark in score.get('expressiveEvents', [])}
+    changes = score.get('dynamicChanges', [])
+    sustain_rows = set()
+    for index, change in enumerate(changes):
+        if index in sustain_rows:
+            continue
         m, staff, count = (change.get(k) for k in ('measureIndex', 'staffIndex', 'staffCount'))
         p, db = position(change.get('positionInMeasure')), change.get('decibels')
         shared = change.get('sharedStaffs', False)
@@ -59,6 +84,21 @@ def plan(page, rendered, bars, page_identity):
             continue
         name = ('ppp' if db <= -18 else 'pp' if db <= -12 else 'p' if db <= -8 else
                 'mp' if db <= -4 else 'mf' if db <= 0 else 'f' if db <= 4 else 'ff' if db <= 7 else 'fff')
+        if db == 3 and change.get('endMeasureIndex') == m and position(change.get('endPosition')) == p:
+            bits = struct.unpack('>i', struct.pack('>f', p))[0]
+            binding = f'{COMPOUND_SOURCE}:{m}:{bits}:{staff}:{count}'
+            if binding in bindings:
+                for j in range(index + 1, len(changes)):
+                    sustain = changes[j]
+                    if sustain.get('measureIndex') != m or position(sustain.get('positionInMeasure')) != p:
+                        break
+                    if (sustain.get('decibels') == -8 and position(sustain.get('endPosition')) == p
+                            and all(sustain.get(k, False) == change.get(k, False) for k in
+                                    ('staffIndex', 'staffCount', 'endMeasureIndex', 'direction',
+                                     'sharedStaffs', 'sharedTiming', 'fixedTarget'))):
+                        name = 'fp'
+                        sustain_rows.add(j)
+                        break
         targets = sorted({n['staffIndex'] for n in notes
                           if type(n.get('staffIndex')) is int and 0 <= n['staffIndex'] < count
                           and type(n.get('staffCount')) is int and n['staffCount'] == count

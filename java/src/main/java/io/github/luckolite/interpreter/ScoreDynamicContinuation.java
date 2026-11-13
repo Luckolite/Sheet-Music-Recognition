@@ -76,6 +76,67 @@ public final class ScoreDynamicContinuation {
         return false;
     }
 
+    private static final String COMPOUND_SOURCE = "printed-fortepiano";
+
+    private static String compoundIdentity(ScoreDynamicChange change) {
+        return COMPOUND_SOURCE + ":" + change.measureIndex() + ":"
+                + Float.floatToIntBits(change.positionInMeasure()) + ":"
+                + change.staffIndex() + ":" + change.staffCount();
+    }
+
+    static ScoreExpressiveEvent compoundEvidence(ScoreDynamicChange change, float visualX) {
+        String target = compoundIdentity(change);
+        return new ScoreExpressiveEvent(
+                target, ScoreExpressiveEvent.Kind.UNRESOLVED_DIRECTION,
+                Optional.empty(), Optional.empty(), ScoreExpressiveEvent.Scope.UNRESOLVED,
+                change.staffIndex(), change.staffCount(), Optional.of(target),
+                ScoreExpressiveEvent.Strength.UNSPECIFIED, "fp",
+                List.of(new ScoreExpressiveEvent.Evidence(
+                        COMPOUND_SOURCE, 0, visualX, change.staffIndex(), change.staffCount(), "fp")));
+    }
+
+    static boolean ownsCompound(ScoreExpressiveEvent event) {
+        return event.kind() == ScoreExpressiveEvent.Kind.UNRESOLVED_DIRECTION
+                && event.scope() == ScoreExpressiveEvent.Scope.UNRESOLVED
+                && event.start().isEmpty() && event.end().isEmpty()
+                && event.qualifierText().equals("fp")
+                && event.targetEventId().filter(id -> id.startsWith(COMPOUND_SOURCE + ":")).isPresent()
+                && event.evidence().stream().anyMatch(e -> e.sourceId().equals(COMPOUND_SOURCE)
+                        && e.printedText().equals("fp") && e.staffIndex() == event.staffIndex()
+                        && e.staffCount() == event.staffCount());
+    }
+
+    static Optional<String> remapCompound(
+            ScoreExpressiveEvent event, java.util.function.IntUnaryOperator measures) {
+        if (!ownsCompound(event)) return event.targetEventId();
+        String target = event.targetEventId().orElseThrow();
+        String[] fields = target.split(":", -1);
+        if (fields.length != 5) return event.targetEventId();
+        try {
+            fields[1] = Integer.toString(measures.applyAsInt(Integer.parseInt(fields[1])));
+            return Optional.of(String.join(":", fields));
+        } catch (NumberFormatException invalid) {
+            return event.targetEventId();
+        }
+    }
+
+    static boolean compoundPair(
+            ScoreDynamicChange attack, ScoreDynamicChange sustain, Set<String> bindings) {
+        return attack.direction() == 0 && attack.decibels() == 3
+                && sustain.direction() == 0 && sustain.decibels() == -8
+                && attack.measureIndex() == sustain.measureIndex()
+                && attack.positionInMeasure() == sustain.positionInMeasure()
+                && attack.endMeasureIndex() == attack.measureIndex()
+                && sustain.endMeasureIndex() == attack.measureIndex()
+                && attack.endPosition() == attack.positionInMeasure()
+                && sustain.endPosition() == attack.positionInMeasure()
+                && attack.staffIndex() == sustain.staffIndex() && attack.staffCount() == sustain.staffCount()
+                && attack.sharedStaffs() == sustain.sharedStaffs()
+                && attack.sharedTiming() == sustain.sharedTiming()
+                && attack.fixedTarget() == sustain.fixedTarget()
+                && bindings.contains(compoundIdentity(attack));
+    }
+
     private static final String HAIRPIN_EDGE = "printed-hairpin-edge";
 
     static void addHairpinEdge(
@@ -344,7 +405,8 @@ public final class ScoreDynamicContinuation {
             return ScoreExpressionDetector.offsetEvidence(event, offset, page);
         if (ScoreFermataDetector.owns(event))
             return ScoreFermataDetector.offsetEvidence(event, offset, page);
-        if (!event.eventId().startsWith(HAIRPIN_EDGE)
+        boolean compound = ownsCompound(event);
+        if (!compound && !event.eventId().startsWith(HAIRPIN_EDGE)
                 && (!event.eventId().startsWith("lexical-dynamic:")
                 || event.evidence().stream().noneMatch(e -> e.sourceId().equals(WORD_SOURCE))))
             return event.offset(offset);
@@ -356,7 +418,7 @@ public final class ScoreDynamicContinuation {
                 event.scope(),
                 event.staffIndex(),
                 event.staffCount(),
-                event.targetEventId(),
+                compound ? remapCompound(event, m -> Math.addExact(m, offset)) : event.targetEventId(),
                 event.strength(),
                 event.qualifierText(),
                 event.evidence().stream()

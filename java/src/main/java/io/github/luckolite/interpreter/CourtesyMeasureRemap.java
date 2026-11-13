@@ -145,8 +145,10 @@ final class CourtesyMeasureRemap {
                                                 e.scope(),
                                                 e.staffIndex(),
                                                 e.staffCount(),
-                                                ScorePedalDetector.remapTargetMeasures(
-                                                        e, i -> map(i, cut)),
+                                                ScoreDynamicContinuation.ownsCompound(e)
+                                                        ? ScoreDynamicContinuation.remapCompound(e, i -> map(i, cut))
+                                                        : ScorePedalDetector.remapTargetMeasures(
+                                                                e, i -> map(i, cut)),
                                                 e.strength(),
                                                 e.qualifierText(),
                                                 e.evidence()))

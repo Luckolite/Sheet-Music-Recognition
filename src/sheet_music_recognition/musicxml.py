@@ -606,7 +606,8 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
             first['retainedParenthesisStart'] = dict(id=group_id, number=number, x=lx, y=ly, height=lh)
             last['retainedParenthesisStop'] = dict(id=group_id, number=number, x=rx, y=ry, height=rh)
         for supplied in score.get('expressiveEvents', []):
-            if supplied.get('kind') == 'PARENTHESIZED_NOTE_GROUP':
+            if (supplied.get('kind') == 'PARENTHESIZED_NOTE_GROUP'
+                    or dynamic_export.compound_binding(supplied) is not None):
                 continue
             if supplied.get('kind') == 'NATURAL_HARMONIC':
                 if (supplied.get('scope') not in ('NOTE', 'UNRESOLVED')
