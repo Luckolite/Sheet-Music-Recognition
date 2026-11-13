@@ -149,13 +149,8 @@ public final class Main {
                                         decoderGray),
                         initialKey);
         score = ScoreTupletMeterContext.apply(score, initialMeter);
-        float[] beats = new float[score.measures().size()];
-        Arrays.fill(beats, initialMeter.quarterBeats());
-        for (var change :
-                score.meterChanges().stream()
-                        .sorted(Comparator.comparingInt(ScoreMeterChange::measureIndex))
-                        .toList())
-            Arrays.fill(beats, change.measureIndex(), beats.length, change.quarterBeats());
+        float[] beats = measureBeats(
+                score.measures().size(), initialMeter.quarterBeats(), score.meterChanges());
         if (beats.length > 0) {
             double pickup = ScoreOpeningDuration.provedQuarterBeats(score, beats[0]);
             if (Double.isFinite(pickup)) beats[0] = (float) pickup;
@@ -497,6 +492,23 @@ public final class Main {
                 && start.doubleValue() >= 0
                 && Double.isFinite(duration.doubleValue())
                 && duration.doubleValue() > 0;
+    }
+
+    private static float[] measureBeats(
+            int count, float initialBeats, List<ScoreMeterChange> changes) {
+        float[] beats = new float[count];
+        for (var change : changes) {
+            int index = change.measureIndex();
+            if (index < count) beats[index] = change.quarterBeats();
+            else if (index > count) throw new IllegalArgumentException("Meter change outside page");
+        }
+        float current = initialBeats;
+        for (int index = 0; index < count; index++) {
+            // A zero entry means no change. Every ScoreMeterChange has positive duration.
+            if (beats[index] != 0) current = beats[index];
+            else beats[index] = current;
+        }
+        return beats;
     }
 
     private static List<SheetInterpreter.Word> readWords(DataInputStream in, int count)
