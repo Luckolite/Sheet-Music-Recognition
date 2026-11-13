@@ -5239,6 +5239,12 @@
     },
     "OmrScoreInterpreter.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/OmrScoreInterpreter.java",
+      "long_same_staff_beam_endpoint_review": {
+        "reviewed_app_commit": "f4c0a1038d3e02749a9e92f3b89ae38e5f1a78e5",
+        "app_lf_sha256": "7e9953c954d0e953ffbdb22dd77b5ac75d857548be06f2c1e4b521d582bd4e07",
+        "standalone_lf_sha256": "808cf2c68315f45932faf29561e252243d6ca2a5e6911ee4df22916d4f9057b1",
+        "scope": "Matching raw sloped beam recovery with two filled heads and a continuous core between their stems. Broader source drift remains open."
+      },
       "stem_owned_beamlet_review": {
         "reviewed_app_commit": "bb06beccc985712c4a957a89d5c0d797bd5b5c51",
         "app_lf_sha256": "85f352bd618719f127d60b48b0be824c72e14595fcfc13508afa898c94a19e88",

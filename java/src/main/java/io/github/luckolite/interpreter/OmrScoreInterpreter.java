@@ -1839,6 +1839,9 @@ final class OmrScoreInterpreter {
             if (!unpitched && beamCount == 0
                     && longDownstemSingleBeam(gray, width, height, head, staff, staffs, heads))
                 beamCount = 1;
+            if (!unpitched && beamCount == 0
+                    && longSameStaffBeamEndpoint(gray, width, height, head, rhythmStaff, heads, measure))
+                beamCount = 1;
             int[] tremolo = tremoloStrokeCounts(gray, width, height, head, rhythmStaff, heads);
             beamCount = Math.max(0, beamCount - tremolo[1]);
             if (tremolo[0] > 0)
@@ -23387,6 +23390,64 @@ final class OmrScoreInterpreter {
                 && start[1] >= lower.bottom + gap * .5f && start[1] <= lower.bottom + gap * 4.5f
                 && StemOwnedBeamTip.matches(gray, width, height, start, end,
                         end[0], end[1], 1, 1, 1, gap);
+    }
+
+    /** A long stem can end at a sloped primary beam hidden by a printed staff rule. */
+    private static boolean longSameStaffBeamEndpoint(
+            byte[] gray, int width, int height, Component head, Staff staff,
+            List<Component> heads, MeasureRegion measure) {
+        float gap = staff.gap;
+        if (gray == null || gap < 8 || !filledBeamEndpointCore(gray, width, height, head, gap))
+            return false;
+        int[] own = attachedRawStem(gray, width, height, head, gap, 2, 170);
+        if (own == null || Math.abs(own[1] - head.centerY) < gap * 3.7f) return false;
+        for (Component peer : heads) {
+            float separation = Math.abs(peer.centerX - head.centerX);
+            if (separation < gap * 2 || separation > gap * 4
+                    || Math.abs(peer.centerY - head.centerY) > gap * 1.5f
+                    || peer.centerX < measure.left() * width
+                    || peer.centerX > measure.right() * width
+                    || !filledBeamEndpointCore(gray, width, height, peer, gap)) continue;
+            int[] other = attachedRawStem(gray, width, height, peer, gap, 2, 170);
+            if (other == null || other[2] != own[2]
+                    || Math.abs(other[1] - peer.centerY) < gap * 3.4f) continue;
+            int[] left = own[0] < other[0] ? own : other;
+            int[] right = left == own ? other : own;
+            float slope = (right[1] - left[1]) / (float) (right[0] - left[0]);
+            if (Math.abs(slope) < .16f || Math.abs(slope) > .45f) continue;
+            int inside = Math.round(gap * .25f);
+            int core = Math.max(2, Math.round(gap * .18f));
+            boolean complete = true;
+            for (int x = left[0]; x <= right[0] && complete; x++) {
+                int y = Math.round(left[1] + slope * (x - left[0])) - own[2] * inside;
+                if (y - core < 0 || y + core >= height) {
+                    complete = false;
+                    break;
+                }
+                for (int dy = -core; dy <= core; dy++)
+                    if ((gray[(y + dy) * width + x] & 255) >= 165) complete = false;
+            }
+            if (complete) return true;
+        }
+        return false;
+    }
+
+    private static boolean filledBeamEndpointCore(
+            byte[] gray, int width, int height, Component head, float gap) {
+        int halfWidth = Math.round(gap * .22f), halfHeight = Math.round(gap * .24f);
+        if (head.maxX - head.minX + 1 < gap * 1.1f
+                || head.maxY - head.minY + 1 < gap * .85f
+                || head.maxY - head.minY + 1 > gap * 1.3f) return false;
+        int cx = Math.round(head.centerX), cy = Math.round(head.centerY);
+        if (cx - halfWidth < 0 || cx + halfWidth >= width
+                || cy - halfHeight < 0 || cy + halfHeight >= height) return false;
+        for (int y = cy - halfHeight; y <= cy + halfHeight; y++) {
+            int ink = 0;
+            for (int x = cx - halfWidth; x <= cx + halfWidth; x++)
+                if ((gray[y * width + x] & 255) < 165) ink++;
+            if (ink < halfWidth * 2) return false;
+        }
+        return true;
     }
 
     private static int transportedPairedBeamCount(

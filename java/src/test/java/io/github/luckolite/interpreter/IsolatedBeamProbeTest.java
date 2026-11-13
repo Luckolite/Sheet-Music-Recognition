@@ -47,6 +47,42 @@ public class IsolatedBeamProbeTest {
     }
 
     @Test
+    public void longSlopedBeamRequiresTwoFilledHeadsAndAnUnbrokenCore() throws Exception {
+        int width = 180, height = 160, gap = 16;
+        byte[] gray = new byte[width * height];
+        Arrays.fill(gray, (byte) 255);
+        for (int x = 61; x <= 109; x++) {
+            int bottom = 114 - Math.round((x - 61) * .25f);
+            for (int y = bottom - 8; y <= bottom; y++) gray[y * width + x] = 0;
+        }
+        for (int y = 53; y <= 114; y++) gray[y * width + 61] = 0;
+        for (int y = 37; y <= 102; y++) gray[y * width + 109] = 0;
+        for (int y = -7; y <= 7; y++)
+            for (int x = 0; x <= 19; x++) {
+                gray[(53 + y) * width + 61 + x] = 0;
+                gray[(37 + y) * width + 109 + x] = 0;
+            }
+        var decoder = OmrScoreInterpreter.class;
+        var head = Class.forName(decoder.getName() + "$Component");
+        var constructor = head.getDeclaredConstructor(
+                int.class, int.class, int.class, int.class, int.class, float.class, float.class);
+        constructor.setAccessible(true);
+        Object left = constructor.newInstance(300, 61, 80, 46, 60, 70f, 53f);
+        Object right = constructor.newInstance(300, 109, 128, 30, 44, 118f, 37f);
+        var staff = Class.forName(decoder.getName() + "$Staff");
+        var frame = staff.getDeclaredConstructor(float.class, float.class, float.class);
+        frame.setAccessible(true);
+        var proof = decoder.getDeclaredMethod("longSameStaffBeamEndpoint", byte[].class,
+                int.class, int.class, head, staff, java.util.List.class, MeasureRegion.class);
+        proof.setAccessible(true);
+        Object[] args = {gray, width, height, right, frame.newInstance(53f, 117f, (float) gap),
+                java.util.List.of(left, right), new MeasureRegion(0, 1, 0, 1)};
+        assertEquals(true, proof.invoke(null, args));
+        for (int y = 96; y <= 110; y++) gray[y * width + 87] = (byte) 255;
+        assertEquals(false, proof.invoke(null, args));
+    }
+
+    @Test
     public void isolatedExtraBandDoesNotShortenTheNote() throws Exception {
         assertEquals(1, count(1));
     }
