@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "score-reader"
-version = "0.2.0"
+version = "0.2.1"
 description = "Experimental offline optical music recognition (OMR): sheet-music images and PDFs to MusicXML, MIDI, JSON and MP3, with Python and Java"
 readme = "README.md"
 requires-python = ">=3.10,<3.12"
@@ -21,9 +21,9 @@ pdf = ["pypdfium2>=4.30,<5"]
 audio = ["imageio-ffmpeg>=0.5,<0.7"]
 
 [project.scripts]
-score-reader = "sheet_music_recognition.cli:main"
-sheet-interpreter = "sheet_music_recognition.cli:main"
-sheet-music-recognition = "sheet_music_recognition.cli:main"
+score-reader = "score_reader.cli:main"
+sheet-interpreter = "score_reader.cli:main"
+sheet-music-recognition = "score_reader.cli:main"
 
 [project.urls]
 Documentation = "https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/docs/README.md"

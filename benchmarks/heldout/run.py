@@ -95,7 +95,7 @@ def main():
     args = parser.parse_args()
     metadata = {}
     if not args.rescore:
-        from sheet_music_recognition import Interpreter, __version__, write_musicxml
+        from score_reader import Interpreter, __version__, write_musicxml
 
         args.output.mkdir(parents=True, exist_ok=False)
         engine = Interpreter(threads=args.threads)

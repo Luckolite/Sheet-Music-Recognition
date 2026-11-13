@@ -4,11 +4,14 @@
 
 ## Python
 
+Use `score_reader` with `score-reader` 0.2.1 or later. Existing
+`sheet_music_recognition` and `sheet_interpreter` imports still work.
+
 Use `Interpreter.interpret()` to read one image. Pass a Pillow image and reuse one interpreter per worker.
 
 ```python
 from PIL import Image
-from sheet_music_recognition import Interpreter, write_musicxml
+from score_reader import Interpreter, write_musicxml
 
 reader = Interpreter()
 with Image.open("examples/scale.png") as image:
@@ -23,7 +26,7 @@ Install the `pdf` extra and use the same interpreter to recognize an entire
 document. The method also accepts an image file path.
 
 ```python
-from sheet_music_recognition import Interpreter, write_musicxml
+from score_reader import Interpreter, write_musicxml
 
 reader = Interpreter()
 score = reader.interpret_document(
@@ -48,8 +51,8 @@ Export again without running recognition:
 ```python
 import json
 
-from sheet_music_recognition import write_mp3
-from sheet_music_recognition.midi import write_midi
+from score_reader import write_mp3
+from score_reader.midi import write_midi
 
 with open("score.json", encoding="utf-8") as source:
     score = json.load(source)

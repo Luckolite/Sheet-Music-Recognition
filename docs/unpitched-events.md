@@ -25,9 +25,9 @@ Default CLI MIDI and MP3 exports reject U clearly. Programmatic preview APIs
 require the caller to choose an explicit policy:
 
 ```python
-from sheet_music_recognition.musicxml import write_musicxml
-from sheet_music_recognition.midi import write_midi, UnpitchedMidiPreview
-from sheet_music_recognition.audio import write_mp3, UnpitchedAudioPreview
+from score_reader.musicxml import write_musicxml
+from score_reader.midi import write_midi, UnpitchedMidiPreview
+from score_reader.audio import write_mp3, UnpitchedAudioPreview
 
 write_musicxml(decoded, "written.musicxml")
 

@@ -3,7 +3,7 @@
 Convert sheet-music images and scanned PDFs to **MusicXML, MIDI, JSON and MP3**
 with offline optical music recognition (OMR). Sheet-Music-Recognition includes downloadable
 model weights, a Java decoder and a Python API and command-line tool, available
-as **`score-reader`** (PyPI package and command) and **`sheet_music_recognition`** (Python import).
+as **`score-reader`** (PyPI package and command) and **`score_reader`** (Python import).
 
 [![Build and test](https://github.com/Luckolite/Sheet-Music-Recognition/actions/workflows/ci.yml/badge.svg)](https://github.com/Luckolite/Sheet-Music-Recognition/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/LICENSE)
@@ -53,15 +53,15 @@ and requires FFmpeg, which the `audio` extra supplies.
 | `--pages 1,3` | PDF pages to read |
 | `--meter 3/4` | Initial meter (default 4/4) |
 | `--bpm 90` | Initial quarter-note tempo (default 120 BPM) |
-| `--key-fifths 2` | Starting key signature with two sharps |
+| `--key-fifths 2` | Fallback key signature with two sharps when the starting key is missing or unreadable |
 | `--instrument violin` | Resolve printed open-string harmonics using standard violin tuning |
 
 Run `score-reader --help` for all options. [API and output details](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/docs/integration.md) · [Standalone JAR and model downloads](https://github.com/Luckolite/Sheet-Music-Recognition/releases)
 
 ## What it supports
 
-- **Scores.** Printed staff notation for piano, violin, and ensembles, including independently barred staves.
 - **Notation.** Notes, chords, rests, clefs, accidentals, ties, slurs, grace notes, and dynamics. Reads repeats and endings, plus changes in key, meter, and tempo.
+- **Scores.** Printed staff notation for piano, violin, and ensembles, including independently barred staves.
 - **Playback.** MIDI and synthesized MP3 previews can follow recognized ritardandos, fermatas, tremolos, and piano pedal brackets. [Playback details](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/docs/expressive-performance.md)
 - **Guitar tab.** Six- and seven-string tab with tuning headers, written rhythms including triplets, and effects such as hammer-ons, pull-offs, slides, bends, and vibrato. When rhythm is missing, the reader estimates it. [Tab details](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/docs/guitar-tabs.md) · [Guitar effects](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/docs/tab-gestures.md)
 - **Exports.** MusicXML reconstructs an editable concert-pitch score and leaves out the original page layout and tab placement. JSON includes note events and page geometry. [Export formats](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/docs/integration.md)

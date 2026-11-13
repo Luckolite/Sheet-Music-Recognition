@@ -6,7 +6,7 @@ on:
       version:
         description: Package version to publish
         required: true
-        default: '0.2.0'
+        default: '0.2.1'
   release:
     types: [published]
 
@@ -62,7 +62,8 @@ jobs:
           sheet-music-recognition --help
           sheet-interpreter --help
           python -m sheet_interpreter.cli --help
-          python -c 'from sheet_interpreter import Interpreter; from sheet_music_recognition import Interpreter as Current; assert Interpreter is Current'
+          python -m score_reader.cli --help
+          python -c 'from score_reader import Interpreter; from sheet_interpreter import Interpreter as Legacy; from sheet_music_recognition import Interpreter as Previous; assert Interpreter is Legacy is Previous'
           score-reader --demo --output base-install-smoke.json --midi base-install-smoke.mid --musicxml base-install-smoke.musicxml
           python -m pip install "$wheel[pdf,audio]"
           python scripts/smoke_test.py

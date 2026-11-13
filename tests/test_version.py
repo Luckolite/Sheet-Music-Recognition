@@ -5,7 +5,11 @@ import re
 import unittest
 from pathlib import Path
 
+import score_reader
+import sheet_interpreter
 import sheet_music_recognition
+from score_reader.midi import write_midi
+from sheet_music_recognition.midi import write_midi as previous_write_midi
 
 
 class VersionTest(unittest.TestCase):
@@ -17,4 +21,11 @@ class VersionTest(unittest.TestCase):
         self.assertIsNotNone(project)
         version = re.search(r'^version\s*=\s*"([^"]+)"', project.group(1), re.MULTILINE)
         self.assertIsNotNone(version)
-        self.assertEqual(version.group(1), sheet_music_recognition.__version__)
+        self.assertEqual(version.group(1), score_reader.__version__)
+
+    def test_public_import_matches_existing_api(self):
+        for package in (sheet_interpreter, sheet_music_recognition):
+            self.assertEqual(package.__version__, score_reader.__version__)
+            for name in score_reader.__all__:
+                self.assertIs(getattr(package, name), getattr(score_reader, name))
+        self.assertIs(write_midi, previous_write_midi)
