@@ -18,6 +18,19 @@ public class ExpressiveDirectionTextTest {
     }
 
     @Test
+    public void completeBowCaptionsPreservePrintedTextWithoutAssigningPlayback() {
+        for (String text : List.of("M. staccato volant", "Sp. Staccato", "G.B. portato",
+                "Détaché", "Martelé", "segue")) {
+            assertTrue(ExpressiveDirectionText.isBowCaption(text));
+            assertEquals(Strength.UNSPECIFIED, one(text, Kind.UNRESOLVED_DIRECTION).strength());
+        }
+        for (String text : List.of("please segue to the next section", "G.B.", "not staccato")) {
+            assertFalse(ExpressiveDirectionText.isBowCaption(text));
+            assertTrue(ExpressiveDirectionText.parse(text).isEmpty());
+        }
+    }
+
+    @Test
     public void gradualAndImmediateSlowingStayDifferent() {
         one("rit.", Kind.RITARDANDO);
         one("Rallentando", Kind.RALLENTANDO);

@@ -145,8 +145,12 @@ public final class ScoreExpressionDetector {
                     directions.stream()
                             .allMatch(d -> d.kind() == Kind.BREATH || d.kind() == Kind.CAESURA);
             float x = word.left() * width;
+            boolean bowCaption = ExpressiveDirectionText.isBowCaption(directionText);
+            var captionStaff = bowCaption
+                    ? bowCaptionOwner(score, staffs, word, gray, width, height) : null;
+            if (bowCaption && captionStaff == null) continue;
             var staff =
-                    PrintedDirectionStaff.at(
+                    bowCaption ? captionStaff : PrintedDirectionStaff.at(
                             staffs,
                             score.measures(),
                             score.notes(),
@@ -225,6 +229,7 @@ public final class ScoreExpressionDetector {
                         }
                 }
             }
+            if (bowCaption) closest = captionAttack(score, staff, width, height, x, word.right() * width);
             if (metricBoundary && closest == null) continue;
             if (closest == null && staff != null && word.right() > word.left())
                 closest =
@@ -540,6 +545,88 @@ public final class ScoreExpressionDetector {
             matched = sibling;
         }
         return matched != null;
+    }
+
+    private static PlayingTechniqueDetector.Staff bowCaptionOwner(
+            ScorePageInterpretation score, List<PlayingTechniqueDetector.Staff> staffs,
+            PlayingTechniqueDetector.Word word, byte[] gray, int width, int height) {
+        float x = word.left() * width, right = word.right() * width;
+        float top = word.top() * height, bottom = word.bottom() * height;
+        if (gray == null || !ScoreDynamicsDetector.containsInk(word, gray, width, height)) return null;
+        PlayingTechniqueDetector.Staff owner = null;
+        float best = Float.POSITIVE_INFINITY;
+        for (var staff : staffs) {
+            float gap = staff.gap();
+            float clearance = bottom <= staff.top() ? staff.top() - bottom
+                    : top >= staff.bottom() ? top - staff.bottom() : -1;
+            if (gap < 6 || clearance < gap * .25f
+                    || top >= staff.bottom() && clearance > gap * 5
+                    || bottom - top > gap * 3.5f || right - x > gap * 25) continue;
+            var nearbyAttack = captionAttack(score, staff, width, height, x, right);
+            boolean ledgerCaption = nearbyAttack != null && bottom < staff.top()
+                    && staff.top() - nearbyAttack.pageY() * height >= gap * 2
+                    && nearbyAttack.pageY() * height - bottom <= gap * 3;
+            if (clearance > gap * 5 && !ledgerCaption) continue;
+            float firstSample = Float.NaN;
+            PlayingTechniqueDetector.Staff proof = null;
+            float[] samples = {0, 1, 2, 3, 4, 5, 6, 7, 8, -1, -2, .5f, 1.5f, 2.5f,
+                    3.5f, 4.5f, 5.5f, 6.5f, 7.5f, -3, -3.5f, -4, -4.5f, -5,
+                    8.5f, 9, 9.5f, 10, 10.5f, 11, 11.5f, 12, 12.5f, 13};
+            for (float delta : samples) {
+                if (!ledgerCaption && (delta < -2 || delta > 8)) break;
+                float sample = x + gap * delta;
+                var local = PrintedDirectionStaff.local(
+                        staff, score.measures(), score.notes(), gray, width, height, sample);
+                if (local == null) continue;
+                if (proof == null) {
+                    proof = local;
+                    firstSample = sample;
+                } else if (Math.abs(sample - firstSample) >= gap * .95f
+                        && Math.abs(proof.bottom() - local.bottom()) <= gap * .3f
+                        && Math.abs(proof.gap() - local.gap()) <= gap * .1f) {
+                    var attack = captionAttack(score, proof, width, height, x, right);
+                    if (attack == null) break;
+                    float distance = clearance / gap;
+                    if (bottom < proof.top() && attack.pageY() * height < proof.top()) {
+                        var measure = score.measures().get(attack.measureIndex());
+                        float attackX = (measure.left() + attack.positionInMeasure()
+                                * (measure.right() - measure.left())) * width;
+                        float headClearance = attack.pageY() * height - bottom;
+                        // Ledger-line heads can carry a caption well above the top rule.
+                        if (attackX >= x && attackX <= right
+                                && headClearance >= gap * .25f && headClearance <= gap * 3)
+                            distance = Math.min(distance, headClearance / gap);
+                    }
+                    if (distance <= 5 && distance < best) {
+                        best = distance;
+                        owner = proof;
+                    }
+                    break;
+                }
+            }
+        }
+        return owner;
+    }
+    private static ScoreNoteEvent captionAttack(
+            ScorePageInterpretation score, PlayingTechniqueDetector.Staff staff,
+            int width, int height, float left, float right) {
+        float center = (staff.top() + staff.bottom()) * .5f / height;
+        ScoreNoteEvent first = null;
+        float firstX = Float.POSITIVE_INFINITY;
+        for (var note : score.notes()) {
+            if (note.staffIndex() != staff.index() || note.staffCount() != staff.count()
+                    || note.crossStaffBeam() || (note.articulations() & NoteOrnament.GRACE) != 0)
+                continue;
+            var measure = score.measures().get(note.measureIndex());
+            if (center < measure.top() || center > measure.bottom()) continue;
+            float x = (measure.left() + note.positionInMeasure()
+                    * (measure.right() - measure.left())) * width;
+            if (x >= left && x <= right && x < firstX) {
+                firstX = x;
+                first = note;
+            }
+        }
+        return first != null ? first : closestDirectionNote(score, staff, width, height, left, left);
     }
 
     private static ScoreNoteEvent closestDirectionNote(

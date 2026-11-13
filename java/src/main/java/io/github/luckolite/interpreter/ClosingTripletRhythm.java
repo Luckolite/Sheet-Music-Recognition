@@ -25,8 +25,10 @@ final class ClosingTripletRhythm {
         var indices = IntStream.range(0, notes.size())
                 .filter(i -> notes.get(i).measureIndex() == barIndex).boxed()
                 .sorted(Comparator.comparingDouble(i -> notes.get(i).positionInMeasure())).toList();
-        if (indices.size() != 10) return score;
         var bar = score.measures().get(barIndex);
+        if (indices.size() == 7)
+            return closingHalf(score, meter, labels, gray, width, height, barIndex, bar, indices);
+        if (indices.size() != 10) return score;
         float[] xs = new float[10], ys = new float[10];
         int direction = notes.get(indices.get(0)).stemDirection();
         if (Math.abs(direction) != 1) return score;
@@ -76,6 +78,73 @@ final class ClosingTripletRhythm {
         }
         return score.withNotes(result, IntStream.range(0, notes.size()).boxed().toList())
                 .withClockContextSource(score.clockContextSource());
+    }
+
+    private static ScorePageInterpretation closingHalf(
+            ScorePageInterpretation score, ScoreMeterChange meter, byte[] labels, byte[] gray,
+            int width, int height, int barIndex, MeasureRegion bar, List<Integer> indices) {
+        if (gray == null || gray.length != (long) width * height) return score;
+        var notes = score.notes();
+        float[] x = new float[7], y = new float[7];
+        for (int i = 0; i < indices.size(); i++) {
+            var note = notes.get(indices.get(i));
+            if (note.kind() != ScoreNoteEvent.Kind.PITCHED || note.staffCount() != 1
+                    || note.crossStaffBeam() || note.beamCount() != (i < 6 ? 1 : 0)
+                    || i == 6 && note.unbeamedDurationBeats() != 2
+                    || note.augmentationDots() != 0 || note.tupletDivisor() != 1
+                    || note.leadingRestBeats() != 0 || note.followingRestBeats() != 0
+                    || note.tiedFromPrevious() || note.boundaryTies() != 0
+                    || (note.articulations() & NoteOrnament.GRACE) != 0) return score;
+            x[i] = (bar.left() + (bar.right() - bar.left()) * note.positionInMeasure()) * width;
+            y[i] = note.pageY() * height;
+        }
+        float edge = bar.right() * width;
+        for (var staff : RawStaffLineDetector.detect(gray, width, height)) {
+            float gap = staff.gap();
+            if (staff.top() < bar.top() * height - gap
+                    || staff.bottom() > bar.bottom() * height + gap) continue;
+            var owner = new PlayingTechniqueDetector.Staff(staff.top(), staff.bottom(), gap, 0, 1);
+            if (meter == null && !printedCommonTime(score, barIndex, labels, gray, width, height, owner))
+                continue;
+            if (!doubleRule(gray, width, height, owner, edge)) continue;
+            int first = tripletDirection(gray, width, height, x, y, gap, 0);
+            int second = tripletDirection(gray, width, height, x, y, gap, 3);
+            if (first == 0 || second == 0 || first == second
+                    && !SeparateBeamGroups.between(gray, width, height, x[2], y[2], x[3], y[3], gap))
+                continue;
+            var result = new ArrayList<>(notes);
+            for (int i : indices.subList(0, 6)) result.set(i, notes.get(i).withTupletRatio(3, 2));
+            return score.withNotes(result, IntStream.range(0, notes.size()).boxed().toList())
+                    .withClockContextSource(score.clockContextSource());
+        }
+        return score;
+    }
+
+    private static boolean doubleRule(
+            byte[] gray, int width, int height, PlayingTechniqueDetector.Staff staff, float edge) {
+        float gap = staff.gap();
+        for (float inset : new float[] {3, 2.5f, 4}) {
+            float[] rails = PrintedDirectionStaff.printedRules(
+                    gray, width, height, edge - inset * gap, staff.bottom(), gap);
+            if (rails == null) continue;
+            var local = new PlayingTechniqueDetector.Staff(
+                    rails[0] - 4 * rails[1], rails[0], rails[1], 0, 1);
+            if (PrintedCadenceDurations.boundaryColumn(gray, width, local, edge, false, true) >= 0)
+                return true;
+        }
+        return false;
+    }
+
+    private static int tripletDirection(
+            byte[] gray, int width, int height, float[] x, float[] y, float gap, int start) {
+        for (int direction : new int[] {-1, 1}) {
+            if (PrintedTupletBeamOwner.connectedHeads(gray, width, height,
+                    x[start], y[start], x[start + 1], y[start + 1], gap, direction)
+                    && PrintedTupletBeamOwner.connectedHeads(gray, width, height,
+                            x[start + 1], y[start + 1], x[start + 2], y[start + 2], gap, direction))
+                return direction;
+        }
+        return 0;
     }
 
     private static boolean printedCommonTime(
