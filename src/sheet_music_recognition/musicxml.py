@@ -816,6 +816,9 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
                 octave_owned[emitted] = 0 if event_kind(g) == 'UNPITCHED' else g.get('octaveShift', 0)
                 if g['sourceIdentity'] in requested_slur_owners:
                     slur_attacks[g['sourceIdentity']] = emitted
+        sounding = [n for n in notes if not n.get('grace', False)]
+        next_note = 0
+        present = []
         for index, bar in enumerate(bars):
             measure = element(part, 'measure', number=first_number+index)
             attributes = element(measure, 'attributes')
@@ -875,7 +878,13 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
                     dash = element(measure, 'direction', placement='above')
                     element(element(dash, 'direction-type'), 'dashes', type='stop', number=str(dash_numbers[mark['identity']]))
                     element(dash, 'offset', mark['endTick']-a)
-            present = [n for n in notes if not n.get('grace', False) and n['start'] < b and n['end'] > a]
+            # Carry sustained notes forward and consume each onset in score order.
+            present = [n for n in present if n['end'] > a]
+            while next_note < len(sounding) and sounding[next_note]['start'] < b:
+                n = sounding[next_note]
+                next_note += 1
+                if n['end'] > a:
+                    present.append(n)
             bar_rests = [r for r in silent if r['barIndex'] == index]
             voices = sorted({n['voice'] for n in present}) or ([] if bar_rests else [1])
             rest_voices = {max(1000, len(voice_ends))+i+1: row for i, row in enumerate(bar_rests)}
