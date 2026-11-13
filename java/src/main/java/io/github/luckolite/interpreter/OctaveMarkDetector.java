@@ -448,7 +448,8 @@ final class OctaveMarkDetector {
                     var attached = !below && !closedEight && isComponent
                             ? verticallyAttachedEight(gray, width, box, gap) : null;
                     if (attached != null) box = attached;
-                    if (!closedEight && attached == null && (below || !brokenEightShape(gray, width, box, gap)))
+                    if (!closedEight && attached == null
+                            && (below || !canRepairEight(gray, width, box, gap)))
                         continue;
                     float dashRight =
                             dashEnd(
@@ -463,7 +464,10 @@ final class OctaveMarkDetector {
                     if (dashRight < 0) continue;
                     int hookDirection =
                             hookDirection(gray, width, height, dashRight, box.top, box.bottom, gap);
-                    if (!closedEight && hookDirection <= 0) continue;
+                    if (!closedEight
+                            && (hookDirection <= 0
+                                    || attached == null && !brokenEightShape(gray, width, box, gap)))
+                        continue;
                     // A bare numeral has no va/vb suffix. Use only the nearest stave;
                     // do not apply the same inter-system mark to both adjacent rows.
                     PlayingTechniqueDetector.Staff nearest = null;
@@ -940,11 +944,15 @@ final class OctaveMarkDetector {
         return null;
     }
 
+    private static boolean canRepairEight(byte[] gray, int width, InkBox box, float gap) {
+        int w = box.right - box.left + 1, h = box.bottom - box.top + 1;
+        return w >= gap * .8f && w <= gap * 1.85f && h >= gap * 1.15f && h <= gap * 2.3f
+                && OctaveClefDigit.holes(gray, width, box.left, box.top, w, h) == 1;
+    }
+
     /** Recover a broken loop only if one short bridge restores the second counter. */
     private static boolean brokenEightShape(byte[] gray, int width, InkBox box, float gap) {
         int w = box.right - box.left + 1, h = box.bottom - box.top + 1;
-        if (w < gap * .8f || w > gap * 1.85f || h < gap * 1.15f || h > gap * 2.3f
-                || OctaveClefDigit.holes(gray, width, box.left, box.top, w, h) != 1) return false;
         var patch = new byte[w * h];
         for (int y = 0; y < h; y++)
             System.arraycopy(gray, (box.top + y) * width + box.left, patch, y * w, w);
@@ -974,7 +982,35 @@ final class OctaveMarkDetector {
                     for (int row = start; row < end; row++) patch[row * w + x] = 0;
             }
         }
-        return OctaveClefDigit.holes(patch, w, 0, 0, w, h) == 2;
+        if (OctaveClefDigit.holes(patch, w, 0, 0, w, h) == 2) return true;
+        return hasDiagonalLowerLoop(gray, width, box, w, h, bridge);
+    }
+
+    /** A broken curved stroke can leave a gap across two adjacent rows. */
+    private static boolean hasDiagonalLowerLoop(
+            byte[] gray, int stride, InkBox box, int w, int h, int bridge) {
+        var patch = new byte[w * h];
+        for (int y = 0; y < h; y++)
+            System.arraycopy(gray, (box.top + y) * stride + box.left, patch, y * w, w);
+        for (int y = h / 2; y < h - 1; y++) {
+            for (int x = 0; x < w; x++) {
+                if ((patch[y * w + x] & 255) >= 165) continue;
+                for (int step = -1; step <= 1; step += 2) {
+                    for (int length = 2; length <= bridge; length++) {
+                        int end = x + step * length;
+                        if (end < 0 || end >= w) break;
+                        if ((patch[(y + 1) * w + end] & 255) >= 165) continue;
+                        var repaired = patch.clone();
+                        for (int i = 1; i < length; i++) {
+                            int row = i * 2 < length ? y : y + 1;
+                            repaired[row * w + x + step * i] = 0;
+                        }
+                        if (OctaveClefDigit.holes(repaired, w, 0, 0, w, h) == 2) return true;
+                    }
+                }
+            }
+        }
+        return false;
     }
 
     private static boolean bareEightShape(byte[] gray, int width, InkBox box, float gap) {
