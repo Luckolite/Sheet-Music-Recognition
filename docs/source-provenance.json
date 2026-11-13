@@ -1618,6 +1618,12 @@
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/ActiveScoreNotes.java"
     },
     "ArtificialHarmonics.java": {
+      "single_beam_shared_shaft_review": {
+        "reviewed_app_commit": "7b3140f584eeda8c82994f56c762e4323c75749a",
+        "app_lf_sha256": "f526ae5f158ce4df8b2d313c45abab7c8ad53de97955de1f21dad6d9caa96b0a",
+        "standalone_lf_sha256": "1c54d8cead43bb7dbd51b75d704f7bd5ec543c0e87b1fa1639d8acddd9d2b20a",
+        "scope": "Matching closed diamond and continuous shaft proof for singly beamed artificial harmonics. Existing unrelated drift remains open."
+      },
       "diamond_pixel_center_review": {
         "reviewed_app_commit": "7ea4db88c30302d0db185ad5c11ce7ced2d75fdf",
         "app_blob_sha256": "73dff320d66b9abf6e101a2777f0ba96c9b318e97773392b5681c3511000ffae",

@@ -194,9 +194,19 @@ final class ArtificialHarmonics {
                             && n.stemDirection() != 0
                             && joinedQuarterStem(gray, w, h, x, y, gap, n.stemDirection())
                             && quarterTouchDiamond(labels, gray, w, h, x, y, gap);
+            // One printed beam is enough when a closed touch diamond is joined to
+            // this stopped note by the same shaft. Do not borrow a nearby hollow head.
+            boolean joinedEighthTouch =
+                    n.beamCount() == 1
+                            && n.unbeamedDurationBeats() < ScoreNoteEvent.DURATION_HALF
+                            && n.stemDirection() != 0
+                            && joinedQuarterStem(gray, w, h, x, y, gap, n.stemDirection())
+                            && enclosedCounter(gray, w, h, x, y - 1.5f * gap, gap * .7f, gap * .24f)
+                            && quarterTouchDiamond(labels, gray, w, h, x, y, gap);
             if (!strictDiamond
                     && !symbolTouch
                     && !joinedQuarterTouch
+                    && !joinedEighthTouch
                     && !(pairedTouch != null
                             && n.beamCount() >= 2
                             && ((pairedTouch.beamCount() == 0
@@ -207,6 +217,7 @@ final class ArtificialHarmonics {
             // Require the stopped stem, or a paired beamed lower note when a crowded touch
             // diamond interrupts that stem and the decoded upper fourth is a spurious half note.
             if (!joinedQuarterTouch
+                    && !joinedEighthTouch
                     && !stem(
                             gray,
                             w,

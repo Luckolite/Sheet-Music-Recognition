@@ -146,6 +146,15 @@ public class SymbolTouchHarmonicsTest {
     }
 
     @Test
+    public void singleBeamUsesTheSameShaftAndClosedTouchDiamond() {
+        draw(true, 0);
+        var n = stopped(1, 0).withStemDirection(-1);
+        assertEquals(List.of(n.withOctaveShift(2)), apply(labels, List.of(n)));
+        erase(Y - 16, Y - 8);
+        assertEquals(List.of(n), apply(labels, List.of(n)));
+    }
+
+    @Test
     public void unbeamedQuarterUsesTheSharedPrintedShaft() {
         draw(true, 0);
         var n = stopped(0, ScoreNoteEvent.DURATION_QUARTER).withStemDirection(-1);
