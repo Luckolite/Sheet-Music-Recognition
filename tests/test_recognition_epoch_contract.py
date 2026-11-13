@@ -16,7 +16,7 @@ class RecognitionEpochContractTest(unittest.TestCase):
                   "GuideCacheIdentity.java").read_text(encoding="utf-8")
         revision = int(re.search(r"RECOGNITION_REVISION\s*=\s*(\d+)", source)[1])
         # Historical encodes leave the current recognition identity intact.
-        self.assertEqual(152, revision)
+        self.assertEqual(153, revision)
         self.assertEqual(revision, wire.RECOGNITION_REVISION)
         self.assertEqual(302, wire.GUIDE_VERSION)
 

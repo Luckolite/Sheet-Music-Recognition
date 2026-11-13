@@ -3240,8 +3240,8 @@
     },
     "FadedNoteheadRecovery.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/FadedNoteheadRecovery.java",
-      "source_sha256": "5664c7d22101f31c87d30d644b384888e4fb6bb2b5001eb4c689c97a8218d4f4",
-      "source_normalized_sha256": "58073f38aab015648da9fa24479f784eb7939948fbf5e08130064271328e26e1",
+      "source_sha256": "9722ecedba9b5888a55f1c06370db25e5f5863d5f7c3b3185d6c4e66c939b7c3",
+      "source_normalized_sha256": "9722ecedba9b5888a55f1c06370db25e5f5863d5f7c3b3185d6c4e66c939b7c3",
       "standalone_sha256": "f6be3fe74e58ffafd6795c2454077535484383f86b2703859abfa869f8d20628",
       "review_note": "Global recognition/performance repairs; namespace-equivalent portable helpers and separately reviewed caller adapters. Original synthetic regressions; no private score assets.",
       "reviewed_app_commit": "75008a026ef8857d7e649a8b64a00f7de672b63b",
@@ -3839,8 +3839,8 @@
     },
     "GuideCacheIdentity.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/GuideCacheIdentity.java",
-      "source_sha256": "42bd447d38760d05c2db40869d86a0a2a69ed776955354037a2e5254996f8a57",
-      "source_normalized_sha256": "42bd447d38760d05c2db40869d86a0a2a69ed776955354037a2e5254996f8a57",
+      "source_sha256": "4034fdf740a5860a7385e7a47dfed427c4cd7fbd7d9dace42e7afcef4fdb9204",
+      "source_normalized_sha256": "4034fdf740a5860a7385e7a47dfed427c4cd7fbd7d9dace42e7afcef4fdb9204",
       "review_note": "Shared recognition and playback-direction changes ported with standalone adapters. Redistributable synthetic regressions cover the changed ink and direction rules.",
       "standalone_sha256": "014f91a3e13bbcc72bce83b035eff8c6cb1070651c1a7a2f3b7fb868e75657d1",
       "reviewed_app_commit": "b029dfbb",
@@ -3901,8 +3901,8 @@
     "GuideCacheIdentityTest.java": {
       "source_path": "app/src/test/java/com/musicsheets/app/pdf/GuideCacheIdentityTest.java",
       "standalone_path": "java/src/test/java/io/github/luckolite/interpreter/GuideCacheIdentityTest.java",
-      "source_sha256": "5cc9fa2e77585ef76c6cd82bc96754eb637fe08edca2843355f32e8281490ef4",
-      "source_normalized_sha256": "5b1dc2c58daf5c07225f26767088aafb3439a7c03014c81f9b0ec6eae6c67a20",
+      "source_sha256": "017e13f050b1f413e9a30806b86458339a252c3db5d91ca13d1f8b0084e8088f",
+      "source_normalized_sha256": "017e13f050b1f413e9a30806b86458339a252c3db5d91ca13d1f8b0084e8088f",
       "standalone_sha256": "672bd354df2f149745f465a51a222b19350b633e6936d413f516abc70fa0e4d2",
       "license": "Apache-2.0",
       "recognition88_review_note": "Reviewed exact contextual global changes and namespace twins with original synthetic regressions. New helpers are selected explicitly by desktop decoder manifest; no models, private fixtures, schema, wire or audio changes.",
@@ -5670,9 +5670,9 @@
     },
     "PaleChordHeadRecovery.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/PaleChordHeadRecovery.java",
-      "source_sha256": "dcc94daeca5347fafc270e0bbe31c78ce951dcfca1b378db472e641fff24be6a",
+      "source_sha256": "c086947abb9192b15b0f7d115a17bd175071f2c6d6fe6f666a3a69a880e03123",
       "reviewed_app_commit": "650d1b3a312dcd7eb58f83945a6a3be321c9b4dd",
-      "source_normalized_sha256": "dcc94daeca5347fafc270e0bbe31c78ce951dcfca1b378db472e641fff24be6a",
+      "source_normalized_sha256": "c086947abb9192b15b0f7d115a17bd175071f2c6d6fe6f666a3a69a880e03123",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/PaleChordHeadRecovery.java"
     },
     "PaleFilledHeadBody.java": {
@@ -6377,8 +6377,8 @@
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/PrintedCurveRuleInk.java",
       "reviewed_app_base_commit": "3fdc80c8c99cb1243302ff358f87121682324290",
       "origin": "Original Apache-2.0 optical helper; no private score assets.",
-      "source_sha256": "4a6daf45dc1a45954a467b06fd1a7e56a26b1c958080e1465825778f5467ebab",
-      "source_normalized_sha256": "4a6daf45dc1a45954a467b06fd1a7e56a26b1c958080e1465825778f5467ebab",
+      "source_sha256": "fabb5a4437af4624d316e3111e24ac1f231b389a2ff98759cfdc1413af1c840a",
+      "source_normalized_sha256": "fabb5a4437af4624d316e3111e24ac1f231b389a2ff98759cfdc1413af1c840a",
       "standalone_sha256": "fab48fa02475a75b9e4cfffdcf7363f50920ddb5e40535ebf75ec383840f923c",
       "reviewed_source_state": "Accepted source130; Guide295, recognition112, audio97",
       "review_note": "Extend original licensed octave-word numeral/suffix raster scales; keep all existing template records and matcher thresholds. Separate complete curved slur caps crossing independently corroborated staff rules using an immutable sample view with three agreeing raw profiles. Original held-out rendering, semantic-secondary, curve and cache controls; no private pixels, models or song-specific rules.",
@@ -7003,8 +7003,8 @@
     },
     "PrintedStemDirection.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/PrintedStemDirection.java",
-      "source_sha256": "b94c8cc9d4adeda5776fafb6c041caf39ffa61ab4cdc366b3a3067769b9a1546",
-      "source_normalized_sha256": "8d61b10c31ed685a90d6309394e0ac68ff667f8fbe8ab36a0eeaf67762a747f1",
+      "source_sha256": "905d37e6a2bc192847a5b923322ed9d6eddc0ef49bde064b6dd791e2b2b286b4",
+      "source_normalized_sha256": "905d37e6a2bc192847a5b923322ed9d6eddc0ef49bde064b6dd791e2b2b286b4",
       "reviewed_app_commit": "650d1b3a312dcd7eb58f83945a6a3be321c9b4dd",
       "reviewed_source_state": "Reviewed uncommitted 882 worktree based on the recorded app commit",
       "review_note": "Reviewed uncommitted 882 worktree based on 650d1b3a312dcd7eb58f83945a6a3be321c9b4dd; full executable-token parity after package/diagnostics adaptation. Original synthetic geometry and framing controls; no private score, log, library, model, dependency or signing material.",
@@ -7422,8 +7422,8 @@
     },
     "RawStaffLineDetector.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/RawStaffLineDetector.java",
-      "source_sha256": "0801c98d9dbc7cf1b5a5f1d9ebd077d2735714c2429a471356c57984d3ac7f31",
-      "source_normalized_sha256": "bc510450db22470cf61fe083f4c1b8b66975eae0719c57ce740311be3cc927ef",
+      "source_sha256": "bbb13014a4027d2763bda276fa1b72aa5249c664ee81d2c5355d393c0160cbe4",
+      "source_normalized_sha256": "bbb13014a4027d2763bda276fa1b72aa5249c664ee81d2c5355d393c0160cbe4",
       "reviewed_app_base_commit": "650d1b3a312dcd7eb58f83945a6a3be321c9b4dd",
       "review_note": "Evaluate existing interior texture rejection on the actual regularized emitted staff frame with independent printed neighbors. Corroborate staff-rule beam bands using complete bilateral staff witnesses, continuous same-rule paths, unchanged mass guards and an independent finite-rail end/body-to-tail veto; clipped evidence abstains. Reject photographic heads only with unchanged off-staff and absent-shaft guards, a continuously shaded body/surround, no thin printed ledger, and no independently bounded body or separate occluding neighbor. Ambiguous clipped neighbor witnesses conservatively preserve heads. Sixty-three original procedural regressions, including real pale whole-head and image-edge counterexamples. No private score pixels, song predicates, model or native record changes.",
       "reviewed_source_state": "working-tree",
@@ -9185,8 +9185,8 @@
     },
     "StaffPitchTrack.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/StaffPitchTrack.java",
-      "source_sha256": "c161d5bfcb494fa8a5cf3c1d49ea12066d6ec895d6da32838e82ee3a117b1c10",
-      "source_normalized_sha256": "c2b87efbca635b93ed20aad4bfc3b767ee7ac79aefc2c0b15c8a4f0549475ea8",
+      "source_sha256": "60c9faee870bf05405a080f4de2f4c7af34cecd1c1cb4544fc907176de573411",
+      "source_normalized_sha256": "60c9faee870bf05405a080f4de2f4c7af34cecd1c1cb4544fc907176de573411",
       "reviewed_app_base_commit": "650d1b3a312dcd7eb58f83945a6a3be321c9b4dd",
       "review_note": "Bound verified sampled staff authority to its observed horizontal range; retain existing local rule recovery outside it. Original generated rule regressions, no source-score pixels.",
       "reviewed_source_state": "committed",
@@ -9299,8 +9299,8 @@
     },
     "SymbolStemHeadRecovery.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/SymbolStemHeadRecovery.java",
-      "source_sha256": "85d765d4188b53a27e116a6ea7ecba9b26450e6c9a90a1b652b2d5443486a416",
-      "source_normalized_sha256": "6ab32933edd252b88449b209086ea6f53f4a6a01e55fc6f04b68aede04fa971d",
+      "source_sha256": "700f1a518abdf8b8a1bfb5cc6575a459f161fb790e6497016f4284c8fd47be04",
+      "source_normalized_sha256": "700f1a518abdf8b8a1bfb5cc6575a459f161fb790e6497016f4284c8fd47be04",
       "standalone_sha256": "8050be3c3174006c0da80c37f01d22e070ba8f6871037a82fad6586ea5ca86ed",
       "reviewed_source_state": "working-tree",
       "review_note": "Recover broken oval rims only with opposing edge contrast, semantic/raw shaft ownership and a complete beam to a retained note. The proved beam establishes filled rhythm on both endpoints. Original scaled/mirrored shapes, missing-ink/shaft/beam controls and false rectangles/arcs; no private score data.",
@@ -9676,8 +9676,8 @@
     },
     "TripletRhythmDetector.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/TripletRhythmDetector.java",
-      "source_sha256": "db577ccc05e25a12d8610038b13d38f878b126a327951e15c5b40b874e72a0f9",
-      "source_normalized_sha256": "8a796660805ca552eac6f01127fc6072ebe0d6c874926a5a875aa247147cdf7f",
+      "source_sha256": "8d8b6787b9a9e7a883da1e0adfd280f0815e79c3c961d064a41b5fcca85ca8c2",
+      "source_normalized_sha256": "8d8b6787b9a9e7a883da1e0adfd280f0815e79c3c961d064a41b5fcca85ca8c2",
       "review_note": "Shared recognition and playback-direction changes ported with standalone adapters. Redistributable synthetic regressions cover the changed ink and direction rules.",
       "standalone_sha256": "3a94ab0baa6516d42b5b6e7572b424e788c1b0f09eb111df9d44c0387c6f2365",
       "reviewed_app_commit": "b029dfbb",
@@ -9750,9 +9750,9 @@
     },
     "TupletNumeralInk.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/TupletNumeralInk.java",
-      "source_sha256": "f7dae5c34d2d523381a4ea73133ca1c066909c8ca456872c88b9c031555458fe",
+      "source_sha256": "fad587ece32c52e8e51fcc1b5dbccd7c690f7cf437ed2951c677905c774d9c5a",
       "reviewed_app_commit": "650d1b3a312dcd7eb58f83945a6a3be321c9b4dd",
-      "source_normalized_sha256": "f7dae5c34d2d523381a4ea73133ca1c066909c8ca456872c88b9c031555458fe",
+      "source_normalized_sha256": "fad587ece32c52e8e51fcc1b5dbccd7c690f7cf437ed2951c677905c774d9c5a",
       "review_note": "Reviewed unreachable sloped-rule coverage rejection; original thresholds, rounding, and deletion order unchanged. Package-only standalone adapter, original synthetic parity regression, no private scores, new dependencies or model changes. Immutable app snapshot based on released 840.",
       "reviewed_app_snapshot": "music-sheets-rest-tuplet-841-source (retained provenance: public4af945db, 2026-10-05)",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/TupletNumeralInk.java"
@@ -9970,8 +9970,8 @@
     },
     "guide_writer.py": {
       "source_path": "tools/native-worker/guide_writer.py",
-      "source_sha256": "57cdb5b5b2692f41ae58ad3a1d51667b505baa134af97219204c388b1056c063",
-      "source_normalized_sha256": "57cdb5b5b2692f41ae58ad3a1d51667b505baa134af97219204c388b1056c063",
+      "source_sha256": "ee43bab965433106fc82fc2768c0afff75f39a8fb2c2b5a0904ad7131101411f",
+      "source_normalized_sha256": "ee43bab965433106fc82fc2768c0afff75f39a8fb2c2b5a0904ad7131101411f",
       "review_note": "Shared recognition and playback-direction changes ported with standalone adapters. Redistributable synthetic regressions cover the changed ink and direction rules.",
       "standalone_sha256": "2539f0a4efdc19784f48e8baecd9534ddb483bcaf60a0338a8a30ccdee8442e7",
       "reviewed_app_commit": "b029dfbb",
