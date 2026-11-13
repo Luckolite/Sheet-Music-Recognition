@@ -6,6 +6,7 @@ import java.util.*;
 
 /** Six- and seven-string numeric tablature. Frets are absolute semitone offsets, never key-signature steps. */
 public final class TablatureDecoder {
+    private static final int[] ROW_THRESHOLDS = {180, 200, 220, 235, 245, 248};
     public record Fret(
             float x,
             float y,
@@ -111,7 +112,7 @@ public final class TablatureDecoder {
         var found = new ArrayList<Staff>();
         int[][] rowCounts = countRowProjections(gray, w, h);
         for (float coverage : new float[] {.55f, .06f})
-            for (int threshold : new int[] {180, 200, 220, 235, 245, 248})
+            for (int threshold : ROW_THRESHOLDS)
                 for (var staff :
                         detectAtThreshold(gray, w, h, threshold, coverage, rowCounts[threshold])) {
                     int match = -1;
@@ -169,49 +170,20 @@ public final class TablatureDecoder {
 
     private static int[][] countRowProjections(byte[] gray, int w, int h) {
         int[][] result = new int[256][];
-        int[] a = new int[h], b = new int[h], c = new int[h];
-        int[] d = new int[h], e = new int[h], f = new int[h];
-        result[180] = a;
-        result[200] = b;
-        result[220] = c;
-        result[235] = d;
-        result[245] = e;
-        result[248] = f;
+        for (int threshold : ROW_THRESHOLDS) result[threshold] = new int[h];
+        int[] histogram = new int[248];
         for (int y = 0; y < h; y++) {
-            int n180 = 0, n200 = 0, n220 = 0, n235 = 0, n245 = 0, n248 = 0;
-            int offset = y * w;
-            for (int x = 0; x < w; x++) {
-                int value = gray[offset + x] & 255;
-                if (value >= 248) continue;
-                n248++;
-                if (value < 180) {
-                    n180++;
-                    n200++;
-                    n220++;
-                    n235++;
-                    n245++;
-                } else if (value < 200) {
-                    n200++;
-                    n220++;
-                    n235++;
-                    n245++;
-                } else if (value < 220) {
-                    n220++;
-                    n235++;
-                    n245++;
-                } else if (value < 235) {
-                    n235++;
-                    n245++;
-                } else if (value < 245) {
-                    n245++;
-                }
+            Arrays.fill(histogram, 0);
+            int end = (y + 1) * w;
+            for (int index = y * w; index < end; index++) {
+                int value = gray[index] & 255;
+                if (value < histogram.length) histogram[value]++;
             }
-            a[y] = n180;
-            b[y] = n200;
-            c[y] = n220;
-            d[y] = n235;
-            e[y] = n245;
-            f[y] = n248;
+            int total = 0, value = 0;
+            for (int threshold : ROW_THRESHOLDS) {
+                while (value < threshold) total += histogram[value++];
+                result[threshold][y] = total;
+            }
         }
         return result;
     }
