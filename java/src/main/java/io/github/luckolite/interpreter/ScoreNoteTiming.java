@@ -1694,7 +1694,7 @@ public final class ScoreNoteTiming {
                 || count != (beats - (terminalQuarter ? 1 : 0)) * 4
                 || groups.get(0).position > .18f
                 || groups.get(count - 1).position < .8f) return null;
-        int dotted = 0, shortNotes = 0, stem = 0, overreadDottedColumns = 0;
+        int dotted = 0, shortNotes = 0, stem = 0, overreadDottedColumns = 0, strayShortDots = 0;
         for (int i = 0; i < count; i++) {
             RhythmGroup group = groups.get(i);
             boolean longSlot = i % 2 == 0;
@@ -1713,7 +1713,8 @@ public final class ScoreNoteTiming {
                         || (terminalQuarter && note.beamCount() < 1)
                         || note.beamCount() > 3
                         || (longSlot && note.beamCount() == 3 && note.augmentationDots() != 1)
-                        || note.augmentationDots() > (longSlot ? 1 : 0)
+                        || note.augmentationDots() > 1
+                        || (!longSlot && note.augmentationDots() == 1 && note.beamCount() != 3)
                         || note.unbeamedDurationBeats() > 1) return null;
             }
             // The two attacks in a dotted pair share a direction. A new pair can
@@ -1723,11 +1724,20 @@ public final class ScoreNoteTiming {
             else if (direction != stem) return null;
             if (longSlot && group.beamCount() == 3 && ++overreadDottedColumns > 1) return null;
             if (longSlot && group.beamCount() == 2 && group.augmentationDots() == 1) dotted++;
-            if (!longSlot && group.beamCount() == 3) shortNotes++;
+            if (!longSlot && group.augmentationDots() == 1) {
+                if (++strayShortDots > 1) return null;
+            } else if (!longSlot && group.beamCount() == 3) shortNotes++;
         }
+        // A single dotted short column needs an otherwise complete long-slot dot
+        // pattern and two independently undotted three-beam short witnesses.
+        if (strayShortDots != 0 && (dotted * 2 != count || shortNotes < 2)) return null;
         if (terminalQuarter) {
             if (dotted * 2 != count || shortNotes < 2) return null;
-        } else if (dotted * 8 < count * 3 || shortNotes < 3 || shortNotes * 6 < count) return null;
+        } else {
+            int threeBeamColumns = shortNotes + strayShortDots;
+            if (dotted * 8 < count * 3 || threeBeamColumns < 3 || threeBeamColumns * 6 < count)
+                return null;
+        }
         double[] durations = new double[groups.size()];
         for (int i = 0; i < count; i++) durations[i] = i % 2 == 0 ? .375 : .125;
         if (terminalQuarter) durations[count] = 1;

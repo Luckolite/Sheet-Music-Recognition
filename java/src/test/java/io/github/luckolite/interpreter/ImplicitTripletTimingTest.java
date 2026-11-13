@@ -128,6 +128,30 @@ public class ImplicitTripletTimingTest {
     }
 
     @Test
+    public void aSingleDottedShortColumnNeedsIndependentRhythmWitnesses() {
+        var notes = new ArrayList<ScoreNoteEvent>();
+        for (int i = 0; i < 12; i++) {
+            int beams = i == 1 || i == 3 || i == 5 ? 3 : 2;
+            int dots = i % 2 == 0 || i == 3 ? 1 : 0;
+            notes.add(new ScoreNoteEvent(
+                            1, .05f + i * .08f, 3, 0, 1, .5f, false,
+                            dots, beams, ScoreNoteEvent.ACCIDENTAL_FROM_KEY, 0, 1)
+                    .withStemDirection(-1));
+        }
+        var shortNote = notes.get(3);
+        assertEquals(.875, ScoreNoteTiming.beatInMeasure(shortNote, notes, 3), .0001);
+        assertEquals(.125,
+                ScoreNoteTiming.resolvedWrittenDurationBeats(shortNote, notes, 3), .0001);
+
+        notes.set(5, new ScoreNoteEvent(
+                        1, .45f, 3, 0, 1, .5f, false,
+                        1, 3, ScoreNoteEvent.ACCIDENTAL_FROM_KEY, 0, 1)
+                .withStemDirection(-1));
+        assertNotEquals(.125,
+                ScoreNoteTiming.resolvedWrittenDurationBeats(shortNote, notes, 3), .0001);
+    }
+
+    @Test
     public void twentyFourSixteenthsFillFourBeats() {
         var notes = run(24, 2);
         assertEquals(

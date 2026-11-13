@@ -1618,6 +1618,12 @@
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/ActiveScoreNotes.java"
     },
     "ArtificialHarmonics.java": {
+      "ledger_joined_diamond_review": {
+        "reviewed_app_commit": "d6fb9d1ff6f2344fc5afeaf561cc625cbbd8fcc7",
+        "app_lf_sha256": "bb1bbb6cc7c1184314a9993000bd91c08d2d5b0a76be730597e66d68008acde7",
+        "standalone_lf_sha256": "8f9e7000f7fef68024ae2ad2ba91afc43dbbaa403aaf3142fe40718f7e8843f7",
+        "scope": "Matching paired fourth-touch proof with an enclosed counter, four dark sides, a lower-tip ledger and a shared shaft. Broader source drift remains open."
+      },
       "rounded_diamond_edge_review": {
         "reviewed_app_commit": "bedb8e391e3386e1f775aadf56702d19088c2799",
         "app_lf_sha256": "fec8c81341d439147bcc8ed2efaecbc1e627651aa84f1b2877ea7fd8928a2033",
@@ -5251,6 +5257,12 @@
     },
     "OmrScoreInterpreter.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/OmrScoreInterpreter.java",
+      "finite_beamlet_and_seam_review": {
+        "reviewed_app_commit": "d6fb9d1ff6f2344fc5afeaf561cc625cbbd8fcc7",
+        "app_lf_sha256": "7a0334c3444233963ef21861a09f8d128a966d206bb1369ae0c1ebe992486717",
+        "standalone_lf_sha256": "c354fd2362f60caf16950d09147faca2efb64b4f8fec0fdc5cfa725f04c2ea27",
+        "scope": "Matching variable two-rail spacing and finite tiny fragments rooted in a seam or tertiary rail. Broader decoder provenance remains open."
+      },
       "two_rail_fragment_review": {
         "reviewed_app_commit": "37780ae185f2f3be9994f90ad387726c8ab1b72e",
         "app_lf_sha256": "c9090419c7198aa205d6da9e06922a349ac06f308ab65d2f6549d6f779036bd1",
@@ -8101,17 +8113,17 @@
     },
     "ScoreNoteTiming.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/ScoreNoteTiming.java",
-      "source_sha256": "ad10ab68f0391c278c4fdcb84c330cbd4cf63cc266370944a4a7a575997f855e",
+      "source_sha256": "b8ba955a0d06fcc8ec813f53b60819674467ba19df13de0bb281d044a30e283e",
       "review_note": "Global recognition/performance repairs; namespace-equivalent portable helpers and separately reviewed caller adapters. Original synthetic regressions; no private score assets.",
-      "source_normalized_sha256": "ad10ab68f0391c278c4fdcb84c330cbd4cf63cc266370944a4a7a575997f855e",
+      "source_normalized_sha256": "b8ba955a0d06fcc8ec813f53b60819674467ba19df13de0bb281d044a30e283e",
       "reviewed_app_state": "Reviewed six-class interpreter worktree extension; package/diagnostic token parity verified against standalone port.",
       "reviewed_source_state": "Committed combined source snapshot; paired package deployment and whole-library accuracy acceptance pending.",
-      "standalone_sha256": "a6c1e42f5f0e4a28510327cecdf24aaa574d730f8bae21fd9fd9c40342b1bde4",
+      "standalone_sha256": "6820c62c7b46fe5f25731e88b358bd4cbc452bd887787b80877a598eaec4a247",
       "reviewed_app_commit": "06a423201200de304e89e74a6f3c09deece2883f",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/ScoreNoteTiming.java",
       "license": "Apache-2.0",
       "closed_phrase_clock_review": "Same-pass complete printed beam ownership resolves remote/shared-stem phrase caps and cross-staff written clock. Asymmetric arches have independent IDs preserving old arcs. Literal unique opposed-stem single-beam partners sustain independently of faster bass attacks. Optional bounded proofs preserve legacy on refusal. One existing clock capture follows final value projection. Original procedural regressions only; no score data, observers, weights or layouts.",
-      "standalone_normalized_sha256": "a6c1e42f5f0e4a28510327cecdf24aaa574d730f8bae21fd9fd9c40342b1bde4",
+      "standalone_normalized_sha256": "6820c62c7b46fe5f25731e88b358bd4cbc452bd887787b80877a598eaec4a247",
       "recognition139_review_note": "Reviewed app fix merged with the existing standalone adapters and formatting. Reviewed namespace-equivalent dotted-triplet timing. The standalone caller also retains the inferred ratio for MusicXML written values."
     },
     "ScoreOpeningDuration.java": {

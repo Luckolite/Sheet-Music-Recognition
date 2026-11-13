@@ -208,11 +208,20 @@ final class ArtificialHarmonics {
                             && n.stemDirection() != 0
                             && joinedQuarterStem(gray, w, h, x, y, gap, n.stemDirection())
                             && ruleCrossedDiamond(gray, w, h, x, y - 1.5f * gap, gap);
+            boolean ledgerJoinedTouch = pairedTouch != null && n.beamCount() >= 2
+                    && pairedTouch.beamCount() == 0
+                    && pairedTouch.unbeamedDurationBeats() == ScoreNoteEvent.DURATION_HALF
+                    && n.stemDirection() != 0
+                    && joinedQuarterStem(gray, w, h, x, y, gap, n.stemDirection())
+                    && ledgerJoinedDiamond(gray, w, h,
+                            (m.left() + pairedTouch.positionInMeasure() * (m.right() - m.left())) * w,
+                            pairedTouch.pageY() * h, y, gap, n.stemDirection());
             if (!strictDiamond
                     && !symbolTouch
                     && !joinedQuarterTouch
                     && !joinedEighthTouch
                     && !ruleCrossedTouch
+                    && !ledgerJoinedTouch
                     && !(pairedTouch != null
                             && n.beamCount() >= 2
                             && ((pairedTouch.beamCount() == 0
@@ -225,6 +234,7 @@ final class ArtificialHarmonics {
             if (!joinedQuarterTouch
                     && !joinedEighthTouch
                     && !ruleCrossedTouch
+                    && !ledgerJoinedTouch
                     && !stem(
                             gray,
                             w,
@@ -529,6 +539,47 @@ final class ArtificialHarmonics {
                     // Keep the counter, exterior and shared-shaft proof for that case.
                     if (completeSides >= 3 && supportedSides == 4 && diamondExterior(
                             gray, width, height, cx, cy, r, gap, y + 1.5f * gap)) return true;
+                }
+            }
+        return false;
+    }
+
+    /** A paired hollow diamond can meet a ledger at its lower tip. */
+    private static boolean ledgerJoinedDiamond(
+            byte[] gray, int width, int height, float x, float y, float stoppedY,
+            float gap, int direction) {
+        for (int cy = Math.round(y - gap * .15f); cy <= Math.round(y + gap * .15f); cy++)
+            for (int cx = Math.round(x - gap * .3f); cx <= Math.round(x + gap * .3f); cx++) {
+                if (dark(gray, width, height, cx, cy)
+                        || !enclosedCounter(gray, width, height, cx, cy, gap * .53f, gap * .14f))
+                    continue;
+                for (float size : DiamondSizes.VALUES) {
+                    float radius = gap * size;
+                    boolean ledger = false;
+                    for (int row = Math.round(cy + radius * .65f);
+                            row <= Math.round(cy + radius * 1.2f); row++)
+                        ledger |= horizontalRule(gray, width, height, row, cx, radius * .85f);
+                    if (!ledger) continue;
+                    int shaftX = Math.round(cx + direction * radius * .9f);
+                    int shaftY = Math.round(cy + radius * 1.15f);
+                    if (shaftY >= stoppedY - gap * .35f
+                            || !dark(gray, width, height, shaftX, shaftY)) continue;
+                    boolean outline = true;
+                    for (int dx : ProbeSigns.VALUES)
+                        for (int dy : ProbeSigns.VALUES) {
+                            int outside = 0;
+                            for (float fraction : new float[] {.25f, .5f, .75f}) {
+                                float px = dx * radius * fraction;
+                                float py = dy * radius * (1 - fraction);
+                                outline &= dark(gray, width, height,
+                                        Math.round(cx + px), Math.round(cy + py));
+                                if (!dark(gray, width, height, Math.round(cx + px * 1.35f),
+                                        Math.round(cy + py * 1.35f))) outside++;
+                            }
+                            if (dy < 0 && outside < 2 || dy > 0 && dx != direction && outside == 0)
+                                outline = false;
+                        }
+                    if (outline) return true;
                 }
             }
         return false;

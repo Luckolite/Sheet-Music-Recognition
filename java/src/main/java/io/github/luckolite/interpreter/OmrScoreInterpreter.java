@@ -23475,18 +23475,25 @@ final class OmrScoreInterpreter {
             int stemGap = interruptedShaft ? Math.round(gap * .7f) : 2;
             if (interruptedShaft)
                 borrowed = attachedRawStem(gray, width, height, fragment, gap, stemGap, 170);
-            if (borrowed == null) continue;
+            boolean narrowBeamlet = fragment.area <= gap * gap * .26f
+                    && fragment.maxY - fragment.minY + 1 <= gap * .54f;
+            if (borrowed == null && !narrowBeamlet) continue;
+            float minimumOwnerDistance = gap * (narrowBeamlet ? 1.7f : 2.2f);
             for (Component owner : heads) {
-                if (Math.abs(owner.centerX - fragment.centerX) > gap * 1.8f
-                        || Math.abs(owner.centerY - fragment.centerY) < gap * 2.2f
+                if (Math.abs(owner.centerX - fragment.centerX) > gap * (narrowBeamlet ? 1.9f : 1.8f)
+                        || Math.abs(owner.centerY - fragment.centerY) < minimumOwnerDistance
                         || Math.abs(owner.centerY - fragment.centerY) > gap * 8
                         || !filledBeamEndpointCore(gray, width, height, owner, gap)) continue;
                 int[] shaft = attachedRawStem(gray, width, height, owner, gap, stemGap, 170);
-                if (shaft == null || shaft[2] == borrowed[2]
-                        || Math.abs(shaft[0] - borrowed[0]) > gap * .2f
-                        || (fragment.centerY - owner.centerY) * shaft[2] < gap * 2.2f
+                if (shaft == null
+                        || (fragment.centerY - owner.centerY) * shaft[2] < minimumOwnerDistance
                         || Math.abs(shaft[1] - fragment.centerY) > gap * 2.3f) continue;
-                if (ownsSlopedBeamFragment(gray, width, height, fragment, owner, shaft, heads, gap, interruptedShaft)) {
+                boolean borrowedOwner = borrowed != null && shaft[2] != borrowed[2]
+                        && Math.abs(shaft[0] - borrowed[0]) <= gap * .2f;
+                if (!borrowedOwner && !narrowBeamlet) continue;
+                if (ownsSlopedBeamFragment(gray, width, height, fragment, owner, shaft, heads, gap,
+                        interruptedShaft || !borrowedOwner || Math.abs(owner.centerY - fragment.centerY) < gap * 2.2f,
+                        !borrowedOwner)) {
                     rejected.add(fragment);
                     break;
                 }
@@ -23497,10 +23504,10 @@ final class OmrScoreInterpreter {
 
     private static boolean ownsSlopedBeamFragment(
             byte[] gray, int width, int height, Component fragment, Component owner,
-            int[] shaft, List<Component> heads, float gap, boolean interruptedShaft) {
+            int[] shaft, List<Component> heads, float gap, boolean interruptedShaft, boolean untraced) {
         for (Component peer : heads) {
             float separation = Math.abs(peer.centerX - owner.centerX);
-            if (separation < gap * 2 || separation > gap * 4
+            if (separation < gap * 2 || separation > gap * 5
                     || Math.abs(peer.centerY - owner.centerY) > gap * 1.5f
                     || !filledBeamEndpointCore(gray, width, height, peer, gap)) continue;
             int[] other = attachedRawStem(gray, width, height, peer, gap, 2, 170);
@@ -23512,17 +23519,25 @@ final class OmrScoreInterpreter {
             float railY = shaft[1] + slope * (fragment.centerX - shaft[0])
                     - shaft[2] * Math.round(gap * .25f);
             float offset = (railY - fragment.centerY) * shaft[2];
-            if (Math.abs(shaft[0] - fragment.centerX) <= gap * .55f
-                    && offset >= -gap * .2f && offset <= gap * 2
+            // A tiny mask can be attached along the filled seam near the shaft.
+            // The same span still needs a separated seam farther along the beam.
+            if (untraced && fragment.area <= gap * gap * .18f
+                    && fragment.maxY - fragment.minY + 1 <= gap * .45f
+                    && Math.abs(shaft[0] - fragment.centerX) <= gap * .85f
+                    && offset >= gap * .28f && offset <= gap * .8f
                     && doubleRailFragment(gray, width, height, shaft, other, fragment, gap))
                 return true;
-            if (interruptedShaft || fragment.area > gap * gap * .65f
+            if (Math.abs(shaft[0] - fragment.centerX) <= gap * (untraced ? .75f : .55f)
+                    && offset >= (untraced ? gap * 1.45f : -gap * .2f) && offset <= gap * 2
+                    && doubleRailFragment(gray, width, height, shaft, other, fragment, gap))
+                return true;
+            if (separation > gap * 4 || interruptedShaft || fragment.area > gap * gap * .65f
                     || fragment.maxY - fragment.minY + 1 > gap * .8f
                     || Math.abs(owner.centerY - fragment.centerY) > gap * 5
                     || Math.abs(shaft[1] - fragment.centerY) > gap * 1.25f
                     || !completeSlopedBeam(gray, width, height, shaft, other, gap)) continue;
             if (Math.abs(offset) <= gap * .24f) return true;
-            if (interruptedShaft || fragment.area <= gap * gap * .28f && offset >= gap * .55f && offset <= gap
+            if (fragment.area <= gap * gap * .28f && offset >= gap * .55f && offset <= gap
                     && Math.abs(shaft[0] - fragment.centerX) <= gap * .85f) {
                 int first = Math.round(fragment.centerX);
                 boolean rooted = true;
@@ -23553,28 +23568,43 @@ final class OmrScoreInterpreter {
         int direction = shaft[2];
         int start = Math.min(shaft[0], other[0]);
         int end = Math.max(shaft[0], other[0]);
-        int margin = Math.round(gap * .28f), gaps = 0;
-        for (int x = start + margin; x <= end - margin; x++) {
-            int tip = Math.round(shaft[1] + slope * (x - shaft[0]));
-            if (!beamCore(gray, width, height, x, tip - direction * Math.round(gap * .25f), 2)
-                    || !beamCore(gray, width, height, x, tip - direction * Math.round(gap), 2))
-                gaps++;
+        int margin = Math.round(gap * .28f);
+        int innerDepth = Math.round(gap * .25f);
+        if (!continuousBeamRail(gray, width, height, shaft, slope, start + margin, end - margin,
+                innerDepth)) return false;
+        // Engraving changes the gap between the rails independently of their slope.
+        boolean separated = false;
+        for (int depth = Math.round(gap); depth <= Math.round(gap * 1.3f); depth++) {
+            if (!continuousBeamRail(gray, width, height, shaft, slope, start + margin, end - margin,
+                    depth)) continue;
+            int seam = (innerDepth + depth) / 2;
+            int exposed = 0;
+            for (int x = start + margin; x <= end - margin; x++) {
+                int y = Math.round(shaft[1] + slope * (x - shaft[0])) - direction * seam;
+                if (y < 1 || y >= height - 1) return false;
+                if (!beamCore(gray, width, height, x, y, 1)) exposed++;
+            }
+            if (exposed >= span * .25f) {
+                separated = true;
+                break;
+            }
         }
-        if (gaps > 1) return false;
-        int exposedSeam = 0;
-        for (int x = start + margin; x <= end - margin; x++) {
-            int y = Math.round(shaft[1] + slope * (x - shaft[0]))
-                    - direction * Math.round(gap * .68f);
-            if (y < 1 || y >= height - 1) return false;
-            if ((gray[(y - 1) * width + x] & 255) >= 165
-                    || (gray[y * width + x] & 255) >= 165
-                    || (gray[(y + 1) * width + x] & 255) >= 165) exposedSeam++;
-        }
-        if (exposedSeam < span * .25f) return false;
+        if (!separated) return false;
         int center = Math.round(fragment.centerX);
         for (int x = Math.min(center, shaft[0]); x <= Math.max(center, shaft[0]); x++)
             if (!beamCore(gray, width, height, x,
                     Math.round(fragment.centerY + slope * (x - fragment.centerX)), 1)) return false;
+        return true;
+    }
+
+    private static boolean continuousBeamRail(
+            byte[] gray, int width, int height, int[] shaft, float slope,
+            int start, int end, int depth) {
+        int gaps = 0;
+        for (int x = start; x <= end; x++) {
+            int y = Math.round(shaft[1] + slope * (x - shaft[0])) - shaft[2] * depth;
+            if (!beamCore(gray, width, height, x, y, 2) && ++gaps > 1) return false;
+        }
         return true;
     }
 
