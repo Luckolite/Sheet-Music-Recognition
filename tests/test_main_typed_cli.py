@@ -199,6 +199,22 @@ class MainTypedCliTests(unittest.TestCase):
         run=subprocess.run([jdk('java'),'-cp',str(self.real_core),PACKAGE+'.Main',str(page),str(output),'4','4','0'],capture_output=True,text=True,timeout=30)
         self.assertEqual(0,run.returncode,run.stderr)
         self.assertEqual([],json.loads(output.read_text(encoding='utf-8'))['events'])
+    def test_truncated_pixel_planes_preserve_existing_output(self):
+        page = self.folder / 'truncated.page.gz'
+        output = self.folder / 'protected-raster.json'
+        output.write_text('existing-output', encoding='utf-8')
+        header = struct.pack('>III', 0x52535031, 8, 8)
+        for size in (63, 127):
+            with self.subTest(size=size):
+                page.write_bytes(gzip.compress(header + bytes(size), mtime=0))
+                run = subprocess.run(
+                    [jdk('java'), '-cp', str(self.classes) + os.pathsep + CORE,
+                     PACKAGE + '.Main', str(page), str(output), '4', '4', '0'],
+                    capture_output=True, text=True, timeout=30)
+                self.assertNotEqual(0, run.returncode)
+                self.assertIn('Truncated page pixels', run.stderr)
+                self.assertEqual('existing-output', output.read_text(encoding='utf-8'))
+
     def test_invalid_page_option_rejects_before_input_or_output_access(self):
         output=self.folder/'protected.json'
         output.write_text('existing-output',encoding='utf-8')

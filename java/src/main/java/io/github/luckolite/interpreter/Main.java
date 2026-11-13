@@ -47,10 +47,15 @@ public final class Main {
             long size = (long) width * height;
             if (width < 1 || height < 1 || size > 20_000_000)
                 throw new IOException("Invalid page dimensions");
-            labels = in.readNBytes((int) size);
-            gray = in.readNBytes((int) size);
-            if (labels.length != size || gray.length != size)
+            labels = new byte[(int) size];
+            gray = new byte[(int) size];
+            try {
+                in.readFully(labels);
+                in.readFully(gray);
+            } catch (EOFException error) {
+                if (error.getMessage() != null) throw error;
                 throw new EOFException("Truncated page pixels");
+            }
             int first = in.read();
             if (first != -1) {
                 int magic =
