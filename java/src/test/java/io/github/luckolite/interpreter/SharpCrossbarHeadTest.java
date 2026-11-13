@@ -86,4 +86,25 @@ public final class SharpCrossbarHeadTest {
         assertArrayEquals(g, f.gray);
         assertArrayEquals(l, f.labels);
     }
+
+    @Test
+    public void staffRuleDoesNotGiveOwnedSharpFragmentAnOutsideBody() throws Exception {
+        var page = new JoinedSignatureSharpTest();
+        page.row(100, 0, 0, false);
+        page.sharp(400, 148);
+        var interpreter = OmrScoreInterpreter.class;
+        var component = Class.forName(interpreter.getName() + "$Component");
+        var create = component.getDeclaredConstructors()[0];
+        create.setAccessible(true);
+        var fragment = create.newInstance(80, 384, 405, 153, 166, 396f, 160f);
+        var sharp = create.newInstance(120, 392, 407, 126, 170, 400f, 148f);
+        var outside = interpreter.getDeclaredMethod(
+                "sharpFragmentHasOutsideBody", byte[].class, int.class, component, component,
+                float.class);
+        outside.setAccessible(true);
+        assertFalse((boolean) outside.invoke(null, page.gray, W, fragment, sharp, 16f));
+        for (int y = 155; y <= 163; y++)
+            for (int x = 384; x <= 390; x++) page.ink(x, y, 2);
+        assertTrue((boolean) outside.invoke(null, page.gray, W, fragment, sharp, 16f));
+    }
 }

@@ -1081,6 +1081,7 @@ final class TripletRhythmDetector {
             }
             if (marked) i += 2;
         }
+        result = mixedPrintedThrees(result, measures, gray, width, height, virtualStart);
         result = mixedBracketPairs(result, soundingGroups, measures, gray, width, height);
         result = mixedBeamedTuplets(result, soundingGroups, measures, gray, width, height, 5, virtualStart);
         result = mixedBeamedTuplets(result, soundingGroups, measures, gray, width, height, 7, virtualStart);
@@ -1089,6 +1090,59 @@ final class TripletRhythmDetector {
             result = beamedTuplets(
                     result, soundingGroups, measures, gray, width, height, divisor, virtualStart, false);
         return beamedTuplets(result, soundingGroups, measures, gray, width, height, 4, virtualStart, true);
+    }
+
+    /** A short secondary beamlet changes the member value, not the primary beam's ownership. */
+    private static List<ScoreNoteEvent> mixedPrintedThrees(
+            List<ScoreNoteEvent> notes, List<MeasureRegion> measures, byte[] gray,
+            int width, int height, int virtualStart) {
+        var result = new ArrayList<>(notes);
+        var groups = onsets(notes, virtualStart);
+        var physical = result.subList(0, Math.min(virtualStart, result.size()));
+        for (int i = 0; i + 2 < groups.size(); i++) {
+            var a = groups.get(i);
+            var b = groups.get(i + 1);
+            var c = groups.get(i + 2);
+            if (a.indices().size() != 1 || b.indices().size() != 1 || c.indices().size() != 1)
+                continue;
+            int ai = a.indices().get(0), bi = b.indices().get(0), ci = c.indices().get(0);
+            if (ai >= virtualStart || bi >= virtualStart || ci >= virtualStart) continue;
+            var first = result.get(ai);
+            var middle = result.get(bi);
+            var last = result.get(ci);
+            if (!sameVoice(first, middle) || !sameVoice(first, last)
+                    || first.measureIndex() < 0 || first.measureIndex() >= measures.size()
+                    || first.beamCount() != 1 || middle.beamCount() != 2 || last.beamCount() != 1
+                    || first.stemDirection() == 0 || middle.stemDirection() != first.stemDirection()
+                    || last.stemDirection() != first.stemDirection()) continue;
+            if (List.of(first, middle, last).stream().anyMatch(note ->
+                    note.kind() != ScoreNoteEvent.Kind.PITCHED || note.tupletDivisor() != 1
+                            || note.augmentationDots() != 0
+                            || note.crossStaffBeam() || (note.articulations() & NoteOrnament.GRACE) != 0))
+                continue;
+            var bar = measures.get(first.measureIndex());
+            float gap = Math.max(4, (bar.bottom() - bar.top()) * height / (8 * first.staffCount()));
+            float x1 = (bar.left() + a.position() * (bar.right() - bar.left())) * width;
+            float x2 = (bar.left() + b.position() * (bar.right() - bar.left())) * width;
+            float x3 = (bar.left() + c.position() * (bar.right() - bar.left())) * width;
+            if (x3 - x1 < 2 * gap || x3 - x1 > 18 * gap || x2 - x1 < gap || x3 - x2 < gap)
+                continue;
+            if (!PrintedTupletBeamOwner.connectedHeads(gray, width, height, x1, a.top() * height,
+                            x2, b.top() * height, gap, first.stemDirection())
+                    || !PrintedTupletBeamOwner.connectedHeads(gray, width, height, x2, b.top() * height,
+                            x3, c.top() * height, gap, first.stemDirection())) continue;
+            float y1 = Math.min(a.top(), Math.min(b.top(), c.top())) * height;
+            float y2 = Math.max(a.bottom(), Math.max(b.bottom(), c.bottom())) * height;
+            var numeral = findOwnedNumeral(gray, width, height, x1, x3, y1, y2, gap,
+                    true, Float.NaN, Float.NaN, 3, true, false, first, physical, bar,
+                    measures, glyph -> true);
+            if (numeral == null || !beamOwnsNumeral(
+                    numeral, first, physical, bar, gray, width, height, x1, x3, gap)) continue;
+            result.set(ai, first.withTupletRatio(3, 2));
+            result.set(bi, middle.withTupletRatio(3, 2));
+            result.set(ci, last.withTupletRatio(3, 2));
+        }
+        return result;
     }
 
     private static List<ScoreNoteEvent> mixedBracketPairs(
@@ -1187,6 +1241,101 @@ final class TripletRhythmDetector {
             }
         }
         return conflict ? Optional.empty() : Optional.ofNullable(selected);
+    }
+
+    /** Preserve a printed binary pair without changing a complete four-quarter staff clock. */
+    static List<ScoreNoteEvent> neutralPrintedPairs(
+            List<ScoreNoteEvent> notes, List<MeasureRegion> measures,
+            List<ScoreMeterChange> meters, byte[] gray, int width, int height) {
+        if (gray == null || gray.length != (long) width * height || notes.isEmpty()) return notes;
+        var result = new ArrayList<>(notes);
+        var groups = onsets(notes);
+        for (int i = 0; i + 1 < groups.size(); i++) {
+            var a = groups.get(i);
+            var b = groups.get(i + 1);
+            if (a.indices().size() != 1 || b.indices().size() != 1) continue;
+            int ai = a.indices().get(0), bi = b.indices().get(0);
+            var first = result.get(ai);
+            var last = result.get(bi);
+            if (!sameVoice(first, last) || first.measureIndex() < 0
+                    || first.measureIndex() >= measures.size()
+                    || !ordinaryBeamedEighth(first) || !ordinaryBeamedEighth(last)
+                    || first.stemDirection() != last.stemDirection()
+                    || first.followingRestBeats() != 0 || last.leadingRestBeats() != 0
+                    || !fourQuarterContext(meters, first.measureIndex())
+                    || Math.abs(neutralStaffClock(groups, notes, first) - 4) > .001) continue;
+            var bar = measures.get(first.measureIndex());
+            float gap = Math.max(4, (bar.bottom() - bar.top()) * height / (8 * first.staffCount()));
+            float x1 = (bar.left() + a.position() * (bar.right() - bar.left())) * width;
+            float x2 = (bar.left() + b.position() * (bar.right() - bar.left())) * width;
+            if (x2 - x1 < gap * 1.15f || x2 - x1 > gap * 12) continue;
+            float y1 = first.pageY() * height, y2 = last.pageY() * height;
+            if (!PrintedTupletBeamOwner.connectedHeads(
+                    gray, width, height, x1, y1, x2, y2, gap, first.stemDirection())) continue;
+            var glyph = findContrastedNumeral(
+                    gray, width, height, x1, x2, Math.min(y1, y2), Math.max(y1, y2), gap, true,
+                    Float.NaN, Float.NaN, 2, false,
+                    numeral -> {
+                        float distance = PrintedTupletBeamOwner.compactPairDistance(
+                                gray, width, height, x1, y1, x2, y2, gap, first.stemDirection(),
+                                numeral.left(), numeral.top(), numeral.right(), numeral.bottom());
+                        return Float.isFinite(distance)
+                                && !insideOtherSystem(numeral, bar, measures, width, height)
+                                && !numeralCrossedByShaft(numeral, gray, width, height, gap)
+                                && !hasCompetingBeamOwner(
+                                        numeral, first, notes, bar, gray, width, height, gap, distance);
+                    },
+                    numeral -> false);
+            if (glyph == null) continue;
+            result.set(ai, first.withTupletRatio(2, 2));
+            result.set(bi, last.withTupletRatio(2, 2));
+        }
+        return List.copyOf(result);
+    }
+
+    private static boolean ordinaryBeamedEighth(ScoreNoteEvent note) {
+        return note.kind() == ScoreNoteEvent.Kind.PITCHED && note.beamCount() == 1
+                && note.augmentationDots() == 0 && note.tupletDivisor() == 1
+                && note.stemDirection() != 0 && !note.crossStaffBeam()
+                && (note.articulations() & NoteOrnament.GRACE) == 0;
+    }
+
+    private static boolean fourQuarterContext(List<ScoreMeterChange> meters, int measure) {
+        ScoreMeterChange active = null;
+        for (var meter : meters) {
+            if (meter.measureIndex() < 0 || meter.measureIndex() > measure) continue;
+            if (active == null || meter.measureIndex() > active.measureIndex()) active = meter;
+        }
+        if (active == null) return true;
+        for (var meter : meters)
+            if (meter.measureIndex() == active.measureIndex() && !meter.equals(active)) return false;
+        return active.numerator() == active.denominator()
+                && (active.denominator() == 2 || active.denominator() == 4);
+    }
+
+    private static double neutralStaffClock(
+            List<Onset> groups, List<ScoreNoteEvent> notes, ScoreNoteEvent first) {
+        double total = 0;
+        boolean seen = false;
+        for (var group : groups) {
+            var note = notes.get(group.indices().get(0));
+            if (!sameVoice(first, note)) continue;
+            double value = ScoreNoteTiming.writtenDurationBeats(note);
+            if (!Double.isFinite(value) || value <= 0) return Double.POSITIVE_INFINITY;
+            for (int index : group.indices()) {
+                var member = notes.get(index);
+                if (member.tupletDivisor() != 1 || member.crossStaffBeam()
+                        || (member.articulations() & NoteOrnament.GRACE) != 0
+                        || Math.abs(ScoreNoteTiming.writtenDurationBeats(member) - value) > .001
+                        || member.leadingRestBeats() != note.leadingRestBeats()
+                        || member.followingRestBeats() != note.followingRestBeats())
+                    return Double.POSITIVE_INFINITY;
+            }
+            if (seen && note.leadingRestBeats() != 0) return Double.POSITIVE_INFINITY;
+            total += value + note.leadingRestBeats() + note.followingRestBeats();
+            seen = true;
+        }
+        return total;
     }
 
     /** Printed duplets require compound meter and a complete unambiguous staff clock. */
@@ -3581,8 +3730,9 @@ final class TripletRhythmDetector {
         float centerX = (firstX + lastX) * .5f;
         // Numerals align with the beam/stems, which can sit to one side of the
         // oval centres. Include that offset without clipping an italic 3.
-        int left = Math.max(0, Math.round(centerX - gap * 2.1f));
-        int right = Math.min(width - 1, Math.round(centerX + gap * 2.1f));
+        float searchWidth = gap * (number == 2 ? 3.35f : 2.1f);
+        int left = Math.max(0, Math.round(centerX - searchWidth));
+        int right = Math.min(width - 1, Math.round(centerX + searchWidth));
         int normalTop = Math.max(0, Math.round(firstY - gap * 7));
         int top = Math.max(0, Math.round(firstY - gap * searchGaps));
         int normalBottom = Math.min(height - 1, Math.round(lastY + gap * 7));

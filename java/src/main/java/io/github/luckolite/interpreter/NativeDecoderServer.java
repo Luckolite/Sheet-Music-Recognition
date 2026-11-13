@@ -111,7 +111,7 @@ public final class NativeDecoderServer {
                             request.gray(),
                             request.width(),
                             request.height(),
-                            request.measures());
+                            request.measures(), request.annotationGray());
             NativeDecoderWire.packet(out, data -> NativeDecoderWire.writeAnalysis(data, score));
             awaitClientClose(in);
             // No document identity, OCR text, credentials or score content in service logs.

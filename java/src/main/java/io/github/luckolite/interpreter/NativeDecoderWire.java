@@ -11,7 +11,7 @@ import java.util.zip.*;
 public final class NativeDecoderWire {
     public static final int MAGIC = 0x4d534431, PORT = 45924, MAX_PIXELS = 20_000_000;
     public static final int MAX_PACKET = 45_000_000, MAX_MEASURES = 4000, MAX_EVENTS = 100_000;
-    public static final int ANALYZE = 1, GEOMETRY = 2;
+    public static final int ANALYZE = 1, GEOMETRY = 2, ANALYZE_WITH_ANNOTATIONS = 3;
 
     /** Negative marker distinguishes the 22-field analysis from legacy 21-field counts. */
     static final int ANALYSIS_STEM_FORMAT = -22;
@@ -44,7 +44,14 @@ public final class NativeDecoderWire {
             int width,
             int height,
             List<MeasureRegion> measures,
-            int operation) {
+            int operation,
+            byte[] annotationGray) {
+        public Request(
+                byte[] labels, byte[] gray, int width, int height, List<MeasureRegion> measures,
+                int operation) {
+            this(labels, gray, width, height, measures, operation, gray);
+        }
+
         public Request(
                 byte[] labels, byte[] gray, int width, int height, List<MeasureRegion> measures) {
             this(labels, gray, width, height, measures, ANALYZE);
@@ -160,13 +167,19 @@ public final class NativeDecoderWire {
         if (r.labels.length != (long) r.width * r.height
                 || r.gray.length != r.labels.length
                 || r.measures.size() > MAX_MEASURES) throw new IOException("Decoder dimensions");
-        if (r.operation != ANALYZE && r.operation != GEOMETRY)
+        if (r.operation != ANALYZE && r.operation != GEOMETRY
+                && r.operation != ANALYZE_WITH_ANNOTATIONS)
             throw new IOException("Decoder operation");
+        if (r.operation == ANALYZE_WITH_ANNOTATIONS
+                && (r.annotationGray == null || r.annotationGray.length != r.gray.length
+                        || 12L + 3L * r.gray.length + 4L + 16L * r.measures.size() >= MAX_PACKET))
+            throw new IOException("Decoder annotation raster limit");
         out.writeInt(r.operation);
         out.writeInt(r.width);
         out.writeInt(r.height);
         out.write(r.labels);
         out.write(r.gray);
+        if (r.operation == ANALYZE_WITH_ANNOTATIONS) out.write(r.annotationGray);
         out.writeInt(r.measures.size());
         for (var m : r.measures) {
             out.writeFloat(m.left());
@@ -178,7 +191,8 @@ public final class NativeDecoderWire {
 
     public static Request readRequest(DataInputStream in) throws IOException {
         int operation = in.readInt();
-        if (operation != ANALYZE && operation != GEOMETRY)
+        if (operation != ANALYZE && operation != GEOMETRY
+                && operation != ANALYZE_WITH_ANNOTATIONS)
             throw new IOException("Decoder operation");
         int width = in.readInt(), height = in.readInt();
         validateDimensions(width, height);
@@ -187,12 +201,20 @@ public final class NativeDecoderWire {
         in.readFully(gray);
         for (byte label : labels)
             if (label < 0 || label > 5) throw new IOException("Decoder label range");
+        byte[] annotationGray = gray;
+        if (operation == ANALYZE_WITH_ANNOTATIONS) {
+            if (12L + 3L * gray.length + 4L >= MAX_PACKET)
+                throw new IOException("Decoder annotation raster limit");
+            annotationGray = new byte[gray.length];
+            in.readFully(annotationGray);
+        }
         int count = count(in, MAX_MEASURES);
         var measures = new ArrayList<MeasureRegion>(count);
         for (int i = 0; i < count; i++)
             measures.add(new MeasureRegion(finite(in), finite(in), finite(in), finite(in)));
         if (in.read() != -1) throw new IOException("Trailing decoder input");
-        return new Request(labels, gray, width, height, List.copyOf(measures), operation);
+        return new Request(
+                labels, gray, width, height, List.copyOf(measures), operation, annotationGray);
     }
 
     private static void validateDimensions(int w, int h) throws IOException {

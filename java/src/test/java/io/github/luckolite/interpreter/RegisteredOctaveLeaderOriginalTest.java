@@ -118,6 +118,18 @@ public class RegisteredOctaveLeaderOriginalTest {
     }
 
     @Test
+    public void originalRasterRetainsLeaderOwnershipAfterCorrection() throws Exception {
+        var p = page(true, true);
+        var corrected = p.g.clone();
+        for (int y = 190; y < 224; y++)
+            Arrays.fill(corrected, y * W + 60, y * W + 119, (byte) 255);
+        assertEquals(NoteArticulation.TENUTO,
+                NoteArticulationDetector.detect(p.l, corrected, W, H, p.n)[0]);
+        int[] marks = NoteArticulationDetector.detect(p.l, corrected, W, H, p.n, p.g);
+        assertArrayEquals(new int[] {0, 0, 0, 0, NoteArticulation.TENUTO}, marks);
+    }
+
+    @Test
     public void separateGenuineTenutoIsNeverDashMember() throws Exception {
         var p = page(true, true);
         premises(p, true);

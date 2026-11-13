@@ -136,7 +136,7 @@ final class CompoundDynamicEvidence {
                 && outer.bottom() >= inner.bottom();
     }
 
-    private static boolean overlaps(
+    static boolean overlaps(
             PlayingTechniqueDetector.Word a, PlayingTechniqueDetector.Word b) {
         return a.left() < b.right()
                 && a.right() > b.left()

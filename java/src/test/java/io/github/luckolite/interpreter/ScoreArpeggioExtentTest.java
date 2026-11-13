@@ -174,4 +174,28 @@ public final class ScoreArpeggioExtentTest {
                             + ScoreArpeggioNotation.plan(s, List.of(0, 1, 2, 3), 4));
         }
     }
+
+    @Test
+    public void continuousGrandStaffWaveOwnsItsRestShapedSegment() {
+        var g = wave(48, 209);
+        var notes = new ArrayList<ScoreNoteEvent>();
+        for (int staff = 0; staff < 2; staff++) {
+            for (int step : new int[] {0, 3, 7}) {
+                notes.add(new ScoreNoteEvent(0, 35f / 204, step, staff, 2,
+                        (100 + staff * 100 - step * 6f) / 250, false, 0, 0, 2, 4));
+            }
+        }
+        var duplicate = new ScoreRestEvent(0, 7f / 204, 181f / 250, 32f / 250, 1, 2, 1);
+        var independent = new ScoreRestEvent(0, 100f / 204, 181f / 250, 32f / 250, 1, 2, 1);
+        var source = new ScorePageInterpretation(
+                List.of(new MeasureRegion(56f / 260, 1, 0, 1)), notes, 1)
+                .withRests(List.of(duplicate, independent));
+        var result = ScoreArpeggioDetector.apply(source, g, 260, 250,
+                List.of(new PlayingTechniqueDetector.Staff(52, 100, 12, 0, 2),
+                        new PlayingTechniqueDetector.Staff(152, 200, 12, 1, 2)), 0);
+        assertEquals(List.of(independent), result.rests());
+        assertEquals(1, result.expressiveEvents().size());
+        assertEquals(List.of(0, 1, 2, 3, 4, 5),
+                ScoreArpeggioNotation.targetIndices(result, result.expressiveEvents().get(0)));
+    }
 }

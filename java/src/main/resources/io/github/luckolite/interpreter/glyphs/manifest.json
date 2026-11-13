@@ -34,6 +34,26 @@
       "bytes": 2681
     },
     {
+      "path": "dynamic_templates/fp_0.png",
+      "sha256": "6c2eb78f791227eaa42d8881777715ef5bb217574b428625899915f3fddd869f",
+      "bytes": 2062
+    },
+    {
+      "path": "dynamic_templates/fp_16.png",
+      "sha256": "cbf6ec613eb12c5ed0cf033fc3df65f91a2c03a127ce23626696e7225f31d2d8",
+      "bytes": 2035
+    },
+    {
+      "path": "dynamic_templates/fp_24.png",
+      "sha256": "e0b32ffb72d076b103bfbd1da53cc62d49eaa100a062a3b711c7c80ae786543d",
+      "bytes": 2042
+    },
+    {
+      "path": "dynamic_templates/fp_32.png",
+      "sha256": "ca2b65c3c8ef317f5b94ae2c97b2956f4cafb8f5ba25f65e7551177d61202244",
+      "bytes": 1967
+    },
+    {
       "path": "dynamic_templates/m.png",
       "sha256": "2a990d7bfd5ac7252bd0e54748851553fcd435f60e9f533848019cc576b7caaf",
       "bytes": 2563

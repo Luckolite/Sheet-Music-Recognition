@@ -71,4 +71,27 @@ public class HollowTempoUnitTest {
     public void inkActuallyInsideStaffStillCannotBeTempo() {
         assertTrue(detect(255, true, false, false, true).isEmpty());
     }
+
+    @Test
+    public void compactHollowTempoGlyphBesideLargeDigits() {
+        int width = 300;
+        int height = 200;
+        byte[] raster = new byte[width * height];
+        Arrays.fill(raster, (byte) 255);
+        rect(raster, width, 81, 39, 82, 64, 45);
+        rect(raster, width, 73, 59, 82, 65, 45);
+        rect(raster, width, 75, 61, 79, 63, 255);
+        rect(raster, width, 100, 49, 116, 51, 25);
+        rect(raster, width, 100, 56, 116, 58, 25);
+        rect(raster, width, 129, 39, 135, 66, 25);
+        var token = new MeasureNumberReconciler.NumberToken(
+                72, 129f / width, 39f / height, 140f / width, 67f / height);
+        var measures = List.of(new MeasureRegion(.2f, .9f, .4f, .8f));
+        assertEquals(List.of(new ScoreTempoChange(0, 0, 144, 2)),
+                TempoChangeDetector.detect(List.of(token), raster, width, height, measures));
+
+        rect(raster, width, 75, 61, 79, 63, 45);
+        assertFalse(TempoChangeDetector.detect(List.of(token), raster, width, height, measures)
+                .stream().anyMatch(tempo -> tempo.beatUnit() == 2));
+    }
 }

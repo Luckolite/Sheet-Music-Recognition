@@ -94,4 +94,9 @@ public final class AnchoredObjectTest {
     public void completeComponentTouchingOwnershipBoundaryAbstains() {
         assertEquals(0, apply(ink(54, true, false), -1));
     }
+
+    @Test
+    public void provedBarlineEnteringTheOwnershipStripPreservesWave() {
+        assertEquals(1, apply(ink(55, true, false), -1));
+    }
 }

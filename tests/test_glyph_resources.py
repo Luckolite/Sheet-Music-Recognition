@@ -42,9 +42,9 @@ class GlyphResourceTest(unittest.TestCase):
                       for path, data in build_java.resource_snapshots(checked)}
             self.assertEqual(original, actual)
 
-    def test_manifest_accounts_for_exactly_twenty_seven_templates_and_two_notices(self):
+    def test_manifest_accounts_for_exactly_thirty_one_templates_and_two_notices(self):
         rows = build_java.resource_snapshots()
-        self.assertEqual(27, sum(path.suffix == ".png" for path, _ in rows))
+        self.assertEqual(31, sum(path.suffix == ".png" for path, _ in rows))
         self.assertEqual(2, sum(path.name.endswith("-OFL.txt") for path, _ in rows))
         self.assertEqual(1, sum(path.name == "manifest.json" for path, _ in rows))
 

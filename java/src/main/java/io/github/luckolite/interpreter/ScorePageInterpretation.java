@@ -417,6 +417,13 @@ public record ScorePageInterpretation(
                 beamSource);
     }
 
+    ScorePageInterpretation withRests(List<ScoreRestEvent> replacement) {
+        return new ScorePageInterpretation(
+                measures, notes, firstMeasureNumber, keyChanges, tempoChanges, meterChanges,
+                replacement, techniqueChanges, dynamicChanges, playbackDirections, expressiveEvents,
+                slurSource, openingPickup, tremoloSource, multiRestGroups, beamSource);
+    }
+
     public ScorePageInterpretation withExpressiveEvents(List<ScoreExpressiveEvent> events) {
         return new ScorePageInterpretation(
                 measures,

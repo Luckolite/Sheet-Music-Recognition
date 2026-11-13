@@ -8,6 +8,7 @@ import static io.github.luckolite.interpreter.ScoreExpressiveEvent.*;
 /** Printed undirected arpeggios retain complete written columns, without performed offsets. */
 public final class ScoreArpeggioNotation {
     private static final String PREFIX = "arpeggio-column-v1:";
+    private static final String CROSS_PREFIX = "arpeggio-grand-staff-v1:";
     private static final float COLUMN = .018f;
 
     private ScoreArpeggioNotation() {}
@@ -17,10 +18,23 @@ public final class ScoreArpeggioNotation {
     /** Accept only an independently proved glyph and its complete same-staff column. */
     public static ScorePageInterpretation capture(
             ScorePageInterpretation score, Collection<Integer> sourceIndices, Evidence glyph) {
+        return capture(score, sourceIndices, glyph, false);
+    }
+
+    static ScorePageInterpretation captureGrandStaff(
+            ScorePageInterpretation score, Collection<Integer> sourceIndices, Evidence glyph) {
+        return capture(score, sourceIndices, glyph, true);
+    }
+
+    private static ScorePageInterpretation capture(
+            ScorePageInterpretation score, Collection<Integer> sourceIndices, Evidence glyph,
+            boolean grandStaff) {
         var indices = new TreeSet<Integer>(sourceIndices);
         if (indices.size() < 2) return score;
         ScoreNoteEvent first = null;
-        var steps = new TreeSet<Integer>();
+        var steps = grandStaff ? new TreeSet<String>()
+                : new TreeSet<String>(Comparator.comparingInt(Integer::parseInt));
+        var staffOwners = new TreeSet<Integer>();
         float minPosition = Float.POSITIVE_INFINITY, maxPosition = Float.NEGATIVE_INFINITY;
         for (int i : indices) {
             if (i < 0 || i >= score.notes().size())
@@ -30,15 +44,18 @@ public final class ScoreArpeggioNotation {
                 return score;
             if (first == null) first = n;
             if (n.measureIndex() != first.measureIndex()
-                    || n.staffIndex() != first.staffIndex()
+                    || !grandStaff && n.staffIndex() != first.staffIndex()
                     || n.staffCount() != first.staffCount()
                     || Math.abs(n.positionInMeasure() - first.positionInMeasure()) > COLUMN
-                    || n.staffIndex() != glyph.staffIndex()
+                    || (!grandStaff && n.staffIndex() != glyph.staffIndex())
+                    || (grandStaff && (n.staffCount() != 2 || glyph.staffIndex() != 0))
                     || n.staffCount() != glyph.staffCount()) return score;
-            steps.add(n.staffStep());
+            staffOwners.add(n.staffIndex());
+            steps.add(memberKey(n, grandStaff));
             minPosition = Math.min(minPosition, n.positionInMeasure());
             maxPosition = Math.max(maxPosition, n.positionInMeasure());
         }
+        if (grandStaff && !staffOwners.equals(Set.of(0, 1))) return score;
         if (steps.size() != indices.size() || maxPosition - minPosition > COLUMN) return score;
         // Reject partial columns: no head at this optical attack may be silently discarded.
         for (int i = 0; i < score.notes().size(); i++) {
@@ -46,22 +63,22 @@ public final class ScoreArpeggioNotation {
             if (n.kind() == ScoreNoteEvent.Kind.PITCHED
                     && (n.articulations() & 32768) == 0
                     && n.measureIndex() == first.measureIndex()
-                    && n.staffIndex() == first.staffIndex()
+                    && (grandStaff || n.staffIndex() == first.staffIndex())
                     && n.staffCount() == first.staffCount()
                     && Math.abs(n.positionInMeasure() - first.positionInMeasure()) <= COLUMN
                     && !indices.contains(i)) return score;
         }
         String target =
-                PREFIX
+                (grandStaff ? CROSS_PREFIX : PREFIX)
                         + first.measureIndex()
                         + ":"
-                        + first.staffIndex()
+                        + glyph.staffIndex()
                         + ":"
                         + first.staffCount()
                         + ":"
                         + Float.toHexString(minPosition)
                         + ":"
-                        + String.join(",", steps.stream().map(Object::toString).toList());
+                        + String.join(",", steps);
         var events = new ArrayList<>(score.expressiveEvents());
         if (events.stream()
                 .anyMatch(
@@ -76,13 +93,23 @@ public final class ScoreArpeggioNotation {
                         Optional.empty(),
                         Optional.empty(),
                         Scope.UNRESOLVED,
-                        first.staffIndex(),
+                        glyph.staffIndex(),
                         first.staffCount(),
                         Optional.of(target),
                         Strength.UNSPECIFIED,
                         "",
                         List.of(glyph)));
         return score.withExpressiveEvents(events);
+    }
+
+    private static String memberKey(ScoreNoteEvent note, boolean grandStaff) {
+        return grandStaff ? note.staffIndex() + "/" + note.staffStep()
+                : Integer.toString(note.staffStep());
+    }
+
+    private static String prefix(String target) {
+        if (target.startsWith(CROSS_PREFIX)) return CROSS_PREFIX;
+        return target.startsWith(PREFIX) ? PREFIX : "";
     }
 
     /** Re-resolve source identity against the current page; list positions are never serialized. */
@@ -94,9 +121,11 @@ public final class ScoreArpeggioNotation {
                         .noneMatch(e -> e.sourceId().equals("printed-arpeggio-wave")))
             return List.of();
         String target = event.targetEventId().get();
-        if (!target.startsWith(PREFIX)) return List.of();
+        String prefix = prefix(target);
+        if (prefix.isEmpty()) return List.of();
+        boolean grandStaff = prefix.equals(CROSS_PREFIX);
         try {
-            String[] t = target.substring(PREFIX.length()).split(":", -1);
+            String[] t = target.substring(prefix.length()).split(":", -1);
             if (t.length != 5) return List.of();
             int measure = Integer.parseInt(t[0]),
                     staff = Integer.parseInt(t[1]),
@@ -104,32 +133,42 @@ public final class ScoreArpeggioNotation {
             float position = Float.parseFloat(t[3]);
             if (staff != event.staffIndex()
                     || count != event.staffCount()
+                    || grandStaff && (staff != 0 || count != 2)
                     || measure < 0
                     || measure >= score.measures().size()
                     || !Float.isFinite(position)
                     || position < 0
                     || position > 1) return List.of();
-            var expected = new TreeSet<Integer>();
-            for (String step : t[4].split(",", -1))
-                if (!expected.add(Integer.parseInt(step))) return List.of();
-            if (expected.size() < 2) return List.of();
+            var expected = new TreeSet<String>();
+            var staffOwners = new TreeSet<Integer>();
+            for (String step : t[4].split(",", -1)) {
+                if (grandStaff) {
+                    String[] member = step.split("/", -1);
+                    if (member.length != 2) return List.of();
+                    int owner = Integer.parseInt(member[0]);
+                    staffOwners.add(owner);
+                    if (!expected.add(owner + "/" + Integer.parseInt(member[1]))) return List.of();
+                } else if (!expected.add(Integer.toString(Integer.parseInt(step)))) return List.of();
+            }
+            if (expected.size() < 2 || grandStaff && !staffOwners.equals(Set.of(0, 1)))
+                return List.of();
             if (event.evidence().stream()
                     .noneMatch(
                             e ->
                                     e.sourceId().equals("printed-arpeggio-wave")
                                             && e.staffIndex() == staff
                                             && e.staffCount() == count)) return List.of();
-            var found = new TreeSet<Integer>();
+            var found = new TreeSet<String>();
             var result = new ArrayList<Integer>();
             for (int i = 0; i < score.notes().size(); i++) {
                 var n = score.notes().get(i);
                 if (n.kind() == ScoreNoteEvent.Kind.PITCHED
                         && (n.articulations() & 32768) == 0
                         && n.measureIndex() == measure
-                        && n.staffIndex() == staff
+                        && (grandStaff || n.staffIndex() == staff)
                         && n.staffCount() == count
                         && Math.abs(n.positionInMeasure() - position) <= COLUMN) {
-                    if (!found.add(n.staffStep())) return List.of();
+                    if (!found.add(memberKey(n, grandStaff))) return List.of();
                     result.add(i);
                 }
             }
@@ -142,15 +181,16 @@ public final class ScoreArpeggioNotation {
     /** Rebase detector-owned optical identities together with their page/measure evidence. */
     static boolean owns(ScoreExpressiveEvent event) {
         return event.kind() == Kind.ARPEGGIO
-                && event.targetEventId().orElse("").startsWith(PREFIX)
+                && !prefix(event.targetEventId().orElse("")).isEmpty()
                 && event.evidence().stream()
                         .anyMatch(e -> e.sourceId().equals("printed-arpeggio-wave"));
     }
 
     static ScoreExpressiveEvent offsetEvidence(ScoreExpressiveEvent event, int offset, int page) {
         if (!owns(event)) return event.offset(offset);
+        String prefix = prefix(event.targetEventId().get());
         try {
-            String[] fields = event.targetEventId().get().substring(PREFIX.length()).split(":", -1);
+            String[] fields = event.targetEventId().get().substring(prefix.length()).split(":", -1);
             if (fields.length != 5) return event.offset(offset);
             try {
                 fields[0] = Integer.toString(Math.addExact(Integer.parseInt(fields[0]), offset));
@@ -162,7 +202,7 @@ public final class ScoreArpeggioNotation {
                         event.scope(),
                         event.staffIndex(),
                         event.staffCount(),
-                        Optional.of(PREFIX + String.join(":", fields)),
+                        Optional.of(prefix + String.join(":", fields)),
                         event.strength(),
                         event.qualifierText(),
                         event.evidence().stream()
@@ -190,7 +230,7 @@ public final class ScoreArpeggioNotation {
                     Scope.UNRESOLVED,
                     event.staffIndex(),
                     event.staffCount(),
-                    Optional.of(PREFIX + "invalid-offset:" + event.targetEventId().orElse("")),
+                    Optional.of(prefix + "invalid-offset:" + event.targetEventId().orElse("")),
                     event.strength(),
                     event.qualifierText(),
                     event.evidence().stream()

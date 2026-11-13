@@ -427,6 +427,7 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
         break
     parenthesis_level_ends = [float("-inf")] * 17
     printed_rest_groups = []
+    printed_triplets = []
     octave_owned = {}
     offset = 0
     current_meter, current_key = meter, key_fifths
@@ -485,6 +486,46 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
             end = bar['start']+ticks(span[1]['quarterBeatOffset'])
             if bar['start'] <= start < end <= bar['start']+bar['length']:
                 literal_rests.append(dict(row, start=start, end=end))
+        source_notes = score.get('notes', [])
+        beam = score.get('beamSource')
+        if beam:
+            from .beam_source import checked
+            source = checked(beam, len(source_notes))
+            owners = defaultdict(list)
+            for index, origin in enumerate(source['noteOrigins']):
+                if origin is not None:
+                    owners[origin['pageIndex'], origin['noteIndex']].append(index)
+            emitted_sources = defaultdict(list)
+            for index, event in enumerate(page['events']):
+                owner = event.get('sourceNoteIndex')
+                if type(owner) is int:
+                    emitted_sources[owner].append(index)
+            for group in source['groups']:
+                if len(group['columns']) != 3 or group['bridges'] != [1, 1]:
+                    continue
+                columns = []
+                levels = []
+                for col in group['columns']:
+                    members = []
+                    beams = set()
+                    for anchor in col['members']:
+                        kept = owners[anchor['pageIndex'], anchor['noteIndex']]
+                        if len(kept) != 1 or len(emitted_sources[kept[0]]) != 1:
+                            break
+                        owner = kept[0]
+                        index = emitted_sources[owner][0]
+                        n = source_notes[owner]
+                        if (n.get('tupletDivisor') != 3 or n.get('tupletNormalNotes') != 2
+                                or n.get('augmentationDots') != 0):
+                            break
+                        beams.add(n.get('beamCount'))
+                        members.append(len(events) + index)
+                    if len(members) != len(col['members']) or len(beams) != 1:
+                        break
+                    columns.append(tuple(members))
+                    levels.append(beams.pop())
+                if levels in ([1, 2, 1], [1, 1, 1]):
+                    printed_triplets.append((columns, levels, first_bar, len(page['measureBeats'])))
         first_event = len(events)
         written = grace_export.plan(page, ticks)
         paired_tremolos = tremolo_export.retained(page)
@@ -510,6 +551,9 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
                                retainedSpelling=spelling_export.retained(page, note_index, spelling_key),
                                retainedOrnamentFlags=ornament_export.retained(page, note_index),
                                retainedTremolo=paired_tremolos.get(note_index), retainedArpeggio=False, retainedNaturalHarmonic=False))
+            owner = n.get('sourceNoteIndex')
+            if type(owner) is int and 0 <= owner < len(source_notes):
+                events[-1]['retainedFollowingRest'] = source_notes[owner].get('followingRestBeats', 0)
             if is_grace:
                 events[-1].update(grace=True, graceOrdinal=placement['ordinal'], afterGrace=placement['after'],
                                   stealPercent=placement['steal'], graceWrittenDuration=duration,
@@ -853,6 +897,38 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
             for n in chord:
                 n['voice'] = voice + 1
         by_source = {n['sourceIdentity']: n for n in notes}
+        mixed_edges = {}
+        mixed_bars = set()
+        for columns, levels, first_bar, page_bar_count in printed_triplets:
+            if any(owner not in by_source for column in columns for owner in column):
+                continue
+            members = [[by_source[owner] for owner in column] for column in columns]
+            first = members[0][0]
+            key = first['voice'], first['measureIndex']
+            if type(key[1]) is not int or not 0 <= key[1] < page_bar_count:
+                continue
+            bar_index = first_bar + key[1]
+            bar = bars[bar_index]
+            cursor = first['start']
+            if not bar['start'] <= cursor < bar['start'] + bar['length']:
+                continue
+            edges = {}
+            for col, level, edge in zip(members, levels, ('start', None, 'stop')):
+                end = cursor + DIVISIONS // (3 if level == 1 else 6)
+                if any((n['voice'], n['measureIndex']) != key or n['start'] != cursor
+                       or n['end'] != end or n.get('grace', False)
+                       or n.get('tupletActualNotes') != 3 or n.get('tupletNormalNotes') != 2
+                       for n in col):
+                    break
+                if edge:
+                    edges[key[0], cursor, end] = edge
+                cursor = end
+            else:
+                if cursor <= bar['start'] + bar['length']:
+                    mixed_edges.update(edges)
+                    if levels == [1, 2, 1]:
+                        mixed_bars.add((key[0], bar_index))
+
         grace_groups = defaultdict(list)
         for n in notes:
             if n.get('grace', False):
@@ -945,7 +1021,23 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
                 for n in present:
                     if n['voice'] == voice:
                         segments[max(a,n['start']),min(b,n['end'])].append(n)
-                for (start, end), chord in sorted(segments.items()):
+                ordered = sorted(segments.items())
+                pair_edges = {}
+                for i, ((start, end), chord) in enumerate(ordered[:-1]):
+                    if (start, end) in pair_edges:
+                        continue
+                    (next_start, next_end), following = ordered[i + 1]
+                    if (end != next_start or end - start != DIVISIONS // 2
+                            or next_end - next_start != end - start):
+                        continue
+                    if all(n['start'] == onset and n['end'] == release
+                           and n.get('tupletActualNotes', 1) == n.get('tupletNormalNotes', 1) == 2
+                           for onset, release, heads in ((start, end, chord),
+                                                         (next_start, next_end, following))
+                           for n in heads):
+                        pair_edges[start, end] = 'start'
+                        pair_edges[next_start, next_end] = 'stop'
+                for (start, end), chord in ordered:
                     if start > cursor:
                         emit_rest_gap(measure, cursor, start, voice, rest_symbols, literal_edges)
                     fragment_start = start
@@ -967,6 +1059,13 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
                                       slide_stop=fragment_start==n['start'] and 'slide_stop' in n,
                                       fragment_end=fragment_end, articulation_flags=articulation_flags[ci],
                                       attack_fragment=fragment_start==n['start'], bow_direction=bow_directions[ci])
+                            edge = (pair_edges.get((fragment_start, fragment_end))
+                                    or mixed_edges.get((voice, fragment_start, fragment_end)))
+                            if ci == 0 and edge is not None:
+                                notations = emitted.find('notations')
+                                if notations is None:
+                                    notations = element(emitted, 'notations')
+                                element(notations, 'tuplet', type=edge, number=1)
                             octave_owned[emitted] = 0 if event_kind(n) == 'UNPITCHED' else n.get('octaveShift', 0)
                             if fragment_start == n['start'] and n['sourceIdentity'] in requested_slur_owners:
                                 slur_attacks[n['sourceIdentity']] = emitted
@@ -974,7 +1073,18 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
                         fragment_start = fragment_end
                     cursor = end
                 if cursor < b:
-                    emit_rest_gap(measure, cursor, b, voice, rest_symbols, literal_edges)
+                    last_chord = ordered[-1][1] if ordered else ()
+                    rest_values = {n.get('retainedFollowingRest', 0) for n in last_chord}
+                    printed = ticks(rest_values.pop()) if len(rest_values) == 1 else 0
+                    tail = b - cursor - printed
+                    if (voice, index) in mixed_bars and tail == DIVISIONS // 6:
+                        if printed:
+                            emit_rest_gap(measure, cursor, cursor + printed, voice, rest_symbols, literal_edges)
+                        forward = element(measure, 'forward')
+                        element(forward, 'duration', tail)
+                        element(forward, 'voice', voice)
+                    else:
+                        emit_rest_gap(measure, cursor, b, voice, rest_symbols, literal_edges)
     from .octave_shift_export import apply as octave_apply
     octave_apply(root, octave_owned)
     first_score = document['pages'][0].get('score', {})

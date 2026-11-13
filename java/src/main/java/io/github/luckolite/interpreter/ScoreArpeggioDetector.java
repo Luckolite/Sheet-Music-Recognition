@@ -15,6 +15,12 @@ public final class ScoreArpeggioDetector {
             int height,
             List<PlayingTechniqueDetector.Staff> staffs,
             int sourcePage) {
+        return apply(score, gray, width, height, staffs, sourcePage, gray);
+    }
+
+    static ScorePageInterpretation apply(
+            ScorePageInterpretation score, byte[] gray, int width, int height,
+            List<PlayingTechniqueDetector.Staff> staffs, int sourcePage, byte[] annotationGray) {
         if (gray == null || gray.length != width * height || width <= 0 || height <= 0)
             return score;
         var done = new HashSet<String>();
@@ -79,6 +85,12 @@ public final class ScoreArpeggioDetector {
                             m.right() * width,
                             chosen,
                             chord.stream().map(score.notes()::get).toList());
+            var cross = grandStaff(score, chord, staffs, chosen, m, x, top, bottom,
+                    annotationGray, width, height, sourcePage);
+            if (cross != score) {
+                score = cross;
+                continue;
+            }
             // A long wave must span this chord, not just an adjacent accidental or rest hook.
             for (int left = Math.max(0, Math.round(x - gap * 3)); left <= x - gap * 1.1f; left++) {
                 int right = Math.round(left + gap * .8f);
@@ -122,12 +134,118 @@ public final class ScoreArpeggioDetector {
         return score;
     }
 
+    /** A grand-staff wave must own both simultaneous, stemless chord columns. */
+    private static ScorePageInterpretation grandStaff(
+            ScorePageInterpretation score, List<Integer> upper,
+            List<PlayingTechniqueDetector.Staff> staffs, PlayingTechniqueDetector.Staff staff,
+            MeasureRegion measure, float x, float top, float bottom,
+            byte[] gray, int width, int height, int page) {
+        var first = score.notes().get(upper.get(0));
+        if (first.staffIndex() != 0 || first.staffCount() != 2
+                || upper.stream().map(score.notes()::get).anyMatch(n ->
+                        n.stemDirection() != 0 || n.unbeamedDurationBeats() != 4)) return score;
+        float gap = staff.gap();
+        var lower = staffs.stream().filter(s -> s.index() == 1 && s.count() == 2
+                        && s.top() > staff.bottom())
+                .min(Comparator.comparingDouble(PlayingTechniqueDetector.Staff::top)).orElse(null);
+        if (lower == null || lower.top() - staff.bottom() > gap * 11) return score;
+        var members = new ArrayList<>(upper);
+        float lowTop = Float.POSITIVE_INFINITY, lowBottom = Float.NEGATIVE_INFINITY;
+        for (int i = 0; i < score.notes().size(); i++) {
+            var n = score.notes().get(i);
+            if (n.measureIndex() != first.measureIndex() || n.staffIndex() != 1 || n.staffCount() != 2
+                    || Math.abs(n.positionInMeasure() - first.positionInMeasure()) > .018f) continue;
+            float y = n.pageY() * height;
+            if (n.kind() != ScoreNoteEvent.Kind.PITCHED || (n.articulations() & 32768) != 0
+                    || n.stemDirection() != 0 || n.unbeamedDurationBeats() != 4
+                    || y < lower.top() - gap * 2 || y > lower.bottom() + gap * 2) return score;
+            lowTop = Math.min(lowTop, y);
+            lowBottom = Math.max(lowBottom, y);
+            members.add(i);
+        }
+        if (members.size() - upper.size() < 2 || lowBottom - lowTop < gap) return score;
+        var frame = new PlayingTechniqueDetector.Staff(staff.top(), lower.bottom(), gap, 0, 2);
+        var owner = new ColumnOwner(x, measure.left() * width, measure.right() * width,
+                frame, List.of(), x - gap * 1.2f);
+        int scanTop = Math.round(top - gap * .75f), scanBottom = Math.round(lowBottom + gap * .8f);
+        for (int left = Math.max(0, Math.round(x - gap * 3)); left <= x - gap * 1.2f; left++) {
+            int right = Math.round(left + gap * .8f);
+            if (right >= owner.stripRight
+                    || !wave(gray, width, height, left, right, scanTop, scanBottom, gap)) continue;
+            var extent = finiteExtent(gray, width, height, left, right, scanTop, scanBottom, gap, owner);
+            if (extent == null || extent.right >= owner.stripRight
+                    || !ownedExtent(extent, top, lowBottom, frame, staffs)) continue;
+            var marked = ScoreArpeggioNotation.captureGrandStaff(score, members,
+                    new ScoreExpressiveEvent.Evidence("printed-arpeggio-wave", page,
+                            (extent.left + extent.right) * .5f / width, 0, 2, "arpeggio"));
+            if (marked == score) continue;
+            var removed = marked.rests().stream().filter(rest ->
+                    rest.measureIndex() == first.measureIndex() && rest.staffCount() == 2
+                            && waveOwnsRest(rest, measure, extent, gray, width, height, gap))
+                    .toList();
+            if (removed.isEmpty()) return marked;
+            var rests = marked.rests().stream().filter(rest -> !removed.contains(rest)).toList();
+            var notes = new ArrayList<>(marked.notes());
+            for (int index : members) {
+                var note = notes.get(index);
+                if (note.leadingRestBeats() == 0) continue;
+                // Only clear a cached leading rest when the discarded mark fully accounts for it.
+                double discarded = removed.stream().filter(rest -> precedes(rest, note))
+                        .mapToDouble(ScoreRestEvent::durationBeats).sum();
+                if (Math.abs(note.leadingRestBeats() - discarded) < .001
+                        && rests.stream().noneMatch(rest -> precedes(rest, note))
+                        && marked.notes().stream().noneMatch(earlier ->
+                                earlier.measureIndex() == note.measureIndex()
+                                        && earlier.staffIndex() == note.staffIndex()
+                                        && earlier.staffCount() == note.staffCount()
+                                        && earlier.positionInMeasure() < note.positionInMeasure() - .018f))
+                    notes.set(index, note.withLeadingRest(0));
+            }
+            return marked.withRests(rests).withNotes(notes,
+                    java.util.stream.IntStream.range(0, notes.size()).boxed().toList());
+        }
+        return score;
+    }
+
+    private static boolean precedes(ScoreRestEvent rest, ScoreNoteEvent note) {
+        return rest.measureIndex() == note.measureIndex()
+                && rest.staffIndex() == note.staffIndex()
+                && rest.staffCount() == note.staffCount()
+                && rest.positionInMeasure() < note.positionInMeasure() - .018f;
+    }
+
+    /** A quarter-rest candidate inside the proved wave must have no separate ink owner. */
+    private static boolean waveOwnsRest(
+            ScoreRestEvent rest, MeasureRegion measure, Extent extent,
+            byte[] gray, int width, int height, float gap) {
+        if (rest.isFullMeasure() || rest.durationBeats() != 1) return false;
+        float x = (measure.left() + rest.positionInMeasure() * (measure.right() - measure.left())) * width;
+        float center = rest.pageY() * height, half = rest.pageHeight() * height / 2;
+        int top = Math.round(center - half), bottom = Math.round(center + half);
+        if (x < extent.left || x > extent.right || top < extent.top || bottom > extent.bottom
+                || half <= 0 || !Float.isFinite(x + center + half)) return false;
+        int rows = 0;
+        for (int y = top; y <= bottom; y++) {
+            var row = inkRow(gray, width, height, extent.left, extent.right, y, gap);
+            if (!row.valid || !row.rule && (row.empty() || row.left < extent.left
+                    || row.right > extent.right)) return false;
+            if (!row.rule) rows++;
+        }
+        return rows > gap;
+    }
+
     private record ColumnOwner(
             float headX,
             float measureLeft,
             float measureRight,
             PlayingTechniqueDetector.Staff staff,
-            List<ScoreNoteEvent> heads) {}
+            List<ScoreNoteEvent> heads,
+            float stripRight) {
+        private ColumnOwner(float headX, float measureLeft, float measureRight,
+                            PlayingTechniqueDetector.Staff staff, List<ScoreNoteEvent> heads) {
+            this(headX, measureLeft, measureRight, staff, heads, headX + .8f * staff.gap());
+        }
+    }
 
     private record Extent(int left, int right, int top, int bottom) {}
 
@@ -301,7 +419,7 @@ public final class ScoreArpeggioDetector {
     private static InkRow bandFace(
             byte[] ink, int width, int height, int y, float gap, ColumnOwner o) {
         int left = (int) Math.floor(o.headX - 3 * gap),
-                right = (int) Math.ceil(o.headX + .8f * gap);
+                right = (int) Math.ceil(o.stripRight);
         if (y < 0 || y >= height || left < 0 || right >= width)
             return new InkRow(-1, -1, false, false);
         if (horizontalRule(ink, width, left, right, y, gap)) return new InkRow(-1, -1, true, true);
@@ -312,9 +430,11 @@ public final class ScoreArpeggioDetector {
                 while (a > 0 && traceDark(ink, width, a - 1, y)) a--;
                 while (b + 1 < width && traceDark(ink, width, b + 1, y)) b++;
                 x = b;
+                // The full row run is known even when a proved barline touches the strip edge.
+                if (b > left && a < right
+                        && ownedBarline(ink, width, height, a, b, y, gap, o)) continue;
                 if (a <= left || b >= right) return new InkRow(a, b, false, false);
-                if (ownedBarline(ink, width, height, a, b, y, gap, o)
-                        || ownedChordInk(ink, width, height, a, b, y, gap, o)) continue;
+                if (ownedChordInk(ink, width, height, a, b, y, gap, o)) continue;
                 if (++count > 1 || b - a > gap * .8f) return new InkRow(a, b, false, false);
                 lo = a;
                 hi = b;

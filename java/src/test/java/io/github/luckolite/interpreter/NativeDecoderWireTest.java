@@ -50,6 +50,19 @@ public class NativeDecoderWireTest {
     }
 
     @Test
+    public void annotationAnalysisPreservesBothRasters() throws Exception {
+        byte[] labels = {0, 1}, decoded = {50, 60}, original = {51, 61};
+        var request = new NativeDecoderWire.Request(labels, decoded, 2, 1, List.of(),
+                NativeDecoderWire.ANALYZE_WITH_ANNOTATIONS, original);
+        try (var in = unpack(packet(out -> NativeDecoderWire.writeRequest(out, request)))) {
+            var read = NativeDecoderWire.readRequest(in);
+            assertEquals(NativeDecoderWire.ANALYZE_WITH_ANNOTATIONS, read.operation());
+            assertArrayEquals(decoded, read.gray());
+            assertArrayEquals(original, read.annotationGray());
+        }
+    }
+
+    @Test
     public void malformedAndTruncatedRecordsAreRejected() throws Exception {
         assertThrows(
                 IOException.class,

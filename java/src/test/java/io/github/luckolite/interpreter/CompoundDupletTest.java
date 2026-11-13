@@ -63,6 +63,26 @@ public class CompoundDupletTest {
     }
 
     @Test
+    public void literalPairInCompleteSimpleBarKeepsItsOrdinaryClock() {
+        var notes = new ArrayList<>(notes().subList(0, 2));
+        notes.add(new ScoreNoteEvent(0, .75f, 2, 0, 1, .2f, false, 1, 0, 2, 2, 1));
+        var bars = List.of(new MeasureRegion(0, 1, .05f, .37f));
+        var simple = List.of(new ScoreMeterChange(0, 2, 2));
+        var marked = TripletRhythmDetector.neutralPrintedPairs(
+                notes, bars, simple, ink(true, true, false), W, H);
+        assertEquals(notes.get(0).withTupletRatio(2, 2), marked.get(0));
+        assertEquals(notes.get(1).withTupletRatio(2, 2), marked.get(1));
+        assertEquals(notes.get(2), marked.get(2));
+        for (int i = 0; i < notes.size(); i++)
+            assertEquals(ScoreNoteTiming.writtenPlacement(notes.get(i), notes, 4),
+                    ScoreNoteTiming.writtenPlacement(marked.get(i), marked, 4));
+        assertEquals(notes, TripletRhythmDetector.neutralPrintedPairs(
+                notes, bars, meter(), ink(true, true, false), W, H));
+        assertEquals(notes, TripletRhythmDetector.neutralPrintedPairs(
+                notes, bars, simple, ink(true, false, false), W, H));
+    }
+
+    @Test
     public void missingNumeralDoesNotInferFromShortClock() {
         var n = notes();
         assertEquals(n, run(n, ink(false, true, false), meter()));

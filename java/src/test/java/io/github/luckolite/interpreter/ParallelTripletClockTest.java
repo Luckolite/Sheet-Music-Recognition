@@ -112,4 +112,31 @@ public class ParallelTripletClockTest {
         n.add(new ScoreNoteEvent(0, .2f, -3, 1, 2, .6f, false, 0, 0, 2, 1).withStemDirection(1));
         assertNull(ParallelTripletClock.find(n.get(0), n, 4));
     }
+
+    @Test
+    public void alignedMixedTripletsUseOneClockAcrossTheGrandStaff() {
+        var notes = new ArrayList<ScoreNoteEvent>();
+        float[] positions = {.07f, .16f, .25f, .35f, .49f, .57f, .68f, .76f, .84f};
+        double cursor = 0;
+        var expected = new ArrayList<Double>();
+        for (int i = 0; i < positions.length; i++) {
+            int beams = i == 4 ? 2 : 1;
+            for (int staff = 0; staff < 2; staff++) {
+                notes.add(new ScoreNoteEvent(
+                        0, positions[i] + staff * .002f, i, staff, 2, .3f + staff * .2f,
+                        false, 0, beams, 2, 0, 3, i == 8 && staff == 0 ? 1 : 0,
+                        0, staff == 0 ? 30 : 18).withTupletRatio(3, 2));
+                expected.add(cursor);
+            }
+            cursor += beams == 2 ? 1.0 / 6 : 1.0 / 3;
+        }
+        notes.add(new ScoreNoteEvent(0, .93f, 5, 1, 2, .5f, false, 0, 0, 2, 1));
+        expected.add(cursor);
+        var clock = ParallelTripletClock.find(notes.get(0), notes, 4);
+        assertNotNull(clock);
+        for (int i = 0; i < notes.size(); i++)
+            assertEquals(expected.get(i), ScoreNoteTiming.beatInMeasure(notes.get(i), notes, 4), 1e-6);
+        notes.set(9, notes.get(9).withTupletRatio(2, 2));
+        assertNull(ParallelTripletClock.find(notes.get(0), notes, 4));
+    }
 }

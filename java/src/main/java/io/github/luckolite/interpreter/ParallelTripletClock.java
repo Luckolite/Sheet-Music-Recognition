@@ -13,6 +13,10 @@ final class ParallelTripletClock {
     static Clock find(ScoreNoteEvent target, List<ScoreNoteEvent> bar, double beats) {
         if (target == null || bar == null || !Double.isFinite(beats) || beats < 2 || beats > 4)
             return null;
+        Clock aligned = findAlignedMixedTriplets(target, bar, beats);
+        if (aligned != null) return aligned;
+        Clock exchanged = findExchangedMixedTriplets(target, bar, beats);
+        if (exchanged != null) return exchanged;
         Clock completeWritten = findCompleteOpposedWrittenVoices(target, bar, beats, false);
         if (completeWritten != null) return completeWritten;
         Clock crossedWritten = findCompleteOpposedWrittenVoices(target, bar, beats, true);
@@ -40,6 +44,132 @@ final class ParallelTripletClock {
         for (var quarter : prefix.quarters()) attacks.add(new Attack(quarter, Double.NaN));
         return new Clock(
                 prefix.members(), prefix.groups(), prefix.unit(), beats, List.copyOf(attacks));
+    }
+
+    /** Two parts can exchange a triplet figure at the boundary of an engraved half-bar. */
+    private static Clock findExchangedMixedTriplets(
+            ScoreNoteEvent target, List<ScoreNoteEvent> bar, double beats) {
+        if (target.staffCount() != 2 || beats != 4) return null;
+        var lanes = List.of(new ArrayList<ScoreNoteEvent>(), new ArrayList<ScoreNoteEvent>());
+        for (var n : bar) {
+            if (n.staffCount() != 2 || n.staffIndex() < 0 || n.staffIndex() > 1
+                    || n.crossStaffBeam() || n.kind() != ScoreNoteEvent.Kind.PITCHED
+                    || (n.articulations() & NoteOrnament.GRACE) != 0) return null;
+            lanes.get(n.staffIndex()).add(n);
+        }
+        for (var lane : lanes) lane.sort(Comparator.comparingDouble(ScoreNoteEvent::positionInMeasure));
+        var heldLane = columns(lanes.get(0));
+        var movingLane = columns(lanes.get(1));
+        if (heldLane.size() == 6 && movingLane.size() == 5) {
+            var swapped = heldLane;
+            heldLane = movingLane;
+            movingLane = swapped;
+        }
+        if (heldLane.size() != 5 || movingLane.size() != 6) return null;
+        var held = heldLane.get(0);
+        var opening = movingLane.get(0).get(0);
+        if (Math.abs(held.get(0).positionInMeasure() - opening.positionInMeasure()) > .009f
+                || opening.positionInMeasure() > .15f) return null;
+        var attacks = new ArrayList<Attack>();
+        for (var n : held) {
+            if (ScoreNoteTiming.writtenDurationBeats(n) != 2 || n.tupletDivisor() != 1
+                    || n.leadingRestBeats() != 0 || n.followingRestBeats() != 0) return null;
+            attacks.add(new Attack(n, 0));
+        }
+        if (!tripletRun(movingLane.subList(0, 6), new int[] {1,1,1,1,2,1}, 0, 2, attacks)
+                || !tripletRun(heldLane.subList(1, 4), new int[] {1,2,1}, 2, 0, attacks))
+            return null;
+        var tail = heldLane.get(4);
+        if (tail.size() != 1) return null;
+        var last = tail.get(0);
+        if (last.tupletDivisor() != 1 || ScoreNoteTiming.writtenDurationBeats(last) != 1
+                || last.leadingRestBeats() != 0 || last.followingRestBeats() != 0) return null;
+        attacks.add(new Attack(last, 17.0 / 6));
+        return new Clock(List.of(), List.of(), Double.NaN, beats, List.copyOf(attacks));
+    }
+
+    private static boolean tripletRun(
+            List<List<ScoreNoteEvent>> groups, int[] levels,
+            double cursor, float tailRest, List<Attack> attacks) {
+        for (int i = 0; i < levels.length; i++) {
+            var group = groups.get(i);
+            if (group.size() != 1) return false;
+            var n = group.get(0);
+            if (n.tupletDivisor() != 3 || n.tupletNormalNotes() != 2
+                    || n.beamCount() != levels[i] || n.augmentationDots() != 0
+                    || n.leadingRestBeats() != 0
+                    || n.followingRestBeats() != (i + 1 == levels.length ? tailRest : 0))
+                return false;
+            attacks.add(new Attack(n, cursor));
+            cursor += ScoreNoteTiming.writtenDurationBeats(n);
+        }
+        return true;
+    }
+
+    /** Two matching engraved lanes establish a common clock even with unfilled tail space. */
+    private static Clock findAlignedMixedTriplets(
+            ScoreNoteEvent target, List<ScoreNoteEvent> bar, double beats) {
+        if (target.staffCount() != 2) return null;
+        var upper = new ArrayList<ScoreNoteEvent>();
+        var lower = new ArrayList<ScoreNoteEvent>();
+        for (var note : bar) {
+            if (note.staffCount() != 2 || note.staffIndex() < 0 || note.staffIndex() > 1
+                    || note.kind() != ScoreNoteEvent.Kind.PITCHED || note.crossStaffBeam()
+                    || (note.articulations() & NoteOrnament.GRACE) != 0) return null;
+            (note.staffIndex() == 0 ? upper : lower).add(note);
+        }
+        upper.sort(Comparator.comparingDouble(ScoreNoteEvent::positionInMeasure));
+        lower.sort(Comparator.comparingDouble(ScoreNoteEvent::positionInMeasure));
+        var a = columns(upper);
+        var b = columns(lower);
+        int shared = Math.min(a.size(), b.size());
+        if (shared < 6 || Math.abs(a.size() - b.size()) > 1) return null;
+        if (a.get(0).get(0).positionInMeasure() > .15f) return null;
+        var attacks = new ArrayList<Attack>();
+        boolean mixed = false;
+        double cursor = 0;
+        double upperRest = 0, lowerRest = 0;
+        for (int i = 0; i < shared; i++) {
+            var left = a.get(i);
+            var right = b.get(i);
+            if (left.size() != 1 || right.size() != 1) return null;
+            var u = left.get(0);
+            var l = right.get(0);
+            if (Math.abs(u.positionInMeasure() - l.positionInMeasure()) > .009f
+                    || u.tupletDivisor() != 3 || u.tupletNormalNotes() != 2
+                    || l.tupletDivisor() != 3 || l.tupletNormalNotes() != 2
+                    || u.beamCount() < 1 || u.beamCount() > 2 || l.beamCount() != u.beamCount()
+                    || u.augmentationDots() != 0 || l.augmentationDots() != 0
+                    || u.leadingRestBeats() != 0 || l.leadingRestBeats() != 0) return null;
+            if (i > 0 && u.beamCount() != a.get(i - 1).get(0).beamCount()) mixed = true;
+            attacks.add(new Attack(u, cursor));
+            attacks.add(new Attack(l, cursor));
+            cursor += ScoreNoteTiming.writtenDurationBeats(u);
+            upperRest = u.followingRestBeats();
+            lowerRest = l.followingRestBeats();
+            if (i + 1 < shared) {
+                if (Math.abs(upperRest - lowerRest) > .001) return null;
+                cursor += upperRest;
+            }
+        }
+        if (!mixed) return null;
+        var tail = a.size() > shared ? a.get(shared) : b.size() > shared ? b.get(shared) : List.<ScoreNoteEvent>of();
+        if (tail.isEmpty()) {
+            if (Math.abs(upperRest - lowerRest) > .001 || cursor + upperRest > beats + .001)
+                return null;
+        } else {
+            if (tail.size() != 1) return null;
+            var note = tail.get(0);
+            double duration = ScoreNoteTiming.writtenDurationBeats(note);
+            double sameStaffRest = a.size() > shared ? upperRest : lowerRest;
+            double oppositeRest = a.size() > shared ? lowerRest : upperRest;
+            if (note.tupletDivisor() != 1 || note.beamCount() != 0
+                    || note.leadingRestBeats() != 0 || sameStaffRest != 0
+                    || !Double.isFinite(duration) || Math.abs(duration - oppositeRest) > .001
+                    || cursor + duration > beats + .001) return null;
+            attacks.add(new Attack(note, cursor));
+        }
+        return new Clock(List.of(), List.of(), Double.NaN, beats, List.copyOf(attacks));
     }
 
     /** Repeated coincident attacks corroborate independent written voice clocks. */

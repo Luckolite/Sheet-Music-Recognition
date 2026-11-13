@@ -46,13 +46,27 @@ final class OmrScoreInterpreter {
 
     static Analysis analyze(
             byte[] labels, byte[] gray, int width, int height, List<MeasureRegion> measures) {
+        return analyze(labels, gray, width, height, measures,
+                new RawCourtesyBudget(64_000_000L, 16L * 1024 * 1024));
+    }
+
+    static Analysis analyze(
+            byte[] labels, byte[] gray, int width, int height, List<MeasureRegion> measures,
+            byte[] annotationGray) {
         return analyze(
                 labels,
                 gray,
                 width,
                 height,
                 measures,
+                annotationGray,
                 new RawCourtesyBudget(64_000_000L, 16L * 1024 * 1024));
+    }
+
+    private static Analysis analyze(
+            byte[] labels, byte[] gray, int width, int height, List<MeasureRegion> measures,
+            RawCourtesyBudget rawCourtesy) {
+        return analyze(labels, gray, width, height, measures, gray, rawCourtesy);
     }
 
     private static Analysis analyze(
@@ -61,6 +75,7 @@ final class OmrScoreInterpreter {
             int width,
             int height,
             List<MeasureRegion> measures,
+            byte[] annotationGray,
             RawCourtesyBudget rawCourtesy) {
         if (labels == null
                 || labels.length != width * height
@@ -2483,6 +2498,7 @@ final class OmrScoreInterpreter {
                     detected.add(new DetectedNote(chord, part, staff.gap));
                 }
         }
+        removeOwnedSharpFragments(detected, writtenAccidentalChoices, gray, width);
         detected = alignDisplacedSeconds(detected, gray, width, height);
         detected = reconcileSingleShaftChords(detected, labels, gray, width, height);
         detected =
@@ -3046,7 +3062,8 @@ final class OmrScoreInterpreter {
                             owner == null ? -1 : owner.index,
                             owner == null ? 0 : owner.count));
         }
-        int[] marks = NoteArticulationDetector.detect(labels, gray, width, height, anchors);
+        int[] marks =
+                NoteArticulationDetector.detect(labels, gray, width, height, anchors, annotationGray);
         for (int i = 0; i < withRests.size(); i++)
             withRests.set(
                     i,
@@ -19783,6 +19800,67 @@ final class OmrScoreInterpreter {
         return new Component(Math.round(gap * gap * .35f),
                 Math.round(x - gap * .6f), Math.round(x + gap * .6f),
                 Math.round(y - gap * .4f), Math.round(y + gap * .4f), x, y);
+    }
+
+    /** A sharp already owned by a separate note can leave a stemless mask island on its spines. */
+    private static void removeOwnedSharpFragments(
+            List<DetectedNote> notes,
+            java.util.IdentityHashMap<Object, WrittenAccidentalChoice> choices,
+            byte[] gray,
+            int width) {
+        if (gray == null) return;
+        var rejected = new java.util.HashSet<Component>();
+        for (var note : notes) {
+            var choice = choices.get(note.head);
+            if (choice == null || choice.ambiguous()
+                    || choice.accidental() != ScoreNoteEvent.ACCIDENTAL_SHARP
+                    || note.event.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_SHARP
+                    || !(choice.glyph() instanceof Component sharp)) continue;
+            for (var candidate : notes) {
+                var head = candidate.head;
+                float gap = candidate.staffGap;
+                var event = candidate.event;
+                if (head == note.head
+                        || event.kind() != ScoreNoteEvent.Kind.PITCHED
+                        || event.measureIndex() != note.event.measureIndex()
+                        || event.staffIndex() != note.event.staffIndex()
+                        || event.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_FROM_KEY
+                        || event.beamCount() != 0
+                        || event.unbeamedDurationBeats() != 4
+                        || head.area > gap * gap * .55f
+                        || head.maxX >= note.head.minX
+                        || head.centerX < sharp.minX || head.centerX > sharp.maxX
+                        || head.centerY < sharp.minY || head.centerY > sharp.maxY
+                        || head.minX < sharp.minX - gap * .65f
+                        || head.maxX > sharp.maxX + gap * .2f
+                        || head.minY < sharp.minY - gap * .2f
+                        || head.maxY > sharp.maxY + gap * .2f
+                        || sharpFragmentHasOutsideBody(gray, width, head, sharp, gap)) continue;
+                rejected.add(head);
+            }
+        }
+        notes.removeIf(note -> rejected.contains(note.head));
+    }
+
+    private static boolean sharpFragmentHasOutsideBody(
+            byte[] gray, int width, Component head, Component sharp, float gap) {
+        int broadRows = 0;
+        int reach = Math.round(gap);
+        for (int y = head.minY; y <= head.maxY; y++) {
+            int left = Math.max(0, head.minX - reach);
+            int right = Math.min(width - 1, head.maxX + reach);
+            int rule = 0;
+            for (int x = left; x <= right; x++)
+                if ((gray[y * width + x] & 255) < 165) rule++;
+            if (rule >= (right - left + 1) * .85f) continue;
+            int outside = 0;
+            for (int x = head.minX; x <= head.maxX; x++)
+                if ((x < sharp.minX || x > sharp.maxX || y < sharp.minY || y > sharp.maxY)
+                        && (gray[y * width + x] & 255) < 165) outside++;
+            if (outside >= gap * .3f && ++broadRows >= Math.max(2, Math.round(gap * .15f)))
+                return true;
+        }
+        return false;
     }
 
     private static WrittenAccidentalChoice chooseWrittenAccidental(

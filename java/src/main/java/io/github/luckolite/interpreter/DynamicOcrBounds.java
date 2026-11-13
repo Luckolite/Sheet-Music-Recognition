@@ -103,7 +103,8 @@ final class DynamicOcrBounds {
         int scanRemaining = 262144, matchRemaining = 262144, matchesRemaining = 64;
         for (var word : words) {
             String token = ScoreDynamicsDetector.glyphLevelText(word.text());
-            if (token == null || !token.matches("f{2,3}|p{2,3}|m[fp]")) continue;
+            boolean fp = CompoundDynamicEvidence.literal(word);
+            if (!fp && (token == null || !token.matches("f{2,3}|p{2,3}|m[fp]"))) continue;
             if (!Float.isFinite(word.left())
                     || !Float.isFinite(word.right())
                     || !Float.isFinite(word.top())
@@ -202,7 +203,11 @@ final class DynamicOcrBounds {
                 unique = candidate;
             }
             if (!ambiguous && unique != null) {
-                var accepted = unique;
+                var accepted = fp
+                        ? new PlayingTechniqueDetector.Word(
+                                "fp", unique.left(), unique.top(), unique.right(), unique.bottom(),
+                                PlayingTechniqueDetector.WordAdmission.FP_GLYPH_QUALIFIED)
+                        : unique;
                 result.removeIf(
                         old ->
                                 old.text().equals(word.text())

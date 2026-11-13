@@ -21,6 +21,7 @@ final class NativeDynamicGlyphs {
     }
 
     private final List<Template> templates;
+    private final List<Template> fpTemplates;
     private static final boolean TRACE = "1".equals(System.getenv("NATIVE_MUSICAL_OCR_TRACE"));
 
     NativeDynamicGlyphs() throws java.io.IOException {
@@ -31,6 +32,13 @@ final class NativeDynamicGlyphs {
                     new Template(mark, image.getWidth() / (float) image.getHeight(), mask(image)));
         }
         templates = List.copyOf(loaded);
+        var compounds = new ArrayList<Template>();
+        for (int tracking : new int[] {0, 16, 24, 32}) {
+            BufferedImage image =
+                    GlyphResources.image("dynamic_templates/fp_" + tracking + ".png");
+            compounds.add(new Template("fp", image.getWidth() / (float) image.getHeight(), mask(image)));
+        }
+        fpTemplates = List.copyOf(compounds);
     }
 
     List<PlayingTechniqueDetector.Word> recognize(
@@ -90,12 +98,22 @@ final class NativeDynamicGlyphs {
                                                     Math.round(candidate.top() * height),
                                                     Math.round(candidate.right() * width),
                                                     Math.round(candidate.bottom() * height));
+                                    if (CompoundDynamicEvidence.literal(candidate)) {
+                                        var fp = match(
+                                                gray, width,
+                                                Math.round(candidate.left() * width),
+                                                Math.round(candidate.top() * height),
+                                                Math.round(candidate.right() * width),
+                                                Math.round(candidate.bottom() * height), fpTemplates);
+                                        return fp.score() >= .55f && fp.score() - proof.score() >= .08f;
+                                    }
                                     return proof.accepted()
                                             && proof.text()
                                                     .equals(
                                                             ScoreDynamicsDetector.glyphLevelText(
                                                                     candidate.text()));
                                 }));
+        var qualifiedFp = cleanedWords.stream().filter(CompoundDynamicEvidence::qualified).toList();
         var compounds = new CompoundDynamicEvidence(cleanedWords);
         var result = new ArrayList<PlayingTechniqueDetector.Word>(cleanedWords);
         var boxes = new ArrayList<>(ScoreDynamicsDetector.symbolBoxes(gray, staffs, width, height));
@@ -118,6 +136,8 @@ final class NativeDynamicGlyphs {
             int right = Math.min(width, Math.round(box.right() * width));
             int bottom = Math.min(height, Math.round(box.bottom() * height));
             if (right <= left || bottom <= top) continue;
+            if (qualifiedFp.stream().anyMatch(word -> CompoundDynamicEvidence.overlaps(word, box)))
+                continue;
             Match match = match(gray, width, left, top, right, bottom);
             if (TRACE && match.score() >= .25f)
                 System.err.println("dynamic glyph=" + box + " match=" + match);
@@ -199,11 +219,17 @@ final class NativeDynamicGlyphs {
             java.util.regex.Pattern.compile("ppp|pp|p|mp|mf|f|ff|fff");
 
     private Match match(byte[] gray, int width, int left, int top, int right, int bottom) {
+        return match(gray, width, left, top, right, bottom, templates);
+    }
+
+    private Match match(
+            byte[] gray, int width, int left, int top, int right, int bottom,
+            List<Template> choices) {
         float aspect = (right - left) / (float) (bottom - top);
         float[] candidate = mask(gray, width, left, top, right, bottom);
         String text = "";
         float best = 0, second = 0;
-        for (var template : templates) {
+        for (var template : choices) {
             double ratio = Math.abs(Math.log(aspect / template.aspect()));
             if (ratio > .4) continue;
             float intersection = 0, total = 0;

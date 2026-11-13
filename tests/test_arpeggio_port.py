@@ -39,6 +39,20 @@ class ArpeggioIdentityTests(unittest.TestCase):
     def test_canonical_half_note_three_head_column(self):self.assertEqual([0,1,2],plan(self.expression,self.page))
     def test_performance_dispatch_keeps_notation_only(self):
         self.assertEqual([0,1,2],_column_members(self.expression,self.page));self.assertNotIn('ARPEGGIO',SUPPORTED)
+    def test_grand_staff_requires_every_head_and_one_written_attack(self):
+        notes = self.page['score']['notes']
+        events = self.page['events']
+        notes[3] = dict(notes[0], staffIndex=1)
+        events[3] = dict(events[0], staffIndex=1, sourceNoteIndex=3, midi=48)
+        self.expression['targetEventId'] = (
+            'arpeggio-grand-staff-v1:0:0:2:' + _float32(.35).hex() + ':0/0,0/2,0/4,1/0')
+        self.assertEqual([0, 1, 2, 3], plan(self.expression, self.page))
+        self.assertEqual([], plan(self.expression, self.page, [0, 1, 2]))
+        events[3]['startBeat'] = 1
+        self.assertEqual([], plan(self.expression, self.page))
+        notes[3]['staffIndex'] = 0
+        self.assertEqual([], target_indices(self.expression, self.page))
+
     def test_reordered_source_identity(self):
         for key in ['notes']:
             a=self.page['score'][key];a[0],a[2]=a[2],a[0]
@@ -122,6 +136,19 @@ class ArpeggioXmlTests(unittest.TestCase):
         def exact_tree(e):
             return (e.tag,tuple(sorted(e.attrib.items())),e.text if e.text and not e.text.isspace() else None,tuple(exact_tree(c)for c in e))
         self.assertEqual(exact_tree(a),exact_tree(b))
+    def test_grand_staff_exports_one_column_on_both_staves(self):
+        doc = document()
+        page = doc['pages'][0]
+        notes = page['score']['notes']
+        events = page['events']
+        notes[3] = dict(notes[0], staffIndex=1)
+        events[3] = dict(events[0], staffIndex=1, sourceNoteIndex=3, midi=48)
+        page['score']['expressiveEvents'][0]['targetEventId'] = (
+            'arpeggio-grand-staff-v1:0:0:2:' + _float32(.35).hex() + ':0/0,0/2,0/4,1/0')
+        exported = self.export(doc)
+        marks_by_part = [len(part.findall('.//arpeggiate')) for part in exported.findall('part')]
+        self.assertEqual([3, 1], marks_by_part)
+
     def test_forged_event_flag_without_source_evidence_cannot_emit(self):
         doc=document();doc['pages'][0]['score']['expressiveEvents']=[]
         for e in doc['pages'][0]['events']:e['retainedArpeggio']=True

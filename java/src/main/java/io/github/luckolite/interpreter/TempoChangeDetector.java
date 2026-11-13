@@ -1116,8 +1116,12 @@ final class TempoChangeDetector {
             }
         for (int[] note : parts) {
             int nw = note[1] - note[0] + 1, nh = note[3] - note[2] + 1;
-            if (nh < unit * 1.2f || nh > unit * 2.8f || nw < unit * .25f || nw > unit * 1.5f)
+            if (nh < unit * .85f || nh > unit * 2.8f || nw < unit * .25f || nw > unit * 1.5f)
                 continue;
+            // Small metronome glyphs can be shorter than adjacent bold BPM digits.
+            // Admit the smaller silhouette only when its head encloses a paper pocket.
+            int[] pocket = closedTempoHead(gray, width, note, unit, inkLimit);
+            if (nh < unit * 1.2f && pocket == null) continue;
             // The head's centre is dark for a quarter; a half-note centre remains paper.
             int cy = note[3] - Math.max(1, Math.round(unit * .12f));
             int headLeft = note[1], headRight = note[0];
@@ -1127,7 +1131,6 @@ final class TempoChangeDetector {
                     headRight = Math.max(headRight, x);
                 }
             int cx = (headLeft + headRight) / 2;
-            int[] pocket = closedTempoHead(gray, width, note, unit, inkLimit);
             boolean hollow = pocket != null;
             if (hollow) {
                 cx = pocket[0];

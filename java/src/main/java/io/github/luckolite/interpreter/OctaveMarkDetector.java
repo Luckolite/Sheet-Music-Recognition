@@ -1183,6 +1183,7 @@ final class OctaveMarkDetector {
         int best = -1;
         for (int y = y1; y <= y2; y++) {
             var runs = acceptedInk == null ? null : new ArrayList<int[]>();
+            int[] terminalDash = null;
             int first = -1,
                     last = -1,
                     count = 0,
@@ -1243,6 +1244,7 @@ final class OctaveMarkDetector {
                                     || hookDirection(gray, width, height, x - 1 + gap * .55f,
                                             scanY, scanY, gap) != 0)
                             && terminalHook(gray, width, height, a, x - 1, scanY, gap)) {
+                        if (acceptedInk != null) terminalDash = new int[] {a, x - 1, scanY};
                         last = x - 1;
                         count++;
                         break;
@@ -1258,6 +1260,7 @@ final class OctaveMarkDetector {
                             && joinedDashHookDirection(gray, width, height, x - 1,
                                     Math.max(0, scanY - 2), Math.min(height - 1, scanY + 2),
                                     gap) != 0) {
+                        if (acceptedInk != null) terminalDash = new int[] {a, x - 1, scanY};
                         last = x - 1;
                         count++;
                         break;
@@ -1272,6 +1275,7 @@ final class OctaveMarkDetector {
                 }
                 if (count >= 24 && joinedDashHookDirection(gray, width, height, x - 1,
                         Math.max(0, scanY - 2), Math.min(height - 1, scanY + 2), gap) != 0) {
+                    if (acceptedInk != null) terminalDash = new int[] {a, x - 1, scanY};
                     last = x - 1;
                     count++;
                     break;
@@ -1285,6 +1289,13 @@ final class OctaveMarkDetector {
             if (count >= Math.max(minimum, skippedSuffix ? 6 : shortDots > count / 2 ? 5 : 3)
                     && last - first >= gap * 3) {
                 best = Math.max(best, last);
+                // Retain only the horizontal portion of a dash joined to its terminal hook.
+                if (terminalDash != null)
+                    for (int yy = Math.max(0, terminalDash[2] - 1);
+                            yy <= Math.min(height - 1, terminalDash[2] + 1); yy++)
+                        for (int xx = terminalDash[0]; xx <= terminalDash[1]; xx++)
+                            if ((gray[yy * width + xx] & 255) < 165)
+                                acceptedInk.set(yy * width + xx);
                 if (acceptedInk != null)
                     for (int[] run : runs)
                         for (int column = run[0]; column <= run[1]; column++) {

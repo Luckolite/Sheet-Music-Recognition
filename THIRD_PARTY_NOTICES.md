@@ -28,7 +28,7 @@ distribution notices.
 
 ## Bundled recognition glyphs
 
-The JAR includes 27 small grayscale templates: nine dynamic symbols rendered from
+The JAR includes 31 small grayscale templates: thirteen dynamic glyph samples rendered from
 Bravura, and nine ornament/auxiliary-accidental symbols rendered in both Bravura and
 Leland. They are individual glyph samples, not score excerpts or font binaries.
 Bravura is copyright Steinberg Media Technologies GmbH; Leland is copyright

@@ -847,6 +847,28 @@ final class PrintedTupletBeamOwner {
             boolean bracketed,
             boolean joined,
             FaintQuarterRestInk.Budget quarterBudget) {
+        return distanceWithBounds(gray, width, height, firstX, firstY, lastX, lastY, gap,
+                stemDirection, numeralLeft, numeralTop, numeralRight, numeralBottom,
+                bracketed, joined, quarterBudget, false);
+    }
+
+    private static float distanceWithBounds(
+            byte[] gray,
+            int width,
+            int height,
+            float firstX,
+            float firstY,
+            float lastX,
+            float lastY,
+            float gap,
+            int stemDirection,
+            int numeralLeft,
+            int numeralTop,
+            int numeralRight,
+            int numeralBottom,
+            boolean bracketed,
+            boolean joined,
+            FaintQuarterRestInk.Budget quarterBudget, boolean compactPair) {
         if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
 
         float nearest = Float.POSITIVE_INFINITY;
@@ -857,7 +879,7 @@ final class PrintedTupletBeamOwner {
                 || !Float.isFinite(gap)
                 || gap < 4
                 || Math.abs(stemDirection) != 1
-                || lastX - firstX < gap * 2
+                || lastX - firstX < gap * (compactPair ? 1.15f : 2)
                 || lastX - firstX > gap * 26) return Float.POSITIVE_INFINITY;
         int travel = -stemDirection;
         List<Tip> first =
@@ -874,17 +896,17 @@ final class PrintedTupletBeamOwner {
                     for (Tip b : last) {
                         if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
 
-                        if (b.x - a.x < gap || Math.abs(b.y - a.y) > gap * 3) continue;
+                        if (b.x - a.x < gap * (compactPair ? .6f : 1) || Math.abs(b.y - a.y) > gap * 3) continue;
                         float fraction = (numeralX - a.x) / (b.x - a.x);
-                        if (fraction < (bracketed ? -.15f : .15f)
-                                || fraction > (bracketed ? 1.15f : .85f)) continue;
+                        if (fraction < (bracketed || compactPair ? -.15f : .15f)
+                                || fraction > (bracketed || compactPair ? 1.15f : .85f)) continue;
                         float beamY = a.y + fraction * (b.y - a.y);
                         float distance = travel > 0 ? numeralTop - beamY : beamY - numeralBottom;
                         float minimum =
                                 joined
                                         ? -(numeralBottom - numeralTop + 1) * .45f
                                         : Math.max(2, gap * .2f);
-                        if (distance < minimum || distance > gap * 1.8f) continue;
+                        if (distance < minimum || distance > gap * (compactPair ? 2.7f : 1.8f)) continue;
                         float candidateDistance = joined ? Math.max(0, distance) : distance;
                         if (quarterBudget == null && candidateDistance >= nearest) continue;
                         if (beamCoverage(gray, width, height, a, b, gap, quarterBudget)
@@ -905,6 +927,15 @@ final class PrintedTupletBeamOwner {
         }
 
         return nearest;
+    }
+
+    /** A literal two may sit near its first shaft on a closely spaced beam. */
+    static float compactPairDistance(
+            byte[] gray, int width, int height, float firstX, float firstY,
+            float lastX, float lastY, float gap, int direction,
+            int left, int top, int right, int bottom) {
+        return distanceWithBounds(gray, width, height, firstX, firstY, lastX, lastY, gap,
+                direction, left, top, right, bottom, false, false, null, true);
     }
 
     /** Both shafts must join the same uninterrupted thick beam. */

@@ -6,6 +6,7 @@ import re
 import struct
 
 PREFIX = 'arpeggio-column-v1:'
+CROSS_PREFIX = 'arpeggio-grand-staff-v1:'
 SOURCE = 'printed-arpeggio-wave'
 
 
@@ -29,10 +30,14 @@ def target_indices(expression, page):
             or type(expression.get('staffCount')) is not int):
         return []
     target = expression.get('targetEventId') or ''
-    if not isinstance(target, str) or not target.startswith(PREFIX):
+    if not isinstance(target, str):
+        return []
+    grand_staff = target.startswith(CROSS_PREFIX)
+    prefix = CROSS_PREFIX if grand_staff else PREFIX
+    if not target.startswith(prefix):
         return []
     try:
-        fields = target[len(PREFIX):].split(':')
+        fields = target[len(prefix):].split(':')
         if len(fields) != 5:
             return []
         measure, staff, count = map(_int, fields[:3])
@@ -43,9 +48,15 @@ def target_indices(expression, page):
         measures = page.get('score', {}).get('measures', [])
         if (measure < 0 or measure >= len(measures) or not math.isfinite(position)
                 or not 0 <= position <= 1 or staff != expression.get('staffIndex')
-                or count != expression.get('staffCount')):
+                or count != expression.get('staffCount')
+                or grand_staff and (staff != 0 or count != 2)):
             return []
-        steps = [_int(text) for text in fields[4].split(',')]
+        if grand_staff:
+            steps = [tuple(map(_int, text.split('/'))) for text in fields[4].split(',')]
+            if any(len(step) != 2 for step in steps) or {owner for owner, _ in steps} != {0, 1}:
+                return []
+        else:
+            steps = [_int(text) for text in fields[4].split(',')]
         if len(steps) < 2 or len(set(steps)) != len(steps):
             return []
         if not any(e.get('sourceId') == SOURCE and e.get('staffIndex') == staff
@@ -54,13 +65,17 @@ def target_indices(expression, page):
         found, result = set(), []
         for index, note in enumerate(page.get('score', {}).get('notes', [])):
             if (note.get('kind', 'PITCHED') == 'PITCHED' and not note.get('articulations', 0) & 32768
-                    and note.get('measureIndex') == measure and note.get('staffIndex') == staff
+                    and note.get('measureIndex') == measure
+                    and (grand_staff or note.get('staffIndex') == staff)
                     and note.get('staffCount') == count
                     and abs(_float32(_float32(note['positionInMeasure']) - position)) <= _float32(.018)):
                 step = note['staffStep']
-                if type(step) is not int or step in found:
+                if type(step) is not int:
                     return []
-                found.add(step)
+                key = (note.get('staffIndex'), step) if grand_staff else step
+                if key in found:
+                    return []
+                found.add(key)
                 result.append(index)
         return result if found == set(steps) else []
     except (ValueError, TypeError, KeyError, OverflowError, struct.error):

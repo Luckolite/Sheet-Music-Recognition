@@ -29,6 +29,41 @@ class CompositeTupletTests(unittest.TestCase):
             self.assertEqual(str(actual),note.findtext('time-modification/actual-notes'))
             self.assertEqual(str(normal),note.findtext('time-modification/normal-notes'))
 
+    def test_neutral_pairs_keep_the_printed_twos_and_exact_clock(self):
+        events = [event(.5, 2, 2, midi=60+i, start=.5*i) for i in range(4)]
+        events.append(event(2, 1, 1, midi=72, start=2))
+        notes = self.export(events).findall('.//note[pitch]')
+        self.assert_ratio(notes[:4], 2, 2)
+        self.assertEqual(['start', 'stop', 'start', 'stop'],
+                         [n.find('notations/tuplet').get('type') for n in notes[:4]])
+        self.assertEqual(4 * DIVISIONS, sum(int(n.findtext('duration')) for n in notes))
+
+    def test_mixed_printed_beam_keeps_the_group_and_unprinted_tail(self):
+        source = [dict(beamCount=beam, augmentationDots=0, tupletDivisor=3,
+                       tupletNormalNotes=2, followingRestBeats=0)
+                  for beam in (1, 2, 1)]
+        source.append(dict(followingRestBeats=0))
+        notes = [event(1/3), event(1/6, midi=61, start=1/3),
+                 event(1/3, midi=62, start=.5), event(3, 1, 1, midi=63, start=5/6)]
+        origins = [dict(pageIndex=0, noteIndex=i) for i in range(4)]
+        for i, n in enumerate(notes):
+            n['sourceNoteIndex'] = i
+        beam = dict(noteOrigins=origins, detachedColumns=[], groups=[
+            dict(id='mixed', columns=[dict(members=[a]) for a in origins[:3]],
+                 bridges=[1, 1], hooks=[])])
+        page = dict(measureBeats=[4], events=notes, score=dict(notes=source, beamSource=beam))
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'mixed.musicxml'
+            write_musicxml(dict(pages=[page]), path)
+            root = ET.parse(path)
+        first = root.findall('.//note[pitch]')[:3]
+        self.assertEqual(['eighth', '16th', 'eighth'], [n.findtext('type') for n in first])
+        self.assertEqual([('start', '1'), ('stop', '1')],
+                         [(n.get('type'), n.get('number'))
+                          for note in first for n in note.findall('notations/tuplet')])
+        self.assertEqual(str(DIVISIONS // 6), root.findtext('.//forward/duration'))
+        self.assertEqual([], root.findall('.//note[rest]'))
+
     def test_composite_triplet_is_two_tied_glyphs(self):
         root=self.export([event(5/3)])
         notes=root.findall('.//note[pitch]')

@@ -1555,7 +1555,15 @@ final class NoteArticulationDetector {
     }
 
     static int[] detect(byte[] labels, byte[] gray, int width, int height, List<Anchor> notes) {
-        return detectWithWordBodies(labels, gray, width, height, notes, List.of());
+        return detect(labels, gray, width, height, notes, gray);
+    }
+
+    static int[] detect(
+            byte[] labels, byte[] gray, int width, int height, List<Anchor> notes,
+            byte[] annotationGray) {
+        return detectWithWordBodies(
+                labels, gray, width, height, notes, List.of(), Long.MAX_VALUE,
+                Long.MAX_VALUE, Long.MAX_VALUE, null, null, annotationGray);
     }
 
     static int[] detectWithWordBodies(
@@ -1598,7 +1606,8 @@ final class NoteArticulationDetector {
                 admissionLimit,
                 storageLimit,
                 null,
-                null);
+                null,
+                gray);
     }
 
     static int[] detectOwnedCarets(
@@ -1627,7 +1636,8 @@ final class NoteArticulationDetector {
                 admissionLimit,
                 storageLimit,
                 evidence,
-                current);
+                current,
+                gray);
     }
 
     private static int[] detectWithWordBodies(
@@ -1641,7 +1651,8 @@ final class NoteArticulationDetector {
             long admissionLimit,
             long storageLimit,
             PrintedBeamSource.CaretEvidence evidence,
-            int[] current) {
+            int[] current,
+            byte[] annotationGray) {
         int[] result = new int[notes.size()];
         if (notes.isEmpty() || labels == null || labels.length != width * height) return result;
         // Raw components retain symbols that the semantic model omitted. Never erase staff
@@ -2140,19 +2151,21 @@ final class NoteArticulationDetector {
                                 octaveDashInk =
                                         completeFrames
                                                 ? OctaveMarkDetector.printedDashInk(
-                                                        gray,
+                                                        annotationGray != null
+                                                                        && annotationGray.length
+                                                                                == gray.length
+                                                                ? annotationGray
+                                                                : gray,
                                                         width,
                                                         height,
                                                         new ArrayList<>(frames.values()))
                                                 : new java.util.BitSet();
                             }
-                            boolean ownedDash = glyph.count > 0;
+                            // Correction can darken a few edge pixels outside the original dash.
+                            int fringe = annotationGray == gray ? 0 : glyph.count / 16;
                             for (int pixel : glyph.pixels)
-                                if (!octaveDashInk.get(pixel)) {
-                                    ownedDash = false;
-                                    break;
-                                }
-                            if (ownedDash) continue;
+                                if (!octaveDashInk.get(pixel) && --fringe < 0) break;
+                            if (glyph.count > 0 && fringe >= 0) continue;
                         }
                         if (candidate == NoteArticulation.TENUTO && nearHead(glyph, notes))
                             continue;

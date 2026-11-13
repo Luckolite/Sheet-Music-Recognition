@@ -37,7 +37,8 @@ public final class DisconnectedHeadOwnershipTest {
                         .filter(c -> c.getSimpleName().equals("ColumnOwner"))
                         .findFirst()
                         .orElseThrow();
-        var ctor = owner.getDeclaredConstructors()[0];
+        var ctor = owner.getDeclaredConstructor(float.class, float.class, float.class,
+                PlayingTechniqueDetector.Staff.class, List.class);
         ctor.setAccessible(true);
         var o =
                 ctor.newInstance(

@@ -258,7 +258,7 @@ public final class SheetInterpreter {
         var clockPartSource =
                 ScorePartProducerSource.capture(
                         sourceAnnotations, tabSourceGray, width, height, measures);
-        var score = OmrScoreInterpreter.analyze(labels, gray, width, height, measures);
+        var score = OmrScoreInterpreter.analyze(labels, gray, width, height, measures, annotationGray);
         var clockAnalysis = score;
         score =
                 RecognizedMultiRestProjection.apply(
@@ -273,7 +273,8 @@ public final class SheetInterpreter {
                         notes,
                         height);
         var words = annotations.words.stream().map(Word::internal).toList();
-        notes = OctaveMarkDetector.apply(words, staffs, measures, notes, gray, width, height);
+        // Thin octave dashes can fade in the paper-corrected note raster.
+        notes = OctaveMarkDetector.apply(words, staffs, measures, notes, annotationGray, width, height);
         notes =
                 FingeringAnnotationFilter.apply(
                         words, staffs, measures, notes, gray, width, height);
@@ -457,6 +458,18 @@ public final class SheetInterpreter {
                                 .boxed()
                                 .toList());
         finalScore =
+                finalScore.withNotes(
+                        TripletRhythmDetector.neutralPrintedPairs(
+                                finalScore.notes(),
+                                finalScore.measures(),
+                                finalScore.meterChanges(),
+                                annotationGray,
+                                width,
+                                height),
+                        java.util.stream.IntStream.range(0, finalScore.notes().size())
+                                .boxed()
+                                .toList());
+        finalScore =
                 OpeningBeamPickup.apply(
                         finalScore,
                         labels,
@@ -549,7 +562,7 @@ public final class SheetInterpreter {
                         width,
                         height,
                         staffs,
-                        Math.max(0, physicalPage));
+                        Math.max(0, physicalPage), annotationGray);
         finalInterpretation =
                 PrintedCueSize.apply(
                         finalInterpretation, expressionWords, staffs, gray, width, height);

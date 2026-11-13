@@ -51,4 +51,21 @@ public class OctaveEndHookTest {
                         List.of(note(150, 1), note(300, 1), note(500, 1)));
         assertEquals(List.of(-1, -1, 0), n.stream().map(ScoreNoteEvent::octaveShift).toList());
     }
+
+    @Test
+    public void terminalHookOwnsItsHorizontalDashOnly() throws Exception {
+        var gray = page();
+        dash(gray, 120, 350, 55);
+        for (int x = 354; x <= 366; x++)
+            for (int y = 55; y <= 56; y++) gray[y * W + x] = 0;
+        for (int y = 55; y <= 66; y++) gray[y * W + 366] = 0;
+        var ink = new java.util.BitSet();
+        var detect = OctaveMarkDetector.class.getDeclaredMethod("dashEnd", byte[].class,
+                int.class, int.class, float.class, float.class, float.class, float.class,
+                int.class, java.util.BitSet.class);
+        detect.setAccessible(true);
+        assertTrue((float) detect.invoke(null, gray, W, H, 120f, 55f, 55f, 16f, 3, ink) >= 366);
+        assertTrue(ink.get(55 * W + 360));
+        assertFalse(ink.get(66 * W + 366));
+    }
 }
