@@ -82,7 +82,7 @@ public class ImplicitTripletTimingTest {
                     new ScoreNoteEvent(
                                     1, .04f + i * .06f, 3, 0, 1, .5f, false,
                                     dots, beams, ScoreNoteEvent.ACCIDENTAL_FROM_KEY, 0, 1)
-                            .withStemDirection(-1));
+                            .withStemDirection(i < 8 ? -1 : 1));
         }
         for (int i = 0; i < notes.size(); i++) {
             var note = notes.get(i);

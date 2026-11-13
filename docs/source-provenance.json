@@ -8095,17 +8095,17 @@
     },
     "ScoreNoteTiming.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/ScoreNoteTiming.java",
-      "source_sha256": "b149d06ca3c3bdd18aa0c7913471a2b27ebe7ec4acc860fd1cd6dc0add3cd8bc",
+      "source_sha256": "d16732c3b0db21a8e0532334152ea2bd7b9fe3f0572050092aa58bd1b39340c5",
       "review_note": "Global recognition/performance repairs; namespace-equivalent portable helpers and separately reviewed caller adapters. Original synthetic regressions; no private score assets.",
-      "source_normalized_sha256": "b149d06ca3c3bdd18aa0c7913471a2b27ebe7ec4acc860fd1cd6dc0add3cd8bc",
+      "source_normalized_sha256": "d16732c3b0db21a8e0532334152ea2bd7b9fe3f0572050092aa58bd1b39340c5",
       "reviewed_app_state": "Reviewed six-class interpreter worktree extension; package/diagnostic token parity verified against standalone port.",
       "reviewed_source_state": "Committed combined source snapshot; paired package deployment and whole-library accuracy acceptance pending.",
-      "standalone_sha256": "a65c39812f6a94cc820486b9956af8a650188eed35a578973ebc45fed1a3f59b",
-      "reviewed_app_commit": "943eca22f6aa2afa29c34bd4a6c7ffbc88f92f60",
+      "standalone_sha256": "62f57d975ea3d08d3fb373c2bec2a6acd58b34fb168e3146ad3b0eee30ff7f9d",
+      "reviewed_app_commit": "06a423201200de304e89e74a6f3c09deece2883f",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/ScoreNoteTiming.java",
       "license": "Apache-2.0",
       "closed_phrase_clock_review": "Same-pass complete printed beam ownership resolves remote/shared-stem phrase caps and cross-staff written clock. Asymmetric arches have independent IDs preserving old arcs. Literal unique opposed-stem single-beam partners sustain independently of faster bass attacks. Optional bounded proofs preserve legacy on refusal. One existing clock capture follows final value projection. Original procedural regressions only; no score data, observers, weights or layouts.",
-      "standalone_normalized_sha256": "a65c39812f6a94cc820486b9956af8a650188eed35a578973ebc45fed1a3f59b",
+      "standalone_normalized_sha256": "62f57d975ea3d08d3fb373c2bec2a6acd58b34fb168e3146ad3b0eee30ff7f9d",
       "recognition139_review_note": "Reviewed app fix merged with the existing standalone adapters and formatting. Reviewed namespace-equivalent dotted-triplet timing. The standalone caller also retains the inferred ratio for MusicXML written values."
     },
     "ScoreOpeningDuration.java": {

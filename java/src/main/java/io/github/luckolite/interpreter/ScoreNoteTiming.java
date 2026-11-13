@@ -1686,15 +1686,17 @@ public final class ScoreNoteTiming {
                 || count != beats * 4
                 || groups.get(0).position > .18f
                 || groups.get(count - 1).position < .8f) return null;
-        int stem = groups.get(0).notes.get(0).stemDirection();
-        if (stem == 0) return null;
-        int dotted = 0, shortNotes = 0;
+        int dotted = 0, shortNotes = 0, stem = 0;
         for (int i = 0; i < count; i++) {
             RhythmGroup group = groups.get(i);
             boolean longSlot = i % 2 == 0;
+            int direction = 0;
             for (ScoreNoteEvent note : group.notes) {
-                if (note.stemDirection() != stem
-                        || note.crossStaffBeam()
+                if (note.stemDirection() != 0) {
+                    if (direction != 0 && note.stemDirection() != direction) return null;
+                    direction = note.stemDirection();
+                }
+                if (note.crossStaffBeam()
                         || note.tupletDivisor() != 1
                         || note.leadingRestBeats() > 0
                         || note.followingRestBeats() > 0
@@ -1704,6 +1706,11 @@ public final class ScoreNoteTiming {
                         || note.augmentationDots() > (longSlot ? 1 : 0)
                         || note.unbeamedDurationBeats() > 1) return null;
             }
+            // The two attacks in a dotted pair share a direction. A new pair can
+            // reverse it. A chord head with no stem read can use its own column's direction.
+            if (direction == 0) return null;
+            if (longSlot) stem = direction;
+            else if (direction != stem) return null;
             if (longSlot && group.beamCount() == 2 && group.augmentationDots() == 1) dotted++;
             if (!longSlot && group.beamCount() == 3) shortNotes++;
         }
