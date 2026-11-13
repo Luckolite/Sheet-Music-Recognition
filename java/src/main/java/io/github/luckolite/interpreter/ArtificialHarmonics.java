@@ -475,11 +475,14 @@ final class ArtificialHarmonics {
             byte[] g, byte[] labels, int w, int h, float x, float y, float gap, boolean crowded) {
         if (gap < 8) return false;
         int horizontal = Math.round(gap * .4f), vertical = Math.round(gap * .25f);
+        int total = 16;
+        int allowedMisses = total - (int) Math.ceil(total * (crowded ? .9f : .94f));
         for (int dx = -horizontal; dx <= horizontal; dx++)
             for (int dy = -vertical; dy <= vertical; dy++)
+                candidate:
                 for (float size : DiamondSizes.VALUES) {
                     float cx = x + dx, cy = y + dy, r = gap * size;
-                    int hit = 0, total = 0, symbolHits = 0;
+                    int hit = 0, misses = 0, symbolHits = 0;
                     for (int side = 0; side < 4; side++)
                         for (int i = 1; i <= 4; i++) {
                             float t = i / 5f, px = (1 - t) * r, py = t * r;
@@ -492,7 +495,6 @@ final class ArtificialHarmonics {
                             }
                             if (side == 3) py = -py;
                             int xx = Math.round(cx + px), yy = Math.round(cy + py);
-                            total++;
                             if (dark(g, w, h, xx, yy)
                                     || dark(g, w, h, xx - 1, yy)
                                     || dark(g, w, h, xx + 1, yy)) {
@@ -501,27 +503,25 @@ final class ArtificialHarmonics {
                                         && (symbol(labels, w, h, xx, yy)
                                                 || symbol(labels, w, h, xx - 1, yy)
                                                 || symbol(labels, w, h, xx + 1, yy))) symbolHits++;
+                            } else if (++misses > allowedMisses) {
+                                continue candidate;
                             }
                         }
-                    if (hit < total * (crowded ? .9f : .94f)) continue;
                     // Model support belongs to the four diamond sides, not neighboring staff/stem
                     // ink.
                     if (labels != null && symbolHits < Math.max(8, (hit + 1) / 2)) continue;
                     // Side samples alone also fit a tilted oval at small staff sizes.
                     // A touch diamond has four actual vertices, including its high and low tips.
-                    boolean vertices = true;
+                    int centerX = Math.round(cx), centerY = Math.round(cy);
                     for (int sign : ProbeSigns.VALUES) {
                         int vx = Math.round(cx + sign * r), vy = Math.round(cy + sign * r);
-                        vertices &=
-                                dark(g, w, h, vx, Math.round(cy))
-                                        || dark(g, w, h, vx, Math.round(cy) - 1)
-                                        || dark(g, w, h, vx, Math.round(cy) + 1);
-                        vertices &=
-                                dark(g, w, h, Math.round(cx), vy)
-                                        || dark(g, w, h, Math.round(cx) - 1, vy)
-                                        || dark(g, w, h, Math.round(cx) + 1, vy);
+                        if (!(dark(g, w, h, vx, centerY)
+                                || dark(g, w, h, vx, centerY - 1)
+                                || dark(g, w, h, vx, centerY + 1))) continue candidate;
+                        if (!(dark(g, w, h, centerX, vy)
+                                || dark(g, w, h, centerX - 1, vy)
+                                || dark(g, w, h, centerX + 1, vy))) continue candidate;
                     }
-                    if (!vertices) continue;
                     // An enclosed paper counter proves a thick hollow outline even when
                     // its small opening occupies less of a fixed center sample rectangle.
                     if (labels != null
@@ -530,13 +530,13 @@ final class ArtificialHarmonics {
                             && diamondExterior(g, w, h, cx, cy, r, gap, y + 1.5f * gap))
                         return true;
                     int clear = 0, inside = 0;
-                    for (int yy = Math.round(cy - r * .3f); yy <= Math.round(cy + r * .3f); yy++) {
+                    int left = Math.round(cx - r * .25f), right = Math.round(cx + r * .25f);
+                    int upper = Math.round(cy - r * .3f), lower = Math.round(cy + r * .3f);
+                    int ruleLeft = Math.round(cx - r - 3), ruleRight = Math.round(cx + r + 3);
+                    for (int yy = upper; yy <= lower; yy++) {
                         // Ignore a staff or ledger line crossing the hollow center.
-                        if (dark(g, w, h, Math.round(cx - r - 3), yy)
-                                && dark(g, w, h, Math.round(cx + r + 3), yy)) continue;
-                        for (int xx = Math.round(cx - r * .25f);
-                                xx <= Math.round(cx + r * .25f);
-                                xx++) {
+                        if (dark(g, w, h, ruleLeft, yy) && dark(g, w, h, ruleRight, yy)) continue;
+                        for (int xx = left; xx <= right; xx++) {
                             inside++;
                             if (!dark(g, w, h, xx, yy)) clear++;
                         }
@@ -568,9 +568,10 @@ final class ArtificialHarmonics {
                 || enclosedCounter(gray, width, height, x, y + gap * .5f, radius, gap * .24f))
             return false;
         boolean above = false, below = false;
-        for (int d = Math.round(gap * .37f); d <= Math.round(gap * .65f); d++) {
-            above |= horizontalRule(gray, width, height, Math.round(y) - d, x, radius);
-            below |= horizontalRule(gray, width, height, Math.round(y) + d, x, radius);
+        int centerRow = Math.round(y), maxDistance = Math.round(gap * .65f);
+        for (int d = Math.round(gap * .37f); d <= maxDistance && !(above && below); d++) {
+            if (!above) above = horizontalRule(gray, width, height, centerRow - d, x, radius);
+            if (!below) below = horizontalRule(gray, width, height, centerRow + d, x, radius);
         }
         if (!above || !below) return false;
         int minX = Math.round(x - gap * .26f), maxX = Math.round(x + gap * .26f);
@@ -578,9 +579,10 @@ final class ArtificialHarmonics {
         for (int cy = minY; cy <= maxY; cy++)
             for (int cx = minX; cx <= maxX; cx++) {
                 if (!enclosedCounter(gray, width, height, cx, cy, gap * .53f, gap * .14f)) continue;
+                candidate:
                 for (float size : DiamondSizes.VALUES) {
                     float r = gap * size;
-                    int completeSides = 0, supportedSides = 0;
+                    int incompleteSides = 0;
                     for (int dx : ProbeSigns.VALUES)
                         for (int dy : ProbeSigns.VALUES) {
                             int darkSide = 0;
@@ -591,13 +593,13 @@ final class ArtificialHarmonics {
                                 if (dark(gray, width, height, xx, yy)
                                         || dark(gray, width, height, xx - dx, yy)) darkSide++;
                             }
-                            if (darkSide == 3) completeSides++;
-                            if (darkSide >= 2) supportedSides++;
+                            if (darkSide < 2 || darkSide == 2 && ++incompleteSides > 1)
+                                continue candidate;
                         }
                     // Engraving against a rule or shaft can displace one corner sample.
                     // Keep the counter, exterior and shared-shaft proof for that case.
-                    if (completeSides >= 3 && supportedSides == 4 && diamondExterior(
-                            gray, width, height, cx, cy, r, gap, y + 1.5f * gap)) return true;
+                    if (diamondExterior(gray, width, height, cx, cy, r, gap, y + 1.5f * gap))
+                        return true;
                 }
             }
         return false;
@@ -615,9 +617,9 @@ final class ArtificialHarmonics {
                 for (float size : DiamondSizes.VALUES) {
                     float radius = gap * size;
                     boolean ledger = false;
-                    for (int row = Math.round(cy + radius * .65f);
-                            row <= Math.round(cy + radius * 1.2f); row++)
-                        ledger |= horizontalRule(gray, width, height, row, cx, radius * .85f);
+                    int lastRow = Math.round(cy + radius * 1.2f);
+                    for (int row = Math.round(cy + radius * .65f); row <= lastRow && !ledger; row++)
+                        ledger = horizontalRule(gray, width, height, row, cx, radius * .85f);
                     if (!ledger) continue;
                     int shaftX = Math.round(cx + direction * radius * .9f);
                     int shaftY = Math.round(cy + radius * 1.15f);
@@ -756,55 +758,66 @@ final class ArtificialHarmonics {
 
     private static boolean diamondExterior(
             byte[] gray, int w, int h, float cx, float cy, float r, float gap, float stoppedY) {
-        int paper = 0, explained = 0, quadrants = 0, nearQuadrants = 0;
-        for (int a : ProbeSigns.VALUES)
+        int unexplained = 0;
+        boolean ownedQuadrant = false;
+        for (int a : ProbeSigns.VALUES) {
+            int firstX = Math.round(cx + a * r * (1 - .4f) * 1.25f);
+            int secondX = Math.round(cx + a * r * (1 - .6f) * 1.25f);
             for (int b : ProbeSigns.VALUES) {
-                int localPaper = 0, localOwned = 0;
-                for (float t : new float[] {.4f, .6f}) {
-                    int x = Math.round(cx + a * r * (1 - t) * 1.25f);
+                boolean localPaper = false;
+                int localOwned = 0;
+                for (int probe = 0; probe < 2; probe++) {
+                    float t = probe == 0 ? .4f : .6f;
+                    int x = probe == 0 ? firstX : secondX;
                     int y = Math.round(cy + b * r * t * 1.25f);
                     if (!dark(gray, w, h, x, y)) {
-                        paper++;
-                        localPaper++;
-                    } else if (horizontalRule(gray, w, h, y, cx, r)
+                        localPaper = true;
+                        continue;
+                    }
+                    if (probe == 1 && !localPaper && (ownedQuadrant || localOwned == 0))
+                        return false;
+
+                    if (horizontalRule(gray, w, h, y, cx, r)
                             || outwardStemBeforeHead(gray, w, h, x, y, cx, cy, r, gap, stoppedY)) {
-                        explained++;
                         localOwned++;
+                    } else if (++unexplained > 2) {
+                        return false;
                     }
                 }
-                if (localPaper > 0) {
-                    quadrants++;
-                    nearQuadrants++;
-                } else if (localOwned == 2
-                        && !dark(
-                                gray,
-                                w,
-                                h,
-                                Math.round(cx + a * r * 1.1f),
-                                Math.round(cy + b * r * 1.1f))) {
-                    quadrants++;
-                }
+                if (localPaper) continue;
+                // At least three quadrants must show paper at a near probe.
+                if (localOwned != 2
+                        || dark(gray, w, h, Math.round(cx + a * r * 1.1f),
+                                Math.round(cy + b * r * 1.1f))) return false;
+                ownedQuadrant = true;
             }
-        return paper >= 3 && paper + explained >= 6 && quadrants == 4 && nearQuadrants >= 3;
+        }
+        return true;
     }
 
     private static boolean horizontalRule(byte[] gray, int w, int h, int y, float cx, float r) {
         int from = Math.round(cx - r * 1.5f);
         int to = Math.round(cx + r * 1.5f);
         if (!dark(gray, w, h, from, y) || !dark(gray, w, h, to, y)) return false;
-        int hits = 0;
-        for (int p = from; p <= to; p++) if (dark(gray, w, h, p, y)) hits++;
-        if (hits < (to - from + 1) * .9f) return false;
-        int limit = Math.max(1, Math.round(r * .5f));
-        for (int endpoint : new int[] {from, to}) {
-            int thickness = 1;
-            for (int direction : ProbeSigns.VALUES)
-                for (int d = 1; d <= limit; d++) {
-                    if (!dark(gray, w, h, endpoint, y + direction * d)) break;
-                    thickness++;
-                }
-            if (thickness > limit) return false;
+        int span = to - from + 1;
+        float requiredHits = span * .9f;
+        int possibleHits = span;
+        int row = y * w;
+        for (int pixel = row + from + 1, end = row + to; pixel < end; pixel++) {
+            if ((gray[pixel] & 255) >= 165 && --possibleHits < requiredHits) return false;
         }
+        int limit = Math.max(1, Math.round(r * .5f));
+        return thinRuleEndpoint(gray, w, h, from, y, limit)
+                && thinRuleEndpoint(gray, w, h, to, y, limit);
+    }
+
+    private static boolean thinRuleEndpoint(byte[] gray, int w, int h, int x, int y, int limit) {
+        int thickness = 1;
+        for (int direction : ProbeSigns.VALUES)
+            for (int d = 1; d <= limit; d++) {
+                if (!dark(gray, w, h, x, y + direction * d)) break;
+                if (++thickness > limit) return false;
+            }
         return true;
     }
 
@@ -827,27 +840,40 @@ final class ArtificialHarmonics {
         if (distance < 2) return false;
         if (direction > 0) {
             int from = Math.round(stoppedY + gap * .2f), to = Math.round(stoppedY + gap * 1.2f);
-            int stemHits = 0;
-            for (int yy = from; yy <= to; yy++) if (dark(gray, w, h, x, yy)) stemHits++;
-            if (stemHits < (to - from + 1) * .9f) return false;
+            if (!stemCoverage(gray, w, h, x, from, to)) return false;
         } else if (distance < Math.round(r * .5f)) return false;
-        int hits = 0;
-        for (int d = 0; d <= distance; d++) if (dark(gray, w, h, x, y + direction * d)) hits++;
-        if (hits < (distance + 1) * .9f) return false;
+        if (!stemCoverage(gray, w, h, x, Math.min(y, endpoint), Math.max(y, endpoint)))
+            return false;
         int limit = Math.max(1, Math.round(r * .5f)), outward = x < cx ? -1 : 1;
-        int nearThickness = 1;
+        boolean reachesLimit = true;
         for (int d = 1; d <= limit; d++) {
-            if (!dark(gray, w, h, x + outward * d, y)) break;
-            nearThickness++;
+            if (!dark(gray, w, h, x + outward * d, y)) {
+                reachesLimit = false;
+                break;
+            }
         }
-        if (nearThickness > limit) return false;
+        if (reachesLimit) return false;
+
         int farThickness = 1;
         for (int side : ProbeSigns.VALUES)
             for (int d = 1; d <= limit; d++) {
                 if (!dark(gray, w, h, x + side * d, endpoint)) break;
-                farThickness++;
+                if (++farThickness > limit) return false;
             }
-        return farThickness <= limit;
+        return true;
+    }
+
+    private static boolean stemCoverage(byte[] gray, int w, int h, int x, int from, int to) {
+        float required = (to - from + 1) * .9f;
+        if (required <= 0) return true;
+        if (x < 0 || x >= w) return false;
+        int first = Math.max(0, from), last = Math.min(h - 1, to);
+        int possible = last - first + 1;
+        if (possible < required) return false;
+        for (int y = first, pixel = first * w + x; y <= last; y++, pixel += w) {
+            if ((gray[pixel] & 255) >= 165 && --possible < required) return false;
+        }
+        return true;
     }
 
     private static boolean enclosedCounter(
@@ -863,43 +889,55 @@ final class ArtificialHarmonics {
         int right = (int) Math.ceil(cx + r), bottom = (int) Math.ceil(cy + r);
         if (left < 0 || top < 0 || right >= w || bottom >= h) return false;
         int width = right - left + 1, height = bottom - top + 1;
+        int minimumDimension = minArea == 1 ? 3 : 4;
+        if (width < minimumDimension || height < minimumDimension
+                || (long) (width - 2) * (height - 2) < minArea) return false;
+        int rasterBase = top * w + left;
         boolean[] visited = new boolean[width * height];
-        int[] queue = new int[visited.length];
+        int[] queue = null;
         for (int iy = 0; iy < height; iy++)
-            for (int ix = 0; ix < width; ix++) {
-                int first = iy * width + ix;
-                if (visited[first] || dark(gray, w, h, left + ix, top + iy)) continue;
-                int head = 0, tail = 1, area = 0, minX = ix, maxX = ix, minY = iy, maxY = iy;
-                long sumX = 0, sumY = 0;
-                boolean boundary = false;
-                queue[0] = first;
+            for (int ix = 0, first = iy * width, seed = rasterBase + iy * w;
+                    ix < width; ix++, first++, seed++) {
+                if (visited[first]) continue;
                 visited[first] = true;
+                if ((gray[seed] & 255) < 165) continue;
+                if (queue == null) queue = new int[visited.length];
+                int head = 0, tail = 1;
+                boolean boundary = ix == 0 || iy == 0 || ix == width - 1 || iy == height - 1;
+                long sumX = 0, sumY = 0;
+                boolean spansX = false, spansY = false;
+                queue[0] = first;
                 while (head < tail) {
-                    int value = queue[head++], x = value % width, y = value / width;
-                    area++;
-                    sumX += x;
-                    sumY += y;
-                    minX = Math.min(minX, x);
-                    maxX = Math.max(maxX, x);
-                    minY = Math.min(minY, y);
-                    maxY = Math.max(maxY, y);
-                    if (x == 0 || y == 0 || x == width - 1 || y == height - 1) boundary = true;
-                    for (int direction = 0; direction < 4; direction++) {
-                        int nx = x + (direction == 0 ? -1 : direction == 1 ? 1 : 0);
-                        int ny = y + (direction == 2 ? -1 : direction == 3 ? 1 : 0);
-                        if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
-                        int next = ny * width + nx;
-                        if (!visited[next] && !dark(gray, w, h, left + nx, top + ny)) {
-                            visited[next] = true;
-                            queue[tail++] = next;
-                        }
+                    int value = queue[head++], y = value / width, x = value - y * width;
+                    if (!boundary) {
+                        boundary = x == 0 || y == 0 || x == width - 1 || y == height - 1;
+                        sumX += x;
+                        sumY += y;
+                        spansX |= x != ix;
+                        spansY |= y != iy;
+                    }
+                    int pixel = rasterBase + y * w + x;
+                    if (x > 0 && !visited[value - 1]) {
+                        visited[value - 1] = true;
+                        if ((gray[pixel - 1] & 255) >= 165) queue[tail++] = value - 1;
+                    }
+                    if (x < width - 1 && !visited[value + 1]) {
+                        visited[value + 1] = true;
+                        if ((gray[pixel + 1] & 255) >= 165) queue[tail++] = value + 1;
+                    }
+                    if (y > 0 && !visited[value - width]) {
+                        visited[value - width] = true;
+                        if ((gray[pixel - w] & 255) >= 165) queue[tail++] = value - width;
+                    }
+                    if (y < height - 1 && !visited[value + width]) {
+                        visited[value + width] = true;
+                        if ((gray[pixel + w] & 255) >= 165) queue[tail++] = value + width;
                     }
                 }
-                if (!boundary
-                        && area >= minArea
-                        && (minArea == 1 || maxX > minX && maxY > minY)
-                        && Math.abs(left + sumX / (float) area - cx) <= r * .4f
-                        && Math.abs(top + sumY / (float) area - cy) <= verticalTolerance) return true;
+                if (boundary || tail < minArea) continue;
+                if ((minArea == 1 || spansX && spansY)
+                        && Math.abs(left + sumX / (float) tail - cx) <= r * .4f
+                        && Math.abs(top + sumY / (float) tail - cy) <= verticalTolerance) return true;
             }
         return false;
     }
