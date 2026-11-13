@@ -27,7 +27,9 @@ class WhiteningResult:
 
 def raster_sha256(gray):
     height, width = gray.shape
-    return hashlib.sha256(struct.pack(">II", width, height) + gray.tobytes()).hexdigest()
+    digest = hashlib.sha256(struct.pack(">II", width, height))
+    digest.update(memoryview(np.ascontiguousarray(gray)))
+    return digest.hexdigest()
 
 
 class PaperBackgroundWhitening:

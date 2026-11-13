@@ -24,13 +24,21 @@ class FrontendTests(unittest.TestCase):
         image = Image.new('RGBA', (64, 64), (0, 0, 0, 0))
         self.assertTrue(np.all(grayscale(image, 64) == 255))
 
+    def test_rgb_and_grayscale_color_keys_still_composite_on_white(self):
+        for mode, color in (('RGB', (0, 0, 0)), ('L', 0)):
+            with self.subTest(mode=mode):
+                image = Image.new(mode, (64, 64), color)
+                self.assertTrue(np.all(grayscale(image, 64) == 0))
+                image.info['transparency'] = color
+                self.assertTrue(np.all(grayscale(image, 64) == 255))
+
     def test_oversized_analysis_is_rejected(self):
         with self.assertRaises(ValueError):
             grayscale(Image.new('L', (1, 6000)), 2048)
 
     def test_page_file_keeps_unsigned_bytes_and_dimensions(self):
         gray = np.array([[0, 255], [128, 42]], np.uint8)
-        labels = np.array([[0, 5], [2, 4]], np.uint8)
+        labels = np.array([[0, 2], [5, 4]], np.uint8).T
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / 'page.gz'
             write_page(path, labels, gray)

@@ -37,13 +37,16 @@ def tile_starts(size):
 def grayscale(image, width=2048):
     if not 64 <= width <= 4096:
         raise ValueError("Analysis width must be 64..4096")
-    image = ImageOps.exif_transpose(image).convert("RGBA")
-    white = Image.new("RGBA", image.size, "white")
-    white.alpha_composite(image)
-    gray = white.convert("L")
-    height = max(1, round(gray.height * width / gray.width))
+    image = ImageOps.exif_transpose(image)
+    height = max(1, round(image.height * width / image.width))
     if width * height > 20_000_000:
         raise ValueError("Analysis image exceeds 20 million pixels")
+    if image.mode in ("L", "RGB") and "transparency" not in image.info:
+        gray = image if image.mode == "L" else image.convert("L")
+    else:
+        white = Image.new("RGBA", image.size, "white")
+        white.alpha_composite(image.convert("RGBA"))
+        gray = white.convert("L")
     return np.asarray(gray.resize((width, height), Image.Resampling.BILINEAR), dtype=np.uint8)
 
 
@@ -56,8 +59,8 @@ def write_page(path, labels, gray, annotations=None):
     # The decoder reads this temporary file once. Favor fast compression.
     with gzip.open(path, "wb", compresslevel=3) as stream:
         stream.write(struct.pack(">III", 0x52535031, width, height))
-        stream.write(labels.tobytes())
-        stream.write(gray.tobytes())
+        stream.write(memoryview(np.ascontiguousarray(labels)))
+        stream.write(memoryview(np.ascontiguousarray(gray)))
         if annotations is None:
             return
         stream.write(struct.pack(">I", 0x4F435231))
@@ -209,7 +212,7 @@ class Interpreter:
                        str(numerator), str(denominator), str(key_fifths)]
             if corrected.changed:
                 decoder_raster = Path(folder) / "decoder.gray"
-                decoder_raster.write_bytes(corrected.decoder_gray.tobytes())
+                decoder_raster.write_bytes(memoryview(np.ascontiguousarray(corrected.decoder_gray)))
                 command.extend(["--decoder-gray", str(decoder_raster)])
             if page_index is not None:
                 command.extend(["--page-index", str(page_index)])
