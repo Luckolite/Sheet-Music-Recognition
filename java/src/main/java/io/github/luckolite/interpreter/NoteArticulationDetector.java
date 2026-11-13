@@ -2871,90 +2871,134 @@ final class NoteArticulationDetector {
         int w = right - left + 1, h = bottom - top + 1;
         if (w < 3 || h < 3) return false;
         boolean[] rules = new boolean[h];
+        byte[][] thinSides = new byte[2][h];
         boolean any = false;
+        int centerX = Math.round(note.x);
         for (int y = top; y <= bottom; y++) {
-            rules[y - top] = thinIndependentRule(gray, width, height, Math.round(note.x), y, gap);
+            rules[y - top] = thinIndependentRule(gray, width, height, centerX, y, gap, thinSides, top);
             if (!rules[y - top])
-                rules[y - top] = occludedStaffRule(gray, width, height, Math.round(note.x), y, gap);
+                rules[y - top] = occludedStaffRule(gray, width, height, centerX, y, gap);
             any |= rules[y - top];
         }
         if (!any) return false;
         boolean[] seen = new boolean[w * h];
-        int[] queue = new int[w * h];
+        int[] queue = new int[Math.min(64, seen.length)];
+        byte[][] bridgeInk = null;
         List<Glyph> fragments = new ArrayList<>(), marks = new ArrayList<>();
-        for (int origin = 0; origin < seen.length; origin++) {
-            int ox = origin % w, oy = origin / w;
-            if (seen[origin] || rules[oy] || (gray[(top + oy) * width + left + ox] & 255) >= 155)
+        int maxBridgeDistance = (int) Math.ceil(gap * .25f) + 1;
+        int[] bridgeAbove = new int[h], bridgeBelow = new int[h];
+        boolean[] besideRule = new boolean[h];
+        int[] rasterRows = new int[h];
+        for (int y = 0, offset = top * width + left; y < h; y++, offset += width)
+            rasterRows[y] = offset;
+        for (int row = 0; row < h; ) {
+            if (!rules[row]) {
+                row++;
                 continue;
+            }
+            int start = row++;
+            while (row < h && rules[row]) row++;
+            if (start > 0) besideRule[start - 1] = true;
+            if (row < h) besideRule[row] = true;
+            int distance = row - start + 1;
+            if (start > 0 && row < h && distance <= maxBridgeDistance) {
+                bridgeBelow[start - 1] = distance;
+                bridgeAbove[row] = distance;
+            }
+        }
+        for (int origin = 0, oy = 0, ox = 0, rasterRow = top * width + left;
+                origin < seen.length; origin++, ox++) {
+            if (ox == w) {
+                ox = 0;
+                oy++;
+                rasterRow += width;
+            }
+            if (rules[oy]) {
+                origin += w - 1;
+                ox = w - 1;
+                continue;
+            }
+            if (seen[origin]) continue;
+            seen[origin] = true;
+            if ((gray[rasterRow + ox] & 255) >= 155) continue;
             int size = 1, take = 0;
             queue[0] = origin;
-            seen[origin] = true;
             boolean clipped = false, joined = false;
             int gx0 = width, gx1 = 0, gy0 = height, gy1 = 0, notation = 0;
             while (take < size) {
-                int at = queue[take++], x = at % w, y = at / w;
-                if (x == 0 || x == w - 1 || y == 0 || y == h - 1) clipped = true;
-                int pixel = (top + y) * width + left + x;
-                gx0 = Math.min(gx0, left + x);
-                gx1 = Math.max(gx1, left + x);
-                gy0 = Math.min(gy0, top + y);
-                gy1 = Math.max(gy1, top + y);
-                byte label = labels[pixel];
-                if (label == OmrMeasurePostProcessor.NOTEHEAD
-                        || label == OmrMeasurePostProcessor.STEM_OR_REST
-                        || label == OmrMeasurePostProcessor.CLEF_OR_KEY) notation++;
-                for (int dy = -1; dy <= 1; dy++)
-                    for (int dx = -1; dx <= 1; dx++) {
-                        int nx = x + dx, ny = y + dy;
-                        if (nx < 0 || nx >= w || ny < 0 || ny >= h || rules[ny]) continue;
-                        int next = ny * w + nx;
-                        if (!seen[next] && (gray[(top + ny) * width + left + nx] & 255) < 155) {
-                            seen[next] = true;
-                            queue[size++] = next;
-                        }
+                int at = queue[take++], y = at / w, x = at - y * w;
+                if (!clipped) {
+                    clipped = x == 0 || x == w - 1 || y == 0 || y == h - 1;
+                    if (!clipped) {
+                        gx0 = Math.min(gx0, left + x);
+                        gx1 = Math.max(gx1, left + x);
+                        gy0 = Math.min(gy0, top + y);
+                        gy1 = Math.max(gy1, top + y);
+                        byte label = labels[rasterRows[y] + x];
+                        if (label == OmrMeasurePostProcessor.NOTEHEAD
+                                || label == OmrMeasurePostProcessor.STEM_OR_REST
+                                || label == OmrMeasurePostProcessor.CLEF_OR_KEY) notation++;
                     }
+                }
+                int firstX = Math.max(0, x - 1), lastX = Math.min(w - 1, x + 1);
+                int lastY = Math.min(h - 1, y + 1);
+                for (int ny = Math.max(0, y - 1); ny <= lastY; ny++) {
+                    if (rules[ny]) continue;
+                    int next = ny * w + firstX;
+                    int raster = rasterRows[ny] + firstX;
+                    for (int nx = firstX; nx <= lastX; nx++, next++, raster++) {
+                        if (seen[next]) continue;
+                        seen[next] = true;
+                        if ((gray[raster] & 255) >= 155) continue;
+                        if (size == queue.length) queue = growMarcatoQueue(queue, seen.length);
+                        queue[size++] = next;
+                    }
+                }
+                if (!besideRule[y]) continue;
                 for (int direction = -1; direction <= 1; direction += 2) {
-                    int ny = y + direction, distance = 1;
+                    int ny = y + direction;
                     // A caret foot can end on a rule, without continuing through it.
-                    if (ny >= 0
+                    if (!clipped && !joined
+                            && ny >= 0
                             && ny < h
                             && rules[ny]
-                            && (gray[(top + ny) * width + left + x] & 255) < 155) joined = true;
-                    while (ny >= 0
-                            && ny < h
-                            && rules[ny]
-                            && distance <= Math.ceil(gap * .25f) + 1) {
-                        ny += direction;
-                        distance++;
-                    }
-                    if (distance == 1
-                            || distance > Math.ceil(gap * .25f) + 1
-                            || ny < 0
-                            || ny >= h
-                            || rules[ny]) continue;
-                    for (int dx = -distance; dx <= distance; dx++) {
-                        int nx = x + dx;
-                        if (nx < 0 || nx >= w) continue;
-                        int next = ny * w + nx;
-                        if ((gray[(top + ny) * width + left + nx] & 255) >= 155) continue;
-                        // A beam can meet the far side of a staff stripe. Keep
-                        // that long horizontal body out of the caret component.
-                        if (longHorizontalBody(gray, width, height, left + nx, top + ny, gap))
-                            continue;
+                            && (gray[rasterRows[ny] + x] & 255) < 155) joined = true;
+                    int distance = direction < 0 ? bridgeAbove[y] : bridgeBelow[y];
+                    if (distance == 0) continue;
+                    ny = y + direction * distance;
+                    if (bridgeInk == null) bridgeInk = new byte[h][];
+                    byte[] inkRow = bridgeInk[ny];
+                    if (inkRow == null) bridgeInk[ny] = inkRow = new byte[w];
+                    int bridgeEnd = Math.min(w - 1, x + distance);
+                    int firstBridgeX = Math.max(0, x - distance);
+                    int next = ny * w + firstBridgeX;
+                    int raster = rasterRows[ny] + firstBridgeX;
+                    for (int nx = firstBridgeX; nx <= bridgeEnd; nx++, next++, raster++) {
+                        byte ink = inkRow[nx];
+                        if (ink == 0) {
+                            // Keep a beam on the far side of a staff stripe out of the caret.
+                            boolean eligible = (gray[raster] & 255) < 155
+                                    && !longHorizontalBody(gray, width, height, left + nx, top + ny, gap);
+                            ink = eligible ? (byte) 1 : (byte) -1;
+                            inkRow[nx] = ink;
+                        }
+                        if (ink < 0) continue;
                         joined = true;
                         if (!seen[next]) {
                             seen[next] = true;
+                            if (size == queue.length) queue = growMarcatoQueue(queue, seen.length);
                             queue[size++] = next;
                         }
                     }
                 }
             }
+            if (clipped) continue;
             float gw = gx1 - gx0 + 1, gh = gy1 - gy0 + 1;
-            if (clipped || notation > size * .25f || gw > gap * 3f || gh > gap * 2.2f) continue;
+            if (notation > size * .25f || gw > gap * 3f || gh > gap * 2.2f) continue;
             int[] pixels = new int[size];
             for (int i = 0; i < size; i++) {
-                int x = left + queue[i] % w, y = top + queue[i] / w;
-                pixels[i] = y * width + x;
+                int local = queue[i], row = local / w;
+                pixels[i] = rasterRows[row] + local - row * w;
             }
             Glyph glyph = new Glyph(gx0, gy0, gx1, gy1, size, pixels);
             fragments.add(glyph);
@@ -2966,6 +3010,7 @@ final class NoteArticulationDetector {
                     && gh <= gap * 1.7f
                     && gh / gw >= .45f) marks.add(glyph);
         }
+        if (marks.isEmpty()) return false;
         // Reflect only geometry for the existing text-run veto. Pixel references still
         // address the original labels; no source ink or shape classifier is modified.
         List<Glyph> reflected = new ArrayList<>();
@@ -3021,6 +3066,10 @@ final class NoteArticulationDetector {
                 return true;
         }
         return false;
+    }
+
+    private static int[] growMarcatoQueue(int[] queue, int limit) {
+        return java.util.Arrays.copyOf(queue, queue.length + Math.min(queue.length, limit - queue.length));
     }
 
     /** Recover a round dot fused into an upright letter above a crowded chord. */
@@ -3302,27 +3351,40 @@ final class NoteArticulationDetector {
     /** A beam-covered rule needs continuous ink to a proved uncovered staff section. */
     private static boolean occludedStaffRule(
             byte[] gray, int width, int height, int x, int y, float gap) {
-        if ((gray[y * width + x] & 255) >= 155) return false;
-        for (int side : new int[] {-1, 1})
+        int row = y * width;
+        if ((gray[row + x] & 255) >= 155) return false;
+        for (int side = -1; side <= 1; side += 2) {
+            int checked = 0, hits = 1;
             for (int spaces = 4; spaces <= 14; spaces++) {
-                int proof = x + side * Math.round(gap * spaces);
+                int distance = Math.round(gap * spaces);
+                int proof = x + side * distance;
                 if (proof < 0 || proof >= width) break;
                 if (!edgeStaffRule(gray, width, height, proof, y, gap, 2)) continue;
-                int hits = 0, samples = Math.abs(proof - x) + 1;
-                for (int xx = Math.min(x, proof); xx <= Math.max(x, proof); xx++)
-                    if ((gray[y * width + xx] & 255) < 155) hits++;
-                if (hits >= samples * .95f) return true;
+                // Each farther proof includes all pixels checked for the previous proof.
+                for (int pixel = row + x + side * (checked + 1);
+                        checked < distance; checked++, pixel += side) {
+                    if ((gray[pixel] & 255) < 155) hits++;
+                }
+                if (hits >= (distance + 1) * .95f) return true;
             }
+        }
         return false;
     }
 
     private static boolean longHorizontalBody(
             byte[] gray, int width, int height, int x, int y, float gap) {
-        int left = x, right = x, reach = Math.max(3, Math.round(gap * 2));
-        while (left > 0 && x - left < reach && (gray[y * width + left - 1] & 255) < 155) left--;
-        while (right + 1 < width && right - x < reach && (gray[y * width + right + 1] & 255) < 155)
-            right++;
-        return right - left + 1 >= gap * 1.5f;
+        int row = y * width, reach = Math.max(3, Math.round(gap * 2));
+        float minimum = gap * 1.5f;
+        int ink = 1;
+        int first = row + Math.max(0, x - reach);
+        for (int pixel = row + x - 1; pixel >= first && (gray[pixel] & 255) < 155; pixel--) {
+            if (++ink >= minimum) return true;
+        }
+        int last = row + x + Math.min(reach, width - 1 - x);
+        for (int pixel = row + x + 1; pixel <= last && (gray[pixel] & 255) < 155; pixel++) {
+            if (++ink >= minimum) return true;
+        }
+        return ink >= minimum;
     }
 
     /** Italic capitals can overhang a detached baseline period horizontally. */
@@ -4559,14 +4621,19 @@ final class NoteArticulationDetector {
         int direction = mark.y() < note.y ? -1 : 1;
         int edge = direction < 0 ? mark.bottom : mark.top;
         int head = Math.round(note.y + direction * note.gap * .3f);
+        if (head < 0 || head >= height) return false;
         int thickness = Math.max(3, (int) Math.ceil(note.gap * .25f));
         int reach = Math.max(4, Math.round(note.gap * 1.5f));
+        int beamSamples = reach + 1;
+        int maxBeamMisses = beamSamples - (int) Math.ceil(beamSamples * .95f);
+        int centerX = Math.round(note.x);
         for (int side : new int[] {-1, 1})
             for (int offset = Math.round(note.gap * .3f);
                     offset <= Math.round(note.gap * .85f);
                     offset++) {
-                int x = Math.round(note.x) + side * offset;
+                int x = centerX + side * offset;
                 if (x < 1 || x >= width - 1) continue;
+                int hits = 0, previousEndpoint = -1;
                 for (int separation =
                                 ruleJoined
                                         ? -Math.round(note.gap * .25f)
@@ -4574,15 +4641,20 @@ final class NoteArticulationDetector {
                         separation <= Math.round(note.gap * 2.5f);
                         separation++) {
                     int endpoint = edge - direction * separation;
-                    if (head < 0
-                            || head >= height
-                            || endpoint < 0
+                    if (endpoint < 0
                             || endpoint + thickness >= height
                             || direction * (endpoint - head) < note.gap * (ruleJoined ? 2.5f : 3f))
                         continue;
-                    int hits = 0, total = Math.abs(endpoint - head) + 1;
-                    for (int y = Math.min(head, endpoint); y <= Math.max(head, endpoint); y++)
-                        if ((gray[y * width + x] & 255) < 155) hits++;
+                    int total = Math.abs(endpoint - head) + 1;
+                    if (previousEndpoint < 0) {
+                        for (int y = Math.min(head, endpoint); y <= Math.max(head, endpoint); y++)
+                            if ((gray[y * width + x] & 255) < 155) hits++;
+                    } else {
+                        // Each successive endpoint shortens the same shaft.
+                        for (int y = previousEndpoint; y != endpoint; y -= direction)
+                            if ((gray[y * width + x] & 255) < 155) hits--;
+                    }
+                    previousEndpoint = endpoint;
                     if (hits < total * .95f) continue;
                     boolean joined = true;
                     for (int d = 0; d < 3; d++) {
@@ -4610,23 +4682,24 @@ final class NoteArticulationDetector {
                         }
                         if ((gray[row * width + x] & 255) < 155
                                 && !thinIndependentRule(gray, width, height, x, row, note.gap))
-                            beyondInk++;
+                            if (++beyondInk > look * .25f) break;
                     }
-                    for (int beamSide : new int[] {-1, 1}) {
+                    if (beyondInk > look * .25f) continue;
+                    for (int beamSide = -1; beamSide <= 1; beamSide += 2) {
                         int end = x + beamSide * reach;
                         if (end < 0 || end >= width) continue;
                         boolean thick = true;
                         for (int dy = 0; dy < thickness && thick; dy++) {
-                            int row = endpoint + dy;
-                            int ink = 0;
-                            for (int d = 0; d <= reach; d++)
-                                if ((gray[row * width + x + beamSide * d] & 255) < 155) ink++;
-                            if (ink < (reach + 1) * .95f) thick = false;
+                            int pixel = (endpoint + dy) * width + x;
+                            int misses = 0;
+                            for (int d = 0; d < beamSamples; d++, pixel += beamSide) {
+                                if ((gray[pixel] & 255) >= 155 && ++misses > maxBeamMisses) {
+                                    thick = false;
+                                    break;
+                                }
+                            }
                         }
-                        if (thick) {
-                            if (beyondInk > look * .25f) continue;
-                            return true;
-                        }
+                        if (thick) return true;
                     }
                 }
             }
@@ -4671,80 +4744,114 @@ final class NoteArticulationDetector {
     /** An independently long, thin rule is not a shaft continuing past its beam. */
     private static boolean thinIndependentRule(
             byte[] gray, int width, int height, int x, int y, float gap) {
+        return thinIndependentRule(gray, width, height, x, y, gap, null, 0);
+    }
+
+    private static boolean thinIndependentRule(
+            byte[] gray, int width, int height, int x, int y, float gap,
+            byte[][] thinSides, int firstCachedRow) {
         if (!horizontalRuleInk(gray, width, height, x, y, gap, 155, .95f))
-            return edgeStaffRule(gray, width, height, x, y, gap);
+            return edgeStaffRule(gray, width, height, x, y, gap, 1, thinSides, firstCachedRow);
         int limit = Math.max(2, (int) Math.ceil(gap * .25f));
-        for (int side : new int[] {-1, 1}) {
+        int row = y * width;
+        for (int side = -1; side <= 1; side += 2) {
             int thin = 0;
             for (int sample = 0; sample < 5; sample++) {
                 int xx = x + side * Math.round(gap * (2f + sample * .5f));
-                if (xx < 0 || xx >= width || (gray[y * width + xx] & 255) >= 155) continue;
-                int top = y, bottom = y;
-                while (top > 0 && (gray[(top - 1) * width + xx] & 255) < 155 && y - top <= limit)
-                    top--;
-                while (bottom + 1 < height
-                        && (gray[(bottom + 1) * width + xx] & 255) < 155
-                        && bottom - y <= limit) bottom++;
-                if (bottom - top + 1 <= limit) thin++;
+                if (xx < 0 || xx >= width || (gray[row + xx] & 255) >= 155) continue;
+                if (thinRuleColumn(gray, width, height, row + xx, y, limit)) thin++;
+                if (thin == 2) break;
             }
             // Two separated columns on each side establish thinness even when
             // a sloped beam or text stroke intersects other samples of the rule.
-            if (thin < 2) return edgeStaffRule(gray, width, height, x, y, gap);
+            if (thin < 2)
+                return edgeStaffRule(gray, width, height, x, y, gap, 1, thinSides, firstCachedRow);
         }
         return true;
     }
 
-    /** At a staff end, one long thin side plus two parallel rules proves the line. */
-    private static boolean edgeStaffRule(
-            byte[] gray, int width, int height, int x, int y, float gap) {
-        return edgeStaffRule(gray, width, height, x, y, gap, 1);
-    }
-
     private static boolean edgeStaffRule(
             byte[] gray, int width, int height, int x, int y, float gap, int tolerance) {
-        for (int side : new int[] {-1, 1}) {
-            if (!thinRuleSide(gray, width, height, x, y, gap, side)) continue;
+        return edgeStaffRule(gray, width, height, x, y, gap, tolerance, null, 0);
+    }
+
+    /** At a staff end, one long thin side plus two parallel rules proves the line. */
+    private static boolean edgeStaffRule(
+            byte[] gray, int width, int height, int x, int y, float gap, int tolerance,
+            byte[][] thinSides, int firstCachedRow) {
+        for (int side = -1; side <= 1; side += 2) {
+            byte[] cache = thinSides == null ? null : thinSides[(side + 1) / 2];
+            if (!cachedThinRuleSide(gray, width, height, x, y, gap, side, cache, firstCachedRow))
+                continue;
             int parallel = 0;
-            for (int offset : new int[] {-2, -1, 1, 2}) {
+            for (int offset = -2; offset <= 2; offset++) {
+                if (offset == 0) continue;
                 boolean found = false;
-                for (int delta = -tolerance; delta <= tolerance; delta++)
-                    found |=
-                            thinRuleSide(
-                                    gray,
-                                    width,
-                                    height,
-                                    x,
-                                    Math.round(y + offset * gap) + delta,
-                                    gap,
-                                    side);
-                if (found) parallel++;
+                int parallelY = Math.round(y + offset * gap);
+                for (int delta = -tolerance; delta <= tolerance && !found; delta++)
+                    found = cachedThinRuleSide(gray, width, height, x, parallelY + delta,
+                            gap, side, cache, firstCachedRow);
+                if (found && ++parallel >= 2) return true;
+                int offsetsLeft = offset < 0 ? 1 - offset : 2 - offset;
+                if (parallel + offsetsLeft < 2) break;
             }
-            if (parallel >= 2) return true;
         }
         return false;
+    }
+
+    private static boolean cachedThinRuleSide(
+            byte[] gray, int width, int height, int x, int y, float gap, int side,
+            byte[] cache, int firstCachedRow) {
+        int index = y - firstCachedRow;
+        if (cache == null || index < 0 || index >= cache.length)
+            return thinRuleSide(gray, width, height, x, y, gap, side);
+        byte known = cache[index];
+        if (known != 0) return known > 0;
+        boolean thin = thinRuleSide(gray, width, height, x, y, gap, side);
+        cache[index] = thin ? (byte) 1 : (byte) -1;
+        return thin;
     }
 
     private static boolean thinRuleSide(
             byte[] gray, int width, int height, int x, int y, float gap, int side) {
         if (y < 0 || y >= height) return false;
         int near = Math.round(gap * 2f), far = Math.round(gap * 4f), ink = 0;
+        int samples = far - near + 1;
+        int farX = x + side * far;
+        if (samples > 0 && (farX < 0 || farX >= width)) return false;
+        float requiredInk = samples * .95f, requiredThin = samples * .6f;
+        int row = y * width;
         int thin = 0, limit = Math.max(2, (int) Math.ceil(gap * .25f));
         for (int distance = near; distance <= far; distance++) {
             int xx = x + side * distance;
             if (xx < 0 || xx >= width) return false;
-            if ((gray[y * width + xx] & 255) >= 155) continue;
+            if ((gray[row + xx] & 255) >= 155) {
+                if (ink + (far - distance) < requiredInk) return false;
+                continue;
+            }
             ink++;
-            int top = y, bottom = y;
-            while (top > 0 && (gray[(top - 1) * width + xx] & 255) < 155 && y - top <= limit) top--;
-            while (bottom + 1 < height
-                    && (gray[(bottom + 1) * width + xx] & 255) < 155
-                    && bottom - y <= limit) bottom++;
-            if (bottom - top + 1 <= limit) thin++;
+            if (thin < requiredThin && thinRuleColumn(gray, width, height, row + xx, y, limit))
+                thin++;
+            if (thin + (far - distance) < requiredThin) return false;
         }
-        int samples = far - near + 1;
         // Nearby heads may intersect a proved rule; most of the long side
         // must still be thin, and two parallel rules remain mandatory.
-        return ink >= samples * .95f && thin >= samples * .6f;
+        return ink >= requiredInk && thin >= requiredThin;
+    }
+
+    /** The center pixel is ink. Stop once its contiguous column exceeds the limit. */
+    private static boolean thinRuleColumn(
+            byte[] gray, int width, int height, int pixel, int y, int limit) {
+        int remaining = limit - 1;
+        for (int row = y - 1, above = pixel - width;
+                row >= 0 && (gray[above] & 255) < 155; row--, above -= width) {
+            if (--remaining < 0) return false;
+        }
+        for (int row = y + 1, below = pixel + width;
+                row < height && (gray[below] & 255) < 155; row++, below += width) {
+            if (--remaining < 0) return false;
+        }
+        return true;
     }
 
     /** A letter's interior crossbar is not the two open arms of a distant caret. */
@@ -5276,19 +5383,22 @@ final class NoteArticulationDetector {
             int threshold,
             float coverage) {
         int near = Math.max(3, Math.round(gap * 1.5f)), far = Math.round(gap * 4f);
-        for (int direction : new int[] {-1, 1}) {
-            int hits = 0, samples = 0;
+        int samples = far - near + 1;
+        if (samples <= 0 || x - far < 0 || x + far >= width) return false;
+        int firstRow = Math.max(0, y - 1) * width;
+        int lastRow = Math.min(height - 1, y + 1) * width;
+        float requiredHits = samples * coverage;
+        for (int direction = -1; direction <= 1; direction += 2) {
+            int hits = 0;
             for (int d = near; d <= far; d++) {
                 int xx = x + direction * d;
-                if (xx < 0 || xx >= width) return false;
-                samples++;
-                for (int yy = Math.max(0, y - 1); yy <= Math.min(height - 1, y + 1); yy++)
-                    if ((gray[yy * width + xx] & 255) < threshold) {
+                for (int row = firstRow; row <= lastRow; row += width)
+                    if ((gray[row + xx] & 255) < threshold) {
                         hits++;
                         break;
                     }
+                if (hits + (far - d) < requiredHits) return false;
             }
-            if (samples == 0 || hits < samples * coverage) return false;
         }
         return true;
     }
