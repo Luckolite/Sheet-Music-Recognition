@@ -9,6 +9,36 @@ import static io.github.luckolite.interpreter.ScorePlaybackDirection.Kind.*;
 
 public class ScoreNavigationDetectorTest {
     @Test
+    public void verticallyRepeatedSegnosAtDoubleBarOpenTheFollowingMeasure() {
+        var staves = List.of(
+                new PlayingTechniqueDetector.Staff(80, 120, 10, 0, 2),
+                new PlayingTechniqueDetector.Staff(190, 230, 10, 1, 2));
+        var measures = List.of(
+                new MeasureRegion(.1f, .49f, .2f, .575f),
+                new MeasureRegion(.51f, .9f, .2f, .575f));
+        var glyphs = List.of(
+                new ScoreNavigationDetector.Glyph(SEGNO, .493f, .11f, .18f),
+                new ScoreNavigationDetector.Glyph(SEGNO, .507f, .385f, .455f));
+        assertEquals(List.of(new ScorePlaybackDirection(1, SEGNO)),
+                ScoreNavigationDetector.detect(List.of(), glyphs, staves, measures, 800, 400));
+    }
+
+    @Test
+    public void separateSegnosWithinMeasuresRemainSeparateDestinations() {
+        var staves = List.of(new PlayingTechniqueDetector.Staff(80, 120, 10, 0, 1));
+        var measures = List.of(
+                new MeasureRegion(.1f, .49f, .2f, .3f),
+                new MeasureRegion(.51f, .9f, .2f, .3f));
+        var glyphs = List.of(
+                new ScoreNavigationDetector.Glyph(SEGNO, .475f, .11f, .18f),
+                new ScoreNavigationDetector.Glyph(SEGNO, .525f, .11f, .18f));
+        assertEquals(List.of(new ScorePlaybackDirection(0, SEGNO),
+                        new ScorePlaybackDirection(1, SEGNO)),
+                ScoreNavigationDetector.detect(List.of(), glyphs, staves, measures, 800, 400));
+    }
+
+
+    @Test
     public void allCapoSegnoFineVariantsHaveExplicitMeanings() {
         assertEquals(DA_CAPO, ScoreNavigationDetector.kind("D.C."));
         assertEquals(DAL_SEGNO, ScoreNavigationDetector.kind("Dal Segno"));

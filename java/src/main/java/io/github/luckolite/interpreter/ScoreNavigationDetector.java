@@ -190,7 +190,8 @@ final class ScoreNavigationDetector {
                 }
             }
             if (owner == null) continue;
-            int picked = -1, firstOnStaff = -1;
+            int picked = -1, firstOnStaff = -1, previousOnStaff = -1;
+            boolean segno = mark.kind() == ScorePlaybackDirection.Kind.SEGNO;
             float nearest = Float.MAX_VALUE;
             float center = (owner.top() + owner.bottom()) * .5f / height;
             for (int m = 0; m < measures.size(); m++) {
@@ -198,6 +199,19 @@ final class ScoreNavigationDetector {
                 if (center < bar.top() - owner.gap() / height
                         || center > bar.bottom() + owner.gap() / height) continue;
                 if (firstOnStaff < 0) firstOnStaff = m;
+                if (segno && previousOnStaff == m - 1 && previousOnStaff >= 0) {
+                    var previous = measures.get(previousOnStaff);
+                    // The measure regions omit the ink at the barline. A Segno
+                    // over that shared boundary opens the following measure.
+                    float gap = bar.left() - previous.right();
+                    if (gap >= 0 && gap * width <= owner.gap() * 2
+                            && mark.centerX() >= previous.right() && mark.centerX() <= bar.left()) {
+                        picked = m;
+                        nearest = 0;
+                        break;
+                    }
+                }
+                previousOnStaff = m;
                 float distance =
                         mark.centerX() < bar.left()
                                 ? bar.left() - mark.centerX()
