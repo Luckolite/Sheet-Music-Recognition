@@ -3,6 +3,7 @@
 """Model inference and a file bridge to the platform-independent Java decoder."""
 import gzip
 import hashlib
+import io
 import json
 import os
 import struct
@@ -59,7 +60,8 @@ def write_page(path, labels, gray, annotations=None):
     if annotations is not None and not isinstance(annotations, dict):
         raise ValueError("Each page's annotations must be an object")
     # The decoder reads this temporary file once. Favor fast compression.
-    with gzip.open(path, "wb", compresslevel=3) as stream:
+    # Buffer the small annotation records so they reach gzip in batches.
+    with gzip.open(path, "wb", compresslevel=3) as compressed, io.BufferedWriter(compressed) as stream:
         stream.write(struct.pack(">III", 0x52535031, width, height))
         stream.write(memoryview(np.ascontiguousarray(labels)))
         stream.write(memoryview(np.ascontiguousarray(gray)))
