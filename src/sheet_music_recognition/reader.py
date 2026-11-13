@@ -20,6 +20,9 @@ from .whitening import PaperBackgroundWhitening, WhiteningResult, MODEL_SHA256 a
 
 MODEL_SHA256 = "92ab7c34c27cb704d95f0cde247b3611d1563fdf1c114b9f9817abb18a7b6a93"
 MODEL_NAME = "music_sheets_v4_float16.tflite"
+_OCR_NUMBER = struct.Struct(">i5f")
+_OCR_METER = struct.Struct(">iii")
+_OCR_WORD_BOUNDS = struct.Struct(">4f")
 
 
 def tile_starts(size):
@@ -77,9 +80,13 @@ def write_page(path, labels, gray, annotations=None):
             if len(rows) > 10000:
                 raise ValueError("Too many OCR tokens")
             stream.write(struct.pack(">i", len(rows)))
-            for row in rows:
-                stream.write(struct.pack(">i5f", row["value"], row["left"], row["top"], row["right"],
-                                         row["bottom"], row.get("annotationLeft", row["left"])))
+            packed = bytearray(len(rows) * _OCR_NUMBER.size)
+            for index, row in enumerate(rows):
+                _OCR_NUMBER.pack_into(packed, index * _OCR_NUMBER.size, row["value"],
+                                      row["left"], row["top"], row["right"], row["bottom"],
+                                      row.get("annotationLeft", row["left"]))
+            if packed:
+                stream.write(packed)
         def write_words(words):
             if len(words) > 10000:
                 raise ValueError("Too many OCR words")
@@ -89,14 +96,18 @@ def write_page(path, labels, gray, annotations=None):
                 if len(text) > 10000:
                     raise ValueError("OCR word too long")
                 stream.write(struct.pack(">i", len(text)) + text)
-                stream.write(struct.pack(">4f", word["left"], word["top"], word["right"], word["bottom"]))
+                stream.write(_OCR_WORD_BOUNDS.pack(word["left"], word["top"], word["right"], word["bottom"]))
         write_words(annotations.get("words", []))
         meters = annotations.get("meters", [])
         if len(meters) > 10000:
             raise ValueError("Too many meter changes")
         stream.write(struct.pack(">i", len(meters)))
-        for meter in meters:
-            stream.write(struct.pack(">iii", meter["measureIndex"], meter["numerator"], meter["denominator"]))
+        packed = bytearray(len(meters) * _OCR_METER.size)
+        for index, meter in enumerate(meters):
+            _OCR_METER.pack_into(packed, index * _OCR_METER.size, meter["measureIndex"],
+                                 meter["numerator"], meter["denominator"])
+        if packed:
+            stream.write(packed)
         write_words(annotations.get("tabWords", []))
 
 
