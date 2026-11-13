@@ -50,4 +50,18 @@ public class BeamInkThresholdTest {
     public void noImageKeepsTheExistingFallback() {
         assertEquals(165, BeamInkThreshold.at(null, 200, 180, 90, 70, 100, 16));
     }
+
+    @Test
+    public void shadedSamplesStillUseTheWholeWindow() {
+        byte[] gray = new byte[17 * 9];
+        for (int paper : new int[] {255, 154, 30}) {
+            Arrays.fill(gray, (byte) paper);
+            Arrays.fill(gray, 0, 17, (byte) 120);
+            int expected = Math.max(40, Math.min(165, paper - 32));
+            assertEquals(expected, BeamInkThreshold.at(gray, 17, 9, 8, 4, 4, 4));
+            gray[4 * 17 + 8] = 120;
+            gray[gray.length - 1] = 120;
+            assertEquals(expected, BeamInkThreshold.at(gray, 17, 9, 8, 4, 4, 4));
+        }
+    }
 }
