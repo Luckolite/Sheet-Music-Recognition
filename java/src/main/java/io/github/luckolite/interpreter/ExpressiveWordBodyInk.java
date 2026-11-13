@@ -8,6 +8,8 @@ import java.util.List;
 
 /** OCR identifies the word; original connected ink identifies the pixels that it owns. */
 final class ExpressiveWordBodyInk {
+    private static final java.util.regex.Pattern VIBRATO =
+            java.util.regex.Pattern.compile("(?i)(?:vib\\.?|vibrato)(?:\\s*\\(abrupt\\s+cut[- ]off\\))?");
     record Body(int left, int top, int right, int bottom, int count, boolean[] ink) {
         boolean contains(int pixel, int stride) {
             int x = pixel % stride - left, y = pixel / stride - top;
@@ -40,11 +42,11 @@ final class ExpressiveWordBodyInk {
         if (valid == 0) return List.of();
         Arrays.sort(gaps, 0, valid);
         float gap = gaps[valid / 2];
-        byte[] contrasted = RestPaperTone.normalizeOrdinaryRestInk(gray, width, height, gap, 220f);
+        byte[] contrasted = null;
         List<Body> result = new ArrayList<>();
         for (var word : words) {
             boolean vibrato = word != null && word.text() != null
-                    && word.text().strip().matches("(?i)(?:vib\\.?|vibrato)(?:\\s*\\(abrupt\\s+cut[- ]off\\))?");
+                    && VIBRATO.matcher(word.text().strip()).matches();
             boolean shortVibrato = vibrato && word.text().strip().equalsIgnoreCase("vib.");
             boolean exclamation = word != null && EnglishCharacterOcrContext.intensity(word.text())
                     && word.text().strip().endsWith("!");
@@ -68,6 +70,8 @@ final class ExpressiveWordBodyInk {
                     y1 = Math.min(height - 1, Math.round(word.bottom() * height));
             int w = x1 - x0 + 1, h = y1 - y0 + 1;
             if (w < gap * 3.5f || w > gap * 24 || h < gap * .65f || h > gap * 6) continue;
+            if (!exclamation && contrasted == null)
+                contrasted = RestPaperTone.normalizeOrdinaryRestInk(gray, width, height, gap, 220f);
             byte[] inkSource = exclamation ? gray : contrasted;
             boolean[] seen = new boolean[w * h];
             int[] queue = new int[w * h];

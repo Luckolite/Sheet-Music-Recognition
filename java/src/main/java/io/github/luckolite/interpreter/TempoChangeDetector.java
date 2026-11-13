@@ -568,7 +568,8 @@ final class TempoChangeDetector {
             proved.put(accepted, eq);
         }
         var ordinary = detectProved(all, gray, width, height, measures, proved, decimalRates);
-        if (measures == null || measures.isEmpty() || all.size() > 10000 || words.size() > 10000)
+        if (measures == null || measures.isEmpty() || all.isEmpty() || words.isEmpty()
+                || all.size() > 10000 || words.size() > 10000)
             return ordinary;
         var contextualMeasures = directionMeasures(measures, gray, width, height);
         int physicalOpening = OpeningPartTempo.firstMeasure(contextualMeasures);
