@@ -128,7 +128,7 @@ class Interpreter:
         if self.output["shape"].tolist() != [1, 320, 320] or self.output["dtype"] != np.int64:
             raise ValueError("Expected int64 class IDs [1,320,320]")
         yy, xx = np.mgrid[:320, :320]
-        self.edge = np.minimum.reduce([xx, yy, 319 - xx, 319 - yy]) + 1
+        self.edge = (np.minimum.reduce([xx, yy, 319 - xx, 319 - yy]) + 1).astype(np.uint8)
         self.ocr = None
         self.paper_whitening = PaperBackgroundWhitening(threads=threads)
 
@@ -179,9 +179,12 @@ class Interpreter:
                         white_prediction = prediction.copy()
                 if prediction.min() < 0 or prediction.max() > 5:
                     raise ValueError("Model returned classes outside 0..5")
-                wins = self.edge[:ch, :cw] >= confidence[top:top + ch, left:left + cw]
-                labels[top:top + ch, left:left + cw][wins] = prediction[:ch, :cw][wins]
-                confidence[top:top + ch, left:left + cw][wins] = self.edge[:ch, :cw][wins]
+                region = np.s_[top:top + ch, left:left + cw]
+                edge = self.edge[:ch, :cw]
+                wins = edge >= confidence[region]
+                # Validated class IDs and the tile's maximum edge weight (160) fit in uint8.
+                np.copyto(labels[region], prediction[:ch, :cw], where=wins, casting="unsafe")
+                np.copyto(confidence[region], edge, where=wins, casting="unsafe")
         return labels
 
     def interpret(self, image, *, meter=(4, 4), key_fifths=0, width=2048, annotations=None,
