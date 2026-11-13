@@ -32,6 +32,23 @@ def raster_sha256(gray):
     return digest.hexdigest()
 
 
+def _bright_paper(pixels):
+    # The thresholds fall between byte values 239/240 and 249/250.
+    # Count pixels on each side to avoid partitioning a float image unless
+    # the two samples used for interpolation straddle a threshold.
+    last = pixels.size - 1
+    quantile_rank = last * .1
+    median_rank = last * .5
+    below_quantile = np.count_nonzero(pixels < 240)
+    below_median = np.count_nonzero(pixels < 250)
+    if below_quantile > np.ceil(quantile_rank) or below_median > np.ceil(median_rank):
+        return False
+    if below_quantile <= int(quantile_rank) and below_median <= int(median_rank):
+        return True
+    normalized = pixels.astype(np.float32) / 255
+    return bool(np.quantile(normalized, .1) > .94 and np.median(normalized) > .98)
+
+
 class PaperBackgroundWhitening:
     def __init__(self, model_path=None, threads=2):
         if type(threads) is not int or not 1 <= threads <= 32:
@@ -73,15 +90,11 @@ class PaperBackgroundWhitening:
         import cv2
         raw_hash = raster_sha256(gray)
 
-        def bright(pixels):
-            normalized = pixels.astype(np.float32) / 255
-            return bool(np.quantile(normalized, .1) > .94 and np.median(normalized) > .98)
-
         kernel = np.ones((25, 25), np.uint8)
         paper_estimate = None
-        if not bright(gray):
+        if not _bright_paper(gray):
             paper_estimate = cv2.morphologyEx(gray, cv2.MORPH_CLOSE, kernel)
-        if paper_estimate is None or bright(paper_estimate):
+        if paper_estimate is None or _bright_paper(paper_estimate):
             output = self._darken_faded_ink(gray, labels, kernel, paper_estimate)
             return self._result(gray, output, raw_hash)
         scale = min(1., 960 / max(height, width))

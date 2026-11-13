@@ -2,10 +2,22 @@
 # SPDX-License-Identifier: Apache-2.0
 import unittest
 import numpy as np
-from sheet_music_recognition.whitening import PaperBackgroundWhitening, raster_sha256
+from sheet_music_recognition.whitening import PaperBackgroundWhitening, _bright_paper, raster_sha256
 
 
 class WhiteningTest(unittest.TestCase):
+    def test_brightness_preserves_percentile_interpolation_at_thresholds(self):
+        for low, high, count, expected in (
+            (239, 255, 10, True),
+            (0, 255, 10, False),
+            (249, 251, 50, True),
+            (248, 251, 50, False),
+        ):
+            with self.subTest(low=low, high=high, count=count):
+                gray = np.full((10, 10), high, np.uint8)
+                gray.flat[:count] = low
+                self.assertEqual(_bright_paper(gray.T), expected)
+
     def test_clean_bypasses_missing_model(self):
         gray = np.full((96, 128), 255, np.uint8)
         gray[20:80:12, 10:118] = 0
