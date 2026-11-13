@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 import numpy as np
-from PIL import Image, ImageOps
+from PIL import ExifTags, Image, ImageOps
 from .runtime import java_executable
 from .whitening import PaperBackgroundWhitening, WhiteningResult, MODEL_SHA256 as PAPER_FIELD_SHA256, RASTER_POLICY
 
@@ -40,7 +40,11 @@ def tile_starts(size):
 def grayscale(image, width=2048):
     if not 64 <= width <= 4096:
         raise ValueError("Analysis width must be 64..4096")
-    image = ImageOps.exif_transpose(image)
+    image.load()
+    # Pillow copies even an unrotated image. The resize below already creates
+    # a new image, so only make an orientation copy when the pixels need it.
+    if image.getexif().get(ExifTags.Base.Orientation, 1) in (2, 3, 4, 5, 6, 7, 8):
+        image = ImageOps.exif_transpose(image)
     height = max(1, round(image.height * width / image.width))
     if width * height > 20_000_000:
         raise ValueError("Analysis image exceeds 20 million pixels")
