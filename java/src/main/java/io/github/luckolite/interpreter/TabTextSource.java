@@ -7,6 +7,7 @@ import java.util.regex.*;
 
 /** Text-layer tab symbols, including overlapping matches returned by PDF search APIs. */
 public final class TabTextSource {
+    private static final int WORD_BANDS = 32;
     private TabTextSource() {}
 
     private static final class TokenPattern {
@@ -63,33 +64,42 @@ public final class TabTextSource {
                 .filter(word -> DigitPattern.VALUE.matcher(word.text()).matches())
                 .toList();
         var out = new ArrayList<TablatureDecoder.Word>();
+        var bands = new ArrayList<List<TablatureDecoder.Word>>(WORD_BANDS);
+        for (int i = 0; i < WORD_BANDS; i++) bands.add(new ArrayList<>());
         for (var v : sorted) {
             if (crossesDigitRows(v, singleDigits)) continue;
             float area = (v.right() - v.left()) * (v.bottom() - v.top());
-            boolean covered = false;
-            for (var old : out) {
-                float
-                        x =
-                                Math.max(
-                                        0,
-                                        Math.min(v.right(), old.right())
-                                                - Math.max(v.left(), old.left())),
-                        y =
-                                Math.max(
-                                        0,
-                                        Math.min(v.bottom(), old.bottom())
-                                                - Math.max(v.top(), old.top()));
-                if (x * y > area * .7f) {
-                    covered = true;
-                    break;
-                }
+            int first = wordBand(v.top()), last = wordBand(v.bottom());
+            if (covered(v, area * .7f, first, last, bands)) continue;
+            out.add(v);
+            for (int band = first; band <= last; band++) {
+                bands.get(band).add(v);
             }
-            if (!covered) out.add(v);
         }
         var order = new HashMap<TablatureDecoder.Word, Integer>();
         for (int i = 0; i < input.size(); i++) order.putIfAbsent(input.get(i), i);
         out.sort(Comparator.comparingInt(order::get));
         return List.copyOf(out);
+    }
+
+    private static int wordBand(float y) {
+        return Math.min(WORD_BANDS - 1, (int) (y * WORD_BANDS));
+    }
+
+    private static boolean covered(
+            TablatureDecoder.Word word, float minimumArea, int first, int last,
+            List<List<TablatureDecoder.Word>> bands) {
+        for (int band = first; band <= last; band++) {
+            for (var old : bands.get(band)) {
+                // Compare each pair only in the first band shared by their boxes.
+                if (band != first && wordBand(old.top()) != band) continue;
+                float x = Math.min(word.right(), old.right()) - Math.max(word.left(), old.left());
+                if (x <= 0) continue;
+                float y = Math.min(word.bottom(), old.bottom()) - Math.max(word.top(), old.top());
+                if (y > 0 && x * y > minimumArea) return true;
+            }
+        }
+        return false;
     }
 
     private static boolean crossesDigitRows(

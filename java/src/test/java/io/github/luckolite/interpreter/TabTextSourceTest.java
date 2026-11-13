@@ -30,6 +30,16 @@ public class TabTextSourceTest {
     }
 
     @Test
+    public void overlapAcrossBandsPreservesPriorityAndInputOrder() {
+        var fragment = new TablatureDecoder.Word("7", .1f, .31f, .15f, .34f);
+        var lower = new TablatureDecoder.Word("9", .1f, .5f, .15f, .54f);
+        var compound = new TablatureDecoder.Word("7h9", .09f, .28f, .18f, .35f);
+        var beside = new TablatureDecoder.Word("5", .16f, .31f, .21f, .34f);
+        assertEquals(List.of(lower, compound, beside),
+                TabTextSource.disjoint(List.of(fragment, lower, compound, beside)));
+    }
+
+    @Test
     public void nativeRhythmVocabularyIncludesLettersDotsAndMusicalGlyphs() {
         assertTrue(
                 TabTextSource.tokens("Q E S W H T Q. E.. ♩ ♪ 𝅝 𝅗𝅥 𝅘𝅥 𝅘𝅥𝅮 𝅘𝅥𝅯 𝅘𝅥𝅰 𝄻 𝄼 𝄽 𝄾 𝄿 𝅀")
