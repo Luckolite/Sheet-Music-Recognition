@@ -190,7 +190,9 @@ final class TripletRhythmDetector {
                 note.tupletNormalNotes(),
                 note.stemDirection(),
                 note.kind(),
-                note.visualSize());
+                note.visualSize(),
+                note.harmonicSemitones(),
+                note.openStringTouch());
     }
 
     /** A chord contributes one attack column, regardless of how many heads it contains. */

@@ -3036,7 +3036,9 @@ final class OmrScoreInterpreter {
                             .withTupletRatio(event.tupletDivisor(), event.tupletNormalNotes())
                             .withLeadingRest(leading)
                             .withKind(event.kind())
-                            .withVisualSize(event.visualSize()));
+                            .withVisualSize(event.visualSize())
+                            .withHarmonicSemitones(event.harmonicSemitones())
+                            .withOpenStringTouch(event.openStringTouch()));
         }
         // Rest exclusion revalidates dots beside individual ovals. A displaced
         // second still shares the surviving printed duration of its proved shaft.
@@ -3243,7 +3245,9 @@ final class OmrScoreInterpreter {
                                     1,
                                     -bare[2],
                                     n.kind())
-                            .withVisualSize(n.visualSize()));
+                            .withVisualSize(n.visualSize())
+                            .withHarmonicSemitones(n.harmonicSemitones())
+                            .withOpenStringTouch(n.openStringTouch()));
             clockFinalHeads.add(printed.head);
         }
         List<ScoreTremoloSource.Pair> retainedPairs = new ArrayList<>();
@@ -3609,7 +3613,9 @@ final class OmrScoreInterpreter {
                                     current.tupletNormalNotes())
                             .withStemDirection(current.stemDirection())
                             .withKind(current.kind())
-                            .withVisualSize(current.visualSize()));
+                            .withVisualSize(current.visualSize())
+                            .withHarmonicSemitones(current.harmonicSemitones())
+                            .withOpenStringTouch(current.openStringTouch()));
         }
         return result;
     }
@@ -6497,7 +6503,9 @@ final class OmrScoreInterpreter {
                                                     e.tupletNormalNotes())
                                             .withStemDirection(e.stemDirection())
                                             .withKind(e.kind())
-                                            .withVisualSize(e.visualSize()),
+                                            .withVisualSize(e.visualSize())
+                                            .withHarmonicSemitones(e.harmonicSemitones())
+                                            .withOpenStringTouch(e.openStringTouch()),
                                     n.head,
                                     n.staffGap));
                 }
@@ -16732,7 +16740,9 @@ final class OmrScoreInterpreter {
                         e.tupletNormalNotes())
                 .withStemDirection(e.stemDirection())
                 .withKind(e.kind())
-                .withVisualSize(e.visualSize());
+                .withVisualSize(e.visualSize())
+                .withHarmonicSemitones(e.harmonicSemitones())
+                .withOpenStringTouch(e.openStringTouch());
     }
 
     private static boolean sameGraceVoice(DetectedNote a, DetectedNote b) {
@@ -19681,7 +19691,9 @@ final class OmrScoreInterpreter {
                                     event.tupletNormalNotes(),
                                     event.stemDirection(),
                                     event.kind())
-                            .withVisualSize(event.visualSize());
+                            .withVisualSize(event.visualSize())
+                            .withHarmonicSemitones(event.harmonicSemitones())
+                            .withOpenStringTouch(event.openStringTouch());
             result.set(i, new DetectedNote(corrected, note.head, note.staffGap));
         }
         return result;
@@ -28056,7 +28068,9 @@ final class OmrScoreInterpreter {
                                         e.tupletNormalNotes())
                                 .withStemDirection(e.stemDirection())
                                 .withKind(e.kind())
-                                .withVisualSize(e.visualSize());
+                                .withVisualSize(e.visualSize())
+                                .withHarmonicSemitones(e.harmonicSemitones())
+                                .withOpenStringTouch(e.openStringTouch());
                 result.set(j, new DetectedNote(corrected, n.head, n.staffGap));
             }
         }
@@ -29490,7 +29504,9 @@ final class OmrScoreInterpreter {
                                 .withStemDirection(event.stemDirection())
                                 .withTupletRatio(event.tupletDivisor(), event.tupletNormalNotes())
                                 .withKind(event.kind())
-                                .withVisualSize(event.visualSize());
+                                .withVisualSize(event.visualSize())
+                                .withHarmonicSemitones(event.harmonicSemitones())
+                                .withOpenStringTouch(event.openStringTouch());
                 note = new DetectedNote(event, note.head, note.staffGap);
             }
             result.add(note);
@@ -29682,7 +29698,9 @@ final class OmrScoreInterpreter {
                                     .withTupletRatio(
                                             event.tupletDivisor(), event.tupletNormalNotes())
                                     .withKind(event.kind())
-                                    .withVisualSize(event.visualSize()),
+                                    .withVisualSize(event.visualSize())
+                                    .withHarmonicSemitones(event.harmonicSemitones())
+                                    .withOpenStringTouch(event.openStringTouch()),
                             current.head,
                             current.staffGap));
         }
