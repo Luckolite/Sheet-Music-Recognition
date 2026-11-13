@@ -632,12 +632,18 @@ final class MaximalRawBarExtractor {
                 staffSplitCounts[column] = splitCount;
             }
         }
-        List<Body> rawCandidates = new ArrayList<>();
+        List<IndexedBody> rawCandidates = new ArrayList<>();
         int[] widths = new int[laneWidth], tops = new int[laneWidth], bottoms = new int[laneWidth];
         double[] offsets = new double[laneWidth];
         int[] firstRun = new int[laneWidth];
+        int[] activeColumns = new int[laneWidth];
+        int activeCount = 0;
+        for (int at = 0; at < laneWidth; at++)
+            if (runCounts[at] != 0) activeColumns[activeCount++] = at;
+        int maxSectionWidth = joined ? 2 * maxWidth : maxWidth;
         int[] firstSplit = joined ? new int[laneWidth] : null;
         long[] remaining = joined ? new long[1] : null;
+        ProjectedCaps projectedCaps = null;
         // Enumerate all raw intercepts over the entire lane for every already-supported slope.
         for (int tick = -13; tick <= 13; tick++) {
             if (tick == 0 || Math.abs(tick) < 2) continue;
@@ -651,9 +657,9 @@ final class MaximalRawBarExtractor {
                 if (laneWidth > workBudget - work)
                     return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), work);
                 work += laneWidth;
-                for (int at = 0; at < laneWidth; at++) {
+                for (int index = 0; index < activeCount; index++) {
+                    int at = activeColumns[index];
                     int runCount = runCounts[at];
-                    if (runCount == 0) continue;
                     // Only nonzero widths expose a cross-section to later scans.
                     widths[at] = 0;
                     int y = (int) Math.rint(intercept + offsets[at]);
@@ -667,10 +673,11 @@ final class MaximalRawBarExtractor {
                     int best = 0, bestTop = -1, bestBottom = -1, bestDistance = Integer.MAX_VALUE;
                     boolean tie = false;
                     for (int k = lo; k < runCount && columnTops[k] <= lastRow; k++) {
-                        if (work >= workBudget)
-                            return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), work);
-                        work++;
                         int t = columnTops[k], b = columnBottoms[k];
+                        int charge = b <= lastRow ? 2 : 1;
+                        if (charge > workBudget - work)
+                            return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), workBudget);
+                        work += charge;
                         // Never accept a clipped slice of a neighboring raw stroke. A candidate
                         // axis must contain a complete vertical cross-section at each x. When an
                         // independently witnessed staff core joins several bars into one raw run,
@@ -712,10 +719,12 @@ final class MaximalRawBarExtractor {
                             bottom = selectedBottom;
                         }
                         int n = bottom - top + 1;
-                        if (work >= workBudget)
-                            return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), work);
-                        work++;
-                        if (n < minWidth || n > (joined ? 2 * maxWidth : maxWidth)) continue;
+                        if (charge == 1) {
+                            if (work >= workBudget)
+                                return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), work);
+                            work++;
+                        }
+                        if (n < minWidth || n > maxSectionWidth) continue;
                         int distance = Math.abs((top + bottom) / 2 - y);
                         if (distance < bestDistance) {
                             best = n;
@@ -726,7 +735,7 @@ final class MaximalRawBarExtractor {
                         } else if (distance == bestDistance
                                 && (top != bestTop || bottom != bestBottom)) tie = true;
                     }
-                    if (!tie && best >= minWidth && best <= (joined ? 2 * maxWidth : maxWidth)) {
+                    if (!tie && best >= minWidth) {
                         widths[at] = best;
                         tops[at] = bestTop;
                         bottoms[at] = bestBottom;
@@ -797,61 +806,52 @@ final class MaximalRawBarExtractor {
                         return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), work);
                     work += bodyWork;
                     if (!connected || first == lane.left || last == lane.right) continue;
-                    var slices = new java.util.HashMap<Integer, Set<Integer>>();
+                    if (projectedCaps == null) projectedCaps = new ProjectedCaps(laneWidth, radius);
+                    projectedCaps.reset();
                     for (int q = first; q <= last; q++) {
                         int at = q - lane.left, dx = q - mid;
                         double projectedX = offsets[at];
                         for (int yy = tops[at]; yy <= bottoms[at]; yy++)
-                            addProjectedPixel(slices, dx, yy - intercept, slope, norm, projectedX);
+                            projectedCaps.add(dx, yy - intercept, slope, norm, projectedX);
                     }
-                    int[] caps = capWidths(slices);
-                    if (caps == null || caps[0] < 1 || caps[1] < 1) continue;
-                    List<Integer> pixels = new ArrayList<>(size);
-                    for (int q = first; q <= last; q++) {
-                        int at = q - lane.left;
-                        for (int yy = tops[at]; yy <= bottoms[at]; yy++) pixels.add(yy * width + q);
-                    }
-                    Body candidate =
-                            new Body(
-                                    tick,
-                                    first,
-                                    last,
-                                    intercept,
-                                    pixels,
-                                    caps[0],
-                                    caps[1],
-                                    caps[2],
-                                    0,
-                                    minY,
-                                    maxY);
-                    long aliasBuild = pixels.size();
+                    if (projectedCaps.slices < 3) continue;
+                    long aliasBuild = size;
                     if (aliasBuild > workBudget - work)
                         return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), work);
                     work += aliasBuild;
                     int aliasIndex = -1;
                     for (int i = 0; i < rawCandidates.size(); i++) {
-                        Body prior = rawCandidates.get(i);
+                        IndexedBody indexedPrior = rawCandidates.get(i);
+                        Body prior = indexedPrior.body;
                         int priorSize = prior.rawPixels.size();
                         if (priorSize > workBudget - work)
                             return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), workBudget);
                         work += priorSize;
-                        if (!boundsOverlap(candidate, prior)) continue;
+                        if (first > prior.lastX || prior.firstX > last
+                                || minY > prior.maxY || prior.minY > maxY) continue;
                         int required = (Math.min(priorSize, size) + 1) / 2;
-                        int overlap = 0;
-                        for (int q : prior.rawPixels) {
-                            int pixelX = q % width;
-                            if (pixelX < first || pixelX > last) continue;
-                            int y = q / width, column = pixelX - lane.left;
-                            if (y >= tops[column] && y <= bottoms[column] && ++overlap >= required) {
-                                aliasIndex = i;
-                                break;
-                            }
+                        if (overlapsColumns(first, last, lane.left, tops, bottoms, indexedPrior, required)) {
+                            aliasIndex = i;
+                            break;
                         }
-                        if (aliasIndex >= 0) break;
                     }
-                    if (aliasIndex < 0) rawCandidates.add(candidate);
-                    else if (pixels.size() > rawCandidates.get(aliasIndex).rawPixels.size())
-                        rawCandidates.set(aliasIndex, candidate);
+                    if (aliasIndex >= 0 && size <= rawCandidates.get(aliasIndex).body.rawPixels.size())
+                        continue;
+                    List<Integer> pixels = new ArrayList<>(size);
+                    for (int q = first; q <= last; q++) {
+                        int at = q - lane.left;
+                        for (int yy = tops[at], pixel = yy * width + q; yy <= bottoms[at];
+                                yy++, pixel += width) pixels.add(pixel);
+                    }
+                    Body candidate = new Body(tick, first, last, intercept, pixels,
+                            projectedCaps.counts[projectedCaps.first],
+                            projectedCaps.counts[projectedCaps.last],
+                            projectedCaps.maximum, 0, minY, maxY);
+                    var indexed = new IndexedBody(candidate,
+                            java.util.Arrays.copyOfRange(tops, first - lane.left, last - lane.left + 1),
+                            java.util.Arrays.copyOfRange(bottoms, first - lane.left, last - lane.left + 1));
+                    if (aliasIndex < 0) rawCandidates.add(indexed);
+                    else rawCandidates.set(aliasIndex, indexed);
                     if (rawCandidates.size() > MAX_BODIES)
                         return new Discovery(Status.TOO_MANY_BODIES, List.of(), work);
                 }
@@ -863,43 +863,35 @@ final class MaximalRawBarExtractor {
         if (aliasWork > workBudget - work)
             return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), work);
         work += aliasWork;
-        rawCandidates.sort(Comparator.comparingInt((Body b) -> b.rawPixels.size()).reversed());
-        List<Body> maximal = new ArrayList<>(rawCandidates.size());
-        for (Body candidate : rawCandidates) {
+        rawCandidates.sort(Comparator.comparingInt((IndexedBody b) -> b.body.rawPixels.size()).reversed());
+        List<IndexedBody> maximal = new ArrayList<>(rawCandidates.size());
+        for (IndexedBody indexed : rawCandidates) {
+            Body candidate = indexed.body;
             boolean alias = false;
             if (candidate.rawPixels.size() > workBudget - work)
                 return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), work);
             work += candidate.rawPixels.size(); // candidate membership set construction
-            boolean indexed = false;
-            for (Body kept : maximal) {
+            for (IndexedBody indexedKept : maximal) {
+                Body kept = indexedKept.body;
                 int keptSize = kept.rawPixels.size();
                 if (keptSize > workBudget - work)
                     return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), workBudget);
                 work += keptSize;
                 if (!boundsOverlap(candidate, kept)) continue;
-                if (!indexed) {
-                    indexColumns(candidate, width, lane.left, tops, bottoms);
-                    indexed = true;
-                }
                 int required = (Math.min(keptSize, candidate.rawPixels.size()) + 1) / 2;
-                int overlap = 0;
-                for (int pixel : kept.rawPixels) {
-                    int x = pixel % width;
-                    if (x < candidate.firstX || x > candidate.lastX) continue;
-                    int y = pixel / width, column = x - lane.left;
-                    if (y >= tops[column] && y <= bottoms[column] && ++overlap >= required) {
-                        alias = true;
-                        break;
-                    }
+                if (overlapsColumns(candidate.firstX, candidate.lastX, candidate.firstX,
+                        indexed.tops, indexed.bottoms, indexedKept, required)) {
+                    alias = true;
+                    break;
                 }
-                if (alias) break;
             }
-            if (!alias) maximal.add(candidate);
+            if (!alias) maximal.add(indexed);
             if (maximal.size() > MAX_BODIES)
                 return new Discovery(Status.TOO_MANY_BODIES, List.of(), work);
         }
         List<Body> withContacts = new ArrayList<>(maximal.size());
-        for (Body b : maximal) {
+        for (IndexedBody indexed : maximal) {
+            Body b = indexed.body;
             long buildWork = b.rawPixels.size();
             if (buildWork > workBudget - work)
                 return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), work);
@@ -909,7 +901,8 @@ final class MaximalRawBarExtractor {
             work += affordable * 10;
             if (affordable < buildWork)
                 return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), work);
-            int contacts = countContacts(b, gray, width, height, lane.left, tops, bottoms, staffPixels);
+            int contacts = countContacts(b, gray, width, height,
+                    indexed.tops, indexed.bottoms, staffPixels);
             withContacts.add(
                     new Body(
                             b.slopeTick,
@@ -930,37 +923,39 @@ final class MaximalRawBarExtractor {
         return new Discovery(Status.CANDIDATES, withContacts, work);
     }
 
-    private static void indexColumns(Body body, int width, int laneLeft, int[] tops, int[] bottoms) {
-        // Discovery stores pixels in column order with one contiguous interval per column.
-        int column = -1;
-        for (int pixel : body.rawPixels) {
-            int at = pixel % width - laneLeft, y = pixel / width;
-            if (at != column) {
-                column = at;
-                tops[at] = y;
-            }
-            bottoms[at] = y;
+    private record IndexedBody(Body body, int[] tops, int[] bottoms) {}
+
+    private static boolean overlapsColumns(
+            int first, int last, int origin, int[] tops, int[] bottoms,
+            IndexedBody other, int required) {
+        int otherFirst = other.body.firstX;
+        int end = Math.min(last, other.body.lastX);
+        for (int x = Math.max(first, otherFirst); x <= end; x++) {
+            int top = Math.max(tops[x - origin], other.tops[x - otherFirst]);
+            int bottom = Math.min(bottoms[x - origin], other.bottoms[x - otherFirst]);
+            if (bottom >= top) required -= bottom - top + 1;
+            if (required <= 0) return true;
         }
+        return false;
     }
 
     private static int countContacts(
-            Body body, byte[] gray, int width, int height, int laneLeft,
+            Body body, byte[] gray, int width, int height,
             int[] tops, int[] bottoms, Set<Integer> staffPixels) {
-        indexColumns(body, width, laneLeft, tops, bottoms);
         int contacts = 0;
         for (int x = body.firstX - 1; x <= body.lastX + 1; x++) {
             int top = height, bottom = -1;
             for (int neighbor = Math.max(body.firstX, x - 1);
                     neighbor <= Math.min(body.lastX, x + 1); neighbor++) {
-                top = Math.min(top, tops[neighbor - laneLeft]);
-                bottom = Math.max(bottom, bottoms[neighbor - laneLeft]);
+                top = Math.min(top, tops[neighbor - body.firstX]);
+                bottom = Math.max(bottom, bottoms[neighbor - body.firstX]);
             }
             // Adjacent body intervals are 8-connected, so their expanded neighborhoods
             // form one contiguous interval in this column.
             int start = Math.max(0, top - 1), end = Math.min(height - 1, bottom + 1);
             if (x >= body.firstX && x <= body.lastX) {
-                contacts += countContactInk(gray, width, x, start, tops[x - laneLeft] - 1, staffPixels);
-                start = bottoms[x - laneLeft] + 1;
+                contacts += countContactInk(gray, width, x, start, tops[x - body.firstX] - 1, staffPixels);
+                start = bottoms[x - body.firstX] + 1;
             }
             contacts += countContactInk(gray, width, x, start, end, staffPixels);
         }
@@ -1003,28 +998,71 @@ final class MaximalRawBarExtractor {
             double expected = intercept + slope * (first + i - mid);
             if (Math.abs(center - expected) > widths[at] * .5 + .5) return false;
         }
-        int coreStart = -1, coreEnd = -1;
-        for (int i = 0; i < n; i++)
-            if (widths[first - laneLeft + i] >= maximum - 1) {
-                if (coreStart < 0) coreStart = i;
-                coreEnd = i;
-            }
-        if (coreStart < 0 || coreEnd < coreStart || coreEnd - coreStart + 1 < (n + 1) / 2)
-            return false;
+        int offset = first - laneLeft, threshold = maximum - 1;
+        int coreStart = 0, coreEnd = n - 1;
+        while (coreStart < n && widths[offset + coreStart] < threshold) coreStart++;
+        while (coreEnd >= coreStart && widths[offset + coreEnd] < threshold) coreEnd--;
+        if (coreEnd - coreStart + 1 < (n + 1) / 2) return false;
         // The qualifying central support must be one continuous core. Endpoints alone
         // previously allowed two wide lobes separated by a thin neck.
         for (int i = coreStart; i <= coreEnd; i++)
-            if (widths[first - laneLeft + i] < maximum - 1) return false;
+            if (widths[offset + i] < threshold) return false;
         for (int i = 1; i <= coreStart; i++)
-            if (widths[first - laneLeft + i] < widths[first - laneLeft + i - 1] - 1) return false;
+            if (widths[offset + i] < widths[offset + i - 1] - 1) return false;
         for (int i = coreEnd + 1; i < n; i++)
-            if (widths[first - laneLeft + i] > widths[first - laneLeft + i - 1] + 1) return false;
+            if (widths[offset + i] > widths[offset + i - 1] + 1) return false;
         return true;
     }
 
     private static long ceilLog2(long n) {
         if (n <= 1) return 1;
         return 64 - Long.numberOfLeadingZeros(n - 1);
+    }
+
+    /** Cross-sections lie within the rounded axis radius, so two words cover each slice. */
+    private static final class ProjectedCaps {
+        final int axisOrigin, crossOrigin;
+        final long[] low, high;
+        final int[] counts, stamps;
+        int generation, first, last, maximum, slices;
+
+        ProjectedCaps(int laneWidth, int radius) {
+            // Along-axis projection is bounded by norm * |dx| plus the radius error.
+            axisOrigin = 2 * laneWidth + radius + 2;
+            crossOrigin = radius + 1;
+            int length = 2 * axisOrigin + 1;
+            low = new long[length];
+            high = new long[length];
+            counts = new int[length];
+            stamps = new int[length];
+        }
+
+        void reset() {
+            generation++;
+            first = counts.length;
+            last = -1;
+            maximum = 0;
+            slices = 0;
+        }
+
+        void add(int dx, int dy, double slope, double norm, double projectedX) {
+            int u = axisOrigin + (int) Math.rint((dx + slope * dy) / norm);
+            int v = crossOrigin + (int) Math.rint((dy - projectedX) / norm);
+            if (stamps[u] != generation) {
+                stamps[u] = generation;
+                low[u] = high[u] = 0;
+                counts[u] = 0;
+                first = Math.min(first, u);
+                last = Math.max(last, u);
+                slices++;
+            }
+            long[] bits = v < Long.SIZE ? low : high;
+            long bit = 1L << (v & (Long.SIZE - 1));
+            if ((bits[u] & bit) == 0) {
+                bits[u] |= bit;
+                maximum = Math.max(maximum, ++counts[u]);
+            }
+        }
     }
 
     private static int[] projectedCapWidths(

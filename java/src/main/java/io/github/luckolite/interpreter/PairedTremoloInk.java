@@ -515,19 +515,27 @@ final class PairedTremoloInk {
         return (gray[y * w + x] & 255) < 185;
     }
 
+    private static int requiredWindowInk(int pixels) {
+        return (int) ((85L * pixels + 99) / 100);
+    }
+
     /** Returns evidence only. Callers must retain the pair's semantics before any head removal. */
     static List<Pair> legacyPairs(byte[] gray, int w, int h, List<Head> input) {
+        return legacyPairs(gray, w, h, input, new java.util.HashMap<>());
+    }
+
+    private static List<Pair> legacyPairs(
+            byte[] gray, int w, int h, List<Head> input, java.util.Map<Integer, Stem> stems) {
         List<Head> heads = input.stream().sorted(Comparator.comparingDouble(Head::x)).toList();
-        java.util.Map<Integer, Stem> stems = new java.util.HashMap<>();
         java.util.Set<Integer> ids = new java.util.HashSet<>();
         for (Head head : heads) {
             if (!ids.add(head.id)) throw new IllegalArgumentException("Duplicate head identity");
-            Stem anchor = stem(gray, w, h, head.x, head.y, head.gap, head.direction);
+            Stem anchor;
             // Unclassified heads still need an independent-stem check before rejection.
             if (head.direction == 0) {
                 anchor = stem(gray, w, h, head.x, head.y, head.gap, 1);
                 if (anchor == null) anchor = stem(gray, w, h, head.x, head.y, head.gap, -1);
-            }
+            } else anchor = stem(gray, w, h, head.x, head.y, head.gap, head.direction);
             if (anchor != null) stems.put(head.id, anchor);
         }
         List<Pair> result = new ArrayList<>();
@@ -663,23 +671,28 @@ final class PairedTremoloInk {
         return discover(gray, w, h, input).pairs();
     }
 
+    private record ShaftKey(int measure, int staff, int direction, int x, int endY) {}
+
+    private record ShaftGroup(List<Head> heads, Stem stem, int minY, int maxY) {}
+
     private static List<Pair> detectPairs(byte[] gray, int w, int h, List<Head> input) {
         trace("pairs.input=" + input.size() + " image=" + w + "x" + h);
-        List<Pair> result = new ArrayList<>(legacyPairs(gray, w, h, input));
+        var stems = new java.util.HashMap<Integer, Stem>();
+        List<Pair> result = new ArrayList<>(legacyPairs(gray, w, h, input, stems));
         if (gray == null || gray.length != (long) w * h || input.size() > 2048)
             return List.copyOf(result);
-        var groups = new java.util.LinkedHashMap<String, List<Head>>();
-        var shafts = new java.util.HashMap<String, Stem>();
-        var ids = new java.util.HashSet<Integer>();
+        var groups = new java.util.LinkedHashMap<ShaftKey, List<Head>>();
+        var shafts = new java.util.HashMap<ShaftKey, Stem>();
+        long footprintPixels = 0;
         for (Head head : input) {
-            if (!ids.add(head.id)) throw new IllegalArgumentException("Duplicate head identity");
+            footprintPixels += head.footprint.size();
             if (head.direction == 0
                     || head.footprint.isEmpty()
                     || head.footprint.size() > 4096
                     || !Double.isFinite(head.gap)
                     || head.gap < 5
                     || head.gap > 64) continue;
-            Stem shaft = stem(gray, w, h, head.x, head.y, head.gap, head.direction);
+            Stem shaft = stems.get(head.id);
             if (shaft == null) {
                 trace("head=" + head.id + " stem=NONE");
                 continue;
@@ -707,16 +720,7 @@ final class PairedTremoloInk {
                             + shaft.headY
                             + ".."
                             + shaft.endY);
-            String key =
-                    head.measure
-                            + ":"
-                            + head.staff
-                            + ":"
-                            + head.direction
-                            + ":"
-                            + shaft.x
-                            + ":"
-                            + shaft.endY;
+            var key = new ShaftKey(head.measure, head.staff, head.direction, shaft.x, shaft.endY);
             // Carry this same measured shaft into contact certification. The caller's
             // earlier attachment proposal can use a different raster column.
             // Full raw continuity and exact member contact are still rechecked.
@@ -733,57 +737,70 @@ final class PairedTremoloInk {
                             head.removalEligible,
                             head.staffTop,
                             head.memberToken,
-                            new int[] {shaft.x, shaft.headY, shaft.endY});
+                            shaft.x,
+                            shaft.headY,
+                            shaft.endY);
             groups.computeIfAbsent(key, k -> new ArrayList<>()).add(grouped);
             shafts.putIfAbsent(key, shaft);
         }
-        trace("groups=" + groups.size() + " keys=" + groups.keySet());
+        if (FringeProfileDiagnostics.enabled())
+            trace("groups=" + groups.size() + " keys=" + groups.keySet().stream()
+                    .map(k -> k.measure + ":" + k.staff + ":" + k.direction + ":" + k.x + ":" + k.endY)
+                    .toList());
         if (groups.size() > 2048) return List.copyOf(result);
-        List<String> keys = new ArrayList<>(groups.keySet());
-        keys.sort(Comparator.comparingInt(k -> shafts.get(k).x));
         List<Pair> added = new ArrayList<>();
         var joinedWorkLedger = new JoinedLaneWorkBudget();
         var contactBudgetByLane = new java.util.HashMap<String, SparseStaffContact.Budget>();
         var refusedLanes = new java.util.HashSet<String>();
         var lanes = new java.util.HashMap<Integer, String>();
-        for (Head head : input) lanes.put(head.id, head.measure + ":" + head.staff);
-        for (int i = 0; i < keys.size(); i++)
-            for (int j = i + 1; j < keys.size(); j++) {
-                List<Head> first = groups.get(keys.get(i)), second = groups.get(keys.get(j));
-                Head a = first.get(0), b = second.get(0);
-                Stem left = shafts.get(keys.get(i)), right = shafts.get(keys.get(j));
+        var legacyEndpoints = new java.util.HashSet<Integer>();
+        for (Pair pair : result) {
+            legacyEndpoints.addAll(pair.firstIds);
+            legacyEndpoints.addAll(pair.secondIds);
+        }
+        List<ShaftGroup> candidates = new ArrayList<>();
+        for (var entry : groups.entrySet()) {
+            List<Head> heads = entry.getValue();
+            if (heads.size() > 128 || heads.stream().anyMatch(head -> legacyEndpoints.contains(head.id)))
+                continue;
+            Stem shaft = shafts.get(entry.getKey());
+            int minY = shaft.endY, maxY = shaft.endY;
+            for (Head head : heads) {
+                int y = rounded(head.y);
+                minY = Math.min(minY, y);
+                maxY = Math.max(maxY, y);
+            }
+            candidates.add(new ShaftGroup(heads, shaft, minY, maxY));
+        }
+        candidates.sort(Comparator.comparingInt(group -> group.stem.x));
+        for (ShaftGroup candidate : candidates) {
+            Head first = candidate.heads.get(0);
+            String lane = first.measure + ":" + first.staff;
+            for (Head head : candidate.heads) lanes.put(head.id, lane);
+        }
+        for (int i = 0; i < candidates.size(); i++) {
+            ShaftGroup firstGroup = candidates.get(i);
+            List<Head> first = firstGroup.heads;
+            Head a = first.get(0);
+            Stem left = firstGroup.stem;
+            for (int j = i + 1; j < candidates.size(); j++) {
+                ShaftGroup secondGroup = candidates.get(j);
+                Stem right = secondGroup.stem;
+                int separation = right.x - left.x;
+                if (separation > 5 * a.gap) break;
+                List<Head> second = secondGroup.heads;
+                Head b = second.get(0);
                 if (a.measure != b.measure
                         || a.staff != b.staff
                         || a.direction != b.direction
                         || Math.abs(a.gap - b.gap) > .1 * a.gap
-                        || right.x - left.x < 1.4 * a.gap
-                        || right.x - left.x > 5 * a.gap
-                        || first.size() > 128
-                        || second.size() > 128) continue;
-                var endpointIds = new java.util.HashSet<Integer>();
-                for (Head x : first) endpointIds.add(x.id);
-                for (Head x : second) endpointIds.add(x.id);
-                if (result.stream()
-                        .anyMatch(
-                                p ->
-                                        p.firstIds.stream().anyMatch(endpointIds::contains)
-                                                || p.secondIds.stream()
-                                                        .anyMatch(endpointIds::contains))) continue;
-                int minY = Integer.MAX_VALUE, maxY = -1;
-                for (Head x : first) {
-                    minY = Math.min(minY, rounded(x.y));
-                    maxY = Math.max(maxY, rounded(x.y));
-                }
-                for (Head x : second) {
-                    minY = Math.min(minY, rounded(x.y));
-                    maxY = Math.max(maxY, rounded(x.y));
-                }
-                minY = Math.min(minY, Math.min(left.endY, right.endY));
-                maxY = Math.max(maxY, Math.max(left.endY, right.endY));
+                        || separation < 1.4 * a.gap) continue;
+                int minY = Math.min(firstGroup.minY, secondGroup.minY);
+                int maxY = Math.max(firstGroup.maxY, secondGroup.maxY);
                 long charge =
-                        (long) (right.x - left.x + 1) * (maxY - minY + 1)
-                                + 24L * (right.x - left.x + 1) * (maxY - minY + rounded(a.gap) + 3);
-                for (Head x : input) charge += x.footprint.size();
+                        (separation + 1L) * (maxY - minY + 1)
+                                + 24L * (separation + 1L) * (maxY - minY + rounded(a.gap) + 3)
+                                + footprintPixels;
                 String lane = lanes.get(a.id);
                 if (refusedLanes.contains(lane)) continue;
                 if (!joinedWorkLedger.charge(lane, charge)) {
@@ -896,7 +913,11 @@ final class PairedTremoloInk {
                     continue;
                 }
                 if (complete.isEmpty()) continue;
+                var endpointIds = new java.util.HashSet<Integer>();
+                for (Head x : first) endpointIds.add(x.id);
+                for (Head x : second) endpointIds.add(x.id);
                 List<Head> middle = new ArrayList<>();
+                long middlePixels = 0;
                 boolean safe = true;
                 for (Head other : input) {
                     if (endpointIds.contains(other.id)
@@ -908,12 +929,12 @@ final class PairedTremoloInk {
                             || !other.removalEligible
                             || other.footprint.isEmpty()
                             || other.footprint.size() > 4096
-                            || stem(gray, w, h, other.x, other.y, other.gap, 1) != null
-                            || stem(gray, w, h, other.x, other.y, other.gap, -1) != null) {
+                            || stems.containsKey(other.id)) {
                         safe = false;
                         break;
                     }
                     middle.add(other);
+                    middlePixels += other.footprint.size();
                 }
                 if (!safe) continue;
                 // A complete three-stroke interpretation must cover every original rail pixel;
@@ -922,10 +943,7 @@ final class PairedTremoloInk {
                 for (Mark m : complete) {
                     long lookupCost =
                             34 - Integer.numberOfLeadingZeros(Math.max(1, m.rawBodyPixelCount()));
-                    long semanticCharge =
-                            middle.stream()
-                                    .mapToLong(t -> t.footprint.size() * (lookupCost + 2))
-                                    .sum();
+                    long semanticCharge = middlePixels * (lookupCost + 2);
                     if (!joinedWorkLedger.charge(lane, semanticCharge)) {
                         refusedLanes.add(lane);
                         break;
@@ -953,6 +971,7 @@ final class PairedTremoloInk {
                                     true));
                 }
             }
+        }
         var use = new java.util.HashMap<Integer, Integer>();
         added.removeIf(p -> refusedLanes.contains(lanes.get(p.firstId())));
         for (Pair p : added)
@@ -1666,22 +1685,30 @@ final class PairedTremoloInk {
                 last = rounded(cx + direction * .95 * gap);
         if (start < 0 || start >= h) return null;
         int longest = 0;
+        int attachRadius = rounded(.2 * gap);
+        int attachTop = Math.max(0, start - attachRadius);
+        int attachBottom = Math.min(h - 1, start + attachRadius);
+        int maxDistance = rounded(9 * gap);
+        int maxMisses = Math.max(1, rounded(.15 * gap));
         for (int x = first; direction * (last - x) >= 0; x += direction) {
             if (x < 1 || x >= w - 1) continue;
             boolean attached = false;
-            for (int y = Math.max(0, start - rounded(.2 * gap));
-                    y <= Math.min(h - 1, start + rounded(.2 * gap));
-                    y++) if (dark(gray, w, x, y)) attached = true;
+            for (int y = attachTop; y <= attachBottom; y++) {
+                if (dark(gray, w, x, y)) {
+                    attached = true;
+                    break;
+                }
+            }
             if (!attached) continue;
             int misses = 0, end = start, ink = 0;
-            for (int distance = 0; distance < rounded(9 * gap); distance++) {
+            for (int distance = 0; distance < maxDistance; distance++) {
                 int y = start - direction * distance;
                 if (y < 0 || y >= h) break;
                 if (dark(gray, w, x, y)) {
                     ink++;
                     end = y;
                     misses = 0;
-                } else if (++misses > Math.max(1, rounded(.15 * gap))) break;
+                } else if (++misses > maxMisses) break;
             }
             int length = Math.abs(end - start);
             if (length < 2.5 * gap || ink / (double) (length + 1) < .85) continue;
@@ -1841,12 +1868,14 @@ final class PairedTremoloInk {
                     || stem.x >= w - 1
                     || Math.min(stem.headY, stem.endY) < 0
                     || Math.max(stem.headY, stem.endY) >= h) return List.of();
-            int ink = 0, total = Math.abs(stem.endY - stem.headY) + 1;
-            for (int y = Math.min(stem.headY, stem.endY); y <= Math.max(stem.headY, stem.endY); y++)
-                if (dark(gray, w, stem.x - 1, y)
-                        || dark(gray, w, stem.x, y)
-                        || dark(gray, w, stem.x + 1, y)) ink++;
-            if (ink / (double) total < .85) return List.of();
+            int top = Math.min(stem.headY, stem.endY), bottom = Math.max(stem.headY, stem.endY);
+            int misses = bottom - top + 1 - requiredWindowInk(bottom - top + 1);
+            for (int y = top; y <= bottom; y++) {
+                if (!dark(gray, w, stem.x - 1, y)
+                        && !dark(gray, w, stem.x, y)
+                        && !dark(gray, w, stem.x + 1, y)
+                        && --misses < 0) return List.of();
+            }
         }
         int x0 = firstColumn, x1 = lastColumn;
         if (x0 < left.x || x1 > right.x || x0 > x1) return List.of();
@@ -1872,23 +1901,33 @@ final class PairedTremoloInk {
             last = Math.min(h - 2, rounded(Math.max(left.endY, right.endY) + .4 * gap));
         }
         List<Mark> marks = new ArrayList<>();
-        for (int sign : new int[] {-1, 1})
+        int span = x1 - x0 + 1;
+        int requiredInk = requiredWindowInk(span);
+        int[] flankColumns = {rounded(left.x + .18 * gap), rounded(right.x - .18 * gap)};
+        double[] projectedOffsets = new double[span];
+        double minimumThickness = finiteHull ? 1 : .20 * gap;
+        double maximumThickness = .75 * gap;
+        int flankRadius = rounded(.45 * gap);
+        for (int sign = -1; sign <= 1; sign += 2)
             for (int tick = 2; tick <= 13; tick++) {
                 double slope = sign * tick * .05;
+                for (int column = 0; column < span; column++)
+                    projectedOffsets[column] = slope * (x0 + column - center);
                 List<Band> bands = new ArrayList<>();
                 int runStart = -1;
                 for (int y = first; y <= last + 1; y++) {
                     int ink = 0;
                     if (y <= last)
-                        for (int x = x0; x <= x1; x++) {
-                            int yy = rounded(y + slope * (x - center));
-                            if (yy >= 0 && yy < h && dark(gray, w, x, yy)) ink++;
+                        for (int column = 0; column < span; column++) {
+                            int yy = rounded(y + projectedOffsets[column]);
+                            if (yy >= 0 && yy < h && dark(gray, w, x0 + column, yy)) ink++;
+                            if (ink >= requiredInk || ink + (span - 1 - column) < requiredInk) break;
                         }
-                    boolean covered = y <= last && ink / (double) (x1 - x0 + 1) >= .85;
+                    boolean covered = y <= last && ink >= requiredInk;
                     if (covered && runStart < 0) runStart = y;
                     if (!covered && runStart >= 0) {
                         int thickness = y - runStart;
-                        if (thickness >= (finiteHull ? 1 : .20 * gap) && thickness <= .75 * gap)
+                        if (thickness >= minimumThickness && thickness <= maximumThickness)
                             bands.add(new Band((runStart + y - 1) * .5, thickness));
                         runStart = -1;
                     }
@@ -1903,16 +1942,17 @@ final class PairedTremoloInk {
                             || d2 > 1.1 * gap
                             || Math.abs(d1 - d2) > .2 * gap) continue;
                     boolean bounded = true;
-                    for (int x :
-                            new int[] {rounded(left.x + .18 * gap), rounded(right.x - .18 * gap)}) {
+                    flank:
+                    for (int x : flankColumns) {
                         if (x < 0 || x >= w) {
                             bounded = false;
                             break;
                         }
                         for (Band band : three) {
                             int yy = rounded(band.center + slope * (x - center)), run = 0;
-                            for (int y = Math.max(0, yy - rounded(.45 * gap));
-                                    y <= Math.min(h - 1, yy + rounded(.45 * gap));
+                            double maxRun = finiteHull ? Math.min(band.thickness, .20 * gap) : .20 * gap;
+                            for (int y = Math.max(0, yy - flankRadius), end = Math.min(h - 1, yy + flankRadius);
+                                    y <= end;
                                     y++) {
                                 // The owned endpoint is retained, not mistaken for a connecting
                                 // stroke.
@@ -1925,10 +1965,10 @@ final class PairedTremoloInk {
                                                                         y * w + x))
                                                 ? run + 1
                                                 : 0;
-                                if (run
-                                        >= (finiteHull
-                                                ? Math.min(band.thickness, .20 * gap)
-                                                : .20 * gap)) bounded = false;
+                                if (run >= maxRun) {
+                                    bounded = false;
+                                    break flank;
+                                }
                             }
                         }
                     }
