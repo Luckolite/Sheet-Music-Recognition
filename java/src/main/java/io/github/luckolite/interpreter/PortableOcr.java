@@ -187,6 +187,7 @@ public final class PortableOcr {
                 || (long) paddedWidth * outHeight > 5_000_000)
             throw new IllegalArgumentException("Invalid OCR resize");
         float[] output = new float[paddedWidth * outHeight * 3];
+        int planeSize = paddedWidth * outHeight;
         float[] mean = {.485f, .456f, .406f}, std = {.229f, .224f, .225f};
         int[] xs0 = new int[outWidth], xs1 = new int[outWidth];
         float[] fractions = new float[outWidth];
@@ -209,6 +210,7 @@ public final class PortableOcr {
             int y0 = (int) sy, y1 = Math.min(bottom - 1, y0 + 1);
             float fy = (float) (sy - y0);
             int row0 = y0 * width, row1 = y1 * width;
+            int outputRow = y * paddedWidth;
             for (int x = 0; x < outWidth; x++) {
                 int x0 = xs0[x], x1 = xs1[x];
                 float fx = fractions[x];
@@ -224,7 +226,7 @@ public final class PortableOcr {
                     float value =
                             Math.round((a + (b - a) * fx) * (1 - fy) + (d + (e - d) * fx) * fy)
                                     / 255f;
-                    output[c * paddedWidth * outHeight + y * paddedWidth + x] =
+                    output[c * planeSize + outputRow + x] =
                             detector ? (value - mean[c]) / std[c] : (value - .5f) / .5f;
                 }
             }
@@ -330,6 +332,7 @@ public final class PortableOcr {
 
     private static float channel(int color, int shift) {
         int alpha = color >>> 24;
+        if (alpha == 255) return (color >>> shift) & 255;
         return (((color >>> shift) & 255) * alpha + 255 * (255 - alpha)) / 255f;
     }
 
@@ -501,6 +504,7 @@ public final class PortableOcr {
         var symbols = new ArrayList<OcrText.Symbol>();
         var text = new StringBuilder();
         var tokens = decoded.tokens();
+        double unit = (double) paddedWidth / contentWidth * line.width() / steps;
         for (int i = 0; i <= tokens.size(); i++) {
             if (i == tokens.size() || tokens.get(i).text().isBlank()) {
                 if (!symbols.isEmpty()) {
@@ -532,7 +536,6 @@ public final class PortableOcr {
                                             + tokens.get(i + 1).endStep()
                                             + 2 * center)
                                     / 4;
-            double unit = (double) paddedWidth / contentWidth * line.width() / steps;
             int l =
                     Math.max(
                             line.left,
