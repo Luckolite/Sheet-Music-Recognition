@@ -10,13 +10,14 @@ public final class TabRhythmContinuations {
 
     public static List<TablatureDecoder.Staff> apply(
             List<TablatureDecoder.Staff> tabs, byte[] gray, int w, int h) {
-        byte[] clean = TabFretRaster.clean(gray, w, h, tabs);
+        byte[] clean = null;
         var out = new ArrayList<TablatureDecoder.Staff>();
         for (var sourceTab : tabs) {
             if (sourceTab.standardTop() >= 0 || sourceTab.frets().isEmpty()) {
                 out.add(sourceTab);
                 continue;
             }
+            if (clean == null) clean = TabFretRaster.clean(gray, w, h, tabs);
             var tab = existingTargets(sourceTab, clean, w, h);
             var slots = new ArrayList<Float>();
             int start = -1;
