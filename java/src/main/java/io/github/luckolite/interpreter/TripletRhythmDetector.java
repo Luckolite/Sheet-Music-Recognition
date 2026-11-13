@@ -5,7 +5,11 @@ package io.github.luckolite.interpreter;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
+import java.util.IdentityHashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Reads printed triplets and beamed five- or seven-in-four groups from numeral and attack geometry.
@@ -14,6 +18,15 @@ final class TripletRhythmDetector {
     private TripletRhythmDetector() {}
 
     record Rhythm(List<ScoreNoteEvent> notes, List<ScoreRestEvent> rests) {}
+
+    private static final class PrintedStaffs {
+        private List<RawStaffLineDetector.StaffLines> lines;
+
+        List<RawStaffLineDetector.StaffLines> detect(byte[] gray, int width, int height) {
+            if (lines == null) lines = RawStaffLineDetector.detect(gray, width, height);
+            return lines;
+        }
+    }
 
     /**
      * A printed rest occupies one rhythmic slot just as a chord attack does. Virtual events are
@@ -28,8 +41,9 @@ final class TripletRhythmDetector {
             int height) {
         if (rests == null || rests.isEmpty())
             return new Rhythm(apply(notes, measures, gray, width, height), rests);
+        var printedStaffs = new PrintedStaffs();
         List<ScoreNoteEvent> slots =
-                new ArrayList<>(isolatedPrintedLanes(notes, measures, gray, width, height));
+                new ArrayList<>(isolatedPrintedLanes(notes, measures, gray, width, height, printedStaffs));
         List<Integer> restIndices = new ArrayList<>();
         for (int restIndex = 0; restIndex < rests.size(); restIndex++) {
             ScoreRestEvent rest = rests.get(restIndex);
@@ -63,7 +77,8 @@ final class TripletRhythmDetector {
                         height,
                         notes.size(),
                         new PrintedTupletBeamOwner.LiteralWork(8_000_000),
-                        rests);
+                        rests,
+                        printedStaffs);
         List<ScoreRestEvent> scaled = new ArrayList<>(rests);
         for (int i = 0; i < restIndices.size(); i++) {
             int index = restIndices.get(i);
@@ -80,82 +95,102 @@ final class TripletRhythmDetector {
                             rest.staffCount(),
                             rest.durationBeats() * marked.get(notes.size() + i).durationScale()));
         }
-        List<ScoreNoteEvent> result = new ArrayList<>();
+        var adjustments = new HashMap<MeasureStaff, List<RestAdjustment>>();
+        for (int i = 0; i < rests.size(); i++) {
+            ScoreRestEvent rest = rests.get(i);
+            double delta = rest.durationBeats() - scaled.get(i).durationBeats();
+            if (delta == 0) continue;
+            var key = new MeasureStaff(rest.measureIndex(), rest.staffIndex(), rest.staffCount());
+            adjustments.computeIfAbsent(key, ignored -> new ArrayList<>())
+                    .add(new RestAdjustment(rest, delta));
+        }
+
+        var originalBars = new HashMap<MeasureStaff, List<ScoreNoteEvent>>();
+        if (!adjustments.isEmpty()) {
+            for (var original : notes) {
+                var key = MeasureStaff.of(original);
+                if (adjustments.containsKey(key))
+                    originalBars.computeIfAbsent(key, ignored -> new ArrayList<>()).add(original);
+            }
+        }
+
+        List<ScoreNoteEvent> result = new ArrayList<>(notes.size());
         for (int i = 0; i < notes.size(); i++) {
             ScoreNoteEvent original = notes.get(i), note = marked.get(i);
-            float next = 1.01f;
-            for (ScoreNoteEvent other : notes)
-                if (sameVoice(original, other)
-                        && other.positionInMeasure() > original.positionInMeasure() + .018f)
-                    next = Math.min(next, other.positionInMeasure());
-            boolean first =
-                    notes.stream()
-                            .noneMatch(
-                                    other ->
-                                            sameVoice(original, other)
-                                                    && other.positionInMeasure()
-                                                            < original.positionInMeasure() - .018f);
-            double before = 0, after = 0;
-            for (int j = 0; j < rests.size(); j++) {
-                ScoreRestEvent rest = rests.get(j);
-                double delta = rest.durationBeats() - scaled.get(j).durationBeats();
-                if (delta == 0
-                        || rest.measureIndex() != note.measureIndex()
-                        || rest.staffIndex() != note.staffIndex()
-                        || rest.staffCount() != note.staffCount()) continue;
-                if (rest.positionInMeasure() < note.positionInMeasure()
-                        && (first
-                                || !ScoreNoteTiming.hasIndependentSustain(original)
-                                        && notes.stream()
-                                                .anyMatch(
-                                                        other ->
-                                                                sameVoice(original, other)
-                                                                        && ScoreNoteTiming
-                                                                                .hasIndependentSustain(
-                                                                                        other)
-                                                                        && Math.abs(
-                                                                                        other
-                                                                                                        .positionInMeasure()
-                                                                                                - rest
-                                                                                                        .positionInMeasure())
-                                                                                <= .018f))
-                        && original.leadingRestBeats() + .001 >= rest.durationBeats())
-                    before += delta;
-                if (rest.positionInMeasure() > note.positionInMeasure()
-                        && rest.positionInMeasure() < next
-                        && (!ScoreNoteTiming.hasIndependentSustain(original)
-                                || rest.positionInMeasure() > note.positionInMeasure() + .018f)
-                        && original.followingRestBeats() + .001 >= rest.durationBeats())
-                    after += delta;
+            var localAdjustments = adjustments.get(MeasureStaff.of(note));
+            if (localAdjustments == null) {
+                result.add(withAdjustedRests(note, 0, 0));
+                continue;
             }
-            result.add(
-                    new ScoreNoteEvent(
-                                    note.measureIndex(),
-                                    note.positionInMeasure(),
-                                    note.staffStep(),
-                                    note.staffIndex(),
-                                    note.staffCount(),
-                                    note.pageY(),
-                                    note.tiedFromPrevious(),
-                                    note.augmentationDots(),
-                                    note.beamCount(),
-                                    note.writtenAccidental(),
-                                    note.unbeamedDurationBeats(),
-                                    note.tupletDivisor(),
-                                    (float) Math.max(0, note.followingRestBeats() - after),
-                                    note.articulations(),
-                                    note.clefBottomDiatonic(),
-                                    note.crossStaffBeam(),
-                                    (float) Math.max(0, note.leadingRestBeats() - before),
-                                    note.compactOpening(),
-                                    note.octaveShift(),
-                                    note.boundaryTies(),
-                                    note.tupletNormalNotes())
-                            .withStemDirection(note.stemDirection())
-                            .withKind(note.kind())
-                            .withVisualSize(note.visualSize()));
+            var localNotes = originalBars.get(MeasureStaff.of(original));
+            float position = original.positionInMeasure();
+            float next = 1.01f;
+            boolean first = true;
+            for (var other : localNotes) {
+                float otherPosition = other.positionInMeasure();
+                if (otherPosition > position + .018f) next = Math.min(next, otherPosition);
+                if (otherPosition < position - .018f) first = false;
+            }
+            boolean independentSustain = ScoreNoteTiming.hasIndependentSustain(original);
+            double before = 0, after = 0;
+            for (var adjustment : localAdjustments) {
+                ScoreRestEvent rest = adjustment.rest();
+                float restPosition = rest.positionInMeasure();
+                if (restPosition < note.positionInMeasure()
+                        && original.leadingRestBeats() + .001 >= rest.durationBeats()
+                        && (first || !independentSustain && sustainAt(localNotes, restPosition)))
+                    before += adjustment.delta();
+                if (restPosition > note.positionInMeasure()
+                        && restPosition < next
+                        && (!independentSustain || restPosition > note.positionInMeasure() + .018f)
+                        && original.followingRestBeats() + .001 >= rest.durationBeats())
+                    after += adjustment.delta();
+            }
+            result.add(withAdjustedRests(note, before, after));
         }
         return new Rhythm(List.copyOf(result), List.copyOf(scaled));
+    }
+
+    private static boolean sustainAt(List<ScoreNoteEvent> notes, float position) {
+        for (var note : notes) {
+            if (Math.abs(note.positionInMeasure() - position) <= .018f
+                    && ScoreNoteTiming.hasIndependentSustain(note)) return true;
+        }
+        return false;
+    }
+
+    private record RestAdjustment(ScoreRestEvent rest, double delta) {}
+
+    private static ScoreNoteEvent withAdjustedRests(ScoreNoteEvent note, double before, double after) {
+        float following = (float) Math.max(0, note.followingRestBeats() - after);
+        float leading = (float) Math.max(0, note.leadingRestBeats() - before);
+        if (Float.compare(following, note.followingRestBeats()) == 0
+                && Float.compare(leading, note.leadingRestBeats()) == 0) return note;
+        return new ScoreNoteEvent(
+                note.measureIndex(),
+                note.positionInMeasure(),
+                note.staffStep(),
+                note.staffIndex(),
+                note.staffCount(),
+                note.pageY(),
+                note.tiedFromPrevious(),
+                note.augmentationDots(),
+                note.beamCount(),
+                note.writtenAccidental(),
+                note.unbeamedDurationBeats(),
+                note.tupletDivisor(),
+                following,
+                note.articulations(),
+                note.clefBottomDiatonic(),
+                note.crossStaffBeam(),
+                leading,
+                note.compactOpening(),
+                note.octaveShift(),
+                note.boundaryTies(),
+                note.tupletNormalNotes(),
+                note.stemDirection(),
+                note.kind(),
+                note.visualSize());
     }
 
     /** A chord contributes one attack column, regardless of how many heads it contains. */
@@ -180,36 +215,57 @@ final class TripletRhythmDetector {
         return onsets(notes, Integer.MAX_VALUE);
     }
 
+    private static final Comparator<ScoreNoteEvent> ONSET_ORDER =
+            Comparator.comparingInt(ScoreNoteEvent::measureIndex)
+                    .thenComparingInt(ScoreNoteEvent::staffIndex)
+                    .thenComparingInt(ScoreNoteEvent::staffCount)
+                    .thenComparingDouble(ScoreNoteEvent::positionInMeasure);
+
+    private static List<Integer> sortedOnsetIndices(List<ScoreNoteEvent> notes) {
+        for (int i = 1; i < notes.size(); i++) {
+            if (ONSET_ORDER.compare(notes.get(i - 1), notes.get(i)) <= 0) continue;
+            List<Integer> order = new ArrayList<>(notes.size());
+            for (int index = 0; index < notes.size(); index++) order.add(index);
+            order.sort((a, b) -> ONSET_ORDER.compare(notes.get(a), notes.get(b)));
+            return order;
+        }
+        return null;
+    }
+
     private static List<Onset> onsets(List<ScoreNoteEvent> notes, int virtualStart) {
-        List<Integer> order = new ArrayList<>();
-        for (int i = 0; i < notes.size(); i++) order.add(i);
-        order.sort(
-                Comparator.comparingInt((Integer i) -> notes.get(i).measureIndex())
-                        .thenComparingInt(i -> notes.get(i).staffIndex())
-                        .thenComparingInt(i -> notes.get(i).staffCount())
-                        .thenComparingDouble(i -> notes.get(i).positionInMeasure()));
+        return onsets(notes, virtualStart, sortedOnsetIndices(notes));
+    }
+
+    private static List<Onset> onsets(List<ScoreNoteEvent> notes, int virtualStart, List<Integer> order) {
         List<Onset> result = new ArrayList<>();
-        for (int i = 0; i < order.size(); ) {
-            ScoreNoteEvent first = notes.get(order.get(i));
-            List<Integer> members = new ArrayList<>();
+        for (int i = 0; i < notes.size(); ) {
+            int firstIndex = order == null ? i : order.get(i);
+            ScoreNoteEvent first = notes.get(firstIndex);
+            List<Integer> chord = null;
             float top = first.pageY(), bottom = top;
-            int j = i;
-            boolean includesRest = order.get(i) >= virtualStart;
-            while (j < order.size()) {
-                ScoreNoteEvent n = notes.get(order.get(j));
-                boolean nextRest = order.get(j) >= virtualStart;
+            int j = i + 1;
+            boolean includesRest = firstIndex >= virtualStart;
+            while (j < notes.size()) {
+                int index = order == null ? j : order.get(j);
+                ScoreNoteEvent n = notes.get(index);
+                boolean nextRest = index >= virtualStart;
                 // A rest beside a displaced head shares its attack column. Sounding-only
                 // groups retain their narrower tolerance and cannot skip a different attack.
                 float tolerance = includesRest || nextRest ? .018f : .012f;
                 if (!sameVoice(first, n)
                         || n.positionInMeasure() - first.positionInMeasure() > tolerance) break;
                 includesRest |= nextRest;
-                members.add(order.get(j));
+                if (chord == null) {
+                    chord = new ArrayList<>();
+                    chord.add(firstIndex);
+                }
+                chord.add(index);
                 top = Math.min(top, n.pageY());
                 bottom = Math.max(bottom, n.pageY());
                 j++;
             }
-            result.add(new Onset(List.copyOf(members), first.positionInMeasure(), top, bottom));
+            List<Integer> members = chord == null ? List.of(firstIndex) : List.copyOf(chord);
+            result.add(new Onset(members, first.positionInMeasure(), top, bottom));
             i = j;
         }
         return result;
@@ -280,15 +336,17 @@ final class TripletRhythmDetector {
             byte[] gray,
             int width,
             int height) {
+        var printedStaffs = new PrintedStaffs();
         return apply(
-                isolatedPrintedLanes(notes, measures, gray, width, height),
+                isolatedPrintedLanes(notes, measures, gray, width, height, printedStaffs),
                 measures,
                 gray,
                 width,
                 height,
                 Integer.MAX_VALUE,
                 new PrintedTupletBeamOwner.LiteralWork(8_000_000),
-                List.of());
+                List.of(),
+                printedStaffs);
     }
 
     /**
@@ -332,57 +390,85 @@ final class TripletRhythmDetector {
         return false;
     }
 
+    private record MeasureStaff(int measure, int staff, int staffCount) {
+        static MeasureStaff of(ScoreNoteEvent note) {
+            return new MeasureStaff(note.measureIndex(), note.staffIndex(), note.staffCount());
+        }
+    }
+
+    private record StemLane(int staff, int staffCount, int direction) {}
+
+    private static int firstMeasureAfter(List<ScoreNoteEvent> lane, int measure) {
+        int left = 0, right = lane.size();
+        while (left < right) {
+            int middle = (left + right) >>> 1;
+            if (lane.get(middle).measureIndex() <= measure) left = middle + 1;
+            else right = middle;
+        }
+        return left;
+    }
+
     /** Resolve a connected printed voice before interleaved opposing attacks. */
     private static List<ScoreNoteEvent> isolatedPrintedLanes(
             List<ScoreNoteEvent> notes,
             List<MeasureRegion> measures,
             byte[] gray,
             int width,
-            int height) {
+            int height,
+            PrintedStaffs printedStaffs) {
         if (notes == null || measures == null || gray == null || gray.length != width * height)
             return notes;
         var result = new ArrayList<>(notes);
-        var visited = new java.util.HashSet<String>();
-        var laneStaffs = RawStaffLineDetector.detect(gray, width, height);
-        for (var first : notes) {
-            String key = first.measureIndex() + ":" + first.staffIndex() + ":" + first.staffCount();
-            if (!visited.add(key)
-                    || first.measureIndex() < 0
-                    || first.measureIndex() >= measures.size()) continue;
-            var bar =
-                    notes.stream()
-                            .filter(n -> sameVoice(first, n))
-                            .collect(java.util.stream.Collectors.toList());
-            if (bar.stream().anyMatch(n -> n.stemDirection() == 0)
-                    || bar.stream().filter(n -> n.stemDirection() == 1).count() < 2
-                    || bar.stream().filter(n -> n.stemDirection() == -1).count() < 2) continue;
+        var bars = new LinkedHashMap<MeasureStaff, List<ScoreNoteEvent>>();
+        for (var note : notes) {
+            int measure = note.measureIndex();
+            if (measure < 0 || measure >= measures.size()) continue;
+            var key = MeasureStaff.of(note);
+            bars.computeIfAbsent(key, ignored -> new ArrayList<>()).add(note);
+        }
+        var lanes = new HashMap<StemLane, List<ScoreNoteEvent>>();
+        IdentityHashMap<ScoreNoteEvent, List<Integer>> noteIndices = null;
+        for (var bar : bars.values()) {
+            int up = 0, down = 0;
+            boolean unknown = false;
+            for (var note : bar) {
+                switch (note.stemDirection()) {
+                    case 1 -> up++;
+                    case -1 -> down++;
+                    case 0 -> unknown = true;
+                }
+                if (unknown) break;
+            }
+            if (unknown || up < 2 || down < 2) continue;
+
+            var first = bar.get(0);
             var region = measures.get(first.measureIndex());
             float fallbackGap =
                     Math.max(
                             4,
                             (region.bottom() - region.top()) * height / (8 * first.staffCount()));
-            float gap = printedRestTupletGap(laneStaffs, region, first, height, fallbackGap);
-            for (int direction : new int[] {-1, 1}) {
-                var lane =
+            float gap = printedRestTupletGap(
+                    printedStaffs.detect(gray, width, height), region, first, height, fallbackGap);
+            int measure = first.measureIndex();
+            for (int direction = -1; direction <= 1; direction += 2) {
+                var key = new StemLane(first.staffIndex(), first.staffCount(), direction);
+                var fullLane = lanes.computeIfAbsent(key, laneKey ->
                         notes.stream()
-                                .filter(
-                                        n ->
-                                                n.staffIndex() == first.staffIndex()
-                                                        && n.staffCount() == first.staffCount()
-                                                        && n.measureIndex() <= first.measureIndex()
-                                                        && n.stemDirection() == direction)
-                                .sorted(
-                                        java.util.Comparator.comparingInt(
-                                                        ScoreNoteEvent::measureIndex)
-                                                .thenComparingDouble(
-                                                        ScoreNoteEvent::positionInMeasure))
-                                .collect(java.util.stream.Collectors.toList());
-                if (lane.size() < 3) continue;
-                var marked = apply(lane, measures, gray, width, height, Integer.MAX_VALUE);
+                                .filter(n -> n.staffIndex() == laneKey.staff()
+                                        && n.staffCount() == laneKey.staffCount()
+                                        && n.stemDirection() == laneKey.direction())
+                                .sorted(Comparator.comparingInt(ScoreNoteEvent::measureIndex)
+                                        .thenComparingDouble(ScoreNoteEvent::positionInMeasure))
+                                .toList());
+                int end = firstMeasureAfter(fullLane, measure);
+                if (end < 3) continue;
+                // Earlier measures provide context for the selected measure.
+                var lane = fullLane.subList(0, end);
+                var marked = apply(lane, measures, gray, width, height, Integer.MAX_VALUE, null, List.of());
                 var owned = new ArrayList<Integer>();
-                for (int i = 0; i < lane.size(); i++)
-                    if (lane.get(i).measureIndex() == first.measureIndex()
-                            && lane.get(i).tupletDivisor() == 1
+                int start = firstMeasureAfter(lane, measure - 1);
+                for (int i = start; i < lane.size(); i++)
+                    if (lane.get(i).tupletDivisor() == 1
                             && marked.get(i).tupletDivisor() == 3) owned.add(i);
                 var attackGroups = new ArrayList<List<Integer>>();
                 for (int index : owned) {
@@ -398,8 +484,9 @@ final class TripletRhythmDetector {
                 }
                 if (attackGroups.size() != 3) continue;
                 boolean connected = true;
-                for (int i = 1; i < attackGroups.size(); i++) {
+                for (int i = 1; i < attackGroups.size() && connected; i++) {
                     boolean pairConnected = false;
+                    pairs:
                     for (int left : attackGroups.get(i - 1))
                         for (int right : attackGroups.get(i)) {
                             var a = lane.get(left);
@@ -423,14 +510,22 @@ final class TripletRhythmDetector {
                                                     * width,
                                             b.pageY() * height,
                                             gap,
-                                            direction)) pairConnected = true;
+                                            direction)) {
+                                pairConnected = true;
+                                break pairs;
+                            }
                         }
-                    connected &= pairConnected;
+                    connected = pairConnected;
                 }
-                if (connected)
-                    for (int index : owned)
-                        for (int j = 0; j < notes.size(); j++)
-                            if (notes.get(j) == lane.get(index)) result.set(j, marked.get(index));
+                if (!connected) continue;
+                if (noteIndices == null) {
+                    noteIndices = new IdentityHashMap<>();
+                    for (int i = 0; i < notes.size(); i++)
+                        noteIndices.computeIfAbsent(notes.get(i), ignored -> new ArrayList<>()).add(i);
+                }
+                for (int index : owned)
+                    for (int originalIndex : noteIndices.get(lane.get(index)))
+                        result.set(originalIndex, marked.get(index));
             }
         }
         return result;
@@ -442,8 +537,11 @@ final class TripletRhythmDetector {
             byte[] gray,
             int width,
             int height,
-            int virtualStart) {
-        return apply(notes, measures, gray, width, height, virtualStart, null, List.of());
+            int virtualStart,
+            PrintedTupletBeamOwner.LiteralWork literalWork,
+            List<ScoreRestEvent> literalRests) {
+        return apply(notes, measures, gray, width, height, virtualStart, literalWork, literalRests,
+                new PrintedStaffs());
     }
 
     private static List<ScoreNoteEvent> apply(
@@ -454,7 +552,8 @@ final class TripletRhythmDetector {
             int height,
             int virtualStart,
             PrintedTupletBeamOwner.LiteralWork literalWork,
-            List<ScoreRestEvent> literalRests) {
+            List<ScoreRestEvent> literalRests,
+            PrintedStaffs printedStaffs) {
         if (notes == null
                 || notes.size() < 2
                 || measures == null
@@ -462,17 +561,17 @@ final class TripletRhythmDetector {
                 || width < 1
                 || height < 1
                 || gray.length != width * height) return notes;
+        // Ratio updates preserve the indices and geometry used by the attack groups.
+        var onsetOrder = sortedOnsetIndices(notes);
+        List<Onset> soundingGroups = onsets(notes, Integer.MAX_VALUE, onsetOrder);
         // A complete printed seven-note group owns its attacks before a smaller candidate.
         List<ScoreNoteEvent> result =
-                new ArrayList<>(
-                        beamedTuplets(notes, measures, gray, width, height, 7, virtualStart));
+                new ArrayList<>(beamedTuplets(
+                        notes, soundingGroups, measures, gray, width, height, 7, virtualStart, false));
         List<Glyph> clearThrees = new ArrayList<>();
         List<OwnedPrintedThree> ownedPrintedThrees = new ArrayList<>();
-        List<RawStaffLineDetector.StaffLines> printedStaffs =
-                virtualStart < result.size()
-                        ? RawStaffLineDetector.detect(gray, width, height)
-                        : List.of();
-        List<Onset> groups = onsets(notes, virtualStart);
+        List<Onset> groups = virtualStart >= notes.size()
+                ? soundingGroups : onsets(notes, virtualStart, onsetOrder);
         for (int i = 0; i + 2 < groups.size(); i++) {
             boolean marked = false;
             for (List<Onset> group :
@@ -546,8 +645,8 @@ final class TripletRhythmDetector {
                                 literal);
                 if (numeral == null && virtualStart < result.size()) {
                     final List<ScoreNoteEvent> restGroupNotes = result;
-                    final float restGap =
-                            printedRestTupletGap(printedStaffs, region, first, height, gap);
+                    final float restGap = printedRestTupletGap(
+                            printedStaffs.detect(gray, width, height), region, first, height, gap);
                     numeral =
                             findContrastedNumeral(
                                     gray,
@@ -942,32 +1041,7 @@ final class TripletRhythmDetector {
                 for (Onset onset : List.of(a, b, c))
                     for (int index : onset.indices()) {
                         ScoreNoteEvent n = result.get(index);
-                        result.set(
-                                index,
-                                new ScoreNoteEvent(
-                                                n.measureIndex(),
-                                                n.positionInMeasure(),
-                                                n.staffStep(),
-                                                n.staffIndex(),
-                                                n.staffCount(),
-                                                n.pageY(),
-                                                n.tiedFromPrevious(),
-                                                n.augmentationDots(),
-                                                n.beamCount(),
-                                                n.writtenAccidental(),
-                                                n.unbeamedDurationBeats(),
-                                                3,
-                                                n.followingRestBeats(),
-                                                n.articulations(),
-                                                n.clefBottomDiatonic(),
-                                                n.crossStaffBeam(),
-                                                n.leadingRestBeats(),
-                                                n.compactOpening(),
-                                                n.octaveShift(),
-                                                n.boundaryTies())
-                                        .withStemDirection(n.stemDirection())
-                                        .withKind(n.kind())
-                                        .withVisualSize(n.visualSize()));
+                        result.set(index, n.withTupletRatio(3, 2));
                     }
                 if (recoveredJoined && !recoveredCurveJoined) {
                     var last = result.get(c.indices().get(0));
@@ -1007,36 +1081,24 @@ final class TripletRhythmDetector {
             }
             if (marked) i += 2;
         }
-        result = mixedBracketPairs(result, measures, gray, width, height);
-        result = mixedBeamedTuplets(result, measures, gray, width, height, 5, virtualStart);
-        result = mixedBeamedTuplets(result, measures, gray, width, height, 7, virtualStart);
-        result = boundedQuintuplets(result, measures, gray, width, height, virtualStart);
-        result = beamedTuplets(
-                beamedTuplets(
-                        beamedTuplets(result, measures, gray, width, height, 7, virtualStart),
-                        measures,
-                        gray,
-                        width,
-                        height,
-                        5,
-                        virtualStart),
-                measures,
-                gray,
-                width,
-                height,
-                6,
-                virtualStart);
-        return beamedTuplets(result, measures, gray, width, height, 4, virtualStart, true);
+        result = mixedBracketPairs(result, soundingGroups, measures, gray, width, height);
+        result = mixedBeamedTuplets(result, soundingGroups, measures, gray, width, height, 5, virtualStart);
+        result = mixedBeamedTuplets(result, soundingGroups, measures, gray, width, height, 7, virtualStart);
+        result = boundedQuintuplets(result, soundingGroups, measures, gray, width, height, virtualStart);
+        for (int divisor : new int[] {7, 5, 6})
+            result = beamedTuplets(
+                    result, soundingGroups, measures, gray, width, height, divisor, virtualStart, false);
+        return beamedTuplets(result, soundingGroups, measures, gray, width, height, 4, virtualStart, true);
     }
 
     private static List<ScoreNoteEvent> mixedBracketPairs(
             List<ScoreNoteEvent> notes,
+            List<Onset> groups,
             List<MeasureRegion> measures,
             byte[] gray,
             int width,
             int height) {
         List<ScoreNoteEvent> result = new ArrayList<>(notes);
-        List<Onset> groups = onsets(notes);
         for (int i = 0; i + 1 < groups.size(); i++) {
             Onset a = groups.get(i), b = groups.get(i + 1);
             if (a.indices().size() != 1 || b.indices().size() != 1) continue;
@@ -1082,32 +1144,7 @@ final class TripletRhythmDetector {
                 continue;
             for (int index : new int[] {a.indices().get(0), b.indices().get(0)}) {
                 ScoreNoteEvent n = result.get(index);
-                result.set(
-                        index,
-                        new ScoreNoteEvent(
-                                        n.measureIndex(),
-                                        n.positionInMeasure(),
-                                        n.staffStep(),
-                                        n.staffIndex(),
-                                        n.staffCount(),
-                                        n.pageY(),
-                                        n.tiedFromPrevious(),
-                                        n.augmentationDots(),
-                                        n.beamCount(),
-                                        n.writtenAccidental(),
-                                        n.unbeamedDurationBeats(),
-                                        3,
-                                        n.followingRestBeats(),
-                                        n.articulations(),
-                                        n.clefBottomDiatonic(),
-                                        n.crossStaffBeam(),
-                                        n.leadingRestBeats(),
-                                        n.compactOpening(),
-                                        n.octaveShift(),
-                                        n.boundaryTies())
-                                .withStemDirection(n.stemDirection())
-                                .withKind(n.kind())
-                                .withVisualSize(n.visualSize()));
+                result.set(index, n.withTupletRatio(3, 2));
             }
             i++;
         }
@@ -1136,6 +1173,22 @@ final class TripletRhythmDetector {
                 gap);
     }
 
+    private static Optional<ScoreMeterChange> meterAt(
+            List<ScoreMeterChange> meters, int measure) {
+        ScoreMeterChange selected = null;
+        boolean conflict = false;
+        for (var meter : meters) {
+            if (meter.measureIndex() < 0 || meter.measureIndex() > measure) continue;
+            if (selected == null || meter.measureIndex() > selected.measureIndex()) {
+                selected = meter;
+                conflict = false;
+            } else if (meter.measureIndex() == selected.measureIndex() && !meter.equals(selected)) {
+                conflict = true;
+            }
+        }
+        return conflict ? Optional.empty() : Optional.ofNullable(selected);
+    }
+
     /** Printed duplets require compound meter and a complete unambiguous staff clock. */
     static List<ScoreNoteEvent> compoundDuplets(
             List<ScoreNoteEvent> notes,
@@ -1145,45 +1198,32 @@ final class TripletRhythmDetector {
             int width,
             int height) {
         if (meters == null || meters.isEmpty() || notes.isEmpty()) return notes;
-        var candidate =
-                beamedTuplets(
-                        beamedTuplets(notes, measures, gray, width, height, 2, notes.size()),
-                        measures,
-                        gray,
-                        width,
-                        height,
-                        4,
-                        notes.size());
-        var groups = onsets(candidate);
-        var originalGroups = onsets(notes);
+        var groups = onsets(notes);
+        var duplets = beamedTuplets(notes, groups, measures, gray, width, height, 2, notes.size(), false);
+        var candidate = beamedTuplets(duplets, groups, measures, gray, width, height, 4, notes.size(), false);
         var result = new ArrayList<>(notes);
+        var meterByMeasure = new HashMap<Integer, Optional<ScoreMeterChange>>();
+        var approvedStaffs = new HashMap<MeasureStaff, Boolean>();
         for (int i = 0; i < notes.size(); i++) {
             var n = candidate.get(i);
             if ((n.tupletDivisor() != 2 && n.tupletDivisor() != 4)
                     || notes.get(i).tupletDivisor() != 1) continue;
-            ScoreMeterChange selected = null;
-            boolean conflict = false;
-            for (var meter : meters) {
-                if (meter.measureIndex() < 0 || meter.measureIndex() > n.measureIndex()) continue;
-                if (selected == null || meter.measureIndex() > selected.measureIndex()) {
-                    selected = meter;
-                    conflict = false;
-                } else if (meter.measureIndex() == selected.measureIndex()
-                        && !meter.equals(selected)) conflict = true;
-            }
-            if (conflict
-                    || selected == null
+            var selected = meterByMeasure.computeIfAbsent(n.measureIndex(), m -> meterAt(meters, m))
+                    .orElse(null);
+            if (selected == null
                     || selected.denominator() != 8
                     || selected.numerator() < 6
                     || selected.numerator() % 3 != 0) continue;
-            double expected = selected.numerator() * .5;
-            double old =
-                    staffClock(originalGroups, notes, notes.get(i), n.staffIndex(), notes.size());
-            double fixed = staffClock(groups, candidate, n, n.staffIndex(), notes.size());
-            if (Double.isFinite(old)
-                    && Double.isFinite(fixed)
-                    && old < expected - .001
-                    && Math.abs(fixed - expected) < .001) result.set(i, n);
+            boolean approved = approvedStaffs.computeIfAbsent(MeasureStaff.of(n), key -> {
+                double expected = selected.numerator() * .5;
+                double old = staffClock(groups, notes, n, key.staff(), notes.size());
+                double fixed = staffClock(groups, candidate, n, key.staff(), notes.size());
+                return Double.isFinite(old)
+                        && Double.isFinite(fixed)
+                        && old < expected - .001
+                        && Math.abs(fixed - expected) < .001;
+            });
+            if (approved) result.set(i, n);
         }
         return List.copyOf(result);
     }
@@ -1193,47 +1233,39 @@ final class TripletRhythmDetector {
             List<ScoreNoteEvent> notes, List<ScoreMeterChange> meters, boolean openingPickup) {
         if (notes == null || notes.isEmpty() || meters == null || meters.isEmpty()) return notes;
         var result = new ArrayList<>(notes);
-        var originalGroups = onsets(notes);
-        for (var first : notes) {
-            if (first.tupletDivisor() != 7
-                    || first.tupletNormalNotes() != 4
+        var meterByMeasure = new HashMap<Integer, Optional<ScoreMeterChange>>();
+        var sevensByStaff = new HashMap<MeasureStaff, List<Integer>>();
+        for (int i = 0; i < notes.size(); i++) {
+            var note = notes.get(i);
+            if (note.tupletDivisor() == 7)
+                sevensByStaff.computeIfAbsent(MeasureStaff.of(note), ignored -> new ArrayList<>()).add(i);
+        }
+        List<Onset> originalGroups = null;
+        List<ScoreNoteEvent> candidate = null;
+        for (var members : sevensByStaff.values()) {
+            if (members.size() != 7) continue;
+            var first = notes.get(members.get(0));
+            if (first.tupletNormalNotes() != 4
                     || first.beamCount() != 2
                     || openingPickup && first.measureIndex() == 0) continue;
-            ScoreMeterChange selected = null;
-            boolean conflict = false;
-            for (var m : meters) {
-                if (m.measureIndex() < 0 || m.measureIndex() > first.measureIndex()) continue;
-                if (selected == null || m.measureIndex() > selected.measureIndex()) {
-                    selected = m;
-                    conflict = false;
-                } else if (m.measureIndex() == selected.measureIndex() && !m.equals(selected))
-                    conflict = true;
-            }
-            if (selected == null || conflict) continue;
-            var members = new ArrayList<Integer>();
-            for (int i = 0; i < notes.size(); i++) {
-                var n = notes.get(i);
-                if (n.measureIndex() == first.measureIndex()
-                        && n.staffIndex() == first.staffIndex()
-                        && n.staffCount() == first.staffCount()
-                        && n.tupletDivisor() == 7) members.add(i);
-            }
-            if (members.size() != 7) continue;
-            if (notes.get(members.get(0)) != first) continue;
+            var selected = meterByMeasure.computeIfAbsent(first.measureIndex(), m -> meterAt(meters, m))
+                    .orElse(null);
+            if (selected == null) continue;
             float left = first.positionInMeasure(),
                     right = notes.get(members.get(6)).positionInMeasure();
             boolean interrupted = false;
-            for (var n : notes)
-                if (n.measureIndex() == first.measureIndex()
-                        && n.staffIndex() == first.staffIndex()
-                        && n.staffCount() == first.staffCount()
+            for (var n : notes) {
+                if (sameVoice(first, n)
                         && n.positionInMeasure() > left
                         && n.positionInMeasure() < right
-                        && n.tupletDivisor() != 7) interrupted = true;
+                        && n.tupletDivisor() != 7) {
+                    interrupted = true;
+                    break;
+                }
+            }
             if (interrupted) continue;
             boolean valid = true;
             float previous = -1;
-            var candidate = new ArrayList<>(notes);
             for (int i : members) {
                 var n = notes.get(i);
                 if (n.tupletNormalNotes() != 4
@@ -1246,41 +1278,33 @@ final class TripletRhythmDetector {
                     break;
                 }
                 previous = n.positionInMeasure();
-                candidate.set(i, n.withTupletRatio(7, 6));
             }
             if (!valid) continue;
+            if (originalGroups == null) {
+                originalGroups = onsets(notes);
+                candidate = new ArrayList<>(notes);
+            }
+            for (int i : members) candidate.set(i, notes.get(i).withTupletRatio(7, 6));
             double before =
                     staffClock(originalGroups, notes, first, first.staffIndex(), notes.size());
             double after =
-                    staffClock(
-                            onsets(candidate),
-                            candidate,
-                            first,
-                            first.staffIndex(),
-                            candidate.size());
+                    staffClock(originalGroups, candidate, first, first.staffIndex(), candidate.size());
             double expected = selected.quarterBeats();
-            if (Double.isFinite(before)
+            boolean approved = Double.isFinite(before)
                     && Double.isFinite(after)
                     && before < expected - .001
-                    && Math.abs(after - expected) < .001)
-                for (int i : members) result.set(i, candidate.get(i));
+                    && Math.abs(after - expected) < .001;
+            for (int i : members) {
+                if (approved) result.set(i, candidate.get(i));
+                candidate.set(i, notes.get(i));
+            }
         }
         return List.copyOf(result);
     }
 
     private static List<ScoreNoteEvent> beamedTuplets(
             List<ScoreNoteEvent> notes,
-            List<MeasureRegion> measures,
-            byte[] gray,
-            int width,
-            int height,
-            int divisor,
-            int virtualStart) {
-        return beamedTuplets(notes, measures, gray, width, height, divisor, virtualStart, false);
-    }
-
-    private static List<ScoreNoteEvent> beamedTuplets(
-            List<ScoreNoteEvent> notes,
+            List<Onset> groups,
             List<MeasureRegion> measures,
             byte[] gray,
             int width,
@@ -1289,7 +1313,6 @@ final class TripletRhythmDetector {
             int virtualStart,
             boolean rapidQuadruplets) {
         List<ScoreNoteEvent> result = new ArrayList<>(notes);
-        List<Onset> groups = onsets(notes);
         for (int i = 0; i + divisor - 1 < groups.size(); i++) {
             Onset firstGroup = groups.get(i);
             for (int index : firstGroup.indices()) {
@@ -1416,41 +1439,12 @@ final class TripletRhythmDetector {
                 for (Onset onset : run)
                     for (int at : onset.indices()) {
                         ScoreNoteEvent n = result.get(at);
-                        result.set(
-                                at,
-                                new ScoreNoteEvent(
-                                                n.measureIndex(),
-                                                n.positionInMeasure(),
-                                                n.staffStep(),
-                                                n.staffIndex(),
-                                                n.staffCount(),
-                                                n.pageY(),
-                                                n.tiedFromPrevious(),
-                                                n.augmentationDots(),
-                                                n.beamCount(),
-                                                n.writtenAccidental(),
-                                                n.unbeamedDurationBeats(),
-                                                divisor,
-                                                n.followingRestBeats(),
-                                                n.articulations(),
-                                                n.clefBottomDiatonic(),
-                                                n.crossStaffBeam(),
-                                                n.leadingRestBeats(),
-                                                n.compactOpening(),
-                                                n.octaveShift(),
-                                                n.boundaryTies())
-                                        .withStemDirection(n.stemDirection())
-                                        .withKind(n.kind())
-                                        .withVisualSize(n.visualSize())
-                                        .withTupletRatio(
-                                                divisor,
-                                                divisor == 2
-                                                        ? 3
-                                                        : divisor == 4
-                                                                ? (n.beamCount() >= 2 ? 6 : 3)
-                                                                : ScoreNoteEvent
-                                                                        .defaultTupletNormalNotes(
-                                                                                divisor)));
+                        int normal = switch (divisor) {
+                            case 2 -> 3;
+                            case 4 -> n.beamCount() >= 2 ? 6 : 3;
+                            default -> ScoreNoteEvent.defaultTupletNormalNotes(divisor);
+                        };
+                        result.set(at, n.withTupletRatio(divisor, normal));
                     }
             }
         }
@@ -1478,13 +1472,13 @@ final class TripletRhythmDetector {
     /** A non-binary ratio needs both printed membership and an independent complete staff clock. */
     private static List<ScoreNoteEvent> boundedQuintuplets(
             List<ScoreNoteEvent> notes,
+            List<Onset> groups,
             List<MeasureRegion> measures,
             byte[] gray,
             int width,
             int height,
             int virtualStart) {
         List<ScoreNoteEvent> result = new ArrayList<>(notes);
-        List<Onset> groups = onsets(notes);
         for (int i = 0; i + 5 < groups.size(); i++) {
             Onset opening = groups.get(i);
             for (int index : opening.indices()) {
@@ -1582,6 +1576,21 @@ final class TripletRhythmDetector {
         return result;
     }
 
+    private static int firstStaffOnset(
+            List<Onset> groups, List<ScoreNoteEvent> notes, int measure, int staff, int staffCount) {
+        int left = 0, right = groups.size();
+        while (left < right) {
+            int middle = (left + right) >>> 1;
+            var sample = notes.get(groups.get(middle).indices().get(0));
+            int order = Integer.compare(sample.measureIndex(), measure);
+            if (order == 0) order = Integer.compare(sample.staffIndex(), staff);
+            if (order == 0) order = Integer.compare(sample.staffCount(), staffCount);
+            if (order < 0) left = middle + 1;
+            else right = middle;
+        }
+        return left;
+    }
+
     /** Chords count once. Parallel durations and sustained voices cannot prove the other clock. */
     private static double staffClock(
             List<Onset> groups,
@@ -1596,13 +1605,18 @@ final class TripletRhythmDetector {
             ScoreNoteEvent rest = notes.get(index);
             if (rest.measureIndex() == first.measureIndex()
                     && rest.staffIndex() == staff
-                    && rest.staffCount() == first.staffCount()) explicitRests = true;
+                    && rest.staffCount() == first.staffCount()) {
+                explicitRests = true;
+                break;
+            }
         }
-        for (Onset onset : groups) {
+        int start = firstStaffOnset(groups, notes, first.measureIndex(), staff, first.staffCount());
+        for (int i = start; i < groups.size(); i++) {
+            Onset onset = groups.get(i);
             ScoreNoteEvent sample = notes.get(onset.indices().get(0));
             if (sample.measureIndex() != first.measureIndex()
                     || sample.staffIndex() != staff
-                    || sample.staffCount() != first.staffCount()) continue;
+                    || sample.staffCount() != first.staffCount()) break;
             double duration = Double.NaN, before = 0, after = 0;
             for (int index : onset.indices()) {
                 ScoreNoteEvent note = notes.get(index);
@@ -1628,6 +1642,7 @@ final class TripletRhythmDetector {
     /** Subdividing a tuplet slot changes its attack count, not its printed ratio. */
     private static List<ScoreNoteEvent> mixedBeamedTuplets(
             List<ScoreNoteEvent> notes,
+            List<Onset> groups,
             List<MeasureRegion> measures,
             byte[] gray,
             int width,
@@ -1635,7 +1650,6 @@ final class TripletRhythmDetector {
             int divisor,
             int virtualStart) {
         List<ScoreNoteEvent> result = new ArrayList<>(notes);
-        List<Onset> groups = onsets(notes);
         for (int i = 0; i < groups.size(); i++) {
             ScoreNoteEvent first = result.get(groups.get(i).indices().get(0));
             if (first.measureIndex() < 0
@@ -1769,30 +1783,7 @@ final class TripletRhythmDetector {
                         ScoreNoteEvent n = result.get(index);
                         result.set(
                                 index,
-                                new ScoreNoteEvent(
-                                                n.measureIndex(),
-                                                n.positionInMeasure(),
-                                                n.staffStep(),
-                                                n.staffIndex(),
-                                                n.staffCount(),
-                                                n.pageY(),
-                                                n.tiedFromPrevious(),
-                                                n.augmentationDots(),
-                                                n.beamCount(),
-                                                n.writtenAccidental(),
-                                                n.unbeamedDurationBeats(),
-                                                divisor,
-                                                n.followingRestBeats(),
-                                                n.articulations(),
-                                                n.clefBottomDiatonic(),
-                                                n.crossStaffBeam(),
-                                                n.leadingRestBeats(),
-                                                n.compactOpening(),
-                                                n.octaveShift(),
-                                                n.boundaryTies())
-                                        .withStemDirection(n.stemDirection())
-                                        .withKind(n.kind())
-                                        .withVisualSize(n.visualSize()));
+                                n.withTupletRatio(divisor, ScoreNoteEvent.defaultTupletNormalNotes(divisor)));
                     }
                 break;
             }
@@ -2933,6 +2924,9 @@ final class TripletRhythmDetector {
                 || width < 1
                 || height < 1
                 || gray.length != width * height) return notes;
+        var activeByStaff = new HashMap<MeasureStaff, List<ScoreNoteEvent>>();
+        for (var note : notes)
+            activeByStaff.computeIfAbsent(MeasureStaff.of(note), ignored -> new ArrayList<>()).add(note);
         List<ScoreNoteEvent> result = new ArrayList<>(notes);
         for (ScoreNoteEvent candidate : notes) {
             if (candidate.tiedFromPrevious()
@@ -2945,14 +2939,15 @@ final class TripletRhythmDetector {
                             (region.bottom() - region.top())
                                     * height
                                     / (8 * candidate.staffCount()));
+            var active = activeByStaff.get(MeasureStaff.of(candidate));
             List<ScoreNoteEvent> voice = new ArrayList<>();
-            for (ScoreNoteEvent n : result)
+            for (ScoreNoteEvent n : active)
                 if (n != candidate
-                        && sameVoice(n, candidate)
                         && !(Math.abs(n.positionInMeasure() - candidate.positionInMeasure())
                                         <= .018f
                                 && Math.abs(n.pageY() - candidate.pageY()) * height <= gap * 2.3f))
                     voice.add(n);
+            if (voice.size() < 2 || voice.size() == 2 && candidate.stemDirection() != 0) continue;
             List<Onset> groups = onsets(voice);
             float candidateX =
                     (region.left()
@@ -3016,6 +3011,7 @@ final class TripletRhythmDetector {
                     }
                 }
                 if (printedNumeral) {
+                    active.remove(candidate);
                     result.remove(candidate);
                     continue;
                 }
@@ -3051,11 +3047,12 @@ final class TripletRhythmDetector {
                                     candidateX,
                                     candidateY)
                             != null) {
+                        active.remove(candidate);
                         result.remove(candidate);
                         break;
                     }
                 }
-                if (!result.contains(candidate)) break;
+                if (!active.contains(candidate)) break;
             }
         }
         return List.copyOf(result);
@@ -3081,31 +3078,6 @@ final class TripletRhythmDetector {
     }
 
     private record Glyph(int left, int top, int right, int bottom) {}
-
-    private static boolean hasPrintedThree(
-            byte[] gray,
-            int width,
-            int height,
-            float firstX,
-            float lastX,
-            float firstY,
-            float lastY,
-            float gap,
-            boolean shortNotes) {
-        return findPrintedThree(
-                        gray,
-                        width,
-                        height,
-                        firstX,
-                        lastX,
-                        firstY,
-                        lastY,
-                        gap,
-                        shortNotes,
-                        Float.NaN,
-                        Float.NaN)
-                != null;
-    }
 
     private static Glyph findPrintedThree(
             byte[] gray,
