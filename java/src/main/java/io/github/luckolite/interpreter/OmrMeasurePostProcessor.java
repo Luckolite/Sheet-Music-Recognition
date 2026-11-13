@@ -3454,26 +3454,31 @@ final class OmrMeasurePostProcessor {
             byte[] gray, int width, int centerX, int top, int bottom, float gap) {
         int radius = Math.max(1, Math.round(gap * .16f));
         int edgeBand = Math.max(2, Math.round(gap * .42f));
+        int inkStart = Math.max(0, centerX - radius);
+        int inkEnd = Math.min(width, centerX + radius + 1);
+        int flank = Math.max(radius + 2, Math.round(gap * .85f));
+        int leftStart = Math.max(0, centerX - flank);
+        int leftEnd = centerX - radius;
+        int rightStart = centerX + radius + 1;
+        int rightEnd = Math.min(width, centerX + flank + 1);
+        if (leftStart >= leftEnd || rightStart >= rightEnd) return false;
+
+        int blankLimit = Math.max(1, Math.round(gap * .18f));
         int rows = bottom - top + 1, darkRows = 0, longest = 0, run = 0, blanks = 0;
+        float minimumDarkRows = rows * .66f;
+        float minimumRun = rows * .72f;
         boolean touchesTop = false, touchesBottom = false;
         for (int y = top; y <= bottom; y++) {
+            if (!touchesTop && y > top + edgeBand) return false;
+            if (darkRows + (bottom - y + 1) < minimumDarkRows) return false;
+            int row = y * width;
             int ink = 255;
-            for (int x = Math.max(0, centerX - radius);
-                    x < Math.min(width, centerX + radius + 1);
-                    x++) ink = Math.min(ink, gray[y * width + x] & 0xff);
-            // A colored/scanned background can be darker than the absolute ink threshold for
-            // the entire page. A connector must also be a narrow stroke with lighter paper on
-            // BOTH sides, not merely a dark column through otherwise unconnected systems.
-            int leftPaper = 0, rightPaper = 0;
-            int flank = Math.max(radius + 2, Math.round(gap * .85f));
-            for (int offset = radius + 1; offset <= flank; offset++) {
-                if (centerX - offset >= 0)
-                    leftPaper = Math.max(leftPaper, gray[y * width + centerX - offset] & 0xff);
-                if (centerX + offset < width)
-                    rightPaper = Math.max(rightPaper, gray[y * width + centerX + offset] & 0xff);
-            }
-            boolean dark =
-                    ink <= RAW_BARLINE_DARK && leftPaper - ink >= 24 && rightPaper - ink >= 24;
+            for (int x = inkStart; x < inkEnd && ink > 0; x++)
+                ink = Math.min(ink, gray[row + x] & 0xff);
+            // On a shaded page the stroke still needs lighter paper on both sides.
+            boolean dark = ink <= RAW_BARLINE_DARK
+                    && hasLightPixel(gray, row + leftStart, row + leftEnd, ink + 24)
+                    && hasLightPixel(gray, row + rightStart, row + rightEnd, ink + 24);
             if (dark) {
                 darkRows++;
                 run += blanks + 1;
@@ -3481,12 +3486,21 @@ final class OmrMeasurePostProcessor {
                 longest = Math.max(longest, run);
                 if (y <= top + edgeBand) touchesTop = true;
                 if (y >= bottom - edgeBand) touchesBottom = true;
-            } else if (++blanks > Math.max(1, Math.round(gap * .18f))) {
+                if (touchesTop && touchesBottom && darkRows >= minimumDarkRows && longest >= minimumRun)
+                    return true;
+            } else if (++blanks > blankLimit) {
                 run = 0;
                 blanks = 0;
             }
         }
-        return touchesTop && touchesBottom && darkRows >= rows * .66f && longest >= rows * .72f;
+        return false;
+    }
+
+    private static boolean hasLightPixel(byte[] gray, int start, int end, int minimum) {
+        for (int i = start; i < end; i++) {
+            if ((gray[i] & 0xff) >= minimum) return true;
+        }
+        return false;
     }
 
     /** A barline can be faint on only one stave of a grand staff. Once the staves are known to

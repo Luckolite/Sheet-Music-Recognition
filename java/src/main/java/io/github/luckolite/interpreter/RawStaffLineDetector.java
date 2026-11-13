@@ -5,7 +5,9 @@ package io.github.luckolite.interpreter;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /** Recovers long five-line staffs directly from page pixels when the semantic mask is incomplete. */
 final class RawStaffLineDetector {
@@ -28,9 +30,10 @@ final class RawStaffLineDetector {
     }
 
     private record Candidate(int[] rows, float gap, float score) {}
+    private record RuleProbe(int row, int flank, int minimumRun) {}
 
     static List<StaffLines> detect(byte[] gray, int width, int height) {
-        if (gray == null || width <= 0 || height <= 0 || gray.length != width * height)
+        if (gray == null || width <= 0 || height <= 0 || gray.length != (long) width * height)
             return List.of();
 
         int[] rowStrength = new int[height];
@@ -167,10 +170,10 @@ final class RawStaffLineDetector {
     private static void rejectUnsupportedAliases(
             List<StaffLines> staffs, byte[] gray, int width, int height) {
         if (gray == null || gray.length != (long) width * height) return;
+        var evidence = new AliasEvidence(gray, width, height);
         int proved = 0, first = height, last = -1;
         for (var staff : staffs)
-            if (printedRuleCount(new Candidate(staff.rows(), staff.gap(), 0), gray, width, height)
-                    >= 4) {
+            if (evidence.darkRules(staff) >= 4) {
                 proved++;
                 first = Math.min(first, staff.top());
                 last = Math.max(last, staff.bottom());
@@ -180,9 +183,7 @@ final class RawStaffLineDetector {
         if (proved < 2) {
             int rawProved = 0, rawFirst = height, rawLast = -1;
             for (var staff : detect(gray, width, height)) {
-                if (printedRuleCount(
-                                new Candidate(staff.rows(), staff.gap(), 0), gray, width, height)
-                        < 4) continue;
+                if (evidence.darkRules(staff) < 4) continue;
                 rawProved++;
                 rawFirst = Math.min(rawFirst, staff.top());
                 rawLast = Math.max(rawLast, staff.bottom());
@@ -194,36 +195,17 @@ final class RawStaffLineDetector {
             }
         }
         if (proved < 2) return;
-        rejectIrregularInteriorAliases(staffs, gray, width, height);
-        rejectUnsupportedInteriorTexture(staffs, gray, width, height);
+        rejectIrregularInteriorAliases(staffs, evidence);
+        rejectUnsupportedInteriorTexture(staffs, evidence);
         final int firstPrinted = first, lastPrinted = last;
         // Interior gaps may contain faint parts; this rejection only handles outer texture.
         staffs.removeIf(
-                staff ->
-                        (staff.bottom() < firstPrinted || staff.top() > lastPrinted)
-                                && (printedRuleCount(
-                                                        new Candidate(staff.rows(), staff.gap(), 0),
-                                                        gray,
-                                                        width,
-                                                        height,
-                                                        230)
-                                                == 0
-                                        || printedRuleCount(
-                                                                new Candidate(
-                                                                        staff.rows(),
-                                                                        staff.gap(),
-                                                                        0),
-                                                                gray,
-                                                                width,
-                                                                height,
-                                                                230)
-                                                        <= 2
-                                                && ConvergingStaffStrokes.matches(
-                                                        gray,
-                                                        width,
-                                                        height,
-                                                        staff.rows(),
-                                                        staff.gap()))
+                staff -> {
+                    if (staff.bottom() >= firstPrinted && staff.top() <= lastPrinted) return false;
+                    int rules = evidence.paleRules(staff);
+                    return (rules == 0
+                                    || rules <= 2 && ConvergingStaffStrokes.matches(
+                                            gray, width, height, staff.rows(), staff.gap()))
                                 && !hasLocalContrastedRule(staff, gray, width, height)
                                 && StaffPitchTrack.detectForMeasures(
                                                 gray,
@@ -232,7 +214,8 @@ final class RawStaffLineDetector {
                                                 staff.top(),
                                                 staff.bottom(),
                                                 staff.gap())
-                                        == null);
+                                        == null;
+                });
     }
 
     /** Apply the existing printed-rule/texture proof to the regular frame emitted downstream. */
@@ -253,44 +236,32 @@ final class RawStaffLineDetector {
                 || above.bottom() >= candidate.top()
                 || below.top() <= candidate.bottom()) return false;
         var frames = new ArrayList<>(List.of(above, candidate, below));
-        rejectUnsupportedInteriorTexture(frames, gray, width, height);
+        rejectUnsupportedInteriorTexture(frames, new AliasEvidence(gray, width, height));
         return !frames.contains(candidate);
     }
 
     /** Multiple texture groups can sit between real systems; each needs its own printed support. */
     private static void rejectUnsupportedInteriorTexture(
-            List<StaffLines> staffs, byte[] gray, int width, int height) {
-        var proved = new ArrayList<StaffLines>();
-        for (var staff : staffs)
-            if (printedRuleCount(
-                                    new Candidate(staff.rows(), staff.gap(), 0),
-                                    gray,
-                                    width,
-                                    height,
-                                    230)
-                            >= 4
-                    && hasFiveParallelLocalRules(staff, gray, width, height)) proved.add(staff);
-        if (proved.size() < 2) return;
+            List<StaffLines> staffs, AliasEvidence evidence) {
+        if (staffs.size() < 3) return;
+        byte[] gray = evidence.gray;
+        int width = evidence.width, height = evidence.height;
+        int firstProofBottom = height, lastProofTop = -1;
+        for (var staff : staffs) {
+            if (evidence.paleRules(staff) >= 4 && evidence.parallelRules(staff)) {
+                firstProofBottom = Math.min(firstProofBottom, staff.bottom());
+                lastProofTop = Math.max(lastProofTop, staff.top());
+            }
+        }
+        if (firstProofBottom >= lastProofTop) return;
+        int upperBoundary = firstProofBottom, lowerBoundary = lastProofTop;
         staffs.removeIf(
-                staff -> {
-                    boolean above = false, below = false;
-                    for (var proof : proved) {
-                        above |= proof.bottom() < staff.top();
-                        below |= proof.top() > staff.bottom();
-                    }
-                    if (!above
-                            || !below
-                            || proved.contains(staff)
-                            || !hasBackgroundTexture(staff, gray, width, height)) return false;
-                    return printedRuleCount(
-                                            new Candidate(staff.rows(), staff.gap(), 0),
-                                            gray,
-                                            width,
-                                            height,
-                                            230)
-                                    <= 1
+                staff -> staff.top() > upperBoundary
+                            && staff.bottom() < lowerBoundary
+                            && evidence.paleRules(staff) <= 1
+                            && hasBackgroundTexture(staff, gray, width, height)
                             && !hasLocalContrastedRule(staff, gray, width, height)
-                            && !hasFiveParallelLocalRules(staff, gray, width, height)
+                            && !evidence.parallelRules(staff)
                             && StaffPitchTrack.detectForMeasures(
                                             gray,
                                             width,
@@ -298,34 +269,44 @@ final class RawStaffLineDetector {
                                             staff.top(),
                                             staff.bottom(),
                                             staff.gap())
-                                    == null;
-                });
+                                    == null);
     }
 
     /** Distributed local variation supplies positive image-texture evidence, not just missing rules. */
     private static boolean hasBackgroundTexture(
             StaffLines staff, byte[] gray, int width, int height) {
-        int size = Math.max(4, Math.round(staff.gap())), total = 0, textured = 0;
-        for (int y = Math.max(0, staff.top()); y <= staff.bottom() && y + size <= height; y += size)
-            for (int x = 0; x + size <= width; x += size * 2) {
+        int size = Math.max(4, Math.round(staff.gap()));
+        int top = Math.max(0, staff.top()), lastY = Math.min(staff.bottom(), height - size);
+        if (top > lastY || size > width) return false;
+        int stride = size <= width / 2 ? size * 2 : width;
+        int total = (1 + (lastY - top) / size) * (1 + (width - size) / stride);
+        int required = Math.max(16, (int) Math.ceil(total * .2));
+        if (total < required) return false;
+        int count = size * size, remaining = total, textured = 0;
+        for (int y = top; y <= lastY; y += size)
+            for (int x = 0; x <= width - size; x += stride) {
                 long sum = 0, squares = 0;
-                int count = size * size;
-                for (int yy = y; yy < y + size; yy++)
-                    for (int xx = x; xx < x + size; xx++) {
-                        int value = gray[yy * width + xx] & 255;
+                for (int yy = y; yy < y + size; yy++) {
+                    int start = yy * width + x;
+                    for (int p = start, end = start + size; p < end; p++) {
+                        int value = gray[p] & 255;
                         sum += value;
                         squares += (long) value * value;
                     }
+                }
                 double mean = sum / (double) count;
-                if (squares / (double) count - mean * mean > 25) textured++;
-                total++;
+                if (squares / (double) count - mean * mean > 25 && ++textured >= required)
+                    return true;
+                if (textured + --remaining < required) return false;
             }
-        return textured >= 16 && textured >= total * .2;
+        return false;
     }
 
     /** Interior semantic texture must contradict both neighboring printed scales before rejection. */
     private static void rejectIrregularInteriorAliases(
-            List<StaffLines> staffs, byte[] gray, int width, int height) {
+            List<StaffLines> staffs, AliasEvidence evidence) {
+        byte[] gray = evidence.gray;
+        int width = evidence.width, height = evidence.height;
         var original = new ArrayList<>(staffs);
         for (int i = 1; i + 1 < original.size(); i++) {
             var a = original.get(i - 1);
@@ -339,16 +320,44 @@ final class RawStaffLineDetector {
                 largest = Math.max(largest, delta);
             }
             if (smallest >= b.gap() * .7f || largest <= b.gap() * 1.2f) continue;
-            if (printedRuleCount(new Candidate(a.rows(), a.gap(), 0), gray, width, height) < 4
-                    || printedRuleCount(new Candidate(c.rows(), c.gap(), 0), gray, width, height)
-                            < 4
-                    || printedRuleCount(
-                                    new Candidate(b.rows(), b.gap(), 0), gray, width, height, 230)
-                            > 0) continue;
+            if (evidence.darkRules(a) < 4 || evidence.darkRules(c) < 4
+                    || evidence.paleRules(b) > 0) continue;
             if (StaffPitchTrack.detectForMeasures(gray, width, height, b.top(), b.bottom(), b.gap())
                             != null
-                    || hasFiveParallelLocalRules(b, gray, width, height)) continue;
+                    || evidence.parallelRules(b)) continue;
             staffs.remove(b);
+        }
+    }
+
+    private static final class AliasEvidence {
+        final byte[] gray;
+        final int width, height;
+        private final Map<StaffLines, Integer> dark = new HashMap<>();
+        private final Map<StaffLines, Integer> pale = new HashMap<>();
+        private final Map<StaffLines, Boolean> parallel = new HashMap<>();
+
+        AliasEvidence(byte[] gray, int width, int height) {
+            this.gray = gray;
+            this.width = width;
+            this.height = height;
+        }
+
+        int darkRules(StaffLines staff) {
+            return dark.computeIfAbsent(staff, key -> countRules(key, DARK));
+        }
+
+        int paleRules(StaffLines staff) {
+            return pale.computeIfAbsent(staff, key -> countRules(key, 230));
+        }
+
+        boolean parallelRules(StaffLines staff) {
+            return parallel.computeIfAbsent(
+                    staff, key -> hasFiveParallelLocalRules(key, gray, width, height));
+        }
+
+        private int countRules(StaffLines staff, int limit) {
+            return printedRuleCount(new Candidate(staff.rows(), staff.gap(), 0),
+                    gray, width, height, limit);
         }
     }
 
@@ -359,16 +368,19 @@ final class RawStaffLineDetector {
                 radius = Math.max(1, Math.round(staff.gap() * .15f));
         int flank = Math.max(2, Math.round(staff.gap() * .35f)),
                 needed = Math.max(12, Math.round(staff.gap() * 4));
+        int[] firstRows = new int[5], lastRows = new int[5];
         for (int shift = -phase; shift <= phase; shift++) {
+            for (int line = 0; line < 5; line++) {
+                int center = Math.round(staff.top() + shift + line * staff.gap());
+                firstRows[line] = Math.max(flank, center - radius);
+                lastRows[line] = Math.min(height - flank - 1, center + radius);
+            }
             int run = 0;
             for (int x = 0; x < width; x++) {
                 boolean all = true;
                 for (int line = 0; line < 5; line++) {
-                    int center = Math.round(staff.top() + shift + line * staff.gap());
                     boolean hit = false;
-                    for (int y = Math.max(flank, center - radius);
-                            y <= Math.min(height - flank - 1, center + radius);
-                            y++) {
+                    for (int y = firstRows[line]; y <= lastRows[line]; y++) {
                         int value = gray[y * width + x] & 255;
                         if ((gray[(y - flank) * width + x] & 255) >= value + 4
                                 && (gray[(y + flank) * width + x] & 255) >= value + 4) {
@@ -393,30 +405,39 @@ final class RawStaffLineDetector {
             StaffLines staff, byte[] gray, int width, int height) {
         int radius = Math.max(1, Math.round(staff.gap() * .35f)),
                 flank = Math.max(2, Math.round(staff.gap() * .35f));
-        int[] hits = new int[width];
-        for (int row : staff.rows())
-            for (int x = 0; x < width; x++) {
-                for (int y = Math.max(flank, row - radius);
-                        y <= Math.min(height - flank - 1, row + radius);
-                        y++) {
+        int[] rows = staff.rows();
+        int[] starts = new int[rows.length], ends = new int[rows.length];
+        for (int i = 0; i < rows.length; i++) {
+            starts[i] = Math.max(flank, rows[i] - radius);
+            ends[i] = Math.min(height - flank - 1, rows[i] + radius);
+        }
+        int minimumCount = Math.max(24, Math.round(staff.gap() * 4));
+        int minimumRunThree = Math.max(12, Math.round(staff.gap() * 8));
+        int minimumRunFour = Math.max(12, Math.round(staff.gap() * 3));
+        int countThree = 0, runThree = 0, countFour = 0, runFour = 0;
+        boolean hasRunThree = false, hasRunFour = false;
+        for (int x = 0; x < width; x++) {
+            int hits = 0;
+            for (int i = 0; i < rows.length && hits + rows.length - i >= 3; i++) {
+                for (int y = starts[i]; y <= ends[i]; y++) {
                     int value = gray[y * width + x] & 255;
                     if ((gray[(y - flank) * width + x] & 255) >= value + 4
                             && (gray[(y + flank) * width + x] & 255) >= value + 4) {
-                        hits[x]++;
+                        hits++;
                         break;
                     }
                 }
             }
-        for (int minimum : new int[] {3, 4}) {
-            int count = 0, run = 0, longest = 0;
-            for (int n : hits)
-                if (n >= minimum) {
-                    count++;
-                    longest = Math.max(longest, ++run);
-                } else run = 0;
-            if (count >= Math.max(24, Math.round(staff.gap() * 4))
-                    && longest >= Math.max(12, Math.round(staff.gap() * (minimum == 3 ? 8 : 3))))
-                return true;
+            if (hits >= 3) {
+                countThree++;
+                if (++runThree >= minimumRunThree) hasRunThree = true;
+                if (countThree >= minimumCount && hasRunThree) return true;
+            } else runThree = 0;
+            if (hits >= 4) {
+                countFour++;
+                if (++runFour >= minimumRunFour) hasRunFour = true;
+                if (countFour >= minimumCount && hasRunFour) return true;
+            } else runFour = 0;
         }
         return false;
     }
@@ -479,12 +500,12 @@ final class RawStaffLineDetector {
                 (quarterBudget == null || quarterBudget.allocate(1, 256)
                         ? new ArrayList<>()
                         : null);
+        Map<RuleProbe, Boolean> ruleEvidence = gray == null ? null : new HashMap<>();
         {
             if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 64);
             for (Candidate candidate : candidates) {
                 if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
 
-                if (gray != null && !hasPrintedRules(candidate, gray, width, height)) continue;
                 boolean overlaps = false;
                 {
                     if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 64);
@@ -500,6 +521,8 @@ final class RawStaffLineDetector {
                     }
                 }
 
+                if (!overlaps && gray != null
+                        && !hasPrintedRules(candidate, gray, width, height, ruleEvidence)) continue;
                 if (!overlaps)
                     FaintQuarterRestInk.add(
                             quarterBudget,
@@ -524,12 +547,23 @@ final class RawStaffLineDetector {
                 : null);
     }
 
-    /** Shadows can form periodic dark projection peaks without any thin printed rules.
-     * Validate before resolving overlaps so an invalid high-scoring group cannot hide a staff.
-     * Partial support is sufficient when a beam obscures the middle rules. */
+    /** Shadows can form periodic dark projection peaks without any thin printed rules. */
     private static boolean hasPrintedRules(
-            Candidate candidate, byte[] gray, int width, int height) {
-        return printedRuleCount(candidate, gray, width, height) == 5;
+            Candidate candidate, byte[] gray, int width, int height,
+            Map<RuleProbe, Boolean> evidence) {
+        int flank = Math.max(2, Math.round(candidate.gap() * .32f));
+        int minimum = Math.max(24, Math.round(width * .12f));
+        int minimumRun = Math.max(12, Math.round(candidate.gap() * 3));
+        for (int row : candidate.rows()) {
+            var probe = new RuleProbe(row, flank, minimumRun);
+            Boolean supported = evidence.get(probe);
+            if (supported == null) {
+                supported = printedRuleAt(gray, width, height, row, flank, minimum, minimumRun, DARK);
+                if (evidence.size() < 4096) evidence.put(probe, supported);
+            }
+            if (!supported) return false;
+        }
+        return true;
     }
 
     private static int printedRuleCount(Candidate candidate, byte[] gray, int width, int height) {
@@ -541,24 +575,32 @@ final class RawStaffLineDetector {
         int supported = 0;
         int probe = Math.max(2, Math.round(candidate.gap() * .32f));
         int minimum = Math.max(24, Math.round(width * .12f));
-        for (int y : candidate.rows()) {
-            if (y < probe || y >= height - probe) continue;
-            int count = 0, run = 0, longest = 0;
-            for (int x = 0; x < width; x++) {
-                int ink = gray[y * width + x] & 255;
-                if (ink <= inkLimit
-                        && (gray[(y - probe) * width + x] & 255) >= ink + 12
-                        && (gray[(y + probe) * width + x] & 255) >= ink + 12) {
-                    count++;
-                    longest = Math.max(longest, ++run);
-                } else run = 0;
-            }
-            // Text baselines have plenty of thin ink, but each glyph interrupts the rule.
-            // Require a short continuous segment as well as aggregate page-wide support.
-            if (count >= minimum && longest >= Math.max(12, Math.round(candidate.gap() * 3)))
+        int minimumRun = Math.max(12, Math.round(candidate.gap() * 3));
+        for (int y : candidate.rows())
+            if (printedRuleAt(gray, width, height, y, probe, minimum, minimumRun, inkLimit))
                 supported++;
-        }
         return supported;
+    }
+
+    private static boolean printedRuleAt(
+            byte[] gray, int width, int height, int y, int probe,
+            int minimum, int minimumRun, int inkLimit) {
+        if (y < probe || y >= height - probe) return false;
+        int row = y * width, above = (y - probe) * width, below = (y + probe) * width;
+        int count = 0, run = 0;
+        boolean continuous = false;
+        for (int x = 0; x < width; x++) {
+            int ink = gray[row + x] & 255;
+            if (ink <= inkLimit
+                    && (gray[above + x] & 255) >= ink + 12
+                    && (gray[below + x] & 255) >= ink + 12) {
+                count++;
+                if (++run >= minimumRun) continuous = true;
+                // Require both a continuous segment and aggregate page-wide support.
+                if (count >= minimum && continuous) return true;
+            } else run = 0;
+        }
+        return false;
     }
 
     /**
@@ -659,28 +701,48 @@ final class RawStaffLineDetector {
                             ? staffEdge
                             : leftEdge(lower, gray, width, height);
             staffEdge = upper == staff ? upperEdge : lowerEdge;
-            for (int edge : new int[] {upperEdge, lowerEdge}) {
-                if (edge < 0) continue;
-                for (int x = Math.max(0, edge - radius);
-                        x <= Math.min(width - 1, edge + radius);
-                        x++)
-                    if (OmrMeasurePostProcessor.verticalRuleAt(gray, width, x, top, bottom, gap))
+            int firstStart = Math.max(0, upperEdge - radius);
+            int firstEnd = Math.min(width - 1, upperEdge + radius);
+            if (upperEdge >= 0
+                    && hasConnector(gray, width, firstStart, firstEnd, top, bottom, gap)) return true;
+            if (lowerEdge >= 0) {
+                int secondStart = Math.max(0, lowerEdge - radius);
+                int secondEnd = Math.min(width - 1, lowerEdge + radius);
+                if (upperEdge < 0) {
+                    if (hasConnector(gray, width, secondStart, secondEnd, top, bottom, gap))
                         return true;
+                } else if (hasConnector(gray, width, secondStart, Math.min(secondEnd, firstStart - 1),
+                                top, bottom, gap)
+                        || hasConnector(gray, width, Math.max(secondStart, firstEnd + 1), secondEnd,
+                                top, bottom, gap)) return true;
             }
         }
         return false;
     }
 
+    private static boolean hasConnector(
+            byte[] gray, int width, int start, int end, int top, int bottom, float gap) {
+        for (int x = start; x <= end; x++)
+            if (OmrMeasurePostProcessor.verticalRuleAt(gray, width, x, top, bottom, gap)) return true;
+        return false;
+    }
+
     private static int leftEdge(StaffLines staff, byte[] gray, int width, int height) {
+        int[] rows = staff.rows();
+        int[] starts = new int[rows.length], ends = new int[rows.length];
+        for (int i = 0; i < rows.length; i++) {
+            starts[i] = Math.max(0, rows[i] - 1) * width;
+            ends[i] = Math.min(height - 1, rows[i] + 1) * width;
+        }
         for (int x = 0; x < width; x++) {
             int lines = 0;
-            for (int row : staff.rows()) {
-                boolean ink = false;
-                for (int y = Math.max(0, row - 1); y <= Math.min(height - 1, row + 1); y++)
-                    if ((gray[y * width + x] & 255) <= DARK) ink = true;
-                if (ink) lines++;
+            for (int i = 0; i < rows.length && lines + rows.length - i >= 4; i++) {
+                for (int row = starts[i]; row <= ends[i]; row += width) {
+                    if ((gray[row + x] & 255) > DARK) continue;
+                    if (++lines == 4) return x;
+                    break;
+                }
             }
-            if (lines >= 4) return x;
         }
         return -1;
     }
@@ -769,6 +831,7 @@ final class RawStaffLineDetector {
                         ? new ArrayList<>()
                         : null);
         float maximumGap = Math.max(40f, height * .035f);
+        int[] scratchRows = quarterBudget == null && peaks.size() >= 5 ? new int[5] : null;
         {
             if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
             for (int first = 0; first + 4 < peaks.size(); first++) {
@@ -787,12 +850,15 @@ final class RawStaffLineDetector {
 
                         float tolerance = Math.max(2f, gap * .24f);
                         int[] rows =
-                                (quarterBudget == null
-                                                || quarterBudget.allocate(
-                                                        (Math.max(0L, (long) (5))) + 1,
-                                                        32L * 1 + 8L * (Math.max(0L, (long) (5))))
+                                quarterBudget == null
+                                        ? scratchRows
+                                        : (quarterBudget.allocate(6, 72)
                                         ? new int[] {top, -1, -1, -1, bottom}
                                         : null);
+                        if (quarterBudget == null) {
+                            rows[0] = top;
+                            rows[4] = bottom;
+                        }
                         float error = 0f;
                         int previousIndex = first;
                         boolean complete = true;
@@ -809,12 +875,18 @@ final class RawStaffLineDetector {
                                 {
                                     if (quarterBudget != null)
                                         FaintQuarterRestInk.charge(quarterBudget, 1, 0);
-                                    for (int index = previousIndex + 1; index < last; index++) {
+                                    int start = previousIndex + 1;
+                                    if (quarterBudget == null)
+                                        start = firstPeakInRange(peaks, start, last, expected, tolerance);
+                                    for (int index = start; index < last; index++) {
                                         if (quarterBudget != null)
                                             FaintQuarterRestInk.charge(quarterBudget, 1, 0);
 
                                         int row = peaks.get(index);
                                         float distance = Math.abs(row - expected);
+                                        if (quarterBudget == null && row > expected
+                                                && (distance > tolerance || distance > bestDistance))
+                                            break;
                                         if (distance > tolerance) continue;
                                         if (distance < bestDistance
                                                 || (distance == bestDistance
@@ -861,7 +933,7 @@ final class RawStaffLineDetector {
                                     quarterBudget,
                                     result,
                                     (quarterBudget == null || quarterBudget.allocate(1, 256)
-                                            ? new Candidate(rows, gap, score)
+                                            ? new Candidate(quarterBudget == null ? rows.clone() : rows, gap, score)
                                             : null));
                     }
                 }
@@ -869,5 +941,15 @@ final class RawStaffLineDetector {
         }
 
         return result;
+    }
+
+    private static int firstPeakInRange(
+            List<Integer> peaks, int start, int end, float expected, float tolerance) {
+        while (start < end) {
+            int middle = (start + end) >>> 1;
+            if (expected - peaks.get(middle) > tolerance) start = middle + 1;
+            else end = middle;
+        }
+        return start;
     }
 }
