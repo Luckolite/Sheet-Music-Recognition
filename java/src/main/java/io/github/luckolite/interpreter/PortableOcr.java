@@ -439,6 +439,7 @@ public final class PortableOcr {
         boolean[] mask = new boolean[mw * mh];
         int foreground = 0;
         int first = mask.length;
+        int scanEnd = 0;
         for (int y = 0; y < mh; y++) {
             if (Thread.currentThread().isInterrupted())
                 throw new java.util.concurrent.CancellationException();
@@ -446,6 +447,7 @@ public final class PortableOcr {
             if (row == null || row.length != mw)
                 throw new IllegalArgumentException("Ragged detection map");
             int offset = y * mw;
+            int previousForeground = foreground;
             for (int x = 0; x < mw; x++) {
                 // CPU sigmoid kernels can overshoot an endpoint by one ULP.
                 float probability = row[x];
@@ -458,12 +460,13 @@ public final class PortableOcr {
                     foreground++;
                 }
             }
+            if (foreground != previousForeground) scanEnd = offset + mw;
         }
         var result = new ArrayList<OcrText.Box>();
         if (foreground < 3) return result;
         // Each queued pixel is marked when added, so no component can exceed this count.
         int[] queue = new int[foreground];
-        for (int start = first; start < mask.length; start++)
+        for (int start = first; start < scanEnd; start++)
             if (mask[start]) {
                 int head = 0, tail = 1;
                 queue[0] = start;
