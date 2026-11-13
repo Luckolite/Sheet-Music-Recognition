@@ -90,12 +90,12 @@ public final class PortableOcr {
                                         gray, width, height, 0, 0, width, height, dw, dh, dw, true),
                         dw,
                         dh);
-        var boxes = new ArrayList<OcrText.Box>();
-        for (var region : regions(prediction, width, height))
-            boxes.addAll(
-                    gray == null
-                            ? splitStackedRows(argb, width, region)
-                            : splitStackedGrayRows(gray, width, region));
+        IntPredicate isInk = gray == null
+                ? index -> isColorInk(argb[index])
+                : index -> (gray[index] & 255) < 190;
+        var regions = regions(prediction, width, height);
+        var boxes = new ArrayList<OcrText.Box>(regions.size());
+        for (var region : regions) boxes.addAll(splitStackedRows(width, region, isInk));
         var lines = new ArrayList<OcrText.Line>();
         for (var box : boxes) {
             if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
@@ -133,23 +133,13 @@ public final class PortableOcr {
                             48);
             var decoded = OcrCtcDecoder.decode(probabilities, inference.dictionary(), 0);
             if (decoded.confidence() < .5f || decoded.text().isBlank()) continue;
-            var words = new ArrayList<OcrText.Element>();
-            for (var word : words(decoded, box, probabilities.length, rw, contentWidth)) {
-                var symbols = new ArrayList<OcrText.Symbol>();
-                for (var symbol : word.symbols())
-                    symbols.add(
-                            new OcrText.Symbol(
-                                    symbol.text(), inkBounds(argb, gray, width, symbol.box())));
-                words.add(
-                        new OcrText.Element(
-                                word.text(), inkBounds(argb, gray, width, word.box()), symbols));
-            }
+            var words = words(decoded, box, probabilities.length, rw, contentWidth, width, isInk);
             if (!words.isEmpty()) lines.add(new OcrText.Line(decoded.text(), box, words));
         }
         lines.sort(
                 Comparator.comparingInt((OcrText.Line l) -> l.box().top)
                         .thenComparingInt(l -> l.box().left));
-        var blocks = new ArrayList<OcrText.Block>();
+        var blocks = new ArrayList<OcrText.Block>(lines.size());
         var text = new StringBuilder();
         for (var line : lines) {
             if (text.length() > 0) text.append('\n');
@@ -336,10 +326,6 @@ public final class PortableOcr {
         return (((color >>> shift) & 255) * alpha + 255 * (255 - alpha)) / 255f;
     }
 
-    private static OcrText.Box inkBounds(int[] argb, byte[] gray, int width, OcrText.Box region) {
-        return gray == null ? inkBounds(argb, width, region) : inkBoundsGray(gray, width, region);
-    }
-
     static OcrText.Box inkBoundsGray(byte[] pixels, int width, OcrText.Box region) {
         return inkBounds(width, region, index -> (pixels[index] & 255) < 190);
     }
@@ -499,21 +485,23 @@ public final class PortableOcr {
             OcrText.Box line,
             int steps,
             int paddedWidth,
-            int contentWidth) {
+            int contentWidth,
+            int rasterWidth,
+            IntPredicate isInk) {
         var result = new ArrayList<OcrText.Element>();
         var symbols = new ArrayList<OcrText.Symbol>();
         var text = new StringBuilder();
         var tokens = decoded.tokens();
         double unit = (double) paddedWidth / contentWidth * line.width() / steps;
+        int wordLeft = 0, wordRight = 0;
         for (int i = 0; i <= tokens.size(); i++) {
             if (i == tokens.size() || tokens.get(i).text().isBlank()) {
                 if (!symbols.isEmpty()) {
-                    var first = symbols.get(0).box();
-                    var last = symbols.get(symbols.size() - 1).box();
+                    var wordBox = new OcrText.Box(wordLeft, line.top, wordRight, line.bottom);
                     result.add(
                             new OcrText.Element(
                                     text.toString(),
-                                    new OcrText.Box(first.left, line.top, last.right, line.bottom),
+                                    inkBounds(rasterWidth, wordBox, isInk),
                                     symbols));
                     symbols = new ArrayList<>();
                     text.setLength(0);
@@ -541,8 +529,10 @@ public final class PortableOcr {
                             line.left,
                             Math.min(line.right - 1, line.left + (int) Math.floor(begin * unit)));
             int r = Math.max(l + 1, Math.min(line.right, line.left + (int) Math.ceil(end * unit)));
-            symbols.add(
-                    new OcrText.Symbol(token.text(), new OcrText.Box(l, line.top, r, line.bottom)));
+            if (symbols.isEmpty()) wordLeft = l;
+            wordRight = r;
+            var symbolBox = new OcrText.Box(l, line.top, r, line.bottom);
+            symbols.add(new OcrText.Symbol(token.text(), inkBounds(rasterWidth, symbolBox, isInk)));
             text.append(token.text());
         }
         return result;
