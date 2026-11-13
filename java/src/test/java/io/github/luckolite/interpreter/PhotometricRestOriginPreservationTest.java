@@ -34,17 +34,8 @@ public class PhotometricRestOriginPreservationTest {
         }
     }
 
-    private static byte[] contrast(byte[] src) throws Exception {
-        Method m =
-                SixteenthRestDetector.class.getDeclaredMethod(
-                        "contrastedRestInk",
-                        byte[].class,
-                        int.class,
-                        int.class,
-                        List.class,
-                        int.class);
-        m.setAccessible(true);
-        return (byte[]) m.invoke(null, src, W, H, staffs(), 185);
+    private static byte[] contrast(byte[] src) {
+        return SixteenthRestDetector.contrastedRestInk(src, W, H, staffs().get(0).gap()).ordinary();
     }
 
     private static List<ScoreNoteEvent> rectify(

@@ -21,6 +21,8 @@ final class SixteenthRestDetector {
 
     record Detection(List<ScoreRestEvent> rests, List<RestDot> dots) {}
 
+    record ContrastViews(byte[] ordinary, byte[] faint) {}
+
     record InkDot(float x, float y) {}
 
     /** Optional accepted proposal bounds for one rectified view; recognition is unchanged. */
@@ -292,29 +294,19 @@ final class SixteenthRestDetector {
     }
 
     private static Detection mergeSupportedCore(Detection strong, Detection extra) {
-        List<ScoreRestEvent> rests = new ArrayList<>(strong.rests());
-        List<RestDot> dots = new ArrayList<>(strong.dots());
-        boolean added = false;
+        if (extra.rests().isEmpty()) return strong;
+        var byMeasure = restsByMeasure(strong.rests());
+        var extraDots = dotsByRest(extra.dots());
+        List<ScoreRestEvent> rests = null;
+        List<RestDot> dots = null;
         for (ScoreRestEvent rest : extra.rests()) {
-            boolean duplicate =
-                    rests.stream()
-                            .anyMatch(
-                                    old ->
-                                            old.measureIndex() == rest.measureIndex()
-                                                    && old.staffIndex() == rest.staffIndex()
-                                                    && old.staffCount() == rest.staffCount()
-                                                    && Math.abs(
-                                                                    old.positionInMeasure()
-                                                                            - rest
-                                                                                    .positionInMeasure())
-                                                            < .025f
-                                                    && Math.abs(old.pageY() - rest.pageY())
-                                                            < Math.max(
-                                                                    .001f,
-                                                                    Math.max(
-                                                                            old.pageHeight(),
-                                                                            rest.pageHeight())));
-            if (duplicate) continue;
+            var measure = byMeasure.computeIfAbsent(
+                    rest.measureIndex(), ignored -> new ArrayList<>());
+            if (firstRecoveryMatch(measure, rest, .001f) != null) continue;
+            if (rests == null) {
+                rests = new ArrayList<>(strong.rests());
+                dots = new ArrayList<>(strong.dots());
+            }
             // Stable insertion never sorts or reconstructs the released records, including
             // intentional voices.
             int at = 0;
@@ -324,10 +316,10 @@ final class SixteenthRestDetector {
                                     && rests.get(at).positionInMeasure()
                                             <= rest.positionInMeasure())) at++;
             rests.add(at, rest);
-            added = true;
-            for (RestDot dot : extra.dots()) if (dot.rest().equals(rest)) dots.add(dot);
+            measure.add(rest);
+            dots.addAll(extraDots.getOrDefault(rest, List.of()));
         }
-        return added ? new Detection(List.copyOf(rests), List.copyOf(dots)) : strong;
+        return rests == null ? strong : new Detection(List.copyOf(rests), List.copyOf(dots));
     }
 
     /** Ordinary standing plates only. These seeds do not bypass any original inspectOwned guard. */
@@ -532,24 +524,16 @@ final class SixteenthRestDetector {
                 candidates.addAll(curved.rests());
                 candidateDots.addAll(curved.dots());
             }
+        if (candidates.isEmpty()) return collected(baseline.rests(), baseline.dots());
+        var byMeasure = restsByMeasure(baseline.rests());
+        var dotsByCandidate = dotsByRest(candidateDots);
         List<ScoreRestEvent> combined = new ArrayList<>(baseline.rests());
         List<RestDot> dots = new ArrayList<>(baseline.dots());
         for (ScoreRestEvent rest : candidates) {
-            boolean duplicate = false;
-            for (ScoreRestEvent old : baseline.rests()) {
-                if (old.measureIndex() == rest.measureIndex()
-                        && old.staffIndex() == rest.staffIndex()
-                        && old.staffCount() == rest.staffCount()
-                        && Math.abs(old.positionInMeasure() - rest.positionInMeasure()) < .025f
-                        && Math.abs(old.pageY() - rest.pageY())
-                                < Math.max(.001f, Math.max(old.pageHeight(), rest.pageHeight()))) {
-                    duplicate = true;
-                    break;
-                }
-            }
-            if (!duplicate) {
+            var measure = byMeasure.getOrDefault(rest.measureIndex(), List.of());
+            if (firstRecoveryMatch(measure, rest, .001f) == null) {
                 combined.add(rest);
-                for (RestDot dot : candidateDots) if (dot.rest().equals(rest)) dots.add(dot);
+                dots.addAll(dotsByCandidate.getOrDefault(rest, List.of()));
             }
         }
         return collected(combined, dots);
@@ -597,13 +581,19 @@ final class SixteenthRestDetector {
             combined.addAll(joined);
             original = collected(combined, original.dots());
         }
-        byte[] contrasted = contrastedRestInk(gray, width, height, staffs);
-        var contrastedNotes =
-                RestFigureOrigins.photometricView(notes, gray, contrasted, width, height);
-        Detection additional =
-                contrasted == gray
-                        ? new Detection(List.of(), List.of())
-                        : detectWithDots(
+        float gap = medianStaffGap(staffs);
+        var contrast = staffs.isEmpty()
+                ? new ContrastViews(gray, gray)
+                : contrastedRestInk(gray, width, height, gap);
+        byte[] contrasted = contrast.ordinary();
+        Detection stable;
+        List<ScoreRestEvent> rests;
+        List<RestDot> dots;
+        if (contrasted != gray) {
+            var contrastedNotes =
+                    RestFigureOrigins.photometricView(notes, gray, contrasted, width, height);
+            Detection additional =
+                    detectWithDots(
                                 contrasted,
                                 width,
                                 height,
@@ -616,19 +606,17 @@ final class SixteenthRestDetector {
                                 null,
                                 null,
                                 counter);
-        List<ScoreRestEvent> rests = new ArrayList<>(original.rests());
-        rests.addAll(additional.rests());
-        List<RestDot> dots = new ArrayList<>(original.dots());
-        dots.addAll(additional.dots());
-        Detection stable = collected(rests, dots);
-        List<Float> gaps = new ArrayList<>();
-        for (Staff staff : staffs) gaps.add(staff.gap());
-        gaps.sort(Float::compare);
-        byte[] paper =
-                gaps.isEmpty()
-                        ? gray
-                        : RestPaperTone.normalize(gray, width, height, gaps.get(gaps.size() / 2));
-        if (paper != gray) {
+            rests = new ArrayList<>(original.rests());
+            rests.addAll(additional.rests());
+            dots = new ArrayList<>(original.dots());
+            dots.addAll(additional.dots());
+            stable = collected(rests, dots);
+        } else {
+            stable = collected(original.rests(), original.dots());
+        }
+        var paperEstimate = RestPaperTone.estimate(gray, width, height, gap);
+        if (paperEstimate != null) {
+            byte[] paper = paperEstimate.normalize(340f);
             var paperNotes = RestFigureOrigins.photometricView(notes, gray, paper, width, height);
             Detection isolated =
                     detectWithDots(
@@ -685,34 +673,24 @@ final class SixteenthRestDetector {
             isolated = new Detection(complete, completeDots);
             rests = new ArrayList<>(stable.rests());
             dots = new ArrayList<>(stable.dots());
+            var byMeasure = restsByMeasure(rests);
+            var isolatedDots = dotsByRest(isolated.dots());
             for (ScoreRestEvent rest : isolated.rests()) {
                 if (!seededOrdinaryRest(gray, width, height, measures, staffs, rest)
                         && !localSeeds.contains(rest)) continue;
                 if (continuedRecoveredTail(paper, width, height, measures, staffs, rest)) continue;
-                boolean duplicate = false;
-                for (ScoreRestEvent old : rests)
-                    if (old.measureIndex() == rest.measureIndex()
-                            && old.staffIndex() == rest.staffIndex()
-                            && old.staffCount() == rest.staffCount()
-                            && Math.abs(old.positionInMeasure() - rest.positionInMeasure()) < .025f
-                            && Math.abs(old.pageY() - rest.pageY())
-                                    < Math.max(old.pageHeight(), rest.pageHeight())) {
-                        duplicate = true;
-                        break;
-                    }
-                if (duplicate) continue;
+                var measure = byMeasure.computeIfAbsent(
+                        rest.measureIndex(), ignored -> new ArrayList<>());
+                if (firstRecoveryMatch(measure, rest, Float.NEGATIVE_INFINITY) != null) continue;
+                measure.add(rest);
                 rests.add(rest);
-                for (RestDot dot : isolated.dots()) if (dot.rest().equals(rest)) dots.add(dot);
+                dots.addAll(isolatedDots.getOrDefault(rest, List.of()));
             }
             stable = collected(rests, dots);
         }
-        for (float paperLevel : new float[] {220, 230, 250}) {
-            byte[] ordinaryPaper =
-                    gaps.isEmpty()
-                            ? gray
-                            : RestPaperTone.normalizeOrdinaryRestInk(
-                                    gray, width, height, gaps.get(gaps.size() / 2), paperLevel);
-            if (ordinaryPaper != gray) {
+        if (paperEstimate != null) {
+            for (float paperLevel : new float[] {220, 230, 250}) {
+                byte[] ordinaryPaper = paperEstimate.normalize(paperLevel);
                 var ordinaryNotes =
                         RestFigureOrigins.photometricView(
                                 notes, gray, ordinaryPaper, width, height);
@@ -732,6 +710,7 @@ final class SixteenthRestDetector {
                                 counter);
                 rests = new ArrayList<>(stable.rests());
                 dots = new ArrayList<>(stable.dots());
+                var ordinaryDots = dotsByRest(ordinary.dots());
                 for (ScoreRestEvent rest : ordinary.rests()) {
                     // Only a complete body in its printed ordinary phase can add silence.
                     // Keep the detector's note/flag owners and reject a continuing shaft.
@@ -741,7 +720,7 @@ final class SixteenthRestDetector {
                             || continuedRecoveredTail(
                                     ordinaryPaper, width, height, measures, staffs, rest)) continue;
                     rests.add(rest);
-                    for (RestDot dot : ordinary.dots()) if (dot.rest().equals(rest)) dots.add(dot);
+                    dots.addAll(ordinaryDots.getOrDefault(rest, List.of()));
                 }
                 if (paperLevel == 220)
                     rests.addAll(
@@ -756,7 +735,7 @@ final class SixteenthRestDetector {
                 stable = collected(rests, dots);
             }
         }
-        byte[] faint = contrastedRestInk(gray, width, height, staffs, 205);
+        byte[] faint = contrast.faint();
         if (faint == gray) return stable;
         var faintNotes = RestFigureOrigins.photometricView(notes, gray, faint, width, height);
         Detection recovered =
@@ -775,32 +754,55 @@ final class SixteenthRestDetector {
                         counter);
         rests = new ArrayList<>(stable.rests());
         dots = new ArrayList<>(stable.dots());
+        var byMeasure = restsByMeasure(rests);
+        var recoveredDots = dotsByRest(recovered.dots());
         for (ScoreRestEvent rest : recovered.rests()) {
             if (!seededOrdinaryRest(gray, width, height, measures, staffs, rest)) continue;
-            ScoreRestEvent duplicate = null;
-            for (ScoreRestEvent old : rests)
-                if (old.measureIndex() == rest.measureIndex()
-                        && old.staffIndex() == rest.staffIndex()
-                        && old.staffCount() == rest.staffCount()
-                        && Math.abs(old.positionInMeasure() - rest.positionInMeasure()) < .025f
-                        && Math.abs(old.pageY() - rest.pageY())
-                                < Math.max(old.pageHeight(), rest.pageHeight())) {
-                    duplicate = old;
-                    break;
-                }
+            var measure = byMeasure.computeIfAbsent(
+                    rest.measureIndex(), ignored -> new ArrayList<>());
+            ScoreRestEvent duplicate = firstRecoveryMatch(measure, rest, Float.NEGATIVE_INFINITY);
             if (duplicate != null) {
                 // A dark lower contour can resemble two rest bulbs before the pale
                 // zigzag is recovered. Prefer the proved full quarter only when it
                 // encloses that shorter reading; adjacent rests retain their identity.
                 if (!completeRecoveredQuarter(rest, duplicate)) continue;
                 rests.remove(duplicate);
-                ScoreRestEvent replaced = duplicate;
-                dots.removeIf(dot -> dot.rest().equals(replaced));
+                measure.remove(duplicate);
+                dots.removeIf(dot -> dot.rest().equals(duplicate));
             }
+            measure.add(rest);
             rests.add(rest);
-            for (RestDot dot : recovered.dots()) if (dot.rest().equals(rest)) dots.add(dot);
+            dots.addAll(recoveredDots.getOrDefault(rest, List.of()));
         }
         return collected(rests, dots);
+    }
+
+    private static java.util.Map<Integer, List<ScoreRestEvent>> restsByMeasure(
+            List<ScoreRestEvent> rests) {
+        var index = new java.util.HashMap<Integer, List<ScoreRestEvent>>();
+        for (ScoreRestEvent rest : rests)
+            index.computeIfAbsent(rest.measureIndex(), ignored -> new ArrayList<>()).add(rest);
+        return index;
+    }
+
+    private static ScoreRestEvent firstRecoveryMatch(
+            List<ScoreRestEvent> measure, ScoreRestEvent rest, float minimumHeight) {
+        for (ScoreRestEvent old : measure)
+            if (old.staffIndex() == rest.staffIndex()
+                    && old.staffCount() == rest.staffCount()
+                    && Math.abs(old.positionInMeasure() - rest.positionInMeasure()) < .025f
+                    && Math.abs(old.pageY() - rest.pageY())
+                            < Math.max(minimumHeight, Math.max(old.pageHeight(), rest.pageHeight())))
+                return old;
+        return null;
+    }
+
+    private static java.util.Map<ScoreRestEvent, List<RestDot>> dotsByRest(List<RestDot> dots) {
+        if (dots.isEmpty()) return java.util.Map.of();
+        var index = new java.util.HashMap<ScoreRestEvent, List<RestDot>>();
+        for (RestDot dot : dots)
+            index.computeIfAbsent(dot.rest(), ignored -> new ArrayList<>()).add(dot);
+        return index;
     }
 
     /**
@@ -819,19 +821,7 @@ final class SixteenthRestDetector {
         for (Staff staff : staffs) {
             int start = -1;
             for (int x = 0; x <= width; x++) {
-                float[] frame = x < width ? restFrame(staff, x) : new float[] {0, 0};
-                float gap = frame[1], middle = frame[0] - 2 * gap;
-                int dark = 0;
-                if (x < width
-                        && Float.isFinite(frame[0])
-                        && Float.isFinite(gap)
-                        && gap >= 4
-                        && gap <= height * .25f)
-                    for (int y = Math.round(middle - gap * .55f);
-                            y <= Math.round(middle - gap * .30f);
-                            y++)
-                        if (y >= 0 && y < height && (paper[y * width + x] & 255) < 170) dark++;
-                if (x < width && dark >= Math.max(3, Math.round(gap * .2f))) {
+                if (x < width && shadedHalfRestColumn(paper, width, height, staff, x)) {
                     if (start < 0) start = x;
                     continue;
                 }
@@ -839,8 +829,8 @@ final class SixteenthRestDetector {
                 int left = start, right = x - 1;
                 start = -1;
                 float center = (left + right) * .5f;
-                frame = restFrame(staff, center);
-                gap = frame[1];
+                float[] frame = restFrame(staff, center);
+                float gap = frame[1];
                 int[] body = sittingRectangle(paper, width, height, staff, left, right, frame);
                 if (body == null) continue;
                 float centerX = center / width, printedCenter = (frame[0] - 2 * gap) / height;
@@ -907,26 +897,56 @@ final class SixteenthRestDetector {
                 : staff.pitchTrack().at(x);
     }
 
-    private static int restPixel(
-            byte[] gray, int width, int height, Staff staff, int x, int y, float bottom) {
-        if (x < 0 || x >= width) return 255;
-        int sourceY = Math.round(y + restFrame(staff, x)[0] - bottom);
-        return sourceY < 0 || sourceY >= height ? 255 : gray[sourceY * width + x] & 255;
+    private static boolean shadedHalfRestColumn(
+            byte[] paper, int width, int height, Staff staff, int x) {
+        float bottom = staff.bottom(), gap = staff.gap();
+        if (staff.pitchTrack() != null) {
+            float[] frame = staff.pitchTrack().at(x);
+            bottom = frame[0];
+            gap = frame[1];
+        }
+        if (!Float.isFinite(bottom) || !Float.isFinite(gap) || gap < 4 || gap > height * .25f)
+            return false;
+        float middle = bottom - 2 * gap;
+        int first = Math.max(0, Math.round(middle - gap * .55f));
+        int last = Math.min(height - 1, Math.round(middle - gap * .30f));
+        int needed = Math.max(3, Math.round(gap * .2f));
+        for (int y = first, pixel = first * width + x;
+                needed <= last - y + 1; y++, pixel += width)
+            if ((paper[pixel] & 255) < 170 && --needed == 0) return true;
+        return false;
     }
 
-    private static int restRowInk(
-            byte[] gray,
-            int width,
-            int height,
-            Staff staff,
-            int left,
-            int right,
-            int y,
-            float bottom) {
-        int count = 0;
-        for (int x = left; x <= right; x++)
-            if (restPixel(gray, width, height, staff, x, y, bottom) < 170) count++;
-        return count;
+    private record RestRectangleInk(
+            byte[] gray, int width, int height, float bottom, float flatBottom,
+            int firstColumn, float[] sourceBottoms) {
+        private float sourceBottom(int x) {
+            return sourceBottoms == null ? flatBottom : sourceBottoms[x - firstColumn];
+        }
+
+        private int pixel(int x, int y, float sourceBottom) {
+            int sourceY = Math.round(y + sourceBottom - bottom);
+            return sourceY < 0 || sourceY >= height ? 255 : gray[sourceY * width + x] & 255;
+        }
+
+        int rowInk(int left, int right, int y) {
+            int count = 0;
+            for (int x = left; x <= right; x++)
+                if (pixel(x, y, sourceBottom(x)) < 170) count++;
+            return count;
+        }
+
+        boolean supportsRule(int y, int contrast, int first, int last, int needed) {
+            for (int x = first; needed <= last - x + 1; x++) {
+                float source = sourceBottom(x);
+                int ink = pixel(x, y, source);
+                if (ink <= 225
+                        && pixel(x, y - contrast, source) >= ink + 12
+                        && pixel(x, y + contrast, source) >= ink + 12
+                        && --needed == 0) return true;
+            }
+            return false;
+        }
     }
 
     private static int[] sittingRectangle(
@@ -941,61 +961,50 @@ final class SixteenthRestDetector {
                 || bodyWidth > gap * 1.6f) return null;
         int reach = Math.max(4, Math.round(gap * 2)), margin = Math.max(2, Math.round(gap * .25f));
         if (left - reach < 0 || right + reach >= width) return null;
+        int firstColumn = left - reach;
+        float[] sourceBottoms = null;
+        if (staff.pitchTrack() != null) {
+            sourceBottoms = new float[right + reach - firstColumn + 1];
+            for (int i = 0; i < sourceBottoms.length; i++)
+                sourceBottoms[i] = staff.pitchTrack().at(firstColumn + i)[0];
+        }
+        var ink = new RestRectangleInk(
+                gray, width, height, bottom, staff.bottom(), firstColumn, sourceBottoms);
         int contrast = Math.max(2, Math.round(gap * .32f)),
                 search = Math.max(1, Math.round(gap * .15f));
+        int needed = (int) Math.ceil((reach - margin) * .5f);
         for (int line = 0; line < 5; line++) {
             int expected = Math.round(bottom - (4 - line) * gap);
             boolean supported = false;
             for (int y = expected - search; y <= expected + search && !supported; y++) {
-                int a = 0, b = 0;
-                for (int x = left - reach; x < left - margin; x++) {
-                    int ink = restPixel(gray, width, height, staff, x, y, bottom);
-                    if (ink <= 225
-                            && restPixel(gray, width, height, staff, x, y - contrast, bottom)
-                                    >= ink + 12
-                            && restPixel(gray, width, height, staff, x, y + contrast, bottom)
-                                    >= ink + 12) a++;
-                }
-                for (int x = right + margin + 1; x <= right + reach; x++) {
-                    int ink = restPixel(gray, width, height, staff, x, y, bottom);
-                    if (ink <= 225
-                            && restPixel(gray, width, height, staff, x, y - contrast, bottom)
-                                    >= ink + 12
-                            && restPixel(gray, width, height, staff, x, y + contrast, bottom)
-                                    >= ink + 12) b++;
-                }
-                supported = a >= (reach - margin) * .5f && b >= (reach - margin) * .5f;
+                supported = ink.supportsRule(y, contrast, left - reach, left - margin - 1, needed)
+                        && ink.supportsRule(y, contrast, right + margin + 1, right + reach, needed);
             }
             if (!supported) return null;
         }
         int rule = Math.round(bottom - 2 * gap), first = rule - 1;
         while (first >= 0
                 && rule - first <= gap * .7f
-                && restRowInk(gray, width, height, staff, left, right, first, bottom)
-                        >= bodyWidth * .8f) first--;
+                && ink.rowInk(left, right, first) >= bodyWidth * .8f) first--;
         first++;
         int rows = rule - first;
         if (rows < Math.max(3, Math.round(gap * .25f))
                 || rows > gap * .65f
-                || restRowInk(gray, width, height, staff, left, right, first - 1, bottom)
-                        > bodyWidth * .8f
-                || restRowInk(gray, width, height, staff, left, right, first - 2, bottom)
-                        > bodyWidth * .25f) return null;
+                || ink.rowInk(left, right, first - 1) > bodyWidth * .8f
+                || ink.rowInk(left, right, first - 2) > bodyWidth * .25f) return null;
         int ruleEdge = Math.max(2, Math.round(gap * .2f));
         for (int y = first; y < rule - ruleEdge; y++)
-            if (restRowInk(gray, width, height, staff, left - margin, left - 1, y, bottom) > 1
-                    || restRowInk(gray, width, height, staff, right + 1, right + margin, y, bottom)
-                            > 1) return null;
-        int outside = 0;
-        for (int y = Math.round(bottom - 4 * gap + gap * .15f);
-                y <= Math.round(bottom + gap * .3f);
-                y++) {
+            if (ink.rowInk(left - margin, left - 1, y) > 1
+                    || ink.rowInk(right + 1, right + margin, y) > 1) return null;
+        int outside = 0, outsideLimit = Math.max(2, Math.round(gap * .2f));
+        int outsideEnd = Math.round(bottom + gap * .3f);
+        for (int y = Math.round(bottom - 4 * gap + gap * .15f); y <= outsideEnd; y++) {
             if (y >= first - 1 && y < rule) continue;
             float nearest = bottom + Math.round((y - bottom) / gap) * gap;
             if (Math.abs(y - nearest) <= ruleEdge) continue;
-            outside += restRowInk(gray, width, height, staff, left, right, y, bottom);
+            outside += ink.rowInk(left, right, y);
+            if (outside > outsideLimit) return null;
         }
-        if (outside > Math.max(2, Math.round(gap * .2f))) return null;
         return new int[] {first, rule - 1};
     }
 
@@ -1016,11 +1025,13 @@ final class SixteenthRestDetector {
         float last = (rest.pageY() + rest.pageHeight() * .5f) * height - 1;
         for (Staff staff : staffs) {
             if (staff.index() != rest.staffIndex() || staff.count() != rest.staffCount()) continue;
-            float[] frame =
-                    staff.pitchTrack() == null
-                            ? new float[] {staff.bottom(), staff.gap()}
-                            : staff.pitchTrack().at(x);
-            float bottom = frame[0], gap = frame[1], top = bottom - 4 * gap;
+            float bottom = staff.bottom(), gap = staff.gap();
+            if (staff.pitchTrack() != null) {
+                float[] frame = staff.pitchTrack().at(x);
+                bottom = frame[0];
+                gap = frame[1];
+            }
+            float top = bottom - 4 * gap;
             if (rest.durationBeats() == .5) {
                 if (last >= bottom - gap * 1.5f
                         && last <= bottom - gap * .75f
@@ -1731,58 +1742,76 @@ final class SixteenthRestDetector {
         float y = rest.pageY() * height;
         for (Staff staff : staffs) {
             if (staff.index() != rest.staffIndex() || staff.count() != rest.staffCount()) continue;
-            float[] frame =
-                    staff.pitchTrack() == null
-                            ? new float[] {staff.bottom(), staff.gap()}
-                            : staff.pitchTrack().at(x);
-            float bottom = frame[0], gap = frame[1];
+            float bottom = staff.bottom(), gap = staff.gap();
+            if (staff.pitchTrack() != null) {
+                float[] frame = staff.pitchTrack().at(x);
+                bottom = frame[0];
+                gap = frame[1];
+            }
             if (y < bottom - gap * 2.25f || y > bottom - gap * .6f) continue;
             int seeds = 0, seedRows = 0;
             int top = Math.max(0, Math.round(y - rest.pageHeight() * height * .5f));
             int end = Math.min(height - 1, Math.round(y + rest.pageHeight() * height * .5f));
+            int left = Math.max(0, Math.round(x - gap * .65f));
+            int right = Math.min(width - 1, Math.round(x + gap * .65f));
             for (int row = top; row <= end; row++) {
+                if (seedRows + (long) end - row + 1 < 3) break;
                 float rule = bottom + Math.round((row - bottom) / gap) * gap;
                 if (Math.abs(row - rule) <= gap * .25f) continue;
                 int count = 0;
-                for (int col = Math.max(0, Math.round(x - gap * .65f));
-                        col <= Math.min(width - 1, Math.round(x + gap * .65f));
-                        col++) if ((gray[row * width + col] & 255) < 155) count++;
+                int offset = row * width;
+                for (int col = left; col <= right; col++)
+                    if ((gray[offset + col] & 255) < 155) count++;
                 seeds += count;
                 if (count >= 2) seedRows++;
+                if (seeds >= 12 && seedRows >= 3) return true;
             }
-            if (seeds >= 12 && seedRows >= 3) return true;
         }
         return false;
     }
 
-    private static byte[] contrastedRestInk(
-            byte[] gray, int width, int height, List<Staff> staffs) {
-        return contrastedRestInk(gray, width, height, staffs, 185);
+    private static float medianStaffGap(List<Staff> staffs) {
+        if (staffs.isEmpty()) return Float.NaN;
+        if (staffs.size() == 1) return staffs.get(0).gap();
+        float[] gaps = new float[staffs.size()];
+        int i = 0;
+        for (Staff staff : staffs) gaps[i++] = staff.gap();
+        java.util.Arrays.sort(gaps);
+        return gaps[gaps.length / 2];
     }
 
-    private static byte[] contrastedRestInk(
-            byte[] gray, int width, int height, List<Staff> staffs, int ceiling) {
-        if (gray == null || gray.length != (long) width * height || staffs.isEmpty()) return gray;
-        List<Float> gaps = new ArrayList<>();
-        for (Staff staff : staffs) gaps.add(staff.gap());
-        gaps.sort(Float::compare);
-        int radius = Math.max(3, Math.round(gaps.get(gaps.size() / 2) * .6f));
-        byte[] result = null;
-        for (int y = radius; y < height - radius; y++)
-            for (int x = radius; x < width - radius; x++) {
-                int at = y * width + x, ink = gray[at] & 255;
-                if (ink < 170 || ink >= ceiling) continue;
-                int bright = 0;
-                if ((gray[at - radius] & 255) >= ink + 40) bright++;
-                if ((gray[at + radius] & 255) >= ink + 40) bright++;
-                if ((gray[at - radius * width] & 255) >= ink + 40) bright++;
-                if ((gray[at + radius * width] & 255) >= ink + 40) bright++;
-                if (bright >= 2) {
-                    if (result == null) result = gray.clone();
-                    result[at] = (byte) 169;
+    static ContrastViews contrastedRestInk(byte[] gray, int width, int height, float gap) {
+        if (gray == null || gray.length != (long) width * height)
+            return new ContrastViews(gray, gray);
+        int radius = Math.max(3, Math.round(gap * .6f));
+        if ((long) radius * 2 >= Math.min(width, height)) return new ContrastViews(gray, gray);
+        int vertical = radius * width;
+        byte[] ordinary = gray, faint = gray;
+        for (int row = vertical, stop = gray.length - vertical; row < stop; row += width) {
+            for (int at = row + radius, end = row + width - radius; at < end; at++) {
+                int ink = gray[at] & 255;
+                if (ink < 170 || ink >= 205) continue;
+                int threshold = ink + 40;
+                int bright = (gray[at - radius] & 255) >= threshold ? 1 : 0;
+                if ((gray[at + radius] & 255) >= threshold) bright++;
+                if (bright < 2 && (gray[at - vertical] & 255) >= threshold) bright++;
+                if (bright < 2 && (bright == 0 || (gray[at + vertical] & 255) < threshold))
+                    continue;
+                if (ink < 185) {
+                    if (ordinary == gray) {
+                        ordinary = gray.clone();
+                        if (faint == gray) faint = ordinary;
+                    }
+                    ordinary[at] = (byte) 169;
+                } else if (faint == ordinary) {
+                    // The views share their ordinary edits until the first
+                    // additional faint pixel needs its own raster.
+                    faint = ordinary.clone();
                 }
+                if (faint != ordinary) faint[at] = (byte) 169;
             }
-        return result == null ? gray : result;
+        }
+        return new ContrastViews(ordinary, faint);
     }
 
     private static Detection detectWithDots(
@@ -2294,13 +2323,16 @@ final class SixteenthRestDetector {
     }
 
     private static Detection collected(List<ScoreRestEvent> result, List<RestDot> restDots) {
-        List<ScoreRestEvent> unique = new ArrayList<>();
+        if (result.isEmpty()) return new Detection(List.of(), List.of());
+        var byMeasure = new java.util.HashMap<Integer, List<ScoreRestEvent>>();
         for (ScoreRestEvent rest : result) {
+            // Keep insertion order within each measure for the first-match rule.
+            List<ScoreRestEvent> measure = byMeasure.computeIfAbsent(
+                    rest.measureIndex(), ignored -> new ArrayList<>());
             int duplicate = -1;
-            for (int i = 0; i < unique.size(); i++) {
-                ScoreRestEvent r = unique.get(i);
-                if (r.measureIndex() == rest.measureIndex()
-                        && r.staffIndex() == rest.staffIndex()
+            for (int i = 0; i < measure.size(); i++) {
+                ScoreRestEvent r = measure.get(i);
+                if (r.staffIndex() == rest.staffIndex()
                         && r.staffCount() == rest.staffCount()
                         && Math.abs(r.positionInMeasure() - rest.positionInMeasure()) < .018f
                         && Math.abs(r.pageY() - rest.pageY())
@@ -2310,19 +2342,30 @@ final class SixteenthRestDetector {
                     break;
                 }
             }
-            if (duplicate < 0) unique.add(rest);
+            if (duplicate < 0) measure.add(rest);
             // A shifted crop may see only the lower bulb of a complete sixteenth rest.
             // Prefer the taller complete glyph, not the crop with a slightly earlier x.
-            else if (rest.pageHeight() > unique.get(duplicate).pageHeight() * 1.1f)
-                unique.set(duplicate, rest);
+            else if (rest.pageHeight() > measure.get(duplicate).pageHeight() * 1.1f)
+                measure.set(duplicate, rest);
         }
         // Original staff/full-glyph passes precede shifted crops. A subpixel x
         // difference must not give a later, cropped interpretation priority.
-        unique.sort(
-                java.util.Comparator.comparingInt(ScoreRestEvent::measureIndex)
-                        .thenComparingDouble(ScoreRestEvent::positionInMeasure));
+        List<Integer> measureOrder = new ArrayList<>(byMeasure.keySet());
+        measureOrder.sort(Integer::compare);
+        List<ScoreRestEvent> unique = new ArrayList<>();
+        for (int index : measureOrder) {
+            var measure = byMeasure.get(index);
+            measure.sort(java.util.Comparator.comparingDouble(ScoreRestEvent::positionInMeasure));
+            unique.addAll(measure);
+        }
+        if (restDots.isEmpty()) return new Detection(List.copyOf(unique), List.of());
         List<RestDot> selectedDots = new ArrayList<>();
-        for (RestDot dot : restDots) if (unique.contains(dot.rest())) selectedDots.add(dot);
+        for (RestDot dot : restDots) {
+            ScoreRestEvent rest = dot.rest();
+            if (rest == null) continue;
+            var measure = byMeasure.get(rest.measureIndex());
+            if (measure != null && measure.contains(rest)) selectedDots.add(dot);
+        }
         return new Detection(List.copyOf(unique), List.copyOf(selectedDots));
     }
 
@@ -4328,24 +4371,31 @@ final class SixteenthRestDetector {
             byte[] gray, int width, int height, int left, int right, int end, float gap) {
         int above = Math.max(3, Math.round(gap * .5f)), below = Math.max(4, Math.round(gap * .65f));
         if (end - above < 0 || end + below >= height) return false;
+        int insideNeeded = (int) Math.ceil((above + 1) * .85f);
+        int outsideNeeded = (int) Math.ceil(below * .85f);
         for (int origin = left; origin <= right; origin++)
             for (int step = 2; step <= 12; step++) {
                 float slope = -step * .1f;
-                int inside = 0, outside = 0;
-                for (int dy = -above; dy <= below; dy++) {
-                    int x = Math.round(origin + slope * dy), y = end + dy;
-                    if (x < 1 || x >= width - 1) continue;
-                    boolean ink =
-                            (gray[y * width + x] & 255) < 170
-                                    && ((gray[y * width + x - 1] & 255) < 170
-                                            || (gray[y * width + x + 1] & 255) < 170);
-                    if (ink) {
-                        if (dy <= 0) inside++;
-                        else outside++;
-                    }
-                }
-                if (inside >= (above + 1) * .85f && outside >= below * .85f) return true;
+                if (tailSectionHasInk(gray, width, origin, end, slope, -above, 0, insideNeeded)
+                        && tailSectionHasInk(
+                                gray, width, origin, end, slope, 1, below, outsideNeeded))
+                    return true;
             }
+        return false;
+    }
+
+    private static boolean tailSectionHasInk(
+            byte[] gray, int width, int origin, int end, float slope,
+            int first, int last, int needed) {
+        int row = (end + first) * width;
+        for (int dy = first; needed <= last - dy + 1; dy++, row += width) {
+            int x = Math.round(origin + slope * dy);
+            if (x < 1 || x >= width - 1) continue;
+            int pixel = row + x;
+            if ((gray[pixel] & 255) < 170
+                    && ((gray[pixel - 1] & 255) < 170 || (gray[pixel + 1] & 255) < 170)
+                    && --needed == 0) return true;
+        }
         return false;
     }
 
