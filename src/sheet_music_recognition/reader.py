@@ -10,6 +10,7 @@ import struct
 import subprocess
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
+from functools import lru_cache
 from pathlib import Path
 from typing import NamedTuple
 
@@ -30,14 +31,16 @@ def tile_starts(size):
     if size < 1:
         raise ValueError("Image dimensions must be positive")
     last = max(0, size - 320)
-    values = []
-    for offset in range(0, size, 192):
-        value = min(offset, last)
-        if not values or values[-1] != value:
-            values.append(value)
-        if value == last:
-            break
-    return values
+    return [*range(0, last, 192), last]
+
+
+@lru_cache(maxsize=1)
+def _tile_edges():
+    axis = np.arange(320, dtype=np.int16)
+    distance = np.minimum(axis, 319 - axis) + 1
+    edges = np.minimum.outer(distance, distance).astype(np.uint8)
+    edges.setflags(write=False)
+    return edges
 
 
 def grayscale(image, width=2048):
@@ -57,7 +60,9 @@ def grayscale(image, width=2048):
         white = Image.new("RGBA", image.size, "white")
         white.alpha_composite(image.convert("RGBA"))
         gray = white.convert("L")
-    return np.asarray(gray.resize((width, height), Image.Resampling.BILINEAR), dtype=np.uint8)
+    if gray.size != (width, height):
+        gray = gray.resize((width, height), Image.Resampling.BILINEAR)
+    return np.asarray(gray, dtype=np.uint8)
 
 
 def write_page(path, labels, gray, annotations=None):
@@ -144,8 +149,7 @@ class Interpreter:
             raise ValueError("Expected float32 input [1,3,320,320]")
         if self.output["shape"].tolist() != [1, 320, 320] or self.output["dtype"] != np.int64:
             raise ValueError("Expected int64 class IDs [1,320,320]")
-        yy, xx = np.mgrid[:320, :320]
-        self.edge = (np.minimum.reduce([xx, yy, 319 - xx, 319 - yy]) + 1).astype(np.uint8)
+        self.edge = _tile_edges()
         self.ocr = None
         self.paper_whitening = PaperBackgroundWhitening(threads=threads)
 
