@@ -1618,6 +1618,12 @@
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/ActiveScoreNotes.java"
     },
     "ArtificialHarmonics.java": {
+      "clipped_diamond_edge_review": {
+        "reviewed_app_commit": "fb61bd4e6b5547d3d43eaa8e5b61768b675e58c2",
+        "app_lf_sha256": "d289e3e70750996d54b50f475bbe25dfde6ca5e6987cd4dc100f9dfbc076d556",
+        "standalone_lf_sha256": "7897f6e53e65d62273ccab14dd7a3191de945200bacc889fed4fd5def7049cc5",
+        "scope": "Matching shared-shaft harmonic recovery with all four sides supported and at least three complete."
+      },
       "staff_rule_harmonic_touch_review": {
         "reviewed_app_commit": "2e57618a1a30c67ffab1f64ad9c476e57fadd7a0",
         "app_lf_sha256": "8a355f645b9bdc5293d5335e28879d228bcc040c1403b92f3a4a75bdf69c201f",

@@ -511,7 +511,7 @@ final class ArtificialHarmonics {
                 if (!enclosedCounter(gray, width, height, cx, cy, gap * .53f, gap * .14f)) continue;
                 for (float size : DiamondSizes.VALUES) {
                     float r = gap * size;
-                    int sides = 0;
+                    int completeSides = 0, supportedSides = 0;
                     for (int dx : ProbeSigns.VALUES)
                         for (int dy : ProbeSigns.VALUES) {
                             int darkSide = 0;
@@ -520,9 +520,12 @@ final class ArtificialHarmonics {
                                 int yy = Math.round(cy + dy * r * (1 - fraction));
                                 if (dark(gray, width, height, xx, yy)) darkSide++;
                             }
-                            if (darkSide == 3) sides++;
+                            if (darkSide == 3) completeSides++;
+                            if (darkSide >= 2) supportedSides++;
                         }
-                    if (sides == 4 && diamondExterior(
+                    // Engraving against a rule or shaft can displace one corner sample.
+                    // Keep the counter, exterior and shared-shaft proof for that case.
+                    if (completeSides >= 3 && supportedSides == 4 && diamondExterior(
                             gray, width, height, cx, cy, r, gap, y + 1.5f * gap)) return true;
                 }
             }
