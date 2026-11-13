@@ -25604,6 +25604,8 @@ final class OmrScoreInterpreter {
                 int outlined =
                         OutlinedBeamInk.count(gray, width, height, attached, head.centerY, gap);
                 if (outlined > 0) return outlined;
+                if (thick == 1
+                        && StemOwnedBeamlet.proves(gray, width, height, attached, gap)) return 2;
             }
             return Math.min(3, thick);
         }

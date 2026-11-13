@@ -5227,6 +5227,12 @@
     },
     "OmrScoreInterpreter.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/OmrScoreInterpreter.java",
+      "stem_owned_beamlet_review": {
+        "reviewed_app_commit": "bb06beccc985712c4a957a89d5c0d797bd5b5c51",
+        "app_lf_sha256": "85f352bd618719f127d60b48b0be824c72e14595fcfc13508afa898c94a19e88",
+        "standalone_lf_sha256": "fc6f6488fbf5a6c642febc7f490ee62fc2d257bb8257e27c409294d480e3af22",
+        "scope": "Matching short secondary beamlet recovery call. Existing decoder drift remains open."
+      },
       "opening_two_over_four_review": {
         "reviewed_app_commit": "70adedbb6dc2f86bf9bc0018da6bd80e8c131ceb",
         "app_blob_sha256": "0841c5a2ed6a3ec566544859988ca7c0fbf2e4b01df5faf6bacb493a3057b95a",
@@ -9054,6 +9060,17 @@
       "scoped_reviewed_app_commit": "0a805317ca2c737cba57a2596680cadfabc0627f",
       "standalone_sha256": "2c507f8260d94196ad412029e133ec6b2b3f43300737ad2d2b52d8e8ba131d65",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/StemOwnedBeamTip.java"
+    },
+    "StemOwnedBeamlet.java": {
+      "source_path": "app/src/main/java/com/musicsheets/app/pdf/StemOwnedBeamlet.java",
+      "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/StemOwnedBeamlet.java",
+      "source_sha256": "2608156fa25fba53d485ba0ecee7f78567178d6b9f29fd4f2a069185676861a4",
+      "source_normalized_sha256": "2608156fa25fba53d485ba0ecee7f78567178d6b9f29fd4f2a069185676861a4",
+      "standalone_sha256": "2b54405551945ee101434aaddb5fe50b225b7fa3886fa9dfac94a49873c2d6ba",
+      "standalone_normalized_sha256": "2b54405551945ee101434aaddb5fe50b225b7fa3886fa9dfac94a49873c2d6ba",
+      "reviewed_app_commit": "bb06beccc985712c4a957a89d5c0d797bd5b5c51",
+      "license": "Apache-2.0",
+      "review_note": "Namespace-equivalent raw beamlet geometry. Original synthetic tests and no private raster in the public tree."
     },
     "SuddenDynamicCaptionOriginalTest.java": {
       "source_path": "app/src/test/java/com/musicsheets/app/pdf/SuddenDynamicCaptionOriginalTest.java",
