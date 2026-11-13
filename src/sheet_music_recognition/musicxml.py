@@ -2,6 +2,7 @@ from . import straight_slide, slide_numbering
 # Copyright 2026 Luckolite
 # SPDX-License-Identifier: Apache-2.0
 """MusicXML 4.0 concert-pitch export of the decoded performance (not source engraving)."""
+from bisect import bisect_right
 from collections import defaultdict
 from functools import lru_cache
 from itertools import accumulate
@@ -695,6 +696,22 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
     misc = element(identification, 'miscellaneous')
     element(misc, 'miscellaneous-field', 'Concert-pitch reconstruction; recognition and estimated timing require review.', name='interpretation')
     part_list = element(root, 'part-list')
+    bar_starts = [bar['start'] for bar in bars]
+    bar_ends = [bar['start'] + bar['length'] for bar in bars]
+    bar_indexes = {start: index for index, start in enumerate(bar_starts)}
+
+    def direction_bar(tick, allow_final=False):
+        index = bisect_right(bar_starts, tick) - 1
+        if index >= 0 and (tick < bar_ends[index] or allow_final and tick == bar_ends[-1]):
+            return index
+        return None
+
+    def written_direction_bar(start, tick):
+        index = bar_indexes.get(start)
+        if index is not None and start <= tick <= bar_ends[index]:
+            return index
+        return None
+
     def physical_staff(row):
         staff = row.get('staffIndex', 0)
         return staff, row.get('staffCount', staff+1)
@@ -718,6 +735,13 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
         clef_changes = clef_export.plan(notes)
         emitted_clefs = set()
         silent = [r for r in full_rests if same_staff(r)]
+        rests_by_bar = defaultdict(list)
+        for row in silent:
+            rests_by_bar[row['barIndex']].append(row)
+        rest_groups_by_bar = defaultdict(list)
+        for group in printed_rest_groups:
+            if same_staff(group):
+                rest_groups_by_bar[group['firstBar']].append(group)
         literal_edges = {tick for row in literal_rests if same_staff(row)
                          for tick in (row['start'], row['end'])}
         for index, n in enumerate(notes):
@@ -783,6 +807,29 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
                     else (lambda n: n['midi'])))
                 selected.setdefault('releaseSymbols', []).append(symbol)
                 rendered.add(mark['identity'])
+        directions_by_bar = defaultdict(list)
+        for mark in marks:
+            if mark['identity'] not in rendered:
+                tick = mark['startTick']
+                if mark.get('_hairpin'):
+                    index = written_direction_bar(mark['_hairpinStartBarStart'], tick)
+                elif mark.get('_absoluteDynamic'):
+                    index = written_direction_bar(mark['_absoluteDynamicBarStart'], tick)
+                elif mark.get('_playingInstruction'):
+                    # A terminal after-grace belongs to its original written bar.
+                    index = written_direction_bar(mark['_playingInstructionBarStart'], tick)
+                else:
+                    index = direction_bar(tick, allow_final=mark['kind'] == 'PEDAL_UP')
+                if index is not None:
+                    directions_by_bar[index].append(('start', mark))
+            if mark.get('_hairpin'):
+                index = written_direction_bar(mark['_hairpinEndBarStart'], mark['endTick'])
+                if index is not None:
+                    directions_by_bar[index].append(('wedge', mark))
+            if mark['identity'] in dash_numbers:
+                index = direction_bar(mark['endTick'], allow_final=True)
+                if index is not None:
+                    directions_by_bar[index].append(('dashes', mark))
         from .tie_owners import releasing_links
         tie_rows = [dict(start=n['start'], end=n['end'], lane=(staff, n.get('midi')),
                          tied=n.get('tiedFromPrevious', False),
@@ -841,9 +888,8 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
             if bar['start'] in clef_changes:
                 clef_export.write(attributes, clef_changes[bar['start']])
                 emitted_clefs.add(bar['start'])
-            for group in printed_rest_groups:
-                if group['firstBar'] == index and same_staff(group):
-                    element(element(attributes, 'measure-style'), 'multiple-rest', group['measureCount'])
+            for group in rest_groups_by_bar.get(index, ()):
+                element(element(attributes, 'measure-style'), 'multiple-rest', group['measureCount'])
             tempos = list(bar['tempos'])
             if (index == 0 or bar['resetTempo']) and not any(t['positionInMeasure'] == 0 for t in tempos):
                 tempos.insert(0, dict(bpm=bpm, positionInMeasure=0))
@@ -860,28 +906,18 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
                 element(direction, 'offset', tempo_offset, sound='yes')
                 element(direction, 'sound', tempo=str(tempo['bpm']))
             a, b = bar['start'], bar['start']+bar['length']
-            for mark in marks:
-                if mark.get('_hairpin'):
-                    owns = mark['_hairpinStartBarStart'] == a and a <= mark['startTick'] <= b
-                elif mark.get('_absoluteDynamic'):
-                    owns = mark['_absoluteDynamicBarStart'] == a and a <= mark['startTick'] <= b
-                elif mark.get('_playingInstruction'):
-                    # A terminal after-grace still belongs to its original written bar.
-                    owns = mark['_playingInstructionBarStart'] == a and a <= mark['startTick'] <= b
-                else:
-                    owns = (a <= mark['startTick'] < b
-                            or index == len(bars)-1 and mark['kind'] == 'PEDAL_UP' and mark['startTick'] == b)
-                if mark['identity'] not in rendered and owns:
+            for action, mark in directions_by_bar.get(index, ()):
+                if action == 'start':
                     expression_direction(measure, mark, mark['startTick']-a)
                     if mark['identity'] in dash_numbers:
                         dash = element(measure, 'direction', placement='above')
                         element(element(dash, 'direction-type'), 'dashes', type='start', number=str(dash_numbers[mark['identity']]))
                         element(dash, 'offset', mark['startTick']-a)
-                if mark.get('_hairpin') and mark['_hairpinEndBarStart'] == a and a <= mark['endTick'] <= b:
+                elif action == 'wedge':
                     stop = element(measure, 'direction', placement='below')
                     element(element(stop, 'direction-type'), 'wedge', type='stop', number=mark['_hairpinNumber'])
                     element(stop, 'offset', mark['endTick']-a)
-                if mark['identity'] in dash_numbers and (a <= mark['endTick'] < b or index == len(bars)-1 and mark['endTick'] == b):
+                else:
                     dash = element(measure, 'direction', placement='above')
                     element(element(dash, 'direction-type'), 'dashes', type='stop', number=str(dash_numbers[mark['identity']]))
                     element(dash, 'offset', mark['endTick']-a)
@@ -892,7 +928,7 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
                 next_note += 1
                 if n['end'] > a:
                     present.append(n)
-            bar_rests = [r for r in silent if r['barIndex'] == index]
+            bar_rests = rests_by_bar.get(index, ())
             voices = sorted({n['voice'] for n in present}) or ([] if bar_rests else [1])
             rest_voices = {max(1000, len(voice_ends))+i+1: row for i, row in enumerate(bar_rests)}
             voices.extend(rest_voices)
