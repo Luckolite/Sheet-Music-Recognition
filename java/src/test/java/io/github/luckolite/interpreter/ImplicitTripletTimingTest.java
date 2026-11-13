@@ -40,6 +40,39 @@ public class ImplicitTripletTimingTest {
     }
 
     @Test
+    public void dottedTripletChordsKeepTheirUnequalValues() {
+        var notes = new ArrayList<ScoreNoteEvent>();
+        for (int i = 0; i < 12; i++) {
+            for (int step : new int[] {2, 5}) {
+                notes.add(
+                        new ScoreNoteEvent(
+                                        1, .04f + i * .08f, step, 0, 1, .5f, false,
+                                        i % 3 == 0 ? 1 : 0, i % 3 == 1 ? 2 : 1,
+                                        ScoreNoteEvent.ACCIDENTAL_FROM_KEY, 0, 1)
+                                .withStemDirection(-1));
+            }
+        }
+        double[] offsets = {0, .5, 2 / 3d};
+        double[] durations = {.5, 1 / 6d, 1 / 3d};
+        for (int i = 0; i < notes.size(); i++) {
+            int attack = i / 2;
+            var note = notes.get(i);
+            assertTrue(ScoreNoteTiming.hasImplicitDottedTriplet(note, notes, 4));
+            assertEquals(
+                    attack / 3 + offsets[attack % 3],
+                    ScoreNoteTiming.beatInMeasure(note, notes, 4), .0001);
+            assertEquals(
+                    durations[attack % 3],
+                    ScoreNoteTiming.resolvedWrittenDurationBeats(note, notes, 4), .0001);
+        }
+        var first = notes.get(0);
+        assertFalse(ScoreNoteTiming.hasImplicitDottedTriplet(first, notes, 6));
+        assertEquals(.75, ScoreNoteTiming.resolvedWrittenDurationBeats(first, notes, 6), .0001);
+        notes.set(3, notes.get(3).withStemDirection(1));
+        assertFalse(ScoreNoteTiming.hasImplicitDottedTriplet(first, notes, 4));
+    }
+
+    @Test
     public void twentyFourSixteenthsFillFourBeats() {
         var notes = run(24, 2);
         assertEquals(

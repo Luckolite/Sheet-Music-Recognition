@@ -260,6 +260,11 @@ public final class Main {
                 }
                 event.put("durationBeats", duration);
                 event.put("durationFallback", estimated);
+                if (!cadences[bar]
+                        && ScoreNoteTiming.hasImplicitDottedTriplet(note, score.notes(), beats[bar])) {
+                    event.put("tupletActualNotes", 3);
+                    event.put("tupletNormalNotes", 2);
+                }
                 event.put("tiedFromPrevious", note.tiedFromPrevious());
                 event.put(
                         "x",

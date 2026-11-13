@@ -676,6 +676,14 @@ public final class ScoreNoteTiming {
                 onset += group.writtenDuration() + followingRest(group);
             }
         }
+        double[] dottedTriplets = implicitDottedTripletDurations(groups, safeBeats);
+        if (dottedTriplets != null) {
+            double onset = 0;
+            for (int i = 0; i < groups.size(); i++) {
+                if (groups.get(i).contains(target)) return onset;
+                onset += dottedTriplets[i];
+            }
+        }
         double[] durations = stabilizedDurations(groups, safeBeats);
         double tailStart = contiguousTailRunStart(groups, durations, safeBeats);
         if (Double.isFinite(tailStart)) {
@@ -1016,7 +1024,8 @@ public final class ScoreNoteTiming {
         if (completePrintedRestRhythm(groups, safeBeats)
                 || sharedShortRestRhythm(target, notes, groups, safeBeats))
             return advanceDurationBeats(target);
-        double[] durations = stabilizedDurations(groups, safeBeats);
+        double[] durations = implicitDottedTripletDurations(groups, safeBeats);
+        if (durations == null) durations = stabilizedDurations(groups, safeBeats);
         for (int index = 0; index < groups.size(); index++)
             if (groups.get(index).contains(target)) return durations[index];
         return advanceDurationBeats(target);
@@ -1605,6 +1614,53 @@ public final class ScoreNoteTiming {
             }
         }
         return tail && smallest > SAME_ONSET_POSITION && largest <= smallest * 2.4f ? result : null;
+    }
+
+    static boolean hasImplicitDottedTriplet(
+            ScoreNoteEvent note, List<ScoreNoteEvent> notes, float beats) {
+        if (grace(note) || note.beamCount() == 0 || note.tupletDivisor() != 1) return false;
+        List<RhythmGroup> groups = rhythmGroups(measureVoice(note, notes));
+        return implicitDottedTripletDurations(groups, beats) != null;
+    }
+
+    /**
+     * A repeated dotted-eighth, sixteenth, eighth figure can occupy one quarter beat
+     * with an implicit 3:2 ratio. Require a complete lane of independently read figures.
+     */
+    private static double[] implicitDottedTripletDurations(List<RhythmGroup> groups, double beats) {
+        int count = groups.size();
+        if (count < 6
+                || count % 3 != 0
+                || count / 3 != beats
+                || groups.get(0).position > .18f
+                || groups.get(count - 1).position < .8f) return null;
+        int stem = groups.get(0).notes.get(0).stemDirection();
+        float smallestGap = Float.MAX_VALUE, largestGap = 0;
+        for (int i = 0; i < count; i++) {
+            RhythmGroup group = groups.get(i);
+            int beams = i % 3 == 1 ? 2 : 1;
+            int dots = i % 3 == 0 ? 1 : 0;
+            for (ScoreNoteEvent note : group.notes) {
+                if (note.beamCount() != beams
+                        || note.augmentationDots() != dots
+                        || note.stemDirection() != stem
+                        || note.tupletDivisor() != 1
+                        || note.tiedFromPrevious()
+                        || note.crossStaffBeam()
+                        || grace(note)
+                        || note.leadingRestBeats() > 0
+                        || note.followingRestBeats() > 0) return null;
+            }
+            if (i > 0) {
+                float gap = group.position - groups.get(i - 1).position;
+                smallestGap = Math.min(smallestGap, gap);
+                largestGap = Math.max(largestGap, gap);
+            }
+        }
+        if (smallestGap <= 0 || largestGap > smallestGap * 2.4f) return null;
+        double[] durations = new double[count];
+        for (int i = 0; i < count; i++) durations[i] = groups.get(i).writtenDuration() * 2 / 3;
+        return durations;
     }
 
     private static boolean implicitTriplets(
