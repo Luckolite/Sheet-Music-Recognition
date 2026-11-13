@@ -3798,10 +3798,10 @@
     },
     "GraceConnectorInk.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/GraceConnectorInk.java",
-      "source_sha256": "de6f7b397fc91c11d0bbcccfdcae7fda49f29c9077904fb45a91cabcba6eb8fb",
+      "source_sha256": "80e46c6d72b7f76475473b15bd6ffdda66850d094a776f80951123cc6a38dd64",
       "reviewed_app_commit": "e075f4122742ccbe717ee18d8497ca5c603ef689",
-      "source_normalized_sha256": "b0a67f1316b9a30e1480ba78b2503ac103721cd3a4229a9e88e039a3674322a5",
-      "standalone_sha256": "3905ee6f367db04ec1952bd770725c1b63630148134135dd59823da2471ca40e",
+      "source_normalized_sha256": "80e46c6d72b7f76475473b15bd6ffdda66850d094a776f80951123cc6a38dd64",
+      "standalone_sha256": "21995bfa6cbcd173379f7d0c374d13e3b6eaf1aac56a226d8739bf8281249c20",
       "reviewed_source_state": "Token-identical integration;10375 Java tests,21 original controls,11 native pages,24 private timing probes. Cumulative paired deployment pending.",
       "review_note": "Independently stemmed neighboring head ink cannot become an augmentation dot. A verified short slashed grace with a larger stemmed principal may reject its owned attached stroke or curved connector. Trace across only thin continuous printed rules; isolated dots and broad bands remain protected. Existing grace-slur ownership admits a bounded contrast sweep. Original Apache-2.0 synthetic fixtures; no private pixels, model, dependency or format changes.",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/GraceConnectorInk.java"
@@ -3839,10 +3839,10 @@
     },
     "GuideCacheIdentity.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/GuideCacheIdentity.java",
-      "source_sha256": "4034fdf740a5860a7385e7a47dfed427c4cd7fbd7d9dace42e7afcef4fdb9204",
-      "source_normalized_sha256": "4034fdf740a5860a7385e7a47dfed427c4cd7fbd7d9dace42e7afcef4fdb9204",
+      "source_sha256": "b0de7235857730355789ec3c56e754b9bca2f7e25912a9435dfbea888eaefcd9",
+      "source_normalized_sha256": "b0de7235857730355789ec3c56e754b9bca2f7e25912a9435dfbea888eaefcd9",
       "review_note": "Shared recognition and playback-direction changes ported with standalone adapters. Redistributable synthetic regressions cover the changed ink and direction rules.",
-      "standalone_sha256": "014f91a3e13bbcc72bce83b035eff8c6cb1070651c1a7a2f3b7fb868e75657d1",
+      "standalone_sha256": "6631ebdd3138306237bf624c0c92cd75ef8d1e8a49ef2ca2714b9f901f5cf6ea",
       "reviewed_app_commit": "b029dfbb",
       "scoped_reviewed_app_commit": "59008495d6250cb0790c1d2b5bd8f5952f0c9a98",
       "license": "Apache-2.0",
@@ -3901,9 +3901,9 @@
     "GuideCacheIdentityTest.java": {
       "source_path": "app/src/test/java/com/musicsheets/app/pdf/GuideCacheIdentityTest.java",
       "standalone_path": "java/src/test/java/io/github/luckolite/interpreter/GuideCacheIdentityTest.java",
-      "source_sha256": "017e13f050b1f413e9a30806b86458339a252c3db5d91ca13d1f8b0084e8088f",
-      "source_normalized_sha256": "017e13f050b1f413e9a30806b86458339a252c3db5d91ca13d1f8b0084e8088f",
-      "standalone_sha256": "672bd354df2f149745f465a51a222b19350b633e6936d413f516abc70fa0e4d2",
+      "source_sha256": "6cf847bb18bcd49aba481c8f254abd9c25871f1a8e7a4aa6d05da46353a9eefb",
+      "source_normalized_sha256": "6cf847bb18bcd49aba481c8f254abd9c25871f1a8e7a4aa6d05da46353a9eefb",
+      "standalone_sha256": "ee9f16f29a881336668ea8cbc26c71b3f6f2f564dc0e2828d0c5f4628157bdd2",
       "license": "Apache-2.0",
       "recognition88_review_note": "Reviewed exact contextual global changes and namespace twins with original synthetic regressions. New helpers are selected explicitly by desktop decoder manifest; no models, private fixtures, schema, wire or audio changes.",
       "reviewed_app_commit": "b029dfbb",
@@ -4498,10 +4498,11 @@
       "scoped_reviewed_app_commit": "5a48dfb1c3ea3b56266cda011cf5ec57a7adcfd9"
     },
     "LongSlurFragmentInk.java": {
+      "standalone_sha256": "9d8e4a91eb044273562f421c686669a86ace20b5d3522c8bcc8d72e9c687762d",
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/LongSlurFragmentInk.java",
-      "source_sha256": "d5de28fb00d4feab7007f632fbfb47629c2fb3d9ba76974f586f57b4d071c1e9",
+      "source_sha256": "b921559edaefe9f44997010aee17cce627b656559b72ffb1419a17cd1d55aecc",
       "reviewed_app_commit": "650d1b3a312dcd7eb58f83945a6a3be321c9b4dd",
-      "source_normalized_sha256": "d5de28fb00d4feab7007f632fbfb47629c2fb3d9ba76974f586f57b4d071c1e9",
+      "source_normalized_sha256": "b921559edaefe9f44997010aee17cce627b656559b72ffb1419a17cd1d55aecc",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/LongSlurFragmentInk.java"
     },
     "MaximalRawBarExtractor.java": {
@@ -5584,10 +5585,11 @@
       "review_note": "Original source title review helpers; executable-token parity after package and AOSP formatting. Fictional geometry/text regressions only; no private score, model, signing material or new dependency."
     },
     "OutlinedBeamInk.java": {
+      "standalone_sha256": "6bd599f317ba59c84c6396744018009f63b244cfc3dcb4d3acffd87d1204ffdb",
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/OutlinedBeamInk.java",
-      "source_sha256": "09f2cc16f588eb29d0b68bc3f47c659e99c134e3c8996ed12d6e780344d1559c",
+      "source_sha256": "c927d1eaccd402f22dbbf0d9a52be9d62eba83570742c700642547e115688c4d",
       "reviewed_app_commit": "650d1b3a312dcd7eb58f83945a6a3be321c9b4dd",
-      "source_normalized_sha256": "09f2cc16f588eb29d0b68bc3f47c659e99c134e3c8996ed12d6e780344d1559c",
+      "source_normalized_sha256": "c927d1eaccd402f22dbbf0d9a52be9d62eba83570742c700642547e115688c4d",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/OutlinedBeamInk.java"
     },
     "OutlinedHookHead.java": {
@@ -8734,11 +8736,12 @@
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/SeparateBeamGroups.java"
     },
     "SeparatedRestInk.java": {
+      "standalone_sha256": "8ccd63b7547e1c536c171f6838414b15bf21e6bfc0b24d17384780a1a32f1af7",
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/SeparatedRestInk.java",
       "reviewed_app_commit": "6d966d3454cc212afe90acd4828ff476d78d98d4",
       "review_note": "Actual connected rest ink supplies contour evidence while untouched pixels retain printed beam, shaft, head, text and dot guards. Verified five-line spacing and a complete rest bracket own endpoint-aligned numerals. A complete explicit triplet lane with one opening rest preserves independent quarter attacks. Original generated controls and exhaustive parity differences reviewed; models, dependencies, public APIs and guide282 wire layout unchanged. Private source material excluded.",
-      "source_sha256": "70b5f4b47005d5e6450d093ce7b3e20595aed13ce5c9772173630e8c11b250de",
-      "source_normalized_sha256": "5adbe4eba5ab58669553a05a4ee173093d357eddd0608e3e6765fee78f67f7de",
+      "source_sha256": "89889ca5d0fffb409207d0ba563f4baa909b1f3307b2867bec062fe5363430c2",
+      "source_normalized_sha256": "89889ca5d0fffb409207d0ba563f4baa909b1f3307b2867bec062fe5363430c2",
       "scoped_reviewed_app_commit": "6d966d3454cc212afe90acd4828ff476d78d98d4",
       "reviewed_source_state": "Committed recognition24 component-owned rest and explicit rest-first triplet repair; namespace-only Java port and existing writer adaptation reviewed.",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/SeparatedRestInk.java"
@@ -9970,10 +9973,10 @@
     },
     "guide_writer.py": {
       "source_path": "tools/native-worker/guide_writer.py",
-      "source_sha256": "ee43bab965433106fc82fc2768c0afff75f39a8fb2c2b5a0904ad7131101411f",
-      "source_normalized_sha256": "ee43bab965433106fc82fc2768c0afff75f39a8fb2c2b5a0904ad7131101411f",
+      "source_sha256": "1dfbc25962cd2dcb369b15c61da1a54bcf3b1ef22c069c62e78328fe476dcae1",
+      "source_normalized_sha256": "1dfbc25962cd2dcb369b15c61da1a54bcf3b1ef22c069c62e78328fe476dcae1",
       "review_note": "Shared recognition and playback-direction changes ported with standalone adapters. Redistributable synthetic regressions cover the changed ink and direction rules.",
-      "standalone_sha256": "2539f0a4efdc19784f48e8baecd9534ddb483bcaf60a0338a8a30ccdee8442e7",
+      "standalone_sha256": "b8889dc72b057af925776d476f1a32cfd14a387409d5bb5e140a4e3aacde8f2b",
       "reviewed_app_commit": "b029dfbb",
       "license": "Apache-2.0",
       "scoped_reviewed_app_commit": "59008495d6250cb0790c1d2b5bd8f5952f0c9a98",
