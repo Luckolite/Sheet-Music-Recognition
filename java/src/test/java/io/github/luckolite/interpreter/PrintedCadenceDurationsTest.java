@@ -78,6 +78,17 @@ public class PrintedCadenceDurationsTest {
                 durations(List.of(note(.35f, 74)), List.of()), 0);
     }
 
+    @Test
+    public void writtenAccidentalCanExtendPastTheOrdinaryChordExclusion() {
+        stroke(327);
+        stroke(334);
+        for (int y = 82; y <= 100; y++) gray[y * WIDTH + 270] = 0;
+        var natural = new ScoreNoteEvent(1, .49f, 0, 0, 1, 74f / HEIGHT,
+                false, 0, 0, ScoreNoteEvent.ACCIDENTAL_NATURAL, 2);
+        assertArrayEquals(new float[] {4, 2, 4}, durations(List.of(natural), List.of()), 0);
+        assertArrayEquals(new float[] {4, 4, 4}, durations(List.of(note(.49f, 74)), List.of()), 0);
+    }
+
     private void localTerminalBar(boolean hasCompanion, boolean interrupted) {
         Arrays.fill(gray, (byte) 255);
         for (int y = 54; y <= 118; y += 16)

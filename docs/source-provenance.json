@@ -1,4 +1,22 @@
 {
+  "printed_double_bar_and_cadence_review": {
+    "reviewed_app_commit": "00b952291f0a00925b50e05d463294c5b19eee5d",
+    "scope": "Retain paired printed rules in padded crops and preserve each runtime's cadence delivery with the same accidental allowance.",
+    "files": {
+      "PrintedMeasureRhythmGuard.java": {
+        "app_path": "app/src/main/java/com/musicsheets/app/pdf/PrintedMeasureRhythmGuard.java",
+        "app_lf_sha256": "98f53ed4e8a3fe2353a0095fcfc35ba55971df653d9e9449fa1b920a8111c0e9",
+        "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/PrintedMeasureRhythmGuard.java",
+        "standalone_lf_sha256": "4c31ef2dae6433e7dbf49ea3eae46df1777a14d50939f7d920a40b3b2a600172"
+      },
+      "PrintedCadenceDurations.java": {
+        "app_path": "app/src/main/java/com/musicsheets/app/pdf/PrintedCadenceDurations.java",
+        "app_lf_sha256": "f7d88dd21451f20e2c6444e3aa3a708e61166e2d3ef0387b8eab796ef5d54994",
+        "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/PrintedCadenceDurations.java",
+        "standalone_lf_sha256": "24e0c920d1be56b597407d63ff1d2dfccfde82b8a55f7c25b80da467909ae33e"
+      }
+    }
+  },
   "recognition137_short_notation_review": {
     "reviewed_app_commit": "bccfeec0f41afa322777d04bc965d40a14749fef",
     "sources": [
@@ -1618,6 +1636,12 @@
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/ActiveScoreNotes.java"
     },
     "ArtificialHarmonics.java": {
+      "unlabelled_harmonic_touch_review": {
+        "reviewed_app_commit": "6dd91dd984d49f549d1916941090eae5643c3653",
+        "app_lf_sha256": "7505f7f5c8faf0df1b6881b36f32325bc6dda1c00edbf72b023163e872b22561",
+        "standalone_lf_sha256": "e0d16b84a27efdba5077012e050e84c8d7872a7345fd57f4e8a187981592b8e1",
+        "scope": "Matching shared-shaft diamond proof for beamed harmonics without a separate upper head. A crossing rule can split the enclosed counter into two pockets. Broader source drift remains open."
+      },
       "shaft_paired_fourth_review": {
         "reviewed_app_commit": "d6d553226d54481b0d5d92200a3338f8b41a98c4",
         "app_lf_sha256": "c1f5d97d3cd7297d4e031ba847836a8b060d7f094bc724f3ddde576d7d7ebd54",
@@ -5262,6 +5286,18 @@
       "owned_head_bar_review": "A full common bar may contact a complete independently stemmed head. Every excessive branch member must be exact validated head ink or a full common axis; unchanged width, paper, body, shaft and negative guards. Original procedural tests only."
     },
     "OmrScoreInterpreter.java": {
+      "head_edge_ledger_review": {
+        "reviewed_app_commit": "20daa7ea02c35fe12a6c3ecd9fe4bf17b5f3a0da",
+        "app_lf_sha256": "0c5ddcd901b52488148f08bc345d3d297ea6426a9fd52df6a2da24fb7a25c0e0",
+        "standalone_lf_sha256": "e65ddb78677aa56ddb058f5a7931801164f6b0d644a27f39c1fdb340b48f2e46",
+        "scope": "Matching printed ledgers at the inward edge of a filled head. The app also guards a flat override reproduced only in desktop. Broader source drift remains open."
+      },
+      "centered_filled_ledger_pitch_review": {
+        "reviewed_app_commit": "03ce777b3e0305b5345b30dad85af12a11cd0fcb",
+        "app_lf_sha256": "2b59fbb5259d8fe9397ac2025e3a5210d80c11b7008e086b1b8de482101b1904",
+        "standalone_lf_sha256": "3612a0f2ae0e5a06929f157de7b9d247fce54f4bc97fc2d6c7241c1fd37e38b4",
+        "scope": "Matching raw short ledger and filled head phase checks for a centered line head or an independently anchored inward space. Broader source drift remains open."
+      },
       "shared_upper_ledger_chord_review": {
         "reviewed_app_commit": "33734fd1c84426f1a33e3b93efa76d8cdb633c48",
         "app_lf_sha256": "f72bf9123952f95cb0a9898b749fd452578dc4ee6a2a5d2ee1fb2c0dc9bb481a",

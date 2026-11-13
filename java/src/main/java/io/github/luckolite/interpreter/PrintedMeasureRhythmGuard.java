@@ -569,12 +569,59 @@ final class PrintedMeasureRhythmGuard {
                                     < .006f;
             for (int i = 1; complete && i < pieces.size(); i++) {
                 float cut = (pieces.get(i - 1).right() + pieces.get(i).left()) * .5f;
-                complete = printedBarline(region, cut, gray, width, height);
+                complete = printedBarline(region, cut, gray, width, height)
+                        || printedDoubleBarline(region, cut, gray, width, height);
             }
             if (complete) result.addAll(pieces);
             else result.add(region);
         }
         return List.copyOf(result);
+    }
+
+    /** A detected two-rule separator can sit inside a crop with extra vertical padding. */
+    private static boolean printedDoubleBarline(
+            MeasureRegion region, float cut, byte[] gray, int width, int height) {
+        int top = Math.max(0, Math.round(region.top() * height));
+        int bottom = Math.min(height - 1, Math.round(region.bottom() * height));
+        int center = Math.round(cut * width);
+        int left = Math.max(0, center - Math.round(width * .065f));
+        int right = Math.min(width - 1, center + Math.round(width * .065f));
+        int cropWidth = right - left + 1, cropHeight = bottom - top + 1;
+        if (cropWidth < 24 || cropHeight < 20) return false;
+        byte[] crop = new byte[cropWidth * cropHeight];
+        for (int y = top; y <= bottom; y++)
+            System.arraycopy(gray, y * width + left, crop, (y - top) * cropWidth, cropWidth);
+        var staffs = RawStaffLineDetector.detect(crop, cropWidth, cropHeight);
+        if (staffs.size() != 1) return false;
+        var staff = staffs.get(0);
+        int a = top + staff.top(), b = top + staff.bottom();
+        float gap = staff.gap();
+        int reach = Math.max(3, Math.round(gap * .8f));
+        int firstRail = -1, lastRail = -1;
+        for (int x = Math.max(0, center - reach); x <= Math.min(width - 1, center + reach); x++) {
+            int dark = 0;
+            for (int y = a; y <= b; y++) if ((gray[y * width + x] & 255) < 150) dark++;
+            if (dark < (b - a + 1) * .93f) continue;
+            int outside = 0;
+            for (int edge = 0; edge < 2; edge++)
+                for (int distance = 3; distance <= Math.round(gap * .5f); distance++) {
+                    int y = edge == 0 ? a - distance : b + distance;
+                    if (y < 0 || y >= height || (gray[y * width + x] & 255) < 150) outside++;
+                }
+            if (outside > 2) continue;
+            if (firstRail < 0) firstRail = x;
+            lastRail = x;
+        }
+        if (firstRail < 0 || lastRail - firstRail < gap * .44f) return false;
+        for (int x = firstRail + 2; x <= lastRail - 2; x++) {
+            boolean clear = true;
+            for (int space = 0; space < 4; space++) {
+                int y = Math.round(a + (space + .5f) * (b - a) / 4);
+                if ((gray[y * width + x] & 255) < 180) clear = false;
+            }
+            if (clear) return true;
+        }
+        return false;
     }
 
     /** A short, note-bearing opening bar must not be merged to match later row counts. */

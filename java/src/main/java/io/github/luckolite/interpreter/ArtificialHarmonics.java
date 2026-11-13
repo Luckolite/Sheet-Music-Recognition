@@ -219,6 +219,11 @@ final class ArtificialHarmonics {
             ScoreNoteEvent shaftTouch = n.beamCount() >= 2 && n.stemDirection() != 0
                     ? shaftPairedFourth(gray, w, h, x, y, gap, n, m, notes) : null;
             boolean shaftPairedTouch = shaftTouch != null;
+            boolean rawTouch = pairedTouch == null && shaftTouch == null && !strictDiamond
+                    && !symbolTouch && !ruleCrossedTouch && n.beamCount() >= 2
+                    && n.stemDirection() != 0 && unlabelledShaftTouch(gray, w, h, x, y, gap,
+                            n.stemDirection());
+
             if (!strictDiamond
                     && !symbolTouch
                     && !joinedQuarterTouch
@@ -226,6 +231,7 @@ final class ArtificialHarmonics {
                     && !ruleCrossedTouch
                     && !ledgerJoinedTouch
                     && !shaftPairedTouch
+                    && !rawTouch
                     && !(pairedTouch != null
                             && n.beamCount() >= 2
                             && ((pairedTouch.beamCount() == 0
@@ -240,6 +246,7 @@ final class ArtificialHarmonics {
                     && !ruleCrossedTouch
                     && !ledgerJoinedTouch
                     && !shaftPairedTouch
+                    && !rawTouch
                     && !stem(
                             gray,
                             w,
@@ -627,14 +634,36 @@ final class ArtificialHarmonics {
         return found;
     }
 
+    private static boolean unlabelledShaftTouch(
+            byte[] gray, int width, int height, float x, float y, float gap, int direction) {
+        for (int offset = Math.round(gap * .4f); offset <= Math.round(gap * .8f); offset++) {
+            int shaft = Math.round(x) + direction * offset;
+            if (!darkRun(gray, width, height, shaft, y - gap * 1.5f, y - gap * .2f)) continue;
+            boolean tail = direction > 0
+                    ? darkRun(gray, width, height, shaft, y - gap * 2.5f, y - gap * 1.5f)
+                    : darkRun(gray, width, height, shaft, y + gap * .2f, y + gap * 1.4f);
+            if (tail && shaftCrossedDiamond(gray, width, height, x, y - gap * 1.5f,
+                    gap, shaft, direction, true)) return true;
+        }
+        return false;
+    }
+
     private static boolean shaftCrossedDiamond(
             byte[] gray, int width, int height, float x, float y, float gap, int shaft,
             int direction) {
+        return shaftCrossedDiamond(gray, width, height, x, y, gap, shaft, direction, false);
+    }
+
+    private static boolean shaftCrossedDiamond(
+            byte[] gray, int width, int height, float x, float y, float gap, int shaft,
+            int direction, boolean allowSplitCounter) {
         for (int cy = Math.round(y - gap * .32f); cy <= Math.round(y + gap * .32f); cy++)
             for (int cx = Math.round(x - gap * .4f); cx <= Math.round(x + gap * .4f); cx++) {
                 int distance = (shaft - cx) * direction;
                 if (distance < gap * .3f || distance > gap * .85f) continue;
-                if (!enclosedCounter(gray, width, height, cx, cy, gap * .76f, gap * .25f)) continue;
+                if (!enclosedCounter(gray, width, height, cx, cy, gap * .76f, gap * .25f)
+                        && !(allowSplitCounter && splitDiamondCounter(gray, width, height, cx, cy, gap)))
+                    continue;
                 for (float size : DiamondSizes.VALUES) {
                     float radius = gap * size;
                     if (Math.abs(distance - radius) > gap * .23f) continue;
@@ -663,6 +692,19 @@ final class ArtificialHarmonics {
                     if (outline >= 11 && outside >= 6 && exposedSides >= 3) return true;
                 }
             }
+        return false;
+    }
+
+    private static boolean splitDiamondCounter(
+            byte[] gray, int width, int height, int cx, int cy, float gap) {
+        int limit = Math.round(gap * .28f);
+        for (int row = cy - limit; row <= cy + limit; row++) {
+            if (!horizontalRule(gray, width, height, row, cx, gap * .65f)) continue;
+            if (enclosedCounter(gray, width, height, cx, row - gap * .25f, gap * .82f,
+                        gap * .12f, 1)
+                    && enclosedCounter(gray, width, height, cx, row + gap * .25f, gap * .82f,
+                        gap * .12f, 1)) return true;
+        }
         return false;
     }
 
@@ -765,6 +807,12 @@ final class ArtificialHarmonics {
     private static boolean enclosedCounter(
             byte[] gray, int w, int h, float cx, float cy, float r,
             float verticalTolerance) {
+        return enclosedCounter(gray, w, h, cx, cy, r, verticalTolerance, 4);
+    }
+
+    private static boolean enclosedCounter(
+            byte[] gray, int w, int h, float cx, float cy, float r,
+            float verticalTolerance, int minArea) {
         int left = (int) Math.floor(cx - r), top = (int) Math.floor(cy - r);
         int right = (int) Math.ceil(cx + r), bottom = (int) Math.ceil(cy + r);
         if (left < 0 || top < 0 || right >= w || bottom >= h) return false;
@@ -802,9 +850,8 @@ final class ArtificialHarmonics {
                     }
                 }
                 if (!boundary
-                        && area >= 4
-                        && maxX > minX
-                        && maxY > minY
+                        && area >= minArea
+                        && (minArea == 1 || maxX > minX && maxY > minY)
                         && Math.abs(left + sumX / (float) area - cx) <= r * .4f
                         && Math.abs(top + sumY / (float) area - cy) <= verticalTolerance) return true;
             }
