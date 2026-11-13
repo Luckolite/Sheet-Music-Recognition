@@ -8,6 +8,13 @@ from itertools import repeat
 import numpy as np
 
 
+_TEMPO_NUMBER = re.compile(
+    r"=\s*(\d{2,3})\s*[)\]]?"
+    r"(?:\s+[A-G][#b♯♭]?(?:(?:maj|min|dim|aug|sus|add|m|M|Δ|∆|ø|°)?[0-9#b♯♭+\-]*)?"
+    r"(?:/[A-G][#b♯♭]?)?)?\s*$"
+)
+
+
 def measure_numbers(words):
     """Offer isolated numbers; the decoder validates system placement and sequence."""
     result = []
@@ -29,7 +36,7 @@ def tempo_numbers(words):
         value = str(word.get("text", ""))
         # OCR can join the adjacent chord symbol to the tempo direction.
         # Keep the BPM box separate; arbitrary trailing prose remains rejected.
-        match = re.search(r"=\s*(\d{2,3})\s*[)\]]?(?:\s+[A-G][#b♯♭]?(?:(?:maj|min|dim|aug|sus|add|m|M|Δ|∆|ø|°)?[0-9#b♯♭+\-]*)?(?:/[A-G][#b♯♭]?)?)?\s*$", value)
+        match = _TEMPO_NUMBER.search(value)
         if not match:
             continue
         bpm = int(match.group(1))
