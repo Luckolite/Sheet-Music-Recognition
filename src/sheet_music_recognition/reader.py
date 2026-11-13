@@ -174,11 +174,12 @@ class Interpreter:
                     self.runtime.set_tensor(self.input["index"], tensor)
                     self.runtime.invoke()
                     prediction = self.runtime.get_tensor(self.output["index"])[0]
+                    if prediction.min() < 0 or prediction.max() > 5:
+                        raise ValueError("Model returned classes outside 0..5")
                     if exact_white:
-                        # Backends may expose a reused output buffer. Own the cached values.
-                        white_prediction = prediction.copy()
-                if prediction.min() < 0 or prediction.max() > 5:
-                    raise ValueError("Model returned classes outside 0..5")
+                        # Cache owned, validated labels in the destination dtype.
+                        white_prediction = prediction.astype(np.uint8)
+                        prediction = white_prediction
                 region = np.s_[top:top + ch, left:left + cw]
                 edge = self.edge[:ch, :cw]
                 wins = edge >= confidence[region]

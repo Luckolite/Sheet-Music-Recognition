@@ -98,6 +98,17 @@ class ExactWhitePredictionCacheTest(unittest.TestCase):
         self.assertEqual(16, baseline.runtime.calls)
         self.assertEqual(baseline.runtime.calls, candidate.runtime.calls)
 
+    def test_white_output_is_validated_before_narrowing(self):
+        gray = np.full((320, 320), 255, np.uint8)
+        for invalid_class in (-256, 256):
+            with self.subTest(invalid_class=invalid_class):
+                owner = make_reader()
+                output = np.zeros((1, 320, 320), np.int64)
+                output[0, 0, 0] = invalid_class
+                owner.runtime.get_tensor = lambda index: output
+                with self.assertRaisesRegex(ValueError, "classes outside 0..5"):
+                    owner.predict(gray)
+
 
 if __name__ == "__main__":
     unittest.main()
