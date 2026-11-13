@@ -338,15 +338,19 @@ public final class PortableOcr {
 
     static OcrText.Box inkBoundsGray(byte[] pixels, int width, OcrText.Box region) {
         int l = region.right, r = -1, t = region.bottom, b = -1;
-        for (int y = region.top; y < region.bottom; y++)
-            for (int x = region.left; x < region.right; x++) {
-                if ((pixels[y * width + x] & 255) < 190) {
-                    l = Math.min(l, x);
-                    r = Math.max(r, x);
-                    t = Math.min(t, y);
-                    b = Math.max(b, y);
-                }
-            }
+        // A row's outermost ink is sufficient to update the crop bounds.
+        for (int y = region.top; y < region.bottom; y++) {
+            int row = y * width;
+            int first = region.left;
+            while (first < region.right && (pixels[row + first] & 255) >= 190) first++;
+            if (first == region.right) continue;
+            l = Math.min(l, first);
+            t = Math.min(t, y);
+            b = y;
+            int last = region.right - 1;
+            while (last > r && last > first && (pixels[row + last] & 255) >= 190) last--;
+            r = Math.max(r, last);
+        }
         return r < l ? region : new OcrText.Box(l, t, r + 1, b + 1);
     }
 
