@@ -23477,6 +23477,10 @@ final class OmrScoreInterpreter {
                 borrowed = attachedRawStem(gray, width, height, fragment, gap, stemGap, 170);
             boolean narrowBeamlet = fragment.area <= gap * gap * .26f
                     && fragment.maxY - fragment.minY + 1 <= gap * .54f;
+            if (interruptedShaft && coveredBeamMask(gray, width, height, fragment, heads, gap)) {
+                rejected.add(fragment);
+                continue;
+            }
             if (borrowed == null && !narrowBeamlet) continue;
             float minimumOwnerDistance = gap * (narrowBeamlet ? 1.7f : 2.2f);
             for (Component owner : heads) {
@@ -23500,6 +23504,59 @@ final class OmrScoreInterpreter {
             }
         }
         return rejected;
+    }
+
+    private static boolean coveredBeamMask(
+            byte[] gray, int width, int height, Component fragment, List<Component> heads, float gap) {
+        for (Component owner : heads) {
+            if (Math.abs(owner.centerX - fragment.centerX) > gap * 2
+                    || Math.abs(owner.centerY - fragment.centerY) < gap * 3
+                    || Math.abs(owner.centerY - fragment.centerY) > gap * 6
+                    || !filledBeamEndpointCore(gray, width, height, owner, gap)) continue;
+            int[] shaft = attachedRawStem(gray, width, height, owner, gap, 2, 170);
+            if (shaft == null || Math.abs(shaft[1] - fragment.centerY) > gap * 1.7f) continue;
+            for (Component peer : heads) {
+                float separation = Math.abs(peer.centerX - owner.centerX);
+                if (separation < gap * 2 || separation > gap * 4.7f
+                        || Math.abs(peer.centerY - owner.centerY) > gap * .9f
+                        || !filledBeamEndpointCore(gray, width, height, peer, gap)) continue;
+                int[] other = attachedRawStem(gray, width, height, peer, gap, 2, 170);
+                if (other == null || other[2] != shaft[2]
+                        || Math.abs(other[1] - peer.centerY) < gap * 3.5f) continue;
+                int start = Math.min(shaft[0], other[0]), end = Math.max(shaft[0], other[0]);
+                if (fragment.centerX <= start || fragment.centerX >= end) continue;
+                float slope = (other[1] - shaft[1]) / (float) (other[0] - shaft[0]);
+                if (Math.abs(slope) > .3f) continue;
+                float tip = shaft[1] + slope * (fragment.centerX - shaft[0]);
+                float depth = (tip - fragment.centerY) * shaft[2];
+                if (depth < gap * .45f || depth > gap * 1.7f) continue;
+                int margin = Math.round(gap * .28f);
+                for (int first = Math.round(gap * .25f); first <= Math.round(gap * .45f); first++) {
+                    int second = first + Math.round(gap * .75f);
+                    if (!continuousBeamRail(gray, width, height, shaft, slope,
+                            start + margin, end - margin, first)
+                            || !continuousBeamRail(gray, width, height, shaft, slope,
+                                    start + margin, end - margin, second)) continue;
+                    int seam = (first + second) / 2, open = 0;
+                    for (int x = start + margin; x <= end - margin; x++) {
+                        int row = Math.round(shaft[1] + slope * (x - shaft[0])) - shaft[2] * seam;
+                        if (!beamCore(gray, width, height, x, row, 1)) open++;
+                    }
+                    if (open < (end - start) * .2f) continue;
+                    int near = Math.abs(fragment.centerX - shaft[0])
+                            <= Math.abs(fragment.centerX - other[0]) ? shaft[0] : other[0];
+                    if (depth <= gap * 1.1f) return true;
+                    if (Math.abs(fragment.centerX - near) > gap * .58f) continue;
+                    int center = Math.round(fragment.centerX);
+                    boolean joined = true;
+                    for (int x = Math.min(center, near); x <= Math.max(center, near); x++)
+                        joined &= beamCore(gray, width, height, x,
+                                Math.round(fragment.centerY + slope * (x - fragment.centerX)), 1);
+                    if (joined) return true;
+                }
+            }
+        }
+        return false;
     }
 
     private static boolean ownsSlopedBeamFragment(

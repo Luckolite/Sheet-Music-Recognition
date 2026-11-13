@@ -216,12 +216,16 @@ final class ArtificialHarmonics {
                     && ledgerJoinedDiamond(gray, w, h,
                             (m.left() + pairedTouch.positionInMeasure() * (m.right() - m.left())) * w,
                             pairedTouch.pageY() * h, y, gap, n.stemDirection());
+            ScoreNoteEvent shaftTouch = n.beamCount() >= 2 && n.stemDirection() != 0
+                    ? shaftPairedFourth(gray, w, h, x, y, gap, n, m, notes) : null;
+            boolean shaftPairedTouch = shaftTouch != null;
             if (!strictDiamond
                     && !symbolTouch
                     && !joinedQuarterTouch
                     && !joinedEighthTouch
                     && !ruleCrossedTouch
                     && !ledgerJoinedTouch
+                    && !shaftPairedTouch
                     && !(pairedTouch != null
                             && n.beamCount() >= 2
                             && ((pairedTouch.beamCount() == 0
@@ -235,6 +239,7 @@ final class ArtificialHarmonics {
                     && !joinedEighthTouch
                     && !ruleCrossedTouch
                     && !ledgerJoinedTouch
+                    && !shaftPairedTouch
                     && !stem(
                             gray,
                             w,
@@ -251,6 +256,7 @@ final class ArtificialHarmonics {
                             && pairedTouch.unbeamedDurationBeats() >= ScoreNoteEvent.DURATION_HALF))
                 continue;
             replacements.put(n, n.withOctaveShift(2));
+            if (shaftPairedTouch) remove.add(shaftTouch);
             for (var upper : notes)
                 if (upper.kind() == ScoreNoteEvent.Kind.PITCHED
                         && upper != n
@@ -580,6 +586,81 @@ final class ArtificialHarmonics {
                                 outline = false;
                         }
                     if (outline) return true;
+                }
+            }
+        return false;
+    }
+
+    /** Re-read a decoded upper head whose staff rule can bias its reported step. */
+    private static ScoreNoteEvent shaftPairedFourth(
+            byte[] gray, int width, int height, float x, float y, float gap,
+            ScoreNoteEvent stopped, MeasureRegion measure, List<ScoreNoteEvent> notes) {
+        ScoreNoteEvent found = null;
+        int direction = stopped.stemDirection();
+        for (ScoreNoteEvent upper : notes) {
+            int steps = upper.staffStep() - stopped.staffStep();
+            if (upper.kind() != ScoreNoteEvent.Kind.PITCHED
+                    || upper.measureIndex() != stopped.measureIndex()
+                    || upper.staffIndex() != stopped.staffIndex()
+                    || (steps != 3 && steps != 4)
+                    || upper.stemDirection() == -direction
+                    || upper.unbeamedDurationBeats() > ScoreNoteEvent.DURATION_HALF) continue;
+            float touchX = (measure.left()
+                    + upper.positionInMeasure() * (measure.right() - measure.left())) * width;
+            float touchY = upper.pageY() * height;
+            if (Math.abs(touchX - x) > gap * .52f
+                    || Math.abs(touchY - (y - 1.5f * gap)) > gap * .5f) continue;
+            for (int offset = Math.round(gap * .35f); offset <= Math.round(gap * .85f); offset++) {
+                int shaft = Math.round(x) + direction * offset;
+                if (!darkRun(gray, width, height, shaft, touchY - gap * .18f, y - gap * .2f))
+                    continue;
+                boolean stemTail = direction > 0
+                        ? darkRun(gray, width, height, shaft, touchY - gap * .9f, touchY - gap * .18f)
+                        : darkRun(gray, width, height, shaft, y + gap * .2f, y + gap * 1.15f);
+                if (!stemTail || !shaftCrossedDiamond(gray, width, height, touchX, touchY,
+                        gap, shaft, direction)) continue;
+                if (found != null) return null;
+                found = upper;
+                break;
+            }
+        }
+        return found;
+    }
+
+    private static boolean shaftCrossedDiamond(
+            byte[] gray, int width, int height, float x, float y, float gap, int shaft,
+            int direction) {
+        for (int cy = Math.round(y - gap * .32f); cy <= Math.round(y + gap * .32f); cy++)
+            for (int cx = Math.round(x - gap * .4f); cx <= Math.round(x + gap * .4f); cx++) {
+                int distance = (shaft - cx) * direction;
+                if (distance < gap * .3f || distance > gap * .85f) continue;
+                if (!enclosedCounter(gray, width, height, cx, cy, gap * .76f, gap * .25f)) continue;
+                for (float size : DiamondSizes.VALUES) {
+                    float radius = gap * size;
+                    if (Math.abs(distance - radius) > gap * .23f) continue;
+                    boolean rule = false;
+                    for (int row = Math.round(cy - radius); row <= Math.round(cy + radius); row++)
+                        if (horizontalRule(gray, width, height, row, cx, radius)) {
+                            rule = true;
+                            break;
+                        }
+                    if (!rule) continue;
+                    int outline = 0, outside = 0, exposedSides = 0;
+                    for (int dx : ProbeSigns.VALUES)
+                        for (int dy : ProbeSigns.VALUES) {
+                            int edge = 0, paper = 0;
+                            for (float f : new float[] {.25f, .5f, .75f}) {
+                                float px = dx * radius * f, py = dy * radius * (1 - f);
+                                if (dark(gray, width, height, Math.round(cx + px), Math.round(cy + py)))
+                                    edge++;
+                                if (!dark(gray, width, height, Math.round(cx + px * 1.45f),
+                                        Math.round(cy + py * 1.45f))) paper++;
+                            }
+                            if (edge >= 2) outline += edge;
+                            if (paper > 0) exposedSides++;
+                            outside += paper;
+                        }
+                    if (outline >= 11 && outside >= 6 && exposedSides >= 3) return true;
                 }
             }
         return false;

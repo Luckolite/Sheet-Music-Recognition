@@ -1618,6 +1618,12 @@
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/ActiveScoreNotes.java"
     },
     "ArtificialHarmonics.java": {
+      "shaft_paired_fourth_review": {
+        "reviewed_app_commit": "d6d553226d54481b0d5d92200a3338f8b41a98c4",
+        "app_lf_sha256": "c1f5d97d3cd7297d4e031ba847836a8b060d7f094bc724f3ddde576d7d7ebd54",
+        "standalone_lf_sha256": "54639f150044333961a19f5197c11d47a83d99f2c0a36f65d6c6a098277ca83a",
+        "scope": "Matching finite shared-shaft and closed upper-outline proof for a fourth touch next to a staff rule. Broader source drift remains open."
+      },
       "ledger_joined_diamond_review": {
         "reviewed_app_commit": "d6fb9d1ff6f2344fc5afeaf561cc625cbbd8fcc7",
         "app_lf_sha256": "bb1bbb6cc7c1184314a9993000bd91c08d2d5b0a76be730597e66d68008acde7",
@@ -5256,6 +5262,12 @@
       "owned_head_bar_review": "A full common bar may contact a complete independently stemmed head. Every excessive branch member must be exact validated head ink or a full common axis; unchanged width, paper, body, shaft and negative guards. Original procedural tests only."
     },
     "OmrScoreInterpreter.java": {
+      "covered_beam_mask_review": {
+        "reviewed_app_commit": "d6d553226d54481b0d5d92200a3338f8b41a98c4",
+        "app_lf_sha256": "9044935c715431f16c7c566dd141335dc2cf9eb864d5f8f05d05e59ea6bc4a23",
+        "standalone_lf_sha256": "3121b4e459f717d11ccc0e6fd037fdf08f2d2c812d5d0fbf3fa95c127e9b4858",
+        "scope": "Matching independent beam endpoints and parallel raw rail proof for head masks embedded in a beam. Broader source drift remains open."
+      },
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/OmrScoreInterpreter.java",
       "finite_beamlet_and_seam_review": {
         "reviewed_app_commit": "d6fb9d1ff6f2344fc5afeaf561cc625cbbd8fcc7",
