@@ -6,6 +6,8 @@ import java.util.*;
 
 /** Attack-local bow directions on the existing staff-owned technique wire. */
 final class BowDirectionDetector {
+    private record StaffLane(int index, int count) {}
+
     private BowDirectionDetector() {}
 
     static List<ScoreTechniqueChange> detect(
@@ -16,9 +18,16 @@ final class BowDirectionDetector {
             List<PlayingTechniqueDetector.Staff> staffs,
             List<MeasureRegion> measures,
             List<ScoreNoteEvent> notes) {
-        if (staffs == null || measures == null || notes == null || notes.size() > 4096)
+        if (staffs == null || staffs.isEmpty() || measures == null
+                || notes == null || notes.isEmpty() || notes.size() > 4096)
             return List.of();
-        List<NoteArticulationDetector.Anchor> anchors = new ArrayList<>();
+        var staffPositions = new HashMap<StaffLane, List<Integer>>();
+        for (int i = 0; i < staffs.size(); i++) {
+            var staff = staffs.get(i);
+            var lane = new StaffLane(staff.index(), staff.count());
+            staffPositions.computeIfAbsent(lane, ignored -> new ArrayList<>()).add(i);
+        }
+        List<NoteArticulationDetector.Anchor> anchors = new ArrayList<>(notes.size());
         for (var note : notes) {
             if (note.measureIndex() < 0 || note.measureIndex() >= measures.size()) return List.of();
             var m = measures.get(note.measureIndex());
@@ -26,10 +35,9 @@ final class BowDirectionDetector {
             float y = note.pageY() * height, best = Float.POSITIVE_INFINITY;
             int owner = -1;
             boolean ambiguous = false;
-            for (int i = 0; i < staffs.size(); i++) {
+            var lane = new StaffLane(note.staffIndex(), note.staffCount());
+            for (int i : staffPositions.getOrDefault(lane, List.of())) {
                 var staff = staffs.get(i);
-                if (staff.index() != note.staffIndex() || staff.count() != note.staffCount())
-                    continue;
                 float distance = Math.abs(y - (staff.top() + staff.bottom()) * .5f);
                 if (distance < best) {
                     best = distance;

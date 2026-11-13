@@ -3,6 +3,7 @@
 package io.github.luckolite.interpreter;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 
 /** Bounded text strips from agreeing written-head geometry on a gently tilted staff. */
@@ -35,7 +36,15 @@ final class TechniqueTextRegions {
             int width,
             int height) {
         List<Region> result = new ArrayList<>();
+        if (staffs.isEmpty() || measures.isEmpty() || notes.isEmpty()) return List.of();
+        var notesByMeasure = new HashMap<Integer, List<ScoreNoteEvent>>();
+        for (var note : notes) {
+            if (note.crossStaffBeam() || note.pageY() <= 0) continue;
+            notesByMeasure.computeIfAbsent(note.measureIndex(), ignored -> new ArrayList<>()).add(note);
+        }
         for (int m = 0; m < measures.size(); m++) {
+            var measureNotes = notesByMeasure.get(m);
+            if (measureNotes == null || measureNotes.size() < 3) continue;
             var measure = measures.get(m);
             for (var staff : staffs) {
                 float gap = staff.gap(), center = (staff.top() + staff.bottom()) * .5f / height;
@@ -44,12 +53,9 @@ final class TechniqueTextRegions {
                 List<Point> points = new ArrayList<>();
                 int columnCount = 0, firstColumn = 0, secondColumn = 0;
                 float min = Float.MAX_VALUE, max = -Float.MAX_VALUE, sx = 0, sy = 0;
-                for (var note : notes) {
-                    if (note.measureIndex() != m
-                            || note.staffIndex() != staff.index()
-                            || note.staffCount() != staff.count()
-                            || note.crossStaffBeam()
-                            || note.pageY() <= 0) continue;
+                for (var note : measureNotes) {
+                    if (note.staffIndex() != staff.index() || note.staffCount() != staff.count())
+                        continue;
                     // Written staff step is optical position. Octave playback shifts remain
                     // separate.
                     float floor = note.pageY() * height + note.staffStep() * gap * .5f;

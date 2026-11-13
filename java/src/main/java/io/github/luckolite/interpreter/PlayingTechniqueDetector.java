@@ -4,12 +4,16 @@ package io.github.luckolite.interpreter;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.regex.Pattern;
 
 final class PlayingTechniqueDetector {
     record Staff(float top, float bottom, float gap, int index, int count) {}
+
+    private record MeasureStaff(int measure, int staff) {}
 
     enum WordAdmission {
         UNCLASSIFIED,
@@ -103,17 +107,24 @@ final class PlayingTechniqueDetector {
             int width,
             int height) {
         List<ScoreTechniqueChange> result = new ArrayList<>();
-        var localRegions = TechniqueTextRegions.above(staffs, measures, notes, width, height);
+        List<TechniqueTextRegions.Region> localRegions = null;
+        Map<MeasureStaff, List<ScoreNoteEvent>> notesByStaff = null;
+        var measuresByStaff = new HashMap<Staff, List<Integer>>();
+        var changesByStaff = new HashMap<MeasureStaff, List<ScoreTechniqueChange>>();
         for (Word word : words) {
             int technique = technique(word.text);
             if (technique < 0) continue;
+            if (localRegions == null)
+                localRegions = TechniqueTextRegions.above(staffs, measures, notes, width, height);
+            float x = word.left * width;
+            float top = word.top * height, bottom = word.bottom * height;
             Staff owner = null;
             float best = Float.MAX_VALUE, second = Float.MAX_VALUE;
             boolean ownerBelow = false;
             for (Staff staff : staffs) {
-                var frame = TechniqueTextRegions.local(staff, word.left * width, localRegions);
-                float above = (frame.top - word.bottom * height) / staff.gap;
-                float below = (word.top * height - frame.bottom) / staff.gap;
+                var frame = TechniqueTextRegions.local(staff, x, localRegions);
+                float above = (frame.top - bottom) / staff.gap;
+                float below = (top - frame.bottom) / staff.gap;
                 boolean upper = above >= -.6f && above <= 4.2f;
                 // OCR boxes and the row-wide staff frame can differ by half a gap.
                 // Require the expression to extend beyond the bottom rule too.
@@ -121,7 +132,7 @@ final class PlayingTechniqueDetector {
                         technique >= ScoreTechniqueChange.CANTABILE
                                 && below >= -.6f
                                 && below <= 4.2f
-                                && word.bottom * height >= frame.bottom + staff.gap * .5f;
+                                && bottom >= frame.bottom + staff.gap * .5f;
                 if (!upper && !lower) continue;
                 boolean isBelow = lower && (!upper || Math.abs(below) < Math.abs(above));
                 float distance = isBelow ? Math.abs(below) : Math.abs(above);
@@ -137,19 +148,19 @@ final class PlayingTechniqueDetector {
             if (owner == null || (ownerBelow && second - best < .6f)) continue;
             int measure = -1;
             float closest = Float.MAX_VALUE;
-            for (int m = 0; m < measures.size(); m++) {
+            float horizontalGap = owner.gap / width;
+            var staffMeasures = measuresByStaff.computeIfAbsent(
+                    owner, staff -> measuresForStaff(staff, measures, height));
+            for (int m : staffMeasures) {
                 var region = measures.get(m);
-                float center = (owner.top + owner.bottom) * .5f / height;
-                if (center < region.top() - owner.gap / height
-                        || center > region.bottom() + owner.gap / height) continue;
-                if (word.left > region.right() + owner.gap / width * .5f) continue;
+                if (word.left > region.right() + horizontalGap * .5f) continue;
                 float distance = Math.max(0, region.left() - word.left);
                 if (distance < closest) {
                     closest = distance;
                     measure = m;
                 }
             }
-            if (measure < 0 || closest > owner.gap / width * 5) continue;
+            if (measure < 0 || closest > horizontalGap * 5) continue;
             var region = measures.get(measure);
             float position =
                     Math.max(
@@ -160,31 +171,56 @@ final class PlayingTechniqueDetector {
                                             / (region.right() - region.left())));
             // Engravers center labels slightly to the right of the first affected head.
             // Snap to that head only within one staff gap; otherwise retain the printed slot.
-            float nearest = owner.gap / width / (region.right() - region.left());
+            float nearest = horizontalGap / (region.right() - region.left());
             float printedPosition = position;
-            for (var note : notes)
-                if (note.measureIndex() == measure && note.staffIndex() == owner.index) {
-                    float d = Math.abs(note.positionInMeasure() - printedPosition);
-                    if (d <= nearest) {
-                        nearest = d;
-                        position = note.positionInMeasure();
-                    }
+            if (notesByStaff == null) {
+                notesByStaff = new HashMap<>();
+                for (var note : notes) {
+                    var key = new MeasureStaff(note.measureIndex(), note.staffIndex());
+                    notesByStaff.computeIfAbsent(key, ignored -> new ArrayList<>()).add(note);
                 }
+            }
+            var key = new MeasureStaff(measure, owner.index);
+            for (var note : notesByStaff.getOrDefault(key, List.of())) {
+                float d = Math.abs(note.positionInMeasure() - printedPosition);
+                if (d <= nearest) {
+                    nearest = d;
+                    position = note.positionInMeasure();
+                }
+            }
             var change =
                     new ScoreTechniqueChange(
                             measure, position, owner.index, owner.count, technique);
             boolean duplicate = false;
-            for (var prior : result)
-                if (prior.measureIndex() == measure
-                        && prior.staffIndex() == owner.index
-                        && prior.technique() == technique
-                        && Math.abs(prior.positionInMeasure() - position) < .03f) duplicate = true;
-            if (!duplicate) result.add(change);
+            var localChanges = changesByStaff.computeIfAbsent(key, ignored -> new ArrayList<>());
+            for (var prior : localChanges) {
+                if (prior.technique() == technique
+                        && Math.abs(prior.positionInMeasure() - position) < .03f) {
+                    duplicate = true;
+                    break;
+                }
+            }
+            if (!duplicate) {
+                localChanges.add(change);
+                result.add(change);
+            }
         }
         result.sort(
                 Comparator.comparingInt(ScoreTechniqueChange::measureIndex)
                         .thenComparingDouble(ScoreTechniqueChange::positionInMeasure)
                         .thenComparingInt(ScoreTechniqueChange::staffIndex));
         return List.copyOf(result);
+    }
+
+    private static List<Integer> measuresForStaff(Staff staff, List<MeasureRegion> measures, int height) {
+        float center = (staff.top + staff.bottom) * .5f / height;
+        float gap = staff.gap / height;
+        var result = new ArrayList<Integer>();
+        for (int m = 0; m < measures.size(); m++) {
+            var region = measures.get(m);
+            if (center < region.top() - gap || center > region.bottom() + gap) continue;
+            result.add(m);
+        }
+        return result;
     }
 }
