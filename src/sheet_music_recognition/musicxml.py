@@ -4,6 +4,7 @@ from . import straight_slide, slide_numbering
 """MusicXML 4.0 concert-pitch export of the decoded performance (not source engraving)."""
 from collections import defaultdict
 from functools import lru_cache
+from itertools import accumulate
 from math import gcd
 from fractions import Fraction
 from decimal import Decimal
@@ -436,20 +437,26 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
         for group in multi_rest_wire.checked_score(score):
             printed_rest_groups.append(dict(group, firstBar=first_bar+group['firstMeasureIndex']))
         from . import source_tempo_clock
+        keys = {change['measureIndex']: change for change in score.get('keyChanges', [])}
+        meters = {change['measureIndex']: change for change in score.get('meterChanges', [])}
+        tempos_by_measure = defaultdict(list)
+        for change in score.get('tempoChanges', []):
+            tempos_by_measure[change['measureIndex']].append(change)
+        # Source anchors use the unrounded beat clock, separate from bar lengths in ticks.
+        measure_starts = list(accumulate(page['measureBeats'], initial=0))
         for index, beats in enumerate(page['measureBeats']):
             length = ticks(beats)
             if length <= 0:
                 raise ValueError('MusicXML measure duration must be positive')
-            for change in score.get('keyChanges', []):
-                if change['measureIndex'] == index:
-                    current_key = change['fifths']
-            for change in score.get('meterChanges', []):
-                if change['measureIndex'] == index:
-                    current_meter = (change['numerator'], change['denominator'])
+            if index in keys:
+                current_key = keys[index]['fifths']
+            if index in meters:
+                change = meters[index]
+                current_meter = (change['numerator'], change['denominator'])
             bar = dict(start=offset+local_start, length=length, meter=current_meter, key=current_key,
                        resetTempo=index == 0 and page_index in tempo_restarts,
                        tempos=[dict(c, _sourceTempoOnset=source_tempo_clock.onset(page, c))
-                               for c in score.get('tempoChanges', []) if c['measureIndex'] == index])
+                               for c in tempos_by_measure.get(index, ())])
             bars.append(bar)
             local_start += length
         for row in score.get('rests', []):
@@ -526,7 +533,7 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
                 raise ValueError('Expression anchor outside MusicXML page')
             if not isinstance(q, (int, float)) or not math.isfinite(q) or q < 0 or q > (page['measureBeats'][m] if m < len(page['measureBeats']) else 0):
                 raise ValueError('Expression anchor outside MusicXML measure')
-            return offset+ticks(sum(page['measureBeats'][:m])+q)
+            return offset+ticks(measure_starts[m]+q)
         from .arpeggio_notation import plan as arpeggio_plan
         from .neutral_rest_caption import is_caption, start as caption_start
         harmonic_marks = [m for m in score.get('expressiveEvents', [])
@@ -586,7 +593,7 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
                     if (measure >= len(page['measureBeats'])
                             or not 0 <= quarter_beat < page['measureBeats'][measure]):
                         continue
-                    measure_start = sum(page['measureBeats'][:measure])
+                    measure_start = measure_starts[measure]
                     expected = offset + ticks(measure_start + quarter_beat)
                     if (expected != owner['start']
                             or not offset + ticks(measure_start) <= owner['start']
@@ -624,7 +631,7 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
                     if (measure >= len(page['measureBeats'])
                             or not 0 <= quarter_beat < page['measureBeats'][measure]):
                         continue
-                    measure_start = sum(page['measureBeats'][:measure])
+                    measure_start = measure_starts[measure]
                     expected = offset + ticks(measure_start + quarter_beat)
                     if (expected != owner['start']
                             or not offset + ticks(measure_start) <= owner['start']
