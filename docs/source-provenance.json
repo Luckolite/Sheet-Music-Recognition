@@ -7598,15 +7598,15 @@
     },
     "RestPaperTone.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/RestPaperTone.java",
-      "source_sha256": "b1784487a7d3026986a2f8677ee1712b7539709049105dd8a1d291eef7892e74",
-      "source_normalized_sha256": "b1784487a7d3026986a2f8677ee1712b7539709049105dd8a1d291eef7892e74",
+      "source_sha256": "0cea31c913d3e7a5f3adc1c8883ebea4eeb7f11e207b50fedc9c0e9e575c1729",
+      "source_normalized_sha256": "0cea31c913d3e7a5f3adc1c8883ebea4eeb7f11e207b50fedc9c0e9e575c1729",
       "reviewed_source_state": "Frozen recognition19 app source; package and diagnostics adapter token parity verified",
       "review_note": "Global physical staff, printed glyph or written owner repair; original procedural regressions. Full executable token parity after the explicit standalone adapter. Historical origin commits are retained; current frozen app bytes are identified by the source hashes. No model, dependency, wire layout or private source material changes.",
       "reviewed_app_commit": "f4fca934fee0c72545a3761a485a87cb0f32af1d",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/RestPaperTone.java",
       "standalone_sha256": "d2933f3c6aaece1e7f33746a76a5c1c06f01ae0597d4fe60232bfa74b7da953e",
       "standalone_normalized_sha256": "d2933f3c6aaece1e7f33746a76a5c1c06f01ae0597d4fe60232bfa74b7da953e",
-      "curve_performance_review": "Reviewed public decoder optimizations ported to the app and native worker. App-specific callers and processing contracts are preserved."
+      "curve_performance_review": "Reviewed public decoder optimizations ported to the app and native worker. App-specific callers and processing contracts are preserved. Android API 26 uses equivalent scalar operations for unavailable Java library methods."
     },
     "RestStaffRuleEdge.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/RestStaffRuleEdge.java",
@@ -7919,8 +7919,8 @@
     },
     "ScoreDynamicsDetector.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/ScoreDynamicsDetector.java",
-      "source_sha256": "19841f83f0866d2ffcb63cf3685ccd959486469aab8216ef4c14798b8a0e3d68",
-      "source_normalized_sha256": "19841f83f0866d2ffcb63cf3685ccd959486469aab8216ef4c14798b8a0e3d68",
+      "source_sha256": "55506da0dc13d573ac3c718c85ce73a0375cbbc7dc6b0955d76da3dded433865",
+      "source_normalized_sha256": "55506da0dc13d573ac3c718c85ce73a0375cbbc7dc6b0955d76da3dded433865",
       "review_note": "Shared recognition and playback-direction changes ported with standalone adapters. Redistributable synthetic regressions cover the changed ink and direction rules.",
       "reviewed_app_base_commit": "650d1b3a312dcd7eb58f83945a6a3be321c9b4dd",
       "reviewed_app_state": "Reviewed recognition108 source committed; cumulative matched rollout deferred during active goal.",
@@ -7937,7 +7937,7 @@
       "reviewed_source_state": "Reviewed committed recognition138 violin-score repair.",
       "recognition139_review_note": "Reviewed namespace-equivalent source port.",
       "recognition151_review_note": "Both attach printed fp evidence when the verified glyph binds an onset and emits the ordered attack and sustain pair. Standalone reuses the paper estimate for the same three contrast passes.",
-      "curve_performance_review": "Reviewed public decoder optimizations ported to the app and native worker. App-specific callers and processing contracts are preserved."
+      "curve_performance_review": "Reviewed public decoder optimizations ported to the app and native worker. App-specific callers and processing contracts are preserved. Android API 26 uses equivalent scalar operations for unavailable Java library methods."
     },
     "ScoreExpressionDetector.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/ScoreExpressionDetector.java",
