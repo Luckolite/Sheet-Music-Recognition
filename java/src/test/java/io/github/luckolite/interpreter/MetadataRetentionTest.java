@@ -46,7 +46,7 @@ public class MetadataRetentionTest {
     private static void unchangedExcept(
             ScoreNoteEvent before, ScoreNoteEvent after, Map<String, Object> changes)
             throws Exception {
-        assertEquals(24, ScoreNoteEvent.class.getRecordComponents().length);
+        assertEquals(26, ScoreNoteEvent.class.getRecordComponents().length);
         assertEquals("kind", ScoreNoteEvent.class.getRecordComponents()[22].getName());
         assertEquals("visualSize", ScoreNoteEvent.class.getRecordComponents()[23].getName());
         assertEquals(ScoreNoteEvent.VisualSize.FULL, before.visualSize());

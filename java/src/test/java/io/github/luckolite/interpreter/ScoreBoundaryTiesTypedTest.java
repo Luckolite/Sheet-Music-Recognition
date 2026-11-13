@@ -233,7 +233,7 @@ public class ScoreBoundaryTiesTypedTest {
         var result = resolve(List.of(note(0, .8f, 4), current)).get(1);
         assertTrue(result.tiedFromPrevious());
         assertEquals(1, result.writtenAccidental());
-        assertEquals(24, ScoreNoteEvent.class.getRecordComponents().length);
+        assertEquals(26, ScoreNoteEvent.class.getRecordComponents().length);
         assertEquals("visualSize", ScoreNoteEvent.class.getRecordComponents()[23].getName());
         for (RecordComponent field : ScoreNoteEvent.class.getRecordComponents())
             if (!field.getName().equals("tiedFromPrevious")

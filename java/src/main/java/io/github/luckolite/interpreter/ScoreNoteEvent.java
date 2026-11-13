@@ -3,7 +3,10 @@
 // Adapted from Music Sheets: standalone package and platform-independent diagnostics.
 package io.github.luckolite.interpreter;
 
-/** One notehead plus written rhythm/tie/accidental metadata read by the measure-guide pass. */
+/**
+ * One written notehead and its rhythm, tie and accidental metadata.
+ * A nonzero harmonic offset raises the sounding pitch while preserving the written pitch.
+ */
 public record ScoreNoteEvent(
         int measureIndex,
         float positionInMeasure,
@@ -28,12 +31,78 @@ public record ScoreNoteEvent(
         int tupletNormalNotes,
         int stemDirection,
         Kind kind,
-        VisualSize visualSize) {
+        VisualSize visualSize,
+        int harmonicSemitones,
+        OpenStringTouch openStringTouch) {
 
     /** Printed glyph scale is independent of pitch classification, rhythm, and performance. */
     public enum VisualSize {
         FULL,
         CUE
+    }
+
+    /** The written diamond attached to this attack; sounding pitch depends on the instrument. */
+    public record OpenStringTouch(int staffStep, float pageY, int writtenAccidental) {
+        public OpenStringTouch {
+            if (staffStep < -35 || staffStep > 35 || !Float.isFinite(pageY) || pageY < 0 || pageY > 1
+                    || writtenAccidental < ACCIDENTAL_DOUBLE_FLAT || writtenAccidental > ACCIDENTAL_DOUBLE_SHARP)
+                throw new IllegalArgumentException("Invalid open-string harmonic touch");
+        }
+    }
+
+    /** Legacy callers have no separate sounding harmonic pitch. */
+    public ScoreNoteEvent(
+            int measureIndex,
+            float positionInMeasure,
+            int staffStep,
+            int staffIndex,
+            int staffCount,
+            float pageY,
+            boolean tiedFromPrevious,
+            int augmentationDots,
+            int beamCount,
+            int writtenAccidental,
+            float unbeamedDurationBeats,
+            int tupletDivisor,
+            float followingRestBeats,
+            int articulations,
+            int clefBottomDiatonic,
+            boolean crossStaffBeam,
+            float leadingRestBeats,
+            boolean compactOpening,
+            int octaveShift,
+            int boundaryTies,
+            int tupletNormalNotes,
+            int stemDirection,
+            Kind kind,
+            VisualSize visualSize) {
+        this(
+                measureIndex,
+                positionInMeasure,
+                staffStep,
+                staffIndex,
+                staffCount,
+                pageY,
+                tiedFromPrevious,
+                augmentationDots,
+                beamCount,
+                writtenAccidental,
+                unbeamedDurationBeats,
+                tupletDivisor,
+                followingRestBeats,
+                articulations,
+                clefBottomDiatonic,
+                crossStaffBeam,
+                leadingRestBeats,
+                compactOpening,
+                octaveShift,
+                boundaryTies,
+                tupletNormalNotes,
+                stemDirection,
+                kind,
+                visualSize,
+                0,
+                null);
     }
 
     /** Legacy callers have ordinary-size glyphs. */
@@ -113,7 +182,69 @@ public record ScoreNoteEvent(
                 tupletNormalNotes,
                 stemDirection,
                 kind,
-                value);
+                value,
+                harmonicSemitones,
+                openStringTouch);
+    }
+
+    public ScoreNoteEvent withHarmonicSemitones(int semitones) {
+        return new ScoreNoteEvent(
+                measureIndex,
+                positionInMeasure,
+                staffStep,
+                staffIndex,
+                staffCount,
+                pageY,
+                tiedFromPrevious,
+                augmentationDots,
+                beamCount,
+                writtenAccidental,
+                unbeamedDurationBeats,
+                tupletDivisor,
+                followingRestBeats,
+                articulations,
+                clefBottomDiatonic,
+                crossStaffBeam,
+                leadingRestBeats,
+                compactOpening,
+                octaveShift,
+                boundaryTies,
+                tupletNormalNotes,
+                stemDirection,
+                kind,
+                visualSize,
+                semitones,
+                openStringTouch);
+    }
+
+    public ScoreNoteEvent withOpenStringTouch(OpenStringTouch touch) {
+        return new ScoreNoteEvent(
+                measureIndex,
+                positionInMeasure,
+                staffStep,
+                staffIndex,
+                staffCount,
+                pageY,
+                tiedFromPrevious,
+                augmentationDots,
+                beamCount,
+                writtenAccidental,
+                unbeamedDurationBeats,
+                tupletDivisor,
+                followingRestBeats,
+                articulations,
+                clefBottomDiatonic,
+                crossStaffBeam,
+                leadingRestBeats,
+                compactOpening,
+                octaveShift,
+                boundaryTies,
+                tupletNormalNotes,
+                stemDirection,
+                kind,
+                visualSize,
+                harmonicSemitones,
+                touch);
     }
 
     /** Pitch classification is explicit; a cross-shaped head alone does not imply percussion. */
@@ -198,7 +329,9 @@ public record ScoreNoteEvent(
                 tupletNormalNotes,
                 stemDirection,
                 value,
-                visualSize);
+                visualSize,
+                harmonicSemitones,
+                openStringTouch);
     }
 
     /** Existing callers without printed shaft evidence keep an unknown direction. */
@@ -274,7 +407,9 @@ public record ScoreNoteEvent(
                 tupletNormalNotes,
                 direction,
                 kind,
-                visualSize);
+                visualSize,
+                harmonicSemitones,
+                openStringTouch);
     }
 
     /** Legacy tuplets retain their former ratios; explicit normal counts preserve 5:3 and other ratios. */
@@ -364,7 +499,9 @@ public record ScoreNoteEvent(
                 normal,
                 stemDirection,
                 kind,
-                visualSize);
+                visualSize,
+                harmonicSemitones,
+                openStringTouch);
     }
 
     /** Optical evidence only: incoming above/below, then outgoing above/below. */
@@ -438,7 +575,9 @@ public record ScoreNoteEvent(
                 tupletNormalNotes,
                 stemDirection,
                 kind,
-                visualSize);
+                visualSize,
+                harmonicSemitones,
+                openStringTouch);
     }
 
     /** Compatibility constructor: notes without an octave mark keep their written register. */
@@ -510,7 +649,9 @@ public record ScoreNoteEvent(
                 tupletNormalNotes,
                 stemDirection,
                 kind,
-                visualSize);
+                visualSize,
+                harmonicSemitones,
+                openStringTouch);
     }
 
     /** Source-compatible constructor for callers without opening-measure geometry. */
@@ -578,7 +719,9 @@ public record ScoreNoteEvent(
                 tupletNormalNotes,
                 stemDirection,
                 kind,
-                visualSize);
+                visualSize,
+                harmonicSemitones,
+                openStringTouch);
     }
 
     public ScoreNoteEvent(
@@ -643,7 +786,9 @@ public record ScoreNoteEvent(
                 tupletNormalNotes,
                 stemDirection,
                 kind,
-                visualSize);
+                visualSize,
+                harmonicSemitones,
+                openStringTouch);
     }
 
     public ScoreNoteEvent(
@@ -706,7 +851,9 @@ public record ScoreNoteEvent(
                 tupletNormalNotes,
                 stemDirection,
                 kind,
-                visualSize);
+                visualSize,
+                harmonicSemitones,
+                openStringTouch);
     }
 
     public static final int CLEF_UNKNOWN = -1;
@@ -792,7 +939,9 @@ public record ScoreNoteEvent(
                 tupletNormalNotes,
                 stemDirection,
                 kind,
-                visualSize);
+                visualSize,
+                harmonicSemitones,
+                openStringTouch);
     }
 
     public int diatonicPitchIdentity() {
@@ -858,7 +1007,9 @@ public record ScoreNoteEvent(
                 tupletNormalNotes,
                 stemDirection,
                 kind,
-                visualSize);
+                visualSize,
+                harmonicSemitones,
+                openStringTouch);
     }
 
     public ScoreNoteEvent(
@@ -1056,7 +1207,15 @@ public record ScoreNoteEvent(
                 DURATION_UNKNOWN);
     }
 
+    static boolean validHarmonicSemitones(Kind kind, int semitones) {
+        return semitones == 0 || (kind == Kind.PITCHED && semitones > 0 && semitones <= 36);
+    }
+
     public ScoreNoteEvent {
+        if (openStringTouch != null && kind != Kind.PITCHED)
+            throw new IllegalArgumentException("An open-string touch requires a pitched anchor");
+        if (!validHarmonicSemitones(kind, harmonicSemitones))
+            throw new IllegalArgumentException("Invalid sounding harmonic offset");
         if (visualSize == null) throw new IllegalArgumentException("A visual size is required");
         if (kind == null) throw new IllegalArgumentException("A note kind is required");
         if (stemDirection < -1 || stemDirection > 1)

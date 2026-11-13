@@ -643,6 +643,10 @@ public final class SheetInterpreter {
                                 clockPartSource,
                                 meterEvidence.provenance(),
                                 tabSourceGray));
-        return PrintedCadenceDurations.capture(finalInterpretation, labels, gray, width, height);
+        var pitched = ArtificialHarmonics.applyThirdPitches(
+                labels, gray, width, height, finalInterpretation);
+        var touches = OpenStringHarmonics.capture(
+                labels, annotationGray, gray, width, height, pitched, words);
+        return PrintedCadenceDurations.capture(touches, labels, gray, width, height);
     }
 }

@@ -11,6 +11,31 @@ final class ArtificialHarmonics {
     record TouchHead(ScoreNoteEvent stop, float x, float y, float gap) {}
     record ThirdPitch(int writtenMidi, int touchMidi, int soundingMidi) {}
 
+    static ScorePageInterpretation applyThirdPitches(
+            byte[] labels, byte[] gray, int width, int height, ScorePageInterpretation score) {
+        var touches = thirdTouches(labels, gray, width, height, score);
+        var accidentals =
+                OmrScoreInterpreter.harmonicTouchAccidentals(labels, gray, width, height, score, touches);
+        if (accidentals.isEmpty()) return score;
+        var notes = new ArrayList<>(score.notes());
+        boolean changed = false;
+        for (int i = 0; i < notes.size(); i++) {
+            var stop = notes.get(i);
+            Integer accidental = accidentals.get(stop);
+            if (accidental == null) continue;
+            int step = stop.diatonicPitchIdentity();
+            if (accidental == ScoreNoteEvent.ACCIDENTAL_FROM_KEY)
+                accidental = carriedTouchAccidental(score, stop, step + 2, accidentals);
+            if (provedMajorThird(score.keyChanges(), stop, accidental)) {
+                notes.set(i, stop.withHarmonicSemitones(28));
+                changed = true;
+            }
+        }
+        if (!changed) return score;
+        var owners = java.util.stream.IntStream.range(0, notes.size()).boxed().toList();
+        return score.withNotes(notes, owners).withClockContextSource(score.clockContextSource());
+    }
+
     static Map<ScoreNoteEvent, ThirdPitch> resolveThirdPitches(
             byte[] labels, byte[] gray, int width, int height, ScorePageInterpretation score,
             int initialKey) {
@@ -33,6 +58,27 @@ final class ArtificialHarmonics {
                 result.put(stop, new ThirdPitch(written, touched, written + 28));
         }
         return result;
+    }
+
+    private static boolean provedMajorThird(
+            List<ScoreKeyChange> keys, ScoreNoteEvent stop, int touchAccidental) {
+        ScoreKeyChange local = null;
+        for (var key : keys)
+            if (key.measureIndex() <= stop.measureIndex()
+                    && (local == null || key.measureIndex() >= local.measureIndex())) local = key;
+        if (local != null) return isMajorThird(stop, touchAccidental, local.fifths());
+        // A page may start under an inherited signature that its raster does not print.
+        // Only store a resolved offset when every possible inherited signature agrees.
+        for (int fifths = -7; fifths <= 7; fifths++)
+            if (!isMajorThird(stop, touchAccidental, fifths)) return false;
+        return true;
+    }
+
+    private static boolean isMajorThird(ScoreNoteEvent stop, int touchAccidental, int fifths) {
+        int step = stop.diatonicPitchIdentity();
+        int written = ScoreTiePitchGuard.writtenMidi(step, stop.writtenAccidental(), fifths);
+        int touch = ScoreTiePitchGuard.writtenMidi(step + 2, touchAccidental, fifths);
+        return touch - written == 4 && written + 28 <= 127;
     }
 
     private static int carriedTouchAccidental(

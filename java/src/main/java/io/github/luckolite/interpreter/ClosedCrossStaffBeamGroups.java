@@ -116,7 +116,9 @@ final class ClosedCrossStaffBeamGroups {
                                     n.tupletNormalNotes(),
                                     n.stemDirection(),
                                     n.kind(),
-                                    n.visualSize()));
+                                    n.visualSize(),
+                                    n.harmonicSemitones(),
+                                    n.openStringTouch()));
                 }
             if (edited.equals(score.notes()))
                 return score.beamSource().equals(source) ? score : score.withBeamSource(source);

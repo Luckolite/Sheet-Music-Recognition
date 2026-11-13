@@ -17,15 +17,15 @@ final class OpenStringHarmonics {
     private record Pitch(int open, int sounding) {}
     record Recovery(int owner, ScoreNoteEvent note, int openMidi, int touchMidi, int soundingMidi) {}
 
-    static List<Recovery> recover(
+    static ScorePageInterpretation capture(
             byte[] labels, byte[] gray, byte[] decoder, int width, int height,
-            ScorePageInterpretation score, List<SheetInterpreter.Word> words, int initialKey) {
+            ScorePageInterpretation score, List<PlayingTechniqueDetector.Word> words) {
         var marks = new LinkedHashSet<Mark>();
         for (var word : words) {
             var mark = zero(gray, width, height, word);
             if (mark != null) marks.add(mark);
         }
-        if (marks.isEmpty() || score.notes().isEmpty()) return List.of();
+        if (marks.isEmpty() || score.notes().isEmpty()) return score;
         var staffs = OmrScoreInterpreter.techniqueStaffs(labels, decoder, width, height, score.measures());
         var byOwner = new LinkedHashMap<Integer, Candidate>();
         var ambiguous = new HashSet<Integer>();
@@ -43,37 +43,50 @@ final class OpenStringHarmonics {
                 .sorted(Comparator.comparingInt(Candidate::owner)).toList();
         var accidentals = OmrScoreInterpreter.harmonicTouchAccidentals(
                 labels, decoder, width, height, score, selected.stream().map(Candidate::head).toList());
-        var recovered = new ArrayList<Recovery>();
+        if (accidentals.isEmpty()) return score;
+        var notes = new ArrayList<>(score.notes());
         for (var candidate : selected) {
             var head = candidate.head();
-            var anchor = head.stop();
-            Integer accidental = accidentals.get(anchor);
+            Integer accidental = accidentals.get(head.stop());
             if (accidental == null) continue;
+            var touch = new ScoreNoteEvent.OpenStringTouch(candidate.step(), head.y() / height, accidental);
+            notes.set(candidate.owner(), head.stop().withOpenStringTouch(touch));
+        }
+        var owners = java.util.stream.IntStream.range(0, notes.size()).boxed().toList();
+        return score.withNotes(notes, owners).withClockContextSource(score.clockContextSource());
+    }
+
+    static List<Recovery> recover(ScorePageInterpretation score, int initialKey) {
+        var recovered = new ArrayList<Recovery>();
+        for (int owner = 0; owner < score.notes().size(); owner++) {
+            var anchor = score.notes().get(owner);
+            var proof = anchor.openStringTouch();
+            if (proof == null) continue;
+            int accidental = proof.writtenAccidental();
             if (accidental == ScoreNoteEvent.ACCIDENTAL_FROM_KEY)
-                accidental = precedingAccidental(score.notes(), recovered, candidate);
+                accidental = precedingAccidental(score.notes(), recovered, anchor, proof.staffStep());
             int fifths = initialKey;
             for (var key : score.keyChanges())
                 if (key.measureIndex() <= anchor.measureIndex()) fifths = key.fifths();
             int touch = ScoreTiePitchGuard.writtenMidi(
-                    anchor.clefBottomDiatonic() + candidate.step(), accidental, fifths);
+                    anchor.clefBottomDiatonic() + proof.staffStep(), accidental, fifths);
             var pitch = sounding(touch);
             if (pitch == null) continue;
             var note = new ScoreNoteEvent(anchor.measureIndex(), anchor.positionInMeasure(),
-                    candidate.step(), anchor.staffIndex(), anchor.staffCount(), head.y() / height,
+                    proof.staffStep(), anchor.staffIndex(), anchor.staffCount(), proof.pageY(),
                     false, 0, 0, accidental, ScoreNoteEvent.DURATION_QUARTER, 1, 0, 0,
                     anchor.clefBottomDiatonic(), false, 0, false, 0, 0, 1, anchor.stemDirection());
-            recovered.add(new Recovery(candidate.owner(), note, pitch.open(), touch, pitch.sounding()));
+            recovered.add(new Recovery(owner, note, pitch.open(), touch, pitch.sounding()));
         }
         return List.copyOf(recovered);
     }
 
     private static int precedingAccidental(
-            List<ScoreNoteEvent> notes, List<Recovery> recovered, Candidate candidate) {
-        var anchor = candidate.head().stop();
+            List<ScoreNoteEvent> notes, List<Recovery> recovered, ScoreNoteEvent anchor, int step) {
         float latest = -1;
         int accidental = ScoreNoteEvent.ACCIDENTAL_FROM_KEY;
         for (var prior : notes) {
-            if (sameWrittenPitch(prior, anchor, candidate.step())
+            if (sameWrittenPitch(prior, anchor, step)
                     && prior.positionInMeasure() > latest) {
                 latest = prior.positionInMeasure();
                 accidental = prior.writtenAccidental();
@@ -81,7 +94,7 @@ final class OpenStringHarmonics {
         }
         for (var prior : recovered) {
             var note = prior.note();
-            if (sameWrittenPitch(note, anchor, candidate.step()) && note.positionInMeasure() > latest) {
+            if (sameWrittenPitch(note, anchor, step) && note.positionInMeasure() > latest) {
                 latest = note.positionInMeasure();
                 accidental = note.writtenAccidental();
             }
@@ -136,7 +149,9 @@ final class OpenStringHarmonics {
             float[] rails = PrintedDirectionStaff.printedRules(gray, width, height, x, staff.bottom(), staff.gap());
             if (rails == null) continue;
             float gap = rails[1], toward = Math.signum(mark.y() - y);
-            for (int step = note.staffStep() - 8; step <= note.staffStep() + 8; step++) {
+            int firstStep = Math.max(-35, note.staffStep() - 8);
+            int lastStep = Math.min(35, note.staffStep() + 8);
+            for (int step = firstStep; step <= lastStep; step++) {
                 float touchY = rails[0] - step * gap * .5f;
                 if ((touchY - y) * toward < gap * .35f || (mark.y() - touchY) * toward < gap * .65f
                         || Math.abs(mark.y() - touchY) > 4.1f * gap || touchY < 0 || touchY >= height) continue;
@@ -164,9 +179,14 @@ final class OpenStringHarmonics {
         return (region.left() + note.positionInMeasure() * (region.right() - region.left())) * width;
     }
 
-    private static Mark zero(byte[] gray, int width, int height, SheetInterpreter.Word word) {
+    static boolean isFingering(String text) {
+        return text != null && FINGERING.matcher(text.trim()).matches();
+    }
+
+    private static Mark zero(byte[] gray, int width, int height, PlayingTechniqueDetector.Word word) {
         String text = word.text();
-        if (!FINGERING.matcher(text).matches()) return null;
+        if (!isFingering(text)) return null;
+        text = text.trim();
         int left = Math.round(word.left() * width), right = Math.round(word.right() * width);
         int top = Math.round(word.top() * height), bottom = Math.round(word.bottom() * height);
         if (left < 0 || right >= width || top < 0 || bottom >= height || right <= left || bottom <= top

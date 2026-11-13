@@ -29,6 +29,10 @@ final class OriginalBeamAnalysisSnapshot {
             for (Object v : items) s.add(json(v));
             return s.toString();
         }
+        if (value instanceof ScoreNoteEvent note
+                && (note.harmonicSemitones() != 0 || note.openStringTouch() != null)) {
+            throw new AssertionError("Unexpected harmonic in the original beam fixture: " + note);
+        }
         if (value.getClass().isArray()) {
             var s = new StringJoiner(",", "[", "]");
             for (int i = 0; i < Array.getLength(value); i++) s.add(json(Array.get(value, i)));
@@ -37,6 +41,11 @@ final class OriginalBeamAnalysisSnapshot {
         var sorted = new TreeMap<String, Object>();
         if (value.getClass().isRecord()) {
             for (var c : value.getClass().getRecordComponents()) {
+                if (value instanceof ScoreNoteEvent
+                        && (c.getName().equals("harmonicSemitones")
+                                || c.getName().equals("openStringTouch"))) {
+                    continue;
+                }
                 var m = c.getAccessor();
                 m.setAccessible(true);
                 sorted.put(c.getName(), m.invoke(value));

@@ -229,9 +229,7 @@ public final class Main {
         }
         attachNotePerformance(score.notes(), events);
         if (standardViolin) {
-            var recovered = OpenStringHarmonics.recover(
-                    labels, gray, decoderGray == null ? gray : decoderGray, width, height,
-                    score, annotations.words(), initialKey);
+            var recovered = OpenStringHarmonics.recover(score, initialKey);
             score = appendOpenStringHarmonics(score, events, recovered, height);
         }
         var result = new LinkedHashMap<String, Object>();

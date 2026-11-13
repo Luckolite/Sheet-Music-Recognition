@@ -50,7 +50,9 @@ final class CourtesyMeasureRemap {
                                                         n.tupletNormalNotes(),
                                                         n.stemDirection(),
                                                         n.kind())
-                                                .withVisualSize(n.visualSize()))
+                                                .withVisualSize(n.visualSize())
+                                                .withHarmonicSemitones(n.harmonicSemitones())
+                                                .withOpenStringTouch(n.openStringTouch()))
                         .toList();
         var keys =
                 s.keyChanges().stream()

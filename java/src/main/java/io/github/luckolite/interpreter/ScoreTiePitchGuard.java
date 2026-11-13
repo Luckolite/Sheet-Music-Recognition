@@ -107,7 +107,9 @@ final class ScoreTiePitchGuard {
                                     current.tupletNormalNotes())
                             .withStemDirection(current.stemDirection())
                             .withKind(current.kind())
-                            .withVisualSize(current.visualSize()));
+                            .withVisualSize(current.visualSize())
+                            .withHarmonicSemitones(current.harmonicSemitones())
+                            .withOpenStringTouch(current.openStringTouch()));
         }
         return result == null ? notes : result;
     }
@@ -184,7 +186,7 @@ final class ScoreTiePitchGuard {
             if (key.measureIndex() <= note.measureIndex()) fifths = key.fifths();
         if (fifths == Integer.MIN_VALUE) return Integer.MIN_VALUE;
         return writtenMidi(note.diatonicPitchIdentity(), note.writtenAccidental(), fifths)
-                + note.octaveShift() * 12;
+                + 12 * note.octaveShift();
     }
 
     static int writtenMidi(int diatonic, int accidental, int fifths) {

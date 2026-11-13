@@ -2521,7 +2521,9 @@ final class SixteenthRestDetector {
                             .withStemDirection(n.stemDirection())
                             .withTupletRatio(n.tupletDivisor(), n.tupletNormalNotes())
                             .withKind(n.kind())
-                            .withVisualSize(n.visualSize()));
+                            .withVisualSize(n.visualSize())
+                            .withHarmonicSemitones(n.harmonicSemitones())
+                            .withOpenStringTouch(n.openStringTouch()));
             mappedSources.add(n);
         }
         mappedNotes =

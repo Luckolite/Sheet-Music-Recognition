@@ -113,7 +113,8 @@ final class MusicalOcrEvidence {
                     if (PlayingTechniqueDetector.technique(element.getText()) < 0
                             && OctaveMarkDetector.shift(element.getText()) == 0
                             && ScoreNavigationDetector.kind(element.getText()) == null
-                            && !FingeringAnnotationFilter.isFingering(element.getText())) continue;
+                            && !FingeringAnnotationFilter.isFingering(element.getText())
+                            && !OpenStringHarmonics.isFingering(element.getText())) continue;
                     var box = element.getBoundingBox();
                     if (box == null) continue;
                     words.add(
