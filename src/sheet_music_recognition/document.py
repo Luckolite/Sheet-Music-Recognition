@@ -3,6 +3,7 @@
 """Shared image and PDF document recognition for the Python API and CLI."""
 import hashlib
 import io
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from PIL import Image
@@ -32,14 +33,8 @@ def interpret_document(engine, source, *, pages=None, meter=(4, 4), bpm=120,
         if annotations is not None and len(annotations) != count:
             raise ValueError("Annotation count must match the number of selected pages")
 
-    def process(image, page_number, source_count, selected_count, native_words=None):
+    def accept(page, page_number, source_count, selected_count):
         nonlocal key, meter
-        page_annotations = annotations[len(results)] if annotations is not None else (
-            {"tabWords": native_words} if native_words else None
-        )
-        context = {} if instrument is None else {"instrument": instrument}
-        page = engine.interpret(image, meter=meter, key_fifths=key, width=width,
-                                page_index=page_number - 1, annotations=page_annotations, **context)
         score = page["score"]
         score["clockContextSource"] = bind_document(
             score.get("clockContextSource"), len(score["notes"]), len(score["measures"]),
@@ -54,6 +49,11 @@ def interpret_document(engine, source, *, pages=None, meter=(4, 4), bpm=120,
             meter = (last["numerator"], last["denominator"])
         if progress is not None:
             progress(len(results), selected_count, page_number)
+
+    def recognize(image, number, page_annotations):
+        context = {} if instrument is None else {"instrument": instrument}
+        return engine.interpret(image, meter=meter, key_fifths=key, width=width,
+                                page_index=number - 1, annotations=page_annotations, **context)
 
     if source.suffix.lower() == ".pdf":
         try:
@@ -76,17 +76,46 @@ def interpret_document(engine, source, *, pages=None, meter=(4, 4), bpm=120,
                 header = tuning_header(first)
             finally:
                 first.close()
-            for number in selected:
+            def render(number, index, consume):
                 page = pdf[number - 1]
                 try:
                     bitmap = page.render(scale=2400 / page.get_width())
                     try:
                         with bitmap.to_pil() as image:
-                            process(image, number, source_count, len(selected), tab_words(page, header))
+                            native_words = tab_words(page, header)
+                            supplied = annotations[index] if annotations is not None else (
+                                {"tabWords": native_words} if native_words else None
+                            )
+                            return consume(image, supplied)
                     finally:
                         bitmap.close()
                 finally:
                     page.close()
+
+            from .reader import Interpreter
+            if len(selected) > 1 and getattr(engine.interpret, "__func__", None) is Interpreter.interpret:
+                engine._validate_decode_context(meter, key, selected[0] - 1, instrument)
+
+                def prepare(number, index):
+                    return render(number, index, lambda image, supplied: engine._prepare_page(image, width, supplied))
+
+                prepared = prepare(selected[0], 0)
+                with ThreadPoolExecutor(max_workers=1, thread_name_prefix="score-decoder") as worker:
+                    for index, number in enumerate(selected):
+                        engine._validate_decode_context(meter, key, number - 1, instrument)
+                        pending = worker.submit(
+                            engine._decode_page, prepared, meter, key, number - 1, instrument)
+                        try:
+                            if index + 1 < len(selected):
+                                prepared = prepare(selected[index + 1], index + 1)
+                        except Exception:
+                            accept(pending.result(), number, source_count, len(selected))
+                            raise
+                        accept(pending.result(), number, source_count, len(selected))
+            else:
+                for index, number in enumerate(selected):
+                    page = render(number, index, lambda image, supplied: recognize(image, number, supplied))
+                    accept(page, number, source_count, len(selected))
         finally:
             pdf.close()
     else:
@@ -94,7 +123,8 @@ def interpret_document(engine, source, *, pages=None, meter=(4, 4), bpm=120,
             raise ValueError("--pages is for PDF input")
         check_annotations(1)
         with Image.open(io.BytesIO(source_bytes)) as image:
-            process(image, 1, 1, 1)
+            page = recognize(image, 1, annotations[0] if annotations is not None else None)
+            accept(page, 1, 1, 1)
 
     return resolve_boundary_ties({
         "schemaVersion": 1,

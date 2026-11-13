@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+from threading import Event
 import unittest
 from unittest.mock import patch
 import xml.etree.ElementTree as ET
@@ -106,7 +107,8 @@ class TypedFrontendCliTests(unittest.TestCase):
                               for p in value['pages']])
         progress = []
         with patch.object(reader,'grayscale',return_value=np.full((8,8),255,dtype=np.uint8)), \
-             patch.object(reader.subprocess,'run',side_effect=self.bridge_run):
+             patch.object(reader.subprocess,'run',side_effect=self.bridge_run), \
+             patch.object(self.engine,'interpret',wraps=self.engine.interpret):
             document = self.engine.interpret_document(
                 self.image, pages=[2, 6], annotations=[{}, {}],
                 progress=lambda *event: progress.append(event),
@@ -126,6 +128,84 @@ class TypedFrontendCliTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError,'page_index'):
                     self.engine.interpret(None,page_index=page)
             pixels.assert_not_called()
+
+    def test_pdf_prefetch_overlaps_decode_and_carries_key_and_meter_in_order(self):
+        import pypdfium2 as pdfium
+
+        source = self.folder / 'overlap.pdf'
+        pdf = pdfium.PdfDocument.new()
+        try:
+            for _ in range(2):
+                pdf.new_page(8, 8).close()
+            pdf.save(source)
+        finally:
+            pdf.close()
+
+        decoding = Event()
+        next_ready = Event()
+        contexts = []
+        progress = []
+
+        def prepare(_image, _width, supplied):
+            if supplied['page'] == 2:
+                self.assertTrue(decoding.wait(5))
+                next_ready.set()
+            return supplied['page']
+
+        def decode(prepared, meter, key, index, instrument):
+            contexts.append((prepared, meter, key, index, instrument))
+            if index == 0:
+                decoding.set()
+                self.assertTrue(next_ready.wait(5))
+            return dict(events=[], measureBeats=[], totalBeats=0,
+                        score=dict(notes=[], measures=[], keyChanges=[dict(fifths=-2)],
+                                   meterChanges=[dict(measureIndex=0, numerator=3, denominator=8)]))
+
+        with patch.object(self.engine, '_prepare_page', side_effect=prepare), \
+             patch.object(self.engine, '_decode_page', side_effect=decode):
+            result = self.engine.interpret_document(
+                source, annotations=[{'page': 1}, {'page': 2}],
+                progress=lambda *event: progress.append(event))
+        self.assertEqual([(1, (4, 4), 0, 0, None), (2, (3, 8), -2, 1, None)], contexts)
+        self.assertEqual([(1, 2, 1), (2, 2, 2)], progress)
+        self.assertEqual([1, 2], [page['sourcePage'] for page in result['pages']])
+
+    def test_raster_ocr_overlaps_prediction_and_whitening(self):
+        ocr_started = Event()
+        whitening_done = Event()
+        gray = np.full((8, 8), 255, dtype=np.uint8)
+        words = [{'text': 'più', 'left': .1, 'top': .1, 'right': .2, 'bottom': .2}]
+
+        def read_annotations(image, supplied):
+            self.assertIs(image, gray)
+            self.assertIsNone(supplied)
+            ocr_started.set()
+            self.assertTrue(whitening_done.wait(5))
+            return {'words': words}
+
+        def predict(image):
+            self.assertTrue(ocr_started.wait(5))
+            return np.zeros_like(image)
+
+        def correct(image, labels):
+            whitening_done.set()
+            return reader.WhiteningResult(image, False, 'raw', 'raw')
+
+        with patch.object(reader, 'grayscale', return_value=gray), \
+             patch.object(self.engine, '_read_annotations', side_effect=read_annotations), \
+             patch.object(self.engine, 'predict', side_effect=predict), \
+             patch.object(self.engine.paper_whitening, 'correct', side_effect=correct):
+            prepared = self.engine._prepare_page(None, 64, None)
+        self.assertEqual({'words': words}, prepared.annotations)
+
+    def test_failed_ocr_does_not_leave_a_worker_running(self):
+        gray = np.full((8, 8), 255, dtype=np.uint8)
+        with patch.object(reader, 'grayscale', return_value=gray), \
+             patch.object(self.engine, '_read_annotations', side_effect=ValueError('bad OCR')):
+            with self.assertRaisesRegex(ValueError, 'bad OCR'):
+                self.engine._prepare_page(None, 64, None)
+            prepared = self.engine._prepare_page(None, 64, {})
+        self.assertEqual({}, prepared.annotations)
     def test_direct_reader_without_page_identity_preserves_legacy_unknown_source(self):
         self.fixture=0
         with patch.object(reader,'grayscale',return_value=np.full((8,8),255,dtype=np.uint8)), \

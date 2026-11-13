@@ -8,12 +8,14 @@ import os
 import struct
 import subprocess
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import NamedTuple
 
 import numpy as np
 from PIL import Image, ImageOps
 from .runtime import java_executable
-from .whitening import PaperBackgroundWhitening, MODEL_SHA256 as PAPER_FIELD_SHA256, RASTER_POLICY
+from .whitening import PaperBackgroundWhitening, WhiteningResult, MODEL_SHA256 as PAPER_FIELD_SHA256, RASTER_POLICY
 
 MODEL_SHA256 = "92ab7c34c27cb704d95f0cde247b3611d1563fdf1c114b9f9817abb18a7b6a93"
 MODEL_NAME = "music_sheets_v4_float16.tflite"
@@ -90,6 +92,13 @@ def write_page(path, labels, gray, annotations=None):
         for meter in meters:
             stream.write(struct.pack(">iii", meter["measureIndex"], meter["numerator"], meter["denominator"]))
         write_words(annotations.get("tabWords", []))
+
+
+class _PreparedPage(NamedTuple):
+    gray: np.ndarray
+    labels: np.ndarray
+    annotations: dict
+    corrected: WhiteningResult
 
 
 class Interpreter:
@@ -178,6 +187,12 @@ class Interpreter:
     def interpret(self, image, *, meter=(4, 4), key_fifths=0, width=2048, annotations=None,
                   page_index=None, instrument=None):
         """Recognize an image; optional page_index is its zero-based physical source page."""
+        self._validate_decode_context(meter, key_fifths, page_index, instrument)
+        prepared = self._prepare_page(image, width, annotations)
+        return self._decode_page(prepared, meter, key_fifths, page_index, instrument)
+
+    @staticmethod
+    def _validate_decode_context(meter, key_fifths, page_index, instrument):
         if instrument not in (None, "violin"):
             raise ValueError("instrument must be None or 'violin' (standard tuning)")
         if page_index is not None and (type(page_index) is not int or not 0 <= page_index <= 100000):
@@ -189,19 +204,33 @@ class Interpreter:
             raise ValueError("Invalid meter")
         if not isinstance(key_fifths, int) or not -7 <= key_fifths <= 7:
             raise ValueError("key_fifths must be -7..7")
+
+    def _read_annotations(self, gray, annotations):
+        from .ocr import LocalOcr, page_annotations
+
+        if self.ocr is None:
+            self.ocr = LocalOcr()
+        words = self.ocr.words(gray)
+        if annotations is None:
+            return page_annotations(words, [])
+        return dict(page_annotations(words, annotations["tabWords"]), **annotations)
+
+    def _prepare_page(self, image, width, annotations):
         gray = grayscale(image, width)
-        labels = self.predict(gray)
         if annotations is None or ("tabWords" in annotations and "words" not in annotations):
-            if self.ocr is None:
-                from .ocr import LocalOcr
-                self.ocr = LocalOcr()
-            from .ocr import page_annotations
-            words = self.ocr.words(gray)
-            if annotations is None:
-                annotations = page_annotations(words, [])
-            else:
-                annotations = dict(page_annotations(words, annotations["tabWords"]), **annotations)
-        corrected = self.paper_whitening.correct(gray, labels)
+            with ThreadPoolExecutor(max_workers=1, thread_name_prefix="score-ocr") as worker:
+                ocr = worker.submit(self._read_annotations, gray, annotations)
+                labels = self.predict(gray)
+                corrected = self.paper_whitening.correct(gray, labels)
+                annotations = ocr.result()
+        else:
+            labels = self.predict(gray)
+            corrected = self.paper_whitening.correct(gray, labels)
+        return _PreparedPage(gray, labels, annotations, corrected)
+
+    def _decode_page(self, prepared, meter, key_fifths, page_index, instrument):
+        gray, labels, annotations, corrected = prepared
+        numerator, denominator = meter
         with tempfile.TemporaryDirectory(prefix="sheet-music-recognition-") as folder:
             page = Path(folder) / "page.page.gz"
             output = Path(folder) / "score.json"
