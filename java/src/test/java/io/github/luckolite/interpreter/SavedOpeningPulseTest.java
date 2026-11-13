@@ -9,6 +9,16 @@ import org.junit.Test;
 
 public class SavedOpeningPulseTest {
     @Test
+    public void unsetSavedTempoUsesThePrintedOpeningRate() {
+        var opening = List.of(new ScoreTempoChange(0, 0, 130, 2),
+                new ScoreTempoChange(8, 0, 70, 2));
+        double rate = ScoreTempoSelection.playbackQuarterBpm(0, 100, opening);
+        assertEquals(130, rate, 0);
+        assertEquals(opening, ScoreTempoSelection.atOpeningTempo(rate, opening));
+        assertEquals(100, ScoreTempoSelection.playbackQuarterBpm(100, 100, opening), 0);
+    }
+
+    @Test
     public void matchesPrintedEighthPulseWithoutScalingLaterTempo() {
         var marks = List.of(new ScoreTempoChange(0, 0, 60, .5),
                 new ScoreTempoChange(4, 0, 78, .5));

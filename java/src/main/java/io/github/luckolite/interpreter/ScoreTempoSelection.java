@@ -20,16 +20,18 @@ public final class ScoreTempoSelection {
     }
 
     /**
-     * Resolve a saved metronome number against a printed opening mark. If the opening mark
-     * confirms that exact number in its own note unit, use its quarter-note rate. Otherwise
-     * keep the caller's already converted quarter-note fallback.
+     * Resolve a saved metronome number against a printed opening mark. An unset tempo or a
+     * saved number that matches the printed note unit uses the mark's quarter-note rate.
+     * Other values keep the caller's already converted quarter-note fallback.
      */
     public static double playbackQuarterBpm(
             int savedBpm, double fallbackQuarterBpm, List<ScoreTempoChange> printed) {
-        if (savedBpm >= 30 && savedBpm <= 400 && printed != null) {
+        if (printed != null) {
             for (var mark : printed) {
                 if (mark.measureIndex() != 0 || mark.positionInMeasure() != 0) continue;
-                if (Double.compare(savedBpm * mark.beatUnit(), mark.bpm()) == 0)
+                boolean matchesPrintedPulse = savedBpm >= 30 && savedBpm <= 400
+                        && Double.compare(savedBpm * mark.beatUnit(), mark.bpm()) == 0;
+                if (savedBpm <= 0 || matchesPrintedPulse)
                     return mark.bpm();
                 break;
             }

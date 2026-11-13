@@ -8517,14 +8517,16 @@
     },
     "ScoreTempoSelection.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/playback/ScoreTempoSelection.java",
-      "source_sha256": "577156858c32a2ca080563b934cc9a25fce4dd837371ecd02682d85c0726f567",
-      "reviewed_app_commit": "8546401e27abf5d57b7373bf77a4e27649f05c88",
-      "source_normalized_sha256": "43509b9628e19ae6d20414ade4786f328a3d1c909929af08baa7f65428eda468",
+      "source_sha256": "91d8fa4b10a8f79fa475af2a85f0cd7955ef469bc8c7635bdd2f3f0280b7437d",
+      "reviewed_app_commit": "e1619e89",
+      "source_normalized_sha256": "91d8fa4b10a8f79fa475af2a85f0cd7955ef469bc8c7635bdd2f3f0280b7437d",
       "reviewed_source_state": "Opening playback pulse selection reviewed for Music Sheets 1.18.561",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/ScoreTempoSelection.java",
-      "standalone_sha256": "e6c17e3e814901094c9cc9922d49fdab2a1ddc824d3b6afa43e04b98cb58334a",
+      "standalone_sha256": "97c01603f573fc674b9896386eee8234b86c39edf135dd17b6e4d17a3f1efff3",
       "tempo_unit_135_review": "Song meter-pulse values are converted to quarter-note clocks once. Existing APIs for explicitly selected printed pulses remain compatible. A new quarter-clock engraving entry retains pulse units and later tempo ratios.",
-      "playback_pulse_review": "Matching printed pulse values are recovered on both sides. Android takes the meter string and computes its SheetTiming fallback. The standalone Java API takes the caller's already converted quarter-note fallback."
+      "playback_pulse_review": "Matching printed pulse values are recovered on both sides. Android takes the meter string and computes its SheetTiming fallback. The standalone Java API takes the caller's already converted quarter-note fallback.",
+      "standalone_normalized_sha256": "97c01603f573fc674b9896386eee8234b86c39edf135dd17b6e4d17a3f1efff3",
+      "current_source_review": "Ported unset and matching saved printed pulse selection; standalone receives its existing caller-provided quarter-note fallback."
     },
     "ScoreTiePitchGuard.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/ScoreTiePitchGuard.java",
