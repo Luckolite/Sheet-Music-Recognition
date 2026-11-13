@@ -52,9 +52,10 @@ final class TupletNumeralInk {
 
     private static int percentile(int[] histogram, int count, float fraction) {
         int sum = 0;
+        float target = count * fraction;
         for (int i = 0; i < histogram.length; i++) {
             sum += histogram[i];
-            if (sum >= count * fraction) return i;
+            if (sum >= target) return i;
         }
         return 255;
     }
@@ -130,34 +131,46 @@ final class TupletNumeralInk {
         byte[] gray = crop.gray();
         int w = crop.sourceWidth(), left = crop.left(), top = crop.top();
         float gap = crop.gap();
+        float minimum = ww * .83f, edgeMinimum = ww * .90f;
+        int maxEdgeStroke = levelRuleThickness(gap);
+        int firstEdgeRow = maxEdgeStroke + 2, endEdgeRow = hh - maxEdgeStroke - 2;
         byte[] pixels = new byte[ww * hh];
         int[] occupancy = new int[hh];
-        for (int y = 0; y < hh; y++) {
-            int source = (y + top) * w + left, target = y * ww;
+        int inkTotal = 0, firstLevelRow = hh - 1;
+        boolean possibleEdges = false;
+        for (int y = 0, source = top * w + left, target = 0;
+                y < hh; y++, source += w, target += ww) {
+            int inkCount = 0;
             for (int x = 0; x < ww; x++) {
                 boolean ink = (gray[source + x] & 255) <= threshold;
                 pixels[target + x] = ink ? 0 : (byte) 255;
-                if (ink) occupancy[y]++;
+                if (ink) inkCount++;
             }
+            occupancy[y] = inkCount;
+            inkTotal += inkCount;
+            if (y > 0 && firstLevelRow == hh - 1 && inkCount >= minimum)
+                firstLevelRow = y;
+            if (ruleEdges && y >= firstEdgeRow && y < endEdgeRow && inkCount >= edgeMinimum)
+                possibleEdges = true;
         }
-        byte[] original = ruleEdges ? pixels.clone() : null;
-        if (ruleEdges) removeLevelRuleEdges(pixels, original, ww, hh, gap);
-        for (int y = 1; y < hh - 1; y++) {
-            if (occupancy[y] < ww * .83f) continue;
+        if (inkTotal == 0) return new Window(pixels, ww, hh, left, top);
+        byte[] original = possibleEdges ? pixels.clone() : null;
+        if (possibleEdges) removeLevelRuleEdges(pixels, original, ww, hh, gap);
+        int maxLevelStroke = Math.max(2, Math.round(gap * .23f));
+        for (int y = firstLevelRow; y < hh - 1; y++) {
+            if (occupancy[y] < minimum) continue;
             int end = y;
-            while (end + 1 < hh - 1 && occupancy[end + 1] >= ww * .83f) end++;
-            if (end - y + 1 <= Math.max(2, Math.round(gap * .23f))) {
+            while (end + 1 < hh - 1 && occupancy[end + 1] >= minimum) end++;
+            if (end - y + 1 <= maxLevelStroke) {
                 if (original == null) original = pixels.clone();
+                int above = (y - 1) * ww, below = (end + 1) * ww;
                 for (int x = 0; x < ww; x++) {
-                    boolean above = false, below = false;
-                    for (int dx = -1; dx <= 1; dx++)
-                        if (x + dx >= 0 && x + dx < ww) {
-                            above |= original[(y - 1) * ww + x + dx] == 0;
-                            below |= original[(end + 1) * ww + x + dx] == 0;
-                        }
-                    boolean crossing = above || below;
+                    boolean crossing = false;
+                    int first = Math.max(0, x - 1), last = Math.min(ww - 1, x + 1);
+                    for (int xx = first; xx <= last && !crossing; xx++)
+                        crossing = original[above + xx] == 0 || original[below + xx] == 0;
                     if (!crossing)
-                        for (int yy = y; yy <= end; yy++) pixels[yy * ww + x] = (byte) 255;
+                        for (int at = above + ww + x; at < below; at += ww) pixels[at] = (byte) 255;
                 }
             }
             y = end;
@@ -166,89 +179,127 @@ final class TupletNumeralInk {
         return new Window(pixels, ww, hh, left, top);
     }
 
+    private static int levelRuleThickness(float gap) {
+        return Math.max(2, Math.round(gap * .30f));
+    }
+
     private static void removeLevelRuleEdges(byte[] pixels, byte[] original, int w, int h, float gap) {
-        int max = Math.max(2, Math.round(gap * .30f));
-        for (int cy = max + 2; cy < h - max - 2; cy++) {
-            int valid = 0, thin = 0;
+        int max = levelRuleThickness(gap);
+        int first = max + 2, end = h - max - 2;
+        if (first >= end || w <= 2) return;
+        float minimumInk = w * .90f, minimumThin = w * .82f;
+        int[] firstPixels = new int[w], lastPixels = new int[w];
+        candidate: for (int cy = first; cy < end; cy++) {
+            int missing = 0, nonThin = 0, row = cy * w;
             for (int x = 0; x < w; x++) {
-                if (original[cy * w + x] != 0) continue;
-                valid++;
+                firstPixels[x] = -1;
+                if (original[row + x] != 0) {
+                    if (w - ++missing < minimumInk || w - ++nonThin < minimumThin)
+                        continue candidate;
+                    continue;
+                }
                 int top = cy, bottom = cy;
                 while (top > cy - max && original[(top - 1) * w + x] == 0) top--;
-                while (bottom < cy + max && original[(bottom + 1) * w + x] == 0) bottom++;
-                if (bottom - top + 1 <= max) thin++;
+                int lastThin = top + max - 1;
+                while (bottom <= lastThin && original[(bottom + 1) * w + x] == 0) bottom++;
+                if (bottom > lastThin) {
+                    if (w - ++nonThin < minimumThin) continue candidate;
+                    continue;
+                }
+                firstPixels[x] = top * w + x;
+                lastPixels[x] = bottom * w + x;
             }
-            if (valid < w * .90f || thin < w * .82f) continue;
             for (int x = 1; x < w - 1; x++) {
-                if (original[cy * w + x] != 0) continue;
-                int top = cy, bottom = cy;
-                while (top > cy - max && original[(top - 1) * w + x] == 0) top--;
-                while (bottom < cy + max && original[(bottom + 1) * w + x] == 0) bottom++;
-                if (bottom - top + 1 > max) continue;
+                int start = firstPixels[x], stop = lastPixels[x];
+                if (start < 0) continue;
+                int above = start - w, below = stop + w;
                 boolean continuation = false;
-                for (int dx = -1; dx <= 1; dx++)
-                    continuation |=
-                            original[(top - 1) * w + x + dx] == 0
-                                    || original[(bottom + 1) * w + x + dx] == 0;
+                for (int dx = -1; dx <= 1 && !continuation; dx++)
+                    continuation = original[above + dx] == 0 || original[below + dx] == 0;
                 if (!continuation)
-                    for (int yy = top; yy <= bottom; yy++) pixels[yy * w + x] = (byte) 255;
+                    for (int at = start; at <= stop; at += w) pixels[at] = (byte) 255;
             }
         }
     }
 
     private static void removeSlopedRules(byte[] pixels, int w, int h, float gap) {
-        int max = Math.max(2, Math.round(gap * .30f));
+        int max = levelRuleThickness(gap);
         int first = max + 2, end = h - max - 2;
-        if (first >= end) return;
-        byte[] original = pixels.clone();
-        float center = w * .5f;
+        if (first >= end || w <= 2) return;
         int missingLimit = w - (int) Math.ceil(w * .90f);
+        int lastValidRow = h - 1 - max;
+        if (tooFewInkColumns(pixels, w, max, lastValidRow, missingLimit)) return;
+        byte[] original = pixels;
+        float center = w * .5f;
         int nonThinLimit = w - (int) Math.ceil(w * .82f);
         float[] shifts = new float[w];
-        int[] tops = new int[w], bottoms = new int[w];
+        int[] rowOffsets = new int[w];
+        int[] abovePixels = new int[w - 2], belowPixels = new int[w - 2];
+        // An addition cannot move a shift across a half-pixel boundary by more
+        // than this rounding bound over the entire candidate row range.
+        float roundingMargin = Math.ulp(end + w * .1f);
+        int maxStrokePixels = max * w, afterMaxStroke = maxStrokePixels + w;
         for (int angle = -4; angle <= 4; angle++) {
             if (angle == 0) continue;
             float slope = angle * .025f;
-            for (int x = 0; x < w; x++) shifts[x] = slope * (x - center);
-            for (int cy = first; cy < end; cy++) {
-                int missing = 0, nonThin = 0;
+            for (int x = 0; x < w; x++) {
+                float shift = shifts[x] = slope * (x - center);
+                int rounded = Math.round(shift);
+                rowOffsets[x] = .5f - Math.abs(shift - rounded) > roundingMargin
+                        ? rounded : Integer.MIN_VALUE;
+            }
+            candidate: for (int cy = first; cy < end; cy++) {
+                int missing = 0, nonThin = 0, spans = 0;
                 for (int x = 0; x < w; x++) {
-                    tops[x] = -1;
-                    int y = Math.round(cy + shifts[x]);
+                    int rowOffset = rowOffsets[x];
+                    int y = rowOffset == Integer.MIN_VALUE
+                            ? Math.round(cy + shifts[x]) : cy + rowOffset;
                     int offset = y * w + x;
-                    if (y - max < 0 || y + max >= h || original[offset] != 0) {
-                        missing++;
-                        nonThin++;
-                        if (missing > missingLimit || nonThin > nonThinLimit) break;
+                    if (y < max || y > lastValidRow || original[offset] != 0) {
+                        if (++missing > missingLimit || ++nonThin > nonThinLimit)
+                            continue candidate;
                         continue;
                     }
-                    int top = y;
-                    while (top > y - max && original[(top - 1) * w + x] == 0) top--;
-                    int bottom = y, lastThin = top + max - 1;
-                    while (bottom <= lastThin && original[(bottom + 1) * w + x] == 0)
-                        bottom++;
-                    if (bottom > lastThin) {
-                        if (++nonThin > nonThinLimit) break;
+                    int above = offset - w, firstProbe = offset - maxStrokePixels;
+                    while (above >= firstProbe && original[above] == 0) above -= w;
+                    int afterThin = above + afterMaxStroke;
+                    int below = offset + w;
+                    while (below <= afterThin && original[below] == 0) below += w;
+                    if (below > afterThin) {
+                        if (++nonThin > nonThinLimit) continue candidate;
                         continue;
                     }
-                    if (y - max > 0 && y + max + 1 < h) {
-                        tops[x] = top;
-                        bottoms[x] = bottom;
+                    if (x > 0 && x < w - 1 && y > max && y < lastValidRow) {
+                        abovePixels[spans] = above;
+                        belowPixels[spans++] = below;
                     }
                 }
-                if (missing > missingLimit || nonThin > nonThinLimit) continue;
-                for (int x = 1; x < w - 1; x++) {
-                    int top = tops[x], bottom = bottoms[x];
-                    if (top < 0) continue;
-                    int aboveRow = (top - 1) * w + x, belowRow = (bottom + 1) * w + x;
+                for (int i = 0; i < spans; i++) {
+                    int aboveRow = abovePixels[i], belowRow = belowPixels[i];
                     boolean above = original[aboveRow - 1] == 0 || original[aboveRow] == 0
                             || original[aboveRow + 1] == 0;
-                    boolean below = original[belowRow - 1] == 0 || original[belowRow] == 0
-                            || original[belowRow + 1] == 0;
-                    if (!above || !below)
-                        for (int yy = top; yy <= bottom; yy++) pixels[yy * w + x] = (byte) 255;
+                    if (!above || (original[belowRow - 1] != 0 && original[belowRow] != 0
+                            && original[belowRow + 1] != 0)) {
+                        if (original == pixels) original = pixels.clone();
+                        for (int at = aboveRow + w; at < belowRow; at += w)
+                            pixels[at] = (byte) 255;
+                    }
                 }
             }
         }
+    }
+
+    private static boolean tooFewInkColumns(byte[] pixels, int width, int top, int bottom,
+            int missingLimit) {
+        int first = top * width, last = bottom * width;
+        int needed = width - missingLimit;
+        for (int x = 0; x < width; x++) {
+            int end = last + x, at = first + x;
+            while (at <= end && pixels[at] != 0) at += width;
+            if (at <= end) {
+                if (--needed == 0) return false;
+            } else if (--missingLimit < 0) return true;
+        }
+        return false;
     }
 }
