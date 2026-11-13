@@ -8080,12 +8080,12 @@
     },
     "ScoreNavigationDetector.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/ScoreNavigationDetector.java",
-      "source_sha256": "32db9f457e2a9c3a2e1a604bb8765e1f0c679ed46de743a6ee0b0591a1991f01",
-      "source_normalized_sha256": "32db9f457e2a9c3a2e1a604bb8765e1f0c679ed46de743a6ee0b0591a1991f01",
+      "source_sha256": "6b632b07c06f80e68d2795b8fb6f96516756a9161a305d6549b579f409b78129",
+      "source_normalized_sha256": "6b632b07c06f80e68d2795b8fb6f96516756a9161a305d6549b579f409b78129",
       "review_note": "Shared recognition and playback-direction changes ported with standalone adapters. Redistributable synthetic regressions cover the changed ink and direction rules.",
-      "standalone_sha256": "22881751cb237fbcfdc36e71e59cc40391c1a99e4991a31f0eb0ad9580de9cd1",
-      "reviewed_source_state": "Reviewed raised Segno recognition and recognition cache revision.",
-      "reviewed_app_commit": "bf8877bd1f89018871af570bc78f07f54546a92e",
+      "standalone_sha256": "95c4bac807ad3bcf2e9f296029f8b503b5d52dee57e18b8678b961a8aa466f05",
+      "reviewed_source_state": "Reviewed barline anchoring for vertically repeated Segno destinations.",
+      "reviewed_app_commit": "b86f5bfc27481eae234e8bcc9db919491c08f71a",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/ScoreNavigationDetector.java"
     },
     "ScoreNavigationNoteProjection.java": {
