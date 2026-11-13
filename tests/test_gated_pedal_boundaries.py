@@ -14,6 +14,12 @@ def render(down):
 
 
 class GatedPedalBoundaryTests(unittest.TestCase):
+    def test_pedal_down_at_gated_off_does_not_hold_old_target(self):
+        messages = render(1.)
+        resets = [tick for tick, _, message in messages
+                  if message[0] & 240 == 224 and message[1:] == bytes([0, 64])]
+        self.assertEqual(480, resets[-1])
+
     def test_pedal_after_gated_off_does_not_hold_old_target(self):
         messages=render(1.5)
         self.assertEqual([480],[t for t,_,m in messages if m[0]&240==128 and m[1]==72])

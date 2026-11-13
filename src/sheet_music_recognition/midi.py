@@ -3,6 +3,8 @@
 """Standard MIDI preview writer; no synthesizer, sound bank or external dependency."""
 import math
 import struct
+from bisect import bisect_left
+from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from .boundary_ties import resolve_boundary_ties
@@ -196,14 +198,15 @@ def _performance_events_prepared(document, bpm, expressive_document, unpitched_p
                               for c in page.get('pedalControls', []))
         pedal_offset += page['totalBeats']
     has_pedal = bool(pedal_controls)
-    pedal_spans = []
+    pedal_controls.sort(key=lambda control: (control['tick'], control['value']))
+    pedal_spans = defaultdict(list)
     held_parts = {}
-    for control in sorted(pedal_controls, key=lambda c: (c['tick'], c['value'])):
+    for control in pedal_controls:
         part = control['staffCount']
         if control['value']:
             held_parts[part] = control['tick']
         elif part in held_parts:
-            pedal_spans.append((part, held_parts.pop(part), control['tick']))
+            pedal_spans[part].append((held_parts.pop(part), control['tick']))
     performed = []
     slide_clock = SlideClock(tuple(events), ppq)
     for start, end, pitch, step, effect, gliss, attack, part, continuous in tones:
@@ -234,7 +237,14 @@ def _performance_events_prepared(document, bpm, expressive_document, unpitched_p
         if has_pedal:
             channel_parts[channel] = part
         active[channel] = [(stop, other, bent) for stop, other, bent in active.get(channel, []) if stop > start]
-        release = max([end]+[up for count, down, up in pedal_spans if count == part and down < end < up])
+        release = end
+        spans = pedal_spans.get(part)
+        if spans:
+            # Spans are ordered and disjoint per part. Pedal-down at the note
+            # end does not sustain that note.
+            prior = bisect_left(spans, (end,)) - 1
+            if prior >= 0:
+                release = max(end, spans[prior][1])
         active[channel].append((release, pitch, expressive))
         velocity = 20 if kind == "dead" else 62 if kind in ("hammer_on", "pull_off", "tap") else 80
         if attack is not None:
@@ -283,7 +293,7 @@ def _performance_events_prepared(document, bpm, expressive_document, unpitched_p
             if channel is None:
                 raise ValueError('MIDI channel capacity exceeded by pedal parts')
             channel_parts[channel] = part
-    for control in sorted(pedal_controls, key=lambda c: (c['tick'], c['value'])):
+    for control in pedal_controls:
         for channel, part in channel_parts.items():
             if part == control['staffCount']:
                 events.append((control['tick'], 1 if control['value'] == 0 else 2,
