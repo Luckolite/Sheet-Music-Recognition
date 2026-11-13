@@ -10,6 +10,7 @@ import struct
 import subprocess
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 from functools import lru_cache
 from pathlib import Path
 from typing import NamedTuple
@@ -58,7 +59,7 @@ def grayscale(image, width=2048):
         gray = image if image.mode == "L" else image.convert("L")
     else:
         white = Image.new("RGBA", image.size, "white")
-        white.alpha_composite(image.convert("RGBA"))
+        white.alpha_composite(image if image.mode == "RGBA" else image.convert("RGBA"))
         gray = white.convert("L")
     if gray.size != (width, height):
         gray = gray.resize((width, height), Image.Resampling.BILINEAR)
@@ -134,7 +135,11 @@ class Interpreter:
         path = Path(model_path) if model_path else Path(__file__).parent / "data" / MODEL_NAME
         if not path.is_file():
             raise FileNotFoundError("Model missing: run python scripts/build_java.py or use the release wheel")
-        self.model_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
+        digest = hashlib.sha256()
+        with path.open("rb") as model:
+            while chunk := model.read(256 * 1024):
+                digest.update(chunk)
+        self.model_sha256 = digest.hexdigest()
         if model_path is None and self.model_sha256 != MODEL_SHA256:
             raise ValueError("Bundled model checksum mismatch")
         try:
@@ -247,15 +252,14 @@ class Interpreter:
 
     def _prepare_page(self, image, width, annotations):
         gray = grayscale(image, width)
-        if annotations is None or ("tabWords" in annotations and "words" not in annotations):
-            with ThreadPoolExecutor(max_workers=1, thread_name_prefix="score-ocr") as worker:
-                ocr = worker.submit(self._read_annotations, gray, annotations)
-                labels = self.predict(gray)
-                corrected = self.paper_whitening.correct(gray, labels)
-                annotations = ocr.result()
-        else:
+        needs_ocr = annotations is None or ("tabWords" in annotations and "words" not in annotations)
+        executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="score-ocr") if needs_ocr else nullcontext()
+        with executor as worker:
+            ocr = worker.submit(self._read_annotations, gray, annotations) if worker is not None else None
             labels = self.predict(gray)
             corrected = self.paper_whitening.correct(gray, labels)
+            if ocr is not None:
+                annotations = ocr.result()
         return _PreparedPage(gray, labels, annotations, corrected)
 
     def _decode_page(self, prepared, meter, key_fifths, page_index, instrument):
