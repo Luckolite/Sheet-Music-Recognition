@@ -15,14 +15,20 @@ final class PrintedCurveRuleInk {
 
     private static final class ColumnProof {
         final float top, gap;
+        final float gapTolerance, centerTolerance;
         final int radius, maxThickness;
         final Profile[] profiles = new Profile[5];
         final Reference[] references = new Reference[5];
         int scannedLines;
+        int fittedLines;
+        float fittedTop, fittedGap;
+        float[] fittedCenters;
 
         ColumnProof(float top, float gap) {
             this.top = top;
             this.gap = gap;
+            gapTolerance = gap * .15f;
+            centerTolerance = gap * .25f;
             radius = Math.max(3, Math.round(gap * .35f));
             maxThickness = (int) Math.ceil(gap * .3f);
         }
@@ -137,7 +143,7 @@ final class PrintedCurveRuleInk {
         }
         Profile profile = columnProof.profiles[line];
         if (profile == null) {
-            profile = prove(x, line, columnTop, columnGap);
+            profile = prove(x, line);
             if (profile == null) profile = NO_PROFILE;
             columnProof.profiles[line] = profile;
         }
@@ -155,57 +161,71 @@ final class PrintedCurveRuleInk {
         return adjusted;
     }
 
-    private Profile prove(int x, int target, float top, float gap) {
-        int count = 0;
+    private Profile prove(int x, int target) {
+        ColumnProof column = columnProof;
+        int count = 0, missing = 0;
         for (int line = 0; line < 5; line++) {
             if (line == target) continue;
             int bit = 1 << line;
-            if ((columnProof.scannedLines & bit) == 0) {
-                int center = Math.round(top + line * gap);
-                columnProof.references[line] = scanReference(
-                        x, line, center, columnProof.radius, columnProof.maxThickness);
-                columnProof.scannedLines |= bit;
+            if ((column.scannedLines & bit) == 0) {
+                int center = Math.round(column.top + line * column.gap);
+                column.references[line] = scanReference(
+                        x, line, center, column.radius, column.maxThickness);
+                column.scannedLines |= bit;
             }
-            Reference reference = columnProof.references[line];
+            Reference reference = column.references[line];
             if (reference != null) referenceScratch[count++] = reference;
+            else if (++missing == 2) return null;
         }
-        if (count < 3) return null;
         for (int i = 0; i < count; i++) samples[i] = referenceScratch[i].contrast;
         float contrast = upperMedian(samples, count);
         for (int i = 0; i < count; i++) samples[i] = referenceScratch[i].mass;
         float mass = upperMedian(samples, count);
         float minContrast = contrast / 1.35f, maxContrast = contrast * 1.35f;
         float minMass = mass / 1.35f, maxMass = mass * 1.35f;
-        int accepted = 0;
+        int accepted = 0, acceptedLines = 0, rejectionsLeft = count - 3;
         float meanLine = 0, meanCenter = 0;
         for (int i = 0; i < count; i++) {
             Reference r = referenceScratch[i];
             if (r.contrast < minContrast || r.contrast > maxContrast
-                    || r.mass < minMass || r.mass > maxMass) continue;
+                    || r.mass < minMass || r.mass > maxMass) {
+                if (--rejectionsLeft < 0) return null;
+                continue;
+            }
             referenceScratch[accepted++] = r;
+            acceptedLines |= 1 << r.line;
             meanLine += r.line;
             meanCenter += r.center;
         }
-        if (accepted < 3) return null;
-        meanLine /= accepted;
-        meanCenter /= accepted;
-        float covariance = 0, variance = 0;
-        for (int i = 0; i < accepted; i++) {
-            Reference r = referenceScratch[i];
-            covariance += (r.line - meanLine) * (r.center - meanCenter);
-            variance += (r.line - meanLine) * (r.line - meanLine);
+        if (column.fittedLines != acceptedLines) {
+            meanLine /= accepted;
+            meanCenter /= accepted;
+            float covariance = 0, variance = 0;
+            for (int i = 0; i < accepted; i++) {
+                Reference r = referenceScratch[i];
+                float lineOffset = r.line - meanLine;
+                covariance += lineOffset * (r.center - meanCenter);
+                variance += lineOffset * lineOffset;
+            }
+            float fittedGap = covariance / variance, fittedTop = meanCenter - fittedGap * meanLine;
+            column.fittedLines = acceptedLines;
+            column.fittedTop = fittedTop;
+            column.fittedGap = fittedGap;
+            column.fittedCenters = null;
+            if (Math.abs(fittedGap - column.gap) > column.gapTolerance) return null;
+            for (int i = 0; i < accepted; i++) {
+                Reference r = referenceScratch[i];
+                if (Math.abs(r.center - fittedTop - r.line * fittedGap) > .75f) return null;
+            }
+            float[] centers = new float[accepted];
+            for (int i = 0; i < accepted; i++) centers[i] = referenceScratch[i].center;
+            column.fittedCenters = centers;
         }
-        float fittedGap = covariance / variance, fittedTop = meanCenter - fittedGap * meanLine;
-        float center = fittedTop + target * fittedGap;
-        if (Math.abs(fittedGap - gap) > gap * .15f
-                || Math.abs(center - top - target * gap) > gap * .25f) return null;
-        for (int i = 0; i < accepted; i++) {
-            Reference r = referenceScratch[i];
-            if (Math.abs(r.center - fittedTop - r.line * fittedGap) > .75f) return null;
-        }
-        float[] centers = new float[accepted];
-        for (int i = 0; i < accepted; i++) centers[i] = referenceScratch[i].center;
-        return new Profile(center, centers);
+        if (column.fittedCenters == null) return null;
+        float center = column.fittedTop + target * column.fittedGap;
+        if (Math.abs(center - column.top - target * column.gap) > column.centerTolerance)
+            return null;
+        return new Profile(center, column.fittedCenters);
     }
 
     /** Select the upper median of three or four finite reference values. */

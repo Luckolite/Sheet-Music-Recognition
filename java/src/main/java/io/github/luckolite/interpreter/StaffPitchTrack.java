@@ -9,6 +9,47 @@ import java.util.List;
 
 /** Follows complete printed five-line groups across a curved page. */
 final class StaffPitchTrack {
+    private static final float[] LOCAL_SLOPES = {0, .04f, -.04f, .08f, -.08f, .12f, -.12f, .16f, -.16f};
+
+    /** Contrast depends on the physical pixel and flank, independent of deskew. */
+    private static final class RuleProjection {
+        private static final int MAX_CELLS = 16384;
+        char[] prefix;
+        boolean[] ready;
+        int firstRow, left, stride;
+        boolean prepared;
+
+        void prepare(int left, int right, int first, int last) {
+            prepared = true;
+            firstRow = first;
+            this.left = left;
+            stride = right - left + 2;
+            int rows = last - first + 1;
+            long cells = (long) rows * stride;
+            if (rows <= 0 || stride < 2 || cells > MAX_CELLS) return;
+            prefix = new char[(int) cells];
+            ready = new boolean[rows];
+        }
+
+        int count(byte[] gray, int width, int row,
+                int from, int to, int flankOffset, int threshold) {
+            int index = row - firstRow;
+            int base = index * stride;
+            if (!ready[index]) {
+                int at = row * width + left, count = 0;
+                for (int out = base + 1, end = base + stride; out < end; at++, out++) {
+                    int ink = gray[at] & 255;
+                    if (ink <= threshold
+                            && (gray[at - flankOffset] & 255) >= ink + 12
+                            && (gray[at + flankOffset] & 255) >= ink + 12) count++;
+                    prefix[out] = (char) count;
+                }
+                ready[index] = true;
+            }
+            return prefix[base + to - left + 1] - prefix[base + from - left];
+        }
+    }
+
     private final float[][] points;
     private boolean verified;
 
@@ -594,10 +635,20 @@ final class StaffPitchTrack {
         // the last wide-strip slope past the printed note.
         // Require page-level curvature evidence before trying inclined rules:
         // beams on a flat staff can otherwise form a competing tilted pattern.
-        for (float slope :
-                curved
-                        ? new float[] {0, .04f, -.04f, .08f, -.08f, .12f, -.12f, .16f, -.16f}
-                        : new float[] {0}) {
+        float[] flat = localRulesWithSlope(labels, gray, width, height, x, headLeft, headRight,
+                referenceBottom, gap, 0);
+        if (flat != null || !curved) return flat;
+        return retryLocalRules(labels, gray, width, height, x, headLeft, headRight,
+                referenceBottom, gap, false, false, 205, 1);
+    }
+
+    private static float[] retryLocalRules(
+            byte[] labels, byte[] gray, int width, int height, float x, int headLeft,
+            int headRight, float referenceBottom, float gap, boolean bilateral,
+            boolean occluded, int threshold, int firstSlope) {
+        RuleProjection projection = null;
+        for (int i = firstSlope; i < LOCAL_SLOPES.length; i++) {
+            if (i == 1) projection = new RuleProjection();
             float[] found =
                     localRulesWithSlope(
                             labels,
@@ -609,7 +660,7 @@ final class StaffPitchTrack {
                             headRight,
                             referenceBottom,
                             gap,
-                            slope);
+                            LOCAL_SLOPES[i], bilateral, occluded, threshold, projection);
             if (found != null) return found;
         }
         return null;
@@ -627,23 +678,8 @@ final class StaffPitchTrack {
             int headRight,
             float referenceBottom,
             float gap) {
-        for (float slope : new float[] {0, .04f, -.04f, .08f, -.08f, .12f, -.12f, .16f, -.16f}) {
-            float[] found =
-                    localRulesWithSlope(
-                            labels,
-                            gray,
-                            width,
-                            height,
-                            x,
-                            headLeft,
-                            headRight,
-                            referenceBottom,
-                            gap,
-                            slope,
-                            true);
-            if (found != null) return found;
-        }
-        return null;
+        return retryLocalRules(labels, gray, width, height, x, headLeft, headRight,
+                referenceBottom, gap, true, false, 205, 0);
     }
 
     /** A flat main staff can curl only after the broad sampling windows end.
@@ -760,25 +796,8 @@ final class StaffPitchTrack {
             int headRight,
             float referenceBottom,
             float gap) {
-        for (float slope : new float[] {0, .04f, -.04f, .08f, -.08f, .12f, -.12f, .16f, -.16f}) {
-            float[] found =
-                    localRulesWithSlope(
-                            labels,
-                            gray,
-                            width,
-                            height,
-                            x,
-                            headLeft,
-                            headRight,
-                            referenceBottom,
-                            gap,
-                            slope,
-                            true,
-                            false,
-                            225);
-            if (found != null) return found;
-        }
-        return null;
+        return retryLocalRules(labels, gray, width, height, x, headLeft, headRight,
+                referenceBottom, gap, true, false, 225, 0);
     }
 
     /** A beam may cover one rule beside a head near the printed staff edge.
@@ -794,24 +813,8 @@ final class StaffPitchTrack {
             int headRight,
             float referenceBottom,
             float gap) {
-        for (float slope : new float[] {0, .04f, -.04f, .08f, -.08f, .12f, -.12f, .16f, -.16f}) {
-            float[] found =
-                    localRulesWithSlope(
-                            labels,
-                            gray,
-                            width,
-                            height,
-                            x,
-                            headLeft,
-                            headRight,
-                            referenceBottom,
-                            gap,
-                            slope,
-                            true,
-                            true);
-            if (found != null) return found;
-        }
-        return null;
+        return retryLocalRules(labels, gray, width, height, x, headLeft, headRight,
+                referenceBottom, gap, true, true, 205, 0);
     }
 
     private static float[] localRulesWithSlope(
@@ -909,11 +912,20 @@ final class StaffPitchTrack {
             boolean bilateral,
             boolean occluded,
             int inkThreshold) {
+        return localRulesWithSlope(labels, gray, width, height, x, headLeft, headRight,
+                referenceBottom, gap, slope, bilateral, occluded, inkThreshold, null);
+    }
+
+    private static float[] localRulesWithSlope(
+            byte[] labels, byte[] gray, int width, int height, float x, int headLeft,
+            int headRight, float referenceBottom, float gap, float slope, boolean bilateral,
+            boolean occluded, int inkThreshold, RuleProjection projection) {
         if (gray == null) return null;
         int radius = Math.max(4, Math.round(gap * (occluded ? 2.5f : 3.5f))),
                 exclusion = Math.max(1, Math.round(gap * .45f));
-        int left = Math.max(0, Math.round(x) - radius),
-                right = Math.min(width - 1, Math.round(x) + radius);
+        int centerColumn = Math.round(x);
+        int left = Math.max(0, centerColumn - radius),
+                right = Math.min(width - 1, centerColumn + radius);
         int top = Math.max(0, Math.round(referenceBottom - gap * 5.5f)),
                 bottom = Math.min(height - 1, Math.round(referenceBottom + gap * 1.5f));
         if (bottom < top) return null;
@@ -921,25 +933,54 @@ final class StaffPitchTrack {
         int excluded = Math.max(0, Math.min(right, excludedRight) - Math.max(left, excludedLeft) + 1);
         int samples = right - left + 1 - excluded;
         if (samples < 8) return null;
-        int[] strength = new int[bottom - top + 1];
         // At the pale threshold, require a narrower stroke so broad shading
         // cannot masquerade as five evenly spaced printed rules.
         int flank = Math.max(2, Math.round(gap * (inkThreshold > 205 ? .22f : .32f)));
         int firstScanY = Math.max(flank, top), lastScanY = Math.min(height - 1 - flank, bottom);
+        if (lastScanY - firstScanY < 4) return null;
+        int[] strength = new int[bottom - top + 1];
         int flankOffset = flank * width;
-        for (int xx = left; xx <= right; xx++) {
-            if (xx >= excludedLeft && xx <= excludedRight) continue;
+        if (projection != null && !projection.prepared) {
+            // The retry table reaches at most this displacement in either direction.
+            int padding = (int) Math.ceil(Math.max(Math.abs(left - x), Math.abs(right - x)) * .16f);
+            projection.prepare(left, right, Math.max(flank, firstScanY - padding),
+                    (int) Math.min(height - 1 - flank, (long) lastScanY + padding));
+        }
+        boolean cached = projection != null && projection.ready != null;
+        for (int xx = left; xx <= right; ) {
+            if (xx >= excludedLeft && xx <= excludedRight) {
+                if (excludedRight >= right) break;
+                xx = excludedRight + 1;
+            }
             int columnShift = Math.round((xx - x) * slope);
+            int runEnd = xx;
+            // Deskewed columns with the same shift can read contiguous raster rows.
+            int spanEnd = xx < excludedLeft ? Math.min(right, excludedLeft - 1) : right;
+            while (runEnd < spanEnd
+                    && Math.round((runEnd + 1 - x) * slope) == columnShift) runEnd++;
             int start = Math.max(firstScanY, flank - columnShift);
             int end = Math.min(lastScanY, height - 1 - flank - columnShift);
-            int offset = (start + columnShift) * width + xx;
-            for (int y = start; y <= end; y++, offset += width) {
-                int ink = gray[offset] & 255;
-                if (ink <= inkThreshold
-                        && (gray[offset - flankOffset] & 255) >= ink + 12
-                        && (gray[offset + flankOffset] & 255) >= ink + 12)
-                    strength[y - top]++;
+            if (cached) {
+                for (int y = start; y <= end; y++) {
+                    strength[y - top] += projection.count(gray, width,
+                            y + columnShift, xx, runEnd, flankOffset, inkThreshold);
+                }
+                xx = runEnd + 1;
+                continue;
             }
+            int offset = (start + columnShift) * width + xx;
+            int runWidth = runEnd - xx + 1;
+            for (int y = start; y <= end; y++, offset += width) {
+                int supported = 0;
+                for (int at = offset, limit = offset + runWidth; at < limit; at++) {
+                    int ink = gray[at] & 255;
+                    if (ink <= inkThreshold
+                            && (gray[at - flankOffset] & 255) >= ink + 12
+                            && (gray[at + flankOffset] & 255) >= ink + 12) supported++;
+                }
+                strength[y - top] += supported;
+            }
+            xx = runEnd + 1;
         }
         int
                 minimum =
@@ -950,43 +991,58 @@ final class StaffPitchTrack {
         // Reject beam-only peaks before selecting a five-line group, so a stronger beam
         // cannot hide a valid staff group through overlap suppression.
         float requiredSupport = Math.max(4, samples * (bilateral ? .45f : .2f));
+        int possibleRows = 0;
+        for (int value : strength) if (value >= minimum) possibleRows++;
+        if (possibleRows < 5) return null;
         for (int row = 0; row < strength.length; row++) {
             if (strength[row] < minimum) continue;
             int supported = 0, center = top + row;
             for (int xx = left; xx <= right && supported < requiredSupport; xx++) {
-                if (xx >= excludedLeft && xx <= excludedRight) continue;
+                if (xx >= excludedLeft && xx <= excludedRight) {
+                    if (excludedRight >= right) break;
+                    xx = excludedRight + 1;
+                }
                 int shifted = center + Math.round((xx - x) * slope);
-                for (int yy = Math.max(0, shifted - band);
-                        yy <= Math.min(height - 1, shifted + band); yy++) {
-                    if (labels[yy * width + xx] != 4) continue;
+                int start = Math.max(0, shifted - band);
+                int end = Math.min(height - 1, shifted + band);
+                for (int yy = start, at = start * width + xx; yy <= end; yy++, at += width) {
+                    if (labels[at] != 4) continue;
                     supported++;
                     break;
                 }
             }
-            if (supported < requiredSupport) strength[row] = 0;
+            if (supported < requiredSupport) {
+                if (--possibleRows < 5) return null;
+                strength[row] = 0;
+            }
         }
+        float peakRadius = gap * .2f;
         for (var lines :
                 RawStaffLineDetector.detectFromStrength(strength, minimum, strength.length)) {
             if (lines.gap() < gap * .88f || lines.gap() > gap * 1.12f) continue;
             float[] centers = new float[5];
             for (int i = 0; i < 5; i++) {
                 int peak = lines.rows()[i], a = peak, b = peak;
-                while (a > 0 && peak - a < gap * .2f && strength[a - 1] >= strength[peak] * .85f)
+                float minimumPeakStrength = strength[peak] * .85f;
+                while (a > 0 && peak - a < peakRadius && strength[a - 1] >= minimumPeakStrength)
                     a--;
                 while (b + 1 < strength.length
-                        && b - peak < gap * .2f
-                        && strength[b + 1] >= strength[peak] * .85f) b++;
+                        && b - peak < peakRadius
+                        && strength[b + 1] >= minimumPeakStrength) b++;
                 centers[i] = top + (a + b) * .5f;
             }
-            List<Float> spacings = new ArrayList<>();
+            float[] spacings = new float[10];
+            int spacingCount = 0;
             for (int i = 0; i < 5; i++)
-                for (int j = i + 1; j < 5; j++) spacings.add((centers[j] - centers[i]) / (j - i));
-            float spacing = median(spacings);
-            List<Float> bottoms = new ArrayList<>();
-            for (int i = 0; i < 5; i++) bottoms.add(centers[i] + (4 - i) * spacing);
-            float base = median(bottoms);
+                for (int j = i + 1; j < 5; j++)
+                    spacings[spacingCount++] = (centers[j] - centers[i]) / (j - i);
+            Arrays.sort(spacings);
+            float spacing = spacings[5];
+            for (int i = 0; i < 5; i++) centers[i] += (4 - i) * spacing;
+            Arrays.sort(centers);
+            float base = centers[2];
             int consistent = 0;
-            for (float value : bottoms) if (Math.abs(value - base) <= gap * .16f) consistent++;
+            for (float value : centers) if (Math.abs(value - base) <= gap * .16f) consistent++;
             // A beam and four rules can outscore a faded outer rule. If that
             // omitted rule continues on both sides at the original staff edge,
             // the shifted group is ambiguous and must not replace the reference.
