@@ -13243,6 +13243,9 @@ final class OmrScoreInterpreter {
                 return false;
             // Existing admissions retain their original physical evidence and ownership.
             if (hasInnerLedgerInk(gray, width, height, part, staff, roundedGrace)) continue;
+            if (shaftCrossedUpperLedgerRules(gray, width, height, part, staff)
+                    && !competingPrintedCore(labels, gray, width, height, part, staff, staffs))
+                continue;
             if (upperLedgerChord(gray, width, height, part, staff, heads)
                     && !competingPrintedCore(labels, gray, width, height, part, staff, staffs))
                 continue;
@@ -13251,6 +13254,43 @@ final class OmrScoreInterpreter {
                     || !completeUpperLedgerBody(gray, width, height, part, staff.pitchGap)
                     || competingPrintedCore(labels, gray, width, height, part, staff, staffs))
                 return false;
+        }
+        return true;
+    }
+
+    /** A downstem can cross the short left edge of several independently printed ledgers. */
+    private static boolean shaftCrossedUpperLedgerRules(
+            byte[] gray, int width, int height, Component head, Staff staff) {
+        float gap = staff.pitchGap;
+        float top = staff.pitchBottom - 4 * gap;
+        float distance = (top - head.centerY) / gap;
+        if (distance < 3.8f || distance > 4.4f
+                || !filledBeamEndpointCore(gray, width, height, head, gap)) return false;
+        int[] stem = attachedRawStem(gray, width, height, head, gap, 2, 170);
+        if (stem == null || stem[2] != 1 || stem[1] < top + gap * 1.5f
+                || Math.abs(stem[0] - head.minX) > gap * .2f) return false;
+        int left = stem[0] + Math.max(1, Math.round(gap * .28f));
+        int right = Math.round(head.centerX + gap * .72f);
+        if (left < 0 || right >= width || right - left < gap) return false;
+        int tolerance = Math.max(1, Math.round(gap * .17f));
+        for (int rule = 1; rule <= 3; rule++) {
+            int center = Math.round(top - rule * gap);
+            boolean found = false;
+            for (int y = Math.max(1, center - tolerance);
+                    y <= Math.min(height - 2, center + tolerance); y++) {
+                if ((gray[y * width + stem[0]] & 255) >= 170
+                        || !shortLedgerRule(gray, width, y, head, gap)) continue;
+                int run = 0;
+                for (int x = left; x <= right; x++) {
+                    if ((gray[y * width + x] & 255) < 165
+                            && ShadedLedgerRule.thin(gray, width, height, x, y, gap)) run++;
+                }
+                if (run >= (right - left + 1) * .85f) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) return false;
         }
         return true;
     }
