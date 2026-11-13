@@ -3,6 +3,7 @@
 package io.github.luckolite.interpreter;
 
 import java.util.*;
+import java.util.function.IntPredicate;
 
 /** Shared CPU OCR pipeline. No platform bitmap, image library or SDK result types.
  * Symbol boxes are CTC alignment estimates, not measured ink contours. */
@@ -374,55 +375,41 @@ public final class PortableOcr {
     /** A detector may enclose both stacked meter digits. Split only tall crops with
      * two substantial ink bands and a genuine empty horizontal gutter, not dots. */
     static List<OcrText.Box> splitStackedRows(int[] pixels, int width, OcrText.Box box) {
-        if (box.height() < box.width() * 1.5 || box.height() < 24) return List.of(box);
-        var bands = new ArrayList<int[]>();
-        int start = -1, last = -1;
-        int gap = Math.max(4, (int) Math.ceil(box.height() * .1));
-        for (int y = box.top; y < box.bottom; y++) {
-            int ink = 0;
-            for (int x = box.left; x < box.right; x++) {
-                int color = pixels[y * width + x];
-                if ((channel(color, 0) + channel(color, 8) + channel(color, 16)) / 3 < 190) ink++;
-            }
-            if (ink >= Math.max(2, box.width() / 20)) {
-                if (start < 0) start = y;
-                else if (y - last > gap) {
-                    bands.add(new int[] {start, last + 1});
-                    start = y;
-                }
-                last = y;
-            }
-        }
-        if (start >= 0) bands.add(new int[] {start, last + 1});
-        if (bands.size() != 2 || bands.stream().anyMatch(b -> b[1] - b[0] < 6)) return List.of(box);
-        int middle = (bands.get(0)[1] + bands.get(1)[0]) / 2;
-        return List.of(
-                new OcrText.Box(box.left, box.top, box.right, middle),
-                new OcrText.Box(box.left, middle, box.right, box.bottom));
+        return splitStackedRows(
+                width,
+                box,
+                index -> {
+                    int color = pixels[index];
+                    return (channel(color, 0) + channel(color, 8) + channel(color, 16)) / 3 < 190;
+                });
     }
 
     static List<OcrText.Box> splitStackedGrayRows(byte[] pixels, int width, OcrText.Box box) {
+        return splitStackedRows(width, box, index -> (pixels[index] & 255) < 190);
+    }
+
+    private static List<OcrText.Box> splitStackedRows(
+            int width, OcrText.Box box, IntPredicate isInk) {
         if (box.height() < box.width() * 1.5 || box.height() < 24) return List.of(box);
-        var bands = new ArrayList<int[]>();
-        int start = -1, last = -1;
+        int start = -1, last = -1, firstEnd = -1;
         int gap = Math.max(4, (int) Math.ceil(box.height() * .1));
+        int minimumInk = Math.max(2, box.width() / 20);
         for (int y = box.top; y < box.bottom; y++) {
-            int ink = 0;
-            for (int x = box.left; x < box.right; x++) {
-                if ((pixels[y * width + x] & 255) < 190) ink++;
+            int row = y * width, ink = 0;
+            for (int index = row + box.left; index < row + box.right && ink < minimumInk; index++) {
+                if (isInk.test(index)) ink++;
             }
-            if (ink >= Math.max(2, box.width() / 20)) {
-                if (start < 0) start = y;
-                else if (y - last > gap) {
-                    bands.add(new int[] {start, last + 1});
-                    start = y;
-                }
-                last = y;
+            if (ink < minimumInk) continue;
+            if (start < 0) start = y;
+            else if (y - last > gap) {
+                if (firstEnd >= 0 || last + 1 - start < 6) return List.of(box);
+                firstEnd = last + 1;
+                start = y;
             }
+            last = y;
         }
-        if (start >= 0) bands.add(new int[] {start, last + 1});
-        if (bands.size() != 2 || bands.stream().anyMatch(b -> b[1] - b[0] < 6)) return List.of(box);
-        int middle = (bands.get(0)[1] + bands.get(1)[0]) / 2;
+        if (firstEnd < 0 || last + 1 - start < 6) return List.of(box);
+        int middle = (firstEnd + start) / 2;
         return List.of(
                 new OcrText.Box(box.left, box.top, box.right, middle),
                 new OcrText.Box(box.left, middle, box.right, box.bottom));
