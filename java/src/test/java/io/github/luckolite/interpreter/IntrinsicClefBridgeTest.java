@@ -3,10 +3,20 @@
 package io.github.luckolite.interpreter;
 
 import org.junit.Test;
+import java.util.List;
 import static org.junit.Assert.*;
 
 /** Original retained-clef events exercise the actual JSON bridge identity method. */
 public class IntrinsicClefBridgeTest {
+    @Test
+    public void measureKeysPreserveInheritedKeyAndSourceOrder() {
+        assertArrayEquals(new int[] {-2, 2, 2, 2, 2}, Main.measureKeys(5, -2, List.of(
+                new ScoreKeyChange(4, 1),
+                new ScoreKeyChange(1, 0),
+                new ScoreKeyChange(1, 2),
+                new ScoreKeyChange(5, 3))));
+    }
+
     private ScoreNoteEvent note(int clef) {
         return new ScoreNoteEvent(0, .1f, 0, 1, 2, .5f, false, 0, 0, 2, 1).withClef(clef);
     }

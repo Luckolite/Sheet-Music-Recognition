@@ -136,15 +136,14 @@ public final class Main {
                 labels, decoderGray == null ? gray : decoderGray, width, height, score, initialKey);
         double[] starts = new double[beats.length + 1];
         for (int i = 0; i < beats.length; i++) starts[i + 1] = starts[i] + beats[i];
+        int[] keys = measureKeys(beats.length, initialKey, score.keyChanges());
         var events = new ArrayList<Map<String, Object>>();
         try (var timing = ScoreNoteTiming.beginTimingSession(score)) {
             for (int noteIndex = 0; noteIndex < score.notes().size(); noteIndex++) {
                 var note = score.notes().get(noteIndex);
                 int bar = note.measureIndex();
                 var region = score.measures().get(bar);
-                int key = initialKey;
-                for (var k : score.keyChanges()) if (k.measureIndex() <= bar) key = k.fifths();
-                var identity = noteIdentity(note, key);
+                var identity = noteIdentity(note, keys[bar]);
                 var harmonic = harmonicPitches.get(note);
                 if (harmonic != null) {
                     identity.put("writtenMidi", harmonic.writtenMidi());
@@ -465,6 +464,21 @@ public final class Main {
                 && start.doubleValue() >= 0
                 && Double.isFinite(duration.doubleValue())
                 && duration.doubleValue() > 0;
+    }
+
+    static int[] measureKeys(int count, int initialKey, List<ScoreKeyChange> changes) {
+        int[] keys = new int[count];
+        // Keep the last applicable entry in source order, even for unsorted input.
+        for (int index = 0; index < changes.size(); index++) {
+            int measure = changes.get(index).measureIndex();
+            if (measure < count) keys[measure] = index + 1;
+        }
+        int latest = 0;
+        for (int measure = 0; measure < count; measure++) {
+            latest = Math.max(latest, keys[measure]);
+            keys[measure] = latest == 0 ? initialKey : changes.get(latest - 1).fifths();
+        }
+        return keys;
     }
 
     private static float[] measureBeats(
