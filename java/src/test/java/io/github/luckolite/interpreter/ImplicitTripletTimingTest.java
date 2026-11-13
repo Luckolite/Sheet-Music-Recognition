@@ -49,7 +49,7 @@ public class ImplicitTripletTimingTest {
                                         1, .04f + i * .08f, step, 0, 1, .5f, false,
                                         i % 3 == 0 ? 1 : 0, i % 3 == 1 ? 2 : 1,
                                         ScoreNoteEvent.ACCIDENTAL_FROM_KEY, 0, 1)
-                                .withStemDirection(-1));
+                                .withStemDirection((i / 3) % 2 == 0 ? -1 : 1));
             }
         }
         double[] offsets = {0, .5, 2 / 3d};

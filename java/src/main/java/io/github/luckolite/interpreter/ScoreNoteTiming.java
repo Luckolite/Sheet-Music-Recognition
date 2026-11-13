@@ -1642,10 +1642,13 @@ public final class ScoreNoteTiming {
                 || count / 3 != beats
                 || groups.get(0).position > .18f
                 || groups.get(count - 1).position < .8f) return null;
-        int stem = groups.get(0).notes.get(0).stemDirection();
+        int stem = 0;
         float smallestGap = Float.MAX_VALUE, largestGap = 0;
         for (int i = 0; i < count; i++) {
             RhythmGroup group = groups.get(i);
+            // A new beamed figure can reverse direction. Its own three
+            // attacks still have to share a stem direction.
+            if (i % 3 == 0) stem = group.notes.get(0).stemDirection();
             int beams = i % 3 == 1 ? 2 : 1;
             int dots = i % 3 == 0 ? 1 : 0;
             for (ScoreNoteEvent note : group.notes) {
