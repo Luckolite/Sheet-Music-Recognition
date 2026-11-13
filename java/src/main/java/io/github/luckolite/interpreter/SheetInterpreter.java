@@ -163,6 +163,14 @@ public final class SheetInterpreter {
             int physicalPage,
             byte[] decoderGray)
             throws Exception {
+        return analyze(labels, gray, width, height, annotations, ocr, physicalPage, decoderGray, null);
+    }
+
+    static ScorePageInterpretation analyze(
+            byte[] labels, byte[] gray, int width, int height, Annotations annotations,
+            MusicalOcr ocr, int physicalPage, byte[] decoderGray,
+            TablatureDecoder.Prepared preparedTabs)
+            throws Exception {
         if (decoderGray != null && (gray == null || decoderGray.length != gray.length))
             throw new IllegalArgumentException("Decoder grayscale dimensions must match source");
         if (physicalPage < -1) throw new IllegalArgumentException("Invalid physical source page");
@@ -197,18 +205,11 @@ public final class SheetInterpreter {
                                                         w.bottom()))
                                 .toList(),
                         annotations.measureNumbers.stream().map(NumberToken::internal).toList());
-        var tabWords =
-                java.util.stream.Stream.concat(
-                                annotations.words.stream(), annotations.tabWords.stream())
-                        .map(
-                                w ->
-                                        new TablatureDecoder.Word(
-                                                w.text, w.left, w.top, w.right, w.bottom))
-                        .toList();
-        var tabs =
-                TablatureDecoder.withWords(
-                        TablatureDecoder.detect(gray, width, height), tabWords, width, height);
-        tabs = TabNotation.rasterRhythm(tabs, gray, width, height, tabWords);
+        var prepared = preparedTabs == null
+                ? TablatureDecoder.prepare(gray, width, height, annotations.words, annotations.tabWords)
+                : preparedTabs;
+        var tabWords = prepared.words();
+        var tabs = prepared.withRhythm();
         labels = TablatureDecoder.withoutTabs(labels, width, height, tabs, false);
         gray = TablatureDecoder.withoutTabs(gray, width, height, tabs, true);
         byte[] annotationGray = gray;

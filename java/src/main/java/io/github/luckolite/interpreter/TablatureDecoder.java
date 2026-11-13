@@ -105,6 +105,20 @@ public final class TablatureDecoder {
 
     private TablatureDecoder() {}
 
+    record Prepared(
+            List<Word> words, List<Staff> recognized, List<Staff> withRhythm) {}
+
+    static Prepared prepare(
+            byte[] gray, int width, int height, List<SheetInterpreter.Word> words,
+            List<SheetInterpreter.Word> nativeWords) {
+        var combined = java.util.stream.Stream.concat(words.stream(), nativeWords.stream())
+                .map(word -> new Word(word.text(), word.left(), word.top(), word.right(), word.bottom()))
+                .toList();
+        var recognized = withWords(detect(gray, width, height), combined, width, height);
+        return new Prepared(
+                combined, recognized, TabNotation.rasterRhythm(recognized, gray, width, height, combined));
+    }
+
     public static List<Staff> detect(byte[] gray, int w, int h) {
         if (gray == null || w < 64 || h < 64 || gray.length != (long) w * h) return List.of();
         // Imported screenshots often use pale rules or enlarged string spacing.

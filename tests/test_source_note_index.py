@@ -76,6 +76,11 @@ public final class SheetInterpreter {
         }
         return new ScorePageInterpretation(List.of(new MeasureRegion(.1f, .9f, .2f, .8f)), notes);
     }
+    static ScorePageInterpretation analyze(byte[] labels, byte[] gray, int width, int height,
+            Annotations annotations, MusicalOcr ocr, int physicalPage, byte[] decoderGray,
+            TablatureDecoder.Prepared preparedTabs) {
+        return analyze(labels, gray, width, height, annotations);
+    }
 }
 '''
 

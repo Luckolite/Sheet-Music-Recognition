@@ -90,22 +90,13 @@ public final class Main {
                                 numbers, tempos, rests, words, meters, nativeTabWords);
             }
         }
-        var tabWords =
-                java.util.stream.Stream.concat(
-                                annotations.words().stream(), annotations.tabWords().stream())
-                        .map(
-                                w ->
-                                        new TablatureDecoder.Word(
-                                                w.text(), w.left(), w.top(), w.right(), w.bottom()))
-                        .toList();
-        var tabs =
-                TablatureDecoder.withWords(
-                        TablatureDecoder.detect(gray, width, height), tabWords, width, height);
+        var preparedTabs = TablatureDecoder.prepare(
+                gray, width, height, annotations.words(), annotations.tabWords());
         var tabWarnings = new ArrayList<String>();
-        if (tabs.stream().anyMatch(t -> t.frets().isEmpty()))
+        if (preparedTabs.recognized().stream().anyMatch(t -> t.frets().isEmpty()))
             tabWarnings.add(
                     "Tablature detected but no reliable fret OCR supplied; paired notation is retained where available.");
-        tabs = TabNotation.rasterRhythm(tabs, gray, width, height, tabWords);
+        var tabs = preparedTabs.withRhythm();
         if (tabs.stream()
                 .filter(t -> t.standardTop() < 0)
                 .flatMap(t -> t.frets().stream())
@@ -126,27 +117,9 @@ public final class Main {
         }
         var score =
                 ScoreTiePitchGuard.withInitialKeyContext(
-                        decoderGray == null
-                                ? (physicalPage < 0
-                                        ? SheetInterpreter.analyze(
-                                                labels, gray, width, height, annotations)
-                                        : SheetInterpreter.analyze(
-                                                labels,
-                                                gray,
-                                                width,
-                                                height,
-                                                annotations,
-                                                null,
-                                                physicalPage))
-                                : SheetInterpreter.analyze(
-                                        labels,
-                                        gray,
-                                        width,
-                                        height,
-                                        annotations,
-                                        null,
-                                        physicalPage,
-                                        decoderGray),
+                        SheetInterpreter.analyze(
+                                labels, gray, width, height, annotations, null,
+                                physicalPage, decoderGray, preparedTabs),
                         initialKey);
         score = ScoreTupletMeterContext.apply(score, initialMeter);
         float[] beats = measureBeats(

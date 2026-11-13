@@ -85,6 +85,12 @@ public final class SheetInterpreter {
         return score.withSlurSource(ScoreSlurSource.capture(List.of(),List.of(arc),
                 List.of(new ScoreSlurPages.Page(physicalPage,score.notes().size()))));
     }
+    static ScorePageInterpretation analyze(byte[] labels, byte[] gray, int width, int height,
+            Annotations annotations, MusicalOcr ocr, int physicalPage, byte[] decoderGray,
+            TablatureDecoder.Prepared preparedTabs) {
+        return physicalPage < 0 ? analyze(labels, gray, width, height, annotations)
+                : analyze(labels, gray, width, height, annotations, ocr, physicalPage);
+    }
 }
 '''
 
