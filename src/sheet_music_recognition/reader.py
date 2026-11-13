@@ -146,20 +146,22 @@ class Interpreter:
         labels = np.zeros_like(gray)
         confidence = np.zeros_like(gray)
         white_prediction = None
+        tensor = np.empty((1, 3, 320, 320), dtype=np.float32)
+        if height < 320 or width < 320:
+            tensor.fill(255)
         # Only the reviewed bundled graph has the deterministic-output contract.
         # Custom models keep one inference call per tile, including stateful models.
         reuse_white = getattr(self, "model_sha256", None) == MODEL_SHA256
         for top in tile_starts(height):
             for left in tile_starts(width):
                 ch, cw = min(320, height - top), min(320, width - left)
-                tile = np.full((320, 320), 255, np.float32)
-                tile[:ch, :cw] = gray[top:top + ch, left:left + cw]
-                # Every channel is an exact repeat of this padded float plane.
-                exact_white = reuse_white and bool(np.all(tile == np.float32(255)))
+                tile = gray[top:top + ch, left:left + cw]
+                # The fixed padding is white too, so only inspect source pixels.
+                exact_white = reuse_white and bool(np.all(tile == 255))
                 if exact_white and white_prediction is not None:
                     prediction = white_prediction
                 else:
-                    tensor = np.repeat(tile[None, None], 3, axis=1)
+                    tensor[0, :, :ch, :cw] = tile
                     self.runtime.set_tensor(self.input["index"], tensor)
                     self.runtime.invoke()
                     prediction = self.runtime.get_tensor(self.output["index"])[0]
@@ -189,20 +191,16 @@ class Interpreter:
             raise ValueError("key_fifths must be -7..7")
         gray = grayscale(image, width)
         labels = self.predict(gray)
-        if annotations is None:
+        if annotations is None or ("tabWords" in annotations and "words" not in annotations):
             if self.ocr is None:
                 from .ocr import LocalOcr
                 self.ocr = LocalOcr()
             from .ocr import page_annotations
             words = self.ocr.words(gray)
-            annotations = page_annotations(words, [])
-        elif "tabWords" in annotations and "words" not in annotations:
-            if self.ocr is None:
-                from .ocr import LocalOcr
-                self.ocr = LocalOcr()
-            from .ocr import page_annotations
-            words = self.ocr.words(gray)
-            annotations = dict(page_annotations(words, annotations["tabWords"]), **annotations)
+            if annotations is None:
+                annotations = page_annotations(words, [])
+            else:
+                annotations = dict(page_annotations(words, annotations["tabWords"]), **annotations)
         corrected = self.paper_whitening.correct(gray, labels)
         with tempfile.TemporaryDirectory(prefix="sheet-music-recognition-") as folder:
             page = Path(folder) / "page.page.gz"
