@@ -1676,6 +1676,8 @@ final class ScoreDynamicsDetector {
         float center = (word.left() + word.right()) * .5f;
         float best = anchor, bestDistance = staff.gap() * .6f;
         boolean found = false, ambiguous = false;
+        boolean compound = CompoundDynamicEvidence.qualified(word);
+        float firstX = Float.POSITIVE_INFINITY, lastX = Float.NEGATIVE_INFINITY;
         for (var note : notes) {
             if (note.measureIndex() != target.measure
                     || note.staffIndex() != staff.index()
@@ -1684,12 +1686,19 @@ final class ScoreDynamicsDetector {
             float x = region.left() + note.positionInMeasure() * (region.right() - region.left());
             if (x < word.left() || x > word.right()) continue;
             float distance = Math.abs(x - center) * width;
+            if (compound && distance < staff.gap() * .6f) {
+                // Displaced heads can share an attack. A second covered column
+                // outside a compact chord's width makes the placement ambiguous.
+                firstX = Math.min(firstX, x);
+                lastX = Math.max(lastX, x);
+                if ((lastX - firstX) * width > staff.gap() * .5f) return anchor;
+            }
             if (!found && distance < bestDistance) {
                 best = x;
                 bestDistance = distance;
                 found = true;
             } else if (found && distance < staff.gap() * .6f) {
-                if (Math.abs(x - best) * width > staff.gap() * .1f) ambiguous = true;
+                if (!compound && Math.abs(x - best) * width > staff.gap() * .1f) ambiguous = true;
                 else if (distance < bestDistance) {
                     best = x;
                     bestDistance = distance;

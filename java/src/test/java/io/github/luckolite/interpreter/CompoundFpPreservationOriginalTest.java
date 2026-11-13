@@ -112,6 +112,25 @@ public class CompoundFpPreservationOriginalTest {
     }
 
     @Test
+    public void tightQualifiedGlyphCanOwnDisplacedChordHeads() {
+        var word = new PlayingTechniqueDetector.Word(
+                "fp", .484f, .34f, .516f, .37f,
+                PlayingTechniqueDetector.WordAdmission.FP_GLYPH_QUALIFIED);
+        assertEquals(.5f, ScoreDynamicsDetector.narrowLiteralAttack(
+                word, staffs.get(0), measures, chordHeads(.5f, .504f), W, H, word.left()), .00001f);
+        assertEquals(word.left(), ScoreDynamicsDetector.narrowLiteralAttack(
+                word, staffs.get(0), measures, chordHeads(.495f, .505f), W, H, word.left()), 0);
+    }
+
+    private List<ScoreNoteEvent> chordHeads(float first, float second) {
+        return List.of(
+                new ScoreNoteEvent(0, first, 2, 0, 1, .2f, false, 0, 0,
+                        ScoreNoteEvent.ACCIDENTAL_FROM_KEY, 1f),
+                new ScoreNoteEvent(0, second, 3, 0, 1, .2f, false, 0, 0,
+                        ScoreNoteEvent.ACCIDENTAL_FROM_KEY, 1f));
+    }
+
+    @Test
     public void repeatedOcrAndDetectionAreStableWithoutDuplicateChanges() {
         var gray = ink();
         var first = ScoreDynamicsDetector.ocrWords("fp", fp("fp"), gray, W, H);
