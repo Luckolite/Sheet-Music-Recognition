@@ -26,64 +26,34 @@ final class BoundedTupletBeam {
                 || nextX - lastX < gap) return false;
         int direction = above ? 1 : -1;
         float center = (firstX + lastX) * .5f;
+        int radius = Math.max(1, Math.round(gap * .08f));
         // A stem sits beside the oval. The numeral is centred over the stem-to-stem beam.
         for (float stemOffset : new float[] {gap * .45f, -gap * .45f}) {
             float left = firstX + stemOffset, right = lastX + stemOffset;
+            int beamStart = Math.round(left + gap * .15f);
+            int beamEnd = Math.round(right - gap * .15f);
+            int beforeStart = Math.round(left - gap * .45f);
+            int beforeEnd = Math.round(left - gap * .2f);
+            int afterStart = Math.round(right + gap * .2f);
+            int afterEnd = Math.round(right + gap * .45f);
+            float axis = center + stemOffset;
             for (int slopeIndex = -20; slopeIndex <= 20; slopeIndex++) {
                 float slope = slopeIndex * .02f;
                 for (int distance = Math.round(gap * .3f); distance <= gap * 2; distance++) {
                     float outer = (above ? numeralBottom : numeralTop) + direction * distance;
-                    if (coverage(
-                                    gray,
-                                    width,
-                                    height,
-                                    left + gap * .15f,
-                                    right - gap * .15f,
-                                    center + stemOffset,
-                                    outer,
-                                    slope,
-                                    gap)
-                            < .94) continue;
+                    if (!hasCoverage(gray, width, height, beamStart, beamEnd, axis, outer,
+                            slope, radius, .94, true)) continue;
                     for (int separation = Math.round(gap * .35f);
                             separation <= gap * .8f;
                             separation++) {
                         float inner = outer + direction * separation;
-                        if (coverage(
-                                        gray,
-                                        width,
-                                        height,
-                                        left + gap * .15f,
-                                        right - gap * .15f,
-                                        center + stemOffset,
-                                        inner,
-                                        slope,
-                                        gap)
-                                < .94) continue;
-                        // The short hook on the following regular note can approach the end;
-                        // require the clear interval immediately outside the group's stem.
-                        double before =
-                                coverage(
-                                        gray,
-                                        width,
-                                        height,
-                                        left - gap * .45f,
-                                        left - gap * .2f,
-                                        center + stemOffset,
-                                        inner,
-                                        slope,
-                                        gap);
-                        double after =
-                                coverage(
-                                        gray,
-                                        width,
-                                        height,
-                                        right + gap * .2f,
-                                        right + gap * .45f,
-                                        center + stemOffset,
-                                        inner,
-                                        slope,
-                                        gap);
-                        if (before <= .2 && after <= .2) return true;
+                        if (!hasCoverage(gray, width, height, beamStart, beamEnd, axis, inner,
+                                slope, radius, .94, true)) continue;
+                        // A following hook can approach the group. Check the gap just outside each stem.
+                        if (hasCoverage(gray, width, height, beforeStart, beforeEnd, axis, inner,
+                                        slope, radius, .2, false)
+                                && hasCoverage(gray, width, height, afterStart, afterEnd, axis, inner,
+                                        slope, radius, .2, false)) return true;
                     }
                 }
             }
@@ -91,26 +61,43 @@ final class BoundedTupletBeam {
         return false;
     }
 
-    private static double coverage(
-            byte[] gray,
-            int width,
-            int height,
-            float left,
-            float right,
-            float center,
-            float baseline,
-            float slope,
-            float gap) {
-        int total = 0, ink = 0, radius = Math.max(1, Math.round(gap * .08f));
-        for (int x = Math.round(left); x <= Math.round(right); x++) {
-            int y = Math.round(baseline + slope * (x - center));
-            if (x < 0 || x >= width || y - radius < 0 || y + radius >= height) return 1;
-            boolean core = true;
-            for (int dy = -radius; dy <= radius; dy++)
-                if ((gray[(y + dy) * width + x] & 255) >= 165) core = false;
-            total++;
-            if (core) ink++;
+    private static boolean hasCoverage(
+            byte[] gray, int width, int height, int start, int end, float center, float baseline,
+            float slope, int radius, double threshold, boolean minimum) {
+        // A clipped ray has the original full-coverage value. The rounded ray is monotone.
+        if (start > end || start < 0 || end >= width
+                || !inBounds(rayY(start, center, baseline, slope), radius, height)
+                || !inBounds(rayY(end, center, baseline, slope), radius, height)) return minimum;
+        int total = end - start + 1;
+        int cutoff = (int) (total * threshold);
+        // Keep the original division-based comparison at the rounding boundary.
+        if (minimum && cutoff / (double) total < threshold) cutoff++;
+        if (!minimum && (cutoff + 1) / (double) total <= threshold) cutoff++;
+        int ink = 0;
+        for (int x = start; x <= end; x++) {
+            int y = rayY(x, center, baseline, slope);
+            int d = -radius;
+            for (; d <= radius; d++) {
+                if ((gray[(y + d) * width + x] & 255) >= 165) break;
+            }
+            if (d > radius) ink++;
+            int possibleInk = ink + (end - x);
+            if (minimum) {
+                if (ink >= cutoff) return true;
+                if (possibleInk < cutoff) return false;
+            } else {
+                if (ink > cutoff) return false;
+                if (possibleInk <= cutoff) return true;
+            }
         }
-        return total > 0 ? ink / (double) total : 1;
+        return minimum;
+    }
+
+    private static int rayY(int x, float center, float baseline, float slope) {
+        return Math.round(baseline + slope * (x - center));
+    }
+
+    private static boolean inBounds(int y, int radius, int height) {
+        return y >= radius && y < height - radius;
     }
 }

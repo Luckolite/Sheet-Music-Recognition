@@ -65,84 +65,77 @@ final class CompleteBeamGroupInk {
         float slope = (last.endY() - first.endY()) / (float) (last.x() - first.x());
         if (Math.abs(slope) > .35f) return false;
         int inset = Math.max(1, Math.round(gap * .12f));
-        for (int i = 0; i < stems.size(); i++) {
-            var s = stems.get(i);
-            float line = first.endY() + (s.x() - first.x()) * slope;
-            if (Math.abs(s.endY() - line) > gap * .2f) return false;
-            if (i > 0) {
-                var prev = stems.get(i - 1);
-                if (!BeamInkConnectivity.connected(
-                        gray,
-                        w,
-                        h,
-                        prev.x(),
-                        prev.endY() + direction * inset,
-                        s.x(),
-                        s.endY() + direction * inset,
-                        gap)) return false;
-            }
+        for (var stem : stems) {
+            float line = first.endY() + (stem.x() - first.x()) * slope;
+            if (Math.abs(stem.endY() - line) > gap * .2f) return false;
         }
-        int thick = 0, totalRail = 0, core = Math.max(2, Math.round(gap * .12f));
-        for (int x = first.x() + 2; x < last.x() - 1; x++) {
-            int edge = Math.round(first.endY() + (x - first.x()) * slope), ink = 0;
-            totalRail++;
-            for (int d = 0; d < core; d++) {
-                int y = edge + direction * d;
-                if (y >= 0 && y < h && (gray[y * w + x] & 255) < 165) ink++;
-            }
-            if (ink == core) thick++;
-        }
-        if (totalRail == 0) return false;
-        if (thick < totalRail * .9f) {
+        int railStart = first.x() + 2, railEnd = last.x() - 1;
+        int totalRail = railEnd - railStart, core = Math.max(2, Math.round(gap * .12f));
+        if (totalRail <= 0) return false;
+        if (!thickRail(gray, w, h, first, slope, railStart, railEnd, core, direction, 0)) {
             // Test one complete interior ray; never combine it column by column with the edge.
             long work = (long) totalRail * core;
-            if (work <= 0 || work > (long) w * h) return false;
-            int insetThick = 0;
-            for (int x = first.x() + 2; x < last.x() - 1; x++) {
-                int edge = Math.round(first.endY() + (x - first.x()) * slope), ink = 0;
-                for (int d = 0; d < core; d++) {
-                    long y = (long) edge + (long) direction * (inset + (long) d);
-                    if (y >= 0 && y < h && (gray[(int) (y * w + x)] & 255) < 165) ink++;
-                }
-                if (ink == core) insetThick++;
-            }
-            if (insetThick < totalRail * .9f) return false;
+            if (work > (long) w * h
+                    || !thickRail(gray, w, h, first, slope, railStart, railEnd, core, direction, inset))
+                return false;
         }
         // A group continuing past either outer owner is incomplete.
-        for (int side : new int[] {-1, 1}) {
-            int edge = side < 0 ? first.x() : last.x(), dark = 0, total = 0;
-            for (int d = Math.round(gap * .35f); d <= gap; d++) {
-                int x = edge + side * d,
-                        y = Math.round(first.endY() + (x - first.x()) * slope) + direction * inset;
+        int firstDistance = Math.round(gap * .35f), lastDistance = (int) gap;
+        int samples = lastDistance - firstDistance + 1;
+        if (samples <= 0) return false;
+        float maximumDark = samples * .2f;
+        for (int side = -1; side <= 1; side += 2) {
+            int edge = side < 0 ? first.x() : last.x(), dark = 0;
+            for (int d = firstDistance; d <= lastDistance; d++) {
+                int x = edge + side * d;
+                int y = Math.round(first.endY() + (x - first.x()) * slope) + direction * inset;
                 if (x < 0 || x >= w || y < 0 || y >= h) return false;
-                total++;
-                if ((gray[y * w + x] & 255) < 165) dark++;
+                if ((gray[y * w + x] & 255) < 165 && ++dark > maximumDark) return false;
             }
-            if (total == 0 || dark > total * .2f) return false;
+        }
+        for (int i = 1; i < stems.size(); i++) {
+            var a = stems.get(i - 1);
+            var b = stems.get(i);
+            if (!BeamInkConnectivity.connected(
+                    gray, w, h, a.x(), a.endY() + direction * inset,
+                    b.x(), b.endY() + direction * inset, gap)) return false;
         }
         // Trace every vertical shaft from the beam back toward the heads, including shafts
         // whose head the model missed. Every long shaft must belong to a supplied owner.
+        float ownershipRadius = Math.max(2, gap * .2f);
+        int owner = 0;
         for (int x = first.x() + 1; x < last.x(); x++) {
+            while (x - stems.get(owner).x() > ownershipRadius) owner++;
+            if (Math.abs(stems.get(owner).x() - x) <= ownershipRadius) continue;
             int y0 = Math.round(first.endY() + (x - first.x()) * slope) + direction * inset;
-            int run = 0, misses = 0;
+            int misses = 0;
             for (int d = 0; d <= gap * 3; d++) {
                 int y = y0 + direction * d;
                 if (y < 0 || y >= h) break;
                 if ((gray[y * w + x] & 255) < 165) {
-                    run = d;
+                    if (d >= gap * 2) return false;
                     misses = 0;
                 } else if (++misses > 1) break;
             }
-            if (run >= gap * 2) {
-                boolean owned = false;
-                for (var s : stems)
-                    if (Math.abs(s.x() - x) <= Math.max(2, gap * .2f)) {
-                        owned = true;
-                        break;
-                    }
-                if (!owned) return false;
-            }
         }
         return true;
+    }
+
+    private static boolean thickRail(
+            byte[] gray, int w, int h, PairedTremoloInk.Stem first, float slope,
+            int start, int end, int core, int direction, int inset) {
+        float required = (end - start) * .9f;
+        int thick = 0;
+        for (int x = start; x < end; x++) {
+            int edge = Math.round(first.endY() + (x - first.x()) * slope);
+            int d = 0;
+            for (; d < core; d++) {
+                long y = (long) edge + (long) direction * (inset + (long) d);
+                if (y < 0 || y >= h || (gray[(int) (y * w + x)] & 255) >= 165) break;
+            }
+            if (d == core && ++thick >= required) return true;
+            if (thick + (end - x - 1) < required) return false;
+        }
+        return false;
     }
 }

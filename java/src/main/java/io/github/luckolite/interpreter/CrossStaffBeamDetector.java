@@ -160,27 +160,8 @@ final class CrossStaffBeamDetector {
         if (stem2 - stem1 < gap) return false;
         int top = Math.max(1, Math.round(Math.min(y1, y2) + gap * 2));
         int bottom = Math.min(height - 2, Math.round(Math.max(y1, y2) - gap * 2));
-        for (int a = top; a <= bottom; a++) {
-            if (!stem(gray, width, height, stem1, y1, a, gap)) continue;
-            for (int b = Math.max(top, a - (int) (gap * 1.8));
-                    b <= Math.min(bottom, a + (int) (gap * 1.8));
-                    b++) {
-                if (!stem(gray, width, height, stem2, y2, b, gap)) continue;
-                int hits = 0, total = 0, thick = 0;
-                for (int x = stem1 + 3; x < stem2 - 2; x++) {
-                    int y = Math.round(a + (b - a) * (x - stem1) / (float) (stem2 - stem1));
-                    total++;
-                    if (dark(gray, width, height, x, y, 1)) hits++;
-                    if (dark(gray, width, height, x, y - 1, 0)
-                            && dark(gray, width, height, x, y + 1, 0)) thick++;
-                }
-                if (total > 0
-                        && hits >= total * .93
-                        && thick >= total * .45
-                        && BeamInkConnectivity.connected(
-                                gray, width, height, stem1, a, stem2, b, gap)) return true;
-            }
-        }
+        if (connectedStems(gray, width, height, stem1, y1, stem2, y2, top, bottom, gap))
+            return true;
         // A hand can cross into the neighbouring staff while both shafts remain
         // above their heads (or below both heads). Its beam is outside the head
         // interval, so the opposed-stem search cannot establish that connection.
@@ -211,23 +192,26 @@ final class CrossStaffBeamDetector {
                         height - 2,
                         Math.round(
                                 up ? Math.min(y1, y2) - gap * 1.5f : Math.max(y1, y2) + gap * 6));
+        return connectedStems(gray, width, height, stem1, y1, stem2, y2, top, bottom, gap);
+    }
+
+    private static boolean connectedStems(
+            byte[] gray, int width, int height, int stem1, float y1, int stem2, float y2,
+            int top, int bottom, float gap) {
+        int total = stem2 - stem1 - 5;
+        if (top > bottom || total <= 0) return false;
+        int verticalTolerance = (int) (gap * 1.8);
+        boolean[] firstStem = shaftEnds(gray, width, height, stem1, y1, top, bottom, gap);
+        boolean[] secondStem = null;
         for (int a = top; a <= bottom; a++) {
-            if (!stem(gray, width, height, stem1, y1, a, gap)) continue;
-            for (int b = Math.max(top, a - (int) (gap * 1.8));
-                    b <= Math.min(bottom, a + (int) (gap * 1.8));
+            if (!firstStem[a - top]) continue;
+            if (secondStem == null)
+                secondStem = shaftEnds(gray, width, height, stem2, y2, top, bottom, gap);
+            for (int b = Math.max(top, a - verticalTolerance);
+                    b <= Math.min(bottom, a + verticalTolerance);
                     b++) {
-                if (!stem(gray, width, height, stem2, y2, b, gap)) continue;
-                int hits = 0, total = 0, thick = 0;
-                for (int x = stem1 + 3; x < stem2 - 2; x++) {
-                    int y = Math.round(a + (b - a) * (x - stem1) / (float) (stem2 - stem1));
-                    total++;
-                    if (dark(gray, width, height, x, y, 1)) hits++;
-                    if (dark(gray, width, height, x, y - 1, 0)
-                            && dark(gray, width, height, x, y + 1, 0)) thick++;
-                }
-                if (total > 0
-                        && hits >= total * .93
-                        && thick >= total * .45
+                if (!secondStem[b - top]) continue;
+                if (hasBeamInk(gray, width, height, stem1, a, stem2, b, total)
                         && BeamInkConnectivity.connected(
                                 gray, width, height, stem1, a, stem2, b, gap)) return true;
             }
@@ -235,24 +219,59 @@ final class CrossStaffBeamDetector {
         return false;
     }
 
-    private static boolean stem(byte[] gray, int w, int h, int x, float headY, int end, float gap) {
-        int direction = end > headY ? 1 : -1;
-        int start = Math.round(headY + direction * gap * .6f);
-        int hits = 0, total = 0, blank = 0;
-        for (int y = start; direction > 0 ? y < end : y > end; y += direction) {
-            total++;
-            if (dark(gray, w, h, x, y, 2)) {
-                hits++;
-                blank = 0;
-            } else if (++blank > Math.max(1, Math.round(gap * .16f))) return false;
+    private static boolean hasBeamInk(
+            byte[] gray, int width, int height, int stem1, int a, int stem2, int b, int total) {
+        double minimumHits = total * .93, minimumThick = total * .45;
+        int hits = 0, thick = 0;
+        for (int x = stem1 + 3; x < stem2 - 2; x++) {
+            int y = Math.round(a + (b - a) * (x - stem1) / (float) (stem2 - stem1));
+            if (dark(gray, width, height, x, y, 1)) hits++;
+            if (dark(gray, width, height, x, y - 1, 0)
+                    && dark(gray, width, height, x, y + 1, 0)) thick++;
+            if (hits >= minimumHits && thick >= minimumThick) return true;
+            int remaining = stem2 - 3 - x;
+            if (hits + remaining < minimumHits || thick + remaining < minimumThick) return false;
         }
-        return total >= gap * 1.4 && hits >= total * .92;
+        return false;
+    }
+
+    private static boolean[] shaftEnds(
+            byte[] gray, int w, int h, int x, float headY, int top, int bottom, float gap) {
+        boolean[] ends = new boolean[bottom - top + 1];
+        int blankLimit = Math.max(1, Math.round(gap * .16f));
+        double minimumLength = gap * 1.4;
+        int left = Math.max(0, x - 2), right = Math.min(w - 1, x + 2);
+        if (left > right) return ends;
+
+        // Every possible endpoint in one direction shares the same shaft prefix.
+        for (int direction = -1; direction <= 1; direction += 2) {
+            int start = Math.round(headY + direction * gap * .6f);
+            int limit = direction < 0 ? top : bottom;
+            if ((limit > headY) != (direction > 0)) continue;
+            int hits = 0, blanks = 0, length = 0;
+            for (int y = start; direction < 0 ? y >= limit : y <= limit; y += direction) {
+                if (y >= top && y <= bottom && (y > headY) == (direction > 0))
+                    ends[y - top] = length >= minimumLength && hits >= length * .92;
+                if (y == limit) break;
+                length++;
+                if (darkRow(gray, w, h, left, right, y)) {
+                    hits++;
+                    blanks = 0;
+                } else if (++blanks > blankLimit) break;
+            }
+        }
+        return ends;
     }
 
     private static boolean dark(byte[] gray, int w, int h, int x, int y, int radius) {
+        return darkRow(gray, w, h, Math.max(0, x - radius), Math.min(w - 1, x + radius), y);
+    }
+
+    private static boolean darkRow(byte[] gray, int w, int h, int left, int right, int y) {
         if (y < 0 || y >= h) return false;
-        for (int k = Math.max(0, x - radius); k <= Math.min(w - 1, x + radius); k++)
-            if ((gray[y * w + k] & 255) < 150) return true;
+        int row = y * w;
+        for (int k = left; k <= right; k++)
+            if ((gray[row + k] & 255) < 150) return true;
         return false;
     }
 }

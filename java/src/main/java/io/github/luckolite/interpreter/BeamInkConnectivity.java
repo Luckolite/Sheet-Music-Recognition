@@ -29,6 +29,15 @@ final class BeamInkConnectivity {
         int top = Math.max(0, Math.min(ay, by) - radius),
                 bottom = Math.min(height - 1, Math.max(ay, by) + radius);
         if (left < 0 || right >= width || right <= left) return false;
+        int first = lineAt(left, ax, ay, bx, by);
+        int last = lineAt(right, ax, ay, bx, by);
+        if (quarterBudget == null) {
+            if (!hasEndpoint(gray, width, left, first, top, bottom)
+                    || !hasEndpoint(gray, width, right, last, top, bottom)) return false;
+            if (followsCenterline(gray, width, left, right, top, bottom, ax, ay, bx, by, first))
+                return true;
+        }
+
         int w = right - left + 1, h = bottom - top + 1;
         boolean[] seen =
                 (quarterBudget == null
@@ -44,8 +53,12 @@ final class BeamInkConnectivity {
                                         32L * 1 + 8L * (Math.max(0L, (long) (w * h))))
                         ? new int[w * h]
                         : null);
+        int[] centerline = null;
+        if (quarterBudget == null) {
+            centerline = new int[w];
+            for (int i = 0; i < w; i++) centerline[i] = lineAt(left + i, ax, ay, bx, by);
+        }
         int size = 0, take = 0;
-        int first = Math.round(ay + (by - ay) * (left - ax) / (float) (bx - ax));
         {
             if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
             for (int y = Math.max(top, first - 1); y <= Math.min(bottom, first + 1); y++) {
@@ -63,8 +76,7 @@ final class BeamInkConnectivity {
             while (take < size) {
                 if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
                 int at = queue[take++], x = left + at % w, y = top + at / w;
-                int expected = Math.round(ay + (by - ay) * (x - ax) / (float) (bx - ax));
-                if (x == right && Math.abs(y - expected) <= 1) return true;
+                if (x == right && Math.abs(y - last) <= 1) return true;
                 {
                     if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
                     for (int dy = -1; dy <= 1; dy++) {
@@ -75,12 +87,15 @@ final class BeamInkConnectivity {
                             for (int dx = -1; dx <= 1; dx++) {
                                 if (quarterBudget != null)
                                     FaintQuarterRestInk.charge(quarterBudget, 1, 0);
+                                if (quarterBudget == null && dx == 0 && dy == 0) continue;
                                 int nx = x + dx, ny = y + dy;
                                 if (nx < left || nx > right || ny < top || ny > bottom) continue;
-                                int next = (ny - top) * w + nx - left;
+                                int next = at + dy * w + dx;
                                 if (seen[next]) continue;
-                                int line =
-                                        Math.round(ay + (by - ay) * (nx - ax) / (float) (bx - ax));
+                                // Rejected pixels cannot become eligible from a different parent.
+                                if (quarterBudget == null) seen[next] = true;
+                                int line = centerline == null
+                                        ? lineAt(nx, ax, ay, bx, by) : centerline[nx - left];
                                 if (Math.abs(ny - line) > radius
                                         || (gray[ny * width + nx] & 255) >= 165) continue;
                                 seen[next] = true;
@@ -93,5 +108,30 @@ final class BeamInkConnectivity {
         }
 
         return false;
+    }
+
+    private static int lineAt(int x, int ax, int ay, int bx, int by) {
+        return Math.round(ay + (by - ay) * (x - ax) / (float) (bx - ax));
+    }
+
+    private static boolean hasEndpoint(
+            byte[] gray, int width, int x, int center, int top, int bottom) {
+        for (int y = Math.max(top, center - 1); y <= Math.min(bottom, center + 1); y++) {
+            if ((gray[y * width + x] & 255) < 165) return true;
+        }
+        return false;
+    }
+
+    private static boolean followsCenterline(
+            byte[] gray, int width, int left, int right, int top, int bottom,
+            int ax, int ay, int bx, int by, int first) {
+        int previous = first;
+        for (int x = left; x <= right; x++) {
+            int y = lineAt(x, ax, ay, bx, by);
+            if (y < top || y > bottom || Math.abs(y - previous) > 1
+                    || (gray[y * width + x] & 255) >= 165) return false;
+            previous = y;
+        }
+        return true;
     }
 }

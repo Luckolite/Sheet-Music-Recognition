@@ -885,27 +885,9 @@ final class PrintedTupletBeamOwner {
                                         ? -(numeralBottom - numeralTop + 1) * .45f
                                         : Math.max(2, gap * .2f);
                         if (distance < minimum || distance > gap * 1.8f) continue;
-                        int covered = 0, total = 0;
-                        {
-                            if (quarterBudget != null)
-                                FaintQuarterRestInk.charge(quarterBudget, 1, 0);
-                            for (int x = a.x + 2; x < b.x - 1; x++) {
-                                if (quarterBudget != null)
-                                    FaintQuarterRestInk.charge(quarterBudget, 1, 0);
-
-                                int y =
-                                        Math.round(
-                                                a.y
-                                                        + (b.y - a.y)
-                                                                * (x - a.x)
-                                                                / (float) (b.x - a.x));
-                                total++;
-                                if (core(gray, width, height, x, y, gap, quarterBudget)) covered++;
-                            }
-                        }
-
-                        if (total > 0
-                                && covered >= total * .94f
+                        float candidateDistance = joined ? Math.max(0, distance) : distance;
+                        if (quarterBudget == null && candidateDistance >= nearest) continue;
+                        if (beamCoverage(gray, width, height, a, b, gap, quarterBudget)
                                 && BeamInkConnectivity.connected(
                                         gray,
                                         width,
@@ -916,7 +898,7 @@ final class PrintedTupletBeamOwner {
                                         b.y,
                                         gap,
                                         quarterBudget))
-                            nearest = Math.min(nearest, joined ? Math.max(0, distance) : distance);
+                            nearest = Math.min(nearest, candidateDistance);
                     }
                 }
             }
@@ -975,27 +957,7 @@ final class PrintedTupletBeamOwner {
                         if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
 
                         if (b.x - a.x < gap * .5f || Math.abs(b.y - a.y) > gap * 3) continue;
-                        int covered = 0, total = 0;
-                        {
-                            if (quarterBudget != null)
-                                FaintQuarterRestInk.charge(quarterBudget, 1, 0);
-                            for (int x = a.x + 2; x < b.x - 1; x++) {
-                                if (quarterBudget != null)
-                                    FaintQuarterRestInk.charge(quarterBudget, 1, 0);
-
-                                int y =
-                                        Math.round(
-                                                a.y
-                                                        + (b.y - a.y)
-                                                                * (x - a.x)
-                                                                / (float) (b.x - a.x));
-                                total++;
-                                if (core(gray, width, height, x, y, gap, quarterBudget)) covered++;
-                            }
-                        }
-
-                        if (total > 0
-                                && covered >= total * .94f
+                        if (beamCoverage(gray, width, height, a, b, gap, quarterBudget)
                                 && BeamInkConnectivity.connected(
                                         gray,
                                         width,
@@ -1012,6 +974,26 @@ final class PrintedTupletBeamOwner {
         }
 
         return false;
+    }
+
+    private static boolean beamCoverage(
+            byte[] gray, int width, int height, Tip a, Tip b, float gap,
+            FaintQuarterRestInk.Budget quarterBudget) {
+        if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
+        int start = a.x + 2, end = b.x - 2;
+        int total = end - start + 1;
+        float required = total * .94f;
+        int covered = 0;
+        for (int x = start; x <= end; x++) {
+            if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
+            int y = Math.round(a.y + (b.y - a.y) * (x - a.x) / (float) (b.x - a.x));
+            if (core(gray, width, height, x, y, gap, quarterBudget)) covered++;
+            if (quarterBudget == null) {
+                if (covered >= required) return true;
+                if (covered + (end - x) < required) return false;
+            }
+        }
+        return total > 0 && covered >= required;
     }
 
     private static List<Tip> tips(
@@ -1099,6 +1081,10 @@ final class PrintedTupletBeamOwner {
             FaintQuarterRestInk.Budget quarterBudget) {
         if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
 
+        int firstDistance = Math.round(gap * .25f);
+        float maxDistance = gap * 1.35f;
+        int lastDistance = (int) maxDistance;
+        float required = (lastDistance - firstDistance + 1) * .94f;
         {
             if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
             for (int angle = -10; angle <= 10; angle++) {
@@ -1107,7 +1093,7 @@ final class PrintedTupletBeamOwner {
                 int hits = 0, total = 0;
                 {
                     if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
-                    for (int d = Math.round(gap * .25f); d <= gap * 1.35f; d++) {
+                    for (int d = firstDistance; d <= maxDistance; d++) {
                         if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
 
                         total++;
@@ -1119,10 +1105,14 @@ final class PrintedTupletBeamOwner {
                                 Math.round(y + angle * .06f * d),
                                 gap,
                                 quarterBudget)) hits++;
+                        if (quarterBudget == null) {
+                            if (hits >= required) return true;
+                            if (hits + (lastDistance - d) < required) break;
+                        }
                     }
                 }
 
-                if (total > 0 && hits >= total * .94f) return true;
+                if (quarterBudget != null && total > 0 && hits >= total * .94f) return true;
             }
         }
 
