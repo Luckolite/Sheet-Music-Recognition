@@ -10,9 +10,14 @@ final class FingeringAnnotationFilter {
     private static final Pattern SINGLE_DIGIT = Pattern.compile("[1-5]");
     private static final Pattern HAND_OR_DIGIT = Pattern.compile("[LH]?[1-5]");
     private static final Pattern HAND_SEQUENCE = Pattern.compile("[LRH]{2,3}");
+    private static final Pattern DIGIT_SEQUENCE = Pattern.compile("[1-5]{2,4}");
     private static final Pattern WHITESPACE = Pattern.compile("\\s+");
 
     private FingeringAnnotationFilter() {}
+
+    private record Candidate(
+            float left, float right, float top, float bottom,
+            boolean fingering, boolean digit, int sequenceLength) {}
 
     static List<ScoreNoteEvent> apply(
             List<PlayingTechniqueDetector.Word> words,
@@ -24,11 +29,14 @@ final class FingeringAnnotationFilter {
             int height) {
         if (words == null
                 || words.isEmpty()
+                || notes.isEmpty()
+                || staffs.isEmpty()
                 || gray == null
                 || width <= 0
                 || height <= 0
                 || gray.length != (long) width * height) return notes;
-        var result = new ArrayList<ScoreNoteEvent>();
+        List<Candidate> candidates = null;
+        var result = new ArrayList<ScoreNoteEvent>(notes.size());
         for (var note : notes) {
             if (note.measureIndex() < 0
                     || note.measureIndex() >= measures.size()
@@ -36,6 +44,10 @@ final class FingeringAnnotationFilter {
                     || (note.articulations() & NoteOrnament.GRACE) != 0) {
                 result.add(note);
                 continue;
+            }
+            if (candidates == null) {
+                candidates = candidates(words, width, height);
+                if (candidates.isEmpty()) return notes;
             }
             var measure = measures.get(note.measureIndex());
             float
@@ -46,16 +58,12 @@ final class FingeringAnnotationFilter {
                                     * width,
                     y = note.pageY() * height;
             boolean annotation = false;
-            for (var word : words) {
-                boolean below = note.staffStep() <= -3;
-                String token = word.text() == null ? "" : word.text().trim();
-                boolean sequence = below && token.matches("[1-5]{2,4}");
-                if (!isFingering(word.text()) && !sequence) continue;
-                float l = word.left() * width,
-                        r = word.right() * width,
-                        t = word.top() * height,
-                        b = word.bottom() * height;
-                if (!Float.isFinite(l + r + t + b) || x < l || x > r || y < t || y > b) continue;
+            boolean below = note.staffStep() <= -3;
+            for (var word : candidates) {
+                boolean sequence = below && word.sequenceLength() != 0;
+                if (!word.fingering() && !sequence) continue;
+                float l = word.left(), r = word.right(), t = word.top(), b = word.bottom();
+                if (x < l || x > r || y < t || y > b) continue;
                 PlayingTechniqueDetector.Staff owner = null;
                 float distance = Float.MAX_VALUE;
                 for (var staff : staffs) {
@@ -77,9 +85,9 @@ final class FingeringAnnotationFilter {
                 if (b - t < gap * 1.15f
                         || b - t > gap * (sequence ? 6 : 5.5f)
                         || r - l < gap * .45f
-                        || r - l > gap * (sequence ? token.length() * 3.5f : 7)) continue;
-                if (sequence && (r - l) / token.length() > gap * 3.5f) continue;
-                if ((below || SINGLE_DIGIT.matcher(word.text().trim()).matches())
+                        || r - l > gap * (sequence ? word.sequenceLength() * 3.5f : 7)) continue;
+                if (sequence && (r - l) / word.sequenceLength() > gap * 3.5f) continue;
+                if ((below || word.digit())
                         && printedStemBeyondWord(gray, width, height, x, y, t, b, gap)) continue;
                 if ((note.staffStep() >= 10 || below)
                         && printedLedgerAcrossWord(
@@ -96,6 +104,23 @@ final class FingeringAnnotationFilter {
             if (!annotation) result.add(note);
         }
         return result.size() == notes.size() ? notes : List.copyOf(result);
+    }
+
+    private static List<Candidate> candidates(
+            List<PlayingTechniqueDetector.Word> words, int width, int height) {
+        var result = new ArrayList<Candidate>();
+        for (var word : words) {
+            String text = word.text() == null ? "" : word.text().trim();
+            int sequenceLength = DIGIT_SEQUENCE.matcher(text).matches() ? text.length() : 0;
+            boolean fingering = isFingering(text);
+            if (!fingering && sequenceLength == 0) continue;
+            float l = word.left() * width, r = word.right() * width;
+            float t = word.top() * height, b = word.bottom() * height;
+            if (!Float.isFinite(l + r + t + b)) continue;
+            result.add(new Candidate(l, r, t, b, fingering,
+                    SINGLE_DIGIT.matcher(text).matches(), sequenceLength));
+        }
+        return result;
     }
 
     static boolean isFingering(String text) {
