@@ -111,10 +111,11 @@ public final class TablatureDecoder {
         // Keep the darkest complete geometry first, then fill in missing systems.
         var found = new ArrayList<Staff>();
         int[][] rowCounts = countRowProjections(gray, w, h);
+        var barlines = new HashMap<StaffBand, List<Float>>();
         for (float coverage : new float[] {.55f, .06f})
             for (int threshold : ROW_THRESHOLDS)
                 for (var staff :
-                        detectAtThreshold(gray, w, h, threshold, coverage, rowCounts[threshold])) {
+                        detectAtThreshold(gray, w, h, threshold, coverage, rowCounts[threshold], barlines)) {
                     int match = -1;
                     for (int i = 0; i < found.size(); i++)
                         if (Math.abs(found.get(i).top - staff.top)
@@ -188,8 +189,11 @@ public final class TablatureDecoder {
         return result;
     }
 
+    private record StaffBand(float top, float gap, int strings, int threshold) {}
+
     private static List<Staff> detectAtThreshold(
-            byte[] gray, int w, int h, int threshold, float coverage, int[] rowCounts) {
+            byte[] gray, int w, int h, int threshold, float coverage, int[] rowCounts,
+            Map<StaffBand, List<Float>> barlines) {
         var lines = new ArrayList<Integer>();
         var thickness = new ArrayList<Integer>();
         var strength = new ArrayList<Integer>();
@@ -254,37 +258,9 @@ public final class TablatureDecoder {
                         five = false;
                 if (five) standard = lines.get(i - 5);
             }
-            var bars = new ArrayList<Float>();
-            int firstRow = Math.round(top);
-            int lastRow = Math.round(top + (strings - 1) * gap);
-            int rowEnd = Math.min(h, lastRow + 1);
-            int total = rowEnd - firstRow;
-            int[] columnInk = new int[w];
-            for (int y = firstRow; y < rowEnd; y++) {
-                int offset = y * w;
-                for (int x = 0; x < w; x++)
-                    if ((gray[offset + x] & 255) < threshold) columnInk[x]++;
-            }
-            int run = -1;
-            for (int x = 0; x <= w; x++) {
-                if (x < w && columnInk[x] >= total * .98) {
-                    if (run < 0) run = x;
-                } else if (run >= 0) {
-                    float center = (run + x - 1) * .5f;
-                    int above = 0, below = 0, cx = Math.round(center);
-                    for (int dy = 1; dy <= Math.round(gap * .4f); dy++) {
-                        int a = firstRow - dy, b = lastRow + dy;
-                        if (a >= 0 && (gray[a * w + cx] & 255) < threshold) above++;
-                        if (b < h && (gray[b * w + cx] & 255) < threshold) below++;
-                    }
-                    // Stacked frets can form a nearly solid column, but protrude beyond both outer
-                    // strings.
-                    if (!(above > gap * .2f && below > gap * .2f)
-                            && (bars.isEmpty() || center - bars.get(bars.size() - 1) > gap * .6f))
-                        bars.add(center);
-                    run = -1;
-                }
-            }
+            // The two coverage passes can propose the same staff at this ink threshold.
+            var band = new StaffBand(top, gap, strings, threshold);
+            var bars = barlines.computeIfAbsent(band, key -> findBarlines(gray, w, h, key));
             // Pale rules interrupted by fret digits need enclosing vertical evidence.
             if (interrupted && bars.size() < 2) continue;
             result.add(
@@ -293,12 +269,49 @@ public final class TablatureDecoder {
                             gap,
                             standard,
                             List.copyOf(frets),
-                            List.copyOf(bars),
+                            bars,
                             strings,
                             List.of()));
             i += strings - 1;
         }
         return List.copyOf(result);
+    }
+
+    private static List<Float> findBarlines(byte[] gray, int w, int h, StaffBand band) {
+        float top = band.top(), gap = band.gap();
+        int strings = band.strings(), threshold = band.threshold();
+        var bars = new ArrayList<Float>();
+        int firstRow = Math.round(top);
+        int lastRow = Math.round(top + (strings - 1) * gap);
+        int rowEnd = Math.min(h, lastRow + 1);
+        int total = rowEnd - firstRow;
+        int[] columnInk = new int[w];
+        for (int y = firstRow; y < rowEnd; y++) {
+            int offset = y * w;
+            for (int x = 0; x < w; x++)
+                if ((gray[offset + x] & 255) < threshold) columnInk[x]++;
+        }
+        int run = -1;
+        for (int x = 0; x <= w; x++) {
+            if (x < w && columnInk[x] >= total * .98) {
+                if (run < 0) run = x;
+            } else if (run >= 0) {
+                float center = (run + x - 1) * .5f;
+                int above = 0, below = 0, cx = Math.round(center);
+                for (int dy = 1; dy <= Math.round(gap * .4f); dy++) {
+                    int a = firstRow - dy, b = lastRow + dy;
+                    if (a >= 0 && (gray[a * w + cx] & 255) < threshold) above++;
+                    if (b < h && (gray[b * w + cx] & 255) < threshold) below++;
+                }
+                // Stacked frets can form a nearly solid column, but protrude beyond both outer
+                // strings.
+                if (!(above > gap * .2f && below > gap * .2f)
+                        && (bars.isEmpty() || center - bars.get(bars.size() - 1) > gap * .6f))
+                    bars.add(center);
+                run = -1;
+            }
+        }
+        return List.copyOf(bars);
     }
 
     private static boolean matchingExtents(
