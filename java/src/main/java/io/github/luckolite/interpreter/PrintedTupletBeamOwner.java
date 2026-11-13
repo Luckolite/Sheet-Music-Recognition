@@ -1027,6 +1027,43 @@ final class PrintedTupletBeamOwner {
         return total > 0 && covered >= required;
     }
 
+    /** Connect shafts through thick beam ink independent of the five printed staff rules. */
+    static boolean connectedAwayFromRules(
+            byte[] gray, int width, int height, float firstX, float firstY,
+            float lastX, float lastY, float gap, int direction, StaffPitchTrack staff) {
+        if (staff == null || !staff.verifiedAt(firstX) || !staff.verifiedAt(lastX)) return false;
+        int left = Math.max(0, (int) (firstX - gap)), right = Math.min(width - 1, (int) (lastX + gap));
+        if (right - left > gap * 9 || right - left < gap * 2) return false;
+        float[][] frames = new float[right - left + 1][];
+        for (int x = left; x <= right; x++) frames[x - left] = staff.at(x);
+        for (var a : tips(gray, width, height, firstX, firstY, gap, direction, 1))
+            for (var b : tips(gray, width, height, lastX, lastY, gap, direction, -1)) {
+                if (b.x - a.x < gap || Math.abs(b.y - a.y) > (b.x - a.x) * .42f) continue;
+                int margin = Math.max(2, Math.round(gap * .25f));
+                int start = a.x + margin, end = b.x - margin, total = end - start + 1;
+                int raw = 0, clear = 0, blank = 0;
+                int radius = Math.max(1, Math.round(gap * .13f));
+                for (int x = start; x <= end; x++) {
+                    float[] frame = frames[x - left];
+                    int center = Math.round(a.y + (b.y - a.y) * (x - a.x) / (float) (b.x - a.x));
+                    int ink = 0, away = 0;
+                    for (int y = center - radius; y <= center + radius; y++) {
+                        if (y < 0 || y >= height || (gray[y * width + x] & 255) >= 165) continue;
+                        ink++;
+                        float phase = (frame[0] - y) / frame[1];
+                        int line = Math.round(phase);
+                        if (line < 0 || line > 4 || Math.abs(phase - line) > .14f) away++;
+                    }
+                    if (ink >= 3) raw++;
+                    if (away >= 2) {
+                        clear++;
+                        blank = 0;
+                    } else if (++blank > gap * .55f) break;
+                }
+                if (raw >= total * .94f && clear >= total * .84f) return true;
+            }
+        return false;
+    }
     private static List<Tip> tips(
             byte[] gray,
             int width,

@@ -123,6 +123,8 @@ public final class Main {
                                 physicalPage, decoderGray, preparedTabs),
                         initialKey);
         score = ScoreTupletMeterContext.apply(score, initialMeter);
+        score = ClosingTripletRhythm.apply(
+                score, initialMeter, labels, decoderGray == null ? gray : decoderGray, width, height);
         float[] beats = measureBeats(
                 score.measures().size(), initialMeter.quarterBeats(), score.meterChanges());
         if (beats.length > 0) {

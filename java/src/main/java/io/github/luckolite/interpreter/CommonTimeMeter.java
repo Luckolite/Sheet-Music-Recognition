@@ -67,6 +67,28 @@ final class CommonTimeMeter {
         return List.copyOf(found);
     }
 
+    /** Read a bounded system header when ink joins a sign to neighboring components. */
+    static int readHeader(
+            byte[] labels, byte[] gray, int width, int height, int header, int top, float gap) {
+        int start = Math.max(0, header - Math.round(gap * 2));
+        int limit = Math.min(width - 1, header + Math.round(gap * 4));
+        int glyph = -1, meter = 0;
+        for (int left = start; left < limit; left++) {
+            if (!precedingClef(labels, width, height, left, top, gap, 0)) continue;
+            int min = left + Math.round(gap * .9f);
+            int max = Math.min(limit, left + Math.round(gap * 2.5f));
+            for (int right = min; right <= max; right++) {
+                int reading = read(gray, width, height, left, right, top, gap, 0);
+                if (reading == 0) continue;
+                int center = (left + right) / 2;
+                if (meter != 0 && (meter != reading || Math.abs(center - glyph) > gap * .55f))
+                    return 0;
+                if (meter == 0) glyph = center;
+                meter = reading;
+            }
+        }
+        return meter;
+    }
     /** 4 means C, 2 means C with a central continuous cut; zero is not proven. */
     static int read(
             byte[] gray,
