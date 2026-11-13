@@ -111,23 +111,24 @@ public final class NativeOcrWire {
         writePacket(
                 out,
                 data -> {
+                    var bounds = ByteBuffer.allocate(4 * Integer.BYTES);
                     data.writeUTF(text.text());
                     data.writeInt(text.blocks().size());
                     for (var block : text.blocks()) {
                         data.writeUTF(block.text());
-                        box(data, block.box());
+                        writeBox(data, block.box(), bounds);
                         data.writeInt(block.lines().size());
                         for (var line : block.lines()) {
                             data.writeUTF(line.text());
-                            box(data, line.box());
+                            writeBox(data, line.box(), bounds);
                             data.writeInt(line.elements().size());
                             for (var word : line.elements()) {
                                 data.writeUTF(word.text());
-                                box(data, word.box());
+                                writeBox(data, word.box(), bounds);
                                 data.writeInt(word.symbols().size());
                                 for (var symbol : word.symbols()) {
                                     data.writeUTF(symbol.text());
-                                    box(data, symbol.box());
+                                    writeBox(data, symbol.box(), bounds);
                                 }
                             }
                         }
@@ -138,26 +139,27 @@ public final class NativeOcrWire {
     public static OcrText readText(DataInputStream input) throws IOException {
         try (var in = packet(input, 8_000_000)) {
             int[] budget = {20_000};
+            var bounds = ByteBuffer.allocate(4 * Integer.BYTES);
             String text = in.readUTF();
             int nb = count(in, budget);
-            var blocks = new ArrayList<OcrText.Block>();
+            var blocks = new ArrayList<OcrText.Block>(nb);
             for (int b = 0; b < nb; b++) {
                 String bt = in.readUTF();
-                var bb = box(in);
+                var bb = readBox(in, bounds);
                 int nl = count(in, budget);
-                var lines = new ArrayList<OcrText.Line>();
+                var lines = new ArrayList<OcrText.Line>(nl);
                 for (int l = 0; l < nl; l++) {
                     String lt = in.readUTF();
-                    var lb = box(in);
+                    var lb = readBox(in, bounds);
                     int nw = count(in, budget);
-                    var words = new ArrayList<OcrText.Element>();
+                    var words = new ArrayList<OcrText.Element>(nw);
                     for (int w = 0; w < nw; w++) {
                         String wt = in.readUTF();
-                        var wb = box(in);
+                        var wb = readBox(in, bounds);
                         int ns = count(in, budget);
-                        var symbols = new ArrayList<OcrText.Symbol>();
+                        var symbols = new ArrayList<OcrText.Symbol>(ns);
                         for (int s = 0; s < ns; s++)
-                            symbols.add(new OcrText.Symbol(in.readUTF(), box(in)));
+                            symbols.add(new OcrText.Symbol(in.readUTF(), readBox(in, bounds)));
                         words.add(new OcrText.Element(wt, wb, symbols));
                     }
                     lines.add(new OcrText.Line(lt, lb, words));
@@ -176,19 +178,21 @@ public final class NativeOcrWire {
         return count;
     }
 
-    private static void box(DataOutputStream out, OcrText.Box box) throws IOException {
+    private static void writeBox(DataOutputStream out, OcrText.Box box, ByteBuffer bounds)
+            throws IOException {
         out.writeBoolean(box != null);
         if (box != null) {
-            out.writeInt(box.left);
-            out.writeInt(box.top);
-            out.writeInt(box.right);
-            out.writeInt(box.bottom);
+            bounds.clear();
+            bounds.putInt(box.left).putInt(box.top).putInt(box.right).putInt(box.bottom);
+            out.write(bounds.array());
         }
     }
 
-    private static OcrText.Box box(DataInputStream in) throws IOException {
+    private static OcrText.Box readBox(DataInputStream in, ByteBuffer bounds) throws IOException {
         if (!in.readBoolean()) return null;
-        int l = in.readInt(), t = in.readInt(), r = in.readInt(), b = in.readInt();
+        in.readFully(bounds.array());
+        bounds.clear();
+        int l = bounds.getInt(), t = bounds.getInt(), r = bounds.getInt(), b = bounds.getInt();
         if (l < 0 || t < 0 || r < l || b < t || r > MAX_PIXELS || b > MAX_PIXELS)
             throw new IOException("Invalid OCR bounds");
         return new OcrText.Box(l, t, r, b);
