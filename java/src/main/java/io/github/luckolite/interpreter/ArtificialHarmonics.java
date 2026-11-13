@@ -203,10 +203,16 @@ final class ArtificialHarmonics {
                             && joinedQuarterStem(gray, w, h, x, y, gap, n.stemDirection())
                             && enclosedCounter(gray, w, h, x, y - 1.5f * gap, gap * .7f, gap * .24f)
                             && quarterTouchDiamond(labels, gray, w, h, x, y, gap);
+            boolean ruleCrossedTouch =
+                    !strictDiamond && !symbolTouch && !joinedQuarterTouch && !joinedEighthTouch
+                            && n.stemDirection() != 0
+                            && joinedQuarterStem(gray, w, h, x, y, gap, n.stemDirection())
+                            && ruleCrossedDiamond(gray, w, h, x, y - 1.5f * gap, gap);
             if (!strictDiamond
                     && !symbolTouch
                     && !joinedQuarterTouch
                     && !joinedEighthTouch
+                    && !ruleCrossedTouch
                     && !(pairedTouch != null
                             && n.beamCount() >= 2
                             && ((pairedTouch.beamCount() == 0
@@ -218,6 +224,7 @@ final class ArtificialHarmonics {
             // diamond interrupts that stem and the decoded upper fourth is a spurious half note.
             if (!joinedQuarterTouch
                     && !joinedEighthTouch
+                    && !ruleCrossedTouch
                     && !stem(
                             gray,
                             w,
@@ -481,6 +488,44 @@ final class ArtificialHarmonics {
                             return true;
                     } else if (outside == 4) return true;
                 }
+        return false;
+    }
+
+    /** Re-read a hollow diamond between two continuous staff rules. */
+    private static boolean ruleCrossedDiamond(
+            byte[] gray, int width, int height, float x, float y, float gap) {
+        float radius = gap * .68f;
+        if (!enclosedCounter(gray, width, height, x, y, radius, gap * .24f)
+                || enclosedCounter(gray, width, height, x, y + gap * .5f, radius, gap * .24f))
+            return false;
+        boolean above = false, below = false;
+        for (int d = Math.round(gap * .37f); d <= Math.round(gap * .65f); d++) {
+            above |= horizontalRule(gray, width, height, Math.round(y) - d, x, radius);
+            below |= horizontalRule(gray, width, height, Math.round(y) + d, x, radius);
+        }
+        if (!above || !below) return false;
+        int minX = Math.round(x - gap * .26f), maxX = Math.round(x + gap * .26f);
+        int minY = Math.round(y - gap * .19f), maxY = Math.round(y + gap * .19f);
+        for (int cy = minY; cy <= maxY; cy++)
+            for (int cx = minX; cx <= maxX; cx++) {
+                if (!enclosedCounter(gray, width, height, cx, cy, gap * .53f, gap * .14f)) continue;
+                for (float size : DiamondSizes.VALUES) {
+                    float r = gap * size;
+                    int sides = 0;
+                    for (int dx : ProbeSigns.VALUES)
+                        for (int dy : ProbeSigns.VALUES) {
+                            int darkSide = 0;
+                            for (float fraction : new float[] {.25f, .5f, .75f}) {
+                                int xx = Math.round(cx + dx * r * fraction);
+                                int yy = Math.round(cy + dy * r * (1 - fraction));
+                                if (dark(gray, width, height, xx, yy)) darkSide++;
+                            }
+                            if (darkSide == 3) sides++;
+                        }
+                    if (sides == 4 && diamondExterior(
+                            gray, width, height, cx, cy, r, gap, y + 1.5f * gap)) return true;
+                }
+            }
         return false;
     }
 

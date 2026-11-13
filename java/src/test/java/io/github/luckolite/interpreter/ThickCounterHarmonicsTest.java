@@ -23,6 +23,12 @@ public class ThickCounterHarmonicsTest {
             boolean semantic,
             boolean detached,
             boolean rule) {
+        return run(gap, hole, ellipse, beams, semantic, detached, rule, false);
+    }
+
+    private List<ScoreNoteEvent> run(
+            int gap, int hole, boolean ellipse, int beams, boolean semantic,
+            boolean detached, boolean rule, boolean staffFramed) {
         byte[] gray = new byte[W * H], labels = new byte[W * H];
         Arrays.fill(gray, (byte) 255);
         int cx = X + glyphDx, cy = Y - gap * 3 / 2 + glyphDy, r = Math.round(gap * glyphScale);
@@ -56,10 +62,13 @@ public class ThickCounterHarmonicsTest {
             for (int x = X - gap / 2 - 1; x <= X - gap / 2 + 1; x++) gray[y * W + x] = 0;
         if (detached)
             for (int y = cy + gap / 3; y < Y - gap / 3; y++)
-                for (int x = X - r - 2; x <= X - r + 2; x++) gray[y * W + x] = (byte) 255;
+                for (int x = X - gap / 2 - 2; x <= X - gap / 2 + 2; x++)
+                    gray[y * W + x] = (byte) 255;
         if (rule) for (int x = 20; x < 220; x++) gray[cy * W + x] = 0;
         if (outerRules)
-            for (int dy : new int[] {-Math.round(gap * .3f), Math.round(gap * .3f)})
+            for (int dy : new int[] {
+                    -Math.round(gap * (staffFramed ? .5f : .3f)),
+                    Math.round(gap * (staffFramed ? .5f : .3f))})
                 for (int x = 20; x < 220; x++) gray[(cy + dy) * W + x] = 0;
         var n =
                 new ScoreNoteEvent(
@@ -78,6 +87,7 @@ public class ThickCounterHarmonicsTest {
                         0,
                         0,
                         ScoreNoteEvent.CLEF_TREBLE);
+        if (staffFramed) n = n.withStemDirection(-1);
         return ArtificialHarmonics.apply(
                 labels,
                 gray,
@@ -86,6 +96,16 @@ public class ThickCounterHarmonicsTest {
                 List.of(new MeasureRegion(0, 1, 0, 1)),
                 List.of(n),
                 List.of(new PlayingTechniqueDetector.Staff(Y - 4 * gap, Y, gap, 0, 1)));
+    }
+
+    @Test
+    public void fourthTouchSurvivesFlankingRulesAndRequiresItsShaft() {
+        glyphScale = .62f;
+        glyphDy = -1;
+        outerRules = true;
+        assertEquals(2, run(20, 3, false, 1, false, false, false, true).get(0).octaveShift());
+        assertEquals(0, run(20, 3, false, 1, false, true, false, true).get(0).octaveShift());
+        assertEquals(0, run(20, 3, true, 1, false, false, false, true).get(0).octaveShift());
     }
 
     @Test
