@@ -47,6 +47,7 @@ class PdfTextTest(unittest.TestCase):
                     header = tuning_header(page)
                     self.assertEqual(header, 'Tuning : E A D G B E')
                     words = tab_words(page, header)
+                    self.assertEqual(words, tab_words(page, None))
                     fret = next(w for w in words if w['text'] == '12')
                     self.assertAlmostEqual(fret['left'], .2, delta=.01)
                     self.assertTrue(.25 < fret['top'] < fret['bottom'] < .32)

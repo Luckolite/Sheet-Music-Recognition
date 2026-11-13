@@ -50,8 +50,9 @@ def interpret_document(engine, source, *, pages=None, meter=(4, 4), bpm=120,
         if progress is not None:
             progress(len(results), selected_count, page_number)
 
+    context = {} if instrument is None else {"instrument": instrument}
+
     def recognize(image, number, page_annotations):
-        context = {} if instrument is None else {"instrument": instrument}
         return engine.interpret(image, meter=meter, key_fifths=key, width=width,
                                 page_index=number - 1, annotations=page_annotations, **context)
 
@@ -65,14 +66,17 @@ def interpret_document(engine, source, *, pages=None, meter=(4, 4), bpm=120,
         pdf = pdfium.PdfDocument(source_bytes)
         try:
             source_count = len(pdf)
-            selected = list(range(1, source_count + 1)) if pages is None else list(pages)
-            if not selected or any(type(n) is not int or not 1 <= n <= source_count for n in selected):
+            selected = range(1, source_count + 1) if pages is None else list(pages)
+            if not selected or (pages is not None and any(
+                    type(n) is not int or not 1 <= n <= source_count for n in selected)):
                 raise ValueError("PDF page number out of range")
-            if selected != sorted(set(selected)):
+            if pages is not None and any(selected[i - 1] >= n for i, n in enumerate(selected) if i):
                 raise ValueError("Choose unique PDF pages in increasing reading order")
-            check_annotations(len(selected))
-            header = ""
-            if annotations is None:
+            selected_count = len(selected)
+            check_annotations(selected_count)
+            # When only page one is selected, read tuning alongside its native words.
+            header = None
+            if annotations is None and (selected[0] != 1 or selected_count > 1):
                 first = pdf[0]
                 try:
                     header = tuning_header(first)
@@ -97,7 +101,7 @@ def interpret_document(engine, source, *, pages=None, meter=(4, 4), bpm=120,
                     page.close()
 
             from .reader import Interpreter
-            if len(selected) > 1 and getattr(engine.interpret, "__func__", None) is Interpreter.interpret:
+            if selected_count > 1 and getattr(engine.interpret, "__func__", None) is Interpreter.interpret:
                 engine._validate_decode_context(meter, key, selected[0] - 1, instrument)
 
                 def prepare(number, index):
@@ -110,17 +114,17 @@ def interpret_document(engine, source, *, pages=None, meter=(4, 4), bpm=120,
                         pending = worker.submit(
                             engine._decode_page, prepared, meter, key, number - 1, instrument)
                         try:
-                            if index + 1 < len(selected):
+                            if index + 1 < selected_count:
                                 prepared = prepare(selected[index + 1], index + 1)
                         except Exception:
                             # Surface the current page's outcome before the next page's failure.
-                            accept(pending.result(), number, source_count, len(selected))
+                            accept(pending.result(), number, source_count, selected_count)
                             raise
-                        accept(pending.result(), number, source_count, len(selected))
+                        accept(pending.result(), number, source_count, selected_count)
             else:
                 for index, number in enumerate(selected):
                     page = render(number, index, lambda image, supplied: recognize(image, number, supplied))
-                    accept(page, number, source_count, len(selected))
+                    accept(page, number, source_count, selected_count)
         finally:
             pdf.close()
     else:

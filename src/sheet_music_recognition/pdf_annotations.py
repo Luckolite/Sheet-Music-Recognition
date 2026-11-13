@@ -11,11 +11,15 @@ _TUNING_HEADER = re.compile(r"^\s*tuning\s*[:=]?[^\r\n]+", re.IGNORECASE | re.MU
 _FONT_SUBSET_PREFIX = re.compile(rb"^[A-Z]{6}\+")
 
 
+def _tuning_header(text):
+    match = _TUNING_HEADER.search(text)
+    return match.group().strip() if match else ""
+
+
 def tuning_header(page):
     textpage = page.get_textpage()
     try:
-        match = _TUNING_HEADER.search(textpage.get_text_range())
-        return match.group().strip() if match else ""
+        return _tuning_header(textpage.get_text_range())
     finally:
         textpage.close()
 
@@ -65,11 +69,14 @@ def _navigation_words(textpage, text, width, height):
 
 
 def tab_words(page, header=""):
+    """Extract native annotations. A None header reads tuning from this page."""
     textpage = page.get_textpage()
     words = []
     try:
         width, height = page.get_width(), page.get_height()
         text = textpage.get_text_range()
+        if header is None:
+            header = _tuning_header(text)
         words.extend(_navigation_words(textpage, text, width, height))
         tokens = set(_TOKEN.findall(text)) | {c for c in text if c in "0123456789"}
         if not tokens:
