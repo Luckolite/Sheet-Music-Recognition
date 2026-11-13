@@ -231,27 +231,14 @@ public final class TablatureDecoder {
                 maxInk = Math.max(maxInk, strength.get(i + n));
             }
             if (!regular || maxThickness > minThickness * 2 + 1 || minInk < maxInk * .55f) continue;
-            // Interrupted fret rules retain matching horizontal extents. A shorter
-            // beam below five notation rules cannot satisfy this enclosing geometry.
-            int minLeft = w, maxLeft = 0, minRight = w, maxRight = 0;
-            for (int n = 0; n < strings; n++) {
-                int left = w, right = -1, y = lines.get(i + n);
-                for (int x = 0; x < w; x++)
-                    if ((gray[y * w + x] & 255) < threshold) {
-                        left = Math.min(left, x);
-                        right = x;
-                    }
-                minLeft = Math.min(minLeft, left);
-                maxLeft = Math.max(maxLeft, left);
-                minRight = Math.min(minRight, right);
-                maxRight = Math.max(maxRight, right);
-            }
-            if ((minInk < maxInk * .88f || coverage < .5f)
-                    && (maxLeft - minLeft > gap * .7f || maxRight - minRight > gap * .7f)) continue;
             if (i > 0 && Math.abs(lines.get(i) - lines.get(i - 1) - gap) < gap * .16f) continue;
             if (i + strings < lines.size()
                     && Math.abs(lines.get(i + strings) - lines.get(i + strings - 1) - gap)
                             < gap * .16f) continue;
+            boolean interrupted = minInk < maxInk * .88f || coverage < .5f;
+            // Interrupted rules need matching extents and enclosing barlines.
+            if (interrupted && !matchingExtents(gray, w, threshold, lines, i, strings, gap))
+                continue;
             float top = lines.get(i);
             List<Fret> frets = List.of();
             float standard = -1;
@@ -268,24 +255,25 @@ public final class TablatureDecoder {
                 if (five) standard = lines.get(i - 5);
             }
             var bars = new ArrayList<Float>();
+            int firstRow = Math.round(top);
+            int lastRow = Math.round(top + (strings - 1) * gap);
+            int rowEnd = Math.min(h, lastRow + 1);
+            int total = rowEnd - firstRow;
+            int[] columnInk = new int[w];
+            for (int y = firstRow; y < rowEnd; y++) {
+                int offset = y * w;
+                for (int x = 0; x < w; x++)
+                    if ((gray[offset + x] & 255) < threshold) columnInk[x]++;
+            }
             int run = -1;
             for (int x = 0; x <= w; x++) {
-                int ink = 0, total = 0;
-                if (x < w)
-                    for (int y = Math.round(top);
-                            y < h && y <= Math.round(top + (strings - 1) * gap);
-                            y++) {
-                        total++;
-                        if ((gray[y * w + x] & 255) < threshold) ink++;
-                    }
-                if (total > 0 && ink >= total * .98) {
+                if (x < w && columnInk[x] >= total * .98) {
                     if (run < 0) run = x;
                 } else if (run >= 0) {
                     float center = (run + x - 1) * .5f;
                     int above = 0, below = 0, cx = Math.round(center);
                     for (int dy = 1; dy <= Math.round(gap * .4f); dy++) {
-                        int a = Math.round(top) - dy,
-                                b = Math.round(top + (strings - 1) * gap) + dy;
+                        int a = firstRow - dy, b = lastRow + dy;
                         if (a >= 0 && (gray[a * w + cx] & 255) < threshold) above++;
                         if (b < h && (gray[b * w + cx] & 255) < threshold) below++;
                     }
@@ -298,7 +286,7 @@ public final class TablatureDecoder {
                 }
             }
             // Pale rules interrupted by fret digits need enclosing vertical evidence.
-            if ((minInk < maxInk * .88f || coverage < .5f) && bars.size() < 2) continue;
+            if (interrupted && bars.size() < 2) continue;
             result.add(
                     new Staff(
                             top,
@@ -311,6 +299,23 @@ public final class TablatureDecoder {
             i += strings - 1;
         }
         return List.copyOf(result);
+    }
+
+    private static boolean matchingExtents(
+            byte[] gray, int w, int threshold, List<Integer> lines, int first, int strings,
+            float gap) {
+        int minLeft = w, maxLeft = 0, minRight = w, maxRight = 0;
+        for (int n = 0; n < strings; n++) {
+            int offset = lines.get(first + n) * w;
+            int left = 0, right = w - 1;
+            while (left < w && (gray[offset + left] & 255) >= threshold) left++;
+            while (right >= left && (gray[offset + right] & 255) >= threshold) right--;
+            minLeft = Math.min(minLeft, left);
+            maxLeft = Math.max(maxLeft, left);
+            minRight = Math.min(minRight, right);
+            maxRight = Math.max(maxRight, right);
+        }
+        return maxLeft - minLeft <= gap * .7f && maxRight - minRight <= gap * .7f;
     }
 
     public record Word(String text, float left, float top, float right, float bottom) {
