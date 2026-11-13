@@ -1,4 +1,22 @@
 {
+  "printed_double_bar_and_cadence_review": {
+    "reviewed_app_commit": "00b952291f0a00925b50e05d463294c5b19eee5d",
+    "scope": "Retain paired printed rules in padded crops and preserve each runtime's cadence delivery with the same accidental allowance.",
+    "files": {
+      "PrintedMeasureRhythmGuard.java": {
+        "app_path": "app/src/main/java/com/musicsheets/app/pdf/PrintedMeasureRhythmGuard.java",
+        "app_lf_sha256": "98f53ed4e8a3fe2353a0095fcfc35ba55971df653d9e9449fa1b920a8111c0e9",
+        "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/PrintedMeasureRhythmGuard.java",
+        "standalone_lf_sha256": "4c31ef2dae6433e7dbf49ea3eae46df1777a14d50939f7d920a40b3b2a600172"
+      },
+      "PrintedCadenceDurations.java": {
+        "app_path": "app/src/main/java/com/musicsheets/app/pdf/PrintedCadenceDurations.java",
+        "app_lf_sha256": "f7d88dd21451f20e2c6444e3aa3a708e61166e2d3ef0387b8eab796ef5d54994",
+        "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/PrintedCadenceDurations.java",
+        "standalone_lf_sha256": "24e0c920d1be56b597407d63ff1d2dfccfde82b8a55f7c25b80da467909ae33e"
+      }
+    }
+  },
   "recognition137_short_notation_review": {
     "reviewed_app_commit": "bccfeec0f41afa322777d04bc965d40a14749fef",
     "sources": [

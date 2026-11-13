@@ -75,8 +75,10 @@ final class PrintedCadenceDurations {
             boolean sameSystem = next != null && Math.abs(next.top() - measure.top()) * height < gap;
             float boundary = sameSystem ? (right + next.left() * width) * .5f : right;
             double firstX = left + first * span, lastX = left + last * span;
+            boolean hasAccidental = chord.stream().anyMatch(
+                    note -> note.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_FROM_KEY);
             if (completeCadence(gray, width, staff, left, right, firstX, lastX, boundary,
-                    sameSystem && nextHasMeter, false))
+                    sameSystem && nextHasMeter, false, hasAccidental))
                 return true;
             // Near a sloping edge the page-wide rails can be several pixels off.
             // Reuse a local five-rule reading before allowing an interrupted stroke.
@@ -88,7 +90,7 @@ final class PrintedCadenceDurations {
             var local = new PlayingTechniqueDetector.Staff(
                     localTop, rails[0], rails[1], staff.index(), staff.count());
             return completeCadence(gray, width, local, left, right, firstX, lastX, boundary,
-                    sameSystem && nextHasMeter, !sameSystem);
+                    sameSystem && nextHasMeter, !sameSystem, hasAccidental);
         }
         return false;
     }
@@ -96,21 +98,22 @@ final class PrintedCadenceDurations {
     private static boolean completeCadence(
             byte[] gray, int width, PlayingTechniqueDetector.Staff staff,
             float left, float right, double first, double last,
-            float boundary, boolean nextHasMeter, boolean terminal) {
+            float boundary, boolean nextHasMeter, boolean terminal, boolean hasAccidental) {
         int stroke = boundaryColumn(gray, width, staff, boundary, nextHasMeter, terminal);
         // A thick terminal bar may be bounded by its right edge in the measure geometry.
         // Start the exclusion at the first proved stroke, before counting any interior ink.
         return stroke >= 0 && emptyOutsideChord(gray, width, staff, left,
-                Math.min(right, stroke + staff.gap() * .45f), first, last);
+                Math.min(right, stroke + staff.gap() * .45f), first, last, hasAccidental);
     }
 
     private static boolean emptyOutsideChord(
             byte[] gray, int width, PlayingTechniqueDetector.Staff staff,
-            float left, float right, double first, double last) {
+            float left, float right, double first, double last, boolean hasAccidental) {
         float gap = staff.gap();
         for (int x = Math.max(0, Math.round(left + gap * .75f));
                 x < Math.min(width, Math.round(right - gap * .75f)); x++) {
-            if (x >= first - gap * 1.2 && x <= last + gap * 1.2) continue;
+            double accidentalReach = hasAccidental ? 1.5 : 1.2;
+            if (x >= first - gap * accidentalReach && x <= last + gap * 1.2) continue;
             int ink = 0;
             for (int y = Math.round(staff.top()); y <= Math.round(staff.bottom()); y++)
                 if (betweenRules(y, staff) && (gray[y * width + x] & 255) < 155) ink++;

@@ -8,6 +8,26 @@ import static org.junit.Assert.*;
 
 public class PrintedMeasureRhythmGuardTest {
     @Test
+    public void preservesDoubleRuleInsidePaddedSingleStaff() {
+        byte[] gray = paper();
+        for (int y = 320; y <= 376; y += 14)
+            Arrays.fill(gray, y * 1000 + 100, y * 1000 + 901, (byte) 0);
+        for (int y = 320; y <= 376; y++) {
+            gray[y * 1000 + 496] = 0;
+            gray[y * 1000 + 504] = 0;
+        }
+        var left = new MeasureRegion(.1f, .49f, .35f, .54f);
+        var right = new MeasureRegion(.51f, .9f, .35f, .54f);
+        var joined = new MeasureRegion(.1f, .9f, .35f, .54f);
+        assertEquals(List.of(left, right), PrintedMeasureRhythmGuard.preservePrintedBoundaries(
+                List.of(left, right), List.of(joined), gray, 1000, 800));
+        for (int y = 310; y <= 386; y++)
+            Arrays.fill(gray, y * 1000 + 496, y * 1000 + 505, (byte) 0);
+        assertEquals(List.of(joined), PrintedMeasureRhythmGuard.preservePrintedBoundaries(
+                List.of(left, right), List.of(joined), gray, 1000, 800));
+    }
+
+    @Test
     public void ledgerExtensionCannotBecomeAnOverlappingStaffRow() {
         var upper =
                 List.of(
