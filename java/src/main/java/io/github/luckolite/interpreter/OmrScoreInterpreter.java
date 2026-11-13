@@ -21203,6 +21203,34 @@ final class OmrScoreInterpreter {
             boolean calibrateFrame) {
         float position = (bottom - head.centerY) / (gap * .5f);
         int original = Math.round(position);
+        if (gray != null && gap >= 8 && (original >= 10 || original <= -2)) {
+            int inward = original < 0 ? 1 : -1;
+            if (original % 2 != 0 && filledBeamEndpointCore(gray, width, height, head, gap)) {
+                for (int lineStep : new int[] {original + inward, original - inward}) {
+                    if (Math.abs(position - lineStep) > .73f) continue;
+                    float line = printedLedgerLine(gray, width, height, head,
+                            bottom - lineStep * gap * .5f, gap, false);
+                    if (Float.isFinite(line) && Math.abs(line - head.centerY) <= gap * .14f
+                            && shortLedgerRule(gray, width, Math.round(line), head, gap))
+                        return lineStep;
+                }
+            }
+            if ((original >= 12 || original <= -4) && original % 2 == 0
+                    && (position - original) * inward >= .25f
+                    && filledBeamEndpointCore(gray, width, height, head, gap)) {
+                float outer = printedLedgerLine(gray, width, height, head,
+                        bottom - original * gap * .5f, gap, false);
+                float inner = printedLedgerLine(gray, width, height, head,
+                        bottom - (original + inward * 2) * gap * .5f, gap, false);
+                float second = printedLedgerLine(gray, width, height, head,
+                        bottom - (original + inward * 4) * gap * .5f, gap, false);
+                if (!Float.isFinite(outer) && Float.isFinite(inner) && Float.isFinite(second)
+                        && shortLedgerRule(gray, width, Math.round(inner), head, gap)
+                        && Math.abs(Math.abs(second - inner) - gap) <= gap * .25f
+                        && (head.centerY - inner) * inward >= gap * .49f
+                        && (head.centerY - inner) * inward <= gap * .73f) return original + inward;
+            }
+        }
         if (gray != null
                 && gap >= 8
                 && original % 2 != 0
