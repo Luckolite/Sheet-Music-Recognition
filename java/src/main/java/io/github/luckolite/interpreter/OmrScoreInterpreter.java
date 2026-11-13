@@ -30949,6 +30949,8 @@ final class OmrScoreInterpreter {
         {
             int[] paper = new int[63];
             int count = 0;
+            int bright = 0;
+            paperSamples:
             for (int row = -3; row <= 3; row++)
                 for (int col = 0; col < 9; col++) {
                     int x = Math.max(0, Math.min(width - 1, left + (right - left) * col / 8));
@@ -30956,32 +30958,48 @@ final class OmrScoreInterpreter {
                             Math.max(
                                     0,
                                     Math.min(height - 1, Math.round(centerY + (row + .37f) * gap)));
-                    paper[count++] = gray[y * width + x] & 255;
+                    int tone = gray[y * width + x] & 255;
+                    paper[count++] = tone;
+                    if (!strictContrast && tone >= 210 && ++bright == 16) break paperSamples;
                 }
-            java.util.Arrays.sort(paper);
-            if (strictContrast || paper[47] < 210)
-                inkLimit = Math.min(inkLimit, Math.max(80, paper[47] - 20));
+            if (bright < 16) {
+                java.util.Arrays.sort(paper);
+                if (strictContrast || paper[47] < 210)
+                    inkLimit = Math.min(inkLimit, Math.max(80, paper[47] - 20));
+            }
         }
         int radius = Math.max(1, Math.round(gap * .1f));
+        int[] searchOffsets = new int[2 * radius + 1];
+        for (int d = 1; d <= radius; d++) {
+            searchOffsets[2 * d - 1] = -d;
+            searchOffsets[2 * d] = d;
+        }
+        float[] profile = flatProfile ? FLAT_TIE_PROFILE : PARABOLIC_TIE_PROFILE;
         int[] contrastOffsets = {
             Math.max(1, Math.round(gap * .18f)),
             Math.max(2, Math.round(gap * .35f)),
             Math.max(3, Math.round(gap * .65f))
         };
         boolean[] straightRows = new boolean[height];
+        float straightMinimum = (right - left + 1) * .85f;
         for (int y = Math.max(0, Math.round(centerY - gap * 3.2f));
                 y <= Math.min(height - 1, Math.round(centerY + gap * 3.2f));
                 y++) {
-            int dark = 0;
-            for (int x = left; x <= right; x++) if ((gray[y * width + x] & 255) <= inkLimit) dark++;
-            straightRows[y] = dark >= (right - left + 1) * .85f;
+            int dark = 0, row = y * width;
+            for (int x = left; x <= right; x++) {
+                if ((gray[row + x] & 255) <= inkLimit && ++dark >= straightMinimum) break;
+                if (dark + (right - x) < straightMinimum) break;
+            }
+            straightRows[y] = dark >= straightMinimum;
         }
         // Each candidate is evaluated synchronously; scratch arrays belong to this call.
         int[] bins = new int[5], coveredBins = new int[5];
-        float[] centers = new float[50],
-                supportedCenters = new float[50],
-                strokeCenters = new float[50];
+        float[] supportedCenters = new float[50], strokeCenters = new float[50];
         int reach = Math.max(2, Math.round(gap * .4f));
+        int span = right - left;
+        boolean compact = span < gap * 2.6f;
+        float maximumThickness = gap * .6f;
+        float centerTolerance = radius + Math.max(1f, gap * .06f);
         // Pixel columns are identical for every candidate curve in this call.
         int[] sampleColumns = new int[50];
         for (int sample = 0; sample < sampleColumns.length; sample++) {
@@ -30990,15 +31008,16 @@ final class OmrScoreInterpreter {
         }
         // Keep the original grid: fractional sampling can move across rasterized ink.
         // Short arcs get an additional finer pass after those candidates fail.
-        for (int grid = 0; grid < (right - left < gap * 2 ? 2 : 1); grid++)
-            for (int side : requiredSide == 0 ? new int[] {-1, 1} : new int[] {requiredSide})
+        int[] sides = requiredSide == 0 ? new int[] {-1, 1} : new int[] {requiredSide};
+        for (int grid = 0; grid < (span < gap * 2 ? 2 : 1); grid++)
+            for (int side : sides)
                 for (float offset = .2f; offset <= 1.15f; offset += grid == 1 ? .075f : .15f)
                     candidate:
                     for (float bend = -.75f; bend <= 1.8f; bend += grid == 1 ? .05f : .1f) {
                         if (Math.abs(bend) < .24f || offset + bend < .12f) continue;
                         // A compact span cannot own a deep bowl under the heads;
                         // rounded dynamics and rest bulbs can supply unrelated ink.
-                        if (right - left < gap * 2.6f && offset + Math.max(0, bend) > 1.6f)
+                        if (compact && offset + Math.max(0, bend) > 1.6f)
                             continue;
                         if (target != null
                                 && Math.abs(centerY + side * gap * (offset + bend) - target.centerY)
@@ -31020,31 +31039,20 @@ final class OmrScoreInterpreter {
                                 continue candidate;
                             // Only completed candidates reach curvature checks. Initialize each
                             // visited sample; abandoned candidates never read their stale tail.
-                            centers[sample] =
-                                    supportedCenters[sample] = strokeCenters[sample] = Float.NaN;
+                            supportedCenters[sample] = strokeCenters[sample] = Float.NaN;
                             int x = sampleColumns[sample];
                             int y =
                                     Math.round(
-                                            centerY
-                                                    + side
-                                                            * gap
-                                                            * (offset
-                                                                    + bend
-                                                                            * (flatProfile
-                                                                                    ? FLAT_TIE_PROFILE[
-                                                                                            sample]
-                                                                                    : PARABOLIC_TIE_PROFILE[
-                                                                                            sample])));
+                                            centerY + side * gap * (offset + bend * profile[sample]));
                             boolean ink = false;
                             int obscuredY = -1;
-                            for (int search = 0; search <= radius * 2; search++) {
-                                int dy = (search + 1) / 2 * (search % 2 == 0 ? 1 : -1);
+                            for (int dy : searchOffsets) {
                                 int yy = y + dy;
                                 if (yy < 0 || yy >= height) continue;
                                 int at = yy * width + x;
-                                if ((gray[at] & 255) > inkLimit
-                                        || labels[at] == OmrMeasurePostProcessor.NOTEHEAD) continue;
                                 int shade = gray[at] & 255;
+                                if (shade > inkLimit
+                                        || labels[at] == OmrMeasurePostProcessor.NOTEHEAD) continue;
                                 if (strictContrast && shade > 125) {
                                     int paper = 0;
                                     for (int distance : contrastOffsets) {
@@ -31060,6 +31068,7 @@ final class OmrScoreInterpreter {
                                                             paper,
                                                             gray[(yy + distance) * width + x]
                                                                     & 255);
+                                        if (paper >= shade + 20) break;
                                     }
                                     if (paper < shade + 20) continue;
                                 }
@@ -31076,23 +31085,21 @@ final class OmrScoreInterpreter {
                                     while (inkTop > Math.max(0, yy - reach)
                                             && (gray[(inkTop - 1) * width + x] & 255) <= inkLimit)
                                         inkTop--;
+                                    if (yy - inkTop > maximumThickness) continue;
                                     while (inkBottom < Math.min(height - 1, yy + reach)
                                             && (gray[(inkBottom + 1) * width + x] & 255)
                                                     <= inkLimit) inkBottom++;
                                     // Follow the actual thin stroke, not the convenient
                                     // edge of a thick accidental, rest bulb or letter.
-                                    if (inkBottom - inkTop > gap * .6f) continue;
+                                    if (inkBottom - inkTop > maximumThickness) continue;
                                     float strokeCenter = (inkTop + inkBottom) * .5f;
-                                    if (right - left < gap * 2.6f
-                                            && side * (strokeCenter - centerY) > gap * 1.6f)
+                                    if (compact && side * (strokeCenter - centerY) > gap * 1.6f)
                                         continue;
-                                    if (Math.abs(strokeCenter - y)
-                                            > radius + Math.max(1f, gap * .06f)) continue;
+                                    if (Math.abs(strokeCenter - y) > centerTolerance) continue;
                                     strokeCenters[sample] = strokeCenter;
                                     ink = true;
-                                    centers[sample] = yy;
                                     supportedCenters[sample] = yy;
-                                    if ((gray[at] & 255) <= 165) strong++;
+                                    if (shade <= 165) strong++;
                                     break;
                                 }
                             }

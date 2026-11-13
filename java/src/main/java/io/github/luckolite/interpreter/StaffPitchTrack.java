@@ -917,27 +917,30 @@ final class StaffPitchTrack {
         int top = Math.max(0, Math.round(referenceBottom - gap * 5.5f)),
                 bottom = Math.min(height - 1, Math.round(referenceBottom + gap * 1.5f));
         if (bottom < top) return null;
+        int excludedLeft = headLeft - exclusion, excludedRight = headRight + exclusion;
+        int excluded = Math.max(0, Math.min(right, excludedRight) - Math.max(left, excludedLeft) + 1);
+        int samples = right - left + 1 - excluded;
+        if (samples < 8) return null;
         int[] strength = new int[bottom - top + 1];
-        int samples = 0;
         // At the pale threshold, require a narrower stroke so broad shading
         // cannot masquerade as five evenly spaced printed rules.
         int flank = Math.max(2, Math.round(gap * (inkThreshold > 205 ? .22f : .32f)));
         int firstScanY = Math.max(flank, top), lastScanY = Math.min(height - 1 - flank, bottom);
+        int flankOffset = flank * width;
         for (int xx = left; xx <= right; xx++) {
-            if (xx >= headLeft - exclusion && xx <= headRight + exclusion) continue;
-            samples++;
+            if (xx >= excludedLeft && xx <= excludedRight) continue;
             int columnShift = Math.round((xx - x) * slope);
-            for (int y = firstScanY; y <= lastScanY; y++) {
-                int row = y + columnShift;
-                if (row < flank || row + flank >= height) continue;
-                int ink = gray[row * width + xx] & 255;
+            int start = Math.max(firstScanY, flank - columnShift);
+            int end = Math.min(lastScanY, height - 1 - flank - columnShift);
+            int offset = (start + columnShift) * width + xx;
+            for (int y = start; y <= end; y++, offset += width) {
+                int ink = gray[offset] & 255;
                 if (ink <= inkThreshold
-                        && (gray[(row - flank) * width + xx] & 255) >= ink + 12
-                        && (gray[(row + flank) * width + xx] & 255) >= ink + 12)
+                        && (gray[offset - flankOffset] & 255) >= ink + 12
+                        && (gray[offset + flankOffset] & 255) >= ink + 12)
                     strength[y - top]++;
             }
         }
-        if (samples < 8) return null;
         int
                 minimum =
                         Math.max(
@@ -946,22 +949,22 @@ final class StaffPitchTrack {
                 band = Math.max(2, Math.round(gap * .25f));
         // Reject beam-only peaks before selecting a five-line group, so a stronger beam
         // cannot hide a valid staff group through overlap suppression.
-        for (int row = 0; row < strength.length; row++)
-            if (strength[row] >= minimum) {
-                int supported = 0, center = top + row;
-                for (int xx = left; xx <= right; xx++) {
-                    if (xx >= headLeft - exclusion && xx <= headRight + exclusion) continue;
-                    int shifted = center + Math.round((xx - x) * slope);
-                    for (int yy = Math.max(0, shifted - band);
-                            yy <= Math.min(height - 1, shifted + band);
-                            yy++)
-                        if (labels[yy * width + xx] == 4) {
-                            supported++;
-                            break;
-                        }
+        float requiredSupport = Math.max(4, samples * (bilateral ? .45f : .2f));
+        for (int row = 0; row < strength.length; row++) {
+            if (strength[row] < minimum) continue;
+            int supported = 0, center = top + row;
+            for (int xx = left; xx <= right && supported < requiredSupport; xx++) {
+                if (xx >= excludedLeft && xx <= excludedRight) continue;
+                int shifted = center + Math.round((xx - x) * slope);
+                for (int yy = Math.max(0, shifted - band);
+                        yy <= Math.min(height - 1, shifted + band); yy++) {
+                    if (labels[yy * width + xx] != 4) continue;
+                    supported++;
+                    break;
                 }
-                if (supported < Math.max(4, samples * (bilateral ? .45f : .2f))) strength[row] = 0;
             }
+            if (supported < requiredSupport) strength[row] = 0;
+        }
         for (var lines :
                 RawStaffLineDetector.detectFromStrength(strength, minimum, strength.length)) {
             if (lines.gap() < gap * .88f || lines.gap() > gap * 1.12f) continue;

@@ -8,24 +8,37 @@ final class BeamInkThreshold {
 
     static int at(byte[] gray, int width, int height, int x, int top, int bottom, float gap) {
         if (gray == null || gap < 3) return 165;
-        int[] histogram = new int[256];
-        int total = 0;
         int margin = Math.max(4, Math.round(gap));
-        for (int y = Math.max(0, top - margin); y <= Math.min(height - 1, bottom + margin); y++)
-            for (int xx = Math.max(0, x - margin * 2);
-                    xx <= Math.min(width - 1, x + margin * 2);
-                    xx++) {
-                histogram[gray[y * width + xx] & 255]++;
-                total++;
-            }
-        int target = (total * 3 + 3) / 4, seen = 0, paper = 255;
-        for (int i = 0; i < 256; i++) {
-            seen += histogram[i];
-            if (seen >= target) {
-                paper = i;
-                break;
+        int left = Math.max(0, x - margin * 2), right = Math.min(width - 1, x + margin * 2);
+        int first = Math.max(0, top - margin), last = Math.min(height - 1, bottom + margin);
+        if (left > right || first > last) return 40;
+        int total = (right - left + 1) * (last - first + 1);
+        int target = (total * 3 + 3) / 4;
+        int bright = 0, dark = 0;
+        // The clamped result can often be decided from one end of the tone range.
+        for (int y = first; y <= last; y++) {
+            int row = y * width;
+            for (int xx = left; xx <= right; xx++) {
+                int tone = gray[row + xx] & 255;
+                if (tone >= 197 && ++bright > total - target) return 165;
+                if (tone <= 72 && ++dark >= target) return 40;
             }
         }
-        return Math.max(40, Math.min(165, paper - 32));
+
+        // Only tones that change the clamped result need histogram bins.
+        int[] histogram = new int[124];
+        for (int y = first; y <= last; y++) {
+            int row = y * width;
+            for (int xx = left; xx <= right; xx++) {
+                int tone = gray[row + xx] & 255;
+                if (tone > 72 && tone < 197) histogram[tone - 73]++;
+            }
+        }
+        int seen = dark;
+        for (int i = 0; i < histogram.length; i++) {
+            seen += histogram[i];
+            if (seen >= target) return i + 41;
+        }
+        return 165;
     }
 }

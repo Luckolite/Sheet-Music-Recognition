@@ -5697,10 +5697,11 @@ final class NoteArticulationDetector {
         if (n == 0) return new SoftMarks(List.of(), List.of());
         java.util.Arrays.sort(gaps, 0, n);
         float gap = gaps[n / 2];
-        byte[] paper = RestPaperTone.normalizeOrdinaryRestInk(gray, width, height, gap);
-        if (paper == gray) return new SoftMarks(List.of(), List.of());
-        // Shape connectivity and dark seed evidence use their independently established tones.
-        byte[] seedInk = RestPaperTone.normalize(gray, width, height, gap);
+        var estimate = RestPaperTone.estimate(gray, width, height, gap);
+        if (estimate == null) return new SoftMarks(List.of(), List.of());
+        // Shape connectivity and dark seed evidence use distinct tones from the same paper estimate.
+        byte[] paper = estimate.normalize(220f);
+        byte[] seedInk = estimate.normalize(340f);
         List<Glyph> accents = new ArrayList<>(), peaks = new ArrayList<>();
         java.util.Arrays.fill(seen, false);
         for (int seed = 0; seed < paper.length; seed++) {

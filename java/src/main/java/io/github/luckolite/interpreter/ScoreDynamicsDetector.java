@@ -1178,52 +1178,46 @@ final class ScoreDynamicsDetector {
                             ScoreDynamicContinuation.evidence(
                                     scoped.get(i), word.text(), word.left()));
         }
-        if (paperProposals && gray != null && !staffs.isEmpty()) {
-            for (byte[] normalized :
-                    new byte[][] {
-                        RestPaperTone.normalize(gray, width, height, staffs.get(0).gap()),
-                        RestPaperTone.normalizeDirectionInk(
-                                gray, width, height, staffs.get(0).gap()),
-                        RestPaperTone.normalizeSoftDirectionInk(
-                                gray, width, height, staffs.get(0).gap())
-                    }) {
-                if (normalized != gray) {
-                    var proposed =
-                            detectDirectionCore(
-                                    words,
-                                    staffs,
-                                    measures,
-                                    notes,
-                                    normalized,
-                                    width,
-                                    height,
-                                    gray,
-                                    false);
-                    for (var change : proposed.changes()) {
-                        if (change.direction() == 0) continue;
-                        boolean claimed = false;
-                        for (var old : scoped)
-                            if (old.direction() == change.direction()
-                                    && old.measureIndex() == change.measureIndex()
-                                    && old.staffIndex() == change.staffIndex()
-                                    && old.staffCount() == change.staffCount()
-                                    && Math.abs(
-                                                    old.positionInMeasure()
-                                                            - change.positionInMeasure())
-                                            < .06f) claimed = true;
-                            else if (old.direction() == change.direction()
-                                    && old.staffIndex() == change.staffIndex()
-                                    && old.staffCount() == change.staffCount()
-                                    && old.sharedStaffs() == change.sharedStaffs()
-                                    && old.measureIndex() == change.measureIndex()
-                                    && old.endMeasureIndex() == change.endMeasureIndex()
-                                    && old.positionInMeasure() < change.positionInMeasure()
-                                    && Math.abs(old.endPosition() - change.endPosition()) < .012f
-                                    && change.endPosition() > change.positionInMeasure()
-                                    && change.endMeasureIndex() == change.measureIndex())
-                                claimed = true;
-                        if (!claimed) scoped.add(change);
-                    }
+        var paper = paperProposals && !staffs.isEmpty()
+                ? RestPaperTone.estimate(gray, width, height, staffs.get(0).gap()) : null;
+        if (paper != null) {
+            for (float level : new float[] {340f, 190f, 180f}) {
+                byte[] normalized = paper.normalize(level);
+                var proposed =
+                        detectDirectionCore(
+                                words,
+                                staffs,
+                                measures,
+                                notes,
+                                normalized,
+                                width,
+                                height,
+                                gray,
+                                false);
+                for (var change : proposed.changes()) {
+                    if (change.direction() == 0) continue;
+                    boolean claimed = false;
+                    for (var old : scoped)
+                        if (old.direction() == change.direction()
+                                && old.measureIndex() == change.measureIndex()
+                                && old.staffIndex() == change.staffIndex()
+                                && old.staffCount() == change.staffCount()
+                                && Math.abs(
+                                                old.positionInMeasure()
+                                                        - change.positionInMeasure())
+                                        < .06f) claimed = true;
+                        else if (old.direction() == change.direction()
+                                && old.staffIndex() == change.staffIndex()
+                                && old.staffCount() == change.staffCount()
+                                && old.sharedStaffs() == change.sharedStaffs()
+                                && old.measureIndex() == change.measureIndex()
+                                && old.endMeasureIndex() == change.endMeasureIndex()
+                                && old.positionInMeasure() < change.positionInMeasure()
+                                && Math.abs(old.endPosition() - change.endPosition()) < .012f
+                                && change.endPosition() > change.positionInMeasure()
+                                && change.endMeasureIndex() == change.measureIndex())
+                            claimed = true;
+                    if (!claimed) scoped.add(change);
                 }
             }
         }

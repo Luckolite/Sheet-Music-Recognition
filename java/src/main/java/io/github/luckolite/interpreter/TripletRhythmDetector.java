@@ -3314,16 +3314,10 @@ final class TripletRhythmDetector {
         Glyph[] pending = pendingEnabled ? new Glyph[admitted.length] : null;
         int[] pendingLevels = pendingEnabled ? new int[admitted.length] : null;
         int pendingCount = 0;
-        for (int pass = 0; pass < 2; pass++)
+        var crop = TupletNumeralInk.crop(gray, width, height, firstX, lastX, firstY, lastY, gap);
+        for (int pass = 0; crop != null && pass < 2; pass++)
             for (int level : levels) {
-                var local =
-                        pass == 0
-                                ? TupletNumeralInk.window(
-                                        gray, width, height, firstX, lastX, firstY, lastY, gap,
-                                        level)
-                                : TupletNumeralInk.ruleEdgesWindow(
-                                        gray, width, height, firstX, lastX, firstY, lastY, gap,
-                                        level);
+                var local = crop.window(level, pass != 0);
                 if (local == null) continue;
                 Glyph retry =
                         findPrintedNumeral(
@@ -3597,33 +3591,36 @@ final class TripletRhythmDetector {
         if (localWidth < 3 || localHeight < 3) return null;
         boolean[] visited = new boolean[localWidth * localHeight];
         int[] queue = new int[visited.length];
-        int[] component = new int[visited.length];
+        boolean usesComponentShape = number != 2 && number != 4 && number != 5
+                && number != 6 && number != 7;
+        int[] component = usesComponentShape ? new int[visited.length] : null;
         for (int origin = 0; origin < visited.length; origin++) {
-            if (visited[origin]
-                    || !dark(gray, width, left + origin % localWidth, top + origin / localWidth))
-                continue;
+            if (visited[origin]) continue;
+            visited[origin] = true;
+            if (!dark(gray, width, left + origin % localWidth, top + origin / localWidth)) continue;
             int count = 0, pending = 1;
             queue[0] = origin;
-            visited[origin] = true;
             int minX = right, maxX = left, minY = bottom, maxY = top;
             while (pending > 0) {
                 int current = queue[--pending];
-                component[count++] = current;
+                if (component != null) component[count] = current;
+                count++;
                 int x = current % localWidth, y = current / localWidth;
                 minX = Math.min(minX, left + x);
                 maxX = Math.max(maxX, left + x);
                 minY = Math.min(minY, top + y);
                 maxY = Math.max(maxY, top + y);
-                for (int dy = -1; dy <= 1; dy++)
-                    for (int dx = -1; dx <= 1; dx++) {
-                        int nx = x + dx, ny = y + dy;
-                        if (nx < 0 || nx >= localWidth || ny < 0 || ny >= localHeight) continue;
-                        int next = ny * localWidth + nx;
-                        if (!visited[next] && dark(gray, width, left + nx, top + ny)) {
-                            visited[next] = true;
-                            queue[pending++] = next;
-                        }
+                int firstRow = Math.max(0, y - 1), lastRow = Math.min(localHeight - 1, y + 1);
+                int firstColumn = Math.max(0, x - 1), lastColumn = Math.min(localWidth - 1, x + 1);
+                for (int ny = firstRow; ny <= lastRow; ny++) {
+                    int row = ny * localWidth;
+                    for (int nx = firstColumn; nx <= lastColumn; nx++) {
+                        int next = row + nx;
+                        if (visited[next]) continue;
+                        visited[next] = true;
+                        if (dark(gray, width, left + nx, top + ny)) queue[pending++] = next;
                     }
+                }
             }
             if (number == 3 && shortNotes && minX <= left && maxX >= right && minY < firstY - gap) {
                 Glyph joined =

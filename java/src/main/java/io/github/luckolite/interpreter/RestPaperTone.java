@@ -10,15 +10,6 @@ final class RestPaperTone {
         return normalize(gray, width, height, gap, 340f);
     }
 
-    /** Direction arms retain their pale connective ink while paper stays above 145. */
-    static byte[] normalizeDirectionInk(byte[] gray, int width, int height, float gap) {
-        return normalize(gray, width, height, gap, 190f);
-    }
-
-    static byte[] normalizeSoftDirectionInk(byte[] gray, int width, int height, float gap) {
-        return normalize(gray, width, height, gap, 180f);
-    }
-
     /** Ordinary rest connectors need a softer paper target than isolated dark contours. */
     static byte[] normalizeOrdinaryRestInk(byte[] gray, int width, int height, float gap) {
         return normalize(gray, width, height, gap, 220f);
@@ -33,32 +24,44 @@ final class RestPaperTone {
 
     private static byte[] normalize(
             byte[] gray, int width, int height, float gap, float paperLevel) {
+        var estimate = estimate(gray, width, height, gap);
+        return estimate == null ? gray : estimate.normalize(paperLevel);
+    }
+
+    /** Reuse a paper estimate while deriving multiple tones from the same raster. */
+    static Estimate estimate(byte[] gray, int width, int height, float gap) {
         if (gray == null
                 || width <= 0
                 || height <= 0
                 || gray.length != (long) width * height
                 || !Float.isFinite(gap)
-                || gap <= 0) return gray;
+                || gap <= 0) return null;
         int tile = Math.max(32, Math.min(128, Math.round(gap * 4)));
         int columns = (width + tile - 1) / tile, rows = (height + tile - 1) / tile;
         int[] paper = new int[columns * rows];
         boolean shaded = false;
-        for (int row = 0; row < rows; row++)
+        int[] histogram = new int[160];
+        for (int row = 0; row < rows; row++) {
+            int top = row * tile, bottom = Math.min(height, top + tile);
             for (int col = 0; col < columns; col++) {
-                int[] histogram = new int[256];
-                int count = 0;
-                for (int y = row * tile; y < Math.min(height, (row + 1) * tile); y++)
-                    for (int x = col * tile; x < Math.min(width, (col + 1) * tile); x++) {
-                        histogram[gray[y * width + x] & 255]++;
-                        count++;
-                    }
-                int target = (count * 3 + 3) / 4, total = 0, tone = 0;
-                while (tone < 255 && (total += histogram[tone]) < target) tone++;
-                // Very dark tiles cannot distinguish a dark symbol from the paper.
-                paper[row * columns + col] = tone >= 96 ? tone : 255;
-                shaded |= tone >= 96 && tone < 240;
+                int left = col * tile, right = Math.min(width, left + tile);
+                int tone = tileTone(gray, width, top, bottom, left, right, histogram);
+                paper[row * columns + col] = tone;
+                shaded |= tone < 240;
             }
-        if (!shaded) return gray;
+        }
+        return shaded ? new Estimate(gray, width, height, tile, columns, rows, paper) : null;
+    }
+
+    record Estimate(byte[] gray, int width, int height, int tile, int columns, int rows, int[] paper) {
+        byte[] normalize(float paperLevel) {
+            return interpolate(gray, width, height, tile, columns, rows, paper, paperLevel);
+        }
+    }
+
+    private static byte[] interpolate(
+            byte[] gray, int width, int height, int tile, int columns, int rows, int[] paper,
+            float paperLevel) {
         byte[] result = gray.clone();
         // Bound coordinate storage; unusually wide images keep the original traversal.
         if (width > 16384)
@@ -79,6 +82,13 @@ final class RestPaperTone {
             float gy = Math.max(0, Math.min(rows - 1, (y + .5f) / tile - .5f));
             int y0 = (int) gy, y1 = Math.min(rows - 1, y0 + 1);
             float fy = gy - y0;
+            if (upperRowIndex != y0 && lowerRowIndex == y0) {
+                float[] previousUpper = upperRow;
+                upperRow = lowerRow;
+                lowerRow = previousUpper;
+                lowerRowIndex = upperRowIndex;
+                upperRowIndex = y0;
+            }
             if (upperRowIndex != y0) {
                 for (int x = 0; x < width; x++) {
                     int x0 = leftColumns[x], x1 = rightColumns[x];
@@ -88,7 +98,7 @@ final class RestPaperTone {
                 }
                 upperRowIndex = y0;
             }
-            if (lowerRowIndex != y1) {
+            if (y1 != y0 && lowerRowIndex != y1) {
                 for (int x = 0; x < width; x++) {
                     int x0 = leftColumns[x], x1 = rightColumns[x];
                     float fx = fractions[x];
@@ -97,21 +107,41 @@ final class RestPaperTone {
                 }
                 lowerRowIndex = y1;
             }
+            int offset = y * width;
+            float[] lowerTones = y1 == y0 ? upperRow : lowerRow;
             for (int x = 0; x < width; x++) {
-                float upper = upperRow[x], lower = lowerRow[x];
+                float upper = upperRow[x], lower = lowerTones[x];
                 float tone = upper * (1 - fy) + lower * fy;
                 if (tone < 240)
-                    result[y * width + x] =
-                            (byte)
-                                    Math.min(
-                                            255,
-                                            Math.round(
-                                                    (gray[y * width + x] & 255)
-                                                            * paperLevel
-                                                            / tone));
+                    result[offset + x] =
+                            (byte) Math.min(255, Math.round((gray[offset + x] & 255) * paperLevel / tone));
             }
         }
         return result;
+    }
+
+    private static int tileTone(
+            byte[] gray, int width, int top, int bottom, int left, int right, int[] histogram) {
+        int count = (bottom - top) * (right - left);
+        int target = (count * 3 + 3) / 4;
+        int dark = 0;
+        // A bright tile still contributes its exact tone to neighbouring shaded tiles.
+        java.util.Arrays.fill(histogram, 0);
+        for (int y = top; y < bottom; y++) {
+            int offset = y * width;
+            for (int x = left; x < right; x++) {
+                int tone = gray[offset + x] & 255;
+                if (tone < 96) {
+                    if (++dark == target) return 255;
+                } else histogram[tone - 96]++;
+            }
+        }
+        int cumulative = dark;
+        for (int i = 0; i < histogram.length; i++) {
+            cumulative += histogram[i];
+            if (cumulative >= target) return i + 96;
+        }
+        return 255;
     }
 
     private static byte[] interpolateWide(
@@ -124,28 +154,24 @@ final class RestPaperTone {
             int[] paper,
             byte[] result,
             float paperLevel) {
-        for (int y = 0; y < height; y++)
+        for (int y = 0; y < height; y++) {
+            float gy = Math.max(0, Math.min(rows - 1, (y + .5f) / tile - .5f));
+            int y0 = (int) gy, y1 = Math.min(rows - 1, y0 + 1);
+            int upperRow = y0 * columns, lowerRow = y1 * columns;
+            float fy = gy - y0;
+            int offset = y * width;
             for (int x = 0; x < width; x++) {
                 float gx = Math.max(0, Math.min(columns - 1, (x + .5f) / tile - .5f));
-                float gy = Math.max(0, Math.min(rows - 1, (y + .5f) / tile - .5f));
-                int x0 = (int) gx,
-                        y0 = (int) gy,
-                        x1 = Math.min(columns - 1, x0 + 1),
-                        y1 = Math.min(rows - 1, y0 + 1);
-                float fx = gx - x0, fy = gy - y0;
-                float upper = paper[y0 * columns + x0] * (1 - fx) + paper[y0 * columns + x1] * fx;
-                float lower = paper[y1 * columns + x0] * (1 - fx) + paper[y1 * columns + x1] * fx;
+                int x0 = (int) gx, x1 = Math.min(columns - 1, x0 + 1);
+                float fx = gx - x0;
+                float upper = paper[upperRow + x0] * (1 - fx) + paper[upperRow + x1] * fx;
+                float lower = paper[lowerRow + x0] * (1 - fx) + paper[lowerRow + x1] * fx;
                 float tone = upper * (1 - fy) + lower * fy;
                 if (tone < 240)
-                    result[y * width + x] =
-                            (byte)
-                                    Math.min(
-                                            255,
-                                            Math.round(
-                                                    (gray[y * width + x] & 255)
-                                                            * paperLevel
-                                                            / tone));
+                    result[offset + x] =
+                            (byte) Math.min(255, Math.round((gray[offset + x] & 255) * paperLevel / tone));
             }
+        }
         return result;
     }
 }
