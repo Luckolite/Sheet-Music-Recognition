@@ -3741,40 +3741,70 @@ final class TripletRhythmDetector {
         int bottom = Math.min(height - 1, Math.round(lastY + gap * searchGaps));
         int localWidth = right - left + 1, localHeight = bottom - top + 1;
         if (localWidth < 3 || localHeight < 3) return null;
-        boolean[] visited = new boolean[localWidth * localHeight];
-        int[] queue = new int[visited.length];
+        int firstOrigin = firstNumeralInk(gray, width, left, right, top, bottom, localWidth);
+        if (firstOrigin < 0) return null;
+        int cells = localWidth * localHeight;
+        int[] component = null;
         boolean usesComponentShape = number != 2 && number != 4 && number != 5
                 && number != 6 && number != 7;
-        int[] component = usesComponentShape ? new int[visited.length] : null;
-        for (int origin = 0; origin < visited.length; origin++) {
+        float maximumHeight = gap * 2.3f, maximumWidth = maximumHeight * .95f;
+        // A component admitted by the size checks must fit inside this many pixels.
+        // Use one count bound instead of testing its changing box at every pixel.
+        int shapeLimit = maximumHeight >= (1 << 24) ? cells
+                : (int) Math.min(cells,
+                (long) Math.min(localHeight, (int) maximumHeight)
+                        * Math.min(localWidth, (int) maximumWidth));
+        boolean rescueBracket = number == 3 && shortNotes;
+        float upperNumeralLimit = firstY - gap, lowerNumeralLimit = lastY + gap;
+        boolean[] visited = new boolean[cells];
+        // Only the last paper row above the seed can border any component.
+        java.util.Arrays.fill(visited, Math.max(0, firstOrigin - localWidth - 1), firstOrigin, true);
+        int initialCapacity = Math.min(128, cells);
+        int[] queue = new int[initialCapacity];
+        for (int origin = firstOrigin; origin < cells; origin++) {
             if (visited[origin]) continue;
             visited[origin] = true;
-            if (!dark(gray, width, left + origin % localWidth, top + origin / localWidth)) continue;
+            int seedY = origin / localWidth, seedX = origin - seedY * localWidth;
+            if (origin != firstOrigin && !dark(gray, width, left + seedX, top + seedY)) continue;
             int count = 0, pending = 1;
             queue[0] = origin;
-            int minX = right, maxX = left, minY = bottom, maxY = top;
+            int minX = seedX, maxX = seedX, maxY = seedY;
+            boolean keepShape = usesComponentShape && seedY > 0
+                    && seedX > 0 && seedX < localWidth - 1 && seedY < localHeight - 1;
             while (pending > 0) {
                 int current = queue[--pending];
-                if (component != null) component[count] = current;
+                int y = current / localWidth, x = current - y * localWidth;
+                minX = Math.min(minX, x);
+                maxX = Math.max(maxX, x);
+                maxY = Math.max(maxY, y);
+                if (keepShape && count < shapeLimit) {
+                    if (component == null) component = new int[Math.min(initialCapacity, shapeLimit)];
+                    if (count == component.length)
+                        component = growNumeralScratch(component, shapeLimit);
+                    component[count] = current;
+                }
                 count++;
-                int x = current % localWidth, y = current / localWidth;
-                minX = Math.min(minX, left + x);
-                maxX = Math.max(maxX, left + x);
-                minY = Math.min(minY, top + y);
-                maxY = Math.max(maxY, top + y);
                 int firstRow = Math.max(0, y - 1), lastRow = Math.min(localHeight - 1, y + 1);
                 int firstColumn = Math.max(0, x - 1), lastColumn = Math.min(localWidth - 1, x + 1);
                 for (int ny = firstRow; ny <= lastRow; ny++) {
-                    int row = ny * localWidth;
+                    int row = ny * localWidth, raster = (top + ny) * width + left;
                     for (int nx = firstColumn; nx <= lastColumn; nx++) {
                         int next = row + nx;
                         if (visited[next]) continue;
                         visited[next] = true;
-                        if (dark(gray, width, left + nx, top + ny)) queue[pending++] = next;
+                        if ((gray[raster + nx] & 255) <= NUMERAL_INK_LIMIT) {
+                            if (pending == queue.length)
+                                queue = growNumeralScratch(queue, cells);
+                            queue[pending++] = next;
+                        }
                     }
                 }
             }
-            if (number == 3 && shortNotes && minX <= left && maxX >= right && minY < firstY - gap) {
+            minX += left;
+            maxX += left;
+            int minY = top + seedY;
+            maxY += top;
+            if (rescueBracket && minX <= left && maxX >= right && minY < upperNumeralLimit) {
                 Glyph joined =
                         bracketedCurveThree(
                                 gray, width, height, left, right, minY, firstX, lastX, firstY, gap,
@@ -3792,12 +3822,12 @@ final class TripletRhythmDetector {
                     || minY <= top
                     || maxY >= bottom
                     || gh < gap * .7f
-                    || gh > gap * 2.3f
+                    || gh > maximumHeight
                     || gw < gh * .30f
                     || gw > gh * .95f
                     || count < gw * gh * .15f
                     || count > gw * gh * .70f
-                    || !(maxY < firstY - gap || minY > lastY + gap)) continue;
+                    || !(maxY < upperNumeralLimit || minY > lowerNumeralLimit)) continue;
             if (Float.isFinite(headX)
                     && (headX < minX - gap * .1f
                             || headX > maxX + gap * .1f
@@ -3864,6 +3894,20 @@ final class TripletRhythmDetector {
             }
         }
         return null;
+    }
+
+    private static int firstNumeralInk(byte[] gray, int width, int left, int right,
+            int top, int bottom, int localWidth) {
+        for (int y = top, origin = 0, row = top * width; y <= bottom;
+                y++, origin += localWidth, row += width) {
+            for (int at = row + left, end = row + right; at <= end; at++)
+                if ((gray[at] & 255) <= NUMERAL_INK_LIMIT) return origin + at - (row + left);
+        }
+        return -1;
+    }
+
+    private static int[] growNumeralScratch(int[] buffer, int limit) {
+        return java.util.Arrays.copyOf(buffer, buffer.length + Math.min(buffer.length, limit - buffer.length));
     }
 
     /** Validate against the untouched raster, not a retry with its staff rules erased. */
@@ -4245,28 +4289,44 @@ final class TripletRhythmDetector {
             int h) {
         byte[] pixels = new byte[w * h];
         java.util.Arrays.fill(pixels, (byte) 255);
+        int[] min = new int[h], max = new int[h];
+        java.util.Arrays.fill(min, w);
+        java.util.Arrays.fill(max, -1);
         for (int i = 0; i < count; i++) {
-            int x = sourceLeft + component[i] % sourceWidth - left;
-            int y = sourceTop + component[i] / sourceWidth - top;
+            int index = component[i], row = index / sourceWidth;
+            int x = sourceLeft + index - row * sourceWidth - left;
+            int y = sourceTop + row - top;
             pixels[y * w + x] = 0;
+            min[y] = Math.min(min[y], x);
+            max[y] = Math.max(max[y], x);
         }
-        return looksLikeThree(pixels, w, 0, 0, w, h);
+        return looksLikeThree(pixels, w, 0, 0, w, h, min, max, count);
     }
 
     private static boolean looksLikeThree(byte[] gray, int width, int left, int top, int w, int h) {
         int[] min = new int[h], max = new int[h];
+        int area = 0;
         for (int y = 0; y < h; y++) {
             min[y] = w;
             max[y] = -1;
             for (int x = 0; x < w; x++)
                 if (dark(gray, width, left + x, top + y)) {
+                    area++;
                     min[y] = Math.min(min[y], x);
                     max[y] = x;
                 }
         }
+        return looksLikeThree(gray, width, left, top, w, h, min, max, area);
+    }
+
+    private static boolean looksLikeThree(byte[] gray, int width, int left, int top, int w, int h,
+            int[] min, int[] max, int area) {
         int upperOpen = 0, lowerOpen = 0, upperPocket = 0, lowerPocket = 0;
         int upperRasterPocket = 0, lowerRasterPocket = 0;
         int upperLobe = -1, lowerLobe = -1, waist = w, waistLeft = w, lowerOpenLeft = w;
+        float upperEnd = .36f + 1f / h;
+        int pocketStart = Math.round(w * .25f), pocketWidth = Math.max(2, Math.round(w * .22f));
+        float pocketEnd = w * .55f;
         for (int y = 0; y < h; y++) {
             // Staff-rule removal can leave a blank scanline through a rest hook.
             // No ink is not an opening or an indented waist of a printed 3.
@@ -4275,11 +4335,13 @@ final class TripletRhythmDetector {
             // A row occupies a whole pixel band; include a short opening that
             // crosses a lobe boundary instead of discarding it at small sizes.
             float nextFraction = (y + 1) / (float) h;
-            if (nextFraction > .15f && fraction <= .36f + 1f / h) {
+            if (nextFraction > .15f && fraction <= upperEnd) {
                 upperLobe = Math.max(upperLobe, max[y]);
                 if (min[y] >= w * .40f) upperOpen++;
-                if (hasLobePocket(gray, width, left, top + y, w)) upperPocket++;
-                if (hasLobePocket(gray, width, left, top + y, w, true)) upperRasterPocket++;
+                int pocket = lobePocket(gray, (top + y) * width + left,
+                        pocketStart, max[y], pocketWidth, pocketEnd);
+                if (pocket == 2) upperPocket++;
+                if (pocket != 0) upperRasterPocket++;
             }
             if (nextFraction > .60f && fraction <= .82f) {
                 // The lower curve must bulge before the baseline; a 2 only widens at its foot.
@@ -4290,8 +4352,10 @@ final class TripletRhythmDetector {
                     lowerOpen++;
                     lowerOpenLeft = Math.min(lowerOpenLeft, min[y]);
                 }
-                if (hasLobePocket(gray, width, left, top + y, w)) lowerPocket++;
-                if (hasLobePocket(gray, width, left, top + y, w, true)) lowerRasterPocket++;
+                int pocket = lobePocket(gray, (top + y) * width + left,
+                        pocketStart, max[y], pocketWidth, pocketEnd);
+                if (pocket == 2) lowerPocket++;
+                if (pocket != 0) lowerRasterPocket++;
             }
             if (fraction >= .37f && fraction <= .55f) {
                 waist = Math.min(waist, max[y]);
@@ -4305,44 +4369,44 @@ final class TripletRhythmDetector {
         boolean upper = upperOpen >= required || upperOpen >= 1 && upperPocket >= required;
         boolean lower = lowerOpen >= required || lowerOpen >= 1 && lowerPocket >= required;
         int indentation = Math.max(1, (int) Math.floor(w * .08f));
-        int foot = -1, capLeft = w;
-        for (int y = 0; y < Math.max(2, (int) Math.ceil(h * .10)); y++)
-            capLeft = Math.min(capLeft, min[y]);
+        int foot = -1;
         for (int y = (int) Math.ceil(h * .92); y < h; y++) foot = Math.max(foot, max[y]);
+        if (lowerLobe - foot < indentation || upperLobe - waist < indentation) return false;
+        int capLeft = w;
+        for (int y = 0, capEnd = Math.max(2, (int) Math.ceil(h * .10)); y < capEnd; y++)
+            capLeft = Math.min(capLeft, min[y]);
+        boolean capIndented = upperLobe - capLeft >= Math.max(2, (int) Math.ceil(w * .25f));
+        int diagonalReach = Math.max(2, Math.round(h * .15f));
+        double diagonalGrowth = Math.max(2, Math.ceil(w * .2f));
         int extendedSolidFoot = 0;
         for (int y = (int) Math.ceil(h * .55f); y < (int) Math.ceil(h * .92f); y++) {
             if (min[y] > w * .4f || max[y] - min[y] + 1 < w * .6f) continue;
             boolean growsFromDiagonal = false;
-            for (int prior = Math.max(0, y - Math.max(2, Math.round(h * .15f))); prior < y; prior++)
+            for (int prior = Math.max(0, y - diagonalReach); prior < y; prior++)
                 if (max[prior] >= 0
-                        && max[y] - max[prior] >= Math.max(2, Math.ceil(w * .2f))
-                        && min[y] <= min[prior] + indentation) growsFromDiagonal = true;
+                        && max[y] - max[prior] >= diagonalGrowth
+                        && min[y] <= min[prior] + indentation) {
+                    growsFromDiagonal = true;
+                    break;
+                }
             if (!growsFromDiagonal) continue;
             int occupied = 0;
             for (int x = min[y]; x <= max[y]; x++)
                 if (dark(gray, width, left + x, top + y)) occupied++;
-            if (occupied >= (max[y] - min[y] + 1) * .9f) extendedSolidFoot++;
+            if (occupied >= (max[y] - min[y] + 1) * .9f && ++extendedSolidFoot == required)
+                return false;
         }
         // A tilted 2's full terminal can end above the last antialiased rows.
         // Its solid foot extends beyond the preceding diagonal, not around a lower bowl.
-        boolean lobes =
-                extendedSolidFoot < required
-                        && lowerLobe - foot >= indentation
-                        && upperLobe - waist >= indentation;
         boolean strictLower =
                 lowerLobe - waist >= indentation
                         || lowerLobe >= w * .5f
                                 && lowerOpen >= required
                                 && lowerOpenLeft - waistLeft >= indentation
-                                && upperLobe - capLeft >= Math.max(2, (int) Math.ceil(w * .25f));
+                                && capIndented;
         // Reject a complete four before accepting either three recognition path.
-        if (lobes && upper && lower && strictLower) {
-            int legacyArea = 0;
-            for (int yy = 0; yy < h; yy++)
-                for (int xx = 0; xx < w; xx++)
-                    if (dark(gray, width, left + xx, top + yy)) legacyArea++;
-            return !completeFourCrossbar(gray, width, legacyArea, left, top, w, h);
-        }
+        if (upper && lower && strictLower)
+            return !completeFourCrossbar(gray, width, area, left, top, w, h);
         boolean rasterUpper =
                 upperOpen >= required || upperOpen >= 1 && upperRasterPocket >= required;
         boolean rasterLower =
@@ -4352,14 +4416,29 @@ final class TripletRhythmDetector {
                         || lowerLobe >= w * .5f
                                 && rasterLower
                                 && lowerOpenLeft - waistLeft >= indentation
-                                && upperLobe - capLeft >= Math.max(2, (int) Math.ceil(w * .25f));
-        if (!(lobes && rasterUpper && rasterLower && curledLower)) return false;
+                                && capIndented;
+        if (!(rasterUpper && rasterLower && curledLower)) return false;
         // A four's complete spine and crossbar contradict the added two-bowl proposal.
         // Do not reinterpret a four's narrow diagonal paper pocket as a curled terminal.
-        int area = 0;
-        for (int y = 0; y < h; y++)
-            for (int x = 0; x < w; x++) if (dark(gray, width, left + x, top + y)) area++;
         return !completeFourCrossbar(gray, width, area, left, top, w, h);
+    }
+
+    /** Return 2 for a pocket meeting both cutoffs, 1 for the pixel-center cutoff alone. */
+    private static int lobePocket(byte[] gray, int row, int first, int last,
+            int minimumWidth, float minimumEnd) {
+        int run = 0, result = 0;
+        for (int x = first; x <= last; x++) {
+            if ((gray[row + x] & 255) > NUMERAL_INK_LIMIT) {
+                run++;
+            } else {
+                if (run >= minimumWidth) {
+                    if (x >= minimumEnd) return 2;
+                    if (x + .5f >= minimumEnd) result = 1;
+                }
+                run = 0;
+            }
+        }
+        return result;
     }
 
     /** A four needs a separately inked crossbar, not a terminal and bowl separated by paper. */
@@ -4395,22 +4474,8 @@ final class TripletRhythmDetector {
     }
 
     private static boolean hasLobePocket(byte[] gray, int width, int left, int y, int w) {
-        return hasLobePocket(gray, width, left, y, w, false);
-    }
-
-    private static boolean hasLobePocket(
-            byte[] gray, int width, int left, int y, int w, boolean pixelCenter) {
-        int run = 0;
-        for (int x = Math.round(w * .25f); x < w; x++) {
-            if (!dark(gray, width, left + x, y)) run++;
-            else {
-                // Only the additive recovery compares the sampled pixel center.
-                if (run >= Math.max(2, Math.round(w * .22f))
-                        && x + (pixelCenter ? .5f : 0) >= w * .55f) return true;
-                run = 0;
-            }
-        }
-        return false;
+        return lobePocket(gray, y * width + left, Math.round(w * .25f), w - 1,
+                Math.max(2, Math.round(w * .22f)), w * .55f) == 2;
     }
 
     private static boolean bracketArm(
@@ -4440,8 +4505,10 @@ final class TripletRhythmDetector {
         return occupied >= (right - left + 1) * .76f;
     }
 
+    private static final int NUMERAL_INK_LIMIT = 165;
+
     private static boolean dark(byte[] gray, int width, int x, int y) {
-        return (gray[y * width + x] & 0xff) <= 165;
+        return (gray[y * width + x] & 0xff) <= NUMERAL_INK_LIMIT;
     }
 
     private static float printedRestTupletGap(
