@@ -5510,10 +5510,12 @@ final class OmrScoreInterpreter {
         if (staff == null) return null;
         float gap = staff.pitchGap, bottom = staff.pitchBottom, top = bottom - gap * 4;
         float mid = (top + bottom) * .5f;
-        if (head.area > gap * gap * .5f
+        boolean broadMask = head.area > gap * gap * .5f
                 || head.maxX - head.minX > gap * .8f
-                || head.maxY - head.minY > gap * .8f
-                || Math.abs(head.centerY - mid) > gap * 1.15f) return null;
+                || head.maxY - head.minY > gap * .8f;
+        if (Math.abs(head.centerY - mid) > gap * 1.15f
+                || head.maxX - head.minX > gap * 1.5f
+                || head.maxY - head.minY > gap * 1.2f) return null;
         boolean header = false;
         for (Component glyph : glyphs) {
             if (glyph.maxX < head.minX
@@ -5558,6 +5560,20 @@ final class OmrScoreInterpreter {
                 || right == searchRight
                 || right - left < gap * .9f
                 || right - left > gap * 2.5f) return null;
+        if (broadMask) {
+            // A broad segmentation island can cover a C terminal and its surrounding paper.
+            // Require the complete printed glyph within the same bounded header.
+            int trim = Math.max(1, Math.round(gap * .35f));
+            for (int first = left; first <= left + trim && first <= head.centerX; first++)
+                for (int last = right; last >= right - trim && last >= head.centerX; last--) {
+                    if (last - first < gap * .9f
+                            || head.minX < first - 1 || head.maxX > last + 1) continue;
+                    if (CommonTimeMeter.read(
+                            gray, width, height, first, last, Math.round(top), gap, 0) != 0)
+                        return new int[] {first, last, scanTop, scanBottom};
+                }
+            return null;
+        }
         int noteInk = 0, minY = height, maxY = -1;
         for (int y = scanTop; y <= scanBottom; y++)
             for (int x = left; x <= right; x++) {

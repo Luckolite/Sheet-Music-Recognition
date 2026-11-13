@@ -113,6 +113,18 @@ public class HeaderSymbolNormalizationTest {
     }
 
     @Test
+    public void broadCommonTimeTerminalIsRemovedWithoutRemovingTheFollowingHead() {
+        var page = new Page(false, true);
+        for (int y = 94; y <= 105; y++)
+            for (int x = 126; x <= 140; x++)
+                page.labels[y * page.w + x] = 2;
+        page.note(205, 112, 10, 7, false);
+        var normalized = page.normalized();
+        assertEquals(0, normalized[99 * page.w + 138]);
+        assertEquals(2, normalized[112 * page.w + 205]);
+    }
+
+    @Test
     public void commonTimeTerminalIsNotANote() {
         Page p = new Page(false, true);
         assertTrue(p.heads(p.labels) > 0);
