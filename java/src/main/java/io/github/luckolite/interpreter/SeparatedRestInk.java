@@ -3,6 +3,7 @@
 package io.github.luckolite.interpreter;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 /** Connected rest components inside a merged vertical projection. */
@@ -17,23 +18,30 @@ final class SeparatedRestInk {
             if (pixels == null) return gray;
             int span = right - left + 1;
             boolean[] member = new boolean[span * (bottom - top + 1)];
-            for (int pixel : pixels)
-                member[(pixel / width - top) * span + pixel % width - left] = true;
-            byte[] owned = scratch;
+            for (int pixel : pixels) {
+                int y = pixel / width;
+                member[(y - top) * span + pixel - y * width - left] = true;
+            }
             for (int y = Math.max(0, top - 1); y <= Math.min(height - 1, bottom + 1); y++) {
                 if (y >= lineTop && y - lineTop < line.length && line[y - lineTop]) continue;
-                for (int x = left; x <= right; x++)
-                    if (y < top || y > bottom || !member[(y - top) * span + x - left])
-                        owned[y * width + x] = (byte) 255;
+                int raster = y * width + left;
+                if (y < top || y > bottom) {
+                    Arrays.fill(scratch, raster, raster + span, (byte) 255);
+                    continue;
+                }
+                int memberRow = (y - top) * span;
+                for (int x = 0; x < span; x++)
+                    if (!member[memberRow + x]) scratch[raster + x] = (byte) 255;
             }
-            return owned;
+            return scratch;
         }
 
         void restore(byte[] scratch, byte[] gray, int width, int height) {
             if (pixels == null) return;
-            for (int y = Math.max(0, top - 1); y <= Math.min(height - 1, bottom + 1); y++)
-                System.arraycopy(
-                        gray, y * width + left, scratch, y * width + left, right - left + 1);
+            int span = right - left + 1;
+            int first = Math.max(0, top - 1), last = Math.min(height - 1, bottom + 1);
+            for (int y = first, row = first * width + left; y <= last; y++, row += width)
+                System.arraycopy(gray, row, scratch, row, span);
         }
     }
 
@@ -45,6 +53,9 @@ final class SeparatedRestInk {
             int width,
             int height) {
         float x = (body.left() + body.right()) * .5f, y = (body.top() + body.bottom()) * .5f;
+        float horizontalTolerance = staff.gap() * .65f;
+        float minimumVerticalTolerance =
+                Math.max(staff.gap() * .5f, (body.bottom() - body.top() + 1) * .5f);
         for (var rest : rests) {
             if (rest.staffIndex() != staff.index()
                     || rest.staffCount() != staff.count()
@@ -54,14 +65,10 @@ final class SeparatedRestInk {
             float restX =
                     (measure.left() + rest.positionInMeasure() * (measure.right() - measure.left()))
                             * width;
-            if (Math.abs(restX - x) < staff.gap() * .65f
+            if (Math.abs(restX - x) < horizontalTolerance
                     && Math.abs(rest.pageY() * height - y)
-                            < Math.max(
-                                    staff.gap() * .5f,
-                                    Math.max(
-                                                    body.bottom() - body.top() + 1,
-                                                    rest.pageHeight() * height)
-                                            * .5f)) return true;
+                            < Math.max(minimumVerticalTolerance, rest.pageHeight() * height * .5f))
+                return true;
         }
         return false;
     }
@@ -87,59 +94,103 @@ final class SeparatedRestInk {
                 || bottom < top
                 || line.length != bottom - top + 1
                 || right - left + 1 > gap * 6) return List.of();
+        int span = right - left + 1;
+        float minimumWidth = gap * .7f, minimumHeight = gap * 1.3f;
+        if (span < minimumWidth || bottom - top - 1 < minimumHeight) return List.of();
         int firstVisible = top, lastVisible = bottom;
         while (firstVisible <= bottom && line[firstVisible - top]) firstVisible++;
         while (lastVisible >= top && line[lastVisible - top]) lastVisible--;
-        int span = right - left + 1, size = span * (bottom - top + 1);
-        boolean[] visited = new boolean[size];
-        int[] queue = new int[size];
-        List<Body> result = new ArrayList<>();
-        for (int seed = 0; seed < size; seed++) {
-            int sx = left + seed % span, sy = top + seed / span;
-            if (visited[seed] || line[sy - top] || (gray[sy * width + sx] & 255) >= 170) continue;
-            int count = 1, cursor = 0;
-            queue[0] = seed;
-            visited[seed] = true;
-            int l = right, r = left, t = bottom, b = top;
-            while (cursor < count) {
-                int pixel = queue[cursor++], x = left + pixel % span, y = top + pixel / span;
-                l = Math.min(l, x);
-                r = Math.max(r, x);
-                t = Math.min(t, y);
-                b = Math.max(b, y);
-                for (int direction = -1; direction <= 1; direction++) {
-                    int yy = y + direction;
-                    // Preserve component continuity through an already verified staff rule.
-                    if (direction != 0)
-                        while (yy >= top && yy <= bottom && line[yy - top]) yy += direction;
-                    if (yy < top || yy > bottom || Math.abs(yy - y) > Math.ceil(gap * .4f) + 1)
-                        continue;
-                    int reach = direction == 0 ? 1 : Math.max(1, Math.abs(yy - y));
-                    for (int xx = Math.max(left, x - reach);
-                            xx <= Math.min(right, x + reach);
-                            xx++) {
-                        int next = (yy - top) * span + xx - left;
-                        if (!visited[next]
-                                && !line[yy - top]
-                                && (gray[yy * width + xx] & 255) < 170) {
-                            visited[next] = true;
-                            queue[count++] = next;
+        if (lastVisible - firstVisible - 1 < minimumHeight) return List.of();
+        double maximumStep = Math.ceil(gap * .4f) + 1;
+        int rows = lastVisible - firstVisible + 1;
+        float maximumWidth = gap * 1.6f, maximumHeight = gap * 3.6f;
+        int size = span * rows;
+        // The padded area is less than twice the crop area, so coordinates fit in an unsigned int.
+        int columnBits = Integer.SIZE - Integer.numberOfLeadingZeros(span - 1);
+        int columnMask = (1 << columnBits) - 1;
+        boolean[] visited = null;
+        int[] queue = null;
+        int[] crossingRows = null;
+        int lineOffset = firstVisible - top;
+        int rasterBase = firstVisible * width + left;
+        List<Body> result = null;
+        for (int seedRow = 0; seedRow < rows; seedRow++) {
+            // A later seed cannot leave enough space above the final visible row.
+            if (rows - 1 - seedRow < minimumHeight) break;
+            if (line[lineOffset + seedRow]) continue;
+            int rasterRow = rasterBase + seedRow * width;
+            for (int sx = 0, seed = seedRow * span; sx < span; sx++, seed++) {
+                if ((visited != null && visited[seed]) || (gray[rasterRow + sx] & 255) >= 170)
+                    continue;
+                if (visited == null) {
+                    visited = new boolean[size];
+                    queue = new int[size];
+                    int firstMasked = 0;
+                    while (firstMasked < rows && !line[lineOffset + firstMasked])
+                        firstMasked++;
+                    if (firstMasked < rows) {
+                        crossingRows = new int[rows * 2];
+                        // Only the nearest visible row can be reached in each direction.
+                        int previous = -1;
+                        for (int row = 0; row < rows; row++) {
+                            if (line[lineOffset + row]) continue;
+                            crossingRows[row * 2] = -1;
+                            crossingRows[row * 2 + 1] = -1;
+                            if (previous >= 0 && !(row - previous > maximumStep)) {
+                                crossingRows[row * 2] = previous;
+                                crossingRows[previous * 2 + 1] = row;
+                            }
+                            previous = row;
                         }
                     }
                 }
+                int count = 1, cursor = 0;
+                queue[0] = (seedRow << columnBits) | sx;
+                visited[seed] = true;
+                int l = span - 1, r = 0, b = seedRow;
+                boolean eligible = seedRow > 0;
+                while (cursor < count) {
+                    int pixel = queue[cursor++], row = pixel >>> columnBits;
+                    int x = pixel & columnMask;
+                    if (eligible) {
+                        l = Math.min(l, x);
+                        r = Math.max(r, x);
+                        b = Math.max(b, row);
+                        eligible = b < rows - 1 && !(r - l + 1 > maximumWidth)
+                                && !(b - seedRow + 1 > maximumHeight);
+                    }
+                    for (int direction = -1; direction <= 1; direction++) {
+                        int neighborRow = crossingRows == null || direction == 0 ? row + direction
+                                : crossingRows[row * 2 + (direction > 0 ? 1 : 0)];
+                        if (neighborRow < 0 || neighborRow >= rows) continue;
+                        int targetRow = neighborRow * span;
+                        int targetRaster = rasterBase + neighborRow * width;
+                        int packedRow = neighborRow << columnBits;
+                        int reach = direction == 0 ? 1 : (neighborRow - row) * direction;
+                        int endColumn = Math.min(span - 1, x + reach);
+                        for (int xx = Math.max(0, x - reach); xx <= endColumn; xx++) {
+                            int next = targetRow + xx;
+                            if (visited[next]) continue;
+                            visited[next] = true;
+                            if ((gray[targetRaster + xx] & 255) < 170) {
+                                queue[count++] = packedRow | xx;
+                            }
+                        }
+                    }
+                }
+                // Never crop a continuing stem or a band-edge glyph into a complete rest.
+                // Raster-order seeding gives the highest row of the connected component.
+                if (!eligible || r - l + 1 < minimumWidth || b - seedRow + 1 < minimumHeight)
+                    continue;
+                int[] pixels = new int[count];
+                for (int i = 0; i < count; i++) {
+                    int pixel = queue[i], row = pixel >>> columnBits;
+                    pixels[i] = rasterBase + row * width + (pixel & columnMask);
+                }
+                if (result == null) result = new ArrayList<>();
+                result.add(new Body(left + l, left + r, firstVisible + seedRow, firstVisible + b, pixels));
             }
-            // Never crop a continuing stem or a band-edge glyph into a complete rest.
-            if (t <= firstVisible
-                    || b >= lastVisible
-                    || r - l + 1 < gap * .7f
-                    || r - l + 1 > gap * 1.6f
-                    || b - t + 1 < gap * 1.3f
-                    || b - t + 1 > gap * 3.6f) continue;
-            int[] pixels = new int[count];
-            for (int i = 0; i < count; i++)
-                pixels[i] = (top + queue[i] / span) * width + left + queue[i] % span;
-            result.add(new Body(l, r, t, b, pixels));
         }
-        return List.copyOf(result);
+        return result == null ? List.of() : List.copyOf(result);
     }
 }
