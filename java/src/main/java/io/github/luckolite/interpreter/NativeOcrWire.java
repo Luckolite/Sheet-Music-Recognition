@@ -14,6 +14,7 @@ import java.util.zip.*;
 public final class NativeOcrWire {
     public static final int PORT = 45925;
     private static final int MAGIC = 0x4f435231, MAX_PIXELS = 20_000_000, MAX_PACKET = 32_000_000;
+    private static final int GZIP_BUFFER_BYTES = 32 * 1024;
 
     private NativeOcrWire() {}
 
@@ -230,7 +231,9 @@ public final class NativeOcrWire {
         if (length < 1 || length > MAX_PACKET) throw new IOException("Invalid OCR packet length");
         byte[] compressed = new byte[length];
         in.readFully(compressed);
-        var gzip = new GZIPInputStream(new ByteArrayInputStream(compressed));
+        var gzip =
+                new GZIPInputStream(
+                        new ByteArrayInputStream(compressed), Math.min(length, GZIP_BUFFER_BYTES));
         return new DataInputStream(
                 new BufferedInputStream(
                         new FilterInputStream(gzip) {
