@@ -40,8 +40,10 @@ def _bright_paper(pixels):
     quantile_rank = last * .1
     median_rank = last * .5
     below_quantile = np.count_nonzero(pixels < 240)
+    if below_quantile > np.ceil(quantile_rank):
+        return False
     below_median = np.count_nonzero(pixels < 250)
-    if below_quantile > np.ceil(quantile_rank) or below_median > np.ceil(median_rank):
+    if below_median > np.ceil(median_rank):
         return False
     if below_quantile <= int(quantile_rank) and below_median <= int(median_rank):
         return True
@@ -96,7 +98,10 @@ class PaperBackgroundWhitening:
             paper_estimate = cv2.morphologyEx(gray, cv2.MORPH_CLOSE, kernel)
         if paper_estimate is None or _bright_paper(paper_estimate):
             output = self._darken_faded_ink(gray, labels, kernel, paper_estimate)
-            return self._result(gray, output, raw_hash)
+            # Faded-ink correction only returns a new raster when it changes a pixel.
+            if output is gray:
+                return WhiteningResult(gray, False, raw_hash, raw_hash)
+            return WhiteningResult(output, True, raw_hash, raster_sha256(output))
         scale = min(1., 960 / max(height, width))
         shape = (max(8, round(width * scale)), max(8, round(height * scale)))
         small = cv2.resize(gray.astype(np.float32), shape, interpolation=cv2.INTER_AREA) / 255
