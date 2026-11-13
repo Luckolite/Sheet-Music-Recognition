@@ -1618,6 +1618,12 @@
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/ActiveScoreNotes.java"
     },
     "ArtificialHarmonics.java": {
+      "rounded_diamond_edge_review": {
+        "reviewed_app_commit": "bedb8e391e3386e1f775aadf56702d19088c2799",
+        "app_lf_sha256": "fec8c81341d439147bcc8ed2efaecbc1e627651aa84f1b2877ea7fd8928a2033",
+        "standalone_lf_sha256": "81c0035e6cf152beffa11883734abac5218d971bc1b59ae00d15771758add958",
+        "scope": "Matching one-pixel interior sample on a sloped diamond edge, retaining counter, exterior, staff rules and shared shaft."
+      },
       "clipped_diamond_edge_review": {
         "reviewed_app_commit": "fb61bd4e6b5547d3d43eaa8e5b61768b675e58c2",
         "app_lf_sha256": "d289e3e70750996d54b50f475bbe25dfde6ca5e6987cd4dc100f9dfbc076d556",

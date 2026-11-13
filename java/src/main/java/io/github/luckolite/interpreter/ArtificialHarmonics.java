@@ -518,7 +518,9 @@ final class ArtificialHarmonics {
                             for (float fraction : new float[] {.25f, .5f, .75f}) {
                                 int xx = Math.round(cx + dx * r * fraction);
                                 int yy = Math.round(cy + dy * r * (1 - fraction));
-                                if (dark(gray, width, height, xx, yy)) darkSide++;
+                                // Rounded coordinates can fall just outside a sloped edge.
+                                if (dark(gray, width, height, xx, yy)
+                                        || dark(gray, width, height, xx - dx, yy)) darkSide++;
                             }
                             if (darkSide == 3) completeSides++;
                             if (darkSide >= 2) supportedSides++;
