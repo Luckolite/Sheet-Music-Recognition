@@ -31,6 +31,31 @@ def retained(page, index):
     return source_flags(page, index) & MASK
 
 
+def duration_gate(flags):
+    if flags & 16:
+        return .28
+    if flags & 4:
+        return .75 if flags & 8 else .5
+    return 1.
+
+
+def bind_performance_gates(document):
+    """Bind source marks before navigation and clock projection change note indices."""
+    pages = []
+    for page in document['pages']:
+        events = []
+        for index, event in enumerate(page['events']):
+            gate = duration_gate(retained(page, index))
+            if gate < 1 or '_articulationGate' in event:
+                event = dict(event)
+                event.pop('_articulationGate', None)
+                if gate < 1:
+                    event['_articulationGate'] = gate
+            events.append(event)
+        pages.append(dict(page, events=events))
+    return dict(document, pages=pages)
+
+
 def chord_marks(chord, start):
     """Common shared-stem glyphs appear once; differing head marks survive."""
     flags = [n.get('retainedArticulations', 0) if start == n['start'] else 0 for n in chord]

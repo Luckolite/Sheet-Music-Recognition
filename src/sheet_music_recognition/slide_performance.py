@@ -7,6 +7,7 @@ and coalesced; page-local raw indices are never used after clock projection.
 """
 import copy
 import math
+from .articulation_export import duration_gate
 from .straight_slide import bindings
 from .tremolo_performance import source_spans
 
@@ -46,9 +47,7 @@ def prepare_slides(document):
                 if identity not in origins:
                     origins.append(identity)
             marks = page['score']['notes'][target]['articulations']
-            page['events'][target]['_slideGate'] = (.28 if marks & 16 else
-                                                    .75 if marks & 4 and marks & 8 else
-                                                    .5 if marks & 4 else 1.)
+            page['events'][target]['_slideGate'] = duration_gate(marks)
             relation = page['events'][target]['slide']
             page['events'][target]['_slideRelation'] = dict(
                 sourceId=source_id, targetId=target_id,

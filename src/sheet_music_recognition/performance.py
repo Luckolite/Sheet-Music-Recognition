@@ -504,6 +504,8 @@ def _perform_one(pages, bpm, slide_group=0):
                        for hold in sustained_beats)
             start_seconds, end_seconds = clock.seconds(a, True), clock.seconds(b, held)
             note = dict(payload)
+            if held or subdivision or pair or interval['clippedEntry']:
+                note.pop('_articulationGate', None)
             note.update(startBeat=start_seconds*2, durationBeats=(end_seconds-start_seconds)*2,
                         tiedFromPrevious=False, measureIndex=0,
                         performanceId=identifier if not (subdivision or pair) else identifier+f'/tremolo:{ordinal}')

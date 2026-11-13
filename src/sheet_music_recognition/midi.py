@@ -16,6 +16,7 @@ from .typed_performance import unpitched_intervals
 from .guitar_effect import validate as validate_guitar, pitch_offset as guitar_pitch_offset
 from .continuous_slide_curve import SlideClock
 from .slide_performance import prepare_slides, resolve_slides
+from .articulation_export import bind_performance_gates
 
 
 @dataclass(frozen=True)
@@ -80,7 +81,7 @@ def variable_length(value):
 
 def performed_document(document, bpm=120):
     """Resolve the existing source/Java clocks without assigning a backend identity."""
-    document = prepare_slides(document)
+    document = prepare_slides(bind_performance_gates(document))
     unpitched_intervals(document)
     document = resolve_boundary_ties(document)
     if not math.isfinite(bpm) or not 15 <= bpm <= 400:
@@ -186,7 +187,8 @@ def _performance_events_prepared(document, bpm, expressive_document, unpitched_p
             owners[index] = prior
         else:
             tone = [row['start'], row['end'], row['lane'][2], row['step'], row['effect'], row['gliss'],
-                    row['note'].get('performanceAttack'), row['note']['staffCount'], row['continuous']]
+                    row['note'].get('performanceAttack'), row['note']['staffCount'], row['continuous'],
+                    row['note'].get('_articulationGate', 1.)]
             tones.append(tone)
             owners[index] = tone
     active = {}
@@ -208,10 +210,14 @@ def _performance_events_prepared(document, bpm, expressive_document, unpitched_p
         elif part in held_parts:
             pedal_spans[part].append((held_parts.pop(part), control['tick']))
     performed = []
+    gated_written_end = 0
     slide_clock = SlideClock(tuple(events), ppq)
-    for start, end, pitch, step, effect, gliss, attack, part, continuous in tones:
+    for start, end, pitch, step, effect, gliss, attack, part, continuous, gate in tones:
         if continuous is not None:
             end = slide_clock.gated_end(start, end, continuous.get('gate', 1))
+        elif gate < 1 and not (step or effect or gliss):
+            gated_written_end = max(gated_written_end, end)
+            end = slide_clock.gated_end(start, end, gate)
         if gliss is not None:
             performed.extend((a, b, midi, effect, attack if a == start else None, part, None) for a, b, midi in
                              white_key_gliss(start, end, pitch, gliss["targetMidi"]))
@@ -322,7 +328,7 @@ def _performance_events_prepared(document, bpm, expressive_document, unpitched_p
         events.extend([(start, 3, bytes([0x99, address, velocity])),
                        (end, 0, bytes([0x89, address, 0]))])
     ordered = sorted(events, key=lambda x: (x[0], x[1]))
-    return ppq, ordered, max(ordered[-1][0], round(offset * ppq))
+    return ppq, ordered, max(ordered[-1][0], round(offset * ppq), gated_written_end)
 
 
 def white_key_gliss(start, end, source, target):
