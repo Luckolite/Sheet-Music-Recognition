@@ -150,7 +150,7 @@ final class CourtesyMeasureRemap {
                                                         : ScorePedalDetector.remapTargetMeasures(
                                                                 e, i -> map(i, cut)),
                                                 e.strength(),
-                                                e.qualifierText(),
+                                                PairedDynamicWedges.remap(e, i -> map(i, cut)),
                                                 e.evidence()))
                         .toList();
         return new ScorePageInterpretation(

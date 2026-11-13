@@ -192,7 +192,8 @@ def expression_direction(measure, mark, offset):
     type_node = element(direction, 'direction-type')
     if mark.get('_hairpin'):
         direction.set('placement', 'below')
-        element(type_node, 'wedge', type=mark['_hairpin'], number=mark['_hairpinNumber'])
+        element(type_node, 'wedge', type=mark['_hairpin'], number=mark['_hairpinNumber'],
+                **mark.get('_hairpinGeometry', {}))
     elif mark.get('_absoluteDynamic'):
         direction.set('placement', 'below')
         caption = mark.get('_suddenDynamic')
@@ -992,7 +993,8 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
                         element(dash, 'offset', mark['startTick']-a)
                 elif action == 'wedge':
                     stop = element(measure, 'direction', placement='below')
-                    element(element(stop, 'direction-type'), 'wedge', type='stop', number=mark['_hairpinNumber'])
+                    element(element(stop, 'direction-type'), 'wedge', type='stop',
+                            number=mark['_hairpinNumber'], **mark.get('_hairpinGeometry', {}))
                     element(stop, 'offset', mark['endTick']-a)
                 else:
                     dash = element(measure, 'direction', placement='above')

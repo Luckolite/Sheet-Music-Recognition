@@ -21,7 +21,7 @@ def document():
 
 
 class HairpinExportTests(unittest.TestCase):
-    def xml(self, doc):
+    def xml(self, doc, *, geometry=False):
         before = copy.deepcopy(doc)
         with tempfile.TemporaryDirectory(prefix='original-hairpin-') as folder:
             path = Path(folder)/'score.musicxml'
@@ -29,6 +29,7 @@ class HairpinExportTests(unittest.TestCase):
             root = ET.parse(path).getroot()
         self.assertEqual(before, doc)
         return [(p.get('id'), int(m.get('number')), w.get('type'), int(d.findtext('offset')), w.get('number'))
+                + ((w.get('default-y'),) if geometry else ())
                 for p in root.findall('part') for m in p.findall('measure') for d in m.findall('direction')
                 if (w := d.find('direction-type/wedge')) is not None]
 
@@ -53,6 +54,27 @@ class HairpinExportTests(unittest.TestCase):
     def test_diminuendo_shape_is_preserved(self):
         doc = document(); doc['pages'][0]['score']['dynamicChanges'][0]['direction'] = -1
         self.assertEqual(self.expected(shape='diminuendo'), self.xml(doc))
+
+    def test_opposed_alternatives_keep_their_printed_rows_and_written_clocks(self):
+        doc = document()
+        score = doc['pages'][0]['score']
+        score['dynamicChanges'] = []
+        source = 'printed-alternative-hairpin'
+        marks = [
+            dict(eventId=f'{source}:0:{row}', kind=kind, scope='UNRESOLVED',
+                 staffIndex=0, staffCount=1, qualifierText=f'0:.17:.86:{row}:{depth}',
+                 evidence=[dict(sourceId=source)])
+            for row, kind, depth in ((0, 'DIMINUENDO', 2.5), (1, 'CRESCENDO', 4.5))
+        ]
+        score['expressiveEvents'] = list(reversed(marks))
+        self.assertEqual([
+            ('P1', 1, 'diminuendo', 0, '1', '-65.0'),
+            ('P1', 1, 'stop', 3 * DIVISIONS, '1', '-65.0'),
+            ('P1', 1, 'crescendo', 0, '2', '-85.0'),
+            ('P1', 1, 'stop', 3 * DIVISIONS, '2', '-85.0'),
+        ], self.xml(doc, geometry=True))
+        score['expressiveEvents'] = marks[:1]
+        self.assertEqual([], self.xml(doc))
 
     def test_centered_whole_head_starts_zero_and_unknown_stop_keeps_fraction(self):
         doc = document(); page = doc['pages'][0]

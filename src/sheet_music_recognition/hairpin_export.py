@@ -4,6 +4,37 @@
 from .technique_export import position
 
 
+def _printed_alternatives(score):
+    source = 'printed-alternative-hairpin'
+    groups = {}
+    for event in score.get('expressiveEvents', []):
+        kind = event.get('kind')
+        if (kind not in ('CRESCENDO', 'DIMINUENDO') or event.get('scope') != 'UNRESOLVED'
+                or event.get('staffIndex') != 0 or event.get('staffCount') != 1
+                or any(event.get(key) is not None for key in ('start', 'end', 'targetEventId'))
+                or not any(e.get('sourceId') == source for e in event.get('evidence', []))):
+            continue
+        text = event.get('qualifierText')
+        if not isinstance(text, str):
+            continue
+        try:
+            measure, first, last, row, depth = text.split(':')
+            measure, row = int(measure), int(row)
+            first, last, depth = position(float(first)), position(float(last)), float(depth)
+        except (ValueError, OverflowError):
+            continue
+        if (measure < 0 or row not in (0, 1) or first is None or last is None
+                or first >= last or not .8 <= depth <= 7):
+            continue
+        groups.setdefault((measure, first, last), []).append((row, kind, depth))
+    for key, group in groups.items():
+        if len(group) != 2:
+            continue
+        upper, lower = sorted(group)
+        if upper[0] == 0 and lower[0] == 1 and upper[1] != lower[1] and 1.5 <= lower[2] - upper[2] <= 3:
+            yield key, (upper, lower)
+
+
 def plan(page, rendered, bars, page_identity):
     notes = page.get('score', {}).get('notes', [])
     events = page.get('events', [])
@@ -99,4 +130,18 @@ def plan(page, rendered, bars, page_identity):
                 staffIndex=target, staffCount=count, startTick=start, endTick=stop,
                 ownerIds=[], evidence=[], _hairpin='crescendo' if direction == 1 else 'diminuendo',
                 _hairpinStartBarStart=bars[m]['start'], _hairpinEndBarStart=bars[end]['start']))
+    for (measure, first, last), pair in _printed_alternatives(page.get('score', {})):
+        if measure >= len(bars):
+            continue
+        start_status, start = column(measure, first, 0, 1, False)
+        end_status, stop = column(measure, last, 0, 1, False)
+        if start_status != 'exact' or end_status != 'exact' or stop <= start:
+            continue
+        bar_start = bars[measure]['start']
+        for row, kind, depth in pair:
+            result.append(dict(identity=f'{page_identity}/alternative-hairpin:{measure}:{row}',
+                kind=kind, scope='PART', staffIndex=0, staffCount=1, startTick=start, endTick=stop,
+                ownerIds=[], evidence=[], _hairpin='crescendo' if kind == 'CRESCENDO' else 'diminuendo',
+                _hairpinStartBarStart=bar_start, _hairpinEndBarStart=bar_start,
+                _hairpinGeometry={'default-y': str(round(-10 * (4 + depth), 3))}))
     return result

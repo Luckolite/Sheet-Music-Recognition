@@ -175,7 +175,7 @@ public record ScoreExpressiveEvent(
                 strength,
                 kind == Kind.PARENTHESIZED_NOTE_GROUP
                         ? ScoreParenthesizedNoteGroup.offsetQualifier(qualifierText, measures)
-                        : qualifierText,
+                        : PairedDynamicWedges.remap(this, i -> Math.addExact(i, measures)),
                 evidence);
     }
 }

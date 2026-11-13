@@ -1361,6 +1361,9 @@ final class ScoreDynamicsDetector {
                 Comparator.comparingInt(ScoreDynamicChange::measureIndex)
                         .thenComparingDouble(ScoreDynamicChange::positionInMeasure)
                         .thenComparingInt(c -> c.direction() == 0 ? 0 : 1));
+        if (paperProposals)
+            PairedDynamicWedges.retain(events, arrivalLevels, measures, notes,
+                    ownershipGray, width, height);
         return new Detection(scoped, events);
     }
 
