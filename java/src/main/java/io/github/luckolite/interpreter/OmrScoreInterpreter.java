@@ -21327,6 +21327,29 @@ final class OmrScoreInterpreter {
                     if (refined == original + inward) return refined;
                 }
             }
+            if (original >= 12 && original - position >= .25f
+                    && !Float.isFinite(first) && !Float.isFinite(outer)
+                    && Float.isFinite(second)
+                    && filledBeamEndpointCore(gray, width, height, head, gap)) {
+                int lineY = Math.round(second - gap);
+                int cx = Math.round(head.centerX);
+                int span = Math.round(gap * .72f);
+                int lift = Math.round(gap * .27f);
+                if (cx >= span && cx + span < width && lineY >= lift + 2
+                        && lineY + lift + 2 < height) {
+                    for (int y = lineY - 2; y <= lineY + 2; y++) {
+                        if (y < head.centerY + gap * .48f || y > head.centerY + gap * .75f
+                                || Math.abs(y - head.maxY) > gap * .24f) continue;
+                        int rail = 0, paperBelow = 0;
+                        for (int x = cx - span; x <= cx + span; x++) {
+                            if ((gray[y * width + x] & 255) < 155) rail++;
+                            if ((gray[(y + lift) * width + x] & 255) > 180) paperBelow++;
+                        }
+                        if (rail >= 2 * span - 1 && paperBelow >= span * 1.6f)
+                            return original - 1;
+                    }
+                }
+            }
             int space = LedgerSpacePhase.resolve(position, head.centerY, gap, outer, first, second);
             if (space != original) return space;
         }
