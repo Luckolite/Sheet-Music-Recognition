@@ -41,6 +41,25 @@ class WhiteningTest(unittest.TestCase):
         self.assertEqual(int(result.decoder_gray.flat[3000]), 0)
         np.testing.assert_array_equal(gray, before)
 
+    def test_shaded_page_matches_reference_float_operations(self):
+        import cv2
+
+        gray = np.arange(64 * 96, dtype=np.uint8).reshape(64, 96) // 2
+        paper = np.broadcast_to(np.linspace(.3, .9, 96, dtype=np.float32), gray.shape).copy()
+        contrast = np.broadcast_to(np.linspace(.36, .95, 64, dtype=np.float32)[:, None], gray.shape).copy()
+        original_paper = paper.copy()
+        original_contrast = contrast.copy()
+        owner = PaperBackgroundWhitening()
+        owner._inference = lambda features: (paper, contrast)
+        resized_paper = cv2.resize(paper, (96, 64), interpolation=cv2.INTER_LINEAR)
+        resized_contrast = cv2.resize(contrast, (96, 64), interpolation=cv2.INTER_LINEAR)
+        ink = np.maximum(0, 1 - gray / (255 * resized_paper))
+        expected = np.rint(255 * (1 - ink / resized_contrast)).clip(0, 255).astype(np.uint8)
+        result = owner.correct(gray)
+        np.testing.assert_array_equal(result.decoder_gray, expected)
+        np.testing.assert_array_equal(paper, original_paper)
+        np.testing.assert_array_equal(contrast, original_contrast)
+
     def test_darkens_labeled_faded_strokes_on_white_paper(self):
         gray = np.full((96, 128), 255, np.uint8)
         labels = np.zeros_like(gray)

@@ -105,8 +105,17 @@ class PaperBackgroundWhitening:
         paper, contrast = self._inference(features)
         paper = cv2.resize(paper, (width, height), interpolation=cv2.INTER_LINEAR)
         contrast = cv2.resize(contrast, (width, height), interpolation=cv2.INTER_LINEAR)
-        ink = np.maximum(0, 1 - gray / (255 * paper))
-        output = np.rint(255 * (1 - ink / contrast)).clip(0, 255).astype(np.uint8)
+        # Reuse the resized paper field as scratch after its values are consumed.
+        paper *= 255
+        ink = np.divide(gray, paper, out=paper)
+        np.subtract(1, ink, out=ink)
+        np.maximum(0, ink, out=ink)
+        corrected = np.divide(ink, contrast, out=ink)
+        np.subtract(1, corrected, out=corrected)
+        corrected *= 255
+        np.rint(corrected, out=corrected)
+        np.clip(corrected, 0, 255, out=corrected)
+        output = corrected.astype(np.uint8)
         output = self._darken_faded_ink(output, labels, kernel)
         return self._result(gray, output, raw_hash)
 
