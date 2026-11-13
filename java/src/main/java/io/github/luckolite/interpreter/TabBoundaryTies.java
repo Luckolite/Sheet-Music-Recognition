@@ -59,11 +59,12 @@ public final class TabBoundaryTies {
         if (systems.stream().anyMatch(t -> t.standardTop() >= 0)) return score;
         byte[] clean = TabFretRaster.clean(gray, width, height, systems);
         var positions = edgePositions(score);
+        var noteLocations = new NoteLocations(score, width, height);
         var incoming = new ArrayList<List<Edge>>();
         var outgoing = new ArrayList<List<Edge>>();
         for (var system : systems) {
-            incoming.add(edges(score, system, clean, width, height, true, positions));
-            outgoing.add(edges(score, system, clean, width, height, false, positions));
+            incoming.add(edges(score, system, clean, width, height, true, positions, noteLocations));
+            outgoing.add(edges(score, system, clean, width, height, false, positions, noteLocations));
         }
         var notes = new ArrayList<>(score.notes());
         // Only actual adjacent systems can establish a within-page predecessor.
@@ -139,7 +140,8 @@ public final class TabBoundaryTies {
             int width,
             int height,
             boolean incoming,
-            Map<VoiceMeasure, EdgePositions> positions) {
+            Map<VoiceMeasure, EdgePositions> positions,
+            NoteLocations noteLocations) {
         if (tab.frets().isEmpty() || tab.bars().size() < 2) return List.of();
         var bars = new ArrayList<>(tab.bars());
         bars.sort(Float::compare);
@@ -161,7 +163,7 @@ public final class TabBoundaryTies {
                     || (incoming
                             ? fret.x() <= boundary || fret.x() >= inner
                             : fret.x() >= boundary || fret.x() <= inner)) continue;
-            int mapped = map(score, fret, tab.gap(), width, height);
+            int mapped = noteLocations.find(fret, tab.gap() * .22f);
             if (mapped < 0) continue;
             var note = score.notes().get(mapped);
             if (note.kind() != ScoreNoteEvent.Kind.PITCHED
@@ -181,25 +183,58 @@ public final class TabBoundaryTies {
         return marks == 0 || !incoming && marks == TabEffect.encode(TabEffect.TAP, 0);
     }
 
-    private static int map(
-            ScorePageInterpretation score,
-            TablatureDecoder.Fret fret,
-            float gap,
-            int width,
-            int height) {
-        int found = -1;
-        for (int i = 0; i < score.notes().size(); i++) {
-            var note = score.notes().get(i);
-            var measure = score.measures().get(note.measureIndex());
-            float x =
-                    (measure.left() + note.positionInMeasure() * (measure.right() - measure.left()))
-                            * width;
-            if (Math.abs(x - fret.x()) > gap * .22f
-                    || Math.abs(note.pageY() * height - fret.y()) > gap * .22f) continue;
-            if (found >= 0) return -1;
-            found = i;
+    private record NoteLocation(int index, float x, float y) {}
+
+    private static final class NoteLocations {
+        private final ScorePageInterpretation score;
+        private final int width, height;
+        private List<NoteLocation> byRow;
+        private boolean finiteRows;
+
+        NoteLocations(ScorePageInterpretation score, int width, int height) {
+            this.score = score;
+            this.width = width;
+            this.height = height;
         }
-        return found;
+
+        private void indexRows() {
+            byRow = new ArrayList<>(score.notes().size());
+            boolean finite = true;
+            for (int i = 0; i < score.notes().size(); i++) {
+                var note = score.notes().get(i);
+                var measure = score.measures().get(note.measureIndex());
+                float x = (measure.left()
+                        + note.positionInMeasure() * (measure.right() - measure.left())) * width;
+                float y = note.pageY() * height;
+                byRow.add(new NoteLocation(i, x, y));
+                finite &= Float.isFinite(y);
+            }
+            finiteRows = finite;
+            if (finiteRows) byRow.sort(Comparator.comparingDouble(NoteLocation::y));
+        }
+
+        int find(TablatureDecoder.Fret fret, float tolerance) {
+            if (byRow == null) indexRows();
+            boolean bounded = finiteRows && Float.isFinite(fret.y()) && tolerance >= 0;
+            int low = 0, high = bounded ? byRow.size() : 0;
+            // Compare the original floating-point difference at both limits.
+            while (low < high) {
+                int middle = low + ((high - low) >>> 1);
+                if (byRow.get(middle).y() - fret.y() < -tolerance) low = middle + 1;
+                else high = middle;
+            }
+            int found = -1;
+            for (int i = low; i < byRow.size(); i++) {
+                var location = byRow.get(i);
+                float dy = location.y() - fret.y();
+                if (bounded && dy > tolerance) break;
+                if (Math.abs(location.x() - fret.x()) > tolerance || Math.abs(dy) > tolerance)
+                    continue;
+                if (found >= 0) return -1;
+                found = location.index();
+            }
+            return found;
+        }
     }
 
     private static boolean samePitchVoice(ScoreNoteEvent a, ScoreNoteEvent b) {
