@@ -8,9 +8,19 @@ final class OctaveWordShapes {
 
     private static final int W = 48, H = 32;
 
-    private record Template(int shift, float aspect, long[] bits) {
+    private record Template(int shift, float aspect, long[] bits, int pixels) {
         Template(int shift, float aspect, String encoded) {
             this(shift, aspect, packed(java.util.Base64.getDecoder().decode(encoded)));
+        }
+
+        Template(int shift, float aspect, long[] bits) {
+            this(shift, aspect, bits, pixels(bits));
+        }
+
+        private static int pixels(long[] bits) {
+            int count = 0;
+            for (long word : bits) count += Long.bitCount(word);
+            return count;
         }
     }
 
@@ -2601,49 +2611,86 @@ final class OctaveWordShapes {
                 "A8YYAADwA8f4AADwB8/4AABwB4/wAABgD4/wAABgD4/gAABgD4/AAABgH4gAAABgH5gAAABgP5gAAABgNxgAAABgNxgBnnB+Jx+D3vj+Lx/B57jnDz/g5xjjDzngxxjDDzHgxhjDDjDhxhjDDgDhhhjDHgDhhjjDHgDhhjDDHnDhhjDDHnHhhjGDHnHhjjGDHHHhjDGHHHHBjDGGPHHBjDGGPGPDjHGGPGODDHGM/3+DDDmM/z8DDDj4AB4AAABw"),
     };
 
+    static {
+        java.util.Arrays.sort(TEMPLATES, java.util.Comparator.comparingDouble(Template::aspect));
+    }
+
+    private static final float ASPECT_TOLERANCE = .45f;
+
     static int match(byte[] gray, int width, int left, int top, int right, int bottom) {
         if (right <= left || bottom <= top) return 0;
         float aspect = (right - left + 1) / (float) (bottom - top + 1);
+        int firstTemplate = aspectBoundary(aspect, false);
+        int endTemplate = aspectBoundary(aspect, true);
+        if (firstTemplate == endTemplate) return 0;
         long[] mask = new long[(W * H + 63) / 64], nearest = new long[mask.length];
-        for (int y = 0; y < H; y++)
+        int[] nearestX = new int[W], lowerX = new int[W], upperX = new int[W];
+        float[] xFractions = new float[W], xComplements = new float[W];
+        for (int x = 0; x < W; x++) {
+            float sx = left + (x + .5f) * (right - left + 1) / W - .5f;
+            int x0 = (int) Math.floor(sx);
+            nearestX[x] = Math.max(left, Math.min(right, Math.round(sx)));
+            lowerX[x] = Math.max(left, Math.min(right, x0));
+            upperX[x] = Math.max(left, Math.min(right, x0 + 1));
+            xFractions[x] = sx - x0;
+            xComplements[x] = 1 - xFractions[x];
+        }
+        int maskPixels = 0, nearestPixels = 0;
+        for (int y = 0; y < H; y++) {
+            float sy = top + (y + .5f) * (bottom - top + 1) / H - .5f;
+            int y0 = (int) Math.floor(sy);
+            float dy = sy - y0;
+            float yComplement = 1 - dy;
+            int nearestRow = Math.max(top, Math.min(bottom, Math.round(sy))) * width;
+            int lowerRow = Math.max(top, Math.min(bottom, y0)) * width;
+            int upperRow = Math.max(top, Math.min(bottom, y0 + 1)) * width;
             for (int x = 0; x < W; x++) {
-                float sx = left + (x + .5f) * (right - left + 1) / W - .5f,
-                        sy = top + (y + .5f) * (bottom - top + 1) / H - .5f;
-                int nx = Math.max(left, Math.min(right, Math.round(sx))),
-                        ny = Math.max(top, Math.min(bottom, Math.round(sy)));
-                if ((gray[ny * width + nx] & 255) < 165) nearest[(y * W + x) / 64] |= 1L << ((y * W + x) % 64);
-                int x0 = (int) Math.floor(sx), y0 = (int) Math.floor(sy);
-                float dx = sx - x0, dy = sy - y0;
-                int x1 = Math.max(left, Math.min(right, x0 + 1)),
-                        y1 = Math.max(top, Math.min(bottom, y0 + 1));
-                x0 = Math.max(left, Math.min(right, x0));
-                y0 = Math.max(top, Math.min(bottom, y0));
+                int bit = y * W + x;
+                if ((gray[nearestRow + nearestX[x]] & 255) < 165) {
+                    nearest[bit / 64] |= 1L << (bit % 64);
+                    nearestPixels++;
+                }
+                int x0 = lowerX[x], x1 = upperX[x];
+                float dx = xFractions[x];
                 float upper =
-                        (gray[y0 * width + x0] & 255) * (1 - dx)
-                                + (gray[y0 * width + x1] & 255) * dx;
+                        (gray[lowerRow + x0] & 255) * xComplements[x]
+                                + (gray[lowerRow + x1] & 255) * dx;
                 float lower =
-                        (gray[y1 * width + x0] & 255) * (1 - dx)
-                                + (gray[y1 * width + x1] & 255) * dx;
-                if (upper * (1 - dy) + lower * dy < 165) mask[(y * W + x) / 64] |= 1L << ((y * W + x) % 64);
+                        (gray[upperRow + x0] & 255) * xComplements[x]
+                                + (gray[upperRow + x1] & 255) * dx;
+                if (upper * yComplement + lower * dy < 165) {
+                    mask[bit / 64] |= 1L << (bit % 64);
+                    maskPixels++;
+                }
             }
+        }
+        if (maskPixels == 0 && nearestPixels == 0) return 0;
+        boolean sameMasks = maskPixels == nearestPixels && java.util.Arrays.equals(mask, nearest);
         float[] scores = new float[5];
-        for (var t : TEMPLATES) {
+        for (int index = firstTemplate; index < endTemplate; index++) {
+            var t = TEMPLATES[index];
             float ratio = (float) Math.abs(Math.log(aspect / t.aspect));
-            if (ratio > .45f) continue;
-            int intersection = 0, union = 0, nearIntersection = 0, nearUnion = 0;
+            float penalty = ratio * .15f;
+            int scoreIndex = t.shift + 2;
+            // Even perfect containment cannot exceed the smaller ink count
+            // divided by the larger one. Keep the bound per shift so that
+            // competing shifts still contribute to the confidence margin.
+            float limit = Math.max(overlapLimit(t.pixels, maskPixels),
+                    overlapLimit(t.pixels, nearestPixels)) - penalty;
+            if (limit <= scores[scoreIndex]) continue;
+            int intersection = 0, nearIntersection = 0;
             for (int i = 0; i < mask.length; i++) {
                 long ink = t.bits[i];
                 intersection += Long.bitCount(ink & mask[i]);
-                union += Long.bitCount(ink | mask[i]);
-                nearIntersection += Long.bitCount(ink & nearest[i]);
-                nearUnion += Long.bitCount(ink | nearest[i]);
+                if (!sameMasks) nearIntersection += Long.bitCount(ink & nearest[i]);
             }
-            float score =
-                    Math.max(
-                                    intersection / (float) Math.max(1, union),
-                                    nearIntersection / (float) Math.max(1, nearUnion))
-                            - ratio * .15f;
-            scores[t.shift + 2] = Math.max(scores[t.shift + 2], score);
+            int union = t.pixels + maskPixels - intersection;
+            float overlap = intersection / (float) Math.max(1, union);
+            if (!sameMasks) {
+                int nearUnion = t.pixels + nearestPixels - nearIntersection;
+                overlap = Math.max(overlap, nearIntersection / (float) Math.max(1, nearUnion));
+            }
+            scores[scoreIndex] = Math.max(scores[scoreIndex], overlap - penalty);
         }
         int best = 2;
         float first = 0, second = 0;
@@ -2654,5 +2701,22 @@ final class OctaveWordShapes {
                 best = i;
             } else second = Math.max(second, scores[i]);
         return first >= .58f && first - second >= .09f ? best - 2 : 0;
+    }
+
+    private static float overlapLimit(int first, int second) {
+        return Math.min(first, second) / (float) Math.max(1, Math.max(first, second));
+    }
+
+    private static int aspectBoundary(float aspect, boolean upper) {
+        int low = 0, high = TEMPLATES.length;
+        while (low < high) {
+            int middle = (low + high) >>> 1;
+            // Use the original float division and log cutoff at both edges.
+            float ratio = (float) Math.log(aspect / TEMPLATES[middle].aspect);
+            boolean before = upper ? ratio >= -ASPECT_TOLERANCE : ratio > ASPECT_TOLERANCE;
+            if (before) low = middle + 1;
+            else high = middle;
+        }
+        return low;
     }
 }

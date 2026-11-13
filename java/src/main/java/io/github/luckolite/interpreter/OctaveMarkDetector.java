@@ -364,6 +364,9 @@ final class OctaveMarkDetector {
         List<PlayingTechniqueDetector.Word> words = new ArrayList<>();
         if (gray == null || gray.length != width * height) return words;
         if (!alreadyContrasted) gray = contrastedInk(gray, width, height);
+        var visited = new java.util.BitSet();
+        int[] stack = new int[Math.min(256, gray.length)];
+        var holeScan = new HoleScanScratch();
         for (var staff : staffs)
             for (boolean below : StaffSides.VALUES) {
                 float gap = staff.gap();
@@ -383,15 +386,16 @@ final class OctaveMarkDetector {
                                                 : staff.top() - gap * .3f));
                 if (top >= bottom) continue;
                 int h = bottom - top + 1;
-                boolean[] visited = new boolean[width * h];
-                int[] stack = new int[width * h];
+                int bandSize = width * h, bandOffset = top * width;
+                float minimumArea = Math.max(4, gap * gap * .025f);
+                visited.clear();
                 List<InkBox> boxes = new ArrayList<>();
                 List<InkBox> shortFragments = new ArrayList<>();
-                for (int origin = 0; origin < visited.length; origin++) {
-                    if (visited[origin] || (gray[top * width + origin] & 255) >= 165) continue;
+                for (int origin = 0; origin < bandSize; origin++) {
+                    if ((gray[bandOffset + origin] & 255) >= 165 || visited.get(origin)) continue;
                     int count = 0, size = 0, left = width, right = -1, y1 = h, y2 = -1;
                     stack[size++] = origin;
-                    visited[origin] = true;
+                    visited.set(origin);
                     while (size > 0) {
                         int at = stack[--size], x = at % width, y = at / width;
                         count++;
@@ -399,24 +403,28 @@ final class OctaveMarkDetector {
                         right = Math.max(right, x);
                         y1 = Math.min(y1, y);
                         y2 = Math.max(y2, y);
-                        for (int dy = -1; dy <= 1; dy++)
-                            for (int dx = -1; dx <= 1; dx++) {
-                                int xx = x + dx, yy = y + dy;
-                                if (xx < 0 || xx >= width || yy < 0 || yy >= h) continue;
-                                int next = yy * width + xx;
-                                if (!visited[next] && (gray[top * width + next] & 255) < 165) {
-                                    visited[next] = true;
+                        int firstX = Math.max(0, x - 1), lastX = Math.min(width - 1, x + 1);
+                        int lastY = Math.min(h - 1, y + 1);
+                        for (int yy = Math.max(0, y - 1); yy <= lastY; yy++) {
+                            int row = yy * width;
+                            for (int next = row + firstX, end = row + lastX; next <= end; next++) {
+                                if ((gray[bandOffset + next] & 255) < 165 && !visited.get(next)) {
+                                    visited.set(next);
+                                    if (size == stack.length)
+                                        stack = java.util.Arrays.copyOf(stack,
+                                                size + Math.min(size, bandSize - size));
                                     stack[size++] = next;
                                 }
                             }
+                        }
                     }
-                    if (count >= Math.max(4, gap * gap * .025f)
+                    if (count >= minimumArea
                             && y2 - y1 + 1 >= 2
                             && y2 - y1 + 1 <= gap * .5f
                             && right - left + 1 >= gap * .2f
                             && right - left + 1 <= gap * 1.5f)
                         shortFragments.add(new InkBox(left, top + y1, right, top + y2, count));
-                    if (count >= Math.max(4, gap * gap * .025f)
+                    if (count >= minimumArea
                             && y2 - y1 + 1 >= gap * .55f
                             && y2 - y1 + 1 <= gap * 3.2f
                             && right - left + 1 >= gap * .12f
@@ -425,13 +433,19 @@ final class OctaveMarkDetector {
                 }
                 boxes.sort(Comparator.comparingInt(InkBox::left));
                 boolean[] used = new boolean[boxes.size()];
+                int componentCount = boxes.size();
                 var bareBoxes = new ArrayList<>(boxes);
-                bareBoxes.addAll(attachedEightBoxes(gray, width, height, top, bottom, gap));
+                bareBoxes.addAll(attachedEightBoxes(gray, width, height, top, bottom, gap, holeScan));
+                var componentBoxes = bareBoxes.size() == componentCount
+                        ? java.util.Set.<InkBox>of()
+                        : new java.util.HashSet<>(boxes);
                 words.addAll(ledgerAttachedWords(gray, width, height, boxes, gap, below));
-                for (var box : bareBoxes) {
+                for (int candidateIndex = 0; candidateIndex < bareBoxes.size(); candidateIndex++) {
+                    var box = bareBoxes.get(candidateIndex);
+                    boolean isComponent = candidateIndex < componentCount || componentBoxes.contains(box);
                     if (centeredInStaff(box, staffs)) continue;
                     boolean closedEight = bareEightShape(gray, width, box, gap);
-                    var attached = !below && !closedEight && boxes.contains(box)
+                    var attached = !below && !closedEight && isComponent
                             ? verticallyAttachedEight(gray, width, box, gap) : null;
                     if (attached != null) box = attached;
                     if (!closedEight && attached == null && (below || !brokenEightShape(gray, width, box, gap)))
@@ -475,7 +489,7 @@ final class OctaveMarkDetector {
                     if (!staff.equals(nearest) || below != nearestBelow) continue;
                     // An attached fragment needs either a suffix or a proved upward end hook
                     // before it can establish a lower octave for the preceding staff.
-                    if (below && !boxes.contains(box) && hookDirection >= 0) continue;
+                    if (below && !isComponent && hookDirection >= 0) continue;
                     words.add(
                             new PlayingTechniqueDetector.Word(
                                     below ? "8vb" : "8va",
@@ -484,12 +498,13 @@ final class OctaveMarkDetector {
                                     (box.right + 1) / (float) width,
                                     (box.bottom + 1) / (float) height));
                 }
+                var members = new ArrayList<InkBox>();
                 for (int i = 0; i < boxes.size(); i++) {
                     if (used[i]) continue;
                     var box = boxes.get(i);
                     int left = box.left, right = box.right, a = box.top, b = box.bottom;
                     used[i] = true;
-                    var members = new ArrayList<InkBox>();
+                    members.clear();
                     members.add(box);
                     for (int j = i + 1; j < boxes.size(); j++) {
                         var next = boxes.get(j);
@@ -600,21 +615,19 @@ final class OctaveMarkDetector {
             }
         // A proved suffix determines the direction. Do not also interpret its
         // numeral as a bare lower-octave mark for the preceding staff.
+        if (words.size() < 2) return words;
         var completeWords = List.copyOf(words);
-        words.removeIf(
-                word ->
-                        completeWords.stream()
-                                .anyMatch(
-                                        other ->
-                                                other != word
-                                                        && other.left() * width
-                                                                <= word.left() * width + 1
-                                                        && other.top() * height
-                                                                <= word.top() * height + 1
-                                                        && other.right() * width
-                                                                > word.right() * width + 2
-                                                        && other.bottom() * height
-                                                                >= word.bottom() * height - 1));
+        words.removeIf(word -> {
+            float left = word.left() * width + 1, right = word.right() * width + 2;
+            float top = word.top() * height + 1, bottom = word.bottom() * height - 1;
+            for (var other : completeWords)
+                if (other != word
+                        && other.right() * width > right
+                        && other.left() * width <= left
+                        && other.top() * height <= top
+                        && other.bottom() * height >= bottom) return true;
+            return false;
+        });
         return words;
     }
 
@@ -623,48 +636,51 @@ final class OctaveMarkDetector {
             byte[] gray, int width, int height, List<InkBox> boxes, float gap, boolean below) {
         var words = new ArrayList<PlayingTechniqueDetector.Word>();
         int thickness = Math.max(1, Math.round(gap * .15f));
+        ConnectedWordScratch scratch = null;
         for (var parent : boxes) {
             if (parent.right - parent.left < gap * 1.5f || parent.bottom - parent.top < gap * .8f)
                 continue;
             int span = parent.right - parent.left + 1;
-            int[] totalCount = new int[span];
-            for (int y = parent.top; y <= parent.bottom; y++)
-                for (int x = parent.left; x <= parent.right; x++)
-                    if ((gray[y * width + x] & 255) < 165) totalCount[x - parent.left]++;
+            int[] leftInk = new int[span + 1];
+            for (int y = parent.top; y <= parent.bottom; y++) {
+                int row = y * width + parent.left;
+                for (int c = 0; c < span; c++)
+                    if ((gray[row + c] & 255) < 165) leftInk[c + 1]++;
+            }
+            for (int c = 0; c < span; c++) leftInk[c + 1] += leftInk[c];
             var tried = new java.util.HashSet<InkBox>();
             int radius = Math.max(thickness + 1, Math.round(gap * .4f));
+            int[] first = new int[span], last = new int[span];
             for (int seedRow = parent.top; seedRow <= parent.bottom; seedRow++) {
-                int[] first = new int[span], last = new int[span], count = new int[span];
-                java.util.Arrays.fill(first, height);
                 java.util.Arrays.fill(last, -1);
-                for (int x = parent.left; x <= parent.right; x++) {
-                    if ((gray[seedRow * width + x] & 255) >= 165) continue;
-                    for (int y = Math.max(parent.top, seedRow - radius);
-                            y <= Math.min(parent.bottom, seedRow + radius);
-                            y++)
-                        if ((gray[y * width + x] & 255) < 165) {
-                            int c = x - parent.left;
-                            first[c] = Math.min(first[c], y);
-                            last[c] = y;
-                            count[c]++;
-                        }
+                int seedOffset = seedRow * width + parent.left;
+                int low = Math.max(parent.top, seedRow - radius);
+                int high = Math.min(parent.bottom, seedRow + radius);
+                for (int c = 0; c < span; c++) {
+                    if ((gray[seedOffset + c] & 255) >= 165) continue;
+                    int x = parent.left + c;
+                    int top = low, bottom = high;
+                    while ((gray[top * width + x] & 255) >= 165) top++;
+                    if (seedRow - top >= thickness) continue;
+                    while ((gray[bottom * width + x] & 255) >= 165) bottom--;
+                    if (bottom - top >= thickness) continue;
+                    first[c] = top;
+                    last[c] = bottom;
                 }
                 for (int column = 0; column < span; column++) {
-                    if (count[column] == 0 || last[column] - first[column] + 1 > thickness)
-                        continue;
+                    if (last[column] < 0) continue;
                     int start = column, end = column, top = first[column], bottom = last[column];
                     while (end + 1 < span
-                            && count[end + 1] > 0
-                            && last[end + 1] - first[end + 1] + 1 <= thickness
+                            && last[end + 1] >= 0
                             && Math.abs(first[end + 1] - top) <= 1
                             && Math.abs(last[end + 1] - bottom) <= 1) end++;
                     column = end;
                     if (end - start + 1 < gap * .65f || span - end < gap * .4f) continue;
-                    int leftInk = 0;
-                    for (int i = 0; i < start; i++) leftInk += totalCount[i];
-                    if (leftInk < gap * gap * .2f) continue;
+                    if (leftInk[start] < gap * gap * .2f) continue;
+                    if (scratch == null) scratch = new ConnectedWordScratch();
                     var word =
-                            rightConnectedWord(gray, width, parent, parent.left + end + 1, seedRow);
+                            rightConnectedWord(
+                                    gray, width, parent, parent.left + end + 1, seedRow, scratch);
                     if (word == null
                             || word.bottom - word.top < gap * .65f
                             || word.bottom - word.top > gap * 2.5f
@@ -680,9 +696,14 @@ final class OctaveMarkDetector {
         return words;
     }
 
+    private static final class ConnectedWordScratch {
+        final java.util.BitSet seen = new java.util.BitSet();
+        int[] stack = new int[64];
+    }
+
     /** Follow only the connected right-side ink, excluding a separate following notehead. */
     private static InkBox rightConnectedWord(
-            byte[] gray, int width, InkBox parent, int cut, int seedY) {
+            byte[] gray, int width, InkBox parent, int cut, int seedY, ConnectedWordScratch scratch) {
         int w = parent.right - cut + 1, h = parent.bottom - parent.top + 1;
         if (w <= 0 || h <= 0) return null;
         if ((gray[seedY * width + cut] & 255) >= 165) {
@@ -691,31 +712,37 @@ final class OctaveMarkDetector {
                 seedY++;
             else return null;
         }
-        boolean[] seen = new boolean[w * h];
-        int[] queue = new int[w * h];
-        int size = 1, take = 0;
-        queue[0] = (seedY - parent.top) * w;
-        seen[queue[0]] = true;
-        int left = width, right = -1, top = parent.bottom + 1, bottom = -1, area = 0;
-        while (take < size) {
-            int at = queue[take++], x = at % w, y = at / w;
+        var seen = scratch.seen;
+        seen.clear();
+        int[] stack = scratch.stack;
+        int size = 1;
+        stack[0] = (seedY - parent.top) * w;
+        seen.set(stack[0]);
+        int right = cut, top = seedY, bottom = seedY, area = 0;
+        while (size > 0) {
+            int at = stack[--size], x = at % w, y = at / w;
             area++;
-            left = Math.min(left, cut + x);
             right = Math.max(right, cut + x);
             top = Math.min(top, parent.top + y);
             bottom = Math.max(bottom, parent.top + y);
-            for (int dy = -1; dy <= 1; dy++)
-                for (int dx = -1; dx <= 1; dx++) {
-                    int xx = x + dx, yy = y + dy;
-                    if (xx < 0 || xx >= w || yy < 0 || yy >= h) continue;
-                    int next = yy * w + xx;
-                    if (seen[next] || (gray[(parent.top + yy) * width + cut + xx] & 255) >= 165)
-                        continue;
-                    seen[next] = true;
-                    queue[size++] = next;
+            int firstX = Math.max(0, x - 1), lastX = Math.min(w - 1, x + 1);
+            int lastY = Math.min(h - 1, y + 1);
+            for (int yy = Math.max(0, y - 1); yy <= lastY; yy++) {
+                int row = yy * w;
+                int source = (parent.top + yy) * width + cut;
+                for (int xx = firstX; xx <= lastX; xx++) {
+                    int next = row + xx;
+                    if ((gray[source + xx] & 255) >= 165 || seen.get(next)) continue;
+                    seen.set(next);
+                    if (size == stack.length) {
+                        stack = java.util.Arrays.copyOf(stack, size + Math.min(size, w * h - size));
+                        scratch.stack = stack;
+                    }
+                    stack[size++] = next;
                 }
+            }
         }
-        return new InkBox(left, top, right, bottom, area);
+        return new InkBox(cut, top, right, bottom, area);
     }
 
     private static PlayingTechniqueDetector.Word completeAttachedWord(
@@ -974,65 +1001,65 @@ final class OctaveMarkDetector {
                 && OctaveClefDigit.holes(gray, width, box.left, box.top, maxWidth, height) == 2;
     }
 
+    private static final class HoleScanScratch {
+        boolean[] seen = new boolean[0];
+        int[] queue = new int[256];
+
+        void reset(int size) {
+            if (seen.length < size) seen = new boolean[size];
+            else java.util.Arrays.fill(seen, 0, size, false);
+        }
+    }
+
     private static List<InkBox> attachedEightBoxes(
-            byte[] gray, int w, int h, int top, int bottom, float gap) {
+            byte[] gray, int w, int h, int top, int bottom, float gap, HoleScanScratch scratch) {
+        // Every component in a strip this narrow touches a side.
+        if (w <= 2) return List.of();
         int band = bottom - top + 1;
-        boolean[] seen = new boolean[w * band];
-        int[] queue = new int[w * band];
+        int sizeLimit = w * band, bandOffset = top * w;
+        scratch.reset(sizeLimit);
+        boolean[] seen = scratch.seen;
+        int[] queue = scratch.queue;
         var holes = new ArrayList<InkBox>();
-        int[] neighbors = {-1, 1, -w, w};
-        for (int seed = 0; seed < seen.length; seed++) {
-            if (seen[seed] || (gray[top * w + seed] & 255) < 165) continue;
+        for (int seed = 0; seed < sizeLimit; seed++) {
+            if (seen[seed] || (gray[bandOffset + seed] & 255) < 165) continue;
             int take = 0, size = 1, pixels = 0, x0 = w, x1 = -1, y0 = band, y1 = -1;
             boolean edge = false;
             seen[seed] = true;
             queue[0] = seed;
             while (take < size) {
                 int at = queue[take++], x = at % w, y = at / w;
-                if (w > 2) {
-                    int left = x, right = x, row = y * w;
-                    while (left > 0
-                            && !seen[row + left - 1]
-                            && (gray[top * w + row + left - 1] & 255) >= 165) left--;
-                    while (right + 1 < w
-                            && !seen[row + right + 1]
-                            && (gray[top * w + row + right + 1] & 255) >= 165) right++;
-                    java.util.Arrays.fill(seen, row + left, row + right + 1, true);
-                    pixels += right - left + 1;
-                    x0 = Math.min(x0, left);
-                    x1 = Math.max(x1, right);
-                    y0 = Math.min(y0, y);
-                    y1 = Math.max(y1, y);
-                    if (left == 0 || right == w - 1 || y == 0 || y == band - 1) edge = true;
-                    for (int direction = -1; direction <= 1; direction += 2) {
-                        int nextY = y + direction;
-                        if (nextY < 0 || nextY >= band) continue;
-                        int nextRow = nextY * w;
-                        for (int nextX = left; nextX <= right; nextX++) {
-                            int next = nextRow + nextX;
-                            if (seen[next] || (gray[top * w + next] & 255) < 165) continue;
-                            seen[next] = true;
-                            queue[size++] = next;
-                            while (nextX < right
-                                    && !seen[nextRow + nextX + 1]
-                                    && (gray[top * w + nextRow + nextX + 1] & 255) >= 165) nextX++;
+                int left = x, right = x, row = y * w;
+                while (left > 0
+                        && !seen[row + left - 1]
+                        && (gray[bandOffset + row + left - 1] & 255) >= 165) left--;
+                while (right + 1 < w
+                        && !seen[row + right + 1]
+                        && (gray[bandOffset + row + right + 1] & 255) >= 165) right++;
+                java.util.Arrays.fill(seen, row + left, row + right + 1, true);
+                pixels += right - left + 1;
+                x0 = Math.min(x0, left);
+                x1 = Math.max(x1, right);
+                y0 = Math.min(y0, y);
+                y1 = Math.max(y1, y);
+                if (left == 0 || right == w - 1 || y == 0 || y == band - 1) edge = true;
+                for (int direction = -1; direction <= 1; direction += 2) {
+                    int nextY = y + direction;
+                    if (nextY < 0 || nextY >= band) continue;
+                    int nextRow = nextY * w;
+                    for (int nextX = left; nextX <= right; nextX++) {
+                        int next = nextRow + nextX;
+                        if (seen[next] || (gray[bandOffset + next] & 255) < 165) continue;
+                        seen[next] = true;
+                        if (size == queue.length) {
+                            queue = java.util.Arrays.copyOf(queue,
+                                    size + Math.min(size, sizeLimit - size));
+                            scratch.queue = queue;
                         }
-                    }
-                } else {
-                    // Preserve the original neighbor convention for one- and two-column inputs.
-                    pixels++;
-                    x0 = Math.min(x0, x);
-                    x1 = Math.max(x1, x);
-                    y0 = Math.min(y0, y);
-                    y1 = Math.max(y1, y);
-                    if (x == 0 || x == w - 1 || y == 0 || y == band - 1) edge = true;
-                    for (int d : neighbors) {
-                        int next = at + d;
-                        if (next < 0 || next >= seen.length || Math.abs(next % w - x) > 1) continue;
-                        if (!seen[next] && (gray[top * w + next] & 255) >= 165) {
-                            seen[next] = true;
-                            queue[size++] = next;
-                        }
+                        queue[size++] = next;
+                        while (nextX < right
+                                && !seen[nextRow + nextX + 1]
+                                && (gray[bandOffset + nextRow + nextX + 1] & 255) >= 165) nextX++;
                     }
                 }
             }
@@ -1042,13 +1069,25 @@ final class OctaveMarkDetector {
                     && x1 - x0 < gap
                     && y1 - y0 < gap) holes.add(new InkBox(x0, top + y0, x1, top + y1, pixels));
         }
+        if (holes.size() < 2) return List.of();
         var result = new ArrayList<InkBox>();
         int pad = Math.max(2, Math.round(gap * .2f));
-        for (var a : holes)
-            for (var b : holes) {
-                if (a.bottom >= b.top
-                        || b.top - a.bottom > gap * .5f
-                        || Math.abs(a.left + a.right - b.left - b.right) > gap * 1.1f) continue;
+        float maximumSeparation = gap * .5f, maximumCenterDifference = gap * 1.1f;
+        for (int i = 0; i < holes.size(); i++) {
+            var a = holes.get(i);
+            // A hole's first row is its first raster seed, so top edges
+            // already follow the scan order.
+            int low = i + 1, high = holes.size();
+            while (low < high) {
+                int middle = (low + high) >>> 1;
+                if (holes.get(middle).top <= a.bottom) low = middle + 1;
+                else high = middle;
+            }
+            int center = a.left + a.right;
+            for (int j = low; j < holes.size(); j++) {
+                var b = holes.get(j);
+                if (b.top - a.bottom > maximumSeparation) break;
+                if (Math.abs(center - b.left - b.right) > maximumCenterDifference) continue;
                 int left = Math.max(0, Math.min(a.left, b.left) - pad),
                         right = Math.min(w - 1, Math.max(a.right, b.right) + pad);
                 int y0 = Math.max(top, a.top - pad), y1 = Math.min(bottom, b.bottom + pad);
@@ -1057,6 +1096,7 @@ final class OctaveMarkDetector {
                 if (ledgerTouchesLeft(gray, w, h, left, right, y0, y1, gap))
                     result.add(new InkBox(left, y0, right, y1, a.area + b.area));
             }
+        }
         return result;
     }
 
@@ -1066,16 +1106,21 @@ final class OctaveMarkDetector {
             byte[] gray, int w, int h, int left, int right, int top, int bottom, float gap) {
         int reach = Math.max(3, Math.round(gap * .8f));
         if (left < reach + 1) return false;
+        int required = (int) Math.ceil((reach + 3) * .85f);
+        int maxThickness = Math.max(3, Math.round(gap * .35f));
         for (int y = Math.round(top + (bottom - top) * .3f);
                 y <= Math.round(top + (bottom - top) * .7f);
                 y++) {
-            int ink = 0;
-            for (int x = left - reach; x <= left + 2; x++) if ((gray[y * w + x] & 255) < 165) ink++;
-            if (ink < (reach + 3) * .85f) continue;
+            int needed = required, row = y * w;
+            for (int x = left - reach; needed > 0 && needed <= left + 3 - x; x++)
+                if ((gray[row + x] & 255) < 165) needed--;
+            if (needed > 0) continue;
             int x = left - reach / 2, a = y, b = y;
-            while (a > 0 && (gray[(a - 1) * w + x] & 255) < 165) a--;
-            while (b + 1 < h && (gray[(b + 1) * w + x] & 255) < 165) b++;
-            if (b - a + 1 <= Math.max(3, Math.round(gap * .35f))) return true;
+            while (a > 0 && b - a + 1 <= maxThickness
+                    && (gray[(a - 1) * w + x] & 255) < 165) a--;
+            while (b + 1 < h && b - a + 1 <= maxThickness
+                    && (gray[(b + 1) * w + x] & 255) < 165) b++;
+            if (b - a + 1 <= maxThickness) return true;
         }
         return false;
     }

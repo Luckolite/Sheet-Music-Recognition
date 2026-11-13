@@ -14,9 +14,13 @@ public final class OctaveFloodFillTraversalParityTest {
     record Drawing(byte[] gray, int width, int height, int top, int bottom, float gap) {}
 
     static final Method DETECT;
+    static final Constructor<?> SCRATCH;
 
     static {
         try {
+            Class<?> scratch = Class.forName(OctaveMarkDetector.class.getName() + "$HoleScanScratch");
+            SCRATCH = scratch.getDeclaredConstructor();
+            SCRATCH.setAccessible(true);
             DETECT =
                     OctaveMarkDetector.class.getDeclaredMethod(
                             "attachedEightBoxes",
@@ -25,7 +29,8 @@ public final class OctaveFloodFillTraversalParityTest {
                             int.class,
                             int.class,
                             int.class,
-                            float.class);
+                            float.class,
+                            scratch);
             DETECT.setAccessible(true);
         } catch (Exception e) {
             throw new ExceptionInInitializerError(e);
@@ -64,7 +69,12 @@ public final class OctaveFloodFillTraversalParityTest {
     }
 
     static List<?> detect(Drawing d) throws Exception {
-        return (List<?>) DETECT.invoke(null, d.gray, d.width, d.height, d.top, d.bottom, d.gap);
+        return detect(d, SCRATCH.newInstance());
+    }
+
+    private static List<?> detect(Drawing d, Object scratch) throws Exception {
+        return (List<?>) DETECT.invoke(null, d.gray, d.width, d.height, d.top, d.bottom, d.gap,
+                scratch);
     }
 
     private static String hex(byte[] bytes) {
@@ -94,11 +104,12 @@ public final class OctaveFloodFillTraversalParityTest {
 
     @Test
     public void interleavedWidthsAndThresholdsKeepIndependentTraversals() throws Exception {
+        Object scratch = SCRATCH.newInstance();
         for (int i = 0; i < 72; i++) {
             Drawing first = drawing(i), second = drawing(287 - i);
             String expected = detect(first).toString();
-            detect(second);
-            assertEquals(expected, detect(first).toString());
+            detect(second, scratch);
+            assertEquals(expected, detect(first, scratch).toString());
         }
     }
 }
