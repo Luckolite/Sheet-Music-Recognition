@@ -294,6 +294,39 @@ class _PlaybackClock:
         return active + self.hold_prefix[hold]
 
 
+class _AttackIndex:
+    """Find attacks near a beat while preserving the bridge's order on gain ties."""
+
+    def __init__(self, attacks):
+        by_staff = defaultdict(list)
+        for order, attack in enumerate(attacks):
+            staff = attack['staffIndex'], attack['staffCount']
+            by_staff[staff].append((attack['beat'], order, attack))
+        self.by_staff = {}
+        for staff, rows in by_staff.items():
+            rows.sort()
+            self.by_staff[staff] = ([row[0] for row in rows], rows)
+
+    def at(self, staff_index, staff_count, beat):
+        staff = self.by_staff.get((staff_index, staff_count))
+        if staff is None:
+            return None
+        beats, rows = staff
+        first = bisect_left(beats, beat)
+        while first and math.isclose(beats[first - 1], beat, abs_tol=1e-7):
+            first -= 1
+
+        best = best_key = None
+        for index in range(first, len(rows)):
+            candidate, order, attack = rows[index]
+            if not math.isclose(candidate, beat, abs_tol=1e-7):
+                break
+            key = attack['gain'], -order
+            if best_key is None or key > best_key:
+                best, best_key = attack, key
+        return best
+
+
 def _perform_one(pages, bpm, slide_group=0):
     pages = resolve_pages(pages)
     beats, numeric, expressions, bindings, sounds, aliases, payloads, directions = [], [], [], {}, [], {}, [], []
@@ -429,6 +462,7 @@ def _perform_one(pages, bpm, slide_group=0):
     result = _bridge(data)
     require_retained_navigation(pages, result.get('navigationOccurrences'))
     clock = _PlaybackClock(result)
+    attacks = _AttackIndex(result['attacks'])
     slide_visits = {}
     if any(payload.get('_slideOrigins') for payload in payloads):
         route = result.get('navigationOccurrences')
@@ -489,10 +523,10 @@ def _perform_one(pages, bpm, slide_group=0):
                 note['clippedEntry'] = interval['clippedEntry']
             if subdivision or pair:
                 note['tremoloBeats'] = 0
-            attacks = [attack for attack in result['attacks'] if attack['staffIndex'] == note['staffIndex']
-                       and attack['staffCount'] == note['staffCount'] and math.isclose(attack['beat'], a, abs_tol=1e-7)]
-            if attacks and not interval['clippedEntry']:
-                note['performanceAttack'] = max(attacks, key=lambda attack: attack['gain'])
+            if not interval['clippedEntry']:
+                attack = attacks.at(note['staffIndex'], note['staffCount'], a)
+                if attack is not None:
+                    note['performanceAttack'] = attack
             events.append(note)
     duration = result['durationSeconds']*2
     return dict(events=events, measureBeats=[duration] if duration else [], totalBeats=duration,

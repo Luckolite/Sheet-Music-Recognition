@@ -6,7 +6,7 @@ import math
 import struct
 import unittest
 import numpy as np
-from sheet_music_recognition.performance import _PlaybackClock, perform_expressions
+from sheet_music_recognition.performance import _AttackIndex, _PlaybackClock, perform_expressions
 from sheet_music_recognition.midi import performance_events
 from sheet_music_recognition.audio import _sample_events, _pcm_blocks, SAMPLE_RATE
 
@@ -42,6 +42,18 @@ def rest_fermata_document(duration=4, supplied_scope='UNRESOLVED'):
 
 
 class ExpressivePerformanceTests(unittest.TestCase):
+    def test_attack_lookup_preserves_staff_tolerance_and_gain_tie_order(self):
+        beat = 1000.
+        first = dict(beat=beat + 5e-7, gain=1.5, staffIndex=0, staffCount=2)
+        second = dict(first, beat=beat - 5e-7)
+        different_staff_count = dict(first, beat=beat, gain=2, staffCount=1)
+        outside_tolerance = dict(first, beat=beat + 2e-6, gain=2)
+        index = _AttackIndex([first, second, different_staff_count, outside_tolerance])
+        self.assertIs(index.at(0, 2, beat), first)
+        self.assertIs(index.at(0, 1, beat), different_staff_count)
+        self.assertIsNone(index.at(1, 2, beat))
+        self.assertIsNone(index.at(0, 2, beat + .01))
+
     def test_indexed_clock_preserves_both_sides_of_a_hold(self):
         clock = _PlaybackClock(dict(
             openingBpm=120,
