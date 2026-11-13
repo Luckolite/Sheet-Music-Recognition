@@ -4,6 +4,7 @@ package io.github.luckolite.interpreter;
 
 import java.io.*;
 import java.net.*;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.*;
@@ -69,7 +70,15 @@ public final class NativeOcrWire {
                 data -> {
                     data.writeInt(width);
                     data.writeInt(height);
-                    for (int pixel : pixels) data.writeInt(pixel);
+                    var bytes = rasterChunk(pixels.length);
+                    var integers = bytes.asIntBuffer();
+                    for (int offset = 0; offset < pixels.length; ) {
+                        int count = Math.min(integers.capacity(), pixels.length - offset);
+                        integers.clear();
+                        integers.put(pixels, offset, count);
+                        data.write(bytes.array(), 0, count * Integer.BYTES);
+                        offset += count;
+                    }
                 });
     }
 
@@ -79,10 +88,22 @@ public final class NativeOcrWire {
             if (width < 1 || height < 1 || (long) width * height > MAX_PIXELS)
                 throw new IOException("Invalid OCR dimensions");
             int[] pixels = new int[width * height];
-            for (int i = 0; i < pixels.length; i++) pixels[i] = data.readInt();
+            var bytes = rasterChunk(pixels.length);
+            var integers = bytes.asIntBuffer();
+            for (int offset = 0; offset < pixels.length; ) {
+                int count = Math.min(integers.capacity(), pixels.length - offset);
+                data.readFully(bytes.array(), 0, count * Integer.BYTES);
+                integers.clear();
+                integers.get(pixels, offset, count);
+                offset += count;
+            }
             if (data.read() != -1) throw new IOException("Trailing OCR raster data");
             return new Raster(width, height, pixels);
         }
+    }
+
+    private static ByteBuffer rasterChunk(int pixels) {
+        return ByteBuffer.allocate(Math.min(4096, pixels) * Integer.BYTES);
     }
 
     public static void writeText(DataOutputStream out, OcrText text) throws IOException {

@@ -4,6 +4,7 @@ package io.github.luckolite.interpreter;
 
 import java.io.*;
 import java.util.*;
+import java.util.zip.GZIPOutputStream;
 import org.junit.Test;
 import static org.junit.Assert.*;
 
@@ -19,6 +20,29 @@ public class NativeOcrWireTest {
         assertEquals(2, copy.width());
         assertEquals(2, copy.height());
         assertArrayEquals(pixels, copy.pixels());
+    }
+
+    @Test
+    public void rasterChunksMatchLegacyEncodingIncludingPartialTail() throws Exception {
+        int width = 137, height = 67;
+        int[] pixels = new Random(7).ints(width * height).toArray();
+        var payload = new ByteArrayOutputStream();
+        try (var legacy = new DataOutputStream(new GZIPOutputStream(payload))) {
+            legacy.writeInt(width);
+            legacy.writeInt(height);
+            for (int pixel : pixels) legacy.writeInt(pixel);
+        }
+        var frame = new ByteArrayOutputStream();
+        var out = new DataOutputStream(frame);
+        out.writeInt(payload.size());
+        payload.writeTo(out);
+        var read = NativeOcrWire.readRaster(
+                new DataInputStream(new ByteArrayInputStream(frame.toByteArray())));
+        assertArrayEquals(pixels, read.pixels());
+
+        var actual = new ByteArrayOutputStream();
+        NativeOcrWire.writeRaster(new DataOutputStream(actual), pixels, width, height);
+        assertArrayEquals(frame.toByteArray(), actual.toByteArray());
     }
 
     @Test
