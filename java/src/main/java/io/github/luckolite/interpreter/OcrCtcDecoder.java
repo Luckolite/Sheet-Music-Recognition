@@ -22,7 +22,8 @@ public final class OcrCtcDecoder {
     public static Result decode(float[][] probabilities, List<String> dictionary, int blankIndex) {
         Objects.requireNonNull(probabilities);
         dictionary = List.copyOf(dictionary);
-        if (dictionary.isEmpty() || blankIndex < 0 || blankIndex >= dictionary.size())
+        int vocabularySize = dictionary.size();
+        if (blankIndex < 0 || blankIndex >= vocabularySize)
             throw new IllegalArgumentException("Invalid CTC dictionary/blank index");
         var tokens = new ArrayList<Token>();
         int previous = blankIndex;
@@ -32,21 +33,25 @@ public final class OcrCtcDecoder {
         float runConfidence = 0;
         for (int t = 0; t < probabilities.length; t++) {
             var step = probabilities[t];
-            if (step == null || step.length != dictionary.size())
+            if (step == null || step.length != vocabularySize)
                 throw new IllegalArgumentException("CTC vocabulary mismatch");
             int best = 0;
+            float bestProbability = Float.NEGATIVE_INFINITY;
             for (int k = 0; k < step.length; k++) {
-                if (!Float.isFinite(step[k]) || step[k] < -0.000001f || step[k] > 1.000001f)
+                float probability = step[k];
+                if (!(probability >= -0.000001f && probability <= 1.000001f))
                     throw new IllegalArgumentException("Expected finite CTC probabilities");
-                if (step[k] > step[best])
+                if (probability > bestProbability) {
                     best = k; // Stable lowest-index tie break on every platform.
+                    bestProbability = probability;
+                }
             }
             if (best != previous) {
                 // Finish the previous span once, after validating the current step.
                 if (previous != blankIndex)
                     tokens.add(new Token(runText, runStart, t, runConfidence));
                 if (best != blankIndex) {
-                    runConfidence = Math.max(0, Math.min(1, step[best]));
+                    runConfidence = Math.max(0, Math.min(1, bestProbability));
                     runText = dictionary.get(best);
                     runStart = t;
                     total += runConfidence;
