@@ -1,4 +1,12 @@
 {
+  "joined_octave_dash_review": {
+    "reviewed_app_commit": "dcd0f57549647688ba5f4b629347bd921c651d6a",
+    "scope": "Matching long octave dash continuation and dotted terminal hook proof. Existing short hook paths and ordinary three-dash proof are preserved.",
+    "app_path": "app/src/main/java/com/musicsheets/app/pdf/OctaveMarkDetector.java",
+    "app_lf_sha256": "763e99cde6d0f17321b491dbf54681bf92298d156728d26a76b356df868cc59f",
+    "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/OctaveMarkDetector.java",
+    "standalone_lf_sha256": "52600a0859eed2d2bb2d1fdc6c17c29537f2ef9ca36d5279863003d21f191219"
+  },
   "printed_double_bar_and_cadence_review": {
     "reviewed_app_commit": "00b952291f0a00925b50e05d463294c5b19eee5d",
     "scope": "Retain paired printed rules in padded crops and preserve each runtime's cadence delivery with the same accidental allowance.",

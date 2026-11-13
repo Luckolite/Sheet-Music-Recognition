@@ -1190,6 +1190,7 @@ final class OctaveMarkDetector {
                     interruptions = 0,
                     x = left,
                     scanY = y;
+            int bridges = 0;
             boolean skippedSuffix = false;
             while (x < width) {
                 int blank = 0;
@@ -1220,7 +1221,12 @@ final class OctaveMarkDetector {
                 while (x < width && (gray[scanY * width + x] & 255) < 165) x++;
                 int length = x - a;
                 if (length < 2) continue;
-                if (length > gap * 1.65f) break;
+                if (length > gap * 1.65f) {
+                    if (count < 24 || length > gap * 3 || bridges >= 6
+                            || !thinDashBridge(gray, width, height, a, x, scanY, gap)) break;
+                    bridges++;
+                    continue;
+                }
                 boolean tall = false;
                 for (int cx = a; cx < x; cx++) {
                     int ya = scanY, yb = scanY;
@@ -1232,7 +1238,11 @@ final class OctaveMarkDetector {
                     }
                 }
                 if (tall) {
-                    if (count >= 3 && terminalHook(gray, width, height, a, x - 1, scanY, gap)) {
+                    if (count >= 3
+                            && (count < 24 || !thinDashBridge(gray, width, height, a, x, scanY, gap)
+                                    || hookDirection(gray, width, height, x - 1 + gap * .55f,
+                                            scanY, scanY, gap) != 0)
+                            && terminalHook(gray, width, height, a, x - 1, scanY, gap)) {
                         last = x - 1;
                         count++;
                         break;
@@ -1244,7 +1254,26 @@ final class OctaveMarkDetector {
                         skippedSuffix = true;
                         continue;
                     }
+                    if (count >= 24 && length <= gap * 1.65f
+                            && joinedDashHookDirection(gray, width, height, x - 1,
+                                    Math.max(0, scanY - 2), Math.min(height - 1, scanY + 2),
+                                    gap) != 0) {
+                        last = x - 1;
+                        count++;
+                        break;
+                    }
+                    if (count >= 24 && length >= gap * .32f && bridges < 6
+                            && thinDashBridge(gray, width, height, a, x, scanY, gap)) {
+                        bridges++;
+                        continue;
+                    }
                     if (count > 0 && ++interruptions <= 1) continue;
+                    break;
+                }
+                if (count >= 24 && joinedDashHookDirection(gray, width, height, x - 1,
+                        Math.max(0, scanY - 2), Math.min(height - 1, scanY + 2), gap) != 0) {
+                    last = x - 1;
+                    count++;
                     break;
                 }
                 if (runs != null) runs.add(new int[] {a, x - 1, scanY});
@@ -1271,6 +1300,17 @@ final class OctaveMarkDetector {
             }
         }
         return best < 0 ? -1 : best + gap * .55f;
+    }
+
+    private static boolean thinDashBridge(
+            byte[] gray, int width, int height, int left, int right, int y, float gap) {
+        int flank = Math.max(3, Math.round(gap * .33f));
+        if (y < flank || y + flank >= height) return false;
+        int thick = 0;
+        for (int x = left; x < right; x++)
+            if ((gray[(y - flank) * width + x] & 255) < 165
+                    || (gray[(y + flank) * width + x] & 255) < 165) thick++;
+        return thick <= Math.max(2, (right - left) * .32f);
     }
 
     private static boolean terminalHook(
@@ -1320,9 +1360,50 @@ final class OctaveMarkDetector {
                 direction = candidate;
             }
         if (direction != 0 || dashRight < 0) return direction;
-        return dottedHookDirection(gray, width, height, end, y1, y2, gap);
+        int dotted = dottedHookDirection(gray, width, height, end, y1, y2, gap);
+        if (dotted != 0) return dotted;
+        return joinedDashHookDirection(gray, width, height, end, y1, y2, gap);
     }
 
+    private static int joinedDashHookDirection(
+            byte[] gray, int width, int height, int end, int top, int bottom, float gap) {
+        int direction = 0;
+        int radius = Math.max(1, Math.round(gap * .36f));
+        for (int x = Math.max(2, end - radius); x <= Math.min(width - 1, end + radius); x++) {
+            for (int y = top; y <= bottom; y++) {
+                if (!endsHorizontalDashes(gray, width, x, y, gap)) continue;
+                for (int step = -1; step <= 1; step += 2) {
+                    if (!hasJoinedDashHook(gray, width, height, x, y, step, gap)) continue;
+                    if (direction != 0 && direction != step) return 0;
+                    direction = step;
+                }
+            }
+        }
+        return direction;
+    }
+
+    private static boolean hasJoinedDashHook(
+            byte[] gray, int width, int height, int x, int y, int step, float gap) {
+        int maxRun = Math.max(3, Math.round(gap * .45f));
+        int minInk = Math.max(2, Math.round(gap * .1f));
+        int limit = y + step * Math.round(gap * 2.25f);
+        if (limit < 0 || limit >= height) return false;
+        int row = y;
+        while (row != limit && (gray[row * width + x] & 255) < 165) row += step;
+        if (Math.abs(row - y) > maxRun) return false;
+        // Require separated vertical ink after the horizontal chain's last dash.
+        for (int dash = 0; dash < 2; dash++) {
+            int start = row;
+            while (row != limit && (gray[row * width + x] & 255) >= 165) row += step;
+            int space = Math.abs(row - start);
+            if (space < 2 || space > maxRun || row == limit) return false;
+            start = row;
+            while (row != limit && (gray[row * width + x] & 255) < 165) row += step;
+            int ink = Math.abs(row - start);
+            if (ink < minInk || ink > maxRun * 2 + 1 || row == limit) return false;
+        }
+        return true;
+    }
     private static int dottedHookDirection(
             byte[] gray, int width, int height, int end, int top, int bottom, float gap) {
         int direction = 0;
