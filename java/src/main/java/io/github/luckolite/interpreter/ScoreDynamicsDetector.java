@@ -2,10 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.github.luckolite.interpreter;
 
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.VarHandle;
+import java.nio.ByteOrder;
 import java.util.*;
 
 /** Isolated dynamic words and long straight hairpins, outside the five-line staff. */
 final class ScoreDynamicsDetector {
+    private static final VarHandle GRAY_WORDS =
+            MethodHandles.byteArrayViewVarHandle(long[].class, ByteOrder.nativeOrder());
+
     private ScoreDynamicsDetector() {}
 
     static List<PlayingTechniqueDetector.Staff> alignStaffs(
@@ -546,6 +552,63 @@ final class ScoreDynamicsDetector {
         return detectDirectionCore(words, staffs, measures, notes, gray, width, height, gray, true);
     }
 
+    private static int collectDirectionComponent(
+            byte[] gray, int width, int height, int origin, boolean[] seen, int[] queue,
+            int[] bounds) {
+        int n = 1;
+        queue[0] = origin;
+        seen[origin] = true;
+        int left = width, right = 0, top = height, bottom = 0;
+        for (int start = 0; start < n; start++) {
+            int at = queue[start], y = at / width, x = at - y * width;
+            left = Math.min(left, x);
+            right = Math.max(right, x);
+            top = Math.min(top, y);
+            bottom = Math.max(bottom, y);
+            int above = Math.min(y, 2), below = Math.min(height - 1 - y, 2);
+            int first = at - above * width, last = at + below * width;
+            boolean hasLeft = x > 0, hasRight = x + 1 < width;
+            for (int center = first; center <= last; center += width) {
+                if (hasLeft) n = appendDirectionInk(gray, seen, queue, n, center - 1);
+                n = appendDirectionInk(gray, seen, queue, n, center);
+                if (hasRight) n = appendDirectionInk(gray, seen, queue, n, center + 1);
+                if (center == last) break;
+            }
+        }
+        bounds[0] = left;
+        bounds[1] = right;
+        bounds[2] = top;
+        bounds[3] = bottom;
+        return n;
+    }
+
+    private static int appendDirectionInk(
+            byte[] gray, boolean[] seen, int[] queue, int size, int pixel) {
+        if (seen[pixel] || (gray[pixel] & 255) >= 145) return size;
+        seen[pixel] = true;
+        queue[size] = pixel;
+        return size + 1;
+    }
+
+    private static int nextDirectionInk(byte[] gray, int start) {
+        int p = start;
+        while (p <= gray.length - Long.BYTES) {
+            long word = (long) GRAY_WORDS.get(gray, p);
+            // With each high bit set, subtracting 17 stays within each byte.
+            // Both high-bit tests pass only when all eight tones are at least 145.
+            long highBits = 0x8080808080808080L;
+            if (((word & (word - 0x1111111111111111L)) & highBits) != highBits) {
+                int end = p + Long.BYTES;
+                for (; p < end; p++)
+                    if ((gray[p] & 255) < 145) return p;
+            } else {
+                p += Long.BYTES;
+            }
+        }
+        while (p < gray.length && (gray[p] & 255) >= 145) p++;
+        return p;
+    }
+
     static Detection detectDirectionCore(
             List<PlayingTechniqueDetector.Word> words,
             List<PlayingTechniqueDetector.Staff> staffs,
@@ -614,17 +677,11 @@ final class ScoreDynamicsDetector {
                             shared, owner, word.top() * height, word.bottom() * height);
             var target = common == null ? owner : common;
             float anchor = literalAnchor(word, target, measures, notes, width, height);
-            var established = slot(anchor, target, measures, notes, width, height);
-            if (established != null
-                    && notes.stream()
-                            .noneMatch(
-                                    n ->
-                                            n.measureIndex() == established.measure()
-                                                    && n.staffIndex() == target.index()
-                                                    && n.staffCount() == target.count()
-                                                    && n.positionInMeasure()
-                                                            == established.position()))
-                anchor =
+            var at = slot(anchor, target, measures, notes, width, height);
+            if (at == null) continue;
+            int onset = onsetKind(at, target, notes);
+            if (onset == 0) {
+                float adjusted =
                         PrintedDynamicInkColumn.anchor(
                                 word,
                                 target,
@@ -634,57 +691,35 @@ final class ScoreDynamicsDetector {
                                 width,
                                 height,
                                 anchor,
-                                established.measure());
+                                at.measure());
+                if (Float.floatToIntBits(adjusted) != Float.floatToIntBits(anchor)) {
+                    at = slot(adjusted, target, measures, notes, width, height);
+                    if (at == null) continue;
+                    onset = onsetKind(at, target, notes);
+                }
+            }
             if (compound) {
-                addCompound(result, compounds, word, target, anchor, measures, notes, width, height, common != null);
+                if (onset != 0)
+                    addCompound(result, compounds, word, target, at, common != null);
                 continue;
             }
-            add(
-                    result,
-                    target,
-                    anchor,
-                    anchor,
-                    db,
-                    0,
-                    measures,
-                    notes,
-                    width,
-                    height,
-                    common != null);
-            var at = slot(anchor, target, measures, notes, width, height);
-            if (at != null
-                    && ownershipGray != null
+            boolean added = addChange(result, target, at, at, db, 0, common != null);
+            if (ownershipGray != null
                     && ownershipGray.length == (long) width * height
                     && containsInk(word, ownershipGray, width, height)
-                    && result.stream()
-                            .anyMatch(
-                                    c ->
-                                            c.direction() == 0
-                                                    && c.measureIndex() == at.measure
-                                                    && c.positionInMeasure() == at.position
-                                                    && c.staffIndex() == target.index()
-                                                    && c.staffCount() == target.count()
-                                                    && c.decibels() == db)) {
-                boolean column =
-                        notes.stream()
-                                .anyMatch(
-                                        n ->
-                                                n.measureIndex() == at.measure
-                                                        && n.staffIndex() == target.index()
-                                                        && n.staffCount() == target.count()
-                                                        && n.positionInMeasure() == at.position
-                                                        && (n.articulations() & NoteOrnament.GRACE)
-                                                                == 0);
+                    && (added || hasExactLevel(result, target, at, db))) {
                 arrivalLevels.add(
                         new PrintedHairpinArrival.Level(
-                                word, target, at.measure, at.position, column));
+                                word, target, at.measure, at.position, onset == 2));
             }
         }
         if (gray != null && gray.length == width * height) {
-            boolean[] seen = new boolean[gray.length];
-            int[] queue = new int[gray.length];
+            boolean originalRaster = gray == ownershipGray;
+            int firstInk = nextDirectionInk(gray, 0);
+            boolean[] seen = firstInk < gray.length ? new boolean[gray.length] : null;
+            int[] queue = seen != null ? new int[gray.length] : null;
             var completeFaint =
-                    paperProposals && gray == ownershipGray
+                    paperProposals && originalRaster
                             ? new CompleteFaintHairpinArms.Page(gray, width, height, staffs)
                             : null;
             var strokes = new ArrayList<HairpinContinuation.Stroke>();
@@ -692,37 +727,24 @@ final class ScoreDynamicsDetector {
             var fragments = new ArrayList<ShadedHairpinFragments.Rail>();
             var faintPairCores = new ArrayList<ShadedHairpinFragments.Rail>();
             var completeOpposed =
-                    gray == ownershipGray
+                    originalRaster
                             ? new CompleteOpposedHairpinPair.Collector(gray, width, height)
                             : null;
-            for (int p = 0; p < gray.length; p++) {
-                if (seen[p] || (gray[p] & 255) >= 145) continue;
-                int start = 0, n = 1;
-                queue[0] = p;
-                seen[p] = true;
-                int left = p % width, right = left, top = p / width, bottom = top;
-                while (start < n) {
-                    int at = queue[start++], x = at % width, y = at / width;
-                    left = Math.min(left, x);
-                    right = Math.max(right, x);
-                    top = Math.min(top, y);
-                    bottom = Math.max(bottom, y);
-                    for (int dy = -2; dy <= 2; dy++)
-                        for (int dx = -1; dx <= 1; dx++) {
-                            int nx = x + dx, ny = y + dy;
-                            if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
-                            int next = ny * width + nx;
-                            if (!seen[next] && (gray[next] & 255) < 145) {
-                                seen[next] = true;
-                                queue[n++] = next;
-                            }
-                        }
+            int[] bounds = new int[4];
+            for (int p = firstInk; p < gray.length; p++) {
+                if ((gray[p] & 255) >= 145) {
+                    p = nextDirectionInk(gray, p + 1);
+                    if (p == gray.length) break;
                 }
-                var owner = directionFloors.owner(top, bottom);
+                if (seen[p]) continue;
+                int n = collectDirectionComponent(gray, width, height, p, seen, queue, bounds);
+                int left = bounds[0], right = bounds[1], top = bounds[2], bottom = bounds[3];
+                int w = right - left + 1, h = bottom - top + 1;
+                var owner = directionFloors.componentOwner(top, bottom);
                 if (owner == null
-                        && right - left + 1 >= minimumGap * 3
-                        && bottom - top + 1 <= maximumGap * 3
-                        && right - left + 1 >= (bottom - top + 1) * 2.5f)
+                        && w >= minimumGap * 3
+                        && h <= maximumGap * 3
+                        && w >= h * 2.5f)
                     owner =
                             PrintedDirectionStaff.at(
                                     staffs,
@@ -737,30 +759,22 @@ final class ScoreDynamicsDetector {
                 if (owner == null) owner = HairpinContinuation.distantOwner(staffs, top, bottom);
                 if (owner == null) continue;
                 float gap = owner.gap();
-                int w = right - left + 1, h = bottom - top + 1;
                 if (completeFaint != null)
                     completeFaint.candidate(owner, queue, n, left, right, top, bottom);
                 // Compact hairpins beside a printed level can have a steeper opening.
                 // Isolated >/< still need the ordinary long, shallow shape.
+                boolean compactSize = w >= gap * 3 && w <= gap * 6 && h <= gap * 1.75f;
                 boolean qualifiedShort =
-                        w >= gap * 3
-                                && w <= gap * 6
-                                && h <= gap * 1.75f
-                                && w >= h * 2.5f
+                        compactSize && w >= h * 2.5f
                                 && precedingPrintedLevel(
                                         words, gray, width, height, left, top, bottom, gap);
-                int[] upper = new int[w], lower = new int[w];
-                Arrays.fill(upper, Integer.MAX_VALUE);
-                Arrays.fill(lower, Integer.MIN_VALUE);
-                for (int i = 0; i < n; i++) {
-                    int x = queue[i] % width - left, y = queue[i] / width;
-                    upper[x] = Math.min(upper[x], y);
-                    lower[x] = Math.max(lower[x], y);
-                }
+                float maxComponentInk = w * Math.max(8, gap);
+                boolean shadedFragment = !originalRaster
+                        && w >= gap * 2 && h <= gap * 3 && n <= maxComponentInk;
+                boolean tooShort = !qualifiedShort && (w < gap * 4 || w < h * 4);
+                boolean tooLarge = h > gap * 3 || n > maxComponentInk;
                 if (completeFaint != null
-                        && w >= gap * 3
-                        && w <= gap * 6
-                        && h <= gap * 1.75f
+                        && compactSize
                         && (qualifiedShort
                                 || w < h * 2.5f
                                         && precedingPrintedLevel(
@@ -773,37 +787,50 @@ final class ScoreDynamicsDetector {
                                                 bottom,
                                                 gap)))
                     completeFaint.compactCandidate(owner, queue, n, left, right, top, bottom);
-                if (completeOpposed != null && !qualifiedShort && (w < gap * 4 || w < h * 4))
-                    completeOpposed.candidate(owner, left, right, top, bottom, n, upper, lower);
-                if (gray == ownershipGray
+                boolean opposedCandidate = completeOpposed != null && tooShort;
+                boolean faintPairCore = originalRaster
                         && w >= gap * 2
                         && h <= gap
                         && w >= h * 4
-                        && n <= w * Math.max(8, gap))
+                        && n <= maxComponentInk;
+                boolean possibleSystemEnd = originalRaster && w < h * 4 && w >= h * 3
+                        && w >= gap * 4 && w <= gap * 8 && h <= gap * 2 && top > owner.bottom();
+                boolean possibleHairpin = !tooLarge && (!tooShort || possibleSystemEnd);
+                if (!opposedCandidate && !faintPairCore && !shadedFragment && !possibleHairpin)
+                    continue;
+                int[] upper = new int[w], lower = new int[w];
+                Arrays.fill(upper, Integer.MAX_VALUE);
+                Arrays.fill(lower, Integer.MIN_VALUE);
+                for (int i = 0; i < n; i++) {
+                    int pixel = queue[i], y = pixel / width;
+                    int x = pixel - y * width - left;
+                    upper[x] = Math.min(upper[x], y);
+                    lower[x] = Math.max(lower[x], y);
+                }
+                if (opposedCandidate)
+                    completeOpposed.candidate(owner, left, right, top, bottom, n, upper, lower);
+                if (faintPairCore)
                     faintPairCores.addAll(
                             ShadedHairpinFragments.pieces(owner, left, right, upper, lower));
-                if (gray != ownershipGray
-                        && w >= gap * 2
-                        && h <= gap * 3
-                        && n <= w * Math.max(8, gap))
+                if (shadedFragment)
                     fragments.addAll(
                             ShadedHairpinFragments.pieces(owner, left, right, upper, lower));
-                boolean compactSystemEnd = gray == ownershipGray && w < h * 4 && w >= h * 3
-                        && w >= gap * 4 && w <= gap * 8 && h <= gap * 2
-                        && top > owner.bottom() && hairpinDirection(upper, lower, gap) != 0
-                        && openHairpinInterior(gray, width, left, upper, lower, gap)
-                        && PrintedHairpinBoundary.atSystemEnd(
-                                gray, width, height, owner, measures, left, right);
-                if (!qualifiedShort && !compactSystemEnd && (w < gap * 4 || w < h * 4)
-                        || h > gap * 3
-                        || n > w * Math.max(8, gap)) continue;
+                if (!possibleHairpin) continue;
+                int direction = 0;
+                if (tooShort) {
+                    direction = hairpinDirection(upper, lower, gap);
+                    if (direction == 0
+                            || !openHairpinInterior(gray, width, left, upper, lower, gap)
+                            || !PrintedHairpinBoundary.atSystemEnd(
+                                    gray, width, height, owner, measures, left, right)) continue;
+                }
 
                 if (qualifiedShort && !openHairpinInterior(gray, width, left, upper, lower, gap))
                     continue;
                 var stroke = HairpinContinuation.stroke(owner, left, right, upper, lower);
                 if (stroke != null) strokes.add(stroke);
                 if (h < gap * .4) continue;
-                int direction = hairpinDirection(upper, lower, gap);
+                if (!tooShort) direction = hairpinDirection(upper, lower, gap);
                 int literalDirection = direction;
                 if (direction == 0) {
                     var faint =
@@ -1562,6 +1589,8 @@ final class ScoreDynamicsDetector {
         private final int height;
         private PlayingTechniqueDetector.Staff[] keys;
         private float[] floors;
+        private long[] componentRows;
+        private PlayingTechniqueDetector.Staff[] componentOwners;
 
         DirectionFloors(
                 List<PlayingTechniqueDetector.Staff> staffs,
@@ -1592,6 +1621,21 @@ final class ScoreDynamicsDetector {
                 }
             }
             return best;
+        }
+
+        PlayingTechniqueDetector.Staff componentOwner(int top, int bottom) {
+            if (componentRows == null) {
+                componentRows = new long[128];
+                componentOwners = new PlayingTechniqueDetector.Staff[componentRows.length];
+            }
+            // Row bounds are nonnegative. Reserve zero for an unused slot.
+            long rows = ((long) top << 32) + bottom + 1L;
+            int index = (top * 31 + bottom) & (componentRows.length - 1);
+            if (componentRows[index] != rows) {
+                componentOwners[index] = owner(top, bottom);
+                componentRows[index] = rows;
+            }
+            return componentOwners[index];
         }
 
         private float floor(int position, PlayingTechniqueDetector.Staff staff) {
@@ -1764,6 +1808,30 @@ final class ScoreDynamicsDetector {
 
     private record Slot(int measure, float position) {}
 
+    /** Zero for no onset, one for grace only, two for an ordinary onset. */
+    private static int onsetKind(
+            Slot at, PlayingTechniqueDetector.Staff owner, List<ScoreNoteEvent> notes) {
+        int kind = 0;
+        for (var note : notes) {
+            if (note.measureIndex() != at.measure || note.staffIndex() != owner.index()
+                    || note.staffCount() != owner.count()
+                    || note.positionInMeasure() != at.position) continue;
+            if ((note.articulations() & NoteOrnament.GRACE) == 0) return 2;
+            kind = 1;
+        }
+        return kind;
+    }
+
+    private static boolean hasExactLevel(
+            List<ScoreDynamicChange> result, PlayingTechniqueDetector.Staff owner, Slot at, float db) {
+        for (var change : result)
+            if (change.direction() == 0 && change.measureIndex() == at.measure
+                    && change.positionInMeasure() == at.position
+                    && change.staffIndex() == owner.index() && change.staffCount() == owner.count()
+                    && change.decibels() == db) return true;
+        return false;
+    }
+
     private static Slot slot(
             float x,
             PlayingTechniqueDetector.Staff staff,
@@ -1773,9 +1841,10 @@ final class ScoreDynamicsDetector {
             int height) {
         int found = -1;
         float distance = Float.MAX_VALUE, y = (staff.top() + staff.bottom()) * .5f / height;
+        float verticalTolerance = staff.gap() / height;
         for (int m = 0; m < measures.size(); m++) {
             var r = measures.get(m);
-            if (y < r.top() - staff.gap() / height || y > r.bottom() + staff.gap() / height)
+            if (y < r.top() - verticalTolerance || y > r.bottom() + verticalTolerance)
                 continue;
             float d = Math.max(r.left() - x, Math.max(0, x - r.right()));
             if (d < distance) {
@@ -1793,6 +1862,7 @@ final class ScoreDynamicsDetector {
                 if (d < nearest) {
                     nearest = d;
                     position = note.positionInMeasure();
+                    if (d == 0) break;
                 }
             }
         return new Slot(found, position);
@@ -1804,21 +1874,8 @@ final class ScoreDynamicsDetector {
             Map<ScoreDynamicChange, PlayingTechniqueDetector.Word> compounds,
             PlayingTechniqueDetector.Word word,
             PlayingTechniqueDetector.Staff owner,
-            float anchor,
-            List<MeasureRegion> measures,
-            List<ScoreNoteEvent> notes,
-            int width,
-            int height,
+            Slot at,
             boolean shared) {
-        Slot at = slot(anchor, owner, measures, notes, width, height);
-        if (at == null) return;
-        boolean actualOnset = false;
-        for (var note : notes)
-            if (note.measureIndex() == at.measure
-                    && note.staffIndex() == owner.index()
-                    && note.staffCount() == owner.count()
-                    && note.positionInMeasure() == at.position) actualOnset = true;
-        if (!actualOnset) return;
         var attack =
                 new ScoreDynamicChange(
                         at.measure,
@@ -1849,23 +1906,6 @@ final class ScoreDynamicsDetector {
         compounds.put(attack, word);
     }
 
-    private static void add(
-            List<ScoreDynamicChange> result,
-            PlayingTechniqueDetector.Staff owner,
-            float left,
-            float right,
-            float db,
-            int direction,
-            List<MeasureRegion> measures,
-            List<ScoreNoteEvent> notes,
-            int width,
-            int height,
-            boolean shared) {
-        addWithArrival(
-                result, owner, left, right, db, direction, measures, notes, width, height, shared,
-                List.of(), null);
-    }
-
     private static void addWithArrival(
             List<ScoreDynamicChange> result,
             PlayingTechniqueDetector.Staff owner,
@@ -1880,10 +1920,10 @@ final class ScoreDynamicsDetector {
             boolean shared,
             List<PrintedHairpinArrival.Level> levels,
             byte[] gray) {
-        Slot a = slot(left, owner, measures, notes, width, height),
-                b = slot(right, owner, measures, notes, width, height);
-        if (a == null
-                || b == null
+        Slot a = slot(left, owner, measures, notes, width, height);
+        if (a == null) return;
+        Slot b = slot(right, owner, measures, notes, width, height);
+        if (b == null
                 || b.measure < a.measure
                 || b.measure == a.measure && b.position < a.position) return;
         if (direction != 0 && a.measure == b.measure && b.position - a.position < .04) return;
@@ -1898,21 +1938,21 @@ final class ScoreDynamicsDetector {
                             measures,
                             width,
                             height);
-            if (arrival.column().isPresent())
-                b = new Slot(arrival.column().get().measure(), arrival.column().get().position());
-            else if (!arrival.observed()) {
-                boolean ownedColumn = false;
-                for (var note : notes)
-                    if (note.measureIndex() == b.measure
-                            && note.positionInMeasure() == b.position
-                            && note.staffIndex() == owner.index()
-                            && note.staffCount() == owner.count()) ownedColumn = true;
-                if (!ownedColumn
-                        && PrintedHairpinBoundary.proved(
-                                gray, width, height, owner, measures.get(b.measure), right * width))
-                    b = new Slot(b.measure, 1);
+            var column = arrival.column().orElse(null);
+            if (column != null) {
+                b = new Slot(column.measure(), column.position());
+            } else if (!arrival.observed() && onsetKind(b, owner, notes) == 0
+                    && PrintedHairpinBoundary.proved(
+                            gray, width, height, owner, measures.get(b.measure), right * width)) {
+                b = new Slot(b.measure, 1);
             }
         }
+        addChange(result, owner, a, b, db, direction, shared);
+    }
+
+    private static boolean addChange(
+            List<ScoreDynamicChange> result, PlayingTechniqueDetector.Staff owner,
+            Slot a, Slot b, float db, int direction, boolean shared) {
         var change =
                 new ScoreDynamicChange(
                         a.measure,
@@ -1925,12 +1965,13 @@ final class ScoreDynamicsDetector {
                         direction,
                         shared);
         for (var old : result)
-            if (old.staffIndex() == change.staffIndex()
+                if (old.staffIndex() == change.staffIndex()
                     && old.staffCount() == change.staffCount()
                     && old.measureIndex() == change.measureIndex()
                     && Math.abs(old.positionInMeasure() - change.positionInMeasure()) < .025
                     && old.direction() == direction
-                    && old.decibels() == db) return;
+                    && old.decibels() == db) return false;
         result.add(change);
+        return true;
     }
 }
