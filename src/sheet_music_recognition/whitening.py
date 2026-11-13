@@ -104,9 +104,14 @@ class PaperBackgroundWhitening:
             return WhiteningResult(output, True, raw_hash, raster_sha256(output))
         scale = min(1., 960 / max(height, width))
         shape = (max(8, round(width * scale)), max(8, round(height * scale)))
-        small = cv2.resize(gray.astype(np.float32), shape, interpolation=cv2.INTER_AREA) / 255
-        estimate = cv2.morphologyEx(small, cv2.MORPH_CLOSE, kernel)
-        features = np.stack((small, estimate)).astype(np.float32, copy=False)
+        features = np.empty((2, shape[1], shape[0]), dtype=np.float32)
+        small = features[0]
+        if shape == (width, height):
+            small[:] = gray
+        else:
+            cv2.resize(gray.astype(np.float32), shape, dst=small, interpolation=cv2.INTER_AREA)
+        small /= 255
+        cv2.morphologyEx(small, cv2.MORPH_CLOSE, kernel, dst=features[1])
         paper, contrast = self._inference(features)
         paper = cv2.resize(paper, (width, height), interpolation=cv2.INTER_LINEAR)
         contrast = cv2.resize(contrast, (width, height), interpolation=cv2.INTER_LINEAR)
@@ -139,11 +144,13 @@ class PaperBackgroundWhitening:
         # Classes 1 through 5 are the model's notation classes. Require existing ink
         # and protect the antialiased edges around already dark strokes.
         candidates = cv2.inRange(gray, MIN_FADED_TONE, MAX_FADED_TONE - 1)
-        cv2.bitwise_and(candidates, cv2.inRange(labels, 1, 5), dst=candidates)
+        eligible = cv2.inRange(labels, 1, 5)
+        cv2.bitwise_and(candidates, eligible, dst=candidates)
         if cv2.countNonZero(candidates) == 0:
             return gray
         core = cv2.erode(gray, np.ones((3, 3), np.uint8))
-        cv2.bitwise_and(candidates, cv2.inRange(core, MIN_FADED_TONE, 255), dst=candidates)
+        cv2.inRange(core, MIN_FADED_TONE, 255, dst=eligible)
+        cv2.bitwise_and(candidates, eligible, dst=candidates)
         if cv2.countNonZero(candidates) == 0:
             return gray
         candidates = candidates != 0
