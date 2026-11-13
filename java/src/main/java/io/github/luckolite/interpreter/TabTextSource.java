@@ -130,21 +130,29 @@ public final class TabTextSource {
 
     public static List<TablatureDecoder.Word> joinDigits(
             List<TablatureDecoder.Staff> tabs, List<TablatureDecoder.Word> input, int w, int h) {
-        var words = new ArrayList<>(disjoint(input));
+        var words = disjoint(input);
+        if (tabs.isEmpty()) return words;
+        var digits = new ArrayList<Digit>();
+        for (int index = 0; index < words.size(); index++) {
+            var word = words.get(index);
+            if (DigitPattern.VALUE.matcher(word.text()).matches())
+                digits.add(new Digit(index, word, (word.top() + word.bottom()) * .5f * h));
+        }
+        digits.sort(Comparator.comparingDouble(digit -> digit.word().left()));
+        boolean[] consumed = new boolean[words.size()];
+        var joined = new ArrayList<TablatureDecoder.Word>();
         for (var tab : tabs)
             for (int string = 0; string < tab.stringCount(); string++) {
                 float cy = tab.top() + string * tab.gap();
-                var lane = new ArrayList<TablatureDecoder.Word>();
-                for (var v : words)
-                    if (Math.abs((v.top() + v.bottom()) * .5f * h - cy) < tab.gap() * .35f
-                            && DigitPattern.VALUE.matcher(v.text()).matches())
-                        lane.add(v);
-                lane.sort(Comparator.comparingDouble(TablatureDecoder.Word::left));
+                var lane = new ArrayList<Digit>();
+                for (var digit : digits)
+                    if (!consumed[digit.index()] && Math.abs(digit.center() - cy) < tab.gap() * .35f)
+                        lane.add(digit);
                 for (int i = 0; i + 1 < lane.size(); i++) {
-                    var a = lane.get(i);
-                    var b = lane.get(i + 1);
+                    var a = lane.get(i).word();
+                    var b = lane.get(i + 1).word();
                     float gap = (b.left() - a.right()) * w;
-                    int fret = Integer.parseInt(a.text() + b.text());
+                    int fret = 10 * (a.text().charAt(0) - '0') + (b.text().charAt(0) - '0');
                     if (gap < 0
                             || gap > tab.gap() * .55f
                             || (b.right() - a.left()) * w > tab.gap() * 1.65f
@@ -152,9 +160,9 @@ public final class TabTextSource {
                             || a.text().equals("0")) continue;
                     if (Math.abs((a.top() + a.bottom() - b.top() - b.bottom()) * .5f * h)
                             > tab.gap() * .15f) continue;
-                    words.remove(a);
-                    words.remove(b);
-                    words.add(
+                    consumed[lane.get(i).index()] = true;
+                    consumed[lane.get(i + 1).index()] = true;
+                    joined.add(
                             new TablatureDecoder.Word(
                                     a.text() + b.text(),
                                     a.left(),
@@ -164,6 +172,13 @@ public final class TabTextSource {
                     i++;
                 }
             }
-        return List.copyOf(words);
+        if (joined.isEmpty()) return words;
+        var result = new ArrayList<TablatureDecoder.Word>(words.size() - joined.size());
+        for (int index = 0; index < words.size(); index++)
+            if (!consumed[index]) result.add(words.get(index));
+        result.addAll(joined);
+        return List.copyOf(result);
     }
+
+    private record Digit(int index, TablatureDecoder.Word word, float center) {}
 }

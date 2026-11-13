@@ -48,6 +48,17 @@ public class TabTextSourceTest {
     }
 
     @Test
+    public void digitJoinKeepsUnpairedWordsFirstAndConsumesEachDigitOnce() {
+        var staff = new TablatureDecoder.Staff(100, 20, -1, List.of(), List.of());
+        var first = new TablatureDecoder.Word("1", .100f, .098f, .106f, .102f);
+        var second = new TablatureDecoder.Word("2", .109f, .098f, .115f, .102f);
+        var third = new TablatureDecoder.Word("3", .119f, .098f, .125f, .102f);
+        var joined = new TablatureDecoder.Word("12", .100f, .098f, .115f, .102f);
+        assertEquals(List.of(third, joined),
+                TabTextSource.joinDigits(List.of(staff, staff), List.of(third, second, first), 1000, 1000));
+    }
+
+    @Test
     public void nativeRhythmVocabularyIncludesLettersDotsAndMusicalGlyphs() {
         assertTrue(
                 TabTextSource.tokens("Q E S W H T Q. E.. ♩ ♪ 𝅝 𝅗𝅥 𝅘𝅥 𝅘𝅥𝅮 𝅘𝅥𝅯 𝅘𝅥𝅰 𝄻 𝄼 𝄽 𝄾 𝄿 𝅀")
