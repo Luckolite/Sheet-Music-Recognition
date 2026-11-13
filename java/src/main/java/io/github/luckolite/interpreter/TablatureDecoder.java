@@ -3,10 +3,12 @@
 package io.github.luckolite.interpreter;
 
 import java.util.*;
+import java.util.regex.Pattern;
 
 /** Six- and seven-string numeric tablature. Frets are absolute semitone offsets, never key-signature steps. */
 public final class TablatureDecoder {
     private static final int[] ROW_THRESHOLDS = {180, 200, 220, 235, 245, 248};
+    private static final Pattern PLAIN_FRET = Pattern.compile("[0-9]{1,2}|[xX]");
     public record Fret(
             float x,
             float y,
@@ -368,12 +370,15 @@ public final class TablatureDecoder {
         for (Staff staff : staffs) {
             var frets = new ArrayList<Fret>();
             float normalHeight = 0;
-            for (var word : words)
-                if (word.text.matches("[0-9]{1,2}|[xX]")
-                        && (word.top + word.bottom) * .5f * h >= staff.top - staff.gap * .4f
-                        && (word.top + word.bottom) * .5f * h <= staff.bottom() + staff.gap * .4f
-                        && (word.bottom - word.top) * h < staff.gap * 1.1f)
-                    normalHeight = Math.max(normalHeight, (word.bottom - word.top) * h);
+            float firstFretRow = staff.top - staff.gap * .4f;
+            float lastFretRow = staff.bottom() + staff.gap * .4f;
+            for (var word : words) {
+                float center = (word.top + word.bottom) * .5f * h;
+                float height = (word.bottom - word.top) * h;
+                if (center >= firstFretRow && center <= lastFretRow
+                        && height < staff.gap * 1.1f && PLAIN_FRET.matcher(word.text).matches())
+                    normalHeight = Math.max(normalHeight, height);
+            }
             for (Word word : words) {
                 float y = (word.top + word.bottom) * .5f * h;
                 int string = Math.round((y - staff.top) / staff.gap);
@@ -437,10 +442,12 @@ public final class TablatureDecoder {
         tabs = confirmedForNotationSuppression(tabs);
         if (tabs.isEmpty()) return pixels;
         byte[] result = pixels.clone();
-        for (Staff tab : tabs)
-            for (int y = Math.max(0, Math.round(tab.top - tab.gap * .65f));
-                    y <= Math.min(h - 1, Math.round(tab.bottom() + tab.gap * .65f));
-                    y++) Arrays.fill(result, y * w, (y + 1) * w, (byte) (grayscale ? 255 : 0));
+        for (Staff tab : tabs) {
+            int first = Math.max(0, Math.round(tab.top - tab.gap * .65f));
+            int last = Math.min(h - 1, Math.round(tab.bottom() + tab.gap * .65f));
+            if (first <= last)
+                Arrays.fill(result, first * w, (last + 1) * w, (byte) (grayscale ? 255 : 0));
+        }
         return result;
     }
 
