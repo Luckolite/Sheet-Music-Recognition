@@ -676,12 +676,13 @@ public final class ScoreNoteTiming {
                 onset += group.writtenDuration() + followingRest(group);
             }
         }
-        double[] dottedTriplets = implicitDottedTripletDurations(groups, safeBeats);
-        if (dottedTriplets != null) {
+        double[] exactDotted = implicitDottedTripletDurations(groups, safeBeats);
+        if (exactDotted == null) exactDotted = repeatedDottedSixteenths(groups, safeBeats);
+        if (exactDotted != null) {
             double onset = 0;
             for (int i = 0; i < groups.size(); i++) {
                 if (groups.get(i).contains(target)) return onset;
-                onset += dottedTriplets[i];
+                onset += exactDotted[i];
             }
         }
         double[] durations = stabilizedDurations(groups, safeBeats);
@@ -1011,6 +1012,13 @@ public final class ScoreNoteTiming {
         }
         // A hollow notehead may share an onset/staff with a faster independent voice.
         // Group rhythm repairs describe the attack clock, not that note's sounding length.
+        if (target != null && notes != null && Float.isFinite(beatsPerMeasure)) {
+            var groups = rhythmGroups(measureVoice(target, notes));
+            double[] dotted = repeatedDottedSixteenths(groups, beatsPerMeasure);
+            if (dotted != null)
+                for (int i = 0; i < groups.size(); i++)
+                    if (groups.get(i).contains(target)) return dotted[i];
+        }
         if (hasIndependentDuration(target, notes)) return advanceDurationBeats(target);
         if (target == null || notes == null || notes.isEmpty()) return advanceDurationBeats(target);
         List<ScoreNoteEvent> phrase = crossStaffPhrase(target, notes, beatsPerMeasure);
@@ -1660,6 +1668,45 @@ public final class ScoreNoteTiming {
         if (smallestGap <= 0 || largestGap > smallestGap * 2.4f) return null;
         double[] durations = new double[count];
         for (int i = 0; i < count; i++) durations[i] = groups.get(i).writtenDuration() * 2 / 3;
+        return durations;
+    }
+
+    /**
+     * Repeated dotted sixteenths and thirty-seconds provide an exact binary clock.
+     * Require a full bar and independent witnesses for both subdivisions. Incomplete
+     * beam/dot reads may support the attack clock without changing the decoded glyphs.
+     */
+    private static double[] repeatedDottedSixteenths(List<RhythmGroup> groups, double beats) {
+        int count = groups.size();
+        if (count < 12
+                || count % 2 != 0
+                || count != beats * 4
+                || groups.get(0).position > .18f
+                || groups.get(count - 1).position < .8f) return null;
+        int stem = groups.get(0).notes.get(0).stemDirection();
+        if (stem == 0) return null;
+        int dotted = 0, shortNotes = 0;
+        for (int i = 0; i < count; i++) {
+            RhythmGroup group = groups.get(i);
+            boolean longSlot = i % 2 == 0;
+            for (ScoreNoteEvent note : group.notes) {
+                if (note.stemDirection() != stem
+                        || note.crossStaffBeam()
+                        || note.tupletDivisor() != 1
+                        || note.leadingRestBeats() > 0
+                        || note.followingRestBeats() > 0
+                        || note.tiedFromPrevious()
+                        || grace(note)
+                        || note.beamCount() > (longSlot ? 2 : 3)
+                        || note.augmentationDots() > (longSlot ? 1 : 0)
+                        || note.unbeamedDurationBeats() > 1) return null;
+            }
+            if (longSlot && group.beamCount() == 2 && group.augmentationDots() == 1) dotted++;
+            if (!longSlot && group.beamCount() == 3) shortNotes++;
+        }
+        if (dotted * 8 < count * 3 || shortNotes < 3 || shortNotes * 6 < count) return null;
+        double[] durations = new double[count];
+        for (int i = 0; i < count; i++) durations[i] = i % 2 == 0 ? .375 : .125;
         return durations;
     }
 

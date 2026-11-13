@@ -73,6 +73,31 @@ public class ImplicitTripletTimingTest {
     }
 
     @Test
+    public void repeatedDottedSixteenthsHoldTheirClockThroughIncompleteReads() {
+        var notes = new ArrayList<ScoreNoteEvent>();
+        for (int i = 0; i < 16; i++) {
+            int beams = i % 2 == 0 || i > 5 ? 2 : 3;
+            int dots = i % 2 == 0 && i != 4 ? 1 : 0;
+            notes.add(
+                    new ScoreNoteEvent(
+                                    1, .04f + i * .06f, 3, 0, 1, .5f, false,
+                                    dots, beams, ScoreNoteEvent.ACCIDENTAL_FROM_KEY, 0, 1)
+                            .withStemDirection(-1));
+        }
+        for (int i = 0; i < notes.size(); i++) {
+            var note = notes.get(i);
+            assertEquals(
+                    (i / 2) * .5 + (i % 2 == 0 ? 0 : .375),
+                    ScoreNoteTiming.beatInMeasure(note, notes, 4), .0001);
+            assertEquals(
+                    i % 2 == 0 ? .375 : .125,
+                    ScoreNoteTiming.resolvedWrittenDurationBeats(note, notes, 4), .0001);
+        }
+        assertNotEquals(
+                .125, ScoreNoteTiming.resolvedWrittenDurationBeats(notes.get(15), notes, 6), .0001);
+    }
+
+    @Test
     public void twentyFourSixteenthsFillFourBeats() {
         var notes = run(24, 2);
         assertEquals(
