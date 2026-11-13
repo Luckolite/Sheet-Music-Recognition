@@ -59,6 +59,23 @@ public class ScoreNavigationPerformanceTest {
     }
 
     @Test
+    public void repeatAtTempoBoundaryUsesNewTempoAndKeepsFinalTempoInTail() {
+        var source =
+                new ScorePerformanceTimeline(
+                        120,
+                        List.of(new TempoSegment(0, 4, 120, 120), new TempoSegment(4, 8, 90, 60)),
+                        List.of());
+        var result = ScoreNavigationPerformance.project(source, repeat(3, 1, 2), meter);
+        assertEquals(
+                List.of(
+                        new TempoSegment(0, 4, 120, 120),
+                        new TempoSegment(4, 8, 90, 60),
+                        new TempoSegment(8, 12, 90, 60),
+                        new TempoSegment(12, 16, 60, 60)),
+                result.timeline().tempoSegments());
+    }
+
+    @Test
     public void partialFineClipsCurveWithoutRoundingToWholeBar() {
         var fine =
                 new ScorePlaybackDirection(

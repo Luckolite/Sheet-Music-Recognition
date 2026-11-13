@@ -235,13 +235,13 @@ public final class ScoreNavigationPerformance {
             double outputStart,
             double outputEnd,
             List<TempoSegment> output) {
-        double cursor = from, current = source.openingBpm(), written = outputStart;
-        for (var segment : source.tempoSegments()) {
-            if (segment.endBeat() <= cursor) {
-                current = segment.endBpm();
-                continue;
-            }
+        var segments = source.tempoSegments();
+        int first = firstSegmentEndingAfter(segments, from);
+        double cursor = from, written = outputStart;
+        double current = first == 0 ? source.openingBpm() : segments.get(first - 1).endBpm();
+        for (int index = first; index < segments.size(); index++) {
             if (cursor >= to) break;
+            var segment = segments.get(index);
             double end = Math.min(to, segment.endBeat());
             double fraction =
                     (cursor - segment.startBeat()) / (segment.endBeat() - segment.startBeat());
@@ -256,5 +256,15 @@ public final class ScoreNavigationPerformance {
             current = b;
         }
         if (cursor < to) output.add(new TempoSegment(written, outputEnd, current, current));
+    }
+
+    private static int firstSegmentEndingAfter(List<TempoSegment> segments, double beat) {
+        int low = 0, high = segments.size();
+        while (low < high) {
+            int middle = low + ((high - low) >>> 1);
+            if (segments.get(middle).endBeat() <= beat) low = middle + 1;
+            else high = middle;
+        }
+        return low;
     }
 }
