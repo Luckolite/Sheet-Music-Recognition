@@ -8,7 +8,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-/** Converts HOMR's staff/notehead mask into a deliberately transparent diagnostic melody. */
+/** Converts the staff and notehead mask into a diagnostic melody. */
 final class OmrScoreInterpreter {
     /** Two staves in one grand staff are close; consecutive compact violin systems are not. */
     private static final float MAX_STAFFS_IN_SYSTEM_SEPARATION_GAPS = 6.75f;
@@ -1029,7 +1029,7 @@ final class OmrScoreInterpreter {
         shortTies.addAll(stemmedSlurHeads(gray, width, height, heads, staffs));
         heads.removeAll(shortTies);
         rejectedSlurHeads.addAll(shortTies);
-        // A bright paper halo can enlarge a printed augmentation dot enough for HOMR to label it
+        // A bright paper halo can enlarge a printed augmentation dot enough for the model to label it
         // as a second plausible notehead. Demote only small, stemless components immediately to
         // the right of a substantially larger head; grace notes retain their attached stem.
         List<AccidentalCandidate> accidentalCandidates = new ArrayList<>();
@@ -9835,7 +9835,7 @@ final class OmrScoreInterpreter {
     }
 
     /**
-     * HOMR occasionally joins the two vertically aligned ovals of a printed dyad into one NOTEHEAD
+     * The mask can join the two vertically aligned ovals of a printed dyad into one NOTEHEAD
      * component. Split only an abnormally tall component with two strong ink lobes and a real
      * valley between them; ordinary single heads, dots, and solid artifacts stay intact.
      */
@@ -25411,7 +25411,7 @@ final class OmrScoreInterpreter {
         // topology. Short dark corners left where one thick beam crosses a semantic staff row
         // otherwise look like an extra beam after that staff row is suppressed.
         int minimumHorizontal = Math.max(4, (int) Math.ceil(gap * .85f));
-        // HOMR often leaves a narrow background seam where a beam meets its stem. Allow that
+        // The mask can leave a narrow background seam where a beam meets its stem. Allow that
         // local seam, but stay well below the roughly 3-4 staff-gap distance to the next stem.
         int stemTolerance = Math.max(2, Math.round(gap * 1.10f));
         int allowedRunGap = Math.max(1, Math.round(gap * .22f));

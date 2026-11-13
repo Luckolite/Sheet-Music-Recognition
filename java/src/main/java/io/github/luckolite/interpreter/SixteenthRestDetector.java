@@ -6,7 +6,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Reads the two left-facing bulbs and descending diagonal tail from raw score ink. HOMR often
+ * Reads the two left-facing bulbs and descending diagonal tail from raw score ink. The model often
  * labels this entire glyph as background, so semantic symbol components cannot seed it.
  */
 final class SixteenthRestDetector {

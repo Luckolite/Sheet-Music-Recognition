@@ -34,7 +34,7 @@ The runtime dependencies are installed separately. Their source and bundled bina
 components can have additional notices and conditions. See [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md)
 before redistributing a complete runtime environment.
 
-This repository does not contain HOMR, Andromr or oemer weights or code. Those projects'
+This repository does not contain Andromr or oemer weights or code. Those projects'
 licenses and their authors' rights remain unchanged. It does not grant rights in the
 music scores a user supplies, or permission to redistribute someone else's score.
 

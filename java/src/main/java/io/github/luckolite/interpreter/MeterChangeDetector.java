@@ -547,7 +547,7 @@ public final class MeterChangeDetector {
                             }
                         }
                     }
-                // HOMR commonly leaves signature digits as background/rest and occasionally
+                // The segmentation mask can leave signature digits as background/rest and sometimes
                 // labels a tiny part of an "8" as a head. Use raw stacked-glyph evidence; the
                 // full-sized semantic head veto still excludes actual notes/chords.
                 // A bottom 8 may be labelled as one or two noteheads while the
