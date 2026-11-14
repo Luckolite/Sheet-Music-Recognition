@@ -4,6 +4,7 @@ package io.github.luckolite.interpreter;
 
 import java.awt.image.BufferedImage;
 import java.util.*;
+import java.util.function.Supplier;
 
 /** Desktop equivalent of the app's asset-backed dynamic glyph comparison. */
 final class NativeDynamicGlyphs {
@@ -90,23 +91,19 @@ final class NativeDynamicGlyphs {
                                 height,
                                 staffs,
                                 candidate -> {
-                                    var proof =
-                                            match(
-                                                    gray,
-                                                    width,
-                                                    Math.round(candidate.left() * width),
-                                                    Math.round(candidate.top() * height),
-                                                    Math.round(candidate.right() * width),
-                                                    Math.round(candidate.bottom() * height));
+                                    int left = Math.round(candidate.left() * width);
+                                    int top = Math.round(candidate.top() * height);
+                                    int right = Math.round(candidate.right() * width);
+                                    int bottom = Math.round(candidate.bottom() * height);
                                     if (CompoundDynamicEvidence.literal(candidate)) {
-                                        var fp = match(
-                                                gray, width,
-                                                Math.round(candidate.left() * width),
-                                                Math.round(candidate.top() * height),
-                                                Math.round(candidate.right() * width),
-                                                Math.round(candidate.bottom() * height), fpTemplates);
-                                        return fp.score() >= .55f && fp.score() - proof.score() >= .08f;
+                                        float aspect = (right - left) / (float) (bottom - top);
+                                        float[] crop = mask(gray, width, left, top, right, bottom);
+                                        var fp = match(aspect, fpTemplates, () -> crop);
+                                        if (fp.score() < .55f) return false;
+                                        var proof = match(aspect, templates, () -> crop);
+                                        return fp.score() - proof.score() >= .08f;
                                     }
+                                    var proof = match(gray, width, left, top, right, bottom);
                                     return proof.accepted()
                                             && proof.text()
                                                     .equals(
@@ -141,25 +138,26 @@ final class NativeDynamicGlyphs {
             Match match = match(gray, width, left, top, right, bottom);
             if (TRACE && match.score() >= .25f)
                 System.err.println("dynamic glyph=" + box + " match=" + match);
+            boolean accepted = match.accepted();
             boolean corroborated =
-                    cleanedWords.stream()
+                    !accepted && cleanedWords.stream()
                             .anyMatch(
                                     word ->
-                                            DynamicGlyphEvidence.corroborated(
-                                                            match.text(),
-                                                            match.score(),
-                                                            match.margin(),
-                                                            ScoreDynamicsDetector.glyphLevelText(
-                                                                    word.text()))
-                                                    && word.left() <= box.left()
+                                            word.left() <= box.left()
                                                     && word.right() >= box.right()
                                                     && word.top() <= box.top()
                                                     && word.bottom() >= box.bottom()
                                                     && word.bottom() - word.top()
                                                             < 1.8f * (box.bottom() - box.top())
                                                     && word.right() - word.left()
-                                                            < 1.8f * (box.right() - box.left()));
-            if (!match.accepted() && !corroborated) continue;
+                                                            < 1.8f * (box.right() - box.left())
+                                                    && DynamicGlyphEvidence.corroborated(
+                                                            match.text(),
+                                                            match.score(),
+                                                            match.margin(),
+                                                            ScoreDynamicsDetector.glyphLevelText(
+                                                                    word.text())));
+            if (!accepted && !corroborated) continue;
             boolean clipped =
                     cleanedWords.stream()
                             .anyMatch(
@@ -176,7 +174,7 @@ final class NativeDynamicGlyphs {
                                                             word.right()));
             if (clipped) continue;
             var recognized = ScoreDynamicsDetector.recognizedWord(match.text(), box, result);
-            if (match.accepted()) compounds.accepted(match.text(), box, recognized);
+            if (accepted) compounds.accepted(match.text(), box, recognized);
             result.removeIf(
                     word ->
                             word.left() < box.right()
@@ -226,16 +224,22 @@ final class NativeDynamicGlyphs {
             byte[] gray, int width, int left, int top, int right, int bottom,
             List<Template> choices) {
         float aspect = (right - left) / (float) (bottom - top);
-        float[] candidate = mask(gray, width, left, top, right, bottom);
+        return match(aspect, choices, () -> mask(gray, width, left, top, right, bottom));
+    }
+
+    private static Match match(float aspect, List<Template> choices, Supplier<float[]> crop) {
+        float[] candidate = null;
         String text = "";
         float best = 0, second = 0;
         for (var template : choices) {
             double ratio = Math.abs(Math.log(aspect / template.aspect()));
             if (ratio > .4) continue;
+            if (candidate == null) candidate = crop.get();
+            float[] exemplar = template.mask();
             float intersection = 0, total = 0;
             for (int i = 0; i < candidate.length; i++) {
-                intersection += Math.min(candidate[i], template.mask()[i]);
-                total += Math.max(candidate[i], template.mask()[i]);
+                intersection += Math.min(candidate[i], exemplar[i]);
+                total += Math.max(candidate[i], exemplar[i]);
             }
             float score = intersection / Math.max(.001f, total) - (float) ratio * .25f;
             if (score > best) {
@@ -249,32 +253,50 @@ final class NativeDynamicGlyphs {
 
     private static float[] mask(BufferedImage image) {
         int w = image.getWidth(), h = image.getHeight();
+        int[] row = new int[w];
         byte[] gray = new byte[w * h];
-        for (int y = 0; y < h; y++)
-            for (int x = 0; x < w; x++)
-                gray[y * w + x] = (byte) ((image.getRGB(x, y) >>> 16) & 255);
+        for (int y = 0, dest = 0; y < h; y++, dest += w) {
+            image.getRGB(0, y, w, 1, row, 0, w);
+            for (int x = 0; x < w; x++) gray[dest + x] = (byte) (row[x] >>> 16);
+        }
         return mask(gray, w, 0, 0, w, h);
     }
 
     private static float[] mask(byte[] gray, int width, int left, int top, int right, int bottom) {
         float[] result = new float[W * H];
+        int[] histogram = new int[256];
+        int[] columns = new int[W];
+        int[] nextColumns = new int[W];
+        float[] fractions = new float[W];
         float sourceWidth = right - left, sourceHeight = bottom - top;
-        for (int y = 0; y < H; y++)
+        for (int x = 0; x < W; x++) {
+            float sx = left + (x + .5f) * sourceWidth / W - .5f;
+            int x0 = Math.max(left, Math.min(right - 1, (int) Math.floor(sx)));
+            columns[x] = x0;
+            nextColumns[x] = Math.min(right - 1, x0 + 1);
+            fractions[x] = Math.max(0, Math.min(1, sx - x0));
+        }
+        for (int y = 0; y < H; y++) {
+            float sy = top + (y + .5f) * sourceHeight / H - .5f;
+            int y0 = Math.max(top, Math.min(bottom - 1, (int) Math.floor(sy)));
+            int y1 = Math.min(bottom - 1, y0 + 1);
+            float fy = Math.max(0, Math.min(1, sy - y0));
+            float upperWeight = 1 - fy;
+            int upper = y0 * width, lower = y1 * width, dest = y * W;
             for (int x = 0; x < W; x++) {
-                float sx = left + (x + .5f) * sourceWidth / W - .5f;
-                float sy = top + (y + .5f) * sourceHeight / H - .5f;
-                int x0 = Math.max(left, Math.min(right - 1, (int) Math.floor(sx)));
-                int y0 = Math.max(top, Math.min(bottom - 1, (int) Math.floor(sy)));
-                int x1 = Math.min(right - 1, x0 + 1), y1 = Math.min(bottom - 1, y0 + 1);
-                float fx = Math.max(0, Math.min(1, sx - x0)),
-                        fy = Math.max(0, Math.min(1, sy - y0));
+                int x0 = columns[x], x1 = nextColumns[x];
+                float fx = fractions[x];
+                float leftWeight = 1 - fx;
                 float value =
-                        (gray[y0 * width + x0] & 255) * (1 - fx) * (1 - fy)
-                                + (gray[y0 * width + x1] & 255) * fx * (1 - fy)
-                                + (gray[y1 * width + x0] & 255) * (1 - fx) * fy
-                                + (gray[y1 * width + x1] & 255) * fx * fy;
-                result[y * W + x] = value;
+                        (gray[upper + x0] & 255) * leftWeight * upperWeight
+                                + (gray[upper + x1] & 255) * fx * upperWeight
+                                + (gray[lower + x0] & 255) * leftWeight * fy
+                                + (gray[lower + x1] & 255) * fx * fy;
+                result[dest + x] = value;
+                histogram[Math.max(0, Math.min(255, Math.round(value)))]++;
             }
-        return GlyphInkContrast.mask(result);
+        }
+        GlyphInkContrast.maskInPlace(result, histogram);
+        return result;
     }
 }
