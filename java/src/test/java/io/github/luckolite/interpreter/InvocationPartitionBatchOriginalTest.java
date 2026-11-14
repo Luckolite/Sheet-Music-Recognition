@@ -178,6 +178,12 @@ public final class InvocationPartitionBatchOriginalTest {
         assertNotNull(batch);
         assertEquals(n, batch.rows().size());
         assertTrue(batch.rows().stream().allMatch(r -> r.partition() != null));
+
+        // Charge reauthentication twice, but the full head roster traversal only once.
+        var tight = new ExactComponentMembers.Budget(30_000, 4_000_000);
+        var indexed = c.producerPartitions(ids, tight);
+        assertNotNull(indexed);
+        assertTrue(indexed.rows().stream().allMatch(row -> row.partition() != null));
     }
 
     @Test

@@ -268,6 +268,7 @@ final class ExactComponentMembers {
             var requested = new ArrayList<Object>(identities);
             var counts = new IdentityHashMap<Object, Integer>();
             for (Object identity : requested) counts.merge(identity, 1, Integer::sum);
+            var leavesByParent = indexRequestedLeaves(requested, counts, budget);
             var rows = new ArrayList<PartitionRow>();
             for (int i = 0; i < requested.size(); i++) {
                 Object identity = requested.get(i);
@@ -276,7 +277,12 @@ final class ExactComponentMembers {
                 if (identity != null) {
                     if (counts.get(identity) != 1) status = "UNKNOWN_DUPLICATE_IDENTITY";
                     else {
-                        partition = partitionAfterAuthentication(identity, budget);
+                        var selected = records.get(identity);
+                        if (selected != null) {
+                            var parent = selected.parent == null ? selected : selected.parent;
+                            var leaves = leavesByParent.get(parent);
+                            if (leaves != null) partition = partition(selected, parent, leaves, budget);
+                        }
                         status =
                                 partition == null
                                         ? "UNKNOWN_UNBOUND_OR_BUDGET"
@@ -289,6 +295,35 @@ final class ExactComponentMembers {
             return new ProducerPartitionBatch(this, rows);
         }
 
+        /** One bounded scan identifies exact descendants for all requested parents. */
+        private Map<Original, List<Original>> indexRequestedLeaves(
+                List<?> requested, Map<Object, Integer> counts, Budget budget) {
+            var leavesByParent = new IdentityHashMap<Original, List<Original>>();
+            if (!budget.take(65L * records.size(), 64)) return leavesByParent;
+            for (Object identity : requested) {
+                Original selected = records.get(identity);
+                if (selected == null || counts.get(identity) != 1) continue;
+                var parent = selected.parent == null ? selected : selected.parent;
+                if (!leavesByParent.containsKey(parent)) {
+                    if (!budget.take(0, 128)) return Map.of();
+                    leavesByParent.put(parent, new ArrayList<>());
+                }
+            }
+            if (leavesByParent.isEmpty()) return leavesByParent;
+            for (Original leaf : records.values()) {
+                Original ancestor = leaf;
+                for (int depth = 0; depth <= 64 && ancestor != null;
+                        depth++, ancestor = ancestor.parent) {
+                    var leaves = leavesByParent.get(ancestor);
+                    if (leaves == null) continue;
+                    if (!budget.take(0, 16)) return Map.of();
+                    leaves.add(leaf);
+                }
+                if (ancestor != null) return Map.of();
+            }
+            return leavesByParent;
+        }
+
         private ProducerPartition partitionAfterAuthentication(
                 Object selectedIdentity, Budget budget) {
             if (!valid || !sealed || budget == null) return null;
@@ -296,20 +331,25 @@ final class ExactComponentMembers {
             if (selected == null) return null;
             Original parent = selected.parent == null ? selected : selected.parent;
             int n = parent.stats.area;
-            if (n > 1_000_000
-                    || !budget.take(65L * records.size() + n, 16L * records.size() + 4L * n + 64))
+            if (n > 1_000_000 || !budget.take(65L * records.size(), 16L * records.size() + 64))
                 return null;
             var leaves = new ArrayList<Original>();
-            long count = 0;
             for (Original candidate : records.values()) {
                 Original cursor = candidate;
                 int depth = 0;
                 while (cursor != null && cursor != parent && depth++ < 64) cursor = cursor.parent;
-                if (cursor == parent) {
-                    leaves.add(candidate);
-                    count += candidate.stats.area;
-                } else if (cursor != null) return null;
+                if (cursor == parent) leaves.add(candidate);
+                else if (cursor != null) return null;
             }
+            return partition(selected, parent, leaves, budget);
+        }
+
+        private ProducerPartition partition(
+                Original selected, Original parent, List<Original> leaves, Budget budget) {
+            int n = parent.stats.area;
+            if (n > 1_000_000 || !budget.take(n, 4L * n)) return null;
+            long count = 0;
+            for (Original leaf : leaves) count += leaf.stats.area;
             if (count > n || leaves.isEmpty()) return null;
             int log = 64 - Long.numberOfLeadingZeros(Math.max(1, n));
             if (!budget.take(4L * n + 2L * n * log, 40L * n + 256L * leaves.size())) return null;
@@ -340,7 +380,7 @@ final class ExactComponentMembers {
             for (int pixel : expected) parentVector.add(pixel);
             return new ProducerPartition(
                     this,
-                    selectedIdentity,
+                    selected.identity,
                     parent.identity,
                     parent.stats,
                     List.copyOf(parentVector),

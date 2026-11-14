@@ -80,10 +80,10 @@ public class IsolatedBeamProbeTest {
         assertEquals(true, proof.invoke(null, args));
 
         Object fragment = constructor.newInstance(100, 97, 110, 96, 104, 105f, 99f);
-        var classify = decoder.getDeclaredMethod("ownedSlopedBeamFragments", byte[].class,
+        var classify = decoder.getDeclaredMethod("ownedSlopedBeamFragments", byte[].class, byte[].class,
                 int.class, int.class, java.util.List.class, java.util.List.class);
         classify.setAccessible(true);
-        Object[] candidates = {gray, width, height, java.util.List.of(left, right, fragment),
+        Object[] candidates = {new byte[width * height], gray, width, height, java.util.List.of(left, right, fragment),
                 java.util.List.of(args[4])};
         assertEquals(java.util.List.of(fragment), classify.invoke(null, candidates));
 

@@ -16,10 +16,12 @@ import xml.etree.ElementTree as ET
 from .typed_events import event_kind, validate_unpitched, notation_order, display_position
 from .rest_kinds import rest_kind, full_measure_span
 from . import visual_size, cue_caption, bow_export, clef_export, articulation_export, ornament_export, grace_export, spelling_export, tremolo_export
-from . import guitar_export
+from . import guitar_export, fingering_export
 from .natural_harmonic_notation import owner_index as natural_harmonic_owner_index
 from .fall_off_notation import owner_index as fall_off_owner_index
 from . import parenthesized_note_group
+from . import beam_export
+from .beam_source import checked as checked_beams
 
 DIVISIONS = 10080  # Exact common binary values and triplet/quintuplet/septuplet subdivisions.
 
@@ -295,6 +297,11 @@ def emit_note(measure, duration, voice, event=None, chord=False, stop=False, sta
         node.find('type').set('size', 'grace-cue' if grace is not None else 'cue')
     if grace is not None and node.find('type') is None:
         raise ValueError('Grace note has no exact written type')
+    if event and attack_fragment and event.get('retainedAccidental') is not None:
+        mark = ET.Element('accidental')
+        mark.text = event['retainedAccidental']
+        modification = node.find('time-modification')
+        node.insert(list(node).index(modification) if modification is not None else len(node), mark)
     if event and (event.get('retainedTremolo') or {}).get('printedFilled'):
         if event['retainedTremolo'].get('printedStem') in (-1, 1):
             element(node, 'stem', 'down' if event['retainedTremolo']['printedStem'] < 0 else 'up')
@@ -313,7 +320,8 @@ def emit_note(measure, duration, voice, event=None, chord=False, stop=False, sta
     parenthesis_right = (event.get('retainedParenthesisStop')
                          if event and event.get('retainedParenthesisStop') and grace is None
                          and fragment_end == event['end'] else None)
-    if stop or start or effect or symbols or gliss_start or gliss_stop or slide_start or slide_stop or articulation_flags or ornament_flags or paired or arpeggio or natural_harmonic or fall_off or parenthesis_left or parenthesis_right or bow_direction is not None:
+    fingering = event.get('retainedFingering') if event and attack_fragment and grace is None else None
+    if stop or start or effect or symbols or gliss_start or gliss_stop or slide_start or slide_stop or articulation_flags or ornament_flags or paired or arpeggio or natural_harmonic or fall_off or parenthesis_left or parenthesis_right or bow_direction is not None or fingering is not None:
         notation = element(node, 'notations')
         if arpeggio:
             element(notation, 'arpeggiate')
@@ -356,6 +364,8 @@ def emit_note(measure, duration, voice, event=None, chord=False, stop=False, sta
             articulation_export.write(notation, articulation_flags)
         if bow_direction is not None:
             bow_export.write(notation, bow_direction)
+        if fingering is not None:
+            fingering_export.write(notation, fingering)
         if ornament_flags:
             ornament_export.write(notation, ornament_flags)
         for symbol in symbols:
@@ -380,6 +390,44 @@ def emit_rest_gap(measure, start, end, voice, symbols, literal_edges=()):
         for duration in duration_parts(b-a):
             cursor += duration
             emit_note(measure, duration, voice, fragment_end=cursor, rest_symbols=symbols)
+
+
+def _join_printed_measures(bars, continuations, full_rests, rest_groups):
+    """Project verified system fragments after resolving their physical source anchors."""
+    full = {rest['barIndex'] for rest in full_rests}
+    for group in rest_groups:
+        full.update(range(group['firstBar'], group['firstBar'] + group['measureCount']))
+    projected, physical_to_output = [], []
+    for i, bar in enumerate(bars):
+        if i not in continuations:
+            projected.append(bar)
+        else:
+            first = projected[-1]
+            if (i - 1 in full or i in full or bar['resetTempo']
+                    or first['meter'] != bar['meter'] or first['key'] != bar['key']):
+                raise ValueError('MusicXML system continuation changes the written measure context')
+            length = first['length'] + bar['length']
+            if length > ticks(first['meter'][0] * 4 / first['meter'][1]):
+                raise ValueError('MusicXML system continuation exceeds the written meter')
+
+            def tempo_at(tempo, physical):
+                if '_writtenBarOffset' in tempo:
+                    return tempo
+                source_onset = tempo['_sourceTempoOnset']
+                onset = (ticks(source_onset) if source_onset is not None
+                         else round(physical['length'] * tempo['positionInMeasure']))
+                return dict(tempo, _writtenBarOffset=physical['start'] - first['start'] + onset)
+
+            projected[-1] = dict(first, length=length, rightBarline=bar.get('rightBarline'), tempos=[
+                *(tempo_at(tempo, first) for tempo in first['tempos']),
+                *(tempo_at(tempo, bar) for tempo in bar['tempos']),
+            ])
+        physical_to_output.append(len(projected) - 1)
+    for rest in full_rests:
+        rest['barIndex'] = physical_to_output[rest['barIndex']]
+    for group in rest_groups:
+        group['firstBar'] = physical_to_output[group['firstBar']]
+    return projected, physical_to_output
 
 
 def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
@@ -429,6 +477,8 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
     parenthesis_level_ends = [float("-inf")] * 17
     printed_rest_groups = []
     printed_triplets = []
+    printed_beams = []
+    continuations = set()
     octave_owned = {}
     offset = 0
     current_meter, current_key = meter, key_fifths
@@ -436,6 +486,18 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
         score = page['score']
         local_start = 0
         first_bar = len(bars)
+        continuation_rows = page.get('printedMeasureContinuations', [])
+        if not isinstance(continuation_rows, list) or any(
+                type(i) is not int or not 1 <= i < len(page['measureBeats'])
+                for i in continuation_rows) or len(set(continuation_rows)) != len(continuation_rows):
+            raise ValueError('Invalid MusicXML system continuation index')
+        if continuation_rows:
+            regions = score.get('measures', [])
+            if (len(regions) != len(page['measureBeats'])
+                    or any(not 0 <= regions[i-1].get('bottom', -1)
+                           < regions[i].get('top', -1) <= 1 for i in continuation_rows)):
+                raise ValueError('MusicXML system continuation requires successive systems')
+            continuations.update(first_bar + i for i in continuation_rows)
         from . import multi_rest_wire
         for group in multi_rest_wire.checked_score(score):
             printed_rest_groups.append(dict(group, firstBar=first_bar+group['firstMeasureIndex']))
@@ -445,6 +507,18 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
         tempos_by_measure = defaultdict(list)
         for change in score.get('tempoChanges', []):
             tempos_by_measure[change['measureIndex']].append(change)
+        barline_rows = page.get('printedBarlineStyles', [])
+        barline_styles = {}
+        if not isinstance(barline_rows, list):
+            raise ValueError('Invalid MusicXML printed barline styles')
+        for row in barline_rows:
+            if (not isinstance(row, dict) or type(row.get('measureIndex')) is not int
+                    or not 0 <= row['measureIndex'] < len(page['measureBeats'])
+                    or row['measureIndex'] in barline_styles
+                    or row.get('style') not in ('light-light', 'light-heavy')
+                    or row['measureIndex'] + 1 in continuation_rows):
+                raise ValueError('Invalid MusicXML printed barline style ownership')
+            barline_styles[row['measureIndex']] = row['style']
         # Source anchors use the unrounded beat clock, separate from bar lengths in ticks.
         measure_starts = list(accumulate(page['measureBeats'], initial=0))
         for index, beats in enumerate(page['measureBeats']):
@@ -460,6 +534,8 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
                        resetTempo=index == 0 and page_index in tempo_restarts,
                        tempos=[dict(c, _sourceTempoOnset=source_tempo_clock.onset(page, c))
                                for c in tempos_by_measure.get(index, ())])
+            if index in barline_styles:
+                bar['rightBarline'] = barline_styles[index]
             bars.append(bar)
             local_start += length
         for row in score.get('rests', []):
@@ -490,46 +566,30 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
         source_notes = score.get('notes', [])
         beam = score.get('beamSource')
         if beam:
-            from .beam_source import checked
-            source = checked(beam, len(source_notes))
-            owners = defaultdict(list)
-            for index, origin in enumerate(source['noteOrigins']):
-                if origin is not None:
-                    owners[origin['pageIndex'], origin['noteIndex']].append(index)
-            emitted_sources = defaultdict(list)
-            for index, event in enumerate(page['events']):
-                owner = event.get('sourceNoteIndex')
-                if type(owner) is int:
-                    emitted_sources[owner].append(index)
-            for group in source['groups']:
-                if len(group['columns']) != 3 or group['bridges'] != [1, 1]:
+            groups = beam_export.bind(checked_beams(beam, len(source_notes)), page['events'])
+            first_event = len(events)
+            for identities, bridges, hooks in groups:
+                columns = [tuple(first_event + index for index in col) for col in identities]
+                printed_beams.append((columns, bridges, hooks))
+                if len(columns) != 3 or bridges != [1, 1] or not all(columns):
                     continue
-                columns = []
                 levels = []
-                for col in group['columns']:
-                    members = []
-                    beams = set()
-                    for anchor in col['members']:
-                        kept = owners[anchor['pageIndex'], anchor['noteIndex']]
-                        if len(kept) != 1 or len(emitted_sources[kept[0]]) != 1:
-                            break
-                        owner = kept[0]
-                        index = emitted_sources[owner][0]
-                        n = source_notes[owner]
-                        if (n.get('tupletDivisor') != 3 or n.get('tupletNormalNotes') != 2
-                                or n.get('augmentationDots') != 0):
-                            break
-                        beams.add(n.get('beamCount'))
-                        members.append(len(events) + index)
-                    if len(members) != len(col['members']) or len(beams) != 1:
+                for col in identities:
+                    members = [source_notes[page['events'][index]['sourceNoteIndex']] for index in col]
+                    if any(n.get('tupletDivisor') != 3 or n.get('tupletNormalNotes') != 2
+                           or n.get('augmentationDots') != 0 for n in members):
                         break
-                    columns.append(tuple(members))
+                    beams = {n.get('beamCount') for n in members}
+                    if len(beams) != 1:
+                        break
                     levels.append(beams.pop())
                 if levels in ([1, 2, 1], [1, 1, 1]):
                     printed_triplets.append((columns, levels, first_bar, len(page['measureBeats'])))
         first_event = len(events)
         written = grace_export.plan(page, ticks)
         paired_tremolos = tremolo_export.retained(page)
+        printed_accidentals = spelling_export.printed_accidentals(page)
+        printed_fingerings = fingering_export.retained(page)
         for note_index, n in enumerate(page['events']):
             if event_kind(n) == 'PITCHED' and (not isinstance(n['midi'], int) or not 0 <= n['midi'] <= 127):
                 raise ValueError('MusicXML note pitch must be a MIDI integer in 0..127')
@@ -544,12 +604,16 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
             spelling_key = (bars[first_bar+measure_index]['key']
                             if type(measure_index) is int and 0 <= measure_index < len(page['measureBeats'])
                             else None)
+            spelling = spelling_export.retained(page, note_index, spelling_key,
+                                                 printed_accidentals.get(note_index))
             events.append(dict(n, start=offset+start, end=offset+(start if is_grace else min(local_start,start+duration)), tie_stop=False, tie_start=False,
                                sourceIdentity=len(events), retainedClef=clef_export.retained(page, note_index),
                                retainedArticulations=articulation_export.retained(page, note_index),
                                retainedBow=bow_export.retained(page, note_index),
+                               retainedFingering=printed_fingerings.get(note_index),
                                retainedVisualSize=visual_size.retained(page, note_index),
-                               retainedSpelling=spelling_export.retained(page, note_index, spelling_key),
+                               retainedSpelling=spelling,
+                               retainedAccidental=spelling_export.printed_mark(printed_accidentals, note_index, spelling),
                                retainedOrnamentFlags=ornament_export.retained(page, note_index),
                                retainedTremolo=paired_tremolos.get(note_index), retainedArpeggio=False, retainedNaturalHarmonic=False))
             owner = n.get('sourceNoteIndex')
@@ -733,6 +797,11 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
         offset += local_start
     if not bars:
         raise ValueError('No interpreted measures to export')
+    physical_bars = bars
+    physical_to_output = list(range(len(bars)))
+    if continuations:
+        bars, physical_to_output = _join_printed_measures(
+            bars, continuations, full_rests, printed_rest_groups)
     from .sudden_dynamic import combine as combine_sudden_dynamics
     expressions = combine_sudden_dynamics(expressions)
     root = ET.Element('score-partwise', version='4.0')
@@ -742,9 +811,12 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
     misc = element(identification, 'miscellaneous')
     element(misc, 'miscellaneous-field', 'Concert-pitch reconstruction; recognition and estimated timing require review.', name='interpretation')
     part_list = element(root, 'part-list')
+    beamed_owners = {owner for columns, _, _ in printed_beams for column in columns for owner in column}
+    rendered_beam_columns = {}
     bar_starts = [bar['start'] for bar in bars]
     bar_ends = [bar['start'] + bar['length'] for bar in bars]
-    bar_indexes = {start: index for index, start in enumerate(bar_starts)}
+    bar_indexes = {bar['start']: physical_to_output[index]
+                   for index, bar in enumerate(physical_bars)}
 
     def direction_bar(tick, allow_final=False):
         index = bisect_right(bar_starts, tick) - 1
@@ -909,8 +981,9 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
             key = first['voice'], first['measureIndex']
             if type(key[1]) is not int or not 0 <= key[1] < page_bar_count:
                 continue
-            bar_index = first_bar + key[1]
-            bar = bars[bar_index]
+            physical_bar_index = first_bar + key[1]
+            bar = physical_bars[physical_bar_index]
+            bar_index = physical_to_output[physical_bar_index]
             cursor = first['start']
             if not bar['start'] <= cursor < bar['start'] + bar['length']:
                 continue
@@ -969,7 +1042,8 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
             for group in rest_groups_by_bar.get(index, ()):
                 element(element(attributes, 'measure-style'), 'multiple-rest', group['measureCount'])
             tempos = list(bar['tempos'])
-            if (index == 0 or bar['resetTempo']) and not any(t['positionInMeasure'] == 0 for t in tempos):
+            if (index == 0 or bar['resetTempo']) and not any(
+                    t.get('_writtenBarOffset', t['positionInMeasure']) == 0 for t in tempos):
                 tempos.insert(0, dict(bpm=bpm, positionInMeasure=0))
             for tempo in tempos:
                 unit, dots, marked_bpm = tempo_mark(tempo)
@@ -980,7 +1054,10 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
                     element(metronome, 'beat-unit-dot')
                 element(metronome, 'per-minute', format(Decimal(str(marked_bpm)).normalize(), 'f'))
                 source_onset = tempo.get('_sourceTempoOnset')
-                tempo_offset = ticks(source_onset) if source_onset is not None else round(bar['length']*tempo['positionInMeasure'])
+                tempo_offset = tempo.get('_writtenBarOffset')
+                if tempo_offset is None:
+                    tempo_offset = (ticks(source_onset) if source_onset is not None
+                                    else round(bar['length'] * tempo['positionInMeasure']))
                 element(direction, 'offset', tempo_offset, sound='yes')
                 element(direction, 'sound', tempo=str(tempo['bpm']))
             a, b = bar['start'], bar['start']+bar['length']
@@ -1072,6 +1149,16 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
                             octave_owned[emitted] = 0 if event_kind(n) == 'UNPITCHED' else n.get('octaveShift', 0)
                             if fragment_start == n['start'] and n['sourceIdentity'] in requested_slur_owners:
                                 slur_attacks[n['sourceIdentity']] = emitted
+                            if (ci == 0 and n['sourceIdentity'] in beamed_owners
+                                    and start == fragment_start and end == fragment_end
+                                    and all(head['start'] == start and head['end'] == end
+                                            and not head.get('durationFallback', False)
+                                            and not head.get('retainedTremolo')
+                                            and head.get('retainedVisualSize') != 'CUE'
+                                            for head in chord)):
+                                owners = frozenset(head['sourceIdentity'] for head in chord)
+                                rendered_beam_columns[owners] = beam_export.WrittenColumn(
+                                    emitted, part_id, index, voice, start, end)
                         emit_graces(measure, chord, True, fragment_end, bar['key']<0)
                         fragment_start = fragment_end
                     cursor = end
@@ -1088,6 +1175,9 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
                         element(forward, 'voice', voice)
                     else:
                         emit_rest_gap(measure, cursor, b, voice, rest_symbols, literal_edges)
+            if bar.get('rightBarline'):
+                element(element(measure, 'barline', location='right'), 'bar-style', bar['rightBarline'])
+    beam_export.write(printed_beams, rendered_beam_columns)
     from .octave_shift_export import apply as octave_apply
     octave_apply(root, octave_owned)
     first_score = document['pages'][0].get('score', {})

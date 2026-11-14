@@ -172,6 +172,20 @@ public final class SheetInterpreter {
             MusicalOcr ocr, int physicalPage, byte[] decoderGray,
             TablatureDecoder.Prepared preparedTabs)
             throws Exception {
+        return analyzeWithPrintedSources(labels, gray, width, height, annotations, ocr,
+                physicalPage, decoderGray, preparedTabs).score();
+    }
+
+    record AnalyzedPage(
+            ScorePageInterpretation score,
+            List<ScoreNoteEvent> originalNotes,
+            SourceLocalAccidental accidentalSource) {}
+
+    static AnalyzedPage analyzeWithPrintedSources(
+            byte[] labels, byte[] gray, int width, int height, Annotations annotations,
+            MusicalOcr ocr, int physicalPage, byte[] decoderGray,
+            TablatureDecoder.Prepared preparedTabs)
+            throws Exception {
         if (decoderGray != null && (gray == null || decoderGray.length != gray.length))
             throw new IllegalArgumentException("Decoder grayscale dimensions must match source");
         if (physicalPage < -1) throw new IllegalArgumentException("Invalid physical source page");
@@ -263,9 +277,11 @@ public final class SheetInterpreter {
         score =
                 RecognizedMultiRestProjection.apply(
                         score, measures, labels, gray, width, height, recognizedRests);
+        var noteOwners = MeterNumeralWholeNoteAlias.remove(
+                score.notes(), measures, labels, gray, annotationGray, width, height);
         var rhythm =
                 TripletRhythmDetector.withRests(
-                        score.notes(), score.rests(), measures, gray, width, height);
+                        noteOwners, score.rests(), measures, gray, width, height);
         var notes = rhythm.notes();
         var staffs =
                 ScoreDynamicsDetector.alignStaffs(
@@ -306,6 +322,7 @@ public final class SheetInterpreter {
         }
         notes = ArtificialHarmonics.apply(labels, gray, width, height, measures, notes, staffs);
         notes = ScoreTiePitchGuard.apply(notes, score.keyChanges());
+        notes = DottedCadenceShortBeams.apply(notes, measures, staffs, gray, width, height);
         List<PlayingTechniqueDetector.Word> dynamicEvidence = words;
         DirectionWordProvenance.Acquisition dynamicAcquisition = null;
         MusicalOcr.SuddenDynamicAcquisition suddenAcquisition = null;
@@ -469,6 +486,10 @@ public final class SheetInterpreter {
                         java.util.stream.IntStream.range(0, finalScore.notes().size())
                                 .boxed()
                                 .toList());
+        finalScore = finalScore.withNotes(
+                TripletRhythmDetector.ordinarySixteenthDyadBars(finalScore.notes(), finalScore.rests(),
+                        finalScore.measures(), finalScore.meterChanges(), gray, width, height),
+                java.util.stream.IntStream.range(0, finalScore.notes().size()).boxed().toList());
         finalScore =
                 OpeningBeamPickup.apply(
                         finalScore,
@@ -617,6 +638,10 @@ public final class SheetInterpreter {
                             staffs,
                             techniqueWords,
                             physicalPage);
+        finalInterpretation = InSystemClosingDyad.apply(
+                finalInterpretation, annotationGray, width, height);
+        finalInterpretation = OwnedTertiaryBeamlets.applyMonophonic(
+                finalInterpretation, gray, width, height);
         if (physicalPage >= 0)
             finalInterpretation =
                     PrintedBeamSource.apply(
@@ -631,6 +656,12 @@ public final class SheetInterpreter {
         finalInterpretation =
                 PrintedPassOmission.apply(
                         finalInterpretation, words, staffs, gray, width, height, physicalPage);
+        finalInterpretation =
+                PrintedDottedTripletBar.apply(finalInterpretation, null, gray, width, height);
+        finalInterpretation =
+                TerminalDottedCadenceHooks.apply(finalInterpretation, null, gray, width, height);
+        finalInterpretation = ClosedSixteenthDyads.apply(finalInterpretation, gray, width, height);
+        finalInterpretation = ClosedDottedSixteenths.apply(finalInterpretation, gray, width, height);
         finalInterpretation =
                 finalInterpretation.withClockContextSource(
                         ScoreClockContextCapture.capture(
@@ -647,6 +678,8 @@ public final class SheetInterpreter {
                 labels, gray, width, height, finalInterpretation);
         var touches = OpenStringHarmonics.capture(
                 labels, annotationGray, gray, width, height, pitched, words);
-        return PrintedCadenceDurations.capture(touches, labels, gray, width, height);
+        return new AnalyzedPage(
+                PrintedCadenceDurations.capture(touches, labels, gray, width, height),
+                clockAnalysis.notes(), clockAnalysis.clockProducerSource().localAccidentals());
     }
 }

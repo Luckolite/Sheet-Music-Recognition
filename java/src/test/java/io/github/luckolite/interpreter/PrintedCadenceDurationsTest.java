@@ -69,6 +69,26 @@ public class PrintedCadenceDurationsTest {
     }
 
     @Test
+    public void wideQuarterCadenceRequiresTwoClosingRules() {
+        var measures = List.of(
+                new MeasureRegion(178f / WIDTH, 322f / WIDTH, .14f, .7f),
+                new MeasureRegion(340f / WIDTH, 560f / WIDTH, .14f, .7f));
+        var quarter = new ScoreNoteEvent(0, .5f, 0, 0, 1, 74f / HEIGHT,
+                false, 0, 0, ScoreNoteEvent.ACCIDENTAL_FROM_KEY, 1);
+        var score = new ScorePageInterpretation(
+                measures, List.of(quarter), 1, List.of(), List.of(), List.of());
+        stroke(327);
+        float[] beats = {4, 4};
+        PrintedCadenceDurations.apply(
+                PrintedCadenceDurations.capture(score, gray, WIDTH, HEIGHT, staffs), beats);
+        assertArrayEquals(new float[] {4, 4}, beats, 0);
+        stroke(334);
+        PrintedCadenceDurations.apply(
+                PrintedCadenceDurations.capture(score, gray, WIDTH, HEIGHT, staffs), beats);
+        assertArrayEquals(new float[] {1, 4}, beats, 0);
+    }
+
+    @Test
     public void separateAttacksAndAdditionalGlyphsAbstain() {
         stroke(327);
         stroke(334);

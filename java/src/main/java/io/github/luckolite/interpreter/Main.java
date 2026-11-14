@@ -116,12 +116,9 @@ public final class Main {
                 throw new IOException("Decoder raster length differs from source");
             decoderGray = Files.readAllBytes(decoderRaster);
         }
-        var score =
-                ScoreTiePitchGuard.withInitialKeyContext(
-                        SheetInterpreter.analyze(
-                                labels, gray, width, height, annotations, null,
-                                physicalPage, decoderGray, preparedTabs),
-                        initialKey);
+        var decoded = SheetInterpreter.analyzeWithPrintedSources(
+                labels, gray, width, height, annotations, null, physicalPage, decoderGray, preparedTabs);
+        var score = ScoreTiePitchGuard.withInitialKeyContext(decoded.score(), initialKey);
         score = ScoreTupletMeterContext.apply(score, initialMeter);
         score = ClosingTripletRhythm.apply(
                 score, initialMeter, labels, decoderGray == null ? gray : decoderGray, width, height);
@@ -135,6 +132,14 @@ public final class Main {
             if (Double.isFinite(closing)) beats[beats.length - 1] = (float) closing;
         }
         boolean[] cadences = PrintedCadenceDurations.apply(score, beats);
+        IsolatedDottedHalfCadence.apply(score, labels, decoderGray == null ? gray : decoderGray,
+                width, height, beats, cadences);
+        var wrapped = WrappedTripletMeasure.capture(score, initialMeter,
+                decoderGray == null ? gray : decoderGray, width, height, beats);
+        score = wrapped.score();
+        var tiedCadence = TiedQuarterCadence.capture(score, initialMeter,
+                decoderGray == null ? gray : decoderGray, width, height, beats);
+        score = tiedCadence.score();
         var harmonicPitches = ArtificialHarmonics.resolveThirdPitches(
                 labels, decoderGray == null ? gray : decoderGray, width, height, score, initialKey);
         double[] starts = new double[beats.length + 1];
@@ -157,6 +162,10 @@ public final class Main {
                 double duration =
                         ScoreNoteTiming.resolvedWrittenDurationBeats(
                                 note, score.notes(), beats[bar]);
+                var wrappedTiming = wrapped.written()[noteIndex];
+                var tiedCadenceTiming = tiedCadence.written()[noteIndex];
+                if (wrappedTiming != null) duration = wrappedTiming.duration();
+                if (tiedCadenceTiming != null) duration = tiedCadenceTiming.duration();
                 boolean estimated = !Double.isFinite(duration) || duration <= 0;
                 if (estimated && note.kind() == ScoreNoteEvent.Kind.UNPITCHED)
                     throw new IOException(
@@ -185,7 +194,8 @@ public final class Main {
                 event.putAll(identity);
                 double startBeat =
                         starts[bar]
-                                + (cadences[bar] ? 0
+                                + (wrappedTiming != null ? wrappedTiming.onset()
+                                  : tiedCadenceTiming != null ? tiedCadenceTiming.onset() : cadences[bar] ? 0
                                         : ScoreNoteTiming.beatInMeasure(note, score.notes(), beats[bar]));
                 if (note.kind() == ScoreNoteEvent.Kind.UNPITCHED
                         && (!Double.isFinite(startBeat)
@@ -228,6 +238,16 @@ public final class Main {
                 events.add(event);
             }
             attachWrittenPlacements(score.notes(), events, beats, cadences);
+            if (score.notes().stream().anyMatch(n -> (n.articulations() & NoteOrnament.GRACE) != 0))
+                for (int i = 0; i < events.size(); i++) {
+                    var wrappedHead = wrapped.written()[i];
+                    var cadenceHead = tiedCadence.written()[i];
+                    if (wrappedHead == null && cadenceHead == null) continue;
+                    double onset = wrappedHead != null ? wrappedHead.onset() : cadenceHead.onset();
+                    double duration = wrappedHead != null ? wrappedHead.duration() : cadenceHead.duration();
+                    events.get(i).put("writtenPlacement", new ScoreNoteTiming.WrittenPlacement(
+                            onset, duration, -1, -1, false, 0));
+                }
         }
         attachNotePerformance(score.notes(), events);
         if (standardViolin) {
@@ -242,6 +262,19 @@ public final class Main {
         result.put("events", events);
         result.put("tablatureWarnings", tabWarnings);
         result.put("measureBeats", beats);
+        var accidentals = decoded.accidentalSource().printedMarks(decoded.originalNotes(), score.notes());
+        if (!accidentals.isEmpty()) result.put("printedAccidentals", accidentals);
+        if (!wrapped.continuations().isEmpty())
+            result.put("printedMeasureContinuations", wrapped.continuations());
+        var barlineStyles = PrintedBarlineStyles.capture(
+                decoderGray == null ? gray : decoderGray, width, height, score.measures(),
+                wrapped.continuations());
+        if (!barlineStyles.isEmpty()) result.put("printedBarlineStyles", barlineStyles);
+        if (tabs.isEmpty()) {
+            var fingerings = PrintedFingeringDigits.capture(
+                    gray, width, height, annotations.words(), score, events);
+            if (!fingerings.isEmpty()) result.put("printedFingerings", fingerings);
+        }
         result.put("totalBeats", starts[beats.length]);
         Files.writeString(Path.of(args[1]), json(result) + "\n", StandardCharsets.UTF_8);
     }
