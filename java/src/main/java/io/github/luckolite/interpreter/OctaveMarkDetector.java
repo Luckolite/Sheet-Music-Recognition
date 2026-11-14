@@ -1057,52 +1057,32 @@ final class OctaveMarkDetector {
         int sizeLimit = w * band, bandOffset = top * w;
         scratch.reset(sizeLimit);
         boolean[] seen = scratch.seen;
-        int[] queue = scratch.queue;
         var holes = new ArrayList<InkBox>();
         float minimumArea = gap * gap * .015f, maximumArea = gap * gap * .65f;
         for (int seed = 0; seed < sizeLimit; seed++) {
             if (seen[seed] || (gray[bandOffset + seed] & 255) < 165) continue;
-            int take = 0, size = 1, pixels = 0, x0 = w, x1 = -1, y0 = band, y1 = -1;
-            boolean edge = false;
-            seen[seed] = true;
-            queue[0] = seed;
-            while (take < size) {
-                int at = queue[take++], x = at % w, y = at / w;
-                int left = x, right = x, row = y * w;
-                while (left > 0
-                        && !seen[row + left - 1]
-                        && (gray[bandOffset + row + left - 1] & 255) >= 165) left--;
-                while (right + 1 < w
-                        && !seen[row + right + 1]
-                        && (gray[bandOffset + row + right + 1] & 255) >= 165) right++;
-                java.util.Arrays.fill(seen, row + left, row + right + 1, true);
-                pixels += right - left + 1;
+            int y0 = seed / w;
+            int size = enqueuePaperRun(gray, bandOffset, w, y0 * w, seed, 0, scratch);
+            int pixels = 0, x0 = w, x1 = -1, y1 = y0;
+            for (int take = 0; take < size; take += 2) {
+                int first = scratch.queue[take], last = scratch.queue[take + 1];
+                int y = first / w, row = y * w, left = first - row, right = last - row;
+                pixels += last - first + 1;
                 x0 = Math.min(x0, left);
                 x1 = Math.max(x1, right);
-                y0 = Math.min(y0, y);
                 y1 = Math.max(y1, y);
-                if (left == 0 || right == w - 1 || y == 0 || y == band - 1) edge = true;
                 for (int direction = -1; direction <= 1; direction += 2) {
                     int nextY = y + direction;
                     if (nextY < 0 || nextY >= band) continue;
-                    int nextRow = nextY * w;
-                    for (int nextX = left; nextX <= right; nextX++) {
-                        int next = nextRow + nextX;
+                    int nextRow = row + direction * w;
+                    for (int next = nextRow + left; next <= nextRow + right; next++) {
                         if (seen[next] || (gray[bandOffset + next] & 255) < 165) continue;
-                        seen[next] = true;
-                        if (size == queue.length) {
-                            queue = java.util.Arrays.copyOf(queue,
-                                    size + Math.min(size, sizeLimit - size));
-                            scratch.queue = queue;
-                        }
-                        queue[size++] = next;
-                        while (nextX < right
-                                && !seen[nextRow + nextX + 1]
-                                && (gray[bandOffset + nextRow + nextX + 1] & 255) >= 165) nextX++;
+                        size = enqueuePaperRun(gray, bandOffset, w, nextRow, next, size, scratch);
+                        next = scratch.queue[size - 1];
                     }
                 }
             }
-            if (!edge
+            if (x0 > 0 && x1 < w - 1 && y0 > 0 && y1 < band - 1
                     && pixels >= minimumArea
                     && pixels <= maximumArea
                     && x1 - x0 < gap
@@ -1137,6 +1117,21 @@ final class OctaveMarkDetector {
             }
         }
         return result;
+    }
+
+    private static int enqueuePaperRun(
+            byte[] gray, int bandOffset, int width, int row, int seed, int size, HoleScanScratch scratch) {
+        int first = seed, last = seed;
+        int end = row + width;
+        // A discovered run is marked in full, so an unmarked seed cannot share a run with it.
+        while (first > row && (gray[bandOffset + first - 1] & 255) >= 165) first--;
+        while (last + 1 < end && (gray[bandOffset + last + 1] & 255) >= 165) last++;
+        java.util.Arrays.fill(scratch.seen, first, last + 1, true);
+        if (size == scratch.queue.length)
+            scratch.queue = java.util.Arrays.copyOf(scratch.queue, Math.multiplyExact(size, 2));
+        scratch.queue[size] = first;
+        scratch.queue[size + 1] = last;
+        return size + 2;
     }
 
     /** Recover a numeral merged with a thin ledger, not a second reading of every
