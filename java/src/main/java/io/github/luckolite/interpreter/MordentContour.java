@@ -19,27 +19,27 @@ final class MordentContour {
                 || b.width() > b.height() * 3.5) return false;
         int w = b.width(), h = b.height();
         double[] center = new double[w];
+        int firstRow = b.top * width + b.left;
+        double centralStart = w * .4, centralEnd = w * .6;
+        double outerStart = w * .1, outerEnd = w * .9;
         int centralTop = h, centralBottom = -1, outerTop = h, outerBottom = -1;
         for (int x = 0; x < w; x++) {
             double mass = 0, moment = 0;
-            int runs = 0, first = h, last = -1;
-            boolean inkBefore = false;
-            for (int y = 0; y < h; y++) {
-                int ink = Math.max(0, 180 - (gray[(b.top + y) * width + b.left + x] & 255));
-                if (ink > 0) {
-                    if (!inkBefore) runs++;
-                    mass += ink;
-                    moment += ink * y;
-                    first = Math.min(first, y);
-                    last = y;
-                }
-                inkBefore = ink > 0;
+            int first = h, last = -1;
+            for (int y = 0, at = firstRow + x; y < h; y++, at += width) {
+                int ink = 180 - (gray[at] & 255);
+                if (ink <= 0) continue;
+                if (last < 0) first = y;
+                else if (y != last + 1) return false;
+                last = y;
+                mass += ink;
+                moment += ink * y;
             }
-            if (mass == 0 || runs != 1) return false;
-            if (x >= w * .4 && x <= w * .6) {
+            if (last < 0) return false;
+            if (x >= centralStart && x <= centralEnd) {
                 centralTop = Math.min(centralTop, first);
                 centralBottom = Math.max(centralBottom, last);
-            } else if (x >= w * .1 && x <= w * .9) {
+            } else if (x >= outerStart && x <= outerEnd) {
                 outerTop = Math.min(outerTop, first);
                 outerBottom = Math.max(outerBottom, last);
             }
@@ -56,10 +56,14 @@ final class MordentContour {
                 || center[d] - center[c] < minimum) return false;
         if (Math.abs(center[a] - center[c]) > h * .25 || Math.abs(center[b1] - center[d]) > h * .25)
             return false;
-        double variation = 0;
-        for (int x = a + 1; x <= d; x++) variation += Math.abs(center[x] - center[x - 1]);
         double travel = center[b1] - center[a] + center[b1] - center[c] + center[d] - center[c];
-        return variation <= travel * 1.25;
+        double maximumVariation = travel * 1.25;
+        double variation = 0;
+        for (int x = a + 1; x <= d; x++) {
+            variation += Math.abs(center[x] - center[x - 1]);
+            if (variation > maximumVariation) return false;
+        }
+        return true;
     }
 
     private static int extremum(double[] values, double from, double to, boolean maximum) {

@@ -335,6 +335,7 @@ final class PortableNoteOrnaments {
                     textTrills.add(r);
                 }
             }
+        var query = repeatedTrills.canRecognize() ? new PortableOrnamentGlyphs.Query() : null;
         for (Bounds box : boxes) {
             // Ledger lines through an open head can resemble a compressed mordent.
             // A component already containing a written head cannot ornament another note.
@@ -351,8 +352,8 @@ final class PortableNoteOrnaments {
             var match =
                     textTrills.contains(box) || repeatedTrills.confirmed(box)
                             ? new PortableOrnamentGlyphs.Match(NoteOrnament.TRILL, 1, 1)
-                            : recognizer.match(gray, width, box);
-            if (!match.accepted() && repeatedTrills.recognizes(gray, width, box, match))
+                            : recognizer.match(gray, width, box, query);
+            if (!match.accepted() && repeatedTrills.recognizes(gray, width, box, match, query))
                 match = new PortableOrnamentGlyphs.Match(NoteOrnament.TRILL, 1, 1);
             if (!match.accepted() && match.kind() == NoteOrnament.TRILL && match.score() > .25f) {
                 // In small italic print the r's terminal and the period can be tiny detached
@@ -485,7 +486,8 @@ final class PortableNoteOrnaments {
 
     private static List<StaffPitchTrack> ornamentTracks(
             byte[] labels, byte[] gray, int w, int h, List<PlayingTechniqueDetector.Staff> staffs) {
-        List<StaffPitchTrack> tracks = new ArrayList<>();
+        if (staffs.isEmpty()) return List.of();
+        List<StaffPitchTrack> tracks = new ArrayList<>(staffs.size());
         var seeds = RegionalStaffSeeds.detect(labels, gray, w, h);
         for (var staff : staffs) {
             RegionalStaffSeeds.Seed selected = null;
@@ -534,11 +536,13 @@ final class PortableNoteOrnaments {
             List<PlayingTechniqueDetector.Staff> staffs,
             List<StaffPitchTrack> tracks,
             PortableOrnamentGlyphs recognizer) {
+        if (staffs.isEmpty()) return new ArrayList<>();
         boolean[] seen = new boolean[gray.length];
-        int[] queue = new int[gray.length];
+        int[] queue = null;
         List<Bounds> parts = new ArrayList<>();
         for (int p = 0; p < gray.length; p++) {
             if (seen[p] || (gray[p] & 255) >= 150) continue;
+            if (queue == null) queue = new int[Math.min(gray.length, 256)];
             int start = 0, end = 1;
             queue[0] = p;
             seen[p] = true;
@@ -549,27 +553,33 @@ final class PortableNoteOrnaments {
                 r = Math.max(r, x);
                 t = Math.min(t, y);
                 b = Math.max(b, y);
-                for (int dy = -1; dy <= 1; dy++)
-                    for (int dx = -1; dx <= 1; dx++) {
-                        int nx = x + dx, ny = y + dy;
-                        if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
-                        int next = ny * w + nx;
+                int firstX = Math.max(0, x - 1), lastX = Math.min(w - 1, x + 1);
+                int lastY = Math.min(h - 1, y + 1);
+                for (int ny = Math.max(0, y - 1); ny <= lastY; ny++) {
+                    int row = ny * w;
+                    for (int next = row + firstX, limit = row + lastX; next <= limit; next++) {
                         if (!seen[next] && (gray[next] & 255) < 150) {
                             seen[next] = true;
+                            if (end == queue.length) {
+                                int capacity = Math.min(gray.length - end, end);
+                                queue = Arrays.copyOf(queue, end + capacity);
+                            }
                             queue[end++] = next;
                         }
                     }
+                }
             }
             if (end < 5) continue;
+            int horizontalSpan = r - l, verticalSpan = b - t;
             for (int staffIndex = 0; staffIndex < staffs.size(); staffIndex++) {
                 var s = staffs.get(staffIndex);
+                float gap = s.gap();
+                if (!(horizontalSpan <= gap * 4.8
+                        && verticalSpan <= gap * 2.8
+                        && verticalSpan >= gap * .3
+                        && horizontalSpan >= gap * .15)) continue;
                 float top = ornamentTop(s, tracks.get(staffIndex), (l + r) * .5f);
-                if (b <= top + s.gap() * .1
-                        && b >= top - s.gap() * 7
-                        && r - l <= s.gap() * 4.8
-                        && b - t <= s.gap() * 2.8
-                        && b - t >= s.gap() * .3
-                        && r - l >= s.gap() * .15) {
+                if (b <= top + gap * .1 && b >= top - gap * 7) {
                     parts.add(new Bounds(l, t, r + 1, b + 1));
                     break;
                 }
@@ -582,7 +592,7 @@ final class PortableNoteOrnaments {
         if (recognizer != null)
             for (var part : parts)
                 if (MordentContour.matches(gray, w, part)) {
-                    var match = recognizer.match(gray, w, part);
+                    var match = recognizer.matchWithMordentContour(gray, w, part);
                     if (match.kind() == NoteOrnament.MORDENT && match.accepted())
                         completeMordents.add(part);
                 }
