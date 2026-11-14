@@ -4,6 +4,8 @@ package io.github.luckolite.interpreter;
 
 /** Refine only a nearby meter staff from complete local printed rails. */
 final class MeterCropStaff {
+    private static final float[] PHASE_SHIFTS = {-.3f, -.6f, .3f, .6f};
+
     static MeterChangeDetector.Crop refine(byte[] gray, int w, int h, MeterChangeDetector.Crop c) {
         if (c == null
                 || gray == null
@@ -51,17 +53,18 @@ final class MeterCropStaff {
             int trimTop = Math.min(c.bottom() - 1, Math.max(c.top(), first - pad));
             int trimBottom =
                     Math.max(trimTop + 1, Math.min(c.bottom(), Math.round(last) + pad + 1));
-            boolean clearTop = true, clearBottom = true;
-            for (int y = c.top(); y < trimTop; y++)
-                for (int x = c.left(); x < c.right(); x++)
-                    if ((gray[y * w + x] & 255) < 245) clearTop = false;
-            for (int y = trimBottom; y < c.bottom(); y++)
-                for (int x = c.left(); x < c.right(); x++)
-                    if ((gray[y * w + x] & 255) < 245) clearBottom = false;
-            if (clearTop) cropTop = trimTop;
-            if (clearBottom) cropBottom = trimBottom;
+            if (clearPadding(gray, w, c.left(), c.right(), c.top(), trimTop)) cropTop = trimTop;
+            if (clearPadding(gray, w, c.left(), c.right(), trimBottom, c.bottom())) cropBottom = trimBottom;
         }
         return new MeterChangeDetector.Crop(c.left(), cropTop, c.right(), cropBottom, first, gap);
+    }
+
+    private static boolean clearPadding(byte[] gray, int width, int left, int right,
+            int top, int bottom) {
+        for (int row = top * width, end = bottom * width; row < end; row += width)
+            for (int at = row + left, limit = row + right; at < limit; at++)
+                if ((gray[at] & 255) < 245) return false;
+        return true;
     }
 
     /** Two agreeing complete staff witnesses may recover a clipped outer rule.
@@ -70,7 +73,7 @@ final class MeterCropStaff {
             byte[] gray, int w, int h, MeterChangeDetector.Crop c) {
         float[] accepted = null;
         int agreeing = 0;
-        for (float shift : new float[] {-.3f, -.6f, .3f, .6f}) {
+        for (float shift : PHASE_SHIFTS) {
             float hint = c.firstLine() + (4 + shift) * c.gap();
             var a =
                     PrintedDirectionStaff.printedRules(
@@ -113,14 +116,20 @@ final class MeterCropStaff {
     private static boolean stackedInk(
             byte[] gray, int w, int left, int right, int top, int bottom, int first, float gap) {
         int middle = Math.round(first + 2 * gap);
-        int[][] boxes = new int[2][4];
+        int railRadius = Math.max(1, Math.round(gap * .12f));
+        int[] rails = new int[5];
+        for (int line = 0; line < rails.length; line++) rails[line] = Math.round(first + line * gap);
+        float centerA = 0, centerB = 0;
         for (int half = 0; half < 2; half++) {
             int minX = right, maxX = left - 1, minY = bottom, maxY = top - 1, count = 0;
             for (int y = half == 0 ? top : middle; y < (half == 0 ? middle : bottom); y++) {
                 boolean rule = false;
-                for (int line = 0; line < 5; line++)
-                    if (Math.abs(y - Math.round(first + line * gap))
-                            <= Math.max(1, Math.round(gap * .12f))) rule = true;
+                for (int rail : rails) {
+                    if (Math.abs(y - rail) <= railRadius) {
+                        rule = true;
+                        break;
+                    }
+                }
                 if (rule) continue;
                 for (int x = left; x < right; x++)
                     if ((gray[y * w + x] & 255) < 150) {
@@ -141,10 +150,10 @@ final class MeterCropStaff {
                     || maxX >= right - 1
                     || minY <= top
                     || maxY >= bottom - 1) return false;
-            boxes[half] = new int[] {minX, maxX, minY, maxY};
+            float center = (minX + maxX) * .5f;
+            if (half == 0) centerA = center;
+            else centerB = center;
         }
-        float centerA = (boxes[0][0] + boxes[0][1]) * .5f;
-        float centerB = (boxes[1][0] + boxes[1][1]) * .5f;
         return Math.abs(centerA - centerB) <= gap * .3f;
     }
 }

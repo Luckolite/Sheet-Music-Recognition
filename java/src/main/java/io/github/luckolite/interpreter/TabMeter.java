@@ -14,12 +14,17 @@ public final class TabMeter {
             List<TablatureDecoder.Word> words,
             int w,
             int h) {
-        var changes = new ArrayList<>(score.meterChanges());
         var standalone = tabs.stream().filter(tab -> tab.standardTop() < 0).toList();
-        if (!standalone.isEmpty()) {
-            var meterWords = words.stream().filter(TabMeter::meterDigit).toList();
+        var meterWords = standalone.isEmpty() ? List.<TablatureDecoder.Word>of()
+                : words.stream().filter(TabMeter::meterDigit).toList();
+        if (meterWords.size() < 2 && ordered(score.meterChanges()))
+            return TabTempo.apply(score, tabs, words, w, h);
+
+        var changes = new ArrayList<>(score.meterChanges());
+        if (meterWords.size() >= 2) {
+            var occupied = new HashSet<Integer>();
+            for (var change : changes) occupied.add(change.measureIndex());
             for (var tab : standalone) {
-                if (meterWords.size() < 2) break;
                 var digits = new ArrayList<TablatureDecoder.Word>();
                 for (var v : meterWords)
                     if (v.top() * h >= tab.top() - tab.gap()
@@ -42,8 +47,7 @@ public final class TabMeter {
                                         && x <= m.right()
                                         && y >= m.top()
                                         && y <= m.bottom()) {
-                                    final int index = i;
-                                    if (changes.stream().noneMatch(c -> c.measureIndex() == index))
+                                    if (occupied.add(i))
                                         changes.add(
                                                 new ScoreMeterChange(i, numerator, denominator));
                                     break;
@@ -74,6 +78,12 @@ public final class TabMeter {
                 words,
                 w,
                 h);
+    }
+
+    private static boolean ordered(List<ScoreMeterChange> changes) {
+        for (int i = 1; i < changes.size(); i++)
+            if (changes.get(i - 1).measureIndex() > changes.get(i).measureIndex()) return false;
+        return true;
     }
 
     private static boolean meterDigit(TablatureDecoder.Word word) {
