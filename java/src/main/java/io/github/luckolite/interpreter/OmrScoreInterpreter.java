@@ -22484,11 +22484,73 @@ final class OmrScoreInterpreter {
         if (aligned.size() == 1) return 1;
         Component second = aligned.get(1);
         float spacing = second.centerX - first.centerX;
-        return spacing >= gap * .18f
-                        && spacing <= gap * 1.45f
-                        && Math.abs(second.centerY - first.centerY) <= gap * .40f
-                ? 2
-                : 1;
+        boolean doubleDot = spacing >= gap * .18f
+                && spacing <= gap * 1.45f
+                && Math.abs(second.centerY - first.centerY) <= gap * .40f;
+        if (doubleDot && !hollowHead && gray != null
+                && ascendingStaccatoPair(gray, width, height, head, first, second, neighboringHeads, gap))
+            return 1;
+        return doubleDot ? 2 : 1;
+    }
+
+    private static boolean ascendingStaccatoPair(byte[] gray, int width, int height,
+            Component head, Component first, Component second, List<Component> nearby, float gap) {
+        if (gap < 8 || first.centerX - head.centerX < gap * .85f
+                || first.centerX - head.centerX > gap * 1.36f
+                || head.maxX - head.minX + 1 < gap * .85f)
+            return false;
+        Component next = null;
+        for (Component candidate : nearby) {
+            float advance = candidate.centerX - head.centerX;
+            float ascent = head.centerY - candidate.centerY;
+            float below = second.centerY - candidate.centerY;
+            if (advance < gap * 1.8f || advance > gap * 2.65f
+                    || ascent < gap * .78f || ascent > gap * 1.16f
+                    || below < gap * .82f || below > gap * 1.18f
+                    || Math.abs(second.centerX - candidate.centerX) > gap * .20f
+                    || candidate.maxX - candidate.minX + 1 < gap * .90f
+                    || second.minY - candidate.maxY < gap * .20f) continue;
+            if (next != null) return false;
+            next = candidate;
+        }
+        if (next == null) return false;
+        int[] stem = attachedRawStem(gray, width, height, head, gap);
+        int[] followingStem = attachedRawStem(gray, width, height, next, gap);
+        return stem != null && stem[2] == -1 && followingStem != null && followingStem[2] == -1
+                && isolatedLowerStaccato(gray, width, height, head, gap);
+    }
+
+    private static boolean isolatedLowerStaccato(
+            byte[] gray, int width, int height, Component head, float gap) {
+        int left = Math.round(head.centerX - gap * .14f);
+        int right = Math.round(head.centerX + gap * .18f);
+        int top = Math.round(head.centerY + gap * .92f);
+        int bottom = Math.round(head.centerY + gap * 1.20f);
+        int core = Math.max(1, Math.round(gap * .095f));
+        int ring = Math.max(core + 2, Math.round(gap * .33f));
+        if (left < ring || top < ring || right + ring >= width || bottom + ring >= height)
+            return false;
+        for (int y = top; y <= bottom; y++) {
+            for (int x = left; x <= right; x++) {
+                if (grayInk(gray, width, x - core, x + core, y - core, y + core, 105)
+                        < Math.ceil((2 * core + 1) * (2 * core + 1) * .78)) continue;
+                if (grayInk(gray, width, x - ring, x + ring, y - ring, y - ring, 155) != 0
+                        || grayInk(gray, width, x - ring, x + ring, y + ring, y + ring, 155) != 0
+                        || grayInk(gray, width, x - ring, x - ring, y - ring, y + ring, 155) != 0
+                        || grayInk(gray, width, x + ring, x + ring, y - ring, y + ring, 155) != 0)
+                    continue;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static int grayInk(byte[] gray, int width, int left, int right, int top, int bottom, int cutoff) {
+        int count = 0;
+        for (int y = top; y <= bottom; y++)
+            for (int x = left; x <= right; x++)
+                if ((gray[y * width + x] & 255) < cutoff) count++;
+        return count;
     }
 
     /** A dark top/bottom crossing belongs to a bounded five-rule barline, not a dot. */
