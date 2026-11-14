@@ -636,6 +636,8 @@ public final class SheetInterpreter {
                             physicalPage);
         finalInterpretation = InSystemClosingDyad.apply(
                 finalInterpretation, annotationGray, width, height);
+        finalInterpretation = OwnedTertiaryBeamlets.applyMonophonic(
+                finalInterpretation, gray, width, height);
         if (physicalPage >= 0)
             finalInterpretation =
                     PrintedBeamSource.apply(

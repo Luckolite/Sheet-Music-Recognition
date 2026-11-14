@@ -71,6 +71,115 @@ final class OwnedTertiaryBeamlets {
         return result;
     }
 
+    static ScorePageInterpretation applyMonophonic(
+            ScorePageInterpretation score, byte[] gray, int width, int height) {
+        var notes = score.notes();
+        var heads = new ArrayList<Head>(notes.size());
+        for (int i = 0; i < notes.size(); i++) {
+            var note = notes.get(i);
+            var region = score.measures().get(note.measureIndex());
+            float x = (region.left() + note.positionInMeasure() * (region.right() - region.left())) * width;
+            float gap = (region.bottom() - region.top()) * height / 8.2f;
+            heads.add(new Head(i, note, x, note.pageY() * height, gap));
+        }
+        var recovered = recoverMonophonic(gray, width, height, heads);
+        if (recovered.isEmpty()) return score;
+        var revised = new ArrayList<>(notes);
+        for (int index : recovered) {
+            var note = notes.get(index);
+            revised.set(index, new ScoreNoteEvent(
+                    note.measureIndex(), note.positionInMeasure(), note.staffStep(), note.staffIndex(),
+                    note.staffCount(), note.pageY(), note.tiedFromPrevious(), note.augmentationDots(), 3,
+                    note.writtenAccidental(), note.unbeamedDurationBeats(), note.tupletDivisor(),
+                    note.followingRestBeats(), note.articulations(), note.clefBottomDiatonic(),
+                    note.crossStaffBeam(), note.leadingRestBeats(), note.compactOpening(),
+                    note.octaveShift(), note.boundaryTies(), note.tupletNormalNotes(),
+                    note.stemDirection(), note.kind(), note.visualSize(), note.harmonicSemitones(),
+                    note.openStringTouch()));
+        }
+        return score.withNotes(revised, java.util.stream.IntStream.range(0, notes.size()).boxed().toList());
+    }
+
+
+    /** A complete shorter hook can close an up-stem group before a separate down-stem group. */
+    static List<Integer> recoverMonophonic(byte[] gray, int width, int height, List<Head> heads) {
+        if (gray == null || gray.length != (long) width * height || heads.size() < 5)
+            return List.of();
+        var result = new ArrayList<Integer>();
+        var budget = new PrintedBeamShafts.Budget(1_000_000);
+        List<RawStaffLineDetector.StaffLines> printedStaffs = null;
+        for (int i = 2; i + 2 < heads.size(); i++) {
+            var first = heads.get(i - 2);
+            var dotted = heads.get(i - 1);
+            var owner = heads.get(i);
+            var following = heads.get(i + 1);
+            var followingShort = heads.get(i + 2);
+            float coarseGap = owner.gap();
+            if (coarseGap < 8 || !plain(first, 1, 0, 1) || !plain(dotted, 2, 1, 1)
+                    || !plain(owner, 2, 0, 1) || !plain(following, 2, 1, -1)
+                    || !plain(followingShort, 3, 0, -1)) continue;
+            if (!separate(first, dotted, coarseGap) || !separate(dotted, owner, coarseGap)
+                    || !separate(owner, following, coarseGap)
+                    || !separate(following, followingShort, coarseGap)
+                    || i > 2 && sameColumn(heads.get(i - 3), first)
+                    || i + 3 < heads.size() && sameColumn(followingShort, heads.get(i + 3)))
+                continue;
+            if (printedStaffs == null) printedStaffs = RawStaffLineDetector.detect(gray, width, height);
+            float gap = measuredGap(printedStaffs, owner, dotted);
+            if (gap == 0) continue;
+            var own = monoAxes(gray, width, height, owner, gap, budget);
+            var peer = monoAxes(gray, width, height, dotted, gap, budget);
+            if (proveSide(gray, width, height, own, peer, gap, -1)
+                    && !proveSide(gray, width, height, peer, own, gap, 1))
+                result.add(owner.index());
+        }
+        return List.copyOf(result);
+    }
+
+    private static boolean plain(Head head, int beams, int dots, int stem) {
+        var n = head.note();
+        return n.kind() == ScoreNoteEvent.Kind.PITCHED && n.staffCount() == 1
+                && n.staffIndex() == 0 && n.visualSize() == ScoreNoteEvent.VisualSize.FULL
+                && n.unbeamedDurationBeats() == 0 && n.beamCount() == beams
+                && n.augmentationDots() == dots && n.stemDirection() == stem
+                && n.tupletDivisor() == 1 && !n.crossStaffBeam() && !n.tiedFromPrevious()
+                && n.boundaryTies() == 0 && n.leadingRestBeats() == 0 && n.followingRestBeats() == 0
+                && (n.articulations() & NoteOrnament.GRACE) == 0;
+    }
+
+    private static boolean separate(Head first, Head second, float gap) {
+        float distance = second.x() - first.x();
+        return sameStaff(first, second) && distance >= gap * 1.45f && distance <= gap * 4.2f;
+    }
+
+    private static float measuredGap(List<RawStaffLineDetector.StaffLines> staffs, Head owner, Head peer) {
+        float found = 0;
+        for (var staff : staffs) {
+            float gap = staff.gap();
+            if (Math.abs(gap - owner.gap()) > owner.gap() * .15f) continue;
+            float floor = owner.y() + owner.note().staffStep() * gap * .5f;
+            float peerFloor = peer.y() + peer.note().staffStep() * gap * .5f;
+            if (Math.abs(floor - peerFloor) > gap * .22f
+                    || Math.abs(staff.bottom() - (floor + peerFloor) * .5f) > gap * .65f) continue;
+            if (found > 0) return 0;
+            found = gap;
+        }
+        return found;
+    }
+
+    private static List<Axis> monoAxes(
+            byte[] gray, int width, int height, Head note, float gap,
+            PrintedBeamShafts.Budget budget) {
+        var shafts = PrintedBeamShafts.at(gray, width, height, note.x(), note.y(), gap, budget);
+        if (shafts.size() != 1 || shafts.get(0).direction() != -note.note().stemDirection())
+            return List.of();
+        var shaft = shafts.get(0);
+        return shaft.columns().stream()
+                .map(column -> new Axis(column.x(), column.endY(), shaft.direction()))
+                .toList();
+    }
+
+
     private static boolean closingHalfChord(Column column, int finalMeasure) {
         if (column == null || column.first.note.measureIndex() != finalMeasure
                 || column.first.note.staffCount() != 1) return false;
