@@ -40,56 +40,71 @@ final class WideTripleBeamInk {
         if (span < gap * (expected == 4 ? 1.2f : 3)
                 || span > gap * 4
                 || Math.abs(a[1] - b[1]) > gap * .75f) return 0;
-        for (float fraction : new float[] {.5f, .75f}) {
-            float[] previous = null;
-            boolean okay = true;
-            for (float f : new float[] {.25f, .5f, .75f}) {
+        int[] thresholds = new int[3], darkestTones = new int[3];
+        int prepared = 0;
+        float inside = expected == 4 ? 3.4f : 2.4f;
+        int minimumCore = Math.max(3, (int) Math.ceil(gap * .3f));
+        float maximumCore = gap * .8f;
+        float[] previous = null, current = null;
+        for (int cutoff = 2; cutoff <= 3; cutoff++) {
+            float fraction = cutoff * .25f;
+            boolean okay = true, retryCanDiffer = false;
+            for (int column = 0; column < 3; column++) {
+                float f = (column + 1) * .25f;
                 int x = Math.round(a[0] + (b[0] - a[0]) * f);
                 float end = a[1] + (b[1] - a[1]) * f;
-                float inside = expected == 4 ? 3.4f : 2.4f;
-                int top = Math.max(1, Math.round(end - (a[2] < 0 ? .35f : inside) * gap)),
-                        bottom =
-                                Math.min(h - 2, Math.round(end + (a[2] < 0 ? inside : .35f) * gap));
-                int threshold = BeamInkThreshold.at(gray, w, h, x, top, bottom, gap),
-                        darkest = threshold;
-                for (int y = top; y <= bottom; y++)
-                    darkest = Math.min(darkest, gray[y * w + x] & 255);
-                threshold = darkest + Math.round((threshold - darkest) * fraction);
-                float[] cores = null;
+                int top = Math.max(1, Math.round(end - (a[2] < 0 ? .35f : inside) * gap));
+                int bottom = Math.min(h - 2, Math.round(end + (a[2] < 0 ? inside : .35f) * gap));
+                if (column == prepared) {
+                    int threshold = BeamInkThreshold.at(gray, w, h, x, top, bottom, gap);
+                    int darkest = threshold;
+                    for (int y = top, pixel = top * w + x; y <= bottom; y++, pixel += w)
+                        darkest = Math.min(darkest, gray[pixel] & 255);
+                    thresholds[column] = threshold;
+                    darkestTones[column] = darkest;
+                    prepared++;
+                }
+                int darkest = darkestTones[column];
+                int range = thresholds[column] - darkest;
+                int threshold = darkest + Math.round(range * fraction);
+                if (cutoff == 2 && threshold != darkest + Math.round(range * .75f))
+                    retryCanDiffer = true;
                 int coreCount = 0, start = -1;
-                for (int y = top; y <= bottom + 1; y++) {
+                for (int y = top, pixel = top * w + x; y <= bottom + 1; y++, pixel += w) {
                     boolean ink =
                             y <= bottom
-                                    && (gray[y * w + x - 1] & 255) < threshold
-                                    && (gray[y * w + x] & 255) < threshold
-                                    && (gray[y * w + x + 1] & 255) < threshold;
+                                    && (gray[pixel - 1] & 255) < threshold
+                                    && (gray[pixel] & 255) < threshold
+                                    && (gray[pixel + 1] & 255) < threshold;
                     if (ink && start < 0) start = y;
                     if (!ink && start >= 0) {
                         int size = y - start;
-                        if (size >= Math.max(3, (int) Math.ceil(gap * .3f)) && size <= gap * .8f) {
+                        if (size >= minimumCore && size <= maximumCore) {
                             float core = (start + y - 1) * .5f - end;
-                            if (cores == null) cores = new float[expected];
-                            if (coreCount < expected) cores[coreCount] = core;
-                            coreCount++;
+                            if (coreCount == expected
+                                    || (coreCount > 0 && (core - current[coreCount - 1] < gap * .3f
+                                            || core - current[coreCount - 1] > gap * .9f))
+                                    || (column > 0 && Math.abs(core - previous[coreCount]) > gap * .22f)) {
+                                okay = false;
+                                break;
+                            }
+                            if (current == null) current = new float[expected];
+                            current[coreCount++] = core;
                         }
                         start = -1;
                     }
                 }
-                if (coreCount != expected) {
+                if (!okay || coreCount != expected) {
                     okay = false;
                     break;
                 }
-                float[] current = cores;
-                for (int i = 0; i < expected; i++) {
-                    if (i > 0
-                            && (current[i] - current[i - 1] < gap * .3f
-                                    || current[i] - current[i - 1] > gap * .9f)) okay = false;
-                    if (previous != null && Math.abs(current[i] - previous[i]) > gap * .22f)
-                        okay = false;
-                }
+                float[] reusable = previous;
                 previous = current;
+                current = reusable;
             }
             if (okay) return expected;
+            // An identical prefix would fail at the same column under the second cutoff.
+            if (cutoff == 2 && !retryCanDiffer) return 0;
         }
         return 0;
     }

@@ -28711,6 +28711,13 @@ final class OmrScoreInterpreter {
                 adaptive
                         ? BeamInkThreshold.at(gray, width, height, x, top, bottom, staff.gap)
                         : 165;
+        return thickNonHeadBandsWithThreshold(
+                gray, labels, width, height, x, top, bottom, staff, stemwardX, threshold);
+    }
+
+    private static int thickNonHeadBandsWithThreshold(
+            byte[] gray, byte[] labels, int width, int height, int x,
+            int top, int bottom, Staff staff, int stemwardX, int threshold) {
         int normal =
                 thickNonHeadBandsAtThreshold(
                         gray, labels, width, height, x, top, bottom, staff, threshold, stemwardX);
@@ -28720,8 +28727,11 @@ final class OmrScoreInterpreter {
         // a single beam crossed by a rule still has only one core.
         int darkest = threshold;
         for (int y = top; y <= bottom; y++) darkest = Math.min(darkest, gray[y * width + x] & 255);
-        for (float fraction : new float[] {.75f, .5f, .25f}) {
-            int coreThreshold = darkest + Math.round((threshold - darkest) * fraction);
+        int previousThreshold = threshold;
+        for (int quarter = 3; quarter > 0; quarter--) {
+            int coreThreshold = darkest + Math.round((threshold - darkest) * (quarter * .25f));
+            if (coreThreshold == previousThreshold) continue;
+            previousThreshold = coreThreshold;
             int cores =
                     thickNonHeadBandsAtThreshold(
                             gray,
@@ -28825,7 +28835,8 @@ final class OmrScoreInterpreter {
             int near = pale[0] + side * 2;
             int threshold = BeamInkThreshold.at(gray, width, height, inner, top, bottom, gap);
             int rootThreshold = threshold < 165 ? threshold + 16 : 205;
-            if (thickNonHeadBands(gray, labels, width, height, inner, top, bottom, staff) == 2
+            if (thickNonHeadBandsWithThreshold(
+                            gray, labels, width, height, inner, top, bottom, staff, inner, threshold) == 2
                     && thickNonHeadBands(
                                     gray, labels, width, height, outer, top, bottom, staff, inner)
                             == 2
