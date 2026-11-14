@@ -41,48 +41,86 @@ final class RegionalStaffSeeds {
         int first = Math.round(seed.top - seed.gap * 2);
         int localHeight = Math.max(24, Math.round(seed.gap * 8));
         List<float[]> samples = new ArrayList<>();
+        byte[] localGray = new byte[stripWidth * localHeight];
+        byte[] localLabels = new byte[localGray.length];
+        float[] deskew = new float[stripWidth];
+        int[] semantic = new int[localHeight], contrasted = new int[localHeight];
+        int flank = Math.max(2, Math.round(seed.gap * .32f));
+        int flankOffset = flank * stripWidth;
+        int minimumStrength = Math.max(6, Math.round(stripWidth * .14f));
+        int previousLeft = -1;
         for (int strip = 0; strip < 13; strip++) {
+            if (samples.size() + 13 - strip < 6) return null;
             float requested = width * (.08f + strip * (.86f / 12));
             int left =
                     Math.max(
                             0,
                             Math.min(width - stripWidth, Math.round(requested - stripWidth * .5f)));
+            if (left == previousLeft) continue;
+            previousLeft = left;
             float centerX = left + stripWidth * .5f;
-            byte[] localGray = new byte[stripWidth * localHeight];
-            byte[] localLabels = new byte[localGray.length];
-            Arrays.fill(localGray, (byte) 255);
-            for (int y = 0; y < localHeight; y++)
-                for (int x = 0; x < stripWidth; x++) {
-                    int worldX = left + x;
-                    int worldY = Math.round(first + y + seed.slope * (worldX - width * .5f));
+            if (seed.slope == 0f) {
+                for (int y = 0, at = 0; y < localHeight; y++, at += stripWidth) {
+                    int worldY = Math.round(first + y + 0f);
                     if (worldY >= 0 && worldY < height) {
-                        localGray[y * stripWidth + x] = gray[worldY * width + worldX];
-                        localLabels[y * stripWidth + x] = labels[worldY * width + worldX];
+                        int source = worldY * width + left;
+                        System.arraycopy(gray, source, localGray, at, stripWidth);
+                        System.arraycopy(labels, source, localLabels, at, stripWidth);
+                    } else {
+                        Arrays.fill(localGray, at, at + stripWidth, (byte) 255);
+                        Arrays.fill(localLabels, at, at + stripWidth, (byte) 0);
                     }
                 }
-            int[] semantic = new int[localHeight], contrasted = new int[localHeight];
-            int flank = Math.max(2, Math.round(seed.gap * .32f));
-            for (int y = flank; y < localHeight - flank; y++)
-                for (int x = 0; x < stripWidth; x++) {
-                    int at = y * stripWidth + x, ink = localGray[at] & 255;
-                    if (localLabels[at] == OmrMeasurePostProcessor.STAFF) semantic[y]++;
+            } else {
+                for (int x = 0; x < stripWidth; x++)
+                    deskew[x] = seed.slope * (left + x - width * .5f);
+                for (int y = 0, at = 0; y < localHeight; y++)
+                    for (int x = 0; x < stripWidth; x++, at++) {
+                        int worldY = Math.round(first + y + deskew[x]);
+                        if (worldY >= 0 && worldY < height) {
+                            int source = worldY * width + left + x;
+                            localGray[at] = gray[source];
+                            localLabels[at] = labels[source];
+                        } else {
+                            localGray[at] = (byte) 255;
+                            localLabels[at] = 0;
+                        }
+                    }
+            }
+            for (int y = flank; y < localHeight - flank; y++) {
+                int semanticCount = 0, contrastCount = 0;
+                for (int at = y * stripWidth, end = at + stripWidth; at < end; at++) {
+                    int ink = localGray[at] & 255;
+                    if (localLabels[at] == OmrMeasurePostProcessor.STAFF) semanticCount++;
                     if (ink <= 238
-                            && (localGray[at - flank * stripWidth] & 255) >= ink + 12
-                            && (localGray[at + flank * stripWidth] & 255) >= ink + 12)
-                        contrasted[y]++;
+                            && (localGray[at - flankOffset] & 255) >= ink + 12
+                            && (localGray[at + flankOffset] & 255) >= ink + 12)
+                        contrastCount++;
                 }
-            List<RawStaffLineDetector.StaffLines> proposals =
-                    new ArrayList<>(
-                            RawStaffLineDetector.detectFromStrength(
-                                    semantic,
-                                    Math.max(6, Math.round(stripWidth * .14f)),
-                                    localHeight));
-            proposals.addAll(
-                    RawStaffLineDetector.detectFromStrength(
-                            contrasted, Math.max(6, Math.round(stripWidth * .14f)), localHeight));
+                semantic[y] = semanticCount;
+                contrasted[y] = contrastCount;
+            }
+            var semanticProposals =
+                    RawStaffLineDetector.detectFromStrength(semantic, minimumStrength, localHeight);
+            List<RawStaffLineDetector.StaffLines> contrastProposals =
+                    Arrays.equals(semantic, contrasted)
+                            ? List.of()
+                            : RawStaffLineDetector.detectFromStrength(
+                                    contrasted, minimumStrength, localHeight);
             float[] best = null;
             float bestDistance = Float.POSITIVE_INFINITY;
-            for (var lines : proposals) {
+            int semanticSize = semanticProposals.size();
+            proposal:
+            for (int i = 0; i < semanticSize + contrastProposals.size(); i++) {
+                var lines = i < semanticSize
+                        ? semanticProposals.get(i)
+                        : contrastProposals.get(i - semanticSize);
+                if (i >= semanticSize) {
+                    for (var previous : semanticProposals) {
+                        if (lines.gap() == previous.gap() && Arrays.equals(lines.rows(), previous.rows()))
+                            continue proposal;
+                    }
+                }
                 if (lines.gap() < seed.gap * .75f
                         || lines.gap() > seed.gap * 1.25f
                         || Math.abs(lines.bottom() + first - seed.bottom) > seed.gap * .75f
@@ -130,17 +168,22 @@ final class RegionalStaffSeeds {
     private static float[] fittedRules(byte[] gray, int width, int height, int[] rows, float gap) {
         int probe = Math.max(2, Math.round(gap * .32f));
         int radius = Math.max(1, Math.round(gap * .10f));
+        int probeOffset = probe * width;
         float[] centers = new float[5];
         for (int line = 0; line < 5; line++) {
+            int firstRow = Math.max(probe, rows[line] - radius);
+            int lastRow = Math.min(height - 1 - probe, rows[line] + radius);
+            if (firstRow > lastRow) return null;
+            int firstOffset = firstRow * width;
             double weighted = 0, weights = 0;
             for (int x = 0; x < width; x++)
-                for (int dy = -radius; dy <= radius; dy++) {
-                    int y = rows[line] + dy;
-                    if (y - probe < 0 || y + probe >= height) continue;
-                    int ink = gray[y * width + x] & 255;
-                    int above = gray[(y - probe) * width + x] & 255;
-                    int below = gray[(y + probe) * width + x] & 255;
-                    if (ink <= 238 && above >= ink + 12 && below >= ink + 12) {
+                for (int y = firstRow, at = firstOffset + x; y <= lastRow; y++, at += width) {
+                    int ink = gray[at] & 255;
+                    if (ink > 238) continue;
+                    int above = gray[at - probeOffset] & 255;
+                    if (above < ink + 12) continue;
+                    int below = gray[at + probeOffset] & 255;
+                    if (below >= ink + 12) {
                         double weight = (above + below) * .5 - ink;
                         weighted += y * weight;
                         weights += weight;
@@ -158,21 +201,25 @@ final class RegionalStaffSeeds {
     }
 
     private static float sampleSlope(List<float[]> samples, int field) {
-        List<Float> slopes = new ArrayList<>();
+        float[] slopes = new float[samples.size() * (samples.size() - 1) / 2];
+        int next = 0;
         for (int i = 0; i < samples.size(); i++)
             for (int j = i + 1; j < samples.size(); j++) {
                 float[] a = samples.get(i), b = samples.get(j);
-                slopes.add((b[field] - a[field]) / (b[0] - a[0]));
+                slopes[next++] = (b[field] - a[field]) / (b[0] - a[0]);
             }
-        slopes.sort(Float::compare);
-        return slopes.get(slopes.size() / 2);
+        Arrays.sort(slopes);
+        return slopes[slopes.length / 2];
     }
 
     private static float sampleBase(List<float[]> samples, int field, float slope) {
-        List<Float> bases = new ArrayList<>();
-        for (float[] p : samples) bases.add(p[field] - slope * p[0]);
-        bases.sort(Float::compare);
-        return bases.get(bases.size() / 2);
+        float[] bases = new float[samples.size()];
+        for (int i = 0; i < bases.length; i++) {
+            float[] sample = samples.get(i);
+            bases[i] = sample[field] - slope * sample[0];
+        }
+        Arrays.sort(bases);
+        return bases[bases.length / 2];
     }
 
     static List<Seed> detect(byte[] labels, byte[] gray, int width, int height) {
@@ -191,9 +238,12 @@ final class RegionalStaffSeeds {
                 || labels.length != gray.length) return List.of();
         int[] strength = new int[height];
         int left = Math.round(width * .08f), right = Math.round(width * .94f);
-        for (int y = 0; y < height; y++)
-            for (int x = left; x < right; x++)
-                if (labels[y * width + x] == OmrMeasurePostProcessor.STAFF) strength[y]++;
+        for (int y = 0, row = 0; y < height; y++, row += width) {
+            int count = 0;
+            for (int at = row + left, end = row + right; at < end; at++)
+                if (labels[at] == OmrMeasurePostProcessor.STAFF) count++;
+            strength[y] = count;
+        }
         int minimum = Math.max(10, width / 80), hole = Math.max(3, width / 170);
         int margin = Math.max(8, width / 50);
         int maximumEnvelope = Math.max(width / 3, height / 4);
@@ -240,10 +290,10 @@ final class RegionalStaffSeeds {
         byte[] local = Arrays.copyOfRange(labels, first * width, last * width);
         float slope = OmrMeasurePostProcessor.estimateStaffSlope(local, width, localHeight);
         int[] projection = new int[localHeight];
-        for (int y = first; y < last; y++)
+        for (int y = 0, rowStart = 0; y < localHeight; y++, rowStart += width)
             for (int x = 0; x < width; x++)
-                if (labels[y * width + x] == OmrMeasurePostProcessor.STAFF) {
-                    int row = Math.round(y - first - slope * (x - width * .5f));
+                if (local[rowStart + x] == OmrMeasurePostProcessor.STAFF) {
+                    int row = Math.round(y - slope * (x - width * .5f));
                     if (row >= 0 && row < localHeight) projection[row]++;
                 }
         for (var lines :
@@ -283,6 +333,7 @@ final class RegionalStaffSeeds {
         int radius = Math.max(0, Math.round(gap * .10f));
         int minimum = Math.max(24, Math.round(width * .08f));
         int minimumRun = Math.max(8, Math.round(gap * 3));
+        if (width < minimum || width < minimumRun) return false;
         for (int line : rows) {
             int count = 0, run = 0, longest = 0;
             for (int x = 0; x < width; x++) {
@@ -303,6 +354,10 @@ final class RegionalStaffSeeds {
                     count++;
                     longest = Math.max(longest, ++run);
                 } else run = 0;
+                if (count >= minimum && longest >= minimumRun) break;
+                int remaining = width - 1 - x;
+                if (count + remaining < minimum
+                        || (longest < minimumRun && run + remaining < minimumRun)) return false;
             }
             if (count < minimum || longest < minimumRun) return false;
         }
