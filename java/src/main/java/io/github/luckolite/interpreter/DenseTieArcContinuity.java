@@ -4,6 +4,12 @@ package io.github.luckolite.interpreter;
 
 /** Original-column connectivity inside an already qualified tie curve. */
 final class DenseTieArcContinuity {
+    private static final java.lang.invoke.VarHandle GRAY_WORDS =
+            java.lang.invoke.MethodHandles.byteArrayViewVarHandle(
+                    long[].class, java.nio.ByteOrder.nativeOrder());
+    private static final long HIGH_BITS = 0x8080808080808080L;
+    private static final long BYTE_ONES = 0x0101010101010101L;
+
     static final class StraightRows {
         private final byte[] gray;
         private final int width, left, right, inkLimit, first;
@@ -41,8 +47,23 @@ final class DenseTieArcContinuity {
             if (index < 0 || index >= states.length) return false;
             byte state = states[index];
             if (state != 0) return state == 2;
-            int dark = 0, end = y * width + right;
-            for (int at = y * width + left; at <= end; at++) {
+            int dark = 0, at = y * width + left, end = y * width + right;
+            if (end - at >= 23 && inkLimit >= 0 && inkLimit < 255) {
+                int cutoff = inkLimit + 1;
+                long bias = BYTE_ONES * (cutoff & 127);
+                for (; at <= end - 7; at += Long.BYTES) {
+                    long word = (long) GRAY_WORDS.get(gray, at);
+                    long high = word & HIGH_BITS;
+                    long brightLow = ((word | HIGH_BITS) - bias) & HIGH_BITS;
+                    long bright = cutoff < 128 ? brightLow | high : brightLow & high;
+                    dark += Long.BYTES - Long.bitCount(bright);
+                    if (dark >= minimum || dark + (end - at - 7) < minimum) {
+                        at = end + 1;
+                        break;
+                    }
+                }
+            }
+            for (; at <= end; at++) {
                 if ((gray[at] & 255) <= inkLimit && ++dark >= minimum) break;
                 if (dark + (end - at) < minimum) break;
             }
@@ -159,12 +180,35 @@ final class DenseTieArcContinuity {
         return covered >= (right - left + 1) * .8f;
     }
 
+    private static final class FlatProfilePrefix {
+        static final int INTERVALS = 512;
+        static final double[] KNOTS = knots();
+
+        private static double[] knots() {
+            double[] result = new double[INTERVALS - 1];
+            for (int i = 0; i < result.length; i++) {
+                result[i] = flatProfileX((i + 1) / (double) INTERVALS);
+            }
+            return result;
+        }
+    }
+
+    private static double flatProfileX(double u) {
+        double v = 1 - u;
+        return 3 * .05 * v * v * u + 3 * .95 * v * u * u + u * u * u;
+    }
+
     private static float flatProfile(float t) {
-        double low = 0, high = 1;
-        for (int step = 0; step < 16; step++) {
-            double u = (low + high) * .5, v = 1 - u;
-            double x = 3 * .05 * v * v * u + 3 * .95 * v * u * u + u * u * u;
-            if (x < t) low = u;
+        // The first nine bisections land on this dyadic grid. A tie
+        // chooses the lower interval, as in the original bisection.
+        if (Float.isNaN(t)) t = Float.NEGATIVE_INFINITY;
+        int index = java.util.Arrays.binarySearch(FlatProfilePrefix.KNOTS, (double) t);
+        int interval = index < 0 ? -index - 1 : index;
+        double low = interval / (double) FlatProfilePrefix.INTERVALS;
+        double high = low + 1d / FlatProfilePrefix.INTERVALS;
+        for (int step = 0; step < 7; step++) {
+            double u = (low + high) * .5;
+            if (flatProfileX(u) < t) low = u;
             else high = u;
         }
         double u = (low + high) * .5;

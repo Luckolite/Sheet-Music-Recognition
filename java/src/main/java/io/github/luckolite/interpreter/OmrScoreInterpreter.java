@@ -32534,20 +32534,40 @@ final class OmrScoreInterpreter {
                 target, inkLimit, requiredSide, strictContrast, flatProfile, frame, null);
     }
 
+    private static final int TIE_PROBE_SLOTS = 4;
+    private static final ThreadLocal<TieArcScratch> TIE_ARC_SCRATCH =
+            ThreadLocal.withInitial(TieArcScratch::new);
+    // A regular arc can synchronously retry at strict contrast before using its witness.
+    private static final ThreadLocal<TieArcScratch> STRICT_TIE_ARC_SCRATCH =
+            ThreadLocal.withInitial(TieArcScratch::new);
+
+    private static final class TieArcScratch {
+        final int[] sampleColumns = new int[50], paper = new int[63];
+        final int[] bins = new int[5], coveredBins = new int[5];
+        final float[] supportedCenters = new float[50], strokeCenters = new float[50];
+        final float[] residuals = new float[50];
+        final long[] probeKeys = new long[50 * TIE_PROBE_SLOTS];
+        final int[] probeRows = new int[probeKeys.length];
+        final float[] probeStrokeCenters = new float[probeKeys.length];
+        final boolean[] probeStrong = new boolean[probeKeys.length];
+    }
+
     private static boolean hasContinuousTieArc(
             byte[] labels, byte[] gray, int width, int height, int left, int right,
             float centerY, float gap, Component target, int inkLimit, int requiredSide,
             boolean strictContrast, boolean flatProfile, TieFrame frame, SystemTieInk witness) {
         // Boundary arc evidence needs raw pixels; semantic-only decoding remains supported.
         if (gray == null || gray.length != (long) width * height) return false;
-        int[] sampleColumns = new int[50];
+        TieArcScratch scratch = (strictContrast ? STRICT_TIE_ARC_SCRATCH : TIE_ARC_SCRATCH).get();
+        int[] sampleColumns = scratch.sampleColumns;
         int span = right - left;
-        {
+        if (inkLimit > 80) {
             for (int col = 0; col < 9; col++)
                 sampleColumns[col] = Math.max(0, Math.min(width - 1, left + span * col / 8));
-            int[] paper = new int[63];
-            int count = 0;
-            int bright = 0;
+            // The 48th of 63 tones is at least the cutoff once 16 tones reach it.
+            int upperCutoff = (int) Math.min(strictContrast ? 256L : 210L, (long) inkLimit + 20);
+            int[] paper = scratch.paper;
+            int count = 0, high = 0, dark = 0;
             paperSamples:
             for (int row = -3; row <= 3; row++) {
                 int y = Math.max(0, Math.min(height - 1, Math.round(centerY + (row + .37f) * gap)));
@@ -32555,13 +32575,16 @@ final class OmrScoreInterpreter {
                 for (int col = 0; col < 9; col++) {
                     int tone = gray[rowStart + sampleColumns[col]] & 255;
                     paper[count++] = tone;
-                    if (!strictContrast && tone >= 210 && ++bright == 16) break paperSamples;
+                    if (tone >= upperCutoff && ++high == 16) break paperSamples;
+                    if (tone <= 100 && ++dark == 48) {
+                        inkLimit = 80;
+                        break paperSamples;
+                    }
                 }
             }
-            if (bright < 16) {
+            if (high < 16 && dark < 48) {
                 java.util.Arrays.sort(paper);
-                if (strictContrast || paper[47] < 210)
-                    inkLimit = Math.min(inkLimit, Math.max(80, paper[47] - 20));
+                inkLimit = Math.min(inkLimit, Math.max(80, paper[47] - 20));
             }
         }
         int radius = Math.max(1, Math.round(gap * .1f));
@@ -32579,10 +32602,9 @@ final class OmrScoreInterpreter {
         var straightRows = new DenseTieArcContinuity.StraightRows(gray, width, left, right, inkLimit,
                 Math.max(0, Math.round(centerY - gap * 3.2f)),
                 Math.min(height - 1, Math.round(centerY + gap * 3.2f)));
-        // Each candidate is evaluated synchronously; scratch arrays belong to this call.
-        int[] bins = new int[5], coveredBins = new int[5];
-        float[] supportedCenters = new float[50], strokeCenters = new float[50];
-        float[] residuals = new float[50];
+        int[] bins = scratch.bins, coveredBins = scratch.coveredBins;
+        float[] supportedCenters = scratch.supportedCenters, strokeCenters = scratch.strokeCenters;
+        float[] residuals = scratch.residuals;
         int reach = Math.max(2, Math.round(gap * .4f));
         boolean compact = span < gap * 2.6f;
         float maximumThickness = gap * .6f;
@@ -32594,11 +32616,12 @@ final class OmrScoreInterpreter {
         }
         // Cache the ordered probe result for each original sample position and requested row.
         // A fixed number of slots per sample bounds scratch independently of the page geometry.
-        int probeSlots = 4;
-        long[] probeKeys = new long[sampleColumns.length * probeSlots];
-        int[] probeRows = new int[probeKeys.length];
-        float[] probeStrokeCenters = new float[probeKeys.length];
-        boolean[] probeStrong = new boolean[probeKeys.length];
+        long[] probeKeys = scratch.probeKeys;
+        // Keys carry a nonzero side. Their payload is valid only after a match in this call.
+        java.util.Arrays.fill(probeKeys, 0L);
+        int[] probeRows = scratch.probeRows;
+        float[] probeStrokeCenters = scratch.probeStrokeCenters;
+        boolean[] probeStrong = scratch.probeStrong;
         boolean requireStrongInk = inkLimit > 165;
         boolean longArc = span >= gap * 8 && span <= gap * (flatProfile ? 48 : 24);
         boolean countNonStrong = requireStrongInk || longArc;
@@ -32625,7 +32648,7 @@ final class OmrScoreInterpreter {
                             for (int end = sample + 10; sample < end; sample++) {
                                 int x = sampleColumns[sample];
                                 int y = Math.round(centerY + sideGap * (offset + bend * profile[sample]));
-                                int probeSlot = sample * probeSlots + (y & (probeSlots - 1));
+                                int probeSlot = sample * TIE_PROBE_SLOTS + (y & (TIE_PROBE_SLOTS - 1));
                                 long probeKey = ((long) y << 32) | (side & 0xffffffffL);
                                 int supportedRow;
                                 float stroke;
