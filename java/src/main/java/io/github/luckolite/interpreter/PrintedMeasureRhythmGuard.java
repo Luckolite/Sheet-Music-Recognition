@@ -57,6 +57,7 @@ final class PrintedMeasureRhythmGuard {
         if (gray == null || fitted.isEmpty()) return fitted;
         fitted = InlineHalfDyadCadence.recover(fitted, labels, gray, width, height);
         fitted = StraightDyadCadenceBoundaries.recover(fitted, labels, gray, width, height);
+        fitted = HalfDyadBeforeSixteenthBar.recover(fitted, labels, gray, width, height);
         fitted = DottedDyadMeasureSeparator.recover(fitted, labels, gray, width, height);
         fitted = SystemHalfDyadCadence.recover(fitted, labels, gray, width, height);
         fitted = SystemQuarterCadence.recover(fitted, labels, gray, width, height);

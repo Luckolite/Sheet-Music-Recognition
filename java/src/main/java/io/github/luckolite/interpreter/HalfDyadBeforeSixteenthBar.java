@@ -1,0 +1,164 @@
+// Copyright 2026 Luckolite
+// SPDX-License-Identifier: Apache-2.0
+package io.github.luckolite.interpreter;
+
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
+
+/** Recovers a missed double rule between an isolated half dyad and a complete sixteenth bar. */
+final class HalfDyadBeforeSixteenthBar {
+    private HalfDyadBeforeSixteenthBar() {}
+
+    static List<MeasureRegion> recover(List<MeasureRegion> regions, byte[] labels, byte[] gray,
+            int width, int height) {
+        var result = new ArrayList<MeasureRegion>();
+        for (int i = 0; i < regions.size(); i++) {
+            var region = regions.get(i);
+            var parts = i > 0 && i + 1 < regions.size()
+                    ? split(regions.get(i - 1), region, regions.get(i + 1), gray, width, height)
+                    : List.<MeasureRegion>of();
+            if (parts.isEmpty() || !qualifies(parts, OmrScoreInterpreter.analyze(
+                    labels, gray, width, height, parts), gray, width, height)) {
+                result.add(region);
+                continue;
+            }
+            result.addAll(parts);
+        }
+        return result.size() == regions.size() ? regions : List.copyOf(result);
+    }
+
+    static List<MeasureRegion> split(MeasureRegion prior, MeasureRegion whole, MeasureRegion following,
+            byte[] gray, int width, int height) {
+        if (whole.cadenceQuarterBeats() != 0) return List.of();
+        float gap = (whole.bottom() - whole.top()) * height / 8.2f;
+        float left = whole.left() * width, right = whole.right() * width;
+        if (gap < 8 || gap > 30 || right - left < 32 * gap || right - left > 49 * gap
+                || !sameStaff(prior, whole, gap, height) || !sameStaff(following, whole, gap, height))
+            return List.of();
+        float opening = (prior.right() * width + left) * .5f;
+        float closing = (following.left() * width + right) * .5f;
+        if (Math.abs(opening - left) > gap || Math.abs(closing - right) > gap)
+            return List.of();
+        float hint = whole.bottom() * height - 2.1f * gap;
+        if (!boundaryAt(gray, width, height, opening, hint, gap)
+                || !boundaryAt(gray, width, height, closing, hint, gap)) return List.of();
+
+        int cut = -1;
+        int start = Math.round(left + 3.4f * gap), end = Math.round(left + 6.4f * gap);
+        for (int x = start; x <= end; x++) {
+            if (!DottedDyadMeasureSeparator.fullInk(
+                    gray, width, x, Math.round(hint - 4 * gap), gap)) continue;
+            var rails = DottedDyadMeasureSeparator.localRails(gray, width, height, x, hint, gap);
+            if (rails == null) continue;
+            int top = Math.round(rails[0] - 4 * rails[1]), bottom = Math.round(rails[0]);
+            var staff = new PlayingTechniqueDetector.Staff(top, bottom, rails[1], 0, 1);
+            int first = PrintedCadenceDurations.boundaryColumn(gray, width, staff, x, false, false);
+            if (first < 0 || !unownedRule(gray, width, height, first, staff)) continue;
+            int second = adjacentRule(gray, width, height, first, staff);
+            if (second < 0) continue;
+            int center = (first + second) / 2;
+            if (cut >= 0 && Math.abs(center - cut) > gap * .45f) return List.of();
+            cut = center;
+        }
+        if (cut < 0) return List.of();
+        float padding = Math.round(gap * .48f);
+        return List.of(new MeasureRegion(whole.left(), (cut - padding) / width,
+                            whole.top(), whole.bottom(), 2),
+                       new MeasureRegion((cut + padding) / width, whole.right(),
+                            whole.top(), whole.bottom()));
+    }
+
+    static boolean qualifies(List<MeasureRegion> parts, OmrScoreInterpreter.Analysis analysis,
+            byte[] gray, int width, int height) {
+        if (!analysis.rests().isEmpty()) return false;
+        var cadence = parts.get(0);
+        var following = parts.get(1);
+        var chord = analysis.notes().stream().filter(n -> n.measureIndex() == 0).toList();
+        var run = analysis.notes().stream().filter(n -> n.measureIndex() == 1)
+                .sorted(Comparator.comparingDouble(ScoreNoteEvent::positionInMeasure)).toList();
+        if (chord.size() != 2 || run.size() != 32) return false;
+        float gap = (cadence.bottom() - cadence.top()) * height / 8.2f;
+        float left = cadence.left() * width, right = cadence.right() * width;
+        if (!dyad(chord.get(0), chord.get(1), right - left, gap, true)) return false;
+        float a = chord.get(0).positionInMeasure(), b = chord.get(1).positionInMeasure();
+        if (Math.min(a, b) < .18f || Math.max(a, b) > .68f) return false;
+        var rails = DottedDyadMeasureSeparator.localRails(gray, width, height,
+                Math.round(right - 1.3f * gap), cadence.bottom() * height - 2.1f * gap, gap);
+        if (rails == null) return false;
+        var staff = new PlayingTechniqueDetector.Staff(rails[0] - 4 * rails[1], rails[0],
+                rails[1], 0, 1);
+        if (!PrintedCadenceDurations.emptyOutsideChord(gray, width, staff, left, right,
+                left + Math.min(a, b) * (right - left), left + Math.max(a, b) * (right - left), false))
+            return false;
+        float span = (following.right() - following.left()) * width;
+        for (int i = 0; i < run.size(); i += 2) {
+            if (!dyad(run.get(i), run.get(i + 1), span, gap, false)) return false;
+            if (i >= 2) {
+                float advance = (run.get(i).positionInMeasure()
+                        - run.get(i - 2).positionInMeasure()) * span;
+                if (advance < gap || advance > 4.5f * gap) return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean dyad(ScoreNoteEvent first, ScoreNoteEvent second,
+            float span, float gap, boolean half) {
+        return first.staffStep() != second.staffStep()
+                && first.stemDirection() != 0 && first.stemDirection() == second.stemDirection()
+                && Math.abs(first.positionInMeasure() - second.positionInMeasure()) * span < .35f * gap
+                && head(first, half) && head(second, half);
+    }
+
+    private static boolean head(ScoreNoteEvent note, boolean half) {
+        return note.kind() == ScoreNoteEvent.Kind.PITCHED && note.staffIndex() == 0
+                && note.staffCount() == 1 && note.visualSize() == ScoreNoteEvent.VisualSize.FULL
+                && note.augmentationDots() == 0 && note.tupletDivisor() == 1
+                && !note.crossStaffBeam() && !note.tiedFromPrevious() && note.boundaryTies() == 0
+                && note.leadingRestBeats() == 0 && note.followingRestBeats() == 0
+                && (note.articulations() & NoteOrnament.GRACE) == 0
+                && note.beamCount() == (half ? 0 : 2)
+                && note.unbeamedDurationBeats() == (half ? 2 : 0);
+    }
+
+    private static boolean sameStaff(MeasureRegion a, MeasureRegion b, float gap, int height) {
+        return Math.abs(a.top() - b.top()) * height <= gap
+                && Math.abs(a.bottom() - b.bottom()) * height <= gap;
+    }
+
+    private static boolean boundaryAt(byte[] gray, int width, int height, float x, float hint, float gap) {
+        var rails = DottedDyadMeasureSeparator.localRails(
+                gray, width, height, Math.round(x), hint, gap);
+        if (rails == null) return false;
+        var staff = new PlayingTechniqueDetector.Staff(rails[0] - 4 * rails[1], rails[0],
+                rails[1], 0, 1);
+        for (int probe = Math.round(x - gap * .35f); probe <= x + gap * .35f; probe++) {
+            if (unownedRule(gray, width, height, probe, staff)) return true;
+        }
+        return false;
+    }
+
+    private static int adjacentRule(byte[] gray, int width, int height, int first,
+            PlayingTechniqueDetector.Staff staff) {
+        int top = Math.round(staff.top());
+        int start = first + Math.max(3, Math.round(staff.gap() * .24f));
+        int limit = first + Math.round(staff.gap() * .85f);
+        for (int x = start; x <= limit; x++) {
+            if (!unownedRule(gray, width, height, x, staff)) continue;
+            if (!DottedDyadMeasureSeparator.fullInk(gray, width, (first + x) / 2, top, staff.gap()))
+                return x;
+        }
+        return -1;
+    }
+
+    private static boolean unownedRule(byte[] gray, int width, int height, int x,
+            PlayingTechniqueDetector.Staff staff) {
+        int top = Math.round(staff.top()), bottom = Math.round(staff.bottom());
+        return DottedDyadMeasureSeparator.fullInk(gray, width, x, top, staff.gap())
+                && OmrMeasurePostProcessor.verticalRuleAt(gray, width, x, top, bottom, staff.gap())
+                && !DottedDyadMeasureSeparator.continuesBeyondStaff(
+                        gray, width, height, x, top, bottom, staff.gap())
+                && !ClosedHeadBarlineGuard.attached(gray, width, height, x, top, bottom, staff.gap());
+    }
+}
