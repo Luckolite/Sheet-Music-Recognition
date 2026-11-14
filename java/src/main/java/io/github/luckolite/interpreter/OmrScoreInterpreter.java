@@ -766,6 +766,7 @@ final class OmrScoreInterpreter {
         }
         List<Component> heads = new ArrayList<>();
         List<Component> rejectedSlurHeads = new ArrayList<>();
+        List<Component> clippedTerminalSeeds = new ArrayList<>();
         for (Component head : headComponents) {
             Staff staff = staffForHead(labels, gray, width, height, staffs, head);
             // A tiny semantic corner is not an oval-sized head. Establish the entire
@@ -788,7 +789,23 @@ final class OmrScoreInterpreter {
                 if (flatStemlessFragment(gray, width, height, head, staff.gap))
                     rejectedSlurHeads.add(head);
                 else heads.add(head);
-            }
+            } else if (staff != null && staff.count == 1 && staff.gap >= 12
+                    && head.maxX - head.minX + 1 >= staff.gap * .2f
+                    && head.maxX - head.minX + 1 < staff.gap * .38f
+                    && head.maxY - head.minY + 1 >= staff.gap * .36f
+                    && head.maxY - head.minY + 1 <= staff.gap * .62f
+                    && head.area >= staff.gap * staff.gap * .07f
+                    && head.area <= staff.gap * staff.gap * .15f
+                    && head.centerX > measures.get(measures.size() - 1).right() * width - staff.gap * 3
+                    && completeHeadMembers(labels, width, height, head) != null)
+                clippedTerminalSeeds.add(head);
+        }
+        var terminalLower = closedTerminalLowerLobe(
+                labels, gray, width, height, measures, staffs, heads, clippedTerminalSeeds);
+        if (terminalLower != null) {
+            heads.add(terminalLower);
+            recoveredFadedHeads.add(terminalLower);
+            recoveredFilledFragmentHeads.add(terminalLower);
         }
         List<Component> recoveredSingleBeamHeads = new ArrayList<>();
         List<CorroboratedFaintBeam.Proof> recoveredFaintBeams = new ArrayList<>();
@@ -24114,6 +24131,120 @@ final class OmrScoreInterpreter {
         return true;
     }
 
+
+    /**
+     * A narrow surviving note mask may miss most of the lower body where an over-staff dyad
+     * sits on ledger ink. Require its own filled core, common shaft, and terminating third hook.
+     */
+    private static Component closedTerminalLowerLobe(
+            byte[] labels, byte[] gray, int width, int height, List<MeasureRegion> measures,
+            List<Staff> staffs, List<Component> heads, List<Component> fragments) {
+        if (gray == null || fragments.isEmpty()) return null;
+        var end = measures.get(measures.size() - 1);
+        Component found = null;
+        var budget = new PrintedBeamShafts.Budget(500_000);
+        for (var fragment : fragments) {
+            var staff = nearestHeadStaff(staffs, fragment.centerY);
+            if (staff == null || staff.count != 1) continue;
+            float gap = staff.gap;
+            float remaining = end.right() * width - fragment.centerX;
+            if (gap < 12 || remaining < gap * 1.65f || remaining > gap * 2.9f
+                    || fragment.centerY > staff.top - gap * 1.9f
+                    || fragment.centerY < staff.top - gap * 4
+                    || containingMeasureForStaff(measures, fragment.centerX / width,
+                            fragment.centerY / height, staff, height) != measures.size() - 1)
+                continue;
+            Component upper = null, peerUpper = null, peerLower = null;
+            boolean rival = false;
+            for (var head : heads) {
+                if (nearestHeadStaff(staffs, head.centerY) != staff) continue;
+                float dx = fragment.centerX - head.centerX;
+                float dy = fragment.centerY - head.centerY;
+                if (Math.abs(dx) < gap * .80f && Math.abs(dy) < gap * .63f) {
+                    rival = true;
+                    break;
+                }
+                if (dx < -.80f * gap && dx > -remaining && Math.abs(dy) < gap * 4) {
+                    rival = true;
+                    break;
+                }
+                if (Math.abs(dx) < gap * .60f && dy >= gap * .8f && dy <= gap * 1.2f) {
+                    if (upper != null) {
+                        rival = true;
+                        break;
+                    }
+                    upper = head;
+                }
+                if (dx < gap * 1.7f || dx > gap * 3.35f) continue;
+                if (dy >= gap * .12f && dy <= gap * .5f) {
+                    if (peerUpper != null) {
+                        rival = true;
+                        break;
+                    }
+                    peerUpper = head;
+                }
+                if (dy >= -gap * .95f && dy <= -gap * .52f) {
+                    if (peerLower != null) {
+                        rival = true;
+                        break;
+                    }
+                    peerLower = head;
+                }
+            }
+            if (rival || upper == null || peerUpper == null || peerLower == null
+                    || Math.abs(peerUpper.centerX - peerLower.centerX) > gap * .22f
+                    || !terminalLobeBarline(gray, width, height, staff, end)
+                    || !FilledSparseBeamHead.matches(
+                            gray, width, height, upper.centerX, upper.centerY, gap)
+                    || !FilledSparseBeamHead.matches(
+                            gray, width, height, peerUpper.centerX, peerUpper.centerY, gap)
+                    || !FilledSparseBeamHead.matches(
+                            gray, width, height, peerLower.centerX, peerLower.centerY, gap))
+                continue;
+            float x = fragment.centerX + gap * .13f;
+            float y = upper.centerY + staff.pitchGap;
+            if (Math.abs(y - fragment.centerY) > gap * .2f
+                    || !FilledSparseBeamHead.completeInterior(gray, width, height, x, y, gap)
+                    || !OwnedTertiaryBeamlets.provesClosingDyadHook(
+                            gray, width, height, x, y, upper.centerX, upper.centerY,
+                            peerUpper.centerX, peerUpper.centerY, peerLower.centerX,
+                            peerLower.centerY, gap, budget)) continue;
+            int halfWidth = Math.round(gap * .67f), halfHeight = Math.round(gap * .46f);
+            int left = Math.round(x) - halfWidth, right = Math.round(x) + halfWidth;
+            int top = Math.round(y) - halfHeight, bottom = Math.round(y) + halfHeight;
+            int area = 0, symbols = 0;
+            for (int yy = top; yy <= bottom; yy++) {
+                for (int xx = left; xx <= right; xx++) {
+                    int at = yy * width + xx;
+                    if ((gray[at] & 255) >= 170) continue;
+                    area++;
+                    if (labels[at] == OmrMeasurePostProcessor.SYMBOL) symbols++;
+                }
+            }
+            if (symbols < gap * gap * .37f || area < gap * gap * .57f) continue;
+            if (found != null) return null;
+            found = new Component(area, left, right, top, bottom, x, y);
+        }
+        return found;
+    }
+
+    private static boolean terminalLobeBarline(
+            byte[] gray, int width, int height, Staff staff, MeasureRegion end) {
+        int left = Math.round(end.right() * width - staff.gap * .28f);
+        int right = Math.round(end.right() * width + staff.gap * .28f);
+        int top = Math.round(staff.top + staff.gap * .25f);
+        int bottom = Math.round(staff.bottom - staff.gap * .25f);
+        if (left < 0 || right >= width || top < 0 || bottom >= height) return false;
+        int run = 0;
+        for (int x = left; x <= right; x++) {
+            int dark = 0;
+            for (int y = top; y <= bottom; y++)
+                if ((gray[y * width + x] & 255) < 165) dark++;
+            run = dark >= (bottom - top + 1) * .91f ? run + 1 : 0;
+            if (run >= Math.max(2, Math.round(staff.gap * .12f))) return true;
+        }
+        return false;
+    }
 
     private record TerminalBeamOwner(Component head, int[] stem) {}
 

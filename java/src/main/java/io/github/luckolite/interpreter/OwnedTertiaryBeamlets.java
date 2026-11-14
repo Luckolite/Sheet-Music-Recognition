@@ -288,6 +288,36 @@ final class OwnedTertiaryBeamlets {
         return result;
     }
 
+    /** Optical hook proof for two heads on a common final shaft and both heads of its peer. */
+    static boolean provesClosingDyadHook(
+            byte[] gray, int w, int h, float lowerX, float lowerY, float upperX, float upperY,
+            float peerUpperX, float peerUpperY, float peerLowerX, float peerLowerY, float gap,
+            PrintedBeamShafts.Budget budget) {
+        var terminal = sharedDownwardAxes(gray, w, h, lowerX, lowerY, upperX, upperY, gap, budget);
+        var peer = sharedDownwardAxes(
+                gray, w, h, peerUpperX, peerUpperY, peerLowerX, peerLowerY, gap, budget);
+        return proveSide(gray, w, h, terminal, peer, gap, -1)
+                && !proveSide(gray, w, h, peer, terminal, gap, 1);
+    }
+
+    private static List<Axis> sharedDownwardAxes(
+            byte[] gray, int w, int h, float ax, float ay, float bx, float by, float gap,
+            PrintedBeamShafts.Budget budget) {
+        var result = new ArrayList<Axis>();
+        for (var a : PrintedBeamShafts.at(gray, w, h, ax, ay, gap, budget)) {
+            if (a.direction() != 1) continue;
+            for (var b : PrintedBeamShafts.at(gray, w, h, bx, by, gap, budget)) {
+                if (b.direction() != 1) continue;
+                for (var ac : a.columns())
+                    for (var bc : b.columns())
+                        if (ac.x() == bc.x() && ac.endY() == bc.endY()
+                                && ac.endY() - Math.max(ay, by) >= gap * 3.8f)
+                            result.add(new Axis(ac.x(), ac.endY(), 1));
+            }
+        }
+        return result;
+    }
+
     private static boolean proveSide(
             byte[] gray, int w, int h, List<Axis> owners, List<Axis> peers, float gap,int side) {
         for (var own : owners)

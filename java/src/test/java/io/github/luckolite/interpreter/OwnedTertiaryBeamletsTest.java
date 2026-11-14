@@ -32,6 +32,38 @@ public final class OwnedTertiaryBeamletsTest {
         assertEquals("single closing stroke", List.of(), recover(true, false));
     }
 
+    @Test
+    public void closingDyadNeedsBothSharedShaftsAndAnExclusivelyOwnedThirdHook() {
+        assertEquals(true, closingDyadHook(true, true, false));
+        assertEquals(false, closingDyadHook(false, true, false));
+        assertEquals(false, closingDyadHook(true, false, false));
+        assertEquals(false, closingDyadHook(true, true, true));
+    }
+
+    private static boolean closingDyadHook(
+            boolean terminalHook, boolean sharedPeerShaft, boolean peerAlsoHooks) {
+        byte[] gray = new byte[WIDTH * HEIGHT];
+        Arrays.fill(gray, (byte) 255);
+        int peer = 490, last = 537, upper = 81, lower = 98;
+        for (int x : new int[] {peer, last}) {
+            oval(gray, x, upper, false);
+            oval(gray, x == peer && !sharedPeerShaft ? x + 13 : x, lower, false);
+            ink(gray, shaftX(x), upper, shaftX(x) + 2, BEAM_TIP);
+        }
+        ink(gray, shaftX(peer), BEAM_TIP - 7, shaftX(last) + 2, BEAM_TIP);
+        ink(gray, shaftX(peer), BEAM_TIP - 21, shaftX(last) + 2, BEAM_TIP - 14);
+        if (terminalHook) {
+            ink(gray, shaftX(last) - 14, BEAM_TIP - 35, shaftX(last), BEAM_TIP - 26);
+        }
+        if (peerAlsoHooks) {
+            ink(gray, shaftX(peer), BEAM_TIP - 35, shaftX(peer) + 14, BEAM_TIP - 26);
+        }
+        return OwnedTertiaryBeamlets.provesClosingDyadHook(
+                gray, WIDTH, HEIGHT, last, lower, last, upper, peer, upper,
+                sharedPeerShaft ? peer : peer + 13, lower, ESTIMATED_GAP,
+                new PrintedBeamShafts.Budget(500_000));
+    }
+
     private static List<Integer> recover(boolean attachFirstHook, boolean doubleClose) {
         byte[] gray = new byte[WIDTH * HEIGHT];
         Arrays.fill(gray, (byte) 255);
