@@ -22488,7 +22488,8 @@ final class OmrScoreInterpreter {
                 && spacing <= gap * 1.45f
                 && Math.abs(second.centerY - first.centerY) <= gap * .40f;
         if (doubleDot && !hollowHead && gray != null
-                && ascendingStaccatoPair(gray, width, height, head, first, second, neighboringHeads, gap))
+                && (ascendingStaccatoPair(gray, width, height, head, first, second, neighboringHeads, gap)
+                        || descendingStaccatoPair(gray, width, height, head, first, second, neighboringHeads, gap)))
             return 1;
         return doubleDot ? 2 : 1;
     }
@@ -22519,6 +22520,80 @@ final class OmrScoreInterpreter {
         return stem != null && stem[2] == -1 && followingStem != null && followingStem[2] == -1
                 && isolatedLowerStaccato(gray, width, height, head, gap);
     }
+
+    private static boolean descendingStaccatoPair(byte[] gray, int width, int height,
+            Component head, Component first, Component second, List<Component> nearby, float gap) {
+        float dotAdvance = first.centerX - head.centerX;
+        if (gap < 8 || dotAdvance < gap || dotAdvance > gap * 1.29f
+                || head.maxX - head.minX + 1 < gap
+                || second.area >= first.area || second.maxY - second.minY > gap * .45f)
+            return false;
+        Component next = null;
+        for (Component candidate : nearby) {
+            float advance = candidate.centerX - head.centerX;
+            float descent = candidate.centerY - head.centerY;
+            float above = candidate.centerY - second.centerY;
+            if (advance < gap * 2.12f || advance > gap * 2.65f
+                    || descent < gap * .37f || descent > gap * .57f
+                    || above < gap * .90f || above > gap * 1.15f
+                    || Math.abs(second.centerX - candidate.centerX) > gap * .14f
+                    || candidate.maxX - candidate.minX + 1 < gap
+                    || candidate.minY - second.maxY < gap * .28f) continue;
+            if (next != null) return false;
+            next = candidate;
+        }
+        if (next == null) return false;
+        int[] a = attachedRawStem(gray, width, height, head, gap);
+        int[] b = attachedRawStem(gray, width, height, next, gap);
+        return a != null && b != null && a[2] == 1 && b[2] == 1
+                && descendingStaccatoAboveHead(gray, width, height, head, gap)
+                && twoSharedBeamRails(gray, width, height, a, b, gap);
+    }
+
+    private static boolean descendingStaccatoAboveHead(
+            byte[] gray, int width, int height, Component head, float gap) {
+        int left = Math.round(head.centerX - gap * .14f);
+        int right = Math.round(head.centerX + gap * .14f);
+        int top = Math.round(head.centerY - gap * 1.72f);
+        int bottom = Math.round(head.centerY - gap * 1.37f);
+        int core = Math.max(1, Math.round(gap * .095f));
+        int ring = Math.max(core + 2, Math.round(gap * .31f));
+        if (left < ring || top < ring || right + ring >= width || bottom + ring >= height)
+            return false;
+        for (int y = top; y <= bottom; y++) {
+            for (int x = left; x <= right; x++) {
+                if (grayInk(gray, width, x - core, x + core, y - core, y + core, 105)
+                        < (2 * core + 1) * (2 * core + 1) * .72f) continue;
+                if (grayInk(gray, width, x - ring, x + ring, y - ring, y - ring, 155) == 0
+                        && grayInk(gray, width, x - ring, x + ring, y + ring, y + ring, 155) == 0
+                        && grayInk(gray, width, x - ring, x - ring, y - ring, y + ring, 155) == 0
+                        && grayInk(gray, width, x + ring, x + ring, y - ring, y + ring, 155) == 0)
+                    return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean twoSharedBeamRails(
+            byte[] gray, int width, int height, int[] a, int[] b, float gap) {
+        int margin = Math.round(gap * .4f), span = b[0] - a[0];
+        if (span < gap * 2 || Math.abs(a[1] - b[1]) > span * .22f
+                || Math.min(a[1], b[1]) < gap * 1.2f || Math.max(a[1], b[1]) >= height)
+            return false;
+        for (float depth : new float[] {.26f, .96f}) {
+            boolean rail = true;
+            int radius = Math.round(gap * .12f);
+            for (int x = a[0] + margin; x <= b[0] - margin; x++) {
+                float projectedTip = a[1] + (b[1] - a[1]) * (x - a[0]) / (float) span;
+                int center = Math.round(projectedTip - depth * gap);
+                if (grayInk(gray, width, x, x, center - radius, center + radius, 120) < 2 * radius)
+                    rail = false;
+            }
+            if (!rail) return false;
+        }
+        return true;
+    }
+
 
     private static boolean isolatedLowerStaccato(
             byte[] gray, int width, int height, Component head, float gap) {
