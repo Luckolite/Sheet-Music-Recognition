@@ -17,7 +17,8 @@ final class StraightDyadCadenceBoundaries {
             var proposal = propose(region, gray, width, height);
             if (!proposal.isEmpty()) {
                 var local = OmrScoreInterpreter.analyze(labels, gray, width, height, proposal);
-                if (completeCadenceGroup(proposal, local.notes(), local.rests(), width, height)) {
+                if (completeCadenceGroup(proposal, local.notes(), local.rests(), width, height)
+                        || closesWithQuarterDyad(proposal, local.notes(), local.rests(), width, height)) {
                     result.addAll(proposal);
                     continue;
                 }
@@ -96,6 +97,58 @@ final class StraightDyadCadenceBoundaries {
                         || upper.stemDirection()==0 || upper.stemDirection()!=lower.stemDirection()
                         || !dyadMember(upper,half) || !dyadMember(lower,half))return false;
             }
+        }
+        return true;
+    }
+
+    /** A printed separator can distinguish a complete 4/4 run from a second
+     * bar whose last, shared-stem quarter is written without a beam. */
+    static boolean closesWithQuarterDyad(List<MeasureRegion> parts,
+            List<ScoreNoteEvent> notes, List<ScoreRestEvent> rests, int width, int height) {
+        if (parts.size() != 2 || !rests.isEmpty()) return false;
+        for (int bar = 0; bar < 2; bar++) {
+            final int index = bar;
+            var owners = notes.stream().filter(n -> n.measureIndex() == index)
+                    .sorted(Comparator.comparingDouble(ScoreNoteEvent::positionInMeasure)).toList();
+            var region = parts.get(bar);
+            float span = (region.right() - region.left()) * width;
+            float gap = (region.bottom() - region.top()) * height / 8.2f;
+            if (owners.isEmpty() || owners.get(0).positionInMeasure() > .12f
+                    || owners.get(owners.size() - 1).positionInMeasure() < .79f) return false;
+            int columns = 0, singleton = 0, dottedColumns = 0;
+            for (int start = 0; start < owners.size();) {
+                var head = owners.get(start);
+                int end = start + 1;
+                while (end < owners.size() && (owners.get(end).positionInMeasure()
+                        - head.positionInMeasure()) * span <= gap * .35f) end++;
+                boolean quarter = bar == 1 && end == owners.size();
+                int direction = head.stemDirection();
+                if (end - start > 2 || direction == 0) return false;
+                if (end - start == 1) {
+                    if (quarter || bar == 0 || ++singleton > 2) return false;
+                } else {
+                    var mate = owners.get(start + 1);
+                    if (mate.staffStep() == head.staffStep()
+                            || Math.abs(mate.pageY() - head.pageY()) * height < gap) return false;
+                }
+                int dots = head.augmentationDots();
+                if (dots != 0 && (bar != 0 || dots != 1 || ++dottedColumns > 1)) return false;
+                for (int i = start; i < end; i++) {
+                    var n = owners.get(i);
+                    if (n.stemDirection() != direction || n.augmentationDots() != dots
+                            || n.staffIndex() != 0 || n.staffCount() != 1
+                            || n.kind() != ScoreNoteEvent.Kind.PITCHED
+                            || n.visualSize() != ScoreNoteEvent.VisualSize.FULL
+                            || n.crossStaffBeam() || n.tiedFromPrevious() || n.boundaryTies() != 0
+                            || n.tupletDivisor() != 1 || n.leadingRestBeats() != 0
+                            || n.followingRestBeats() != 0 || (n.articulations() & NoteOrnament.GRACE) != 0
+                            || n.beamCount() != (quarter ? 0 : 2)
+                            || n.unbeamedDurationBeats() != (quarter ? 1 : 0)) return false;
+                }
+                columns++;
+                start = end;
+            }
+            if (columns != (bar == 0 ? 16 : 13)) return false;
         }
         return true;
     }
