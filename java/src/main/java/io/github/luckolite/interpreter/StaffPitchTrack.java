@@ -16,14 +16,17 @@ final class StaffPitchTrack {
         private static final int MAX_CELLS = 16384;
         char[] prefix;
         boolean[] ready;
-        int firstRow, left, stride;
+        int[] strength, semanticShifts;
+        int firstRow, left, stride, excludedFrom, excludedTo;
         boolean prepared;
 
-        void prepare(int left, int right, int first, int last) {
+        void prepare(int left, int right, int first, int last, int excludedLeft, int excludedRight) {
             prepared = true;
             firstRow = first;
             this.left = left;
             stride = right - left + 2;
+            excludedFrom = Math.max(left, excludedLeft) - left + 1;
+            excludedTo = Math.min(right, excludedRight) - left + 1;
             int rows = last - first + 1;
             long cells = (long) rows * stride;
             if (rows <= 0 || stride < 2 || cells > MAX_CELLS) return;
@@ -31,22 +34,41 @@ final class StaffPitchTrack {
             ready = new boolean[rows];
         }
 
-        int count(byte[] gray, int width, int row,
-                int from, int to, int flankOffset, int threshold) {
-            int index = row - firstRow;
-            int base = index * stride;
-            if (!ready[index]) {
-                int at = row * width + left, count = 0;
-                for (int out = base + 1, end = base + stride; out < end; at++, out++) {
-                    int ink = gray[at] & 255;
-                    if (ink <= threshold
-                            && (gray[at - flankOffset] & 255) >= ink + 12
-                            && (gray[at + flankOffset] & 255) >= ink + 12) count++;
-                    prefix[out] = (char) count;
+        void accumulate(byte[] gray, int width, int start, int end, int shift, int top,
+                int from, int to, int flankOffset, int threshold, int[] strength) {
+            int index = start + shift - firstRow;
+            int at = (start + shift) * width + left;
+            int fromOffset = from - left;
+            int toOffset = to - left + 1;
+            for (int y = start, base = index * stride; y <= end;
+                    y++, index++, base += stride, at += width) {
+                if (!ready[index]) {
+                    int count = 0;
+                    int pixel = at;
+                    int out = base + 1;
+                    if (excludedFrom <= excludedTo) {
+                        count = fill(gray, pixel, out, base + excludedFrom, flankOffset, threshold, 0);
+                        // Queries never cross the excluded span.
+                        prefix[base + excludedTo] = (char) count;
+                        out = base + excludedTo + 1;
+                        pixel += excludedTo;
+                    }
+                    fill(gray, pixel, out, base + stride, flankOffset, threshold, count);
+                    ready[index] = true;
                 }
-                ready[index] = true;
+                strength[y - top] += prefix[base + toOffset] - prefix[base + fromOffset];
             }
-            return prefix[base + to - left + 1] - prefix[base + from - left];
+        }
+
+        private int fill(byte[] gray, int at, int out, int end, int flankOffset, int threshold, int count) {
+            for (; out < end; at++, out++) {
+                int ink = gray[at] & 255;
+                if (ink <= threshold
+                        && (gray[at - flankOffset] & 255) >= ink + 12
+                        && (gray[at + flankOffset] & 255) >= ink + 12) count++;
+                prefix[out] = (char) count;
+            }
+            return count;
         }
     }
 
@@ -960,13 +982,22 @@ final class StaffPitchTrack {
         int flank = Math.max(2, Math.round(gap * (inkThreshold > 205 ? .22f : .32f)));
         int firstScanY = Math.max(flank, top), lastScanY = Math.min(height - 1 - flank, bottom);
         if (lastScanY - firstScanY < 4) return null;
-        int[] strength = new int[bottom - top + 1];
+        int strengthLength = bottom - top + 1;
+        int[] strength;
+        if (projection == null) {
+            strength = new int[strengthLength];
+        } else {
+            if (projection.strength == null) projection.strength = new int[strengthLength];
+            else Arrays.fill(projection.strength, 0);
+            strength = projection.strength;
+        }
         int flankOffset = flank * width;
         if (projection != null && !projection.prepared) {
             // The retry table reaches at most this displacement in either direction.
             int padding = (int) Math.ceil(Math.max(Math.abs(left - x), Math.abs(right - x)) * .16f);
             projection.prepare(left, right, Math.max(flank, firstScanY - padding),
-                    (int) Math.min(height - 1 - flank, (long) lastScanY + padding));
+                    (int) Math.min(height - 1 - flank, (long) lastScanY + padding),
+                    excludedLeft, excludedRight);
         }
         boolean cached = projection != null && projection.ready != null;
         for (int xx = left; xx <= right; ) {
@@ -978,15 +1009,14 @@ final class StaffPitchTrack {
             int runEnd = xx;
             // Deskewed columns with the same shift can read contiguous raster rows.
             int spanEnd = xx < excludedLeft ? Math.min(right, excludedLeft - 1) : right;
-            while (runEnd < spanEnd
+            if (slope == 0) runEnd = spanEnd;
+            else while (runEnd < spanEnd
                     && Math.round((runEnd + 1 - x) * slope) == columnShift) runEnd++;
             int start = Math.max(firstScanY, flank - columnShift);
             int end = Math.min(lastScanY, height - 1 - flank - columnShift);
             if (cached) {
-                for (int y = start; y <= end; y++) {
-                    strength[y - top] += projection.count(gray, width,
-                            y + columnShift, xx, runEnd, flankOffset, inkThreshold);
-                }
+                projection.accumulate(gray, width, start, end, columnShift, top,
+                        xx, runEnd, flankOffset, inkThreshold, strength);
                 xx = runEnd + 1;
                 continue;
             }
@@ -1016,6 +1046,17 @@ final class StaffPitchTrack {
         int possibleRows = 0;
         for (int value : strength) if (value >= minimum) possibleRows++;
         if (possibleRows < 5) return null;
+        int[] shifts = null;
+        if (slope != 0) {
+            int columns = right - left + 1;
+            if (projection == null) {
+                shifts = new int[columns];
+            } else {
+                if (projection.semanticShifts == null) projection.semanticShifts = new int[columns];
+                shifts = projection.semanticShifts;
+            }
+            for (int xx = left; xx <= right; xx++) shifts[xx - left] = Math.round((xx - x) * slope);
+        }
         for (int row = 0; row < strength.length; row++) {
             if (strength[row] < minimum) continue;
             int supported = 0, center = top + row;
@@ -1024,7 +1065,7 @@ final class StaffPitchTrack {
                     if (excludedRight >= right) break;
                     xx = excludedRight + 1;
                 }
-                int shifted = center + Math.round((xx - x) * slope);
+                int shifted = center + (shifts == null ? 0 : shifts[xx - left]);
                 int start = Math.max(0, shifted - band);
                 int end = Math.min(height - 1, shifted + band);
                 for (int yy = start, at = start * width + xx; yy <= end; yy++, at += width) {

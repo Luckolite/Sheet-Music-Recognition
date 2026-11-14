@@ -74,12 +74,14 @@ final class PrintedDashSpan {
                 || !Float.isFinite(gapY)
                 || gapX <= 0
                 || gapY <= 0) return Optional.empty();
+        float firstTop = word.top() - gapY * .4f;
+        float firstBottom = word.bottom() + gapY * .4f;
+        float horizontalTolerance = gapX * 2;
         PrintedDashChains.Run first = null;
         int firstSystem = -1;
         for (var run : runs) {
-            if (run.y() < word.top() - gapY * .4f
-                    || run.y() > word.bottom() + gapY * .4f
-                    || Math.abs(run.left() - word.right()) > gapX * 2) continue;
+            if (run.y() < firstTop || run.y() > firstBottom
+                    || Math.abs(run.left() - word.right()) > horizontalTolerance) continue;
             int owner = resolveOwner.applyAsInt(run);
             if (expectedFirst >= 0 && owner != expectedFirst) continue;
             if (owner < 0) continue;
@@ -91,6 +93,7 @@ final class PrintedDashSpan {
         var path = new ArrayList<PrintedDashChains.Run>();
         path.add(first);
         int row = firstSystem;
+        IdentityHashMap<PrintedDashChains.Run, Integer> owners = null;
         for (; ; ) {
             var last = path.get(path.size() - 1);
             var system = systems.get(row);
@@ -106,10 +109,14 @@ final class PrintedDashSpan {
                 return Optional.of(new Span(firstSystem, row, path, End.PAGE_EDGE));
             var nextSystem = systems.get(row + 1);
             if (nextSystem.top() <= system.top()) return Optional.empty();
+            if (owners == null) {
+                owners = new IdentityHashMap<>();
+                owners.put(first, firstSystem);
+            }
             PrintedDashChains.Run next = null;
             for (var run : runs) {
-                if (resolveOwner.applyAsInt(run) != row + 1
-                        || Math.abs(run.left() - nextSystem.left()) > gapX * 2) continue;
+                if (Math.abs(run.left() - nextSystem.left()) > horizontalTolerance
+                        || owners.computeIfAbsent(run, resolveOwner::applyAsInt) != row + 1) continue;
                 if (next != null) return Optional.empty();
                 next = run;
             }
