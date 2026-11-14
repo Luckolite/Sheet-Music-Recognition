@@ -54,7 +54,12 @@ final class OriginalBeamAnalysisSnapshot {
             for (var f : value.getClass().getDeclaredFields())
                 if (!Modifier.isStatic(f.getModifiers())) {
                     f.setAccessible(true);
-                    sorted.put(f.getName(), f.get(value));
+                    Object field = f.get(value);
+                    // Preserve the original snapshot shape for scenes with no joined naturals.
+                    if (value instanceof SourceLocalAccidental
+                            && f.getName().equals("joinedNaturalOwners")
+                            && field instanceof Set<?> owners && owners.isEmpty()) continue;
+                    sorted.put(f.getName(), field);
                 }
         return fields(sorted);
     }
