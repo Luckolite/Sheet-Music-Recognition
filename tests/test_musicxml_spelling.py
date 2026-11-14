@@ -82,6 +82,26 @@ class MusicXmlSpellingTests(unittest.TestCase):
         page['events'][0]['sourceNoteIndex'] = 1
         self.assertIsNone(self.export(doc).find('.//note/accidental'))
 
+    def test_inferred_clef_spelling_requires_a_mark_and_agreement_with_midi(self):
+        for staff, count, step, midi, sign, expected in (
+                (0, 1, 6, 75, 1, ('D', '1', '5', 'sharp')),
+                (1, 2, 0, 44, 1, ('G', '1', '2', 'sharp')),
+                (0, 1, 13, 86, 0, ('D', '0', '6', 'natural'))):
+            with self.subTest(staff=staff, count=count, step=step):
+                doc = document(30 + step, sign, midi)
+                page = doc['pages'][0]
+                note = page['score']['notes'][0]
+                note.update(clefBottomDiatonic=-1, staffIndex=staff, staffCount=count)
+                event = page['events'][0]
+                event.update(clefInferred=True, staffIndex=staff, staffCount=count, sourceNoteIndex=0)
+                page['printedAccidentals'] = [dict(noteIndex=0, accidental=sign)]
+                n = self.export(doc).find('.//note[pitch]')
+                self.assertEqual(expected, (n.findtext('pitch/step'), n.findtext('pitch/alter', '0'),
+                                            n.findtext('pitch/octave'), n.findtext('accidental')))
+                self.assertIsNone(retained(page, 0, 0))
+                event['midi'] += 1
+                self.assertIsNone(self.export(doc).find('.//note/accidental'))
+
     def test_invalid_printed_mark_rows_raise(self):
         for rows in (None, [{'noteIndex': 1, 'accidental': 0}],
                      [{'noteIndex': 0, 'accidental': 2}], [{'noteIndex': True, 'accidental': 0}],

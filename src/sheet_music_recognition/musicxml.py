@@ -600,7 +600,8 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
             spelling_key = (bars[first_bar+measure_index]['key']
                             if type(measure_index) is int and 0 <= measure_index < len(page['measureBeats'])
                             else None)
-            spelling = spelling_export.retained(page, note_index, spelling_key)
+            spelling = spelling_export.retained(page, note_index, spelling_key,
+                                                 printed_accidentals.get(note_index))
             events.append(dict(n, start=offset+start, end=offset+(start if is_grace else min(local_start,start+duration)), tie_stop=False, tie_start=False,
                                sourceIdentity=len(events), retainedClef=clef_export.retained(page, note_index),
                                retainedArticulations=articulation_export.retained(page, note_index),

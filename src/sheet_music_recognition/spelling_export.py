@@ -36,9 +36,9 @@ def printed_mark(rows, index, spelling):
     return mark if spelling[1] == alter else None
 
 
-def retained(page, index, key):
+def retained(page, index, key, printed=None):
     event = page['events'][index]
-    if event_kind(event) != 'PITCHED' or event.get('clefInferred', False):
+    if event_kind(event) != 'PITCHED':
         return None
     notes = page.get('score', {}).get('notes', [])
     if len(notes) != len(page['events']):
@@ -52,18 +52,27 @@ def retained(page, index, key):
             or any(k not in event or k not in source or event[k] != source[k] for k in fields)):
         return None
     bottom = source.get('clefBottomDiatonic', -1)
-    if bottom == -1:
+    inferred = event.get('clefInferred', False)
+    if inferred and (bottom != -1 or type(printed) is not int
+                     or printed not in PRINTED_ACCIDENTALS
+                     or event.get('sourceNoteIndex') != index):
+        return None
+    if bottom == -1 and not inferred:
         return None
     step, accidental = source.get('staffStep'), source.get('writtenAccidental')
     shift = source.get('octaveShift', 0)
-    if step is None or accidental is None:
+    if step is None or accidental is None or inferred and printed != accidental:
         return None
-    if (type(bottom) is not int or bottom not in LAYOUT
+    if (type(bottom) is not int or bottom not in (*LAYOUT, -1)
             or any(type(v) is not int for v in (step, accidental, shift))
             or accidental not in (-2, -1, 0, 1, 2, 3)):
         raise ValueError('Invalid retained pitch spelling')
     if event.get('clefBottomDiatonic', bottom) != bottom:
         return None
+    if bottom == -1:
+        # The owned glyph fixes the alteration. Check that its resulting spelling
+        # reproduces the decoder's pitch with the same fallback staff geometry.
+        bottom = 18 if source['staffCount'] > 1 and source['staffIndex'] > 0 else 30
     diatonic = bottom + step + 7 * shift
     octave, letter = divmod(diatonic, 7)
     if accidental == 2:  # FROM_KEY is distinct from the double-sharp wire value 3.
