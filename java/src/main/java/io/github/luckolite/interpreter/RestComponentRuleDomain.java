@@ -37,6 +37,14 @@ final class RestComponentRuleDomain {
             float printedCenter,
             float gap,
             java.util.List<ScoreNoteEvent> notes) {
+        return bindResolved(
+                gray, width, height, left, right, top, bottom, line, printedCenter, gap,
+                originalPlane(notes, gray, width, height));
+    }
+
+    /** A single invocation can reuse this identity check across its component proposals. */
+    static byte[] originalPlane(
+            java.util.List<ScoreNoteEvent> notes, byte[] gray, int width, int height) {
         byte[] original = null;
         if (notes != null)
             for (var note : notes) {
@@ -44,11 +52,16 @@ final class RestComponentRuleDomain {
                 if (origin == null) continue;
                 if (origin.originalGray == null
                         || origin.originalGray.length != (long) width * height)
-                    return new Domain(left, right, line, false);
-                if (original != null && original != origin.originalGray)
-                    return new Domain(left, right, line, false);
+                    return null;
+                if (original != null && original != origin.originalGray) return null;
                 original = origin.originalGray;
             }
+        return original;
+    }
+
+    static Domain bindResolved(
+            byte[] gray, int width, int height, int left, int right, int top, int bottom,
+            boolean[] line, float printedCenter, float gap, byte[] original) {
         if (original == null) return new Domain(left, right, line, false);
         return bind(
                 gray, original, width, height, left, right, top, bottom, line, printedCenter, gap);
@@ -87,39 +100,40 @@ final class RestComponentRuleDomain {
         float first = printedCenter - gap * 2, last = printedCenter + gap * 2, edge = gap * .35f;
         if (original == null || original.length != gray.length || first < 0 || last >= height)
             return legacy;
-        boolean outside = false;
-        for (int i = 0; i < line.length; i++)
-            if (line[i] && (top + i < first - edge || top + i > last + edge)) {
-                outside = true;
-                break;
-            }
-        if (!outside || !five(gray, original, width, height, left, right, printedCenter, gap))
+        float minimumRow = first - edge, maximumRow = last + edge;
+        int from = 0, to = line.length;
+        while (from < to && top + from < minimumRow && !line[from]) from++;
+        while (to > from && top + to - 1 > maximumRow && !line[to - 1]) to--;
+        boolean extrapolated = from < to
+                && (top + from < minimumRow || top + to - 1 > maximumRow);
+        if (!extrapolated || !five(gray, original, width, height, left, right, printedCenter, gap))
             return legacy;
         boolean[] owned = line.clone();
-        for (int i = 0; i < owned.length; i++)
-            if (top + i < first - edge || top + i > last + edge) owned[i] = false;
+        while (from < to && top + from < minimumRow) owned[from++] = false;
+        while (to > from && top + to - 1 > maximumRow) owned[--to] = false;
 
         // Restoring original ink can join previously separated projection runs. Follow it
         // to real paper columns, never clip a continuing curve back to the old proposal.
         int l = left, r = right;
-        while (l > 0 && ink(gray, width, l - 1, top, bottom, owned)) {
-            if (r - (l - 1) + 1 > gap * 6) return null;
+        float maximumSpan = gap * 6;
+        while (l > 0 && ink(gray, width, l - 1, top, owned)) {
+            if (r - l + 2 > maximumSpan) return null;
             l--;
         }
-        while (r + 1 < width && ink(gray, width, r + 1, top, bottom, owned)) {
-            if ((r + 1) - l + 1 > gap * 6) return null;
+        while (r + 1 < width && ink(gray, width, r + 1, top, owned)) {
+            if (r - l + 2 > maximumSpan) return null;
             r++;
         }
-        if (l == 0 || r == width - 1 || r - l + 1 > gap * 6) return null;
+        if (l == 0 || r == width - 1 || r - l + 1 > maximumSpan) return null;
         // The complete restored interval needs the same independent exterior evidence.
         if ((l != left || r != right)
                 && !five(gray, original, width, height, l, r, printedCenter, gap)) return null;
         return new Domain(l, r, owned, true);
     }
 
-    private static boolean ink(byte[] gray, int width, int x, int top, int bottom, boolean[] line) {
-        for (int y = top; y <= bottom; y++)
-            if (!line[y - top] && (gray[y * width + x] & 255) < 170) return true;
+    private static boolean ink(byte[] gray, int width, int x, int top, boolean[] line) {
+        for (int i = 0, at = top * width + x; i < line.length; i++, at += width)
+            if (!line[i] && (gray[at] & 255) < 170) return true;
         return false;
     }
 
@@ -141,15 +155,11 @@ final class RestComponentRuleDomain {
             int expected = Math.round(center + (k - 2) * gap);
             if (expected - radius < 0 || expected + radius >= height) return false;
             int first = -1, last = -1;
-            for (int y = expected - radius; y <= expected + radius; y++) {
-                boolean both = true;
-                for (int x = left - reach; x < left && both; x++)
-                    if ((gray[y * width + x] & 255) >= 170
-                            || (original[y * width + x] & 255) >= 170) both = false;
-                for (int x = right + 1; x <= right + reach && both; x++)
-                    if ((gray[y * width + x] & 255) >= 170
-                            || (original[y * width + x] & 255) >= 170) both = false;
-                if (!both) continue;
+            int end = expected + radius;
+            for (int y = expected - radius, at = y * width; y <= end; y++, at += width) {
+                if (!continuous(gray, original, at + left - reach, at + left)
+                        || !continuous(gray, original, at + right + 1, at + right + reach + 1))
+                    continue;
                 if (last >= 0 && y != last + 1) return false; // competing disjoint stripe supports
                 if (first < 0) first = y;
                 last = y;
@@ -157,6 +167,18 @@ final class RestComponentRuleDomain {
             if (first < 0 || first <= previous) return false;
             previous = last;
         }
+        return true;
+    }
+
+    private static boolean continuous(byte[] gray, byte[] original, int start, int end) {
+        if (gray == original) {
+            for (int at = start; at < end; at++)
+                if ((gray[at] & 255) >= 170) return false;
+            return true;
+        }
+        for (int at = start; at < end; at++)
+            if ((gray[at] & 255) >= 170 || (original[at] & 255) >= 170)
+                return false;
         return true;
     }
 }

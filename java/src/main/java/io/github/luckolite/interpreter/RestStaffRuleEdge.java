@@ -14,7 +14,7 @@ final class RestStaffRuleEdge {
             float staffTop,
             float gap,
             boolean[] mask) {
-        return extend(gray, width, height, top, staffTop, gap, mask, false);
+        return extend(gray, width, height, top, staffTop, gap, mask, false, null);
     }
 
     static boolean[] extendContrasted(
@@ -25,7 +25,13 @@ final class RestStaffRuleEdge {
             float staffTop,
             float gap,
             boolean[] mask) {
-        return extend(gray, width, height, top, staffTop, gap, mask, true);
+        return extend(gray, width, height, top, staffTop, gap, mask, true, null);
+    }
+
+    static boolean[] extend(
+            byte[] gray, int width, int height, int top, float staffTop, float gap,
+            boolean[] mask, OrdinaryRuns ordinaryRuns) {
+        return extend(gray, width, height, top, staffTop, gap, mask, false, ordinaryRuns);
     }
 
     private static boolean[] extend(
@@ -36,7 +42,8 @@ final class RestStaffRuleEdge {
             float staffTop,
             float gap,
             boolean[] mask,
-            boolean contrasted) {
+            boolean contrasted,
+            OrdinaryRuns ordinaryRuns) {
         if (gray == null
                 || width <= 0
                 || height <= 0
@@ -49,43 +56,82 @@ final class RestStaffRuleEdge {
                 || !Float.isFinite(staffTop)) return mask;
         boolean[] result = mask;
         int minimum = Math.max(3, Math.round(gap * 3));
+        if (minimum > width) return mask;
+        int radius = Math.max(3, Math.round(gap * .35f));
+        float edge = gap * .35f;
         for (int i = 0; i < mask.length; i++) {
             if (mask[i]) continue;
             int y = top + i;
-            float nearest = staffTop + Math.round((y - staffTop) / gap) * gap;
-            if (Math.abs(y - nearest) > gap * .35f) continue;
             int adjacent =
                     i > 0 && mask[i - 1] ? y - 1 : i + 1 < mask.length && mask[i + 1] ? y + 1 : -1;
             if (adjacent < 0) continue;
-            int run = 0;
-            boolean proven = false;
-            for (int x = 0; x < width; x++) {
-                int value = gray[y * width + x] & 255, other = gray[adjacent * width + x] & 255;
-                boolean ink = value < (contrasted ? 200 : 170) && other < (contrasted ? 200 : 170);
-                if (ink && contrasted) {
-                    int radius = Math.max(3, Math.round(gap * .35f));
-                    ink =
-                            y >= radius
-                                    && y + radius < height
-                                    && Math.min(
-                                                            gray[(y - radius) * width + x] & 255,
-                                                            gray[(y + radius) * width + x] & 255)
-                                                    - Math.max(value, other)
-                                            >= 35;
-                }
-                if (ink) {
-                    if (++run >= minimum) {
-                        proven = true;
-                        break;
-                    }
-                } else run = 0;
-            }
+            if (contrasted && (y < radius || y + radius >= height)) continue;
+            float nearest = staffTop + Math.round((y - staffTop) / gap) * gap;
+            if (Math.abs(y - nearest) > edge) continue;
+            int row = y * width, neighbor = adjacent * width;
+            boolean proven = contrasted
+                    ? contrastedRun(gray, width, row, neighbor, radius * width, minimum)
+                    : ordinaryRuns != null
+                            ? ordinaryRuns.proves(y, adjacent, minimum)
+                            : sharedRun(gray, width, row, neighbor, minimum) == minimum;
             if (proven) {
                 if (result == mask) result = mask.clone();
                 result[i] = true;
             }
         }
         return result;
+    }
+
+    private static boolean contrastedRun(
+            byte[] gray, int width, int row, int adjacent, int radius, int minimum) {
+        int run = 0, above = row - radius, below = row + radius;
+        for (int x = 0; x < width; x++) {
+            int value = gray[row + x] & 255, other = gray[adjacent + x] & 255;
+            if (value < 200 && other < 200
+                    && Math.min(gray[above + x] & 255, gray[below + x] & 255)
+                            - Math.max(value, other) >= 35) {
+                if (++run == minimum) return true;
+            } else run = 0;
+        }
+        return false;
+    }
+
+    /** Returns the requested run length or the exact shorter maximum after a complete search. */
+    private static int sharedRun(byte[] gray, int width, int row, int adjacent, int minimum) {
+        int run = 0, longest = 0;
+        for (int x = 0; x < width; x++) {
+            if ((gray[row + x] & 255) < 170 && (gray[adjacent + x] & 255) < 170) {
+                if (++run == minimum) return minimum;
+            } else {
+                longest = Math.max(longest, run);
+                run = 0;
+            }
+        }
+        return Math.max(longest, run);
+    }
+
+    /** Shares ordinary edge proof across placements and across either direction of one row pair. */
+    static final class OrdinaryRuns {
+        private final byte[] gray;
+        private final int width;
+        private final int[] rowLongest, bounds;
+
+        OrdinaryRuns(byte[] gray, int width, int[] rowLongest) {
+            this.gray = gray;
+            this.width = width;
+            this.rowLongest = rowLongest;
+            bounds = new int[rowLongest.length];
+        }
+
+        private boolean proves(int row, int adjacent, int minimum) {
+            if (rowLongest[row] < minimum || rowLongest[adjacent] < minimum) return false;
+            int first = Math.min(row, adjacent), bound = bounds[first];
+            if (bound < 0) return ~bound >= minimum;
+            if (bound >= minimum) return true;
+            int found = sharedRun(gray, width, first * width, (first + 1) * width, minimum);
+            bounds[first] = found == minimum ? found : ~found;
+            return found == minimum;
+        }
     }
 
     /** A lower-voice fallback must not reinterpret a moving note's downward flag. */
