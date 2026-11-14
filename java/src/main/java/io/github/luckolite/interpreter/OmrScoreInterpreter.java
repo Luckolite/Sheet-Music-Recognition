@@ -3735,7 +3735,9 @@ final class OmrScoreInterpreter {
                     }
                 }
         }
-        return normalizeDoubleBarSharps(result, gray, width, height, measures, staffs);
+        // Header cleanup only clears notehead labels, so the other lists still describe result.
+        return normalizeDoubleBarSharps(result, gray, width, height, measures, staffs,
+                result == labels ? heads : null, glyphs, symbols);
     }
 
     /** Recover a mixed-label sharp only in a separated slot after a full double bar. */
@@ -3745,18 +3747,28 @@ final class OmrScoreInterpreter {
             int width,
             int height,
             List<MeasureRegion> measures,
-            List<Staff> staffs) {
+            List<Staff> staffs,
+            List<Component> noteHeads,
+            List<Component> glyphs,
+            List<Component> symbols) {
         byte[] result = labels;
-        List<Component> noteHeads = findComponents(labels, width, height, (byte) 2);
-        List<Component> seeds = new ArrayList<>();
-        for (byte label : new byte[] {2, 3, 5})
-            seeds.addAll(findComponents(labels, width, height, label));
+        List<Component> seeds = null;
+        byte[] ink = null;
+        int[] queue = null, largest = null;
         for (Staff staff : staffs)
             for (MeasureRegion measure : measures) {
                 float cy = (staff.top + staff.bottom) * .5f, gap = staff.pitchGap;
                 if (cy < measure.top() * height || cy > measure.bottom() * height) continue;
                 float boundary = measure.left() * width;
                 if (!hasDoubleBar(labels, gray, width, height, boundary, staff)) continue;
+                if (seeds == null) {
+                    if (noteHeads == null)
+                        noteHeads = findComponents(labels, width, height, OmrMeasurePostProcessor.NOTEHEAD);
+                    seeds = new ArrayList<>(noteHeads.size() + glyphs.size() + symbols.size());
+                    seeds.addAll(noteHeads);
+                    seeds.addAll(glyphs);
+                    seeds.addAll(symbols);
+                }
                 for (Component seed : seeds) {
                     if (seed.centerX < boundary + gap * .2f
                             || seed.centerX > boundary + gap * 2.1f
@@ -3767,23 +3779,26 @@ final class OmrScoreInterpreter {
                     int top = Math.max(0, Math.round(seed.centerY - gap * 2.5f)),
                             bottom = Math.min(height - 1, Math.round(seed.centerY + gap * 2.5f));
                     if (left < boundary + gap * .05f) continue;
-                    int w = right - left + 1, h = bottom - top + 1;
-                    byte[] ink = new byte[w * h];
-                    for (int y = 0; y < h; y++)
+                    int w = right - left + 1, h = bottom - top + 1, size = w * h;
+                    if (ink == null || ink.length < size) {
+                        ink = new byte[size];
+                        queue = new int[size];
+                        largest = new int[size];
+                    }
+                    for (int y = 0; y < h; y++) {
+                        int row = (top + y) * width + left, cropRow = y * w;
                         for (int x = 0; x < w; x++) {
-                            byte v = labels[(top + y) * width + left + x];
-                            if (v != 0 && v != 4) ink[y * w + x] = 3;
+                            byte v = labels[row + x];
+                            ink[cropRow + x] = v != 0 && v != 4 ? (byte) 3 : 0;
                         }
-                    // Keep only the largest eight-connected glyph; nearby isolated marks stay
-                    // unchanged.
-                    byte[] remaining = ink.clone();
-                    int[] queue = new int[ink.length], largest = new int[ink.length];
+                    }
+                    // The flood clears each candidate pixel. Restore only the largest glyph.
                     int largestSize = 0;
-                    for (int origin = 0; origin < remaining.length; origin++) {
-                        if (remaining[origin] == 0) continue;
+                    for (int origin = 0; origin < size; origin++) {
+                        if (ink[origin] == 0) continue;
                         int tail = 1;
                         queue[0] = origin;
-                        remaining[origin] = 0;
+                        ink[origin] = 0;
                         for (int head = 0; head < tail; head++) {
                             int at = queue[head], xx = at % w, yy = at / w;
                             for (int ny = Math.max(0, yy - 1); ny <= Math.min(h - 1, yy + 1); ny++)
@@ -3791,8 +3806,8 @@ final class OmrScoreInterpreter {
                                         nx <= Math.min(w - 1, xx + 1);
                                         nx++) {
                                     int next = ny * w + nx;
-                                    if (remaining[next] != 0) {
-                                        remaining[next] = 0;
+                                    if (ink[next] != 0) {
+                                        ink[next] = 0;
                                         queue[tail++] = next;
                                     }
                                 }
@@ -3802,23 +3817,22 @@ final class OmrScoreInterpreter {
                             System.arraycopy(queue, 0, largest, 0, tail);
                         }
                     }
-                    java.util.Arrays.fill(ink, (byte) 0);
-                    for (int i = 0; i < largestSize; i++) ink[largest[i]] = 3;
-                    int area = 0, l = w, r = -1, t = h, b = -1;
-                    for (int y = 0; y < h; y++)
-                        for (int x = 0; x < w; x++)
-                            if (ink[y * w + x] == 3) {
-                                area++;
-                                l = Math.min(l, x);
-                                r = Math.max(r, x);
-                                t = Math.min(t, y);
-                                b = Math.max(b, y);
-                            }
-                    if (area == 0 || l == 0 || r == w - 1 || t == 0 || b == h - 1) continue;
-                    Component glyph = null;
-                    for (Component piece : findComponents(ink, w, h, (byte) 3))
-                        if (glyph == null || piece.area > glyph.area) glyph = piece;
-                    if (glyph == null) continue;
+                    if (largestSize < 3) continue;
+                    int l = w, r = -1, t = h, b = -1;
+                    long sumX = 0, sumY = 0;
+                    for (int i = 0; i < largestSize; i++) {
+                        int at = largest[i], y = at / w, x = at - y * w;
+                        ink[at] = 3;
+                        l = Math.min(l, x);
+                        r = Math.max(r, x);
+                        t = Math.min(t, y);
+                        b = Math.max(b, y);
+                        sumX += x;
+                        sumY += y;
+                    }
+                    if (l == 0 || r == w - 1 || t == 0 || b == h - 1) continue;
+                    Component glyph = new Component(largestSize, l, r, t, b,
+                            sumX / (float) largestSize, sumY / (float) largestSize);
                     if (!isSharpGlyph(ink, w, h, new AccidentalCandidate(glyph, (byte) 3), gap))
                         continue;
                     // A first played chord must not be swallowed as a signature.
@@ -3832,9 +3846,10 @@ final class OmrScoreInterpreter {
                     if (!Float.isFinite(firstHead)
                             || firstHead - (left + glyph.centerX) < gap * 1.35f) continue;
                     if (result == labels) result = labels.clone();
-                    for (int y = t; y <= b; y++)
-                        for (int x = l; x <= r; x++)
-                            if (ink[y * w + x] == 3) result[(top + y) * width + left + x] = 3;
+                    for (int i = 0; i < largestSize; i++) {
+                        int at = largest[i], y = at / w, x = at - y * w;
+                        result[(top + y) * width + left + x] = 3;
+                    }
                 }
             }
         return result;
@@ -12276,11 +12291,14 @@ final class OmrScoreInterpreter {
             return findComponentsByPixel(labels, width, height, target);
         if (membership != null && !membership.bindInput(labels, rawGray, width, height))
             membership = null;
+        List<Component> result = new ArrayList<>();
+        int firstTarget = 0;
+        while (firstTarget < labels.length && labels[firstTarget] != target) firstTarget++;
+        if (firstTarget == labels.length) return result;
         boolean[] visited = new boolean[labels.length];
         int[] stack = new int[Math.min(labels.length, 256)];
-        List<Component> result = new ArrayList<>();
-        for (int origin = 0; origin < labels.length; origin++) {
-            if (visited[origin] || labels[origin] != target) continue;
+        for (int origin = firstTarget; origin < labels.length; origin++) {
+            if (labels[origin] != target || visited[origin]) continue;
             int stackSize = 0;
             stack[stackSize++] = origin;
             visited[origin] = true;
@@ -12290,7 +12308,7 @@ final class OmrScoreInterpreter {
             var memberRuns = membership == null ? null : membership.begin();
             while (stackSize > 0) {
                 int current = stack[--stackSize];
-                int x = current % width, y = current / width, row = y * width;
+                int y = current / width, row = y * width, x = current - row;
                 int left = x, right = x;
                 while (left > 0 && !visited[row + left - 1] && labels[row + left - 1] == target)
                     left--;
@@ -31372,6 +31390,7 @@ final class OmrScoreInterpreter {
         // Each candidate is evaluated synchronously; scratch arrays belong to this call.
         int[] bins = new int[5], coveredBins = new int[5];
         float[] supportedCenters = new float[50], strokeCenters = new float[50];
+        float[] residuals = new float[50];
         int reach = Math.max(2, Math.round(gap * .4f));
         boolean compact = span < gap * 2.6f;
         float maximumThickness = gap * .6f;
@@ -31513,7 +31532,7 @@ final class OmrScoreInterpreter {
                         // A changing stroke width can supply two curved boundaries while
                         // its printed center remains straight. Do not let the search
                         // switch boundaries to manufacture a returning arc.
-                        if (hits >= 34 && hasFlatTieStrokeCenter(strokeCenters, gap)) continue;
+                        if (hits >= 34 && hasFlatTieStrokeCenter(strokeCenters, gap, residuals)) continue;
                         // Curvature follows the smaller of staff scale and the short arc span.
                         if (hits >= 43
                                 && bins[0] >= 7
@@ -31864,7 +31883,10 @@ final class OmrScoreInterpreter {
     }
 
     private static boolean hasFlatTieStrokeCenter(float[] centers, float gap) {
-        float[] finite = new float[centers.length];
+        return hasFlatTieStrokeCenter(centers, gap, new float[centers.length]);
+    }
+
+    private static boolean hasFlatTieStrokeCenter(float[] centers, float gap, float[] finite) {
         int count = 0;
         double sumX = 0, sumY = 0, sumXX = 0, sumXY = 0;
         for (int i = 0; i < centers.length; i++)
@@ -31883,11 +31905,18 @@ final class OmrScoreInterpreter {
         double slope = (count * sumXY - sumX * sumY) / divisor,
                 intercept = (sumY - slope * sumX) / count;
         int at = 0;
-        for (int i = 0; i < centers.length; i++)
-            if (Float.isFinite(centers[i]))
-                finite[at++] = (float) (centers[i] - intercept - slope * i);
+        float minimum = Float.POSITIVE_INFINITY, maximum = Float.NEGATIVE_INFINITY;
+        for (int i = 0; i < centers.length; i++) {
+            if (!Float.isFinite(centers[i])) continue;
+            float residual = (float) (centers[i] - intercept - slope * i);
+            finite[at++] = residual;
+            minimum = Math.min(minimum, residual);
+            maximum = Math.max(maximum, residual);
+        }
+        float limit = Math.max(1.5f, gap * .13f);
+        if (maximum - minimum <= limit) return true;
         java.util.Arrays.sort(finite, 0, count);
-        return finite[count - 1 - count / 10] - finite[count / 10] <= Math.max(1.5f, gap * .13f);
+        return finite[count - 1 - count / 10] - finite[count / 10] <= limit;
     }
 
     private static final float[] PARABOLIC_TIE_PROFILE = parabolicTieProfile();
