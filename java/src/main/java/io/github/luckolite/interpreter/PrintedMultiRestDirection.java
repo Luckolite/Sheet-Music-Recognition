@@ -11,8 +11,10 @@ final class PrintedMultiRestDirection {
         var m = score.measures().get(first);
         if (first > 0 && m.equals(score.measures().get(first - 1))) return 0;
         int end = first + 1;
-        while (end < score.measures().size() && m.equals(score.measures().get(end))) end++;
-        if (end - first < 2 || end - first > 32) return 0;
+        while (end < score.measures().size() && m.equals(score.measures().get(end))) {
+            if (++end - first > 32) return 0;
+        }
+        if (end - first < 2) return 0;
         for (var n : score.notes())
             if (n.measureIndex() >= first && n.measureIndex() < end) return 0;
         for (var r : score.rests())
@@ -40,11 +42,12 @@ final class PrintedMultiRestDirection {
             int h) {
         ScoreRestEvent result = null;
         for (int i = 0; i < score.measures().size(); i++) {
-            if (silentRun(score, i) == 0) continue;
             var m = score.measures().get(i);
             if (!BeamedHeadQuarterRests.validMeasure(m)
                     || word.left() < m.left()
-                    || word.left() > m.right()) continue;
+                    || word.left() > m.right()
+                    || word.left() > m.left() + (m.right() - m.left()) * .35f
+                    || silentRun(score, i) == 0) continue;
             if (!MultiMeasureRestDetector.hasThickHorizontalBar(gray, w, h, m)) continue;
             for (var staff : staffs) {
                 float gap = staff.gap(), center = (staff.top() + staff.bottom()) * .5f;
@@ -55,7 +58,6 @@ final class PrintedMultiRestDirection {
                         || staff.index() >= staff.count()
                         || center / h < m.top()
                         || center / h > m.bottom()) continue;
-                if (word.left() > m.left() + (m.right() - m.left()) * .35f) continue;
                 var rules =
                         PrintedDirectionStaff.printedRules(
                                 gray, w, h, word.left() * w, staff.bottom(), gap);

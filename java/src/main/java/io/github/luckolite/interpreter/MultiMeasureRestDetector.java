@@ -1136,12 +1136,17 @@ final class MultiMeasureRestDetector {
         int searchBottom = bottom - Math.round(regionHeight * .12f);
         int consecutive = 0;
         for (int y = searchTop; y <= searchBottom; y++) {
-            int longest = 0, current = 0, paleGap = 0;
-            for (int x = left; x <= right; x++) {
-                if ((gray[y * width + x] & 0xff) <= 150) {
+            int current = 0, paleGap = 0;
+            int row = y * width;
+            boolean qualifies = false;
+            for (int at = row + left, end = row + right; at <= end; at++) {
+                if ((gray[at] & 255) <= 150) {
                     current += paleGap + 1;
                     paleGap = 0;
-                    longest = Math.max(longest, current);
+                    if (current >= requiredRun) {
+                        qualifies = true;
+                        break;
+                    }
                 } else if (current > 0 && paleGap < 1) {
                     paleGap++;
                 } else {
@@ -1149,8 +1154,9 @@ final class MultiMeasureRestDetector {
                     paleGap = 0;
                 }
             }
-            consecutive = longest >= requiredRun ? consecutive + 1 : 0;
+            consecutive = qualifies ? consecutive + 1 : 0;
             if (consecutive >= requiredThickness) return true;
+            if (consecutive + searchBottom - y < requiredThickness) break;
         }
         return cappedRestWindow(gray, width, height, region) != null;
     }
@@ -1191,9 +1197,14 @@ final class MultiMeasureRestDetector {
     }
 
     private static boolean filledBarRow(byte[] gray, int width, int left, int right, int y) {
+        int row = y * width;
+        float required = (right - left + 1) * .80f;
         int ink = 0;
-        for (int x = left; x <= right; x++) if ((gray[y * width + x] & 255) <= 150) ink++;
-        return ink >= (right - left + 1) * .80f;
+        for (int at = row + left, end = row + right; at <= end; at++) {
+            if ((gray[at] & 255) <= 150 && ++ink >= required) return true;
+            if (ink + end - at < required) return false;
+        }
+        return ink >= required;
     }
 
     private static int clamp(int value, int minimum, int maximum) {

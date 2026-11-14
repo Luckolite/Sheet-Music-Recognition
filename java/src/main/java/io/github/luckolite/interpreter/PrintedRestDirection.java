@@ -96,6 +96,9 @@ final class PrintedRestDirection {
                 || top < 0
                 || bottom >= h
                 || bottom < top) return null;
+        float ownerX = caption ? (word.left() + word.right()) * .5f : word.left();
+        float probeX = ownerX * w, right = word.right() * w;
+        IdentityHashMap<PlayingTechniqueDetector.Staff, Optional<float[]>> rulesByStaff = null;
         ScoreRestEvent best = null;
         float rank = Float.MAX_VALUE;
         boolean ambiguous = false;
@@ -107,13 +110,12 @@ final class PrintedRestDirection {
                     || rest.positionInMeasure() < 0
                     || rest.positionInMeasure() > 1) continue;
             var m = score.measures().get(rest.measureIndex());
-            float ownerX = caption ? (word.left() + word.right()) * .5f : word.left();
             if (ownerX < m.left()
                     || ownerX > m.right()
-                    || caption && (!uniqueFullRest(score, rest) || word.right() > m.right()))
+                    || caption && (word.right() > m.right() || !uniqueFullRest(score, rest)))
                 continue;
             float rx = (m.left() + rest.positionInMeasure() * (m.right() - m.left())) * w;
-            float dx = Math.max(0, Math.max(x - rx, rx - word.right() * w));
+            float dx = Math.max(0, Math.max(x - rx, rx - right));
             for (var staff : staffs) {
                 float gap = staff.gap(), center = (staff.top() + staff.bottom()) * .5f;
                 if (staff.index() != rest.staffIndex()
@@ -126,9 +128,10 @@ final class PrintedRestDirection {
                         || Math.abs(rest.pageY() * h - center) > gap * 2.5f
                         || (dx > gap * 3 && !measureStartWholeRest(score, rest, word, gap, w)))
                     continue;
-                var rules =
-                        PrintedDirectionStaff.printedRules(
-                                gray, w, h, ownerX * w, staff.bottom(), gap);
+                if (rulesByStaff == null) rulesByStaff = new IdentityHashMap<>();
+                var rules = rulesByStaff.computeIfAbsent(staff, key -> Optional.ofNullable(
+                        PrintedDirectionStaff.printedRules(gray, w, h, probeX, key.bottom(), key.gap())))
+                        .orElse(null);
                 if (rules == null
                         || Math.abs(rules[0] - staff.bottom()) > gap * .5f
                         || Math.abs(rules[1] - gap) > gap * .15f) continue;
