@@ -3780,18 +3780,33 @@ final class OmrScoreInterpreter {
                             bottom = Math.min(height - 1, Math.round(seed.centerY + gap * 2.5f));
                     if (left < boundary + gap * .05f) continue;
                     int w = right - left + 1, h = bottom - top + 1, size = w * h;
+                    // The selected glyph must fit inside the crop with a one-pixel border.
+                    if (w - 2 < Math.round(gap * .65f) || h - 2 < gap * 1.55f) continue;
+                    // A first played chord must not be swallowed as a signature.
+                    float firstHead = Float.POSITIVE_INFINITY;
+                    for (Component head : noteHeads)
+                        if (head.centerX > right
+                                && Math.abs(head.centerY - cy) < gap * 5
+                                && head.minY <= staff.bottom + gap * 3
+                                && head.maxY >= staff.top - gap * 3)
+                            firstHead = Math.min(firstHead, head.minX);
+                    if (!Float.isFinite(firstHead)) continue;
                     if (ink == null || ink.length < size) {
                         ink = new byte[size];
                         queue = new int[size];
                         largest = new int[size];
                     }
+                    int cropInk = 0;
                     for (int y = 0; y < h; y++) {
                         int row = (top + y) * width + left, cropRow = y * w;
                         for (int x = 0; x < w; x++) {
                             byte v = labels[row + x];
-                            ink[cropRow + x] = v != 0 && v != 4 ? (byte) 3 : 0;
+                            boolean marked = v != 0 && v != 4;
+                            ink[cropRow + x] = marked ? (byte) 3 : 0;
+                            if (marked) cropInk++;
                         }
                     }
+                    if (cropInk < 3 || cropInk < gap * gap * .42f) continue;
                     // The flood clears each candidate pixel. Restore only the largest glyph.
                     int largestSize = 0;
                     for (int origin = 0; origin < size; origin++) {
@@ -3814,7 +3829,9 @@ final class OmrScoreInterpreter {
                         }
                         if (tail > largestSize) {
                             largestSize = tail;
-                            System.arraycopy(queue, 0, largest, 0, tail);
+                            int[] previousLargest = largest;
+                            largest = queue;
+                            queue = previousLargest;
                         }
                     }
                     if (largestSize < 3) continue;
@@ -3833,18 +3850,9 @@ final class OmrScoreInterpreter {
                     if (l == 0 || r == w - 1 || t == 0 || b == h - 1) continue;
                     Component glyph = new Component(largestSize, l, r, t, b,
                             sumX / (float) largestSize, sumY / (float) largestSize);
+                    if (firstHead - (left + glyph.centerX) < gap * 1.35f) continue;
                     if (!isSharpGlyph(ink, w, h, new AccidentalCandidate(glyph, (byte) 3), gap))
                         continue;
-                    // A first played chord must not be swallowed as a signature.
-                    float firstHead = Float.POSITIVE_INFINITY;
-                    for (Component head : noteHeads)
-                        if (head.centerX > right
-                                && Math.abs(head.centerY - cy) < gap * 5
-                                && head.minY <= staff.bottom + gap * 3
-                                && head.maxY >= staff.top - gap * 3)
-                            firstHead = Math.min(firstHead, head.minX);
-                    if (!Float.isFinite(firstHead)
-                            || firstHead - (left + glyph.centerX) < gap * 1.35f) continue;
                     if (result == labels) result = labels.clone();
                     for (int i = 0; i < largestSize; i++) {
                         int at = largest[i], y = at / w, x = at - y * w;
@@ -21002,29 +21010,28 @@ final class OmrScoreInterpreter {
         int terminalMargin = Math.max(2, Math.round(glyphHeight * .10f));
         float bridgeThreshold = (rightSpine - leftSpine + 1) * .70f;
         byte[] bridgeInk = crossbarInk == null ? labels : crossbarInk;
-        for (int row = terminalMargin; row < glyphHeight - terminalMargin; row++) {
-            if (rows[row] < wideThreshold) continue;
-            int bridge = 0;
-            int at = (glyph.minY + row) * width + glyph.minX + leftSpine;
-            for (int col = leftSpine; col <= rightSpine; col++)
-                if (candidate.matches(bridgeInk[at++]) && ++bridge >= bridgeThreshold) break;
-            if (bridge < bridgeThreshold) rows[row] = 0;
-        }
-        // Measure crossbars against the two spines, not stray ink at the glyph edge.
-        List<int[]> crossbars = new ArrayList<>();
+        // Compact bridged bands into the row-count array after reading their final row.
+        int bands = 0, bandStart = -1;
         int minimumBandHeight = Math.max(2, Math.round(gap * .12f));
-        for (int row = terminalMargin; row < rows.length - terminalMargin; ) {
-            if (rows[row] < wideThreshold) {
-                row++;
-                continue;
+        int end = glyphHeight - terminalMargin;
+        for (int row = terminalMargin; row <= end; row++) {
+            if (row < end && rows[row] >= wideThreshold) {
+                int bridge = 0;
+                int at = (glyph.minY + row) * width + glyph.minX + leftSpine;
+                for (int col = leftSpine; col <= rightSpine; col++)
+                    if (candidate.matches(bridgeInk[at++]) && ++bridge >= bridgeThreshold) break;
+                if (bridge >= bridgeThreshold) {
+                    if (bandStart < 0) bandStart = row;
+                    continue;
+                }
             }
-            int first = row;
-            while (row < rows.length - terminalMargin && rows[row] >= wideThreshold) row++;
-            // A painted staff stripe at a spine tip is not a sharp crossbar.
-            if (row - first < minimumBandHeight) continue;
-            crossbars.add(new int[] {first, row - 1});
+            if (bandStart >= 0 && row - bandStart >= minimumBandHeight) {
+                rows[bands++] = bandStart;
+                rows[bands++] = row - 1;
+            }
+            bandStart = -1;
         }
-        if (crossbars.size() < 2) return Float.NaN;
+        if (bands < 4) return Float.NaN;
 
         // Each spine must have enough rows above and below the selected bands.
         // Measure the last required row at each end once for all pairs.
@@ -21071,24 +21078,23 @@ final class OmrScoreInterpreter {
         }
         float bestCenter = Float.NaN;
         int bestSupport = -1;
-        for (int i = 0; i < crossbars.size(); i++)
-            for (int j = i + 1; j < crossbars.size(); j++) {
-                int[] firstBand = crossbars.get(i), lastBand = crossbars.get(j);
-                int firstCrossbar = firstBand[0], lastCrossbar = lastBand[1];
+        for (int i = 0; i < bands; i += 2) {
+            int firstCrossbar = rows[i];
+            if (firstCrossbar <= upperExtension) continue;
+            int firstSize = rows[i + 1] - firstCrossbar + 1;
+            for (int j = i + 2; j < bands; j += 2) {
+                int lastCrossbar = rows[j + 1];
+                if (lastCrossbar >= lowerExtension) break;
                 if (lastCrossbar - firstCrossbar < glyphHeight * .18f) continue;
-                // Both sharp spines protrude through both crossbars. A flat's bowl can
-                // supply a long second column, but cannot supply its upper extension.
-                if (firstCrossbar <= upperExtension || lastCrossbar >= lowerExtension) continue;
-                // A hairpin or staff stripe can add a third short band near a tip.
-                // Prefer the two substantial crossbars with support on both spines.
-                int firstSize = firstBand[1] - firstBand[0] + 1,
-                        lastSize = lastBand[1] - lastBand[0] + 1;
+                // Prefer substantial crossbars with support on both spines.
+                int lastSize = lastCrossbar - rows[j] + 1;
                 int support = Math.min(firstSize, lastSize) * 100 + firstSize + lastSize;
                 if (support > bestSupport) {
                     bestSupport = support;
                     bestCenter = glyph.minY + (firstCrossbar + lastCrossbar) * .5f;
                 }
             }
+        }
         return bestCenter;
     }
 
@@ -21247,40 +21253,61 @@ final class OmrScoreInterpreter {
                 || glyph.minY <= 0
                 || glyph.maxY >= height - 1) return Float.NaN;
         int pad = Math.round(gh * .3f) + 2, w = gw + 2 * pad;
+        int[] columns = new int[glyph.area];
+        int[] rowEnds = new int[gh];
+        boolean[] barPixels = crossbarInk == null ? null : new boolean[glyph.area];
+        int area = 0, minY = gh, maxY = -1;
+        long sourceSumX = 0, sumY = 0;
+        for (int y = 0; y < gh; y++) {
+            int row = (glyph.minY + y) * width + glyph.minX;
+            for (int x = 0; x < gw; x++) {
+                if (!candidate.matches(labels[row + x])) continue;
+                if (area == columns.length) return Float.NaN;
+                columns[area] = x;
+                if (barPixels != null) barPixels[area] = candidate.matches(crossbarInk[row + x]);
+                area++;
+                sourceSumX += x;
+                sumY += y;
+                minY = Math.min(minY, y);
+                maxY = y;
+            }
+            rowEnds[y] = area;
+        }
+        if (area != glyph.area) return Float.NaN;
+
+        byte[] projected = new byte[w * gh];
+        byte[] projectedBars = barPixels == null ? null : new byte[projected.length];
         float pitchSum = 0, firstPitch = Float.NaN;
+        float middleRow = (gh - 1) * .5f;
         int accepted = 0;
-        // Shift each row without dropping ink. A shared lean must preserve both
-        // shaft extensions, two bridged crossbars and the upright shape limits.
-        for (int step : new int[] {-6, -5, -4, -3, -2, 2, 3, 4, 5, 6}) {
+        // The same source ink is shifted into each trial without dropping any pixels.
+        for (int step = -6; step <= 6; step++) {
+            if (step >= -1 && step <= 1) continue;
+            if (step != -6) {
+                java.util.Arrays.fill(projected, (byte) 0);
+                if (projectedBars != null) java.util.Arrays.fill(projectedBars, (byte) 0);
+            }
             float lean = step * .05f;
-            byte[] projected = new byte[w * gh];
-            byte[] projectedBars = crossbarInk == null ? null : new byte[w * gh];
-            int area = 0, minX = w, maxX = -1, minY = gh, maxY = -1;
-            long sx = 0, sy = 0;
-            for (int y = 0; y < gh; y++) {
-                int shift = Math.round((y - (gh - 1) * .5f) * lean);
-                for (int x = 0; x < gw; x++) {
-                    if (!candidate.matches(labels[(glyph.minY + y) * width + glyph.minX + x]))
-                        continue;
-                    int xx = x - shift + pad;
-                    projected[y * w + xx] = OmrMeasurePostProcessor.SYMBOL;
-                    if (crossbarInk != null
-                            && candidate.matches(
-                                    crossbarInk[(glyph.minY + y) * width + glyph.minX + x]))
-                        projectedBars[y * w + xx] = OmrMeasurePostProcessor.SYMBOL;
-                    area++;
-                    sx += xx;
-                    sy += y;
-                    minX = Math.min(minX, xx);
-                    maxX = Math.max(maxX, xx);
-                    minY = Math.min(minY, y);
-                    maxY = Math.max(maxY, y);
+            int minX = w, maxX = -1;
+            long sumX = sourceSumX;
+            for (int y = minY, first = 0; y <= maxY; y++) {
+                int end = rowEnds[y];
+                if (first == end) continue;
+                int shift = pad - Math.round((y - middleRow) * lean);
+                int row = y * w + shift;
+                minX = Math.min(minX, columns[first] + shift);
+                maxX = Math.max(maxX, columns[end - 1] + shift);
+                sumX += (long) shift * (end - first);
+                for (; first < end; first++) {
+                    int at = row + columns[first];
+                    projected[at] = OmrMeasurePostProcessor.SYMBOL;
+                    if (barPixels != null && barPixels[first])
+                        projectedBars[at] = OmrMeasurePostProcessor.SYMBOL;
                 }
             }
-            if (area != glyph.area) return Float.NaN;
             Component shifted =
                     new Component(
-                            area, minX, maxX, minY, maxY, sx / (float) area, sy / (float) area);
+                            area, minX, maxX, minY, maxY, sumX / (float) area, sumY / (float) area);
             float pitch =
                     uprightSharpPitchCenter(
                             projected,
