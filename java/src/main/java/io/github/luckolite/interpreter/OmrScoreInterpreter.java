@@ -9664,6 +9664,70 @@ final class OmrScoreInterpreter {
                 labels, gray, width, height, boundary, right, staff, doubleBar, false);
     }
 
+    /** Returns the start of an exact repeated flat signature after a complete raw treble clef. */
+    static int inheritedFlatHeaderStart(
+            byte[] gray,
+            byte[] labels,
+            int width,
+            int height,
+            int staffStart,
+            int signatureEnd,
+            float bottom,
+            float gap,
+            int expectedFlats) {
+        int right = Math.min(signatureEnd, Math.round(staffStart + gap * 4.25f));
+        int top = Math.round(bottom - gap * 6.5f), end = Math.round(bottom + gap * 2.5f);
+        if (staffStart < 0
+                || right >= width
+                || right <= staffStart
+                || signatureEnd >= width
+                || top < 0
+                || end >= height
+                || end <= top) return -1;
+        int cropWidth = right - staffStart + 1, cropHeight = end - top + 1;
+        byte[] crop = new byte[cropWidth * cropHeight];
+        byte target = OmrMeasurePostProcessor.CLEF_OR_KEY;
+        for (int y = 0; y < cropHeight; y++) {
+            for (int x = 0; x < cropWidth; x++) {
+                int pixel = (top + y) * width + staffStart + x;
+                if (labels[pixel] == target && (gray[pixel] & 255) <= 200)
+                    crop[y * cropWidth + x] = target;
+            }
+        }
+        var staff = new Staff(bottom - gap * 4, bottom, gap);
+        int start = -1;
+        for (var body : findComponents(crop, cropWidth, cropHeight, target)) {
+            if (body.minX > gap * 1.75f || body.maxX == cropWidth - 1) continue;
+            var clef =
+                    new Component(
+                            body.area,
+                            body.minX + staffStart,
+                            body.maxX + staffStart,
+                            body.minY + top,
+                            body.maxY + top,
+                            body.centerX + staffStart,
+                            body.centerY + top);
+            if (!completeHeaderTreble(clef, staff)) continue;
+            if (start >= 0) return -1;
+            start = clef.maxX + 1;
+        }
+        return start >= 0
+                        && start < signatureEnd
+                        && countHeaderFlatSpines(
+                                        labels,
+                                        gray,
+                                        width,
+                                        height,
+                                        start,
+                                        signatureEnd,
+                                        staff,
+                                        false,
+                                        true)
+                                == expectedFlats
+                ? start
+                : -1;
+    }
+
     private static int countHeaderFlatSpines(
             byte[] labels,
             byte[] gray,

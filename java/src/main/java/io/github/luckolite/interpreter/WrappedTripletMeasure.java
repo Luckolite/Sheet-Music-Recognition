@@ -15,8 +15,15 @@ final class WrappedTripletMeasure {
     record Proof(ScorePageInterpretation score, List<Integer> continuations, Timing[] written) {}
     record Half(List<Integer> owners, float[] x) {}
 
-    static Proof capture(ScorePageInterpretation score, ScoreMeterChange inherited,
-            byte[] gray, int width, int height, float[] beats) {
+    static Proof capture(
+            ScorePageInterpretation score,
+            ScoreMeterChange inherited,
+            byte[] gray,
+            int width,
+            int height,
+            float[] beats,
+            byte[] labels,
+            int[] keys) {
         var written = new Timing[score.notes().size()];
         if (gray == null || gray.length != (long) width * height || beats.length < 4)
             return new Proof(score, List.of(), written);
@@ -54,11 +61,21 @@ final class WrappedTripletMeasure {
                 tail = WrappedEighthTriplets.half(gray, width, height, regions.get(i+1), notes, byMeasure.get(i+1));
                 undotted = true;
             }
-            if (lead == null || tail == null || !WrappedMeasureBoundaries.confirms(
-                    gray, width, height, regions, i, lead.x()[8], tail.x()[0], undotted)) continue;
-            if (notes.get(lead.owners().get(0)).clefBottomDiatonic()
-                    != notes.get(tail.owners().get(0)).clefBottomDiatonic())
-                continue;
+            if (lead == null || tail == null) continue;
+            int clef = notes.get(lead.owners().get(0)).clefBottomDiatonic();
+            if (clef != notes.get(tail.owners().get(0)).clefBottomDiatonic()) continue;
+            int headerKey = undotted && clef == ScoreNoteEvent.CLEF_TREBLE ? keys[i] : 0;
+            if (!WrappedMeasureBoundaries.confirms(
+                    gray,
+                    width,
+                    height,
+                    regions,
+                    i,
+                    lead.x()[8],
+                    tail.x()[0],
+                    undotted,
+                    labels,
+                    headerKey)) continue;
             assign(lead, notes, written, undotted);
             assign(tail, notes, written, undotted);
             beats[i] = 3;
