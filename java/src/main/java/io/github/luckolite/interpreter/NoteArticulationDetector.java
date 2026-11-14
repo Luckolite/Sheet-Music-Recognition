@@ -140,6 +140,7 @@ final class NoteArticulationDetector {
                 || notes == null
                 || events == null
                 || staffs == null
+                || notes.isEmpty()
                 || notes.size() != events.size()
                 || notes.size() > 4096) return List.of();
         // Same raw component threshold as ordinary articulation recognition. One bounded page
@@ -156,16 +157,16 @@ final class NoteArticulationDetector {
             queue[0] = seed;
             seen.set(seed);
             while (take < size) {
-                int at = queue[take++], x = at % width, y = at / width;
+                int at = queue[take++], y = at / width, x = at - y * width;
                 l = Math.min(l, x);
                 r = Math.max(r, x);
                 t = Math.min(t, y);
                 b = Math.max(b, y);
-                for (int dy = -1; dy <= 1; dy++)
-                    for (int dx = -1; dx <= 1; dx++) {
-                        int xx = x + dx, yy = y + dy;
-                        if (xx < 0 || xx >= width || yy < 0 || yy >= height) continue;
-                        int next = yy * width + xx;
+                int firstX = Math.max(0, x - 1), lastX = Math.min(width - 1, x + 1);
+                int lastY = Math.min(height - 1, y + 1);
+                for (int yy = Math.max(0, y - 1); yy <= lastY; yy++) {
+                    int row = yy * width;
+                    for (int next = row + firstX, end = row + lastX; next <= end; next++) {
                         if ((gray[next] & 255) < 155 && !seen.get(next)) {
                             seen.set(next);
                             if (size == queue.length)
@@ -173,6 +174,7 @@ final class NoteArticulationDetector {
                             queue[size++] = next;
                         }
                     }
+                }
             }
             if (++componentCount > 4096) return List.of();
             // Count rejected components against the original limit without retaining their pixels.
@@ -194,17 +196,18 @@ final class NoteArticulationDetector {
             // Existing UP shape tip-band law, measured on this complete component.
             work += g.count + 16L;
             if (work > 256_000_000L) return List.of();
+            float glyphWidth = g.right - g.left + 1, glyphHeight = g.bottom - g.top + 1;
+            float aspect = glyphHeight / glyphWidth;
+            if (aspect < .65f || aspect > 2.2f) continue;
+            double tipEdge = g.bottom - (g.bottom - g.top) * .15;
             double tip = 0;
             int tips = 0;
             for (int pixel : g.pixels)
-                if (pixel / width >= g.bottom - (g.bottom - g.top) * .15) {
+                if (pixel / width >= tipEdge) {
                     tip += pixel % width;
                     tips++;
                 }
             double tipX = tips == 0 ? Double.NaN : tip / tips;
-            float glyphWidth = g.right - g.left + 1, glyphHeight = g.bottom - g.top + 1;
-            float aspect = glyphHeight / glyphWidth;
-            if (aspect < .65f || aspect > 2.2f) continue;
             for (int i = 0; i < notes.size(); i++) {
                 Anchor n = notes.get(i);
                 float gap = n.gap;
@@ -308,15 +311,23 @@ final class NoteArticulationDetector {
             // its letters reach36g left, bounded3g width, and dashes12g right.
             List<Glyph> context = new ArrayList<>();
             long contextPixels = 0;
-            for (var other : glyphs)
-                if (other.right >= g.left - 40 * n.gap
-                        && other.left <= g.right + 14 * n.gap
-                        && other.bottom >= g.y() - 3 * n.gap
-                        && other.top <= g.y() + 3 * n.gap) {
+            float contextLeft = g.left - 40 * n.gap, contextRight = g.right + 14 * n.gap;
+            float contextTop = g.y() - 3 * n.gap, contextBottom = g.y() + 3 * n.gap;
+            boolean contextOverflow = false;
+            for (var other : glyphs) {
+                // The first raster seed of each component is on its top row.
+                if (other.top > contextBottom) break;
+                if (other.right >= contextLeft && other.left <= contextRight
+                        && other.bottom >= contextTop && other.top <= contextBottom) {
+                    if (context.size() == 256) {
+                        contextOverflow = true;
+                        break;
+                    }
                     context.add(other);
                     contextPixels += other.count;
                 }
-            if (context.size() > 256) continue;
+            }
+            if (contextOverflow) continue;
             int padding = Math.max(3, Math.max(g.right - g.left + 1, g.bottom - g.top + 1) / 2);
             long background =
                     (long)

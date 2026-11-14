@@ -61,6 +61,7 @@ final class ScoreDynamicsDetector {
     /** Isolated letter-sized raw components grouped into a word, without staff lines or beams. */
     static List<PlayingTechniqueDetector.Word> symbolBoxes(
             byte[] gray, List<PlayingTechniqueDetector.Staff> staffs, int width, int height) {
+        if (staffs.isEmpty()) return List.of();
         boolean[] seen = new boolean[gray.length];
         int[] queue = new int[gray.length];
         List<int[]> boxes = new ArrayList<>();
@@ -87,6 +88,7 @@ final class ScoreDynamicsDetector {
                         }
                     }
             }
+            if (n < 3) continue;
             var staff = owner(staffs, top, bottom, 8f);
             if (staff == null) continue;
             float gap = staff.gap();
@@ -94,8 +96,7 @@ final class ScoreDynamicsDetector {
             // group too wide to be a word. Hairpins are detected independently.
             if (right - left >= gap * 4 && right - left > (bottom - top) * 4) continue;
             // Keep small adjacent letters too, so the p in "pizz." is not accepted as piano.
-            if (n >= 3
-                    && bottom - top >= gap * .2
+            if (bottom - top >= gap * .2
                     && bottom - top <= gap * 3
                     && right - left >= gap * .12
                     && right - left <= gap * 8)
@@ -122,8 +123,8 @@ final class ScoreDynamicsDetector {
             float gap = staffs.get(b[4]).gap();
             for (int i = joined.size() - 1; i >= 0; i--) {
                 var candidate = joined.get(i);
-                if (candidate[4] == b[4]
-                        && b[0] - candidate[2] < gap * .5
+                if (candidate[4] != b[4]) break;
+                if (b[0] - candidate[2] < gap * .5
                         && b[0] >= candidate[0]
                         && Math.max(candidate[1], b[1]) < Math.min(candidate[3], b[3])) {
                     a = candidate;
@@ -154,17 +155,19 @@ final class ScoreDynamicsDetector {
         // Fragmented letter bodies may touch or overlap in row extent while their actual pixels
         // stay disconnected. Retain original boxes and offer the complete body only
         // as an additional proposal; the font matcher still proves its identity.
-        for (int i = 0; i < joined.size(); i++)
+        for (int i = 0; i < joined.size(); i++) {
+            int[] a = joined.get(i);
+            float gap = staffs.get(a[4]).gap();
+            if (a[3] - a[1] < gap * .55f) continue;
             for (int j = i + 1; j < joined.size(); j++) {
-                int[] a = joined.get(i), b = joined.get(j);
-                if (a[4] != b[4]
-                        || Math.max(a[1], b[1]) > Math.min(a[3], b[3])
+                int[] b = joined.get(j);
+                // Joining preserves staff order and the left edge of the first member.
+                if (a[4] != b[4] || b[0] >= a[2]) break;
+                if (Math.max(a[1], b[1]) > Math.min(a[3], b[3])
                         || Math.max(a[0], b[0]) >= Math.min(a[2], b[2])) continue;
-                float gap = staffs.get(a[4]).gap();
                 int left = Math.min(a[0], b[0]), right = Math.max(a[2], b[2]);
                 int top = Math.min(a[1], b[1]), bottom = Math.max(a[3], b[3]);
-                if (a[3] - a[1] < gap * .55f
-                        || b[3] - b[1] < gap * .55f
+                if (b[3] - b[1] < gap * .55f
                         || bottom - top > gap * 3
                         || right - left > gap * 8) continue;
                 result.add(
@@ -175,6 +178,7 @@ final class ScoreDynamicsDetector {
                                 right / (float) width,
                                 bottom / (float) height));
             }
+        }
         return result;
     }
 
