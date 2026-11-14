@@ -22,23 +22,26 @@ final class OpenChevron {
             ink[x][y] = true;
         }
         int[] first = new int[w], last = new int[w], runs = new int[w];
-        java.util.Arrays.fill(first, h);
-        java.util.Arrays.fill(last, -1);
         int split = 0;
         double upper = 0, lower = 0;
         for (int x = 0; x < w; x++) {
             int firstEnd = -1, secondStart = -1;
-            for (int y = 0; y < h; y++)
-                if (ink[x][y]) {
-                    first[x] = Math.min(first[x], y);
-                    last[x] = y;
-                    if (y == 0 || !ink[x][y - 1]) {
-                        runs[x]++;
-                        if (runs[x] == 2) secondStart = y;
-                    }
-                    if (runs[x] == 1) firstEnd = y;
-                }
-            if (runs[x] > 2 || x >= w * .10 && x <= w * .90 && runs[x] == 0) return false;
+            boolean[] column = ink[x];
+            int y = 0;
+            while (y < h && !column[y]) y++;
+            first[x] = y;
+            last[x] = -1;
+            while (y < h) {
+                if (++runs[x] > 2) return false;
+                if (runs[x] == 2) secondStart = y;
+                do {
+                    y++;
+                } while (y < h && column[y]);
+                last[x] = y - 1;
+                if (runs[x] == 1) firstEnd = y - 1;
+                while (y < h && !column[y]) y++;
+            }
+            if (x >= w * .10 && x <= w * .90 && runs[x] == 0) return false;
             if (x <= w * .40
                     && runs[x] == 2
                     && secondStart - firstEnd - 1 >= Math.max(1, h * .15)

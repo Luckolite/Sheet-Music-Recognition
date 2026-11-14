@@ -95,19 +95,26 @@ final class StaffJoinedCompactApproach {
         int[] threshold = new int[sh];
         Arrays.fill(threshold, 150);
         boolean[] rule = new boolean[sh];
+        float radius = Math.max(1, gap * .13f + .5f);
+        int[] proposed = null, histogram = null;
+        int firstSample = Math.round(gap * 3), lastSample = Math.round(gap * 5);
         for (int line = 0; line < 5; line++) {
             float center = frame[0] - line * frame[1];
             int cy = Math.round(center);
             if (cy < t - 3 || cy > b + 3) continue;
             if (!FlagRootStaffRule.matches(raw, w, h, cy, right, gap, 150)) continue;
-            float radius = Math.max(1, gap * .13f + .5f);
             int first = Math.max(t, (int) Math.ceil(center - radius)),
                     last = Math.min(b, (int) Math.floor(center + radius));
-            int[] proposed = new int[Math.max(0, last - first + 1)];
+            if (last < first) continue;
+            if (proposed == null) {
+                proposed = new int[Math.min(sh, 2 * (int) Math.ceil(radius) + 1)];
+                histogram = new int[256];
+            }
             boolean verified = true;
             for (int y = first; y <= last; y++) {
-                int a = background(raw, w, y, right, gap, -1),
-                        z = background(raw, w, y, right, gap, 1);
+                int origin = y * w + right;
+                int a = background(raw, origin, firstSample, lastSample, -1, histogram),
+                        z = background(raw, origin, firstSample, lastSample, 1, histogram);
                 if (a < 0 || z < 0 || Math.abs(a - z) > Math.max(12, Math.max(a, z) * .08f)) {
                     verified = false;
                     break;
@@ -126,9 +133,10 @@ final class StaffJoinedCompactApproach {
             for (int x = l; x <= r; x++)
                 ink[(y - t) * sw + x - l] = (raw[y * w + x] & 255) < threshold[y - t];
         var accepted = new ArrayList<Certificate>();
-        int[] queue = new int[area];
+        int[] queue = null;
         for (int seed = 0; seed < area; seed++) {
             if (!ink[seed]) continue;
+            if (queue == null) queue = new int[Math.min(64, area)];
             int n = 1, cursor = 0;
             queue[0] = seed;
             ink[seed] = false;
@@ -138,15 +146,17 @@ final class StaffJoinedCompactApproach {
             while (cursor < n) {
                 int p = queue[cursor++], xx = p % sw, yy = p / sw, x = l + xx, y = t + yy;
                 clipped |= xx == 0 || xx == sw - 1 || yy == 0 || yy == sh - 1;
-                x0 = Math.min(x0, x);
-                x1 = Math.max(x1, x);
-                y0 = Math.min(y0, y);
-                y1 = Math.max(y1, y);
-                sx += x;
-                sy += y;
-                sxx += (double) x * x;
-                syy += (double) y * y;
-                sxy += (double) x * y;
+                if (!clipped) {
+                    x0 = Math.min(x0, x);
+                    x1 = Math.max(x1, x);
+                    y0 = Math.min(y0, y);
+                    y1 = Math.max(y1, y);
+                    sx += x;
+                    sy += y;
+                    sxx += (double) x * x;
+                    syy += (double) y * y;
+                    sxy += (double) x * y;
+                }
                 for (int dy = -1; dy <= 1; dy++)
                     for (int dx = -1; dx <= 1; dx++) {
                         int nx = xx + dx, ny = yy + dy;
@@ -154,6 +164,8 @@ final class StaffJoinedCompactApproach {
                         int q = ny * sw + nx;
                         if (ink[q]) {
                             ink[q] = false;
+                            if (n == queue.length)
+                                queue = Arrays.copyOf(queue, n + Math.min(n, area - n));
                             queue[n++] = q;
                         }
                     }
@@ -165,31 +177,11 @@ final class StaffJoinedCompactApproach {
                     || x1 - x0 > gap * .65f
                     || y1 - y0 < 5
                     || y1 - y0 > gap * 1.2f) continue;
-            int[] pixels = new int[n];
-            boolean contact = false, isolation = true;
-            var owned = new HashSet<Integer>();
-            for (int i = 0; i < n; i++) {
-                int p = queue[i];
-                pixels[i] = (t + p / sw) * w + l + p % sw;
-                owned.add(pixels[i]);
-                contact |= rule[p / sw];
-            }
+            boolean contact = false;
+            for (int i = 0; i < n && !contact; i++) contact = rule[queue[i] / sw];
             if (!contact) continue;
-            for (int p : pixels)
-                for (int dy = -1; dy <= 1; dy++)
-                    for (int dx = -1; dx <= 1; dx++) {
-                        int x = p % w + dx, y = p / w + dy, q = y * w + x;
-                        if (x < l || x > r || y < t || y > b) {
-                            isolation = false;
-                            continue;
-                        }
-                        if ((raw[q] & 255) < 150
-                                && !owned.contains(q)
-                                && (!rule[y - t] || (raw[q] & 255) < threshold[y - t]))
-                            isolation = false;
-                    }
-            if (!isolation
-                    || !budget.take(
+            // An unclipped flood already owns every neighboring pixel below its row threshold.
+            if (!budget.take(
                             n * heads.size() * 4L
                                     + n * 16L
                                     + heads.size() * 64L
@@ -213,6 +205,11 @@ final class StaffJoinedCompactApproach {
                                                                     (vx - vy) * (vx - vy)
                                                                             + 4 * cov * cov))
                                                     * .5));
+            int[] pixels = new int[n];
+            for (int i = 0; i < n; i++) {
+                int p = queue[i], row = p / sw;
+                pixels[i] = (t + row) * w + l + p - row * sw;
+            }
             var stroke =
                     CompactApproachStrokes.supportedStroke(
                             raw,
@@ -242,20 +239,24 @@ final class StaffJoinedCompactApproach {
         return !budget.refused && accepted.size() == 1 ? accepted.get(0) : null;
     }
 
-    private static int background(byte[] raw, int w, int y, int origin, float gap, int direction) {
-        int[] histogram = new int[256];
-        int n = 0;
-        for (int d = Math.round(gap * 3); d <= Math.round(gap * 5); d++) {
-            histogram[raw[y * w + origin + direction * d] & 255]++;
-            n++;
+    private static int background(
+            byte[] raw, int origin, int first, int last, int direction, int[] histogram) {
+        Arrays.fill(histogram, 0);
+        int n = last - first + 1;
+        int low = 255, high = 0;
+        for (int d = first, pixel = origin + direction * first; d <= last; d++, pixel += direction) {
+            int tone = raw[pixel] & 255;
+            histogram[tone]++;
+            low = Math.min(low, tone);
+            high = Math.max(high, tone);
         }
-        int sum = 0, median = 0;
-        for (; median < 256; median++) {
+        int sum = 0, median = low;
+        for (; median <= high; median++) {
             sum += histogram[median];
             if (sum > n / 2) break;
         }
         int stable = 0;
-        for (int v = Math.max(0, median - 12); v <= Math.min(255, median + 12); v++)
+        for (int v = Math.max(low, median - 12); v <= Math.min(high, median + 12); v++)
             stable += histogram[v];
         return stable >= n * .8f ? median : -1;
     }

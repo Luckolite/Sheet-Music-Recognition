@@ -5959,24 +5959,27 @@ final class NoteArticulationDetector {
         int[] queue = scratch.queue;
         java.util.Arrays.fill(seen, false);
         List<Glyph> result = new ArrayList<>();
+        float maxWidth = width * .025f, maxHeight = height * .018f;
         for (int p = 0; p < gray.length; p++) {
             if (seen[p] || (gray[p] & 255) >= threshold) continue;
             int start = 0, end = 1;
             queue[0] = p;
             seen[p] = true;
             int left = p % width, right = left, top = p / width, bottom = top, dark = 0;
+            boolean oversized = false;
             while (start < end) {
-                int point = queue[start++], x = point % width, y = point / width;
-                if ((gray[point] & 255) < darkThreshold) dark++;
-                left = Math.min(left, x);
-                right = Math.max(right, x);
-                top = Math.min(top, y);
-                bottom = Math.max(bottom, y);
-                for (int dy = -1; dy <= 1; dy++)
-                    for (int dx = -1; dx <= 1; dx++) {
-                        int nx = x + dx, ny = y + dy;
-                        if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
-                        int next = ny * width + nx;
+                int point = queue[start++], y = point / width, x = point - y * width;
+                if (!oversized) {
+                    if ((gray[point] & 255) < darkThreshold) dark++;
+                    left = Math.min(left, x);
+                    right = Math.max(right, x);
+                    bottom = Math.max(bottom, y);
+                    oversized = right - left > maxWidth || bottom - top > maxHeight;
+                }
+                int firstX = Math.max(0, x - 1), lastX = Math.min(width - 1, x + 1);
+                int firstY = Math.max(0, y - 1), lastY = Math.min(height - 1, y + 1);
+                for (int ny = firstY, row = firstY * width; ny <= lastY; ny++, row += width)
+                    for (int next = row + firstX, last = row + lastX; next <= last; next++) {
                         if (!seen[next] && (gray[next] & 255) < threshold) {
                             seen[next] = true;
                             if (end == queue.length) queue = scratch.grow(end);
@@ -5987,10 +5990,7 @@ final class NoteArticulationDetector {
             // A complete independently proved pair can lose one dark edge pixel
             // to antialiasing. Round its core budget to actual pixels; retain the
             // absolute dark seed and every chevron, size, ownership and notation guard.
-            if (end < 8
-                    || dark < Math.max(3, Math.round(end * .18f) - 1)
-                    || right - left > width * .025f
-                    || bottom - top > height * .018f) continue;
+            if (oversized || end < 8 || dark < Math.max(3, Math.round(end * .18f) - 1)) continue;
             if (OpenChevron.matches(queue, width, left, top, right, bottom, end)) {
                 int[] pixels = java.util.Arrays.copyOf(queue, end);
                 result.add(new Glyph(left, top, right, bottom, end, pixels));

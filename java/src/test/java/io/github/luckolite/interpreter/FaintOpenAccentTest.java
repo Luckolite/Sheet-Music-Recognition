@@ -84,7 +84,12 @@ public class FaintOpenAccentTest {
             }
         byte[] before = gray.clone(), labelsBefore = labels.clone();
         boolean[] seen = new boolean[gray.length];
-        int[] queue = new int[gray.length];
+        var scratchType = Class.forName(NoteArticulationDetector.class.getName() + "$GlyphFloodScratch");
+        var constructor = scratchType.getDeclaredConstructor(int.class);
+        constructor.setAccessible(true);
+        var scratch = constructor.newInstance(gray.length);
+        var queueField = scratchType.getDeclaredField("queue");
+        queueField.setAccessible(true);
         java.lang.reflect.Method faint =
                 NoteArticulationDetector.class.getDeclaredMethod(
                         "faintAccentGlyphs",
@@ -92,9 +97,9 @@ public class FaintOpenAccentTest {
                         int.class,
                         int.class,
                         boolean[].class,
-                        int[].class);
+                        scratchType);
         faint.setAccessible(true);
-        List<?> first = (List<?>) faint.invoke(null, gray, w, h, seen, queue);
+        List<?> first = (List<?>) faint.invoke(null, gray, w, h, seen, scratch);
         assertEquals(1, first.size());
         Object glyph = first.get(0);
         Class<?> type = glyph.getClass();
@@ -109,9 +114,9 @@ public class FaintOpenAccentTest {
             accessor.setAccessible(true);
             assertEquals(bounds[i], ((Integer) accessor.invoke(glyph)).intValue());
         }
-        Arrays.fill(queue, Integer.MIN_VALUE);
+        Arrays.fill((int[]) queueField.get(scratch), Integer.MIN_VALUE);
         assertArrayEquals(retainedBefore, retained);
-        List<?> repeated = (List<?>) faint.invoke(null, gray, w, h, seen, queue);
+        List<?> repeated = (List<?>) faint.invoke(null, gray, w, h, seen, scratch);
         assertEquals(1, repeated.size());
         assertArrayEquals(retainedBefore, (int[]) pixelAccessor.invoke(repeated.get(0)));
         assertTrue(
@@ -128,7 +133,7 @@ public class FaintOpenAccentTest {
         assertArrayEquals(before, gray);
         assertArrayEquals(labelsBefore, labels);
         Arrays.fill(gray, (byte) 255);
-        assertTrue(((List<?>) faint.invoke(null, gray, w, h, seen, queue)).isEmpty());
+        assertTrue(((List<?>) faint.invoke(null, gray, w, h, seen, scratch)).isEmpty());
         assertArrayEquals(retainedBefore, retained);
     }
 }
