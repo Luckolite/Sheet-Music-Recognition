@@ -232,6 +232,7 @@ final class PrintedDirectionStaff {
         float[] accepted = null;
         byte[] crop = new byte[w * h];
         int[] offsets = new int[w];
+        int[] rowCounts = new int[h];
         float[] shifts = {0, -gap * .2f, gap * .2f};
         int flank = Math.max(2, Math.round(gap * .3f));
         int band = Math.max(1, Math.round(gap * .2f));
@@ -261,10 +262,11 @@ final class PrintedDirectionStaff {
             if (!valid) continue;
             // Written-head floors inherit a small staff-gap rounding error at remote steps.
             // Every allowed reference offset must still converge on the same complete raw rails.
+            java.util.Arrays.fill(rowCounts, 0);
             for (float shift : shifts) {
                 var found =
                         StaffPitchTrack.broadStraightPitch(
-                                crop, w, h, hint - top + shift, gap, false);
+                                crop, w, h, hint - top + shift, gap, false, rowCounts);
                 if (found == null) continue;
                 boolean bilateral = true;
                 int samples = radius - exclusion;

@@ -34,6 +34,7 @@ final class TerminalDirectionRails {
                 h = bottom - top + 1,
                 exclusion = Math.max(2, Math.round(gap * .5f));
         float[] accepted = null;
+        int[] rowCounts = new int[h];
         for (float slope : new float[] {0, .04f, -.04f, .08f, -.08f, .12f, -.12f, .16f, -.16f}) {
             byte[] crop = new byte[w * h];
             java.util.Arrays.fill(crop, (byte) 255);
@@ -48,12 +49,13 @@ final class TerminalDirectionRails {
                     crop[(y - top) * w + xx - left] = gray[(y + dy) * width + xx];
             }
             if (!valid) continue;
+            java.util.Arrays.fill(rowCounts, 0);
             // Written-head floors inherit a small staff-gap rounding error at remote steps.
             // Every allowed reference offset must still converge on the same complete raw rails.
             for (float shift : new float[] {0, -gap * .2f, gap * .2f}) {
                 var found =
                         StaffPitchTrack.broadStraightPitch(
-                                crop, w, h, hint - top + shift, gap, false);
+                                crop, w, h, hint - top + shift, gap, false, rowCounts);
                 if (found == null) continue;
                 int flank = Math.max(2, Math.round(gap * .3f)),
                         band = Math.max(1, Math.round(gap * .2f));

@@ -392,27 +392,49 @@ final class StaffPitchTrack {
 
     static float[] broadStraightPitch(
             byte[] gray, int width, int height, float bottom, float gap, boolean correctionOnly) {
+        return broadStraightPitch(gray, width, height, bottom, gap, correctionOnly, null);
+    }
+
+    // A caller probing several hints can reuse the row counts for one unchanged crop.
+    // Zero denotes an unscanned row. A known count is stored as count + 1.
+    static float[] broadStraightPitch(
+            byte[] gray, int width, int height, float bottom, float gap, boolean correctionOnly,
+            int[] rowCounts) {
+        return broadStraightPitch(gray, width, height, bottom, gap, correctionOnly, rowCounts, 169, 20);
+    }
+
+    static float[] broadStraightPitch(
+            byte[] gray, int width, int height, float bottom, float gap, boolean correctionOnly,
+            int[] rowCounts, int darkestAllowedCenter, int minimumContrast) {
         if (gray == null || gap < 8) return null;
         float[] rows = new float[5];
         int flank = Math.max(2, Math.round(gap * .3f));
+        int flankStride = flank * width;
         int radius = Math.max(2, Math.round(gap * .35f));
+        int[] support = null;
         for (int line = 0; line < 5; line++) {
             int center = Math.round(bottom - line * gap),
                     first = center - radius,
                     last = center + radius;
             if (first < flank || last >= height - flank) return null;
-            int[] support = new int[last - first + 1];
+            if (support == null) support = new int[last - first + 1];
             int peak = 0, at = 0;
             for (int y = first; y <= last; y++) {
-                for (int x = 0; x < width; x++) {
-                    int ink = gray[y * width + x] & 255;
-                    if (ink < 170
-                            && (gray[(y - flank) * width + x] & 255) > ink + 20
-                            && (gray[(y + flank) * width + x] & 255) > ink + 20)
-                        support[y - first]++;
+                int count = rowCounts == null ? -1 : rowCounts[y] - 1;
+                if (count < 0) {
+                    count = 0;
+                    int rowStart = y * width;
+                    for (int pixel = rowStart; pixel < rowStart + width; pixel++) {
+                        int ink = gray[pixel] & 255;
+                        if (ink <= darkestAllowedCenter
+                                && (gray[pixel - flankStride] & 255) > ink + minimumContrast
+                                && (gray[pixel + flankStride] & 255) > ink + minimumContrast) count++;
+                    }
+                    if (rowCounts != null) rowCounts[y] = count + 1;
                 }
-                if (support[y - first] > peak) {
-                    peak = support[y - first];
+                support[y - first] = count;
+                if (count > peak) {
+                    peak = count;
                     at = y - first;
                 }
             }
