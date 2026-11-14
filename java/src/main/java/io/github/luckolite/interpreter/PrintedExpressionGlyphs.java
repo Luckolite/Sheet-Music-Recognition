@@ -66,8 +66,9 @@ final class PrintedExpressionGlyphs {
             byte[] gray,
             int width,
             int height) {
-        var result = new ArrayList<>(detect(score, staffs, gray, width, height, 175));
-        for (var candidate : detect(score, staffs, gray, width, height, 155)) {
+        var scratch = new ComponentScratch();
+        var result = new ArrayList<>(detect(score, staffs, gray, width, height, 175, scratch));
+        for (var candidate : detect(score, staffs, gray, width, height, 155, scratch)) {
             if (MetricModulationText.parse(candidate.text()).isEmpty()) continue;
             boolean overlap = false;
             for (var old : result)
@@ -86,7 +87,8 @@ final class PrintedExpressionGlyphs {
             byte[] gray,
             int width,
             int height,
-            int threshold) {
+            int threshold,
+            ComponentScratch scratch) {
         if (gray == null || width < 1 || height < 1 || gray.length != (long) width * height)
             return List.of();
         var result = new ArrayList<Mark>();
@@ -117,7 +119,7 @@ final class PrintedExpressionGlyphs {
                 if (x1 <= x0) continue;
                 // A metric equation may span the barline and its courtesy meter at the system end.
                 int metricRight = above ? Math.min(width, (int) (right * width + gap * 5)) : x1;
-                var parts = components(gray, width, x0, top, metricRight, bottom, threshold);
+                var parts = components(gray, width, x0, top, metricRight, bottom, threshold, scratch);
                 var notes = new ArrayList<Pulse>();
                 for (var part : parts) {
                     if (part.height() >= gap * .65f
@@ -184,33 +186,34 @@ final class PrintedExpressionGlyphs {
                         if (!equalsBands(a, b, gap)) continue;
                         int el = Math.min(a.left, b.left), er = Math.max(a.right, b.right);
                         float ey = (a.cy() + b.cy()) * .5f;
-                        var leftNotes =
-                                notes.stream()
-                                        .filter(
-                                                n ->
-                                                        n.part.right < el
-                                                                && el - n.part.right < gap * 2
-                                                                && Math.abs(n.part.cy() - ey)
-                                                                        < gap * 1.8f)
-                                        .toList();
-                        var rightNotes =
-                                notes.stream()
-                                        .filter(
-                                                n ->
-                                                        n.part.left > er
-                                                                && n.part.left - er < gap * 2
-                                                                && Math.abs(n.part.cy() - ey)
-                                                                        < gap * 1.8f)
-                                        .toList();
-                        if (leftNotes.size() != 1 || rightNotes.size() != 1) continue;
-                        var l = leftNotes.get(0);
-                        var r = rightNotes.get(0);
+                        Pulse l = null, r = null;
+                        boolean ambiguous = false;
+                        for (var note : notes) {
+                            var part = note.part;
+                            if (Math.abs(part.cy() - ey) >= gap * 1.8f) continue;
+                            if (part.right < el && el - part.right < gap * 2) {
+                                if (l != null) {
+                                    ambiguous = true;
+                                    break;
+                                }
+                                l = note;
+                            } else if (part.left > er && part.left - er < gap * 2) {
+                                if (r != null) {
+                                    ambiguous = true;
+                                    break;
+                                }
+                                r = note;
+                            }
+                        }
+                        if (ambiguous || l == null || r == null) continue;
                         if (l.value != 4
                                 && r.value != 4
                                 && Math.abs(l.part.height() - r.part.height()) > gap * 1.4f)
                             continue;
-                        int[] ld = dots(l, parts, gap, el), rd = dots(r, parts, gap, metricRight);
-                        if (ld == null || rd == null) continue;
+                        int[] ld = dots(l, parts, gap, el);
+                        if (ld == null) continue;
+                        int[] rd = dots(r, parts, gap, metricRight);
+                        if (rd == null) continue;
                         int y0 = Math.min(l.part.top, r.part.top),
                                 y1 = Math.max(l.part.bottom, r.part.bottom);
                         if (PrintedDirectionStaff.at(
@@ -247,7 +250,10 @@ final class PrintedExpressionGlyphs {
                                     && p != a
                                     && p != b
                                     && !dot(p, l, gap)
-                                    && !dot(p, r, gap)) extra = true;
+                                    && !dot(p, r, gap)) {
+                                extra = true;
+                                break;
+                            }
                         if (extra) continue;
                         String key = "metric:" + el + ":" + Math.round(ey);
                         if (seen.add(key))
@@ -292,17 +298,23 @@ final class PrintedExpressionGlyphs {
     }
 
     private static int[] dots(Pulse n, List<Part> parts, float gap, int end) {
-        var dots =
-                parts.stream()
-                        .filter(p -> p.right < end && dot(p, n, gap))
-                        .sorted(Comparator.comparingInt(Part::left))
-                        .toList();
-        if (dots.size() > 2) return null;
-        if (dots.size() == 2 && Math.abs(dots.get(0).cy() - dots.get(1).cy()) > gap * .2f)
-            return null;
-        return new int[] {
-            dots.size(), dots.isEmpty() ? n.part.right : dots.get(dots.size() - 1).right
-        };
+        Part first = null, second = null;
+        for (var part : parts) {
+            if (part.right >= end || !dot(part, n, gap)) continue;
+            if (second != null) return null;
+            if (first == null) {
+                first = part;
+            } else if (part.left < first.left) {
+                second = first;
+                first = part;
+            } else {
+                second = part;
+            }
+        }
+        if (first == null) return new int[] {0, n.part.right};
+        if (second == null) return new int[] {1, first.right};
+        if (Math.abs(first.cy() - second.cy()) > gap * .2f) return null;
+        return new int[] {2, second.right};
     }
 
     private static boolean equalsBands(Part a, Part b, float gap) {
@@ -321,11 +333,28 @@ final class PrintedExpressionGlyphs {
                         >= Math.max(a.width(), b.width()) * .8f;
     }
 
+    private static final class ComponentScratch {
+        boolean[] seen = new boolean[0];
+        int[] queue = new int[0];
+
+        void reset(int size) {
+            if (seen.length < size) {
+                seen = new boolean[size];
+                queue = new int[size];
+            } else {
+                Arrays.fill(seen, 0, size, false);
+            }
+        }
+    }
+
     private static List<Part> components(
-            byte[] gray, int width, int left, int top, int right, int bottom, int threshold) {
+            byte[] gray, int width, int left, int top, int right, int bottom, int threshold,
+            ComponentScratch scratch) {
         int w = right - left, h = bottom - top;
-        var seen = new boolean[w * h];
-        var queue = new int[w * h];
+        int area = w * h;
+        scratch.reset(area);
+        var seen = scratch.seen;
+        var queue = scratch.queue;
         var result = new ArrayList<Part>();
         for (int y = 0; y < h; y++)
             for (int x = 0; x < w; x++) {

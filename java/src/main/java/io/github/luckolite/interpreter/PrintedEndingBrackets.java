@@ -48,48 +48,64 @@ final class PrintedEndingBrackets {
                 || gray.length != (long) width * height
                 || staffs == null
                 || measures == null
-                || words == null) return List.of();
+                || words == null
+                || words.isEmpty()) return List.of();
         var result = new ArrayList<Mark>();
+        boolean[] seen = new boolean[0];
+        int[] runs = new int[256];
         for (var staff : staffs) {
             float gap = staff.gap();
             if (!Float.isFinite(gap) || gap < 5 || gap > Math.min(width, height) / 8f) continue;
             int top = Math.max(0, Math.round(staff.top() - gap * 8));
             int bottom = Math.min(height - 1, Math.round(staff.top() - gap * .3f));
             if (bottom <= top) continue;
-            int rows = bottom - top + 1;
-            boolean[] seen = new boolean[width * rows];
-            int[] queue = new int[seen.length];
-            for (int seed = 0; seed < seen.length; seed++) {
-                if (seen[seed] || (gray[top * width + seed] & 255) >= 170) continue;
-                int take = 0, size = 1, left = width, right = -1, first = rows, last = -1;
-                queue[0] = seed;
-                seen[seed] = true;
-                while (take < size) {
-                    int at = queue[take++], x = at % width, y = at / width;
-                    left = Math.min(left, x);
-                    right = Math.max(right, x);
-                    first = Math.min(first, y);
+            int rows = bottom - top + 1, bandSize = width * rows, offset = top * width;
+            if (seen.length < bandSize) seen = new boolean[bandSize];
+            else Arrays.fill(seen, 0, bandSize, false);
+            for (int seed = 0; seed < bandSize; seed++) {
+                if (seen[seed] || (gray[offset + seed] & 255) >= 170) continue;
+                int first = seed / width, last = first, left = width, right = -1;
+                int queued = 2;
+                runs[0] = runStart(gray, offset, seed, first * width);
+                runs[1] = runEnd(gray, offset, seed, (first + 1) * width);
+                Arrays.fill(seen, runs[0], runs[1] + 1, true);
+                for (int take = 0; take < queued; take += 2) {
+                    int from = runs[take], to = runs[take + 1], y = from / width;
+                    int row = y * width, x0 = from - row, x1 = to - row;
+                    left = Math.min(left, x0);
+                    right = Math.max(right, x1);
                     last = Math.max(last, y);
-                    for (int dy = -1; dy <= 1; dy++)
-                        for (int dx = -1; dx <= 1; dx++) {
-                            int xx = x + dx, yy = y + dy;
-                            if (xx < 0 || xx >= width || yy < 0 || yy >= rows) continue;
-                            int next = yy * width + xx;
-                            if (!seen[next] && (gray[(top + yy) * width + xx] & 255) < 170) {
-                                seen[next] = true;
-                                queue[size++] = next;
-                            }
+                    int neighborLeft = Math.max(0, x0 - 1);
+                    int neighborRight = Math.min(width - 1, x1 + 1);
+                    for (int step = -1; step <= 1; step += 2) {
+                        if (y + step < 0 || y + step >= rows) continue;
+                        int neighbor = row + step * width;
+                        for (int next = neighbor + neighborLeft; next <= neighbor + neighborRight; next++) {
+                            if (seen[next] || (gray[offset + next] & 255) >= 170) continue;
+                            int start = runStart(gray, offset, next, neighbor);
+                            int end = runEnd(gray, offset, next, neighbor + width);
+                            Arrays.fill(seen, start, end + 1, true);
+                            if (queued == runs.length) runs = Arrays.copyOf(runs, Math.multiplyExact(queued, 2));
+                            runs[queued++] = start;
+                            runs[queued++] = end;
+                            next = end;
                         }
+                    }
                 }
                 int w = right - left + 1, h = last - first + 1;
                 if (w <= gap * 6 || h <= gap * .5f || h >= gap * 7 || first == 0) continue;
                 int[] roof = new int[w], floor = new int[w], count = new int[w];
                 Arrays.fill(roof, h);
-                for (int i = 0; i < size; i++) {
-                    int x = queue[i] % width - left, y = queue[i] / width - first;
-                    roof[x] = Math.min(roof[x], y);
-                    floor[x] = Math.max(floor[x], y);
-                    count[x]++;
+                for (int i = 0; i < queued; i += 2) {
+                    int row = runs[i] / width;
+                    int start = runs[i] - row * width - left;
+                    int end = runs[i + 1] - row * width - left;
+                    int y = row - first;
+                    for (int x = start; x <= end; x++) {
+                        roof[x] = Math.min(roof[x], y);
+                        floor[x] = Math.max(floor[x], y);
+                        count[x]++;
+                    }
                 }
                 int margin = Math.round(gap), n = 0;
                 double sx = 0, sy = 0, sxx = 0, sxy = 0;
@@ -242,4 +258,14 @@ final class PrintedEndingBrackets {
         }
         return List.copyOf(values);
     }
+    private static int runStart(byte[] gray, int offset, int seed, int rowStart) {
+        while (seed > rowStart && (gray[offset + seed - 1] & 255) < 170) seed--;
+        return seed;
+    }
+
+    private static int runEnd(byte[] gray, int offset, int seed, int rowEnd) {
+        while (seed + 1 < rowEnd && (gray[offset + seed + 1] & 255) < 170) seed++;
+        return seed;
+    }
+
 }

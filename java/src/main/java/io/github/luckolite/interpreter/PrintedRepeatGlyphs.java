@@ -44,11 +44,11 @@ final class PrintedRepeatGlyphs {
                         || b.y - a.y > gap * 1.3f) continue;
                 float cx = (a.x + b.x) * .5f, cy = (a.y + b.y) * .5f, measuredGap = b.y - a.y;
                 if (Math.abs(cy - (staffTop + staffBottom) * .5f) > gap) continue;
+                // Either flank can prove the staff rules for both bar sides.
+                if (!staffRails(gray, width, height, cx, cy, measuredGap, -1)
+                        && !staffRails(gray, width, height, cx, cy, measuredGap, 1)) continue;
                 var accepted = new ArrayList<List<Bar>>();
-                for (int side : new int[] {-1, 1}) {
-                    if (!staffRails(gray, width, height, cx, cy, measuredGap, side)
-                            && !staffRails(gray, width, height, cx, cy, measuredGap, -side))
-                        continue;
+                for (int side = -1; side <= 1; side += 2) {
                     var pair = bars(gray, width, height, cx, cy, measuredGap, gap, side);
                     if (pair.size() != 2) continue;
                     pair.sort(Comparator.comparingDouble(bar -> Math.abs(bar.center() - cx)));
@@ -92,13 +92,11 @@ final class PrintedRepeatGlyphs {
                             || b.y - a.y > gap * 1.3f) continue;
                     float cx = (a.x + b.x) * .5f, cy = (a.y + b.y) * .5f, measuredGap = b.y - a.y;
                     if (Math.abs(cy - (staff.top() + staff.bottom()) * .5f) > gap) continue;
+                    // Either flank can prove the staff rules for both bar sides.
+                    if (!staffRails(gray, width, height, cx, cy, measuredGap, -1)
+                            && !staffRails(gray, width, height, cx, cy, measuredGap, 1)) continue;
                     var sides = new ArrayList<Mark>();
-                    for (int side : new int[] {-1, 1}) {
-                        // Prefer the music-side staff rules; dense notes can obscure that flank.
-                        // The opposite flank may independently prove all five rules.
-                        if (!staffRails(gray, width, height, cx, cy, measuredGap, side)
-                                && !staffRails(gray, width, height, cx, cy, measuredGap, -side))
-                            continue;
+                    for (int side = -1; side <= 1; side += 2) {
                         var bars = bars(gray, width, height, cx, cy, measuredGap, gap, side);
                         if (bars.size() != 2) continue;
                         bars.sort(Comparator.comparingDouble(bar -> Math.abs(bar.center() - cx)));
@@ -129,28 +127,32 @@ final class PrintedRepeatGlyphs {
     private static boolean staffRails(
             byte[] gray, int width, int height, float cx, float cy, float gap, int barSide) {
         int flank = Math.max(2, Math.round(gap * .3f)), band = Math.max(1, Math.round(gap * .2f));
+        int firstStep = Math.round(gap * 2), lastStep = Math.round(gap * 6);
+        int samples = lastStep - firstStep + 1;
+        if (samples < 8) return false;
+        int xStart = Math.round(cx - barSide * firstStep);
+        int xEnd = Math.round(cx - barSide * lastStep);
+        if (Math.min(xStart, xEnd) < 0 || Math.max(xStart, xEnd) >= width) return false;
+        int required = (int) Math.ceil(samples * .7f);
+        int flankOffset = flank * width;
         for (int line = 0; line < 5; line++) {
-            int samples = 0, hits = 0;
-            for (int dx = Math.round(gap * 2); dx <= Math.round(gap * 6); dx++) {
-                int x = Math.round(cx - barSide * dx), center = Math.round(cy + (line - 2) * gap);
-                if (x < 0
-                        || x >= width
-                        || center - band - flank < 0
-                        || center + band + flank >= height) return false;
-                samples++;
-                boolean ink = false;
-                for (int y = center - band; y <= center + band; y++) {
-                    int tone = gray[y * width + x] & 255;
+            int center = Math.round(cy + (line - 2) * gap);
+            if (center - band - flank < 0 || center + band + flank >= height) return false;
+            int need = required;
+            int low = (center - band) * width, high = (center + band) * width;
+            for (int dx = firstStep; need > 0 && need <= lastStep - dx + 1; dx++) {
+                int x = Math.round(cx - barSide * dx);
+                for (int p = low + x; p <= high + x; p += width) {
+                    int tone = gray[p] & 255;
                     if (tone < 220
-                            && (gray[(y - flank) * width + x] & 255) > tone + 15
-                            && (gray[(y + flank) * width + x] & 255) > tone + 15) {
-                        ink = true;
+                            && (gray[p - flankOffset] & 255) > tone + 15
+                            && (gray[p + flankOffset] & 255) > tone + 15) {
+                        need--;
                         break;
                     }
                 }
-                if (ink) hits++;
             }
-            if (samples < 8 || hits < samples * .7f) return false;
+            if (need > 0) return false;
         }
         return true;
     }
@@ -194,11 +196,18 @@ final class PrintedRepeatGlyphs {
                 right = Math.min(width - 1, Math.round(cx + gap * 2.5f));
         int top = Math.round(cy - 2 * measuredGap), bottom = Math.round(cy + 2 * measuredGap);
         if (top < 0 || bottom >= height) return result;
+        int required = (int) Math.ceil((bottom - top + 1) * .8f);
         for (int x = left; x <= right + 1; x++) {
-            int hits = 0;
-            if (x <= right && (x - cx) * side > gap * .35f)
-                for (int y = top; y <= bottom; y++) if ((gray[y * width + x] & 255) < 170) hits++;
-            boolean solid = hits >= (bottom - top + 1) * .8f;
+            boolean solid = false;
+            if (x <= right && (x - cx) * side > gap * .35f) {
+                int needed = required;
+                for (int y = top, at = y * width + x;
+                        needed > 0 && needed <= bottom - y + 1;
+                        y++, at += width) {
+                    if ((gray[at] & 255) < 170) needed--;
+                }
+                solid = needed == 0;
+            }
             if (solid && start < 0) start = x;
             if (!solid && start >= 0) {
                 result.add(new Bar(start, x - 1));
@@ -209,34 +218,48 @@ final class PrintedRepeatGlyphs {
     }
 
     private static List<Dot> dots(byte[] gray, int width, int top, int bottom, float gap) {
-        int rows = bottom - top + 1;
+        int rows = bottom - top + 1, offset = top * width;
         boolean[] seen = new boolean[width * rows];
-        int[] queue = new int[seen.length];
+        int[] queue = new int[Math.min(256, seen.length)];
         var result = new ArrayList<Dot>();
         for (int seed = 0; seed < seen.length; seed++) {
-            if (seen[seed] || (gray[top * width + seed] & 255) >= 140) continue;
-            int take = 0, size = 1, left = width, right = -1, first = rows, last = -1;
+            if (seen[seed] || (gray[offset + seed] & 255) >= 140) continue;
+            int take = 0, queued = 1, size = 0, left = width, right = -1;
+            int first = seed / width, last = first;
             long sx = 0, sy = 0;
             queue[0] = seed;
             seen[seed] = true;
-            while (take < size) {
-                int at = queue[take++], x = at % width, y = at / width;
-                left = Math.min(left, x);
-                right = Math.max(right, x);
-                first = Math.min(first, y);
+            while (take < queued) {
+                int at = queue[take++], y = at / width, row = y * width;
+                int runLeft = at - row, runRight = runLeft;
+                while (runLeft > 0 && !seen[row + runLeft - 1]
+                        && (gray[offset + row + runLeft - 1] & 255) < 140) runLeft--;
+                while (runRight + 1 < width && !seen[row + runRight + 1]
+                        && (gray[offset + row + runRight + 1] & 255) < 140) runRight++;
+                Arrays.fill(seen, row + runLeft, row + runRight + 1, true);
+                int count = runRight - runLeft + 1;
+                size += count;
+                sx += ((long) runLeft + runRight) * count / 2;
+                sy += (long) y * count;
+                left = Math.min(left, runLeft);
+                right = Math.max(right, runRight);
                 last = Math.max(last, y);
-                sx += x;
-                sy += y;
-                for (int dy = -1; dy <= 1; dy++)
-                    for (int dx = -1; dx <= 1; dx++) {
-                        int xx = x + dx, yy = y + dy;
-                        if (xx < 0 || xx >= width || yy < 0 || yy >= rows) continue;
-                        int next = yy * width + xx;
-                        if (!seen[next] && (gray[(top + yy) * width + xx] & 255) < 140) {
-                            seen[next] = true;
-                            queue[size++] = next;
-                        }
+                int firstNeighbor = Math.max(0, runLeft - 1);
+                int lastNeighbor = Math.min(width - 1, runRight + 1);
+                for (int step = -1; step <= 1; step += 2) {
+                    if (y + step < 0 || y + step >= rows) continue;
+                    int neighbor = row + step * width;
+                    int end = neighbor + lastNeighbor;
+                    for (int next = neighbor + firstNeighbor; next <= end; next++) {
+                        if (seen[next] || (gray[offset + next] & 255) >= 140) continue;
+                        seen[next] = true;
+                        if (queued == queue.length)
+                            queue = Arrays.copyOf(queue, queued + Math.min(queued, seen.length - queued));
+                        queue[queued++] = next;
+                        while (next < end && !seen[next + 1]
+                                && (gray[offset + next + 1] & 255) < 140) next++;
                     }
+                }
             }
             int w = right - left + 1, h = last - first + 1;
             if (first == 0
