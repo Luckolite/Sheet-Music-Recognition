@@ -99,6 +99,7 @@ final class PrintedRestDirection {
         float ownerX = caption ? (word.left() + word.right()) * .5f : word.left();
         float probeX = ownerX * w, right = word.right() * w;
         IdentityHashMap<PlayingTechniqueDetector.Staff, Optional<float[]>> rulesByStaff = null;
+        IdentityHashMap<PlayingTechniqueDetector.Staff, Float> captionTops = null;
         ScoreRestEvent best = null;
         float rank = Float.MAX_VALUE;
         boolean ambiguous = false;
@@ -138,7 +139,9 @@ final class PrintedRestDirection {
                 float localTop = rules[0] - rules[1] * 4;
                 float observedTop = top;
                 if (caption && top < rules[0] + gap * .25f && bottom > rules[0]) {
-                    float body = CaptionRuleSeparator.bodyTop(gray, w, h, word, rules[0], rules[1]);
+                    if (captionTops == null) captionTops = new IdentityHashMap<>();
+                    float body = captionTops.computeIfAbsent(staff,
+                            key -> CaptionRuleSeparator.bodyTop(gray, w, h, word, rules[0], rules[1]));
                     if (Float.isFinite(body)) observedTop = body;
                 }
                 float vertical =

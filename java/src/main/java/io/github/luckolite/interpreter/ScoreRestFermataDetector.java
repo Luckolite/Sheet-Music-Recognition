@@ -239,8 +239,7 @@ public final class ScoreRestFermataDetector {
                                     rest,
                                     score.rests(),
                                     score.notes(),
-                                    meter.beatsInMeasure(rest.measureIndex()),
-                                    true);
+                                    meter.beatsInMeasure(rest.measureIndex()));
 
                     finish =
                             onset
@@ -285,23 +284,13 @@ public final class ScoreRestFermataDetector {
             List<ScoreNoteEvent> notes,
             float beats) {
 
-        return provedOnset(target, rests, notes, beats, false);
-    }
-
-    private static double provedOnset(
-            ScoreRestEvent target,
-            List<ScoreRestEvent> rests,
-            List<ScoreNoteEvent> notes,
-            float beats,
-            boolean captureLane) {
-
         if (target.isFullMeasure())
             return Double.isFinite(target.resolvedDurationBeats(beats)) ? 0 : Double.NaN;
         if (!Double.isFinite(target.durationBeats())
                 || target.durationBeats() <= 0
                 || target.durationBeats() > beats) return Double.NaN;
 
-        var witnesses = captureLane ? new ArrayList<ScoreNoteEvent>() : null;
+        var witnesses = new ArrayList<ScoreNoteEvent>();
 
         float before = -1, after = 2;
 
@@ -310,7 +299,7 @@ public final class ScoreRestFermataDetector {
                     && note.staffIndex() == target.staffIndex()
                     && note.staffCount() == target.staffCount()) {
 
-                if (witnesses != null) witnesses.add(note);
+                witnesses.add(note);
 
                 if (Math.abs(note.positionInMeasure() - target.positionInMeasure()) <= .018f)
                     return Double.NaN;
@@ -320,24 +309,20 @@ public final class ScoreRestFermataDetector {
                 else after = Math.min(after, note.positionInMeasure());
             }
 
-        var scanNotes = witnesses == null ? notes : witnesses;
-
         double start = 0, end = beats;
 
-        for (var note : scanNotes)
-            if (note.measureIndex() == target.measureIndex()
-                    && note.staffIndex() == target.staffIndex()
-                    && note.staffCount() == target.staffCount()) {
-
-                double a = ScoreNoteTiming.beatInMeasure(note, notes, beats),
-                        d = ScoreNoteTiming.resolvedWrittenDurationBeats(note, notes, beats);
-
-                if (!Double.isFinite(a) || !Double.isFinite(d) || d <= 0) return Double.NaN;
-
-                if (note.positionInMeasure() == before) start = Math.max(start, a + d);
-
-                if (note.positionInMeasure() == after) end = Math.min(end, a);
-            }
+        double[] starts = new double[witnesses.size()];
+        double[] finishes = new double[witnesses.size()];
+        for (int i = 0; i < witnesses.size(); i++) {
+            var note = witnesses.get(i);
+            double onset = ScoreNoteTiming.beatInMeasure(note, notes, beats);
+            double duration = ScoreNoteTiming.resolvedWrittenDurationBeats(note, notes, beats);
+            if (!Double.isFinite(onset) || !Double.isFinite(duration) || duration <= 0) return Double.NaN;
+            starts[i] = onset;
+            finishes[i] = onset + duration;
+            if (note.positionInMeasure() == before) start = Math.max(start, finishes[i]);
+            if (note.positionInMeasure() == after) end = Math.min(end, onset);
+        }
 
         double prior = 0, total = 0;
 
@@ -359,16 +344,8 @@ public final class ScoreRestFermataDetector {
 
         if (Math.abs(end - start - total) > 1e-7) return Double.NaN;
 
-        for (var note : scanNotes)
-            if (note.measureIndex() == target.measureIndex()
-                    && note.staffIndex() == target.staffIndex()
-                    && note.staffCount() == target.staffCount()) {
-
-                double a = ScoreNoteTiming.beatInMeasure(note, notes, beats),
-                        b = a + ScoreNoteTiming.resolvedWrittenDurationBeats(note, notes, beats);
-
-                if (a < end - 1e-7 && b > start + 1e-7) return Double.NaN;
-            }
+        for (int i = 0; i < starts.length; i++)
+            if (starts[i] < end - 1e-7 && finishes[i] > start + 1e-7) return Double.NaN;
 
         return start + prior;
     }
