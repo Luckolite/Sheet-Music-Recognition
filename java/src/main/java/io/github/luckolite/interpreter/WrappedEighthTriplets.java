@@ -14,6 +14,12 @@ final class WrappedEighthTriplets {
 
     private record Ribbon(float coverage, int leftY, int rightY) {}
 
+    private record RuleBand(int first, int[] rows, int radius) {
+        boolean contains(int x, int y) {
+            return Math.abs(y - rows[x - first]) <= radius;
+        }
+    }
+
     static WrappedTripletMeasure.Half half(byte[] gray, int width, int height, MeasureRegion bar,
             List<ScoreNoteEvent> notes, List<Integer> candidates) {
         if (candidates.size() != 9) return null;
@@ -184,7 +190,15 @@ final class WrappedEighthTriplets {
             }
             boolean same = a.direction() == b.direction();
             if (i % 3 == 2) {
-                if (same && bestRibbon(gray, width, height, a, b, gap).coverage() > .46f) return null;
+                if (same) {
+                    var ribbon = bestRibbon(gray, width, height, a, b, gap);
+                    if (ribbon.coverage() > .46f
+                            && (!closedBar
+                                    || x.length != 12
+                                    || !staffRuleOnlyCut(
+                                            gray, width, height, bar, a, b, gap, ribbon)))
+                        return null;
+                }
                 continue;
             }
             if (!same || !singleRail(gray, width, height, a, b, gap)) return null;
@@ -512,8 +526,62 @@ final class WrappedEighthTriplets {
         return new WrappedTripletMeasure.Half(owners, x);
     }
 
+    /** A staff crossing can imitate part of a beam without joining the two shafts. */
+    private static boolean staffRuleOnlyCut(
+            byte[] gray,
+            int width,
+            int height,
+            MeasureRegion bar,
+            PrintedBeamShafts.Shaft left,
+            PrintedBeamShafts.Shaft right,
+            float gap,
+            Ribbon ribbon) {
+        if (ribbon.coverage() >= .75f) return false;
+        int a = (left.left() + left.right()) / 2, b = (right.left() + right.right()) / 2;
+        int inset = Math.round(gap * .45f), first = a + inset, last = b - inset;
+        if (first < 0 || last >= width || last <= first) return false;
+        var staff = WrappedMeasureBoundaries.closedTripletStaff(gray, width, height, bar);
+        if (staff == null || !staff.verifiedAt(a) || !staff.verifiedAt(b)) return false;
+        var centre = staff.at((a + b) * .5f);
+        int rule = Math.round((centre[0] - (ribbon.leftY() + ribbon.rightY()) * .5f) / centre[1]);
+        if (rule < 0 || rule >= 5) return false;
+
+        // A real beam running on top of a rule has no independent separation witness.
+        var before = staff.at(a);
+        var after = staff.at(b);
+        float start = ribbon.leftY() - (before[0] - rule * before[1]);
+        float end = ribbon.rightY() - (after[0] - rule * after[1]);
+        if (start * end >= 0 || Math.min(Math.abs(start), Math.abs(end)) < gap * .31f) return false;
+
+        int[] rows = new int[last - first + 1];
+        int isolated = 0, flank = Math.max(3, Math.round(gap * .22f));
+        for (int x = first; x <= last; x++) {
+            var local = staff.at(x);
+            int y = Math.round(local[0] - rule * local[1]);
+            if (y < flank || y + flank >= height) return false;
+            rows[x - first] = y;
+            if ((gray[y * width + x] & 255) < 155
+                    && (gray[(y - flank) * width + x] & 255) >= 155
+                    && (gray[(y + flank) * width + x] & 255) >= 155) isolated++;
+        }
+        if (isolated < rows.length * .84f) return false;
+        var ruleInk = new RuleBand(first, rows, Math.round(gap * .16f));
+        return bestRibbon(gray, width, height, left, right, gap, ruleInk).coverage() <= .46f;
+    }
+
     private static Ribbon bestRibbon(byte[] gray, int width, int height,
             PrintedBeamShafts.Shaft a, PrintedBeamShafts.Shaft b, float gap) {
+        return bestRibbon(gray, width, height, a, b, gap, null);
+    }
+
+    private static Ribbon bestRibbon(
+            byte[] gray,
+            int width,
+            int height,
+            PrintedBeamShafts.Shaft a,
+            PrintedBeamShafts.Shaft b,
+            float gap,
+            RuleBand excluded) {
         var best = new Ribbon(0, a.endY(), b.endY());
         int direction = a.direction();
         for (int dy = -Math.round(gap * .28f); dy <= Math.round(gap * .28f); dy++) {
@@ -521,7 +589,8 @@ final class WrappedEighthTriplets {
                 int centre = -direction * Math.round(gap * .14f);
                 int leftY = a.endY() + centre + dy;
                 int rightY = b.endY() + centre + dy + Math.round(slope * gap * .24f);
-                float cover = coverage(gray, width, height, a, b, gap, leftY, rightY, .31f);
+                float cover =
+                        coverage(gray, width, height, a, b, gap, leftY, rightY, .31f, excluded);
                 int distance = Math.abs(leftY-a.endY()-centre) + Math.abs(rightY-b.endY()-centre);
                 int prior = Math.abs(best.leftY()-a.endY()-centre)
                         + Math.abs(best.rightY()-b.endY()-centre);
@@ -535,6 +604,20 @@ final class WrappedEighthTriplets {
     private static float coverage(byte[] gray, int width, int height,
             PrintedBeamShafts.Shaft a, PrintedBeamShafts.Shaft b, float gap,
             int leftY, int rightY, float band) {
+        return coverage(gray, width, height, a, b, gap, leftY, rightY, band, null);
+    }
+
+    private static float coverage(
+            byte[] gray,
+            int width,
+            int height,
+            PrintedBeamShafts.Shaft a,
+            PrintedBeamShafts.Shaft b,
+            float gap,
+            int leftY,
+            int rightY,
+            float band,
+            RuleBand excluded) {
         int x0 = (a.left() + a.right()) / 2, x1 = (b.left() + b.right()) / 2;
         int padding = Math.round(gap * .45f);
         if (x0 < 0 || x1 >= width || x1 - x0 <= padding * 2) return 0;
@@ -546,7 +629,8 @@ final class WrappedEighthTriplets {
             if (middle - radius < 0 || middle + radius >= height) return 0;
             int run = 0;
             for (int y = middle - radius; y <= middle + radius; y++) {
-                if ((gray[y * width + x] & 255) < 155) {
+                if ((gray[y * width + x] & 255) < 155
+                        && (excluded == null || !excluded.contains(x, y))) {
                     if (++run >= thickness) {
                         hits++;
                         break;

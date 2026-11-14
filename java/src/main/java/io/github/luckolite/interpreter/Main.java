@@ -120,6 +120,13 @@ public final class Main {
                 labels, gray, width, height, annotations, null, physicalPage, decoderGray, preparedTabs);
         var score = ScoreTiePitchGuard.withInitialKeyContext(decoded.score(), initialKey);
         score = ScoreTupletMeterContext.apply(score, initialMeter);
+        score =
+                ClosedDottedSixteenths.applyClosedOctaves(
+                        score,
+                        initialMeter,
+                        decoderGray == null ? gray : decoderGray,
+                        width,
+                        height);
         score = ClosingTripletRhythm.apply(
                 score, initialMeter, labels, decoderGray == null ? gray : decoderGray, width, height);
         float[] beats = measureBeats(

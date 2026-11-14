@@ -49,7 +49,11 @@ final class FingeringAnnotationFilter {
         notes = separatedFingeringCaptions(words, staffs, measures, notes, gray, width, height);
         notes = shortFingeringCaptions(words, staffs, measures, notes, gray, width, height);
         notes = overlappingFingeringCaptions(words, staffs, measures, notes, gray, width, height);
+        notes =
+                loweredSegueWithSplitFingerings(
+                        words, staffs, measures, notes, gray, width, height);
         notes = isolatedParentheticalSixteenths(words, staffs, measures, notes, gray, width, height);
+        notes = belowStaffNumerals(words, staffs, measures, notes, gray, width, height);
         List<Candidate> candidates = null;
         var result = new ArrayList<ScoreNoteEvent>(notes.size());
         for (var note : notes) {
@@ -119,6 +123,131 @@ final class FingeringAnnotationFilter {
             if (!annotation) result.add(note);
         }
         return result.size() == notes.size() ? notes : List.copyOf(result);
+    }
+
+    /** A compact two-counter numeral in a below-staff fingering line can be read as a note. */
+    private static List<ScoreNoteEvent> belowStaffNumerals(
+            List<PlayingTechniqueDetector.Word> words,
+            List<PlayingTechniqueDetector.Staff> staffs,
+            List<MeasureRegion> measures,
+            List<ScoreNoteEvent> notes,
+            byte[] gray,
+            int width,
+            int height) {
+        var numerals =
+                words.stream().filter(w -> "8".equals(w.text()) || "3".equals(w.text())).toList();
+        if (numerals.isEmpty()) return notes;
+        var rowTokens = candidates(words, width, height);
+        var remove = Collections.newSetFromMap(new IdentityHashMap<ScoreNoteEvent, Boolean>());
+        for (var note : notes) {
+            if (note.kind() != ScoreNoteEvent.Kind.PITCHED
+                    || note.staffCount() != 1
+                    || note.staffIndex() != 0
+                    || note.staffStep() > -2
+                    || note.stemDirection() != 0
+                    || note.beamCount() != 0
+                    || note.unbeamedDurationBeats() != 1
+                    || note.visualSize() != ScoreNoteEvent.VisualSize.FULL
+                    || note.articulations() != 0
+                    || note.augmentationDots() != 0
+                    || note.tupletDivisor() != 1
+                    || note.crossStaffBeam()
+                    || note.tiedFromPrevious()
+                    || note.boundaryTies() != 0
+                    || note.measureIndex() < 0
+                    || note.measureIndex() >= measures.size()) continue;
+            var measure = measures.get(note.measureIndex());
+            float x =
+                    (measure.left() + note.positionInMeasure() * (measure.right() - measure.left()))
+                            * width;
+            float y = note.pageY() * height;
+            for (var word : numerals) {
+                float l = word.left() * width, r = word.right() * width;
+                float t = word.top() * height, b = word.bottom() * height;
+                if (x < l || x > r || y < t || y > b) continue;
+                for (var staff : staffs) {
+                    float gap = staff.gap();
+                    if (staff.index() != 0
+                            || staff.count() != 1
+                            || gap < 8
+                            || gap > 32
+                            || staff.top() < measure.top() * height
+                            || staff.bottom() > measure.bottom() * height
+                            || t < staff.bottom() - gap * .1f
+                            || b > staff.bottom() + gap * 2.6f
+                            || b - t < gap
+                            || b - t > gap * 2.1f
+                            || r - l > gap * 2.2f
+                            || !bracketedByFingerings(
+                                    rowTokens, measure, x, (t + b) / 2, gap, width)
+                            || printedStemBeyondWord(gray, width, height, x, y, t, b, gap)
+                            || printedLedgerAcrossWord(gray, width, height, l, r, y, gap)
+                            || !completeTwoCounterNumeral(
+                                    gray, width, height, x, y, l, t, r, b, gap)) continue;
+                    remove.add(note);
+                    break;
+                }
+                if (remove.contains(note)) break;
+            }
+        }
+        return remove.isEmpty() ? notes : notes.stream().filter(n -> !remove.contains(n)).toList();
+    }
+
+    private static boolean bracketedByFingerings(
+            List<Candidate> words, MeasureRegion measure, float x, float y, float gap, int width) {
+        boolean left = false, right = false;
+        for (var word : words) {
+            if (!word.digit() && word.sequenceLength() == 0
+                    || word.left() < measure.left() * width
+                    || word.right() > measure.right() * width) continue;
+            float dx = (word.left() + word.right()) / 2 - x;
+            if (Math.abs(dx) < gap
+                    || Math.abs(dx) > 5 * gap
+                    || Math.abs((word.top() + word.bottom()) / 2 - y) > .5f * gap) continue;
+            if (dx < 0) left = true;
+            else right = true;
+        }
+        return left && right;
+    }
+
+    private static boolean completeTwoCounterNumeral(
+            byte[] gray,
+            int width,
+            int height,
+            float x,
+            float y,
+            float l,
+            float t,
+            float r,
+            float b,
+            float gap) {
+        int left = Math.max(0, Math.round(l)), right = Math.min(width - 1, Math.round(r));
+        int top = Math.max(0, Math.round(t)), bottom = Math.min(height - 1, Math.round(b));
+        if (left >= right || top >= bottom) return false;
+        var source =
+                RawNumeralComponents.capture(
+                        gray, width, height, left, top, right, bottom, 165, () -> {}, () -> {});
+        RawNumeralComponents.Component glyph = null;
+        for (var piece : source.components()) {
+            if (piece.size() < gap * gap * .05f) continue;
+            if (glyph != null) return false;
+            glyph = piece;
+        }
+        if (glyph == null
+                || glyph.left <= left
+                || glyph.right >= right
+                || glyph.top <= top
+                || glyph.bottom >= bottom
+                || x < glyph.left
+                || x > glyph.right
+                || y < glyph.top
+                || y > glyph.bottom) return false;
+        int w = glyph.right - glyph.left + 1, h = glyph.bottom - glyph.top + 1;
+        return h >= gap
+                && h <= gap * 1.6f
+                && w >= h * .52f
+                && w <= h * .85f
+                && OctaveClefDigit.holes(gray, width, glyph.left, glyph.top, w, h) == 2;
     }
 
     /** Staff-line fragments can be notehead-shaped while belonging to an alternate fingering. */
@@ -346,14 +475,26 @@ final class FingeringAnnotationFilter {
     }
 
     private static boolean captionHead(ScoreNoteEvent n) {
-        return n.kind() == ScoreNoteEvent.Kind.PITCHED && n.staffCount() == 1 && n.staffIndex() == 0
-                && n.stemDirection() == 0 && n.visualSize() == ScoreNoteEvent.VisualSize.FULL
-                && n.staffStep() >= -2 && n.staffStep() <= 1 && !n.crossStaffBeam()
+        return captionHead(n, false);
+    }
+
+    private static boolean captionHead(ScoreNoteEvent n, boolean allowTextTie) {
+        return n.kind() == ScoreNoteEvent.Kind.PITCHED
+                && n.staffCount() == 1
+                && n.staffIndex() == 0
+                && n.stemDirection() == 0
+                && n.visualSize() == ScoreNoteEvent.VisualSize.FULL
+                && n.staffStep() >= -2
+                && n.staffStep() <= 1
+                && !n.crossStaffBeam()
                 && n.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_FROM_KEY
-                && n.augmentationDots() == 0 && n.tupletDivisor() == 1
+                && n.augmentationDots() == 0
+                && n.tupletDivisor() == 1
                 && (n.articulations() & (NoteOrnament.GRACE | NoteOrnament.TYPE_MASK)) == 0
-                && !n.tiedFromPrevious() && n.boundaryTies() == 0
-                && n.leadingRestBeats() == 0 && n.followingRestBeats() == 0
+                && (allowTextTie || !n.tiedFromPrevious())
+                && n.boundaryTies() == 0
+                && n.leadingRestBeats() == 0
+                && n.followingRestBeats() == 0
                 && (n.beamCount() >= 1 && n.beamCount() <= 2 && n.unbeamedDurationBeats() == 0
                         || n.beamCount() == 0 && n.unbeamedDurationBeats() == 4);
     }
@@ -401,6 +542,203 @@ final class FingeringAnnotationFilter {
         if (right - previous < gap * .9f || right - previous > gap * 2.6f) return false;
         return PrintedCadenceDurations.boundaryColumn(gray, width, staff, right, true, false) >= 0
                 && closedWrittenSixteenths(music);
+    }
+
+    /** A dense fingering line can split into several OCR boxes above a separate segue. */
+    private static List<ScoreNoteEvent> loweredSegueWithSplitFingerings(
+            List<PlayingTechniqueDetector.Word> words,
+            List<PlayingTechniqueDetector.Staff> staffs,
+            List<MeasureRegion> measures,
+            List<ScoreNoteEvent> notes,
+            byte[] gray,
+            int width,
+            int height) {
+        var discard = Collections.newSetFromMap(new IdentityHashMap<ScoreNoteEvent, Boolean>());
+        for (var caption : words) {
+            if (caption.text() == null || !SINGLE_SEGUE.matcher(caption.text().strip()).matches())
+                continue;
+            int measure =
+                    uniqueCaptionMeasure(
+                            measures, caption, caption, (caption.top() + caption.bottom()) * .5f);
+            if (measure < 0) continue;
+            var bar = measures.get(measure);
+            var row = notes.stream().filter(n -> n.measureIndex() == measure).toList();
+            if (row.size() != 15) continue;
+            var aliases = row.stream().filter(n -> captionHead(n, true)).toList();
+            if (aliases.size() != 3) continue;
+            var lower =
+                    aliases.stream()
+                            .filter(n -> n.beamCount() == 0 && n.staffStep() <= -1)
+                            .sorted(Comparator.comparingDouble(ScoreNoteEvent::positionInMeasure))
+                            .toList();
+            var upper =
+                    aliases.stream().filter(n -> n.beamCount() == 2 && n.staffStep() >= 0).toList();
+            if (lower.size() != 2
+                    || upper.size() != 1
+                    || lower.get(0).tiedFromPrevious()
+                    || upper.get(0).tiedFromPrevious()) continue;
+            var first = lower.get(0);
+            var last = lower.get(1);
+            if (last.tiedFromPrevious()
+                    && (first.staffStep() != last.staffStep()
+                            || first.octaveShift() != last.octaveShift()
+                            || first.clefBottomDiatonic() != last.clefBottomDiatonic())) continue;
+            var music =
+                    row.stream()
+                            .filter(n -> !aliases.contains(n))
+                            .sorted(Comparator.comparingDouble(ScoreNoteEvent::positionInMeasure))
+                            .toList();
+            for (var staff : staffs) {
+                float gap = staff.gap(),
+                        left = caption.left() * width,
+                        right = caption.right() * width;
+                if (staff.index() != 0
+                        || staff.count() != 1
+                        || gap < 10
+                        || gap > 25
+                        || staff.top() < bar.top() * height
+                        || staff.bottom() > bar.bottom() * height
+                        || caption.top() * height < staff.bottom() - gap * .12f
+                        || caption.top() * height > staff.bottom() + gap * .5f
+                        || caption.bottom() * height < staff.bottom() + gap * 1.7f
+                        || caption.bottom() * height > staff.bottom() + gap * 2.8f
+                        || right - left < gap * 5
+                        || right - left > gap * 8
+                        || !twoCaptionOwners(lower, bar, staff, caption, gray, width, height)
+                        || !splitCaptionNumeral(
+                                upper.get(0), bar, staff, caption, words, gray, width, height)
+                        || !closedCaptionSixteenths(music, bar, staff, gray, width, height))
+                    continue;
+                discard.addAll(aliases);
+                break;
+            }
+        }
+        return discard.isEmpty()
+                ? notes
+                : notes.stream().filter(n -> !discard.contains(n)).toList();
+    }
+
+    private static boolean twoCaptionOwners(
+            List<ScoreNoteEvent> aliases,
+            MeasureRegion bar,
+            PlayingTechniqueDetector.Staff staff,
+            PlayingTechniqueDetector.Word word,
+            byte[] gray,
+            int width,
+            int height) {
+        var graph = captionComponents(gray, width, height, staff, word);
+        if (graph == null) return false;
+        float gap = staff.gap();
+        var glyphs =
+                graph.components().stream()
+                        .filter(
+                                c ->
+                                        c.size() >= gap * 2.1f
+                                                && c.left > graph.left
+                                                && c.right < graph.right
+                                                && c.top > graph.top
+                                                && c.bottom < graph.bottom
+                                                && c.right - c.left >= gap * .45f
+                                                && c.right - c.left <= gap * 3.4f
+                                                && c.bottom - c.top >= gap * .65f
+                                                && c.bottom - c.top <= gap * 1.9f)
+                        .sorted(Comparator.comparingInt(c -> c.left))
+                        .toList();
+        if (glyphs.size() < 4
+                || glyphs.size() > 5
+                || !aliases.stream()
+                        .allMatch(
+                                n -> insideInk(n, bar, staff, List.of(word), gray, width, height)))
+            return false;
+        float start = bar.left() * width, span = (bar.right() - bar.left()) * width;
+        float first = start + span * aliases.get(0).positionInMeasure();
+        float later = start + span * aliases.get(1).positionInMeasure();
+        return ownsTextCenter(glyphs.get(0), first, aliases.get(0).pageY() * height, width)
+                && glyphs.subList(1, glyphs.size() - 1).stream()
+                                .filter(
+                                        g ->
+                                                ownsTextCenter(
+                                                        g,
+                                                        later,
+                                                        aliases.get(1).pageY() * height,
+                                                        width))
+                                .count()
+                        == 1;
+    }
+
+    private static boolean splitCaptionNumeral(
+            ScoreNoteEvent alias,
+            MeasureRegion bar,
+            PlayingTechniqueDetector.Staff staff,
+            PlayingTechniqueDetector.Word caption,
+            List<PlayingTechniqueDetector.Word> words,
+            byte[] gray,
+            int width,
+            int height) {
+        float gap = staff.gap(),
+                x = (bar.left() + alias.positionInMeasure() * (bar.right() - bar.left())) * width,
+                y = alias.pageY() * height;
+        if (y < staff.bottom() - gap * .83f || y > staff.bottom() - gap * .12f) return false;
+        for (var digit : words) {
+            if (digit.text() == null
+                    || !digit.text().strip().equals("3")
+                    || (digit.right() - digit.left()) * width < gap * .7f
+                    || (digit.right() - digit.left()) * width > gap * 2.2f
+                    || !insideInk(alias, bar, staff, List.of(digit), gray, width, height)
+                    || !ownsNumeralBowl(gray, width, height, digit, staff, x, y)) continue;
+            float center = (digit.top() + digit.bottom()) * height * .5f;
+            boolean left = false, toCaption = false;
+            for (var word : words) {
+                if (word.text() == null
+                        || !word.text().strip().matches("[1-5](?:\\s*[1-5]){1,4}")
+                        || word.left() < bar.left()
+                        || word.right() > caption.left()
+                        || Math.abs((word.top() + word.bottom()) * height * .5f - center)
+                                > gap * .4f
+                        || (word.bottom() - word.top()) * height < gap * 1.2f
+                        || (word.bottom() - word.top()) * height > gap * 2.4f) continue;
+                float before = (digit.left() - word.right()) * width;
+                float after = (word.left() - digit.right()) * width;
+                if (before > 0 && before < gap * 3) left = true;
+                if (after > 0
+                        && after < gap * 2
+                        && (caption.left() - word.right()) * width <= gap * 1.1f) toCaption = true;
+            }
+            if (left && toCaption) return true;
+        }
+        return false;
+    }
+
+    private static boolean ownsNumeralBowl(
+            byte[] gray,
+            int width,
+            int height,
+            PlayingTechniqueDetector.Word word,
+            PlayingTechniqueDetector.Staff staff,
+            float x,
+            float y) {
+        // The staff rule crosses the glyph above this bowl. Keep it out of the component graph.
+        float gap = staff.gap();
+        int left = Math.round(word.left() * width), right = Math.round(word.right() * width);
+        int top = Math.round(staff.bottom() - gap * .78f),
+                bottom = Math.round(word.bottom() * height);
+        if (left < 0 || right >= width || top < 0 || bottom >= height || bottom <= top)
+            return false;
+        var graph =
+                RawNumeralComponents.capture(
+                        gray, width, height, left, top, right, bottom, 165, () -> {}, () -> {});
+        return graph.components().stream()
+                        .filter(
+                                c ->
+                                        c.left > left
+                                                && c.right < right
+                                                && c.bottom < bottom
+                                                && c.size() >= gap * 2.1f
+                                                && c.right - c.left >= gap * .35f
+                                                && c.right - c.left <= gap * 1.1f
+                                                && ownsTextCenter(c, x, y, width))
+                        .count()
+                == 1;
     }
 
     /** A split, slightly overlapping OCR caption can seed two digit bowls and one whole-note alias. */

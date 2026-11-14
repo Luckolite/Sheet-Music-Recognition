@@ -135,4 +135,44 @@ public class BelowStaffFingeringTest {
         read(p, "2323", -8);
         assertArrayEquals(old, p);
     }
+
+    @Test
+    public void shallowFalseHeadNeedsBothRawCountersAndARecognizedFingeringRow() {
+        byte[] p = page(255);
+        for (int y = 167; y <= 186; y++) {
+            Arrays.fill(p, y * W + 194, y * W + 206, (byte) 0);
+            if ((y >= 170 && y <= 174) || (y >= 178 && y <= 182)) {
+                Arrays.fill(p, y * W + 198, y * W + 202, (byte) 255);
+            }
+        }
+        var numeral =
+                new PlayingTechniqueDetector.Word("8", 188f / W, 166f / H, 212f / W, 189f / H);
+        var left = new PlayingTechniqueDetector.Word("21", 144f / W, 166f / H, 175f / W, 189f / H);
+        var right = new PlayingTechniqueDetector.Word("2", 226f / W, 168f / H, 243f / W, 190f / H);
+        var words = List.of(left, numeral, right);
+        assertTrue(readShallowNumeral(p, words).isEmpty());
+        assertEquals(1, readShallowNumeral(p, List.of(numeral, right)).size());
+
+        byte[] closed = p.clone();
+        for (int y = 170; y <= 174; y++) Arrays.fill(closed, y * W + 198, y * W + 202, (byte) 0);
+        assertEquals(1, readShallowNumeral(closed, words).size());
+        byte[] stemmed = p.clone();
+        for (int y = 130; y <= 182; y++) stemmed[y * W + 205] = 0;
+        assertEquals(1, readShallowNumeral(stemmed, words).size());
+        byte[] ledger = p.clone();
+        Arrays.fill(ledger, 180 * W + 172, 180 * W + 229, (byte) 0);
+        assertEquals(1, readShallowNumeral(ledger, words).size());
+    }
+
+    private List<ScoreNoteEvent> readShallowNumeral(
+            byte[] gray, List<PlayingTechniqueDetector.Word> words) {
+        return FingeringAnnotationFilter.apply(
+                words,
+                List.of(new PlayingTechniqueDetector.Staff(100, 164, G, 0, 1)),
+                List.of(new MeasureRegion(0, 1, 0, 1)),
+                List.of(new ScoreNoteEvent(0, .5f, -2, 0, 1, 181f / H, false, 0, 0, 2, 1f)),
+                gray,
+                W,
+                H);
+    }
 }

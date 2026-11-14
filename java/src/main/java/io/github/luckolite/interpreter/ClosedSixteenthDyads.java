@@ -34,6 +34,7 @@ final class ClosedSixteenthDyads {
         int meter=0;
         for (int i=0;i<notes.size();i++) {
             var n=notes.get(i);
+            if (n.measureIndex() < 0 || n.measureIndex() >= regions.size()) continue;
             var b=regions.get(n.measureIndex());
             bars.get(n.measureIndex()).add(new Head(i,n,
                     (b.left()+n.positionInMeasure()*(b.right()-b.left()))*w,n.pageY()*h));
@@ -43,9 +44,17 @@ final class ClosedSixteenthDyads {
             while (meter<score.meterChanges().size() && score.meterChanges().get(meter).measureIndex()<=m)
                 active=score.meterChanges().get(meter++);
             final int bar=m;
-            if (active==null || active.numerator()!=4 || active.denominator()!=4
-                    || bars.get(m).size()!=32 || regions.get(m).cadenceQuarterBeats()!=0
-                    || score.rests().stream().anyMatch(r->r.measureIndex()==bar)) continue;
+            int count = bars.get(m).size();
+            if (active == null
+                    || active.numerator() != 4
+                    || active.denominator() != 4
+                    || count != 30 && count != 32
+                    || regions.get(m).cadenceQuarterBeats() != 0
+                    || score.rests().stream().anyMatch(r -> r.measureIndex() == bar)) continue;
+            if (count == 30) {
+                closeToEighth(ink, regions.get(m), bars.get(m), result);
+                continue;
+            }
             if (active.measureIndex()==m && closedHeaderSixteenths(ink,regions.get(m),bars.get(m))) {
                 for (var head:bars.get(m)) {
                     var note=head.note.withTupletRatio(1,1);
@@ -66,6 +75,142 @@ final class ClosedSixteenthDyads {
         }
         if (result.equals(notes)) return score;
         return score.withNotes(result,IntStream.range(0,notes.size()).boxed().toList());
+    }
+
+    private static void closeToEighth(
+            Ink ink, MeasureRegion region, List<Head> heads, List<ScoreNoteEvent> result) {
+        heads.sort(Comparator.comparingDouble(Head::x));
+        float gap = (region.bottom() - region.top()) * ink.height / 8.2f;
+        if (gap < 12
+                || gap > 23
+                || (region.right() - region.left()) * ink.width < gap * 42
+                || (region.right() - region.left()) * ink.width > gap * 62
+                || !WrappedMeasureBoundaries.confirmsClosed(
+                        ink.raw, ink.width, ink.height, region, heads.get(0).x, heads.get(29).x))
+            return;
+
+        float sum = 0;
+        int sampleCount = 0;
+        float floor = region.bottom() * ink.height - gap * 2.1f;
+        for (int slot = 0; slot < 15; slot += 2) {
+            var sample =
+                    PrintedDirectionStaff.printedRules(
+                            ink.raw, ink.width, ink.height, heads.get(slot * 2).x, floor, gap);
+            if (sample != null && Math.abs(sample[1] - gap) <= gap * .10f) {
+                sum += sample[1];
+                sampleCount++;
+            }
+        }
+        if (sampleCount < 3) return;
+        gap = sum / sampleCount;
+        int clef = heads.get(0).note.clefBottomDiatonic();
+        var geometry = new ClosedFourDyadBeam.Head[15];
+        int tripletClaims = 0;
+        for (int slot = 0; slot < 15; slot++) {
+            var a = heads.get(slot * 2);
+            var b = heads.get(slot * 2 + 1);
+            if (b.x - a.x > gap * .15f
+                    || Math.abs(b.y - a.y) < gap * .65f
+                    || Math.abs(b.y - a.y) > gap * 1.4f) return;
+            int actual = a.note.tupletDivisor();
+            if (actual != 1 && actual != 3) return;
+            if (actual == 3) tripletClaims |= 1 << slot;
+            for (var head : List.of(a, b)) {
+                var n = head.note;
+                if (!ordinaryGeometry(n, clef)
+                        || n.augmentationDots() != 0
+                        || n.tupletDivisor() != actual
+                        || n.tupletNormalNotes() != (actual == 3 ? 2 : 1)) return;
+                if (slot < 14
+                        && (n.beamCount() != 2
+                                || n.stemDirection() != -1
+                                || n.unbeamedDurationBeats() != 0)) return;
+            }
+            var upper = a.y < b.y ? a : b;
+            var lower = a.y < b.y ? b : a;
+            if (slot == 14
+                    && (upper.note.beamCount() != 0
+                            || upper.note.stemDirection() != -1
+                            || upper.note.unbeamedDurationBeats() != 1
+                            || lower.note.beamCount() != 1
+                            || lower.note.stemDirection() != 0
+                            || lower.note.unbeamedDurationBeats() != 0)) return;
+            geometry[slot] = new ClosedFourDyadBeam.Head((a.x + b.x) * .5f, upper.y, lower.y);
+        }
+        if (!hasContainedTripletClaims(tripletClaims)) return;
+        for (int i = 0; i < 12; i += 4) {
+            var group = java.util.Arrays.copyOfRange(geometry, i, i + 4);
+            boolean roomForPrintedAccidentals = true;
+            for (int j = 1; j < 4; j++) {
+                if (group[j].x() - group[j - 1].x() <= gap * 4.7f) continue;
+                roomForPrintedAccidentals &=
+                        heads.get((i + j) * 2).note.writtenAccidental()
+                                        != ScoreNoteEvent.ACCIDENTAL_FROM_KEY
+                                || heads.get((i + j) * 2 + 1).note.writtenAccidental()
+                                        != ScoreNoteEvent.ACCIDENTAL_FROM_KEY;
+            }
+            if (!roomForPrintedAccidentals
+                    || !ClosedFourDyadBeam.provesWithAccidentalSpacing(
+                            ink.raw, ink.width, ink.height, group, gap, 1)) return;
+        }
+        if (!ClosedFourDyadBeam.provesTwoSixteenthsAndEighth(
+                ink.raw,
+                ink.width,
+                ink.height,
+                java.util.Arrays.copyOfRange(geometry, 12, 15),
+                gap)) return;
+        var revised = new ArrayList<ScoreNoteEvent>(30);
+        for (int i = 0; i < 30; i++) {
+            var note = heads.get(i).note;
+            revised.add(i < 28 ? note.withTupletRatio(1, 1) : asSharedEighth(note));
+        }
+        for (int i = 0; i < 30; i++) {
+            var placed = ScoreNoteTiming.writtenPlacement(revised.get(i), revised, 4f).orElse(null);
+            if (placed == null
+                    || Math.abs(placed.onsetBeats() - (i / 2) * .25) > 1e-6
+                    || Math.abs(placed.durationBeats() - (i < 28 ? .25 : .5)) > 1e-6) return;
+        }
+        for (int i = 0; i < 30; i++) result.set(heads.get(i).owner, revised.get(i));
+    }
+
+    /** Each candidate claim must contain three adjacent dyads under one closed double rail. */
+    static boolean hasContainedTripletClaims(int claims) {
+        if (claims == 0 || (claims & ~0xfff) != 0) return false;
+        for (int bit = 0; bit < 12; bit += 4) {
+            int underOneRail = claims >> bit & 0xf;
+            if (underOneRail != 0 && underOneRail != 0b0111 && underOneRail != 0b1110) return false;
+        }
+        return true;
+    }
+
+    private static ScoreNoteEvent asSharedEighth(ScoreNoteEvent n) {
+        return new ScoreNoteEvent(
+                n.measureIndex(),
+                n.positionInMeasure(),
+                n.staffStep(),
+                n.staffIndex(),
+                n.staffCount(),
+                n.pageY(),
+                n.tiedFromPrevious(),
+                n.augmentationDots(),
+                1,
+                n.writtenAccidental(),
+                0,
+                n.tupletDivisor(),
+                n.followingRestBeats(),
+                n.articulations(),
+                n.clefBottomDiatonic(),
+                n.crossStaffBeam(),
+                n.leadingRestBeats(),
+                n.compactOpening(),
+                n.octaveShift(),
+                n.boundaryTies(),
+                n.tupletNormalNotes(),
+                -1,
+                n.kind(),
+                n.visualSize(),
+                n.harmonicSemitones(),
+                n.openStringTouch());
     }
 
     private static boolean closedHeaderSixteenths(Ink ink,MeasureRegion bar,List<Head> heads) {
