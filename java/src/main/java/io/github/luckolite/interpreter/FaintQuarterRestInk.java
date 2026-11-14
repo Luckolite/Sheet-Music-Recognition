@@ -142,6 +142,12 @@ final class FaintQuarterRestInk {
             this.parent = parent;
         }
 
+        boolean tryPrepayLocal(long work) {
+            if (parent != null || exhausted || work > workLimit - workUsed) return false;
+            workUsed += work;
+            return true;
+        }
+
         boolean prepay(long work, long bytes) {
             if (work < 0 || bytes < 0) throw new IllegalArgumentException();
             if (exhausted || work > workLimit - workUsed || bytes > byteLimit - bytesUsed) {

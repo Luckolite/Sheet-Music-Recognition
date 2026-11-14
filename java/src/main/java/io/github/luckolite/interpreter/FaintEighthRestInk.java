@@ -147,16 +147,16 @@ final class FaintEighthRestInk {
             FaintQuarterRestInk.Budget quarterBudget) {
         FaintQuarterRestInk.charge(quarterBudget, 1, 0);
 
-        int value = raw[y * width + x] & 255;
+        int at = y * width + x, value = raw[at] & 255;
         if (value < 170) return true;
         if (value >= 230 || x < radius || x + radius >= width || y < radius || y + radius >= height)
             return false;
+        int threshold = value + 20, vertical = radius * width;
         int bright = 0;
-        if ((raw[y * width + x - radius] & 255) >= value + 20) bright++;
-        if ((raw[y * width + x + radius] & 255) >= value + 20) bright++;
-        if ((raw[(y - radius) * width + x] & 255) >= value + 20) bright++;
-        if ((raw[(y + radius) * width + x] & 255) >= value + 20) bright++;
-        return bright >= 2;
+        if ((raw[at - radius] & 255) >= threshold) bright++;
+        if ((raw[at + radius] & 255) >= threshold && ++bright == 2) return true;
+        if ((raw[at - vertical] & 255) >= threshold && ++bright == 2) return true;
+        return bright == 1 && (raw[at + vertical] & 255) >= threshold;
     }
 
     private static int rowRuns(
@@ -170,22 +170,23 @@ final class FaintEighthRestInk {
 
         int runs = 0;
         boolean active = false;
-        lo[row] = -1;
-        hi[row] = -1;
+        int left = -1, right = -1, start = row * w;
         {
             FaintQuarterRestInk.charge(quarterBudget, 1, 0);
             for (int x = 0; x < w; x++) {
                 FaintQuarterRestInk.charge(quarterBudget, 1, 0);
 
-                boolean ink = points[row * w + x] != 0;
+                boolean ink = points[start + x] != 0;
                 if (ink) {
                     if (!active) runs++;
-                    if (lo[row] < 0) lo[row] = x;
-                    hi[row] = x;
+                    if (left < 0) left = x;
+                    right = x;
                 }
                 active = ink;
             }
         }
+        lo[row] = left;
+        hi[row] = right;
         return runs;
     }
 
@@ -193,38 +194,64 @@ final class FaintEighthRestInk {
             byte[] points, int w, int h, int[] queue, FaintQuarterRestInk.Budget quarterBudget) {
         FaintQuarterRestInk.charge(quarterBudget, 1, 0);
 
-        int all = 0, first = -1;
-        {
-            FaintQuarterRestInk.charge(quarterBudget, 1, 0);
-            for (int i = 0; i < points.length; i++) {
+        if (quarterBudget != null && !quarterBudget.tryPrepayLocal(1L + points.length)) {
+            // This census has no side effects before it completes. A linked budget still
+            // receives the same sequence of unit charges, including the refusal point.
+            for (int i = 0; i <= points.length; i++)
                 FaintQuarterRestInk.charge(quarterBudget, 1, 0);
-                if (points[i] != 0) {
-                    all++;
-                    if (first < 0) first = i;
-                }
-            }
+        }
+        int all = 0, first = -1;
+        for (int i = 0; i < points.length; i++) {
+            if (points[i] == 0) continue;
+            all++;
+            if (first < 0) first = i;
         }
         if (first < 0) return 0;
-        int take = 0, size = 1;
+        int size = 1;
         queue[0] = first;
         points[first] = 2;
+        size = floodQueued(points, w, 0, h - 1, queue, size, quarterBudget);
+        return size == all ? size : -1;
+    }
+
+    private static int floodQueued(
+            byte[] points, int w, int firstRow, int lastRow, int[] queue, int size,
+            FaintQuarterRestInk.Budget quarterBudget) {
+        int take = 0;
         {
             FaintQuarterRestInk.charge(quarterBudget, 1, 0);
             while (take < size) {
+                // Each queued pixel charges two loop entries and five steps per row.
+                // With a parent or a tight budget, keep the original per-step refusal order.
+                if (quarterBudget == null || quarterBudget.tryPrepayLocal(17)) {
+                    int at = queue[take++], y = at / w, x = at - y * w;
+                    int left = Math.max(0, x - 1), right = Math.min(w - 1, x + 1);
+                    for (int row = Math.max(firstRow, y - 1); row <= Math.min(lastRow, y + 1); row++) {
+                        int start = row * w + left, end = row * w + right;
+                        for (int next = start; next <= end; next++) {
+                            if (points[next] == 1) {
+                                points[next] = 2;
+                                queue[size++] = next;
+                            }
+                        }
+                    }
+                    continue;
+                }
                 FaintQuarterRestInk.charge(quarterBudget, 1, 0);
-                int at = queue[take++], x = at % w, y = at / w;
+                int at = queue[take++], y = at / w, x = at - y * w;
                 {
                     FaintQuarterRestInk.charge(quarterBudget, 1, 0);
                     for (int dy = -1; dy <= 1; dy++) {
                         FaintQuarterRestInk.charge(quarterBudget, 1, 0);
+                        int row = y + dy, rowStart = row * w;
                         {
                             FaintQuarterRestInk.charge(quarterBudget, 1, 0);
                             for (int dx = -1; dx <= 1; dx++) {
                                 FaintQuarterRestInk.charge(quarterBudget, 1, 0);
 
-                                int xx = x + dx, yy = y + dy;
-                                if (xx < 0 || xx >= w || yy < 0 || yy >= h) continue;
-                                int next = yy * w + xx;
+                                int xx = x + dx;
+                                if (xx < 0 || xx >= w || row < firstRow || row > lastRow) continue;
+                                int next = rowStart + xx;
                                 if (points[next] == 1) {
                                     points[next] = 2;
                                     queue[size++] = next;
@@ -235,7 +262,7 @@ final class FaintEighthRestInk {
                 }
             }
         }
-        return size == all ? size : -1;
+        return size;
     }
 
     private static boolean completeBand(
@@ -307,7 +334,7 @@ final class FaintEighthRestInk {
             for (int direction = 0; direction < 2; direction++) {
                 FaintQuarterRestInk.charge(quarterBudget, 1, 0);
 
-                int take = 0, size = 0, row = direction == 0 ? a : c;
+                int size = 0, row = direction == 0 ? a : c;
                 {
                     FaintQuarterRestInk.charge(quarterBudget, 1, 0);
                     for (int x = 0; x < w; x++) {
@@ -318,33 +345,7 @@ final class FaintEighthRestInk {
                         }
                     }
                 }
-                {
-                    FaintQuarterRestInk.charge(quarterBudget, 1, 0);
-                    while (take < size) {
-                        FaintQuarterRestInk.charge(quarterBudget, 1, 0);
-                        int at = queue[take++], x = at % w, y = at / w;
-                        {
-                            FaintQuarterRestInk.charge(quarterBudget, 1, 0);
-                            for (int dy = -1; dy <= 1; dy++) {
-                                FaintQuarterRestInk.charge(quarterBudget, 1, 0);
-                                {
-                                    FaintQuarterRestInk.charge(quarterBudget, 1, 0);
-                                    for (int dx = -1; dx <= 1; dx++) {
-                                        FaintQuarterRestInk.charge(quarterBudget, 1, 0);
-
-                                        int xx = x + dx, yy = y + dy;
-                                        if (xx < 0 || xx >= w || yy < a || yy > c) continue;
-                                        int n = yy * w + xx;
-                                        if (scratch[n] == 1) {
-                                            scratch[n] = 2;
-                                            queue[size++] = n;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+                size = floodQueued(scratch, w, a, c, queue, size, quarterBudget);
                 {
                     FaintQuarterRestInk.charge(quarterBudget, 1, 0);
                     for (int y = a + 1; y < c; y++) {
@@ -535,12 +536,13 @@ final class FaintEighthRestInk {
             for (int y = 0; y < h; y++) {
                 FaintQuarterRestInk.charge(quarterBudget, 1, 0);
 
+                int raster = (first + y) * width, crop = y * w;
                 {
                     FaintQuarterRestInk.charge(quarterBudget, 1, 0);
                     for (int x = 0; x < aa.length; x++) {
                         FaintQuarterRestInk.charge(quarterBudget, 1, 0);
-                        aa[x] = raw[(first + y) * width + la + x] & 255;
-                        bb[x] = raw[(first + y) * width + ra + x] & 255;
+                        aa[x] = raw[raster + la + x] & 255;
+                        bb[x] = raw[raster + ra + x] & 255;
                     }
                 }
                 sort(aa, quarterBudget);
@@ -560,8 +562,8 @@ final class FaintEighthRestInk {
                     FaintQuarterRestInk.charge(quarterBudget, 1, 0);
                     for (int x = 0; x < w; x++) {
                         FaintQuarterRestInk.charge(quarterBudget, 1, 0);
-                        int v = raw[(first + y) * width + left + x] & 255;
-                        if (v < 230 && v <= base - 20) points[y * w + x] = 1;
+                        int v = raw[raster + left + x] & 255;
+                        if (v < 230 && v <= base - 20) points[crop + x] = 1;
                     }
                 }
             }
