@@ -71,9 +71,8 @@ final class RestCompetingGlyphs {
         var before = row.stream().filter(n->n.positionInMeasure()<rest.positionInMeasure()).toList();
         var after = row.stream().filter(n->n.positionInMeasure()>rest.positionInMeasure()).toList();
         if (before.size() != 2 || after.size() != 2) return false;
-        int stem = before.get(0).stemDirection();
-        if (stem == 0 || row.stream().anyMatch(n->n.staffCount()!=1 || n.staffIndex()!=0
-                || n.beamCount()!=2 || n.stemDirection()!=stem || n.augmentationDots()!=0
+        if (row.stream().anyMatch(n->n.staffCount()!=1 || n.staffIndex()!=0
+                || n.beamCount()!=2 || n.augmentationDots()!=0
                 || n.tupletDivisor()!=1 || n.crossStaffBeam())) return false;
         float ax = x(region,after.get(0).positionInMeasure(),width);
         if (ax-rx < gap*1.2f || ax-rx > gap*2.25f
@@ -89,14 +88,28 @@ final class RestCompetingGlyphs {
         if (rails==null) return false;
         gap=rails[1];
         int staffTop=Math.round(rails[0]-4*gap);
-        for(byte[] raster: new byte[][]{gray,source}) {
-            for(int i=0;i<2;i++) {
-                var a=before.get(i); var b=after.get(i);
-                if(!PrintedTupletBeamOwner.connectedHeads(raster,width,height,
-                        x(region,a.positionInMeasure(),width),a.pageY()*height,
-                        x(region,b.positionInMeasure(),width),b.pageY()*height,gap,stem)) return false;
-            }
-            if (!naturalPair(labels,raster,width,height,rx,firstY,secondY,gap,staffTop)) return false;
+        if (!naturalPair(labels,gray,width,height,rx,firstY,secondY,gap,staffTop)
+                || !naturalPair(labels,source,width,height,rx,firstY,secondY,gap,staffTop))
+            return false;
+        // Stem directions are not assigned at this stage of raw note ownership.
+        // Require sustained beams with a single common optical orientation on both rasters.
+        boolean up = joinedByBeams(before,after,region,gray,width,height,gap,1)
+                && joinedByBeams(before,after,region,source,width,height,gap,1);
+        boolean down = joinedByBeams(before,after,region,gray,width,height,gap,-1)
+                && joinedByBeams(before,after,region,source,width,height,gap,-1);
+        return up != down;
+    }
+
+    private static boolean joinedByBeams(List<ScoreNoteEvent> before,List<ScoreNoteEvent> after,
+            MeasureRegion region,byte[] raster,int width,int height,float gap,int direction) {
+        for (int i=0;i<2;i++) {
+            var a=before.get(i); var b=after.get(i);
+            if (a.stemDirection()!=0 && a.stemDirection()!=direction
+                    || b.stemDirection()!=0 && b.stemDirection()!=direction
+                    || !PrintedTupletBeamOwner.connectedHeads(raster,width,height,
+                            x(region,a.positionInMeasure(),width),a.pageY()*height,
+                            x(region,b.positionInMeasure(),width),b.pageY()*height,gap,direction))
+                return false;
         }
         return true;
     }
