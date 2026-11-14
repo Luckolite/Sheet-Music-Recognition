@@ -172,6 +172,20 @@ public final class SheetInterpreter {
             MusicalOcr ocr, int physicalPage, byte[] decoderGray,
             TablatureDecoder.Prepared preparedTabs)
             throws Exception {
+        return analyzeWithPrintedSources(labels, gray, width, height, annotations, ocr,
+                physicalPage, decoderGray, preparedTabs).score();
+    }
+
+    record AnalyzedPage(
+            ScorePageInterpretation score,
+            List<ScoreNoteEvent> originalNotes,
+            SourceLocalAccidental accidentalSource) {}
+
+    static AnalyzedPage analyzeWithPrintedSources(
+            byte[] labels, byte[] gray, int width, int height, Annotations annotations,
+            MusicalOcr ocr, int physicalPage, byte[] decoderGray,
+            TablatureDecoder.Prepared preparedTabs)
+            throws Exception {
         if (decoderGray != null && (gray == null || decoderGray.length != gray.length))
             throw new IllegalArgumentException("Decoder grayscale dimensions must match source");
         if (physicalPage < -1) throw new IllegalArgumentException("Invalid physical source page");
@@ -658,6 +672,8 @@ public final class SheetInterpreter {
                 labels, gray, width, height, finalInterpretation);
         var touches = OpenStringHarmonics.capture(
                 labels, annotationGray, gray, width, height, pitched, words);
-        return PrintedCadenceDurations.capture(touches, labels, gray, width, height);
+        return new AnalyzedPage(
+                PrintedCadenceDurations.capture(touches, labels, gray, width, height),
+                clockAnalysis.notes(), clockAnalysis.clockProducerSource().localAccidentals());
     }
 }

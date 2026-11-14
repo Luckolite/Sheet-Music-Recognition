@@ -4,6 +4,37 @@
 from .clef_export import LAYOUT
 from .typed_events import event_kind
 
+PRINTED_ACCIDENTALS = {
+    -2: (-2, 'flat-flat'), -1: (-1, 'flat'), 0: (0, 'natural'),
+    1: (1, 'sharp'), 3: (2, 'double-sharp'),
+}
+
+
+def printed_accidentals(page):
+    """Validate explicit glyph records. Legacy pitch spellings do not identify glyphs."""
+    rows = page.get('printedAccidentals', [])
+    notes = page.get('score', {}).get('notes', [])
+    if not isinstance(rows, list) or len(rows) > len(notes):
+        raise ValueError('Invalid printed accidental list')
+    result = {}
+    for row in rows:
+        index = row.get('noteIndex') if isinstance(row, dict) else None
+        value = row.get('accidental') if isinstance(row, dict) else None
+        if (type(index) is not int or not 0 <= index < len(notes) or index in result
+                or event_kind(notes[index]) != 'PITCHED'
+                or type(value) is not int or value not in PRINTED_ACCIDENTALS):
+            raise ValueError('Invalid printed accidental owner or sign')
+        result[index] = value
+    return result
+
+
+def printed_mark(rows, index, spelling):
+    if spelling is None or index not in rows:
+        return None
+    alter, mark = PRINTED_ACCIDENTALS[rows[index]]
+    # A boundary tie, edit or retune can replace the original spelling. Keep only matching ink.
+    return mark if spelling[1] == alter else None
+
 
 def retained(page, index, key):
     event = page['events'][index]

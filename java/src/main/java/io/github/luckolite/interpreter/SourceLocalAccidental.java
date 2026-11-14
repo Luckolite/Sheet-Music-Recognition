@@ -6,6 +6,8 @@ import java.util.*;
 
 /** Actual picker lineage, separate from head admission and rhythmic position anchors. */
 final class SourceLocalAccidental {
+    private static final String SUPPORTED = "MODEL_SUPPORTED_ACTUAL_LOCAL_ACCIDENTAL";
+
     record Glyph(int index, int label, ExactComponentMembers.Stats stats, List<Integer> pixels) {
         Glyph {
             pixels = List.copyOf(pixels);
@@ -34,6 +36,16 @@ final class SourceLocalAccidental {
             boolean ambiguous,
             String status) {}
 
+    record PrintedMark(int noteIndex, int accidental) {}
+
+    private record NoteLocation(
+            int measure, int staff, int staffCount, float position, float pageY, int staffStep) {
+        NoteLocation(ScoreNoteEvent note) {
+            this(note.measureIndex(), note.staffIndex(), note.staffCount(),
+                    note.positionInMeasure(), note.pageY(), note.staffStep());
+        }
+    }
+
     static final class Role {
         private final List<Integer> pixels;
 
@@ -55,6 +67,7 @@ final class SourceLocalAccidental {
     private final List<Head> headAlternatives;
     private final List<Integer> unrepresentedGlyphMembers;
     private final boolean complete;
+    private final boolean authenticatedFrame;
 
     private SourceLocalAccidental(
             String raw,
@@ -67,7 +80,8 @@ final class SourceLocalAccidental {
             List<Head> headAlternatives,
             List<Choice> choices,
             List<Integer> unrepresentedGlyphMembers,
-            boolean complete) {
+            boolean complete,
+            boolean authenticatedFrame) {
         issuer = ISSUER;
         rawSha = raw;
         labelSha = label;
@@ -80,6 +94,7 @@ final class SourceLocalAccidental {
         this.choices = List.copyOf(choices);
         this.unrepresentedGlyphMembers = List.copyOf(unrepresentedGlyphMembers);
         this.complete = complete;
+        this.authenticatedFrame = authenticatedFrame;
     }
 
     @Override
@@ -90,6 +105,7 @@ final class SourceLocalAccidental {
                 && glyphCount == other.glyphCount
                 && headCount == other.headCount
                 && complete == other.complete
+                && authenticatedFrame == other.authenticatedFrame
                 && rawSha.equals(other.rawSha)
                 && labelSha.equals(other.labelSha)
                 && glyphs.equals(other.glyphs)
@@ -111,12 +127,13 @@ final class SourceLocalAccidental {
                 headAlternatives,
                 choices,
                 unrepresentedGlyphMembers,
-                complete);
+                complete,
+                authenticatedFrame);
     }
 
     static SourceLocalAccidental unavailable() {
         return new SourceLocalAccidental(
-                "", "", 0, 0, 0, 0, List.of(), List.of(), List.of(), List.of(), false);
+                "", "", 0, 0, 0, 0, List.of(), List.of(), List.of(), List.of(), false, false);
     }
 
     List<Choice> choices() {
@@ -240,7 +257,7 @@ final class SourceLocalAccidental {
                         && members.length == headToken.stats().area()
                         && partition != null
                         && partition.residual().isEmpty())
-                    status = "MODEL_SUPPORTED_ACTUAL_LOCAL_ACCIDENTAL";
+                    status = SUPPORTED;
             }
             rows.add(
                     new Choice(
@@ -265,7 +282,42 @@ final class SourceLocalAccidental {
                 alternatives,
                 rows,
                 unrepresented,
-                complete);
+                complete,
+                authenticatedFrame);
+    }
+
+    List<PrintedMark> printedMarks(List<ScoreNoteEvent> original, List<ScoreNoteEvent> retained) {
+        if (issuer != ISSUER || !authenticatedFrame || choices.isEmpty()) return List.of();
+        var representedGlyphs = new BitSet(glyphCount);
+        for (var glyph : glyphs) representedGlyphs.set(glyph.index());
+        var glyphOwners = new HashMap<Integer, Integer>();
+        for (var choice : choices)
+            if (choice.glyph() >= 0) glyphOwners.merge(choice.glyph(), 1, Integer::sum);
+        var originalLocations = new HashMap<NoteLocation, Integer>();
+        for (var note : original)
+            originalLocations.merge(new NoteLocation(note), 1, Integer::sum);
+        var retainedIndexes = new HashMap<NoteLocation, Integer>();
+        for (int index = 0; index < retained.size(); index++)
+            retainedIndexes.merge(new NoteLocation(retained.get(index)), index, (a, b) -> -1);
+        var marks = new ArrayList<PrintedMark>();
+        for (var choice : choices) {
+            if (!choice.status().equals(SUPPORTED)
+                    || glyphOwners.getOrDefault(choice.glyph(), 0) != 1
+                    || !representedGlyphs.get(choice.glyph())
+                    || choice.note() < 0 || choice.note() >= original.size()) continue;
+            var originalNote = original.get(choice.note());
+            if (originalNote.kind() != ScoreNoteEvent.Kind.PITCHED
+                    || !choice.originalNote().equals(originalNote)) continue;
+            var location = new NoteLocation(originalNote);
+            int index = retainedIndexes.getOrDefault(location, -1);
+            if (index < 0 || originalLocations.get(location) != 1) continue;
+            var note = retained.get(index);
+            if (note.kind() == ScoreNoteEvent.Kind.PITCHED
+                    && note.writtenAccidental() == choice.accidental())
+                marks.add(new PrintedMark(index, choice.accidental()));
+        }
+        marks.sort(Comparator.comparingInt(PrintedMark::noteIndex));
+        return List.copyOf(marks);
     }
 
     Role role(
@@ -299,7 +351,7 @@ final class SourceLocalAccidental {
             for (var choice : choices) {
                 if (choice.glyph() != glyph.index()
                         || choice.ambiguous()
-                        || !choice.status().equals("MODEL_SUPPORTED_ACTUAL_LOCAL_ACCIDENTAL")
+                        || !choice.status().equals(SUPPORTED)
                         || choice.note() < 0
                         || choice.note() >= notes.size()) continue;
                 var note = notes.get(choice.note());

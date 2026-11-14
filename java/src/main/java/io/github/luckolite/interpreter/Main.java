@@ -116,12 +116,9 @@ public final class Main {
                 throw new IOException("Decoder raster length differs from source");
             decoderGray = Files.readAllBytes(decoderRaster);
         }
-        var score =
-                ScoreTiePitchGuard.withInitialKeyContext(
-                        SheetInterpreter.analyze(
-                                labels, gray, width, height, annotations, null,
-                                physicalPage, decoderGray, preparedTabs),
-                        initialKey);
+        var decoded = SheetInterpreter.analyzeWithPrintedSources(
+                labels, gray, width, height, annotations, null, physicalPage, decoderGray, preparedTabs);
+        var score = ScoreTiePitchGuard.withInitialKeyContext(decoded.score(), initialKey);
         score = ScoreTupletMeterContext.apply(score, initialMeter);
         score = ClosingTripletRhythm.apply(
                 score, initialMeter, labels, decoderGray == null ? gray : decoderGray, width, height);
@@ -265,6 +262,8 @@ public final class Main {
         result.put("events", events);
         result.put("tablatureWarnings", tabWarnings);
         result.put("measureBeats", beats);
+        var accidentals = decoded.accidentalSource().printedMarks(decoded.originalNotes(), score.notes());
+        if (!accidentals.isEmpty()) result.put("printedAccidentals", accidentals);
         if (!wrapped.continuations().isEmpty())
             result.put("printedMeasureContinuations", wrapped.continuations());
         result.put("totalBeats", starts[beats.length]);

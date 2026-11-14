@@ -52,6 +52,45 @@ class MusicXmlSpellingTests(unittest.TestCase):
         doc['pages'][0]['score']['keyChanges'] = [dict(measureIndex=0,fifths=1)]
         self.assertEqual(('F',0,4), self.pitch(doc))
 
+    def test_only_printed_marks_are_written_even_when_pitch_is_carried(self):
+        doc = document(31, 0, 65)
+        page = doc['pages'][0]
+        page['score']['keyChanges'] = [dict(measureIndex=0, fifths=1)]
+        page['printedAccidentals'] = [dict(noteIndex=0, accidental=0)]
+        page['events'].append(dict(page['events'][0], startBeat=1, tiedFromPrevious=True))
+        page['score']['notes'].append(dict(page['score']['notes'][0]))
+        notes = self.export(doc).findall('.//note[pitch]')
+        self.assertEqual(['natural', None], [n.findtext('accidental') for n in notes])
+        self.assertEqual(['start', 'stop'], [n.find('tie').get('type') for n in notes])
+
+    def test_printed_mark_is_placed_before_tuplet_and_not_repeated_on_split(self):
+        doc = document()
+        page = doc['pages'][0]
+        page['printedAccidentals'] = [dict(noteIndex=0, accidental=-1)]
+        page['events'][0].update(durationBeats=5/3, tupletActualNotes=3, tupletNormalNotes=2)
+        notes = self.export(doc).findall('.//note[pitch]')
+        self.assertEqual(['flat', None], [n.findtext('accidental') for n in notes])
+        tags = [child.tag for child in notes[0]]
+        self.assertLess(tags.index('accidental'), tags.index('time-modification'))
+
+    def test_conflicting_or_unowned_mark_is_not_written(self):
+        doc = document()
+        page = doc['pages'][0]
+        page['printedAccidentals'] = [dict(noteIndex=0, accidental=1)]
+        self.assertIsNone(self.export(doc).find('.//note/accidental'))
+        page['printedAccidentals'][0]['accidental'] = -1
+        page['events'][0]['sourceNoteIndex'] = 1
+        self.assertIsNone(self.export(doc).find('.//note/accidental'))
+
+    def test_invalid_printed_mark_rows_raise(self):
+        for rows in (None, [{'noteIndex': 1, 'accidental': 0}],
+                     [{'noteIndex': 0, 'accidental': 2}], [{'noteIndex': True, 'accidental': 0}],
+                     [{'noteIndex': 0, 'accidental': False}]):
+            doc = document()
+            doc['pages'][0]['printedAccidentals'] = rows
+            with self.subTest(rows=rows), self.assertRaises(ValueError):
+                self.export(doc)
+
     def test_from_key_uses_resolved_bar_key(self):
         for key,d,midi,expected in [(1,31,66,('F',1,4)),(-1,34,70,('B',-1,4)),
                                     (7,27,60,('B',1,3)),(-7,28,59,('C',-1,4))]:

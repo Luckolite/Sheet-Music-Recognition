@@ -297,6 +297,11 @@ def emit_note(measure, duration, voice, event=None, chord=False, stop=False, sta
         node.find('type').set('size', 'grace-cue' if grace is not None else 'cue')
     if grace is not None and node.find('type') is None:
         raise ValueError('Grace note has no exact written type')
+    if event and attack_fragment and event.get('retainedAccidental') is not None:
+        mark = ET.Element('accidental')
+        mark.text = event['retainedAccidental']
+        modification = node.find('time-modification')
+        node.insert(list(node).index(modification) if modification is not None else len(node), mark)
     if event and (event.get('retainedTremolo') or {}).get('printedFilled'):
         if event['retainedTremolo'].get('printedStem') in (-1, 1):
             element(node, 'stem', 'down' if event['retainedTremolo']['printedStem'] < 0 else 'up')
@@ -566,6 +571,7 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
         first_event = len(events)
         written = grace_export.plan(page, ticks)
         paired_tremolos = tremolo_export.retained(page)
+        printed_accidentals = spelling_export.printed_accidentals(page)
         for note_index, n in enumerate(page['events']):
             if event_kind(n) == 'PITCHED' and (not isinstance(n['midi'], int) or not 0 <= n['midi'] <= 127):
                 raise ValueError('MusicXML note pitch must be a MIDI integer in 0..127')
@@ -580,12 +586,14 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
             spelling_key = (bars[first_bar+measure_index]['key']
                             if type(measure_index) is int and 0 <= measure_index < len(page['measureBeats'])
                             else None)
+            spelling = spelling_export.retained(page, note_index, spelling_key)
             events.append(dict(n, start=offset+start, end=offset+(start if is_grace else min(local_start,start+duration)), tie_stop=False, tie_start=False,
                                sourceIdentity=len(events), retainedClef=clef_export.retained(page, note_index),
                                retainedArticulations=articulation_export.retained(page, note_index),
                                retainedBow=bow_export.retained(page, note_index),
                                retainedVisualSize=visual_size.retained(page, note_index),
-                               retainedSpelling=spelling_export.retained(page, note_index, spelling_key),
+                               retainedSpelling=spelling,
+                               retainedAccidental=spelling_export.printed_mark(printed_accidentals, note_index, spelling),
                                retainedOrnamentFlags=ornament_export.retained(page, note_index),
                                retainedTremolo=paired_tremolos.get(note_index), retainedArpeggio=False, retainedNaturalHarmonic=False))
             owner = n.get('sourceNoteIndex')
