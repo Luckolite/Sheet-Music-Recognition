@@ -229,6 +229,9 @@ final class RestPaperTone {
         int first = gray[firstRow + left] & 255;
         int middle = firstRow + (rows / 2) * width + left + tileWidth / 2;
         int last = endRow - width + right - 1;
+        if (first < 255 && (gray[middle] & 255) == first && (gray[last] & 255) == first
+                && isUniformTile(gray, width, firstRow, endRow, left, right))
+            return first >= 96 ? first : 255;
         if (first == 255 && gray[middle] == -1 && gray[last] == -1
                 && hasWhiteRank(gray, width, firstRow, endRow, left, right, upperRank))
             return 255;
@@ -249,6 +252,20 @@ final class RestPaperTone {
             if (upperRank <= 0) return tone;
         }
         return 255;
+    }
+
+    private static boolean isUniformTile(
+            byte[] gray, int width, int firstRow, int endRow, int left, int right) {
+        int start = firstRow + left, end = firstRow + right;
+        byte tone = gray[start];
+        for (int x = start + 1; x < end; x++)
+            if (gray[x] != tone) return false;
+        if (left == 0 && right == width)
+            return java.util.Arrays.mismatch(gray, start, endRow - width, gray, end, endRow) < 0;
+        for (int row = firstRow + width; row < endRow; row += width)
+            if (java.util.Arrays.mismatch(gray, start, end, gray, row + left, row + right) >= 0)
+                return false;
+        return true;
     }
 
     private static boolean hasWhiteRank(

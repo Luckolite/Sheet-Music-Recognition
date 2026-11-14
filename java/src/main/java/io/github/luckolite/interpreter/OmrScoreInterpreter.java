@@ -19345,52 +19345,69 @@ final class OmrScoreInterpreter {
     private static Component retainSeedConnectedInk(
             byte[] ink, int width, int height, Component seed, int left, int top) {
         boolean[] kept = null;
-        int[] queue = null;
-        int tail = 0;
+        long[] pending = null;
+        int size = 0;
         int firstX = Math.max(0, seed.minX - left), lastX = Math.min(width - 1, seed.maxX - left);
         int lastY = Math.min(height - 1, seed.maxY - top);
         for (int y = Math.max(0, seed.minY - top); y <= lastY; y++) {
-            int row = y * width;
-            for (int at = row + firstX, end = row + lastX; at <= end; at++) {
-                if (ink[at] != 0) {
-                    if (kept == null) {
-                        kept = new boolean[ink.length];
-                        queue = new int[ink.length];
-                    }
-                    kept[at] = true;
-                    queue[tail++] = at;
+            int row = y * width, end = row + lastX;
+            for (int at = row + firstX; at <= end; at++) {
+                if (ink[at] == 0) continue;
+                if (kept == null) {
+                    kept = new boolean[ink.length];
+                    pending = new long[Math.min(ink.length, 32)];
                 }
+                if (kept[at]) continue;
+                if (size == pending.length)
+                    pending = java.util.Arrays.copyOf(pending, size + Math.min(size, ink.length - size));
+                pending[size++] = retainInkRun(ink, kept, at, row, row + width - 1);
+                at = (int) pending[size - 1];
             }
         }
-        if (tail == 0) {
+        if (size == 0) {
             java.util.Arrays.fill(ink, (byte) 0);
             return null;
         }
-        int minX = width, maxX = -1, minY = height, maxY = -1;
+        int minX = width, maxX = -1, minY = height, maxY = -1, area = 0;
         long sx = 0, sy = 0;
-        for (int head = 0; head < tail; head++) {
-            int at = queue[head], y = at / width, x = at - y * width;
-            sx += x;
-            sy += y;
-            minX = Math.min(minX, x);
-            maxX = Math.max(maxX, x);
+        for (int head = 0; head < size; head++) {
+            long run = pending[head];
+            int start = (int) (run >>> 32), finish = (int) run;
+            int y = start / width, row = y * width;
+            int x0 = start - row, x1 = finish - row, count = finish - start + 1;
+            area += count;
+            sx += ((long) x0 + x1) * count / 2;
+            sy += (long) y * count;
+            minX = Math.min(minX, x0);
+            maxX = Math.max(maxX, x1);
             minY = Math.min(minY, y);
             maxY = Math.max(maxY, y);
-            int from = Math.max(0, x - 1), to = Math.min(width - 1, x + 1);
-            for (int yy = Math.max(0, y - 1), endY = Math.min(height - 1, y + 1); yy <= endY; yy++) {
-                int row = yy * width;
-                for (int next = row + from, end = row + to; next <= end; next++) {
-                    if (ink[next] != 0 && !kept[next]) {
-                        kept[next] = true;
-                        queue[tail++] = next;
-                    }
+            int from = Math.max(0, x0 - 1), to = Math.min(width - 1, x1 + 1);
+            for (int step = -1; step <= 1; step += 2) {
+                int yy = y + step;
+                if (yy < 0 || yy >= height) continue;
+                int neighbor = row + step * width;
+                for (int at = neighbor + from, end = neighbor + to; at <= end; at++) {
+                    if (kept[at] || ink[at] == 0) continue;
+                    if (size == pending.length)
+                        pending = java.util.Arrays.copyOf(pending, size + Math.min(size, ink.length - size));
+                    pending[size++] = retainInkRun(ink, kept, at, neighbor, neighbor + width - 1);
+                    at = (int) pending[size - 1];
                 }
             }
         }
-        if (tail != ink.length)
+        if (area != ink.length)
             for (int at = 0; at < ink.length; at++)
                 if (!kept[at] && ink[at] != 0) ink[at] = 0;
-        return new Component(tail, minX, maxX, minY, maxY, sx / (float) tail, sy / (float) tail);
+        return new Component(area, minX, maxX, minY, maxY, sx / (float) area, sy / (float) area);
+    }
+
+    private static long retainInkRun(byte[] ink, boolean[] kept, int at, int first, int last) {
+        int start = at, finish = at;
+        while (start > first && ink[start - 1] != 0) start--;
+        while (finish < last && ink[finish + 1] != 0) finish++;
+        java.util.Arrays.fill(kept, start, finish + 1, true);
+        return ((long) start << 32) | finish;
     }
 
     private static boolean rawStrokeLeavesCrop(
@@ -32307,7 +32324,7 @@ final class OmrScoreInterpreter {
                                     probeStrokeCenters[probeSlot] = stroke;
                                     probeStrong[probeSlot] = strongProbe;
                                 }
-                                // Abandoned candidates never read the unwritten tail of these arrays.
+                                // Abandoned candidates never read the unwritten tail of these java.util.Arrays.
                                 strokeCenters[sample] = stroke;
                                 supportedCenters[sample] = supportedRow < 0 ? Float.NaN : supportedRow;
                                 // At most 20 of the 50 votes may lack strong ink when it is required.

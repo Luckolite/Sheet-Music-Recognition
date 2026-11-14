@@ -73,6 +73,20 @@ final class SeparatedRestInk {
         return false;
     }
 
+    static final class Scratch {
+        private boolean[] visited = new boolean[0];
+        private int[] queue = new int[0];
+
+        private void reset(int size) {
+            if (visited.length < size) {
+                visited = new boolean[size];
+                queue = new int[size];
+            } else {
+                Arrays.fill(visited, 0, size, false);
+            }
+        }
+    }
+
     static List<Body> find(
             byte[] gray,
             int width,
@@ -83,6 +97,20 @@ final class SeparatedRestInk {
             int bottom,
             boolean[] line,
             float gap) {
+        return find(gray, width, height, left, right, top, bottom, line, gap, new Scratch());
+    }
+
+    static List<Body> find(
+            byte[] gray,
+            int width,
+            int height,
+            int left,
+            int right,
+            int top,
+            int bottom,
+            boolean[] line,
+            float gap,
+            Scratch scratch) {
         if (gray == null
                 || gray.length != (long) width * height
                 || gap < 4
@@ -114,17 +142,36 @@ final class SeparatedRestInk {
         int lineOffset = firstVisible - top;
         int rasterBase = firstVisible * width + left;
         List<Body> result = null;
+        int segmentEnd = rows - 1;
+        for (int row = 1, previous = 0; row < rows; row++) {
+            if (!line[lineOffset + row]) {
+                if (row - previous > maximumStep) {
+                    segmentEnd = previous;
+                    break;
+                }
+                previous = row;
+            }
+        }
         for (int seedRow = 0; seedRow < rows; seedRow++) {
-            // A later seed cannot leave enough space above the final visible row.
             if (rows - 1 - seedRow < minimumHeight) break;
             if (line[lineOffset + seedRow]) continue;
+            if (seedRow > segmentEnd) {
+                segmentEnd = seedRow;
+                for (int row = seedRow + 1; row < rows && !(row - segmentEnd > maximumStep); row++)
+                    if (!line[lineOffset + row]) segmentEnd = row;
+            }
+            if (segmentEnd < rows - 1 && segmentEnd - seedRow + 1 < minimumHeight) {
+                seedRow = segmentEnd;
+                continue;
+            }
             int rasterRow = rasterBase + seedRow * width;
             for (int sx = 0, seed = seedRow * span; sx < span; sx++, seed++) {
                 if ((visited != null && visited[seed]) || (gray[rasterRow + sx] & 255) >= 170)
                     continue;
                 if (visited == null) {
-                    visited = new boolean[size];
-                    queue = new int[size];
+                    scratch.reset(size);
+                    visited = scratch.visited;
+                    queue = scratch.queue;
                     int firstMasked = 0;
                     while (firstMasked < rows && !line[lineOffset + firstMasked])
                         firstMasked++;

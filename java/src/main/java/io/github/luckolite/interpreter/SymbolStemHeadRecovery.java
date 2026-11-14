@@ -186,13 +186,15 @@ final class SymbolStemHeadRecovery {
             outerX[k] = rimX[k] * 1.6f;
             outerY[k] = rimY[k] * 1.6f;
         }
+        var upper = new ShaftSpan();
+        var lower = new ShaftSpan();
         for (int y = firstY; y <= lastY; y += stride) {
-            ShaftSpan upper = shaftSpan(w, h, y, gap, firstDistance, lastDistance, -1);
-            ShaftSpan lower = shaftSpan(w, h, y, gap, firstDistance, lastDistance, 1);
-            if (upper == null && lower == null) continue;
+            boolean hasUpper = upper.reset(w, h, y, gap, firstDistance, lastDistance, -1);
+            boolean hasLower = lower.reset(w, h, y, gap, firstDistance, lastDistance, 1);
+            if (!hasUpper && !hasLower) continue;
             candidates: for (int x = margin; x < w - margin; x += stride) {
-                if (!(upper != null && upper.owns(labels, gray, w, x + rx, shaftRadius))
-                        && !(lower != null && lower.owns(labels, gray, w, x - rx, shaftRadius)))
+                if (!(hasUpper && upper.owns(labels, gray, w, x + rx, shaftRadius))
+                        && !(hasLower && lower.owns(labels, gray, w, x - rx, shaftRadius)))
                     continue;
                 int quadrantMisses = 0, misses = 0;
                 for (int k = 0; k < 48; k++) {
@@ -266,18 +268,27 @@ final class SymbolStemHeadRecovery {
     }
 
     private static final class ShaftSpan {
-        private final int middleRow, firstRow, step, total;
-        private final float requiredRaw, requiredSemantic;
+        private int middleRow, firstRow, step, total;
+        private float requiredRaw, requiredSemantic;
         private int nextColumn;
         private int witness = -1;
 
-        ShaftSpan(int middleRow, int firstRow, int step, int total) {
-            this.middleRow = middleRow;
-            this.firstRow = firstRow;
-            this.step = step;
-            this.total = total;
+        boolean reset(
+                int width, int height, int y, float gap, int firstDistance, int lastDistance,
+                int direction) {
+            int middle = Math.round(y + direction * gap * 1.5f);
+            if (middle < 0 || middle >= height) return false;
+            int end = Math.min(lastDistance, direction < 0 ? y : height - 1 - y);
+            total = end - firstDistance + 1;
+            if (total < gap) return false;
+            middleRow = middle * width;
+            firstRow = (y + direction * firstDistance) * width;
+            step = direction * width;
             requiredRaw = total * .85f;
             requiredSemantic = total * .5f;
+            nextColumn = 0;
+            witness = -1;
+            return true;
         }
 
         boolean owns(byte[] labels, byte[] gray, int width, float center, int radius) {
@@ -303,17 +314,5 @@ final class SymbolStemHeadRecovery {
             }
             return false;
         }
-    }
-
-    private static ShaftSpan shaftSpan(
-            int width, int height, int y, float gap, int firstDistance, int lastDistance,
-            int direction) {
-        int middle = Math.round(y + direction * gap * 1.5f);
-        if (middle < 0 || middle >= height) return null;
-        int end = Math.min(lastDistance, direction < 0 ? y : height - 1 - y);
-        int total = end - firstDistance + 1;
-        if (total < gap) return null;
-        return new ShaftSpan(middle * width, (y + direction * firstDistance) * width,
-                direction * width, total);
     }
 }

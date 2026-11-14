@@ -2031,6 +2031,7 @@ final class SixteenthRestDetector {
                                         s.index(),
                                         s.count()),
                                 (s.top() + s.bottom()) * .5f));
+        var componentScratch = new SeparatedRestInk.Scratch();
         byte[] componentOriginal = null;
         boolean componentOriginalResolved = false;
         RestColumnProjection projection = null;
@@ -2227,7 +2228,8 @@ final class SixteenthRestDetector {
                                                     scanTop,
                                                     scanBottom,
                                                     componentDomain.line(),
-                                                    staff.gap())) {
+                                                    staff.gap(),
+                                                    componentScratch)) {
                                 int bodyTop = Math.max(scanTop, body.top() - 1);
                                 int bodyBottom = Math.min(scanBottom, body.bottom() + 1);
                                 boolean[] bodyMask =
