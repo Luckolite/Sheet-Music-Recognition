@@ -41,7 +41,7 @@ final class ClosedOctaveTripletBars {
                     || hasRest.get(m)
                     || owners.size() != 24
                     || measures.get(m).cadenceQuarterBeats() != 0
-                    || !ownsBar(notes, owners, measures.get(m), gray, width, height)) continue;
+                    || !ownsBar(notes, owners, measures, m, gray, width, height)) continue;
             if (result == null) result = new ArrayList<>(notes);
             for (int owner : owners) {
                 var note = notes.get(owner);
@@ -54,10 +54,12 @@ final class ClosedOctaveTripletBars {
     private static boolean ownsBar(
             List<ScoreNoteEvent> notes,
             List<Integer> unsorted,
-            MeasureRegion bar,
+            List<MeasureRegion> measures,
+            int index,
             byte[] gray,
             int width,
             int height) {
+        var bar = measures.get(index);
         var owners =
                 unsorted.stream()
                         .map(notes::get)
@@ -74,6 +76,7 @@ final class ClosedOctaveTripletBars {
         if (clef == ScoreNoteEvent.CLEF_UNKNOWN) return false;
         float first = 0, previous = 0, upperX = 0, upperY = 0, lowerX = 0, lowerY = 0;
         int seeds = 0;
+        boolean startsSystem = false;
         var budget = new PrintedBeamShafts.Budget(280_000);
         PrintedBeamShafts.Shaft prior = null;
         for (int i = 0; i < owners.size(); i += 2) {
@@ -94,19 +97,35 @@ final class ClosedOctaveTripletBars {
             if (i == 0) first = x;
             else if (x - previous < gap * 1.75f
                     || x - previous > gap * 4.1f
-                    || WrappedTripletDotInk.uniqueCore(gray, width, height, upperX, upperY, x, gap)
-                            != null
-                    || WrappedTripletDotInk.uniqueCore(gray, width, height, lowerX, lowerY, x, gap)
-                            != null) return false;
+                    || competingDot(gray, width, height, upperX, upperY, x, gap, startsSystem)
+                    || competingDot(gray, width, height, lowerX, lowerY, x, gap, startsSystem))
+                return false;
             var u = PrintedBeamShafts.at(gray, width, height, x0, y0, gap, budget);
             var v = PrintedBeamShafts.at(gray, width, height, x1, y1, gap, budget);
-            if (u.size() != 1 || v.size() != 1) return false;
-            var high = u.get(0);
+            if (v.isEmpty() && startsSystem && !budget.refused()) {
+                v = contrastShaft(gray, width, height, x1, y1, gap, budget);
+            }
+            if (v.size() != 1 || budget.refused()) return false;
             var low = v.get(0);
-            if (high.direction() != 1
-                    || low.direction() != 1
-                    || Math.min(high.right(), low.right()) < Math.max(high.left(), low.left())
-                    || Math.abs(high.endY() - low.endY()) > gap * .15f) return false;
+            if (low.direction() != 1) return false;
+            if (i == 0) {
+                startsSystem =
+                        WrappedMeasureBoundaries.confirmsShaftBoundedInitialStaffBar(
+                                gray, width, height, measures, index, x, low.left());
+            }
+            if (u.size() > 1) return false;
+            var high = u.isEmpty() ? null : u.get(0);
+            boolean shared =
+                    high != null
+                            && high.direction() == 1
+                            && Math.min(high.right(), low.right())
+                                    >= Math.max(high.left(), low.left())
+                            && Math.abs(high.endY() - low.endY()) <= gap * .15f;
+            if (!shared
+                    && (!startsSystem
+                            || high != null && high.direction() != 1
+                            || !continuesUpperShaft(gray, width, height, x0, y0, low, gap)))
+                return false;
             if (prior != null
                     && !WrappedEighthTriplets.matchesRailBridge(
                             gray, width, height, prior, low, gap, i % 6 != 0)) return false;
@@ -119,12 +138,93 @@ final class ClosedOctaveTripletBars {
         }
         float next = left + span + gap * .5f;
         return seeds == 3
-                && WrappedTripletDotInk.uniqueCore(gray, width, height, upperX, upperY, next, gap)
-                        == null
-                && WrappedTripletDotInk.uniqueCore(gray, width, height, lowerX, lowerY, next, gap)
-                        == null
-                && WrappedMeasureBoundaries.confirmsClosed(
-                        gray, width, height, bar, first, previous);
+                && !competingDot(gray, width, height, upperX, upperY, next, gap, startsSystem)
+                && !competingDot(gray, width, height, lowerX, lowerY, next, gap, startsSystem)
+                && (WrappedMeasureBoundaries.confirmsClosed(
+                                gray, width, height, bar, first, previous)
+                        || startsSystem
+                                && WrappedMeasureBoundaries.confirmsInitialStaffBarClosingEdge(
+                                        gray, width, height, bar, previous));
+    }
+
+    private static boolean competingDot(
+            byte[] gray,
+            int width,
+            int height,
+            float headX,
+            float headY,
+            float nextX,
+            float gap,
+            boolean startsSystem) {
+        var dot = WrappedTripletDotInk.uniqueCore(gray, width, height, headX, headY, nextX, gap);
+        return dot != null
+                && (!startsSystem
+                        || !WrappedEighthTriplets.headConnectedLedger(
+                                        gray, width, height, headX, headY, dot, gap, .40f)
+                                && !OctaveMarkDetector.dotBelongsToDashOrigin(
+                                        gray, width, height, headX, headY, dot, gap));
+    }
+
+    private static List<PrintedBeamShafts.Shaft> contrastShaft(
+            byte[] gray,
+            int width,
+            int height,
+            float x,
+            float y,
+            float gap,
+            PrintedBeamShafts.Budget budget) {
+        var contrast =
+                new PrintedBeamShaftPixels.Frame(
+                        gray,
+                        gray,
+                        width,
+                        height,
+                        0,
+                        units -> {
+                            if (!budget.take(units)) throw new ShaftQuotaExceeded();
+                        },
+                        true);
+        try {
+            return PrintedBeamShafts.at(gray, width, height, x, y, gap, budget, contrast);
+        } catch (ShaftQuotaExceeded exhausted) {
+            return List.of();
+        }
+    }
+
+    private static final class ShaftQuotaExceeded extends RuntimeException {}
+
+    /** Faint intersections may interrupt an upper read while the common lower shaft remains literal. */
+    private static boolean continuesUpperShaft(
+            byte[] gray,
+            int width,
+            int height,
+            float headX,
+            float headY,
+            PrintedBeamShafts.Shaft lower,
+            float gap) {
+        int axis = (lower.left() + lower.right()) / 2;
+        int left = axis - 2,
+                right = axis + 1,
+                top = Math.round(headY + gap * .2f),
+                bottom = lower.startY();
+        if (left < 0
+                || right >= width
+                || top < 0
+                || bottom >= height
+                || bottom - top < gap * 2.8f
+                || headX - axis < gap * .42f
+                || headX - axis > gap * .78f) return false;
+        int soft = 0, run = 0;
+        for (int y = top; y <= bottom; y++) {
+            int minimum = 255;
+            for (int x = left; x <= right; x++)
+                minimum = Math.min(minimum, gray[y * width + x] & 255);
+            if (minimum >= 235) return false;
+            if (minimum >= 160) {
+                if (++soft > 4 || ++run > 3) return false;
+            } else run = 0;
+        }
+        return true;
     }
 
     private static boolean ordinary(ScoreNoteEvent note, int clef) {

@@ -215,6 +215,18 @@ final class WrappedEighthTriplets {
             float headY,
             WrappedTripletDotInk.Center core,
             float gap) {
+        return headConnectedLedger(gray, width, height, headX, headY, core, gap, .35f);
+    }
+
+    static boolean headConnectedLedger(
+            byte[] gray,
+            int width,
+            int height,
+            float headX,
+            float headY,
+            WrappedTripletDotInk.Center core,
+            float gap,
+            float maxTip) {
         int left = Math.round(headX - gap), right = Math.round(core.x() + gap * .4f);
         int top = Math.round(Math.min(core.y(), headY) - gap * .65f);
         int bottom = Math.round(Math.max(core.y(), headY) + gap * .65f);
@@ -234,7 +246,7 @@ final class WrappedEighthTriplets {
             }
         }
         if (dark < (cx - leftLedger) * .83f) return false;
-        if (!taperingLedgerTip(gray, width, headX, core, gap)) return false;
+        if (!taperingLedgerTip(gray, width, headX, core, gap, maxTip)) return false;
         for (var glyph : graph.components()) {
             if (core.x() < glyph.left
                     || core.x() > glyph.right
@@ -255,7 +267,12 @@ final class WrappedEighthTriplets {
     }
 
     private static boolean taperingLedgerTip(
-            byte[] gray, int width, float headX, WrappedTripletDotInk.Center core, float gap) {
+            byte[] gray,
+            int width,
+            float headX,
+            WrappedTripletDotInk.Center core,
+            float gap,
+            float maxTip) {
         int prior = Integer.MAX_VALUE;
         int thinFrom = Math.round(headX + gap * .74f);
         int right = core.x() + Math.round(gap * .28f);
@@ -271,7 +288,7 @@ final class WrappedEighthTriplets {
             if (x > core.x() && thickness > 0) occupied++;
             prior = thickness;
         }
-        return thicknessAtCore <= gap * .35f && occupied >= 2;
+        return thicknessAtCore <= gap * maxTip && occupied >= 2;
     }
 
     /** Keep a head-connected middle shaft only if its ink reappears at both flanks' real rail. */

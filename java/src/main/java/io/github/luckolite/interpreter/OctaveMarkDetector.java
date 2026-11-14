@@ -1274,6 +1274,54 @@ final class OctaveMarkDetector {
         return best;
     }
 
+    /** A compact core next to a ledger can be part of the direction at an octave dash origin. */
+    static boolean dotBelongsToDashOrigin(
+            byte[] gray,
+            int width,
+            int height,
+            float headX,
+            float headY,
+            WrappedTripletDotInk.Center core,
+            float gap) {
+        if (core.x() - headX < gap * 1.1f || core.x() - headX > gap * 1.45f) return false;
+        int left = Math.round(headX - gap * .6f), right = Math.round(core.x() + gap * 1.05f);
+        int top = Math.round(Math.min(headY, core.y()) - gap * .55f);
+        int bottom = Math.round(Math.max(headY, core.y()) + gap * 1.25f);
+        if (left < 0 || right >= width || top < 0 || bottom >= height) return false;
+        var glyphs =
+                RawNumeralComponents.capture(
+                        gray, width, height, left, top, right, bottom, 145, () -> {}, () -> {});
+        int seed = core.y() * width + core.x();
+        for (var body : glyphs.components()) {
+            float widthG = body.right - body.left + 1, heightG = body.bottom - body.top + 1;
+            if (body.left <= headX + gap * .85f
+                    || body.left > core.x()
+                    || body.right < core.x()
+                    || body.top >= core.y()
+                    || body.bottom <= core.y()
+                    || widthG < gap * .65f
+                    || widthG > gap * 1.45f
+                    || heightG < gap * 1.25f
+                    || heightG > gap * 1.9f
+                    || body.size() < gap * gap * .43f) continue;
+            boolean owns = false;
+            for (int i = 0; i < body.size(); i++) owns |= body.pixel(i) == seed;
+            if (!owns) continue;
+            float end =
+                    dashEnd(
+                            gray,
+                            width,
+                            height,
+                            body.right - gap * .20f,
+                            body.top,
+                            body.bottom,
+                            gap,
+                            5);
+            if (end > body.right + gap * 4) return true;
+        }
+        return false;
+    }
+
     /** Find a horizontal chain of short printed dashes, stopping at its actual end. */
     private static float dashEnd(
             byte[] gray, int width, int height, float start, float top, float bottom, float gap) {

@@ -98,6 +98,68 @@ final class WrappedMeasureBoundaries {
                 && unownedClosedEdge(gray,width,height,staff,bar.right,lastHead,false,gap);
     }
 
+    static boolean confirmsShaftBoundedInitialStaffBar(
+            byte[] gray,
+            int width,
+            int height,
+            List<MeasureRegion> regions,
+            int index,
+            float firstHead,
+            int firstShaftLeft) {
+        if (index < 1 || index + 1 >= regions.size()) return false;
+        var bar = box(regions.get(index), width, height);
+        var before = box(regions.get(index - 1), width, height);
+        var after = box(regions.get(index + 1), width, height);
+        if (bar == null || before == null || after == null) return false;
+        float guess = bar.height() / 8.2f;
+        if (guess < 10
+                || guess > 25
+                || bar.top - before.bottom < guess * 3
+                || !sameRow(bar, after, guess)
+                || !boundaryPocket(bar.right, after.left, guess)
+                || firstHead - bar.left < guess * 2) return false;
+        var staff = track(gray, width, height, bar);
+        if (staff == null) return false;
+        float gap = staff.at(firstHead)[1];
+        float firstInk = firstShaftLeft;
+        float left = bar.left - gap * .5f, right = firstInk - gap * .15f;
+        if (firstHead - firstInk < gap * .35f
+                || firstHead - firstInk > gap * .85f
+                || right - left < gap * 1.8f
+                || !clearOfVerticalInk(gray, width, height, staff, left, right)) return false;
+        for (float x : new float[] {left, bar.left, right})
+            if (staffRules(gray, width, height, staff, Math.round(x)) != 5) return false;
+        // The incoming five rules must visibly start before the cropped key slot.
+        int end = Math.round(bar.left - gap * 1.25f);
+        for (int x = end; x >= Math.max(0, Math.round(bar.left - gap * 7)); x--)
+            if (staffRules(gray, width, height, staff, x) == 5
+                    && staffRules(gray, width, height, staff, Math.round(x - gap * .65f)) == 0)
+                return true;
+        return false;
+    }
+
+    static boolean confirmsInitialStaffBarClosingEdge(
+            byte[] gray, int width, int height, MeasureRegion region, float lastHead) {
+        var bar = box(region, width, height);
+        if (bar == null) return false;
+        var staff = track(gray, width, height, bar);
+        if (staff == null) return false;
+        float gap = staff.at(lastHead)[1];
+        if (!unownedClosedEdge(gray, width, height, staff, bar.right, lastHead, false, gap))
+            return false;
+        int first = Math.max(0, Math.round(bar.right - gap * .25f));
+        int last = Math.min(width - 1, Math.round(bar.right + gap * 1.35f));
+        int run = 0, independent = 0;
+        for (int x = first; x <= last + 1; x++) {
+            if (x <= last && verticalCoverage(gray, width, height, staff, x) >= .92f) run++;
+            else {
+                if (run >= Math.max(2, Math.round(gap * .12f))) independent++;
+                run = 0;
+            }
+        }
+        return independent == 1;
+    }
+
     private static boolean unownedClosedEdge(byte[] gray,int width,int height,StaffPitchTrack staff,
             float edge,float nearestHead,boolean opening,float gap) {
         int left=Math.max(0,Math.round(edge-gap*(opening ? .85f : .25f)));
