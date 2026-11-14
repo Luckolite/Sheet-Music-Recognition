@@ -48,8 +48,8 @@ final class WrappedTripletMeasure {
             var tail = half(gray, width, height, regions.get(i+1), notes, byMeasure.get(i+1));
             boolean undotted = false;
             if (lead == null || tail == null) {
-                if (beats[i-1] != 6 || beats[i+2] != 6
-                        || byMeasure.get(i-1).size() != 18 || byMeasure.get(i+2).size() != 18) continue;
+                if (beats[i-1] != 6 || beats[i+2] != 6 || byMeasure.get(i+2).size() != 18
+                        || !qualifiedPrecedingEighths(notes, byMeasure.get(i-1))) continue;
                 lead = WrappedEighthTriplets.half(gray, width, height, regions.get(i), notes, byMeasure.get(i));
                 tail = WrappedEighthTriplets.half(gray, width, height, regions.get(i+1), notes, byMeasure.get(i+1));
                 undotted = true;
@@ -68,6 +68,30 @@ final class WrappedTripletMeasure {
         if (continuations.isEmpty()) return new Proof(score, List.of(), written);
         return new Proof(score.withNotes(notes, IntStream.range(0, notes.size()).boxed().toList())
                 .withClockContextSource(score.clockContextSource()), List.copyOf(continuations), written);
+    }
+
+    private static boolean qualifiedPrecedingEighths(
+            List<ScoreNoteEvent> notes, List<Integer> owners) {
+        if (owners.size() == 18) return true;
+        // A single lost head in the neighboring arpeggio need not obscure the two proved rails.
+        if (owners.size() != 17) return false;
+        var positions = new float[17];
+        for (int i = 0; i < positions.length; i++) {
+            var note = notes.get(owners.get(i));
+            if (note.kind() != ScoreNoteEvent.Kind.PITCHED || note.staffCount() != 1
+                    || note.beamCount() != 1 || note.augmentationDots() != 0
+                    || note.followingRestBeats() != 0 || note.leadingRestBeats() != 0
+                    || note.tiedFromPrevious() || note.boundaryTies() != 0) return false;
+            positions[i] = note.positionInMeasure();
+        }
+        java.util.Arrays.sort(positions);
+        var intervals = new float[16];
+        for (int i = 0; i < intervals.length; i++) intervals[i] = positions[i + 1] - positions[i];
+        java.util.Arrays.sort(intervals);
+        float median = (intervals[7] + intervals[8]) / 2;
+        return positions[0] < .16f && positions[16] > .84f
+                && median > 0 && intervals[0] >= median * .6f && intervals[14] <= median * 1.6f
+                && intervals[15] >= median * 1.75f && intervals[15] <= median * 2.3f;
     }
 
     static Half half(byte[] gray, int width, int height, MeasureRegion bar,
