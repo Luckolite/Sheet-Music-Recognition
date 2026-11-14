@@ -14,8 +14,46 @@ final class ShadedChordHeadRecovery {
 
     static List<Chord> find(
             byte[] labels, byte[] gray, int width, int height, float gap, int top, int bottom) {
-        List<Chord> result = find(labels, gray, width, height, gap, top, bottom, 155);
-        for (Chord candidate : find(labels, gray, width, height, gap, top, bottom, 130)) {
+        List<Chord> result = new ArrayList<>();
+        if (gray == null
+                || labels == null
+                || width < 3
+                || height < 3
+                || gray.length != (long) width * height
+                || labels.length != gray.length
+                || gap < 8
+                || !Float.isFinite(gap)) return result;
+        top = Math.max(1, top);
+        bottom = Math.min(height - 2, bottom);
+        if (bottom <= top) return result;
+        int size = width * (bottom - top + 1);
+        byte[] core = null;
+        boolean hasStrictCore = false;
+        for (int y = top; y <= bottom; y++) {
+            int row = y * width, bandRow = (y - top) * width;
+            for (int x = 1; x < width - 1; x++) {
+                int p = row + x;
+                int center = gray[p] & 255;
+                if (center < 130 || center > 205) continue;
+                int left = gray[p - 1] & 255, right = gray[p + 1] & 255;
+                int above = gray[p - width] & 255, below = gray[p + width] & 255;
+                int darkest = Math.min(center, Math.min(Math.min(left, right), Math.min(above, below)));
+                int lightest = Math.max(Math.max(left, right), Math.max(above, below));
+                if (darkest < 130 || lightest > 205) continue;
+                if (core == null) core = new byte[size];
+                if (darkest >= 155) {
+                    core[bandRow + x] = 2;
+                    hasStrictCore = true;
+                } else {
+                    core[bandRow + x] = 1;
+                }
+            }
+        }
+        if (core == null) return result;
+        var scratch = new FloodScratch(Math.min(256, size));
+        if (hasStrictCore)
+            result = find(labels, gray, width, height, gap, top, bottom, 155, core, scratch);
+        for (Chord candidate : find(labels, gray, width, height, gap, top, bottom, 130, core, scratch)) {
             boolean overlaps = false;
             for (Chord existing : result)
                 if (candidate.right >= existing.left
@@ -38,52 +76,32 @@ final class ShadedChordHeadRecovery {
             float gap,
             int top,
             int bottom,
-            int minimum) {
+            int minimum, byte[] core, FloodScratch scratch) {
         List<Chord> result = new ArrayList<>();
-        if (gray == null
-                || labels == null
-                || width < 3
-                || height < 3
-                || gray.length != (long) width * height
-                || labels.length != gray.length
-                || gap < 8
-                || !Float.isFinite(gap)) return result;
-        top = Math.max(1, top);
-        bottom = Math.min(height - 2, bottom);
-        if (bottom <= top) return result;
-        int size = width * (bottom - top + 1);
-        boolean[] core = new boolean[size], seen = new boolean[size];
-        int[] queue = new int[size];
-        for (int y = top; y <= bottom; y++)
-            for (int x = 1; x < width - 1; x++) {
-                int p = y * width + x;
-                core[(y - top) * width + x] =
-                        middle(gray[p], minimum)
-                                && middle(gray[p - 1], minimum)
-                                && middle(gray[p + 1], minimum)
-                                && middle(gray[p - width], minimum)
-                                && middle(gray[p + width], minimum);
-            }
+        int size = core.length;
+        // The first pass demotes its visited pixels into the second pass.
+        int required = minimum == 155 ? 2 : 1;
+        byte visited = (byte) (required - 1);
         for (int seed = 0; seed < size; seed++) {
-            if (seen[seed] || !core[seed]) continue;
-            int read = 0, end = 1;
-            queue[0] = seed;
-            seen[seed] = true;
-            int left = width, right = 0, upper = bottom, lower = top;
-            while (read < end) {
-                int p = queue[read++], x = p % width, y = top + p / width;
-                left = Math.min(left, x);
-                right = Math.max(right, x);
-                upper = Math.min(upper, y);
-                lower = Math.max(lower, y);
-                for (int direction = 0; direction < 4; direction++) {
-                    int nx = x + (direction == 0 ? -1 : direction == 1 ? 1 : 0),
-                            ny = y + (direction == 2 ? -1 : direction == 3 ? 1 : 0);
-                    if (nx < 0 || nx >= width || ny < top || ny > bottom) continue;
-                    int next = (ny - top) * width + nx;
-                    if (!seen[next] && core[next]) {
-                        seen[next] = true;
-                        queue[end++] = next;
+            if (core[seed] != required) continue;
+            int row = seed / width;
+            int queued = scratch.enqueue(core, seed, required, visited, 0);
+            int area = 0, left = width, right = 0, upper = top + row, lower = upper;
+            for (int read = 0; read < queued; read += 2) {
+                int start = scratch.queue[read], finish = scratch.queue[read + 1];
+                row = start / width;
+                int rowStart = row * width;
+                left = Math.min(left, start - rowStart);
+                right = Math.max(right, finish - rowStart);
+                lower = Math.max(lower, top + row);
+                area += finish - start + 1;
+                for (int step = -width; step <= width; step += 2 * width) {
+                    int neighbor = start + step, limit = finish + step;
+                    if (neighbor < 0 || limit >= size) continue;
+                    for (int next = neighbor; next <= limit; next++) {
+                        if (core[next] != required) continue;
+                        queued = scratch.enqueue(core, next, required, visited, queued);
+                        next = scratch.queue[queued - 1];
                     }
                 }
             }
@@ -92,7 +110,7 @@ final class ShadedChordHeadRecovery {
                     || w > gap * 1.5f
                     || h < gap * 1.35f
                     || h > gap * 4.2f
-                    || end < w * h * .5f
+                    || area < w * h * .5f
                     || upper == top
                     || lower == bottom) continue;
             int count = Math.round(h / gap + .2f);
@@ -101,10 +119,11 @@ final class ShadedChordHeadRecovery {
             if (headHeight < gap * .45f || headHeight > gap * 1.15f) continue;
             int[] rowLeft = new int[h], rowRight = new int[h];
             Arrays.fill(rowLeft, width);
-            for (int i = 0; i < end; i++) {
-                int x = queue[i] % width, y = top + queue[i] / width;
-                rowLeft[y - upper] = Math.min(rowLeft[y - upper], x);
-                rowRight[y - upper] = Math.max(rowRight[y - upper], x);
+            for (int i = 0; i < queued; i += 2) {
+                int start = scratch.queue[i], finish = scratch.queue[i + 1];
+                int y = start / width, rowStart = y * width, rowIndex = top + y - upper;
+                rowLeft[rowIndex] = Math.min(rowLeft[rowIndex], start - rowStart);
+                rowRight[rowIndex] = Math.max(rowRight[rowIndex], finish - rowStart);
             }
             float first = (h - 1 - (count - 1) * gap) * .5f;
             int[] peaks = new int[count], peakRows = new int[count];
@@ -139,7 +158,7 @@ final class ShadedChordHeadRecovery {
                     && !clippedByRule(gray, width, height, left, right, lower, gap)) curved = false;
             if (!curved) continue;
             float cx = (left + right) * .5f, cy = (upper + lower) * .5f;
-            int[] paper = new int[18];
+            int[] paper = scratch.paper;
             int samples = 0;
             for (int side : new int[] {-1, 1})
                 for (int dy = -1; dy <= 1; dy++)
@@ -149,19 +168,20 @@ final class ShadedChordHeadRecovery {
                         if (x >= 0 && x < width && y >= 0 && y < height)
                             paper[samples++] = gray[y * width + x] & 255;
                     }
-            Arrays.sort(paper, 0, samples);
             if (samples < 12) continue;
-            int[] fills = new int[end];
-            for (int i = 0; i < end; i++)
-                fills[i] = gray[(top + queue[i] / width) * width + queue[i] % width] & 255;
-            Arrays.sort(fills);
-            int fill = fills[end / 2];
-            if (minimum == 130) {
-                if (fill > 170
-                        || paper[samples * 3 / 4] < 190
-                        || paper[samples * 3 / 4] - fill < 50) continue;
-            } else if (paper[samples * 3 / 4] < 205
-                    || paper[samples * 3 / 4] < 220 && paper[samples * 3 / 4] - fill < 50) continue;
+            Arrays.sort(paper, 0, samples);
+            int paperTone = paper[samples * 3 / 4];
+            if (paperTone < (minimum == 130 ? 190 : 205)) continue;
+            if (minimum == 130 || paperTone < 220) {
+                int[] fills = new int[area];
+                int offset = top * width, index = 0;
+                for (int i = 0; i < queued; i += 2)
+                    for (int pixel = scratch.queue[i]; pixel <= scratch.queue[i + 1]; pixel++)
+                        fills[index++] = gray[offset + pixel] & 255;
+                Arrays.sort(fills);
+                int fill = fills[area / 2];
+                if (paperTone - fill < 50 || minimum == 130 && fill > 170) continue;
+            }
             int down = stem(labels, gray, width, height, left - 3, lower - first, gap, 1);
             int up = stem(labels, gray, width, height, right + 3, upper + first, gap, -1);
             if (down < 0 && up < 0) continue;
@@ -190,9 +210,26 @@ final class ShadedChordHeadRecovery {
         return result;
     }
 
-    private static boolean middle(byte pixel, int minimum) {
-        int value = pixel & 255;
-        return value >= minimum && value <= 205;
+    private static final class FloodScratch {
+        final int[] paper = new int[18];
+        int[] queue;
+
+        FloodScratch(int size) {
+            queue = new int[size];
+        }
+
+        int enqueue(byte[] core, int seed, int required, byte visited, int count) {
+            // The empty border columns bound every horizontal run.
+            int start = seed, finish = seed;
+            while (core[start - 1] == required) start--;
+            while (core[finish + 1] == required) finish++;
+            Arrays.fill(core, start, finish + 1, visited);
+            if (count + 2 > queue.length)
+                queue = Arrays.copyOf(queue, count + Math.max(2, count));
+            queue[count] = start;
+            queue[count + 1] = finish;
+            return count + 2;
+        }
     }
 
     private static boolean outlinedNecks(
