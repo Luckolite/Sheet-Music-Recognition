@@ -342,6 +342,8 @@ final class FiniteConnectedSlidePorts {
         // The admission pass has finished. Reuse its per-head flags for emitted targets.
         Arrays.fill(bodies, false);
         int viewCount = views.size();
+        var nearby = new ArrayList<Piece>();
+        var combinedPieces = new ArrayList<Piece>();
         long proofCount = 0;
         for (var view : views) proofCount += view.pieces().size();
         for (var view : views) {
@@ -358,7 +360,7 @@ final class FiniteConnectedSlidePorts {
                 float left = owner.a().x() + gap * .45f, right = owner.b().x() - gap * .45f;
                 float top = Math.min(owner.a().y(), owner.b().y()) - gap;
                 float bottom = Math.max(owner.a().y(), owner.b().y()) + gap;
-                var nearby = new ArrayList<Piece>();
+                nearby.clear();
                 appendInside(pieces, left, right, top, bottom, nearby);
                 budget.takeVisits(viewCount);
                 budget.reserve(128L + proofCount * 64L);
@@ -367,10 +369,10 @@ final class FiniteConnectedSlidePorts {
                     budget.reserve(1024); // The original empty nearby sort.
                     continue;
                 }
-                var proofPieces = new ArrayList<Piece>();
+                combinedPieces.clear();
                 for (var otherView : views)
-                    if (otherView == view) proofPieces.addAll(nearby);
-                    else appendInside(otherView.pieces(), left, right, top, bottom, proofPieces);
+                    if (otherView == view) combinedPieces.addAll(nearby);
+                    else appendInside(otherView.pieces(), left, right, top, bottom, combinedPieces);
                 NoteSlideDetector.Stroke found = null;
                 for (var p : nearby) {
                     budget.take(1);
@@ -384,7 +386,7 @@ final class FiniteConnectedSlidePorts {
                                     owner,
                                     p,
                                     tracks,
-                                    proofPieces,
+                                    combinedPieces,
                                     views,
                                     false,
                                     budget);
@@ -404,7 +406,14 @@ final class FiniteConnectedSlidePorts {
                             budget.pairAttempts++;
                             var one = nearby.get(a);
                             var two = nearby.get(b);
-                            if (two.l <= one.r || two.l - one.r > gap * 2) continue;
+                            if (two.l <= one.r) continue;
+                            if (two.l - one.r > gap * 2) {
+                                // Sorted left edges make the rest of this suffix too distant.
+                                int remaining = nearby.size() - b - 1;
+                                budget.pairAttempts += Math.min(remaining, budget.remainingWork());
+                                budget.takeVisits(remaining);
+                                break;
+                            }
                             int length = Math.addExact(one.px.length, two.px.length);
                             budget.take(length);
                             if (budget.firstPairBytes < 0) budget.firstPairBytes = budget.usedBytes;
@@ -428,7 +437,7 @@ final class FiniteConnectedSlidePorts {
                                             owner,
                                             p,
                                             tracks,
-                                            proofPieces,
+                                            combinedPieces,
                                             views,
                                             true,
                                             budget);
@@ -650,6 +659,9 @@ final class FiniteConnectedSlidePorts {
         var tracks = new StaffPitchTrack[staffs.size()];
         var result = new ArrayList<NoteSlideDetector.Stroke>();
         var workspace = new CrossWorkspace();
+        var ownerViews = new ArrayList<View>();
+        var near = new ArrayList<Piece>();
+        var proofPieces = new ArrayList<Piece>();
         for (var owner : pairs) {
             budget.take(1);
             int lane = owner.b().staff();
@@ -665,7 +677,7 @@ final class FiniteConnectedSlidePorts {
             if (tracks[lane] == null
                     || !body(gray, w, h, owner.a(), budget)
                     || !body(gray, w, h, owner.b(), budget)) continue;
-            var ownerViews = new ArrayList<View>();
+            ownerViews.clear();
             for (var view : views) {
                 budget.reserve(64);
                 ownerViews.add(
@@ -686,8 +698,8 @@ final class FiniteConnectedSlidePorts {
             budget.reserve(64L + 24L * (views.size() + 1));
             var proofViews = new ArrayList<>(ownerViews);
             proofViews.add(typed);
-            var near = new ArrayList<Piece>();
-            var proofPieces = new ArrayList<Piece>();
+            near.clear();
+            proofPieces.clear();
             float gap = owner.b().gap();
             float left = owner.a().x() + gap * .45f, right = owner.b().x() - gap * .45f;
             float low = Math.min(owner.a().y(), owner.b().y()) - gap;
@@ -739,7 +751,11 @@ final class FiniteConnectedSlidePorts {
                     budget.take(1);
                     var one = near.get(i);
                     var two = near.get(j);
-                    if (two.l <= one.r || two.l - one.r > gap * 2) continue;
+                    if (two.l <= one.r) continue;
+                    if (two.l - one.r > gap * 2) {
+                        budget.takeVisits(near.size() - j - 1);
+                        break;
+                    }
                     int length = Math.addExact(one.px.length, two.px.length);
                     budget.take(length);
                     budget.reserve(80L + length * 4L);
@@ -1069,16 +1085,22 @@ final class FiniteConnectedSlidePorts {
         }
         boolean[] ink = new boolean[clean.length];
         ink[firstInk] = true;
-        for (int i = firstInk + 1; i < ink.length; i++)
-            ink[i] = (clean[i] & 255) < 150;
+        int inkCount = 1;
+        for (int i = firstInk + 1; i < ink.length; i++) {
+            if ((clean[i] & 255) >= 150) continue;
+            ink[i] = true;
+            inkCount++;
+        }
 
-        int[] queue = new int[ink.length];
+        // Every marked pixel can enter the queue only once. Retain the original reservation.
+        int[] queue = new int[inkCount];
         var result = new ArrayList<Piece>();
+        float maxWidth = gap * 12;
         budget.takeVisits(firstInk);
         for (int seed = firstInk; seed < ink.length; seed++) {
             budget.take(1);
             if (!ink[seed]) continue;
-            int read = 0, end = 1, l = w, r = 0, t = h, b = 0;
+            int read = 0, end = 1, l = w, r = 0, t = seed / w, b = t;
             queue[0] = seed;
             ink[seed] = false;
             while (read < end) {
@@ -1087,20 +1109,19 @@ final class FiniteConnectedSlidePorts {
                 int at = queue[read++], y = at / w, x = at - y * w;
                 l = Math.min(l, x);
                 r = Math.max(r, x);
-                t = Math.min(t, y);
                 b = Math.max(b, y);
-                for (int dy = -1; dy <= 1; dy++)
-                    for (int dx = -1; dx <= 1; dx++) {
-                        int xx = x + dx, yy = y + dy;
-                        if (xx < 0 || xx >= w || yy < 0 || yy >= h) continue;
-                        int next = yy * w + xx;
-                        if (ink[next]) {
-                            ink[next] = false;
-                            queue[end++] = next;
-                        }
+                int firstX = Math.max(0, x - 1), lastX = Math.min(w - 1, x + 1);
+                int lastY = Math.min(h - 1, y + 1);
+                for (int ny = Math.max(0, y - 1); ny <= lastY; ny++) {
+                    int row = ny * w;
+                    for (int next = row + firstX, last = row + lastX; next <= last; next++) {
+                        if (!ink[next]) continue;
+                        ink[next] = false;
+                        queue[end++] = next;
                     }
+                }
             }
-            if (end >= 6 && r - l >= 3 && r - l <= gap * 12 && b - t <= maxHeight) {
+            if (end >= 6 && r - l >= 3 && r - l <= maxWidth && b - t <= maxHeight) {
                 budget.take(end);
                 budget.reserve(128L + 4L * end);
                 result.add(new Piece(Arrays.copyOf(queue, end), l, r, t, b));
