@@ -1073,6 +1073,9 @@ final class OmrScoreInterpreter {
                         staffs,
                         measures,
                         closedBeamEndOwners));
+        rejectedBeamHeads.addAll(
+                fusedSecondaryBeamHeads(
+                        labels, gray, annotationGray, width, height, heads, staffs));
         heads.removeAll(rejectedBeamHeads);
         if (gray != null) {
             var last = measures.get(measures.size() - 1);
@@ -25216,6 +25219,116 @@ final class OmrScoreInterpreter {
             offset += step;
         }
         return offset;
+    }
+
+    /** Two shafted beam columns and the upstream open channel own a fused terminal strip. */
+    private static List<Component> fusedSecondaryBeamHeads(
+            byte[] labels,
+            byte[] gray,
+            byte[] source,
+            int width,
+            int height,
+            List<Component> heads,
+            List<Staff> staffs) {
+        if (gray == null || source == null) return List.of();
+        var rejected = new ArrayList<Component>();
+        for (var fragment : heads) {
+            var staff = nearestHeadStaff(staffs, fragment.centerY);
+            if (staff == null || staff.count != 1) continue;
+            float gap = staff.gap;
+            int maskWidth = fragment.maxX - fragment.minX + 1;
+            int maskHeight = fragment.maxY - fragment.minY + 1;
+            if (gap < 8
+                    || gap > 30
+                    || maskWidth < gap * .9f
+                    || maskWidth > gap * 1.25f
+                    || maskHeight < gap * .5f
+                    || maskHeight > gap * .85f
+                    || fragment.area < gap * gap * .48f
+                    || fragment.area > gap * gap * .72f
+                    || Math.abs(fragment.centerY - staff.top) > gap * .4f
+                    || attachedRawStem(gray, width, height, fragment, gap, 2, 170) != null
+                    || attachedRawStem(source, width, height, fragment, gap, 2, 170) != null
+                    || hasOpenCenter(labels, gray, width, height, fragment, gap)) continue;
+            var shafts = new ArrayList<int[]>();
+            for (var head : heads) {
+                if (head == fragment
+                        || nearestHeadStaff(staffs, head.centerY) != staff
+                        || head.centerX < fragment.centerX - gap * 5.5f
+                        || head.centerX > fragment.centerX + gap * 1.75f
+                        || head.centerY - fragment.centerY < gap * 2.0f
+                        || head.centerY - fragment.centerY > gap * 3.5f
+                        || head.area < gap * gap * 1.03f
+                        || hasOpenCenter(labels, gray, width, height, head, gap)) continue;
+                var shaft = attachedRawStem(gray, width, height, head, gap, 2, 170);
+                if (shaft != null
+                        && shaft[2] == -1
+                        && head.centerY - shaft[1] >= gap * 2.9f
+                        && fragment.centerY - shaft[1] >= gap * .45f
+                        && fragment.centerY - shaft[1] <= gap * 1.15f) shafts.add(shaft);
+            }
+            if (shafts.size() != 3) continue;
+            shafts.sort(Comparator.comparingInt(shaft -> shaft[0]));
+            var first = shafts.get(0);
+            var middle = shafts.get(1);
+            var last = shafts.get(2);
+            int endpointCores = 0;
+            for (var head : heads) {
+                if (nearestHeadStaff(staffs, head.centerY) != staff
+                        || head.centerY - fragment.centerY < gap * 2
+                        || head.centerY - fragment.centerY > gap * 3.5f
+                        || !(Math.abs(head.centerX - (first[0] - gap * .53f)) < gap * .31f
+                                || Math.abs(head.centerX - (last[0] - gap * .53f)) < gap * .31f))
+                    continue;
+                if (filledBeamEndpointCore(gray, width, height, head, gap)
+                        && filledBeamEndpointCore(source, width, height, head, gap))
+                    endpointCores++;
+            }
+            if (endpointCores != 2) continue;
+            if (middle[0] - first[0] < gap * 1.9f
+                    || middle[0] - first[0] > gap * 3.7f
+                    || last[0] - middle[0] < gap * 2.4f
+                    || last[0] - middle[0] > gap * 3.9f
+                    || fragment.minX - middle[0] < gap
+                    || last[0] - fragment.maxX < gap * .45f) continue;
+            int[] members = completeHeadMembers(labels, width, height, fragment);
+            if (members != null
+                    && fusedSecondaryBeamOwns(
+                            gray, width, height, gap, members, first, middle, last)
+                    && fusedSecondaryBeamOwns(
+                            source, width, height, gap, members, first, middle, last))
+                rejected.add(fragment);
+        }
+        return rejected;
+    }
+
+    private static boolean fusedSecondaryBeamOwns(
+            byte[] gray, int width, int height, float gap, int[] mask, int[] a, int[] b, int[] c) {
+        float slope = (c[1] - a[1]) / (float) (c[0] - a[0]);
+        if (Math.abs(slope) > .2f || Math.abs(b[1] - a[1] - slope * (b[0] - a[0])) > gap * .13f)
+            return false;
+        int margin = Math.round(gap * .38f);
+        int upper = Math.round(gap * .27f), lower = Math.round(gap * .99f);
+        for (int[] interval :
+                new int[][] {{a[0] + margin, b[0] - margin}, {b[0] + margin, c[0] - margin}})
+            if (!continuousBeamRail(gray, width, height, a, slope, interval[0], interval[1], upper)
+                    || !continuousBeamRail(
+                            gray, width, height, a, slope, interval[0], interval[1], lower))
+                return false;
+        int openColumns = 0;
+        for (int x = a[0] + margin; x <= b[0] - margin; x++) {
+            int y = Math.round(a[1] + slope * (x - a[0]) + gap * .67f);
+            if ((gray[y * width + x] & 255) > 185) openColumns++;
+        }
+        if (openColumns < gap * .8f) return false;
+        for (int pixel : mask) {
+            int x = pixel % width, y = pixel / width;
+            float offset = y - (a[1] + slope * (x - a[0]));
+            if (offset < gap * .28f || offset > gap * 1.19f || (gray[pixel] & 255) >= 155)
+                return false;
+            if (!beamCore(gray, width, height, x, y, 1)) return false;
+        }
+        return true;
     }
 
     private static boolean coveredBeamMask(

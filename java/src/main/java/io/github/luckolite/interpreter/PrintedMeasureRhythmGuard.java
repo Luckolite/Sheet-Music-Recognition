@@ -61,6 +61,7 @@ final class PrintedMeasureRhythmGuard {
         fitted = DottedDyadMeasureSeparator.recover(fitted, labels, gray, width, height);
         fitted = SystemHalfDyadCadence.recover(fitted, labels, gray, width, height);
         fitted = SystemQuarterCadence.recover(fitted, labels, gray, width, height);
+        fitted = DottedHalfAfterSixteenths.recover(fitted, labels, gray, width, height);
         int last = fitted.size() - 1;
         var cadence = terminalCadence(fitted.get(last), labels, gray, width, height, true);
         if (cadence.isEmpty()) return fitted;
