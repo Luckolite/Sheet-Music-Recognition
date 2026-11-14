@@ -910,17 +910,23 @@ public final class MeterChangeDetector {
         int supportBottom = height - 1 - flank,
                 minimumSupport = Math.max(24, Math.round(width * .2f));
         int total = 0;
+        int flankStride = flank * width;
+        int[] shifts = new int[width];
+        for (int x = 0; x < width; x++) shifts[x] = Math.round(slope * (x - width * .5f));
+        int remaining = staff.rows().length;
         for (int row : staff.rows()) {
             int hits = 0;
             for (int x = 0; x < width; x++) {
-                int center = row + Math.round(slope * (x - width * .5f));
-                for (int y = Math.max(flank, center - radius);
-                        y <= Math.min(supportBottom, center + radius);
-                        y++) {
-                    int ink = gray[y * width + x] & 255;
+                int center = row + shifts[x];
+                int first = Math.max(flank, center - radius);
+                int last = Math.min(supportBottom, center + radius);
+                if (first > last) continue;
+                for (int at = first * width + x, end = last * width + x;
+                        at <= end; at += width) {
+                    int ink = gray[at] & 255;
                     if (ink <= 225
-                            && (gray[(y - flank) * width + x] & 255) >= ink + 12
-                            && (gray[(y + flank) * width + x] & 255) >= ink + 12) {
+                            && (gray[at - flankStride] & 255) >= ink + 12
+                            && (gray[at + flankStride] & 255) >= ink + 12) {
                         hits++;
                         break;
                     }
@@ -930,6 +936,7 @@ public final class MeterChangeDetector {
                 supported++;
                 total += hits;
             }
+            if (supported + --remaining < 3) return 0;
         }
         return supported >= 3 ? total : 0;
     }
