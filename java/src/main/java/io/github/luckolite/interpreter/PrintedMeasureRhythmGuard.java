@@ -20,7 +20,7 @@ final class PrintedMeasureRhythmGuard {
         raw = rejectOverlappingRows(raw);
         fitted = rejectOverlappingRows(fitted);
         fitted = preserveCountNeutralRows(raw, fitted, gray, width, height);
-        fitted = preservePrintedBoundaries(raw, fitted, gray, width, height);
+        fitted = preservePrintedBoundaries(raw, fitted, labels, gray, width, height);
         fitted = preserveShiftedBoundary(raw, fitted, gray, width, height);
         fitted = rejectUnprintedRows(raw, fitted, labels, gray, width, height);
         fitted = preserveFinalRestRow(raw, fitted, labels, gray, width, height);
@@ -731,6 +731,16 @@ final class PrintedMeasureRhythmGuard {
             byte[] gray,
             int width,
             int height) {
+        return preservePrintedBoundaries(raw, fitted, null, gray, width, height);
+    }
+
+    static List<MeasureRegion> preservePrintedBoundaries(
+            List<MeasureRegion> raw,
+            List<MeasureRegion> fitted,
+            byte[] labels,
+            byte[] gray,
+            int width,
+            int height) {
         if (gray == null || gray.length != width * height) return fitted;
         List<MeasureRegion> result = new ArrayList<>();
         for (var region : fitted) {
@@ -744,12 +754,87 @@ final class PrintedMeasureRhythmGuard {
                 float cut = (pieces.get(i - 1).right() + pieces.get(i).left()) * .5f;
                 complete = printedBarline(region, cut, gray, width, height)
                         || printedDoubleBarline(region, cut, gray, width, height)
-                        || printedBarlineNearCut(region, cut, gray, width, height);
+                        || printedBarlineNearCut(region, cut, gray, width, height)
+                        || pieces.size() == 2 && provesDottedHalfClosingBar(
+                                pieces.get(0), pieces.get(1), raw, labels, gray, width, height);
             }
             if (complete) result.addAll(pieces);
             else result.add(region);
         }
         return List.copyOf(result);
+    }
+
+    /** A lone dotted half can authenticate a separator on a former system-ending bar. */
+    private static boolean provesDottedHalfClosingBar(
+            MeasureRegion before,
+            MeasureRegion cadence,
+            List<MeasureRegion> raw,
+            byte[] labels,
+            byte[] gray,
+            int width,
+            int height) {
+        if (labels == null || labels.length != gray.length) return false;
+        int index = raw.indexOf(cadence);
+        if (index < 1 || index + 1 == raw.size() || !raw.get(index - 1).equals(before)
+                || sameRow(cadence, raw.get(index + 1))) return false;
+        float gap = (cadence.bottom() - cadence.top()) * height / 8.2f;
+        float left = cadence.left() * width, right = cadence.right() * width;
+        float precedingRight = before.right() * width;
+        if (gap < 6 || gap > 32 || right - left < gap * 3.5f || right - left > gap * 7.5f
+                || precedingRight - before.left() * width < gap * 12
+                || left - precedingRight < gap * .55f || left - precedingRight > gap * 1.5f)
+            return false;
+        float hint = cadence.bottom() * height - 2.1f * gap;
+        var rails = PrintedDirectionStaff.printedRules(gray, width, height, right - 2.5f * gap, hint, gap);
+        if (rails == null) return false;
+        gap = rails[1];
+        var staff = new PlayingTechniqueDetector.Staff(rails[0] - 4 * gap, rails[0], gap, 0, 1);
+        float seam = (precedingRight + left) * .5f;
+        if (!hasClearSeamStroke(gray, width, height, staff, seam)
+                || PrintedCadenceDurations.boundaryColumn(gray, width, staff, right, false, true) < 0)
+            return false;
+
+        var analysis = OmrScoreInterpreter.analyze(labels, gray, width, height, List.of(before, cadence));
+        if (analysis.rests().stream().anyMatch(rest -> rest.measureIndex() == 1)) return false;
+        var close = analysis.notes().stream().filter(note -> note.measureIndex() == 1).toList();
+        if (close.size() != 1
+                || analysis.notes().stream().filter(note -> note.measureIndex() == 0
+                        && note.staffIndex() == 0 && note.staffCount() == 1
+                        && (note.articulations() & NoteOrnament.GRACE) == 0).count() < 8)
+            return false;
+        var note = close.get(0);
+        return note.kind() == ScoreNoteEvent.Kind.PITCHED
+                && note.staffIndex() == 0 && note.staffCount() == 1
+                && note.visualSize() == ScoreNoteEvent.VisualSize.FULL
+                && note.positionInMeasure() >= .15f && note.positionInMeasure() <= .65f
+                && note.unbeamedDurationBeats() == 2 && note.augmentationDots() == 1
+                && note.beamCount() == 0 && note.tupletDivisor() == 1 && note.stemDirection() != 0
+                && !note.tiedFromPrevious() && !note.crossStaffBeam() && note.boundaryTies() == 0
+                && note.leadingRestBeats() == 0 && note.followingRestBeats() == 0
+                && (note.articulations() & NoteOrnament.GRACE) == 0;
+    }
+
+    private static boolean hasClearSeamStroke(
+            byte[] gray, int width, int height, PlayingTechniqueDetector.Staff staff, float seam) {
+        float gap = staff.gap();
+        int top = Math.round(staff.top()), bottom = Math.round(staff.bottom());
+        int near = Math.round(gap * .26f), far = Math.round(gap * .65f);
+        int center = Math.round(seam);
+        if (center - near < 0 || center + near >= width || top - far < 0 || bottom + far >= height)
+            return false;
+        boolean previous = false;
+        for (int x = center - near; x <= center + near; x++) {
+            int inside = 0, outside = 0;
+            for (int y = top; y <= bottom; y++) if ((gray[y * width + x] & 255) < 150) inside++;
+            for (int d = near; d <= far; d++) {
+                if ((gray[(top - d) * width + x] & 255) < 150) outside++;
+                if ((gray[(bottom + d) * width + x] & 255) < 150) outside++;
+            }
+            boolean stroke = inside >= (bottom - top + 1) * .95f && outside <= 1;
+            if (stroke && previous) return true;
+            previous = stroke;
+        }
+        return false;
     }
 
     /** A tilted staff can lose its rule peaks in the projection of a long merged measure. */

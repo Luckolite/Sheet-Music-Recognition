@@ -306,6 +306,7 @@ public final class SheetInterpreter {
         }
         notes = ArtificialHarmonics.apply(labels, gray, width, height, measures, notes, staffs);
         notes = ScoreTiePitchGuard.apply(notes, score.keyChanges());
+        notes = DottedCadenceShortBeams.apply(notes, measures, staffs, gray, width, height);
         List<PlayingTechniqueDetector.Word> dynamicEvidence = words;
         DirectionWordProvenance.Acquisition dynamicAcquisition = null;
         MusicalOcr.SuddenDynamicAcquisition suddenAcquisition = null;
