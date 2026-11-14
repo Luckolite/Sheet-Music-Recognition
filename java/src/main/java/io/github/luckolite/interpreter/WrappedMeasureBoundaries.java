@@ -74,6 +74,40 @@ final class WrappedMeasureBoundaries {
                 && unownedClosedEdge(gray, width, height, staff, bar.right, lastHead, false, gap);
     }
 
+    /** A shortened decoder box is acceptable only when both independent barlines are visible. */
+    static boolean confirmsClosedTripletBar(
+            byte[] gray,
+            int width,
+            int height,
+            MeasureRegion region,
+            float firstHead,
+            float lastHead) {
+        if (confirmsClosed(gray, width, height, region, firstHead, lastHead)) return true;
+        var bar = box(region, width, height);
+        if (bar == null || lastHead >= bar.right) return false;
+        var staff = track(gray, width, height, bar);
+        if (staff == null) return false;
+        float gap = staff.at(firstHead)[1];
+        if (firstHead - bar.left < gap * .88f
+                || bar.right - lastHead < gap * .8f
+                || bar.right - lastHead >= gap * 1.2f
+                || !unownedClosedEdge(gray, width, height, staff, bar.left, firstHead, true, gap)
+                || !unownedClosedEdge(gray, width, height, staff, bar.right, lastHead, false, gap))
+            return false;
+        int first = Math.max(0, Math.round(bar.right - gap * .25f));
+        int last = Math.min(width - 1, Math.round(bar.right + gap * 1.35f));
+        int run = 0;
+        int strokes = 0;
+        for (int x = first; x <= last + 1; x++) {
+            if (x <= last && verticalCoverage(gray, width, height, staff, x) >= .92f) run++;
+            else {
+                if (run >= Math.max(2, Math.round(gap * .12f))) strokes++;
+                run = 0;
+            }
+        }
+        return strokes == 1;
+    }
+
     static boolean confirmsInitialStaffBar(
             byte[] gray,int width,int height,List<MeasureRegion> regions,int index,
             float firstHead,float lastHead) {

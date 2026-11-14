@@ -53,7 +53,7 @@ final class WrappedEighthTriplets {
             var bar = regions.get(m);
             var proof = singleRailGroups(gray, width, height, bar, notes, owners, true);
             if (proof == null
-                    || !WrappedMeasureBoundaries.confirmsClosed(
+                    || !WrappedMeasureBoundaries.confirmsClosedTripletBar(
                             gray, width, height, bar, proof.x()[0], proof.x()[owners.size() - 1]))
                 continue;
             if (result == notes) result = new ArrayList<>(notes);
