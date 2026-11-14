@@ -639,6 +639,7 @@ public final class SheetInterpreter {
         finalInterpretation =
                 TerminalDottedCadenceHooks.apply(finalInterpretation, null, gray, width, height);
         finalInterpretation = ClosedSixteenthDyads.apply(finalInterpretation, gray, width, height);
+        finalInterpretation = ClosedDottedSixteenths.apply(finalInterpretation, gray, width, height);
         finalInterpretation =
                 finalInterpretation.withClockContextSource(
                         ScoreClockContextCapture.capture(
