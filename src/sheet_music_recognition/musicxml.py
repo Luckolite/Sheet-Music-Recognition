@@ -16,7 +16,7 @@ import xml.etree.ElementTree as ET
 from .typed_events import event_kind, validate_unpitched, notation_order, display_position
 from .rest_kinds import rest_kind, full_measure_span
 from . import visual_size, cue_caption, bow_export, clef_export, articulation_export, ornament_export, grace_export, spelling_export, tremolo_export
-from . import guitar_export
+from . import guitar_export, fingering_export
 from .natural_harmonic_notation import owner_index as natural_harmonic_owner_index
 from .fall_off_notation import owner_index as fall_off_owner_index
 from . import parenthesized_note_group
@@ -320,7 +320,8 @@ def emit_note(measure, duration, voice, event=None, chord=False, stop=False, sta
     parenthesis_right = (event.get('retainedParenthesisStop')
                          if event and event.get('retainedParenthesisStop') and grace is None
                          and fragment_end == event['end'] else None)
-    if stop or start or effect or symbols or gliss_start or gliss_stop or slide_start or slide_stop or articulation_flags or ornament_flags or paired or arpeggio or natural_harmonic or fall_off or parenthesis_left or parenthesis_right or bow_direction is not None:
+    fingering = event.get('retainedFingering') if event and attack_fragment and grace is None else None
+    if stop or start or effect or symbols or gliss_start or gliss_stop or slide_start or slide_stop or articulation_flags or ornament_flags or paired or arpeggio or natural_harmonic or fall_off or parenthesis_left or parenthesis_right or bow_direction is not None or fingering is not None:
         notation = element(node, 'notations')
         if arpeggio:
             element(notation, 'arpeggiate')
@@ -363,6 +364,8 @@ def emit_note(measure, duration, voice, event=None, chord=False, stop=False, sta
             articulation_export.write(notation, articulation_flags)
         if bow_direction is not None:
             bow_export.write(notation, bow_direction)
+        if fingering is not None:
+            fingering_export.write(notation, fingering)
         if ornament_flags:
             ornament_export.write(notation, ornament_flags)
         for symbol in symbols:
@@ -586,6 +589,7 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
         written = grace_export.plan(page, ticks)
         paired_tremolos = tremolo_export.retained(page)
         printed_accidentals = spelling_export.printed_accidentals(page)
+        printed_fingerings = fingering_export.retained(page)
         for note_index, n in enumerate(page['events']):
             if event_kind(n) == 'PITCHED' and (not isinstance(n['midi'], int) or not 0 <= n['midi'] <= 127):
                 raise ValueError('MusicXML note pitch must be a MIDI integer in 0..127')
@@ -606,6 +610,7 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
                                sourceIdentity=len(events), retainedClef=clef_export.retained(page, note_index),
                                retainedArticulations=articulation_export.retained(page, note_index),
                                retainedBow=bow_export.retained(page, note_index),
+                               retainedFingering=printed_fingerings.get(note_index),
                                retainedVisualSize=visual_size.retained(page, note_index),
                                retainedSpelling=spelling,
                                retainedAccidental=spelling_export.printed_mark(printed_accidentals, note_index, spelling),

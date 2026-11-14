@@ -270,6 +270,11 @@ public final class Main {
                 decoderGray == null ? gray : decoderGray, width, height, score.measures(),
                 wrapped.continuations());
         if (!barlineStyles.isEmpty()) result.put("printedBarlineStyles", barlineStyles);
+        if (tabs.isEmpty()) {
+            var fingerings = PrintedFingeringDigits.capture(
+                    gray, width, height, annotations.words(), score, events);
+            if (!fingerings.isEmpty()) result.put("printedFingerings", fingerings);
+        }
         result.put("totalBeats", starts[beats.length]);
         Files.writeString(Path.of(args[1]), json(result) + "\n", StandardCharsets.UTF_8);
     }

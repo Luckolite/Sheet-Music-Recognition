@@ -53,6 +53,20 @@ final class RawNumeralComponents {
             int bottom,
             ObservedFringeContinuation.Charge charge,
             Runnable newComponent) {
+        return capture(gray, width, height, left, top, right, bottom, 165, charge, newComponent);
+    }
+
+    static RawNumeralComponents capture(
+            byte[] gray,
+            int width,
+            int height,
+            int left,
+            int top,
+            int right,
+            int bottom,
+            int threshold,
+            ObservedFringeContinuation.Charge charge,
+            Runnable newComponent) {
         if (left > right || top > bottom)
             throw new IllegalArgumentException("raw core graph bounds");
         int w = right - left + 1, h = bottom - top + 1;
@@ -74,7 +88,7 @@ final class RawNumeralComponents {
         for (int seed = 0; seed < w * h; seed++) {
             charge.tick();
             int x = left + seed % w, y = top + seed / w;
-            if (seen.get(seed) || (gray[y * width + x] & 255) > 165) continue;
+            if (seen.get(seed) || (gray[y * width + x] & 255) > threshold) continue;
             newComponent.run();
             int take = 0, size = 1, l = width, r = -1, t = height, b = -1;
             queue[0] = seed;
@@ -92,7 +106,7 @@ final class RawNumeralComponents {
                         if (nx < left || nx > right || ny < top || ny > bottom) continue;
                         int next = (ny - top) * w + nx - left;
                         charge.tick();
-                        if (!seen.get(next) && (gray[ny * width + nx] & 255) <= 165) {
+                        if (!seen.get(next) && (gray[ny * width + nx] & 255) <= threshold) {
                             seen.set(next);
                             queue[size++] = next;
                         }
