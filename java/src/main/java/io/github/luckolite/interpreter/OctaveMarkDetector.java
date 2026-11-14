@@ -366,7 +366,7 @@ final class OctaveMarkDetector {
         if (gray == null || gray.length != width * height) return words;
         if (!alreadyContrasted) gray = contrastedInk(gray, width, height);
         var visited = new java.util.BitSet();
-        int[] stack = new int[Math.min(256, gray.length)];
+        var flood = new WordInkRuns();
         var holeScan = new HoleScanScratch();
         for (var staff : staffs)
             for (boolean below : StaffSides.VALUES) {
@@ -394,29 +394,22 @@ final class OctaveMarkDetector {
                 List<InkBox> shortFragments = new ArrayList<>();
                 for (int origin = 0; origin < bandSize; origin++) {
                     if ((gray[bandOffset + origin] & 255) >= 165 || visited.get(origin)) continue;
-                    int count = 0, size = 0, left = width, right = -1, y1 = origin / width, y2 = y1;
-                    stack[size++] = origin;
-                    visited.set(origin);
-                    while (size > 0) {
-                        int at = stack[--size], x = at % width, y = at / width;
-                        count++;
-                        left = Math.min(left, x);
-                        right = Math.max(right, x);
-                        y2 = Math.max(y2, y);
-                        int firstX = Math.max(0, x - 1), lastX = Math.min(width - 1, x + 1);
-                        int lastY = Math.min(h - 1, y + 1);
-                        for (int yy = Math.max(0, y - 1); yy <= lastY; yy++) {
-                            int row = yy * width;
-                            for (int next = row + firstX, end = row + lastX; next <= end; next++) {
-                                if ((gray[bandOffset + next] & 255) < 165 && !visited.get(next)) {
-                                    visited.set(next);
-                                    if (size == stack.length)
-                                        stack = java.util.Arrays.copyOf(stack,
-                                                size + Math.min(size, bandSize - size));
-                                    stack[size++] = next;
-                                }
-                            }
-                        }
+                    flood.first(gray, visited, bandOffset, width, origin);
+                    int count = 0, left = width, right = -1, y1 = origin / width, y2 = y1;
+                    while (flood.size > 0) {
+                        int index = --flood.size;
+                        int start = flood.starts[index], end = flood.ends[index];
+                        int rowStart = start - start % width;
+                        count += end - start + 1;
+                        left = Math.min(left, start - rowStart);
+                        right = Math.max(right, end - rowStart);
+                        y2 = Math.max(y2, rowStart / width);
+                        int from = Math.max(rowStart, start - 1);
+                        int to = Math.min(rowStart + width - 1, end + 1);
+                        if (rowStart != 0)
+                            flood.overlap(gray, visited, bandOffset, width, from - width, to - width);
+                        if (rowStart + width < bandSize)
+                            flood.overlap(gray, visited, bandOffset, width, from + width, to + width);
                     }
                     if (count >= minimumArea
                             && y2 - y1 + 1 >= 2
@@ -638,6 +631,44 @@ final class OctaveMarkDetector {
     }
 
     /** A long thin ink neck separates a complete octave word from the preceding written note. */
+    /** Reuses the frontier for eight-connected ink runs within a staff band. */
+    private static final class WordInkRuns {
+        int[] starts = new int[128];
+        int[] ends = new int[128];
+        int size;
+
+        void first(byte[] gray, java.util.BitSet visited, int offset, int width, int origin) {
+            int rowEnd = origin - origin % width + width;
+            enqueue(gray, visited, offset, origin, origin, rowEnd);
+        }
+
+        void overlap(byte[] gray, java.util.BitSet visited, int offset, int width, int from, int to) {
+            int rowStart = from - from % width, rowEnd = rowStart + width;
+            for (int at = from; at <= to; at++) {
+                if ((gray[offset + at] & 255) >= 165 || visited.get(at)) continue;
+                int first = at;
+                while (first > rowStart && (gray[offset + first - 1] & 255) < 165
+                        && !visited.get(first - 1)) first--;
+                at = enqueue(gray, visited, offset, first, at, rowEnd);
+            }
+        }
+
+        private int enqueue(byte[] gray, java.util.BitSet visited, int offset,
+                int first, int seed, int rowEnd) {
+            int last = seed;
+            while (last + 1 < rowEnd && (gray[offset + last + 1] & 255) < 165
+                    && !visited.get(last + 1)) last++;
+            visited.set(first, last + 1);
+            if (size == starts.length) {
+                starts = java.util.Arrays.copyOf(starts, size * 2);
+                ends = java.util.Arrays.copyOf(ends, size * 2);
+            }
+            starts[size] = first;
+            ends[size++] = last;
+            return last;
+        }
+    }
+
     private static List<PlayingTechniqueDetector.Word> ledgerAttachedWords(
             byte[] gray, int width, int height, List<InkBox> boxes, float gap, boolean below) {
         var words = new ArrayList<PlayingTechniqueDetector.Word>();

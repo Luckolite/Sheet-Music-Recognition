@@ -38,6 +38,26 @@ final class NoteArticulationDetector {
         }
     }
 
+    private static final class ReflectedGlyphs {
+        private final List<Glyph> source;
+        private List<Glyph> reflected;
+
+        ReflectedGlyphs(List<Glyph> source) {
+            this.source = source;
+        }
+
+        List<Glyph> get() {
+            if (reflected == null) {
+                reflected = new ArrayList<>(source.size());
+                for (var glyph : source) {
+                    reflected.add(new Glyph(-glyph.right, glyph.top, -glyph.left, glyph.bottom,
+                            glyph.count, glyph.pixels));
+                }
+            }
+            return reflected;
+        }
+    }
+
     private static List<Anchor> physicalAccentFrames(List<Anchor> notes) {
         java.util.LinkedHashMap<Integer, Anchor> frames = new java.util.LinkedHashMap<>();
         for (Anchor n : notes) {
@@ -1753,6 +1773,7 @@ final class NoteArticulationDetector {
                         ? new ArrayList<>()
                         : paperGlyphs(gray, strongPaper, width, height, seen, scratch);
         paperCandidates.addAll(softMarks.peaks);
+        var paperMembership = java.util.Set.copyOf(paperCandidates);
         glyphs.addAll(paperCandidates);
         List<Glyph> candidates = new ArrayList<>(faintAccents), claimedAccents = new ArrayList<>();
         candidates.addAll(glyphs);
@@ -1763,27 +1784,10 @@ final class NoteArticulationDetector {
         List<Glyph> printedClaims = new ArrayList<>();
         CompoundClaims compoundClaims = new CompoundClaims(notes.size());
         // A peak-shaped first letter needs word context on its right as well.
-        // Reflect positions once; semantic pixel references remain unchanged.
-        List<Glyph> reflectedGlyphs =
-                raw
-                        ? glyphs.stream()
-                                .map(
-                                        g ->
-                                                new Glyph(
-                                                        -g.right, g.top, -g.left, g.bottom, g.count,
-                                                        g.pixels))
-                                .collect(java.util.stream.Collectors.toList())
-                        : List.of();
-        List<Glyph> originalReflected =
-                raw
-                        ? originalGlyphs.stream()
-                                .map(
-                                        g ->
-                                                new Glyph(
-                                                        -g.right, g.top, -g.left, g.bottom, g.count,
-                                                        g.pixels))
-                                .collect(java.util.stream.Collectors.toList())
-                        : List.of();
+        // Build mirrored context only when an angular shape needs it.
+        var reflectedGlyphs = new ReflectedGlyphs(glyphs);
+        var originalReflected = paperCandidates.isEmpty()
+                ? reflectedGlyphs : new ReflectedGlyphs(originalGlyphs);
         int[] legacyResult = null;
         DetachedCaretBodies.Page caretPage =
                 raw
@@ -1833,7 +1837,7 @@ final class NoteArticulationDetector {
                 for (int glyphIndex = 0; glyphIndex < candidates.size(); glyphIndex++) {
                     boolean closedDotFringe = pass == 0 && glyphIndex >= fringeStart;
                     Glyph glyph = candidates.get(glyphIndex);
-                    boolean paperCandidate = pass == 0 && paperCandidates.contains(glyph);
+                    boolean paperCandidate = pass == 0 && paperMembership.contains(glyph);
                     if (pass == 1) {
                         caretPage.a(64, 128);
                         DetachedCaretCosts.admissionGlyph(
@@ -1849,7 +1853,7 @@ final class NoteArticulationDetector {
                             paperCandidate
                                     ? glyphs
                                     : originalGlyphs;
-                    List<Glyph> reflectedContext =
+                    ReflectedGlyphs reflectedContext =
                             paperCandidate
                                     ? reflectedGlyphs
                                     : originalReflected;
@@ -1877,15 +1881,7 @@ final class NoteArticulationDetector {
                     // Semantic notation normally vetoes an articulation. A raw isolated
                     // dot may have been mislabeled as a head and rejected by the pitch
                     // reader; it can still be staccato if it is not an accepted head.
-                    int notation = 0;
-                    for (int pixel : glyph.pixels) {
-                        byte label = labels[pixel];
-                        if (label == OmrMeasurePostProcessor.NOTEHEAD
-                                || label == OmrMeasurePostProcessor.STEM_OR_REST
-                                || label == OmrMeasurePostProcessor.CLEF_OR_KEY
-                                || label == OmrMeasurePostProcessor.STAFF) notation++;
-                    }
-                    boolean semanticNotation = notation > glyph.count * .25f;
+                    boolean semanticNotation = mostlyNotation(glyph, labels);
                     Glyph printedCore = null;
                     boolean coreMeasured = !raw;
                     float glyphX = glyph.x(), glyphY = glyph.y();
@@ -1905,8 +1901,9 @@ final class NoteArticulationDetector {
                                     && joinedOwner == null
                                     && glyphIndex >= faintAccents.size()
                                     && glyphIndex < faintAccents.size() + originalGlyphs.size();
-                    for (int n = 0; n < notes.size(); n++) {
-                        if (joinedOwner != null && n != joinedOwner) continue;
+                    int firstNote = joinedOwner == null ? 0 : joinedOwner;
+                    int lastNote = joinedOwner == null ? notes.size() - 1 : joinedOwner;
+                    for (int n = firstNote; n >= 0 && n < notes.size() && n <= lastNote; n++) {
                         Anchor note = notes.get(n);
                         float dx = Math.abs(glyphX - note.x) / note.gap,
                                 dy = Math.abs(glyphY - note.y) / note.gap;
@@ -2061,7 +2058,7 @@ final class NoteArticulationDetector {
                                                         glyph.bottom,
                                                         glyph.count,
                                                         glyph.pixels),
-                                                reflectedContext,
+                                                reflectedContext.get(),
                                                 note.gap,
                                                 labels))) continue;
                         if (raw
@@ -3243,6 +3240,20 @@ final class NoteArticulationDetector {
         return false;
     }
 
+    private static boolean mostlyNotation(Glyph glyph, byte[] labels) {
+        int notation = 0;
+        float threshold = glyph.count * .25f;
+        for (int pixel : glyph.pixels) {
+            byte label = labels[pixel];
+            if ((label == OmrMeasurePostProcessor.NOTEHEAD
+                            || label == OmrMeasurePostProcessor.STEM_OR_REST
+                            || label == OmrMeasurePostProcessor.CLEF_OR_KEY
+                            || label == OmrMeasurePostProcessor.STAFF)
+                    && ++notation > threshold) return true;
+        }
+        return false;
+    }
+
     /** A text word and its spaced extension dashes are not note articulations. */
     private static boolean directionText(
             Glyph target, List<Glyph> glyphs, float gap, byte[] labels) {
@@ -3267,15 +3278,11 @@ final class NoteArticulationDetector {
                     || w > gap * 3f
                     || g.top > target.y() + gap * .15f
                     || g.bottom + 1 < target.y() - gap * .15f) continue;
-            int notation = 0;
-            for (int p : g.pixels)
-                if (labels[p] == OmrMeasurePostProcessor.NOTEHEAD
-                        || labels[p] == OmrMeasurePostProcessor.STEM_OR_REST
-                        || labels[p] == OmrMeasurePostProcessor.CLEF_OR_KEY
-                        || labels[p] == OmrMeasurePostProcessor.STAFF) notation++;
-            if (notation <= g.count * .25f) letters.add(g);
+            if (!mostlyNotation(g, labels)) letters.add(g);
         }
+        if (letters.size() < 3) return false;
         letters.sort(java.util.Comparator.comparingInt(Glyph::left));
+        boolean sortedDashes = false;
         for (int i = 0; i + 2 < letters.size(); i++) {
             Glyph first = letters.get(i), last = first;
             int count = 1;
@@ -3301,18 +3308,15 @@ final class NoteArticulationDetector {
                 }
             // Require a continuous run of thin dashes back to the word. Three
             // isolated tenutos elsewhere on the page do not constitute text.
-            List<Glyph> dashes = new ArrayList<>();
-            for (Glyph g : possibleDashes)
-                if (g.left >= last.right
-                        && g.left <= target.right + gap * 12
-                        && Math.abs(g.y() - target.y()) <= gap * .15f
-                        && g.bottom - g.top + 1 <= gap * .25f
-                        && g.right - g.left + 1 >= gap * .55f
-                        && g.right - g.left + 1 <= gap * 1.8f) dashes.add(g);
-            dashes.sort(java.util.Comparator.comparingInt(Glyph::left));
+            if (possibleDashes.size() < 3) continue;
+            if (!sortedDashes) {
+                possibleDashes.sort(java.util.Comparator.comparingInt(Glyph::left));
+                sortedDashes = true;
+            }
             float edge = last.right;
             int matched = 0;
-            for (Glyph dash : dashes) {
+            for (Glyph dash : possibleDashes) {
+                if (dash.left < last.right) continue;
                 if (dash.left - edge > gap * 4.5f) break;
                 edge = dash.right;
                 matched++;

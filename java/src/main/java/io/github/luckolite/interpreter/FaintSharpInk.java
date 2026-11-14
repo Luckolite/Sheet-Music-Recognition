@@ -60,15 +60,22 @@ final class FaintSharpInk {
         byte[] mask = new byte[w * h];
         for (int y = top, row = top * width, dest = 0;
                 y <= bottom; y++, row += width, dest += w) {
+            int firstInk = row + left, end = row + right;
+            while (firstInk <= end && !ink(gray, width, firstInk, side)) firstInk++;
+            if (firstInk > end) continue;
             boolean rule = staffRule(gray, row + firstFlank, row + left,
                     row + right + 1, row + lastFlank, allowedBright);
-            for (int x = 0, at = row + left; x < w; x++, at++) {
-                if (!ink(gray, width, at, side)) continue;
-                if (rule
-                        && (!ink(gray, width, at - probeStride, side)
-                                || !ink(gray, width, at + probeStride, side))) continue;
-                mask[dest + x] = OmrMeasurePostProcessor.CLEF_OR_KEY;
-            }
+            int at = firstInk;
+            do {
+                if (!rule
+                        || ink(gray, width, at - probeStride, side)
+                                && ink(gray, width, at + probeStride, side)) {
+                    mask[dest + at - row - left] = OmrMeasurePostProcessor.CLEF_OR_KEY;
+                }
+                do {
+                    at++;
+                } while (at <= end && !ink(gray, width, at, side));
+            } while (at <= end);
         }
         byte[] closed = mask;
         int limit = Math.min(h - 4, Math.max(1, Math.round(gap * maximumGap)));
