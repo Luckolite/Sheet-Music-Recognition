@@ -186,6 +186,31 @@ public final class SheetInterpreter {
             MusicalOcr ocr, int physicalPage, byte[] decoderGray,
             TablatureDecoder.Prepared preparedTabs)
             throws Exception {
+        return analyzeWithPrintedSources(
+                labels,
+                gray,
+                width,
+                height,
+                annotations,
+                ocr,
+                physicalPage,
+                decoderGray,
+                preparedTabs,
+                null);
+    }
+
+    static AnalyzedPage analyzeWithPrintedSources(
+            byte[] labels,
+            byte[] gray,
+            int width,
+            int height,
+            Annotations annotations,
+            MusicalOcr ocr,
+            int physicalPage,
+            byte[] decoderGray,
+            TablatureDecoder.Prepared preparedTabs,
+            ScoreMeterChange inheritedMeter)
+            throws Exception {
         if (decoderGray != null && (gray == null || decoderGray.length != gray.length))
             throw new IllegalArgumentException("Decoder grayscale dimensions must match source");
         if (physicalPage < -1) throw new IllegalArgumentException("Invalid physical source page");
@@ -695,6 +720,9 @@ public final class SheetInterpreter {
                 TerminalDottedCadenceHooks.apply(finalInterpretation, null, gray, width, height);
         finalInterpretation = ClosedSixteenthDyads.apply(finalInterpretation, gray, width, height);
         finalInterpretation = ClosedDottedSixteenths.apply(finalInterpretation, gray, width, height);
+        finalInterpretation =
+                ClosedDottedSixteenths.applyClosedOctaveFragments(
+                        finalInterpretation, inheritedMeter, gray, width, height);
         finalInterpretation =
                 finalInterpretation.withClockContextSource(
                         ScoreClockContextCapture.capture(

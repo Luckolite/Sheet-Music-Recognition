@@ -330,7 +330,37 @@ final class OwnedTertiaryBeamlets {
             float peerX,
             float peerY,
             float gap) {
-        if (gap < 10 || gap > 27 || ownerY + gap * 2.35f > y || ownerY + gap * 3.4f < y)
+        return ownsBackwardHookAlias(gray, w, h, x, y, ownerX, ownerY, peerX, peerY, gap, false);
+    }
+
+    static boolean ownsTerminalBackwardHookAlias(
+            byte[] gray,
+            int w,
+            int h,
+            float x,
+            float y,
+            float ownerX,
+            float ownerY,
+            float peerX,
+            float peerY,
+            float gap) {
+        return ownsBackwardHookAlias(gray, w, h, x, y, ownerX, ownerY, peerX, peerY, gap, true);
+    }
+
+    private static boolean ownsBackwardHookAlias(
+            byte[] gray,
+            int w,
+            int h,
+            float x,
+            float y,
+            float ownerX,
+            float ownerY,
+            float peerX,
+            float peerY,
+            float gap,
+            boolean terminal) {
+        float reach = terminal ? 3.65f : 3.4f;
+        if (gap < 10 || gap > 27 || ownerY + gap * 2.35f > y || ownerY + gap * reach < y)
             return false;
         var budget = new PrintedBeamShafts.Budget(150_000);
         var own = PrintedBeamShafts.at(gray, w, h, ownerX, ownerY, gap, budget);
@@ -352,16 +382,41 @@ final class OwnedTertiaryBeamlets {
                     || column.x() - x > gap * .85f
                     || column.endY() - y < gap * 1.43f
                     || column.endY() - y > gap * 1.97f) continue;
-            if (!isThinAttachedBand(gray, w, h, x, y, column.x(), gap)) continue;
+            if (!isThinAttachedBand(gray, w, h, x, y, column.x(), gap, terminal ? .72f : .66f))
+                continue;
             var owner = new Axis(column.x(), column.endY(), 1);
-            var peers = previous.columns().stream().map(c -> new Axis(c.x(), c.endY(), 1)).toList();
-            if (proveSide(gray, w, h, List.of(owner), peers, gap, -1)) return true;
+            if (proveSide(gray, w, h, List.of(owner), downwardAxes(previous), gap, -1)) return true;
         }
         return false;
     }
 
+    static boolean provesBackwardHook(
+            byte[] gray, int w, int h, float x, float y, float peerX, float peerY, float gap) {
+        var budget = new PrintedBeamShafts.Budget(100_000);
+        var own = PrintedBeamShafts.at(gray, w, h, x, y, gap, budget);
+        var peer = PrintedBeamShafts.at(gray, w, h, peerX, peerY, gap, budget);
+        return own.size() == 1
+                && peer.size() == 1
+                && !budget.refused()
+                && proveSide(
+                        gray,
+                        w,
+                        h,
+                        downwardAxes(own.get(0)),
+                        downwardAxes(peer.get(0)),
+                        gap,
+                        -1,
+                        true);
+    }
+
+    private static List<Axis> downwardAxes(PrintedBeamShafts.Shaft shaft) {
+        return shaft.direction() == 1
+                ? shaft.columns().stream().map(c -> new Axis(c.x(), c.endY(), 1)).toList()
+                : List.of();
+    }
+
     private static boolean isThinAttachedBand(
-            byte[] gray, int w, int h, float x, float y, int shaft, float gap) {
+            byte[] gray, int w, int h, float x, float y, int shaft, float gap, float maxThickness) {
         int center = Math.round(x), row = Math.round(y);
         // A filled head at this spot extends farther away from the rail than a short hook.
         for (int col = center - Math.round(gap * .18f);
@@ -370,7 +425,7 @@ final class OwnedTertiaryBeamlets {
             int top = row, bottom = row;
             while (top > row - gap && ink(gray, w, h, col, top - 1)) top--;
             while (bottom < row + gap && ink(gray, w, h, col, bottom + 1)) bottom++;
-            if (bottom - top + 1 > gap * .66f) return false;
+            if (bottom - top + 1 > gap * maxThickness) return false;
         }
         for (int col = center; col <= shaft; col++) {
             if (!ink(gray, w, h, col, row - 1)
@@ -382,19 +437,41 @@ final class OwnedTertiaryBeamlets {
 
     private static boolean proveSide(
             byte[] gray, int w, int h, List<Axis> owners, List<Axis> peers, float gap,int side) {
+        return proveSide(gray, w, h, owners, peers, gap, side, false);
+    }
+
+    private static boolean proveSide(
+            byte[] gray,
+            int w,
+            int h,
+            List<Axis> owners,
+            List<Axis> peers,
+            float gap,
+            int side,
+            boolean allowFaintSeam) {
         for (var own : owners)
             for (var peer : peers) {
                 float slope = (peer.tip-own.tip)/(float)(peer.x-own.x);
-                if (own.direction != peer.direction || (peer.x-own.x)*side < gap * 1.7f
-                        || (peer.x-own.x)*side > gap * 4.2f || Math.abs(slope) > .4f
-                        || !doubleRails(gray,w,h,own,peer,slope,gap)) continue;
+                if (own.direction != peer.direction
+                        || (peer.x - own.x) * side < gap * 1.7f
+                        || (peer.x - own.x) * side > gap * 4.2f
+                        || Math.abs(slope) > .4f
+                        || !doubleRails(gray, w, h, own, peer, slope, gap, allowFaintSeam))
+                    continue;
                 if (hook(gray,w,h,own,gap,side)) return true;
             }
         return false;
     }
 
     private static boolean doubleRails(
-            byte[] gray,int w,int h,Axis own,Axis peer,float slope,float gap) {
+            byte[] gray,
+            int w,
+            int h,
+            Axis own,
+            Axis peer,
+            float slope,
+            float gap,
+            boolean allowFaintSeam) {
         int margin = Math.max(2,Math.round(gap*.28f));
         int start=Math.min(own.x,peer.x)+margin,end=Math.max(own.x,peer.x)-margin;
         for (int a=Math.round(gap*.18f); a<=Math.round(gap*.4f); a++) {
@@ -404,10 +481,41 @@ final class OwnedTertiaryBeamlets {
                 int exposed=0,seam=(a+b)/2;
                 for (int x=start; x<=end; x++)
                     if (!ink(gray,w,h,x,center(own,slope,x,seam))) exposed++;
-                if (exposed>=(end-start+1)*.28f) return true;
+                if (exposed >= (end - start + 1) * .28f
+                        || allowFaintSeam && faintSeam(gray, w, h, own, slope, start, end, a, b))
+                    return true;
             }
         }
         return false;
+    }
+
+    /** Both dark rail cores must border a lighter seam spread along the shaft interval. */
+    private static boolean faintSeam(
+            byte[] gray,
+            int w,
+            int h,
+            Axis owner,
+            float slope,
+            int left,
+            int right,
+            int outer,
+            int inner) {
+        int samples = right - left + 1, count = 0;
+        int[] thirds = new int[3];
+        for (int x = left; x <= right; x++) {
+            int outerY = center(owner, slope, x, outer), innerY = center(owner, slope, x, inner);
+            if (Math.min(outerY, innerY) < 0 || Math.max(outerY, innerY) >= h || x < 0 || x >= w)
+                return false;
+            int core = Math.max(gray[outerY * w + x] & 255, gray[innerY * w + x] & 255);
+            int light = 0;
+            for (int depth = outer + 3; depth <= inner - 3; depth++)
+                light = Math.max(light, gray[center(owner, slope, x, depth) * w + x] & 255);
+            if (light >= core + 28) {
+                thirds[(x - left) * 3 / samples]++;
+                count++;
+            }
+        }
+        return count >= samples * .48f && thirds[0] >= 2 && thirds[1] >= 2 && thirds[2] >= 2;
     }
 
     private static boolean rail(byte[] gray,int w,int h,Axis own,float slope,int a,int b,int depth) {
