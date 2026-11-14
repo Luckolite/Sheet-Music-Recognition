@@ -6,6 +6,14 @@ package io.github.luckolite.interpreter;
 final class RestPaperTone {
     private RestPaperTone() {}
 
+    private static final java.lang.invoke.VarHandle GRAY_WORDS =
+            java.lang.invoke.MethodHandles.byteArrayViewVarHandle(
+                    long[].class, java.nio.ByteOrder.nativeOrder());
+    private static final long HIGH_BITS = 0x8080808080808080L;
+    private static final long BYTE_ONES = 0x0101010101010101L;
+    private static final long WHITE_BIAS = BYTE_ONES * 127;
+    private static final long DARK_BIAS = BYTE_ONES * 96;
+
     static byte[] normalize(byte[] gray, int width, int height, float gap) {
         return normalize(gray, width, height, gap, 340f);
     }
@@ -271,9 +279,15 @@ final class RestPaperTone {
     private static boolean hasWhiteRank(
             byte[] gray, int width, int firstRow, int endRow, int left, int right, int needed) {
         int tileWidth = right - left;
+        int wordWidth = tileWidth >= 24 ? tileWidth - tileWidth % Long.BYTES : 0;
         for (int row = firstRow; row < endRow; row += width) {
             int hits = 0;
-            for (int pixel = row + left, end = row + right; pixel < end; pixel++)
+            int pixel = row + left, end = row + right;
+            for (int wordEnd = pixel + wordWidth; pixel < wordEnd; pixel += Long.BYTES) {
+                long word = (long) GRAY_WORDS.get(gray, pixel);
+                hits += Long.BYTES - Long.bitCount(((word | HIGH_BITS) - WHITE_BIAS) & word & HIGH_BITS);
+            }
+            for (; pixel < end; pixel++)
                 hits += ((gray[pixel] & 255) - 255) >>> 31;
             int white = tileWidth - hits;
             needed -= white;
@@ -288,9 +302,15 @@ final class RestPaperTone {
             byte[] gray, int width, int firstRow, int endRow, int left, int right,
             int needed, int remaining) {
         int tileWidth = right - left;
+        int wordWidth = tileWidth >= 24 ? tileWidth - tileWidth % Long.BYTES : 0;
         for (int row = firstRow; row < endRow; row += width) {
             int hits = 0;
-            for (int pixel = row + left, end = row + right; pixel < end; pixel++)
+            int pixel = row + left, end = row + right;
+            for (int wordEnd = pixel + wordWidth; pixel < wordEnd; pixel += Long.BYTES) {
+                long word = (long) GRAY_WORDS.get(gray, pixel);
+                hits += Long.BYTES - Long.bitCount((((word | HIGH_BITS) - DARK_BIAS) | word) & HIGH_BITS);
+            }
+            for (; pixel < end; pixel++)
                 hits += ((gray[pixel] & 255) - 96) >>> 31;
             needed -= hits;
             if (needed <= 0) return true;

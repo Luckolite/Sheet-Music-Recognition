@@ -2,10 +2,20 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.github.luckolite.interpreter;
 
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.VarHandle;
+import java.nio.ByteOrder;
 import java.util.Arrays;
 
 /** Keeps shaded paper out of the narrow ink bands used to count beams. */
 final class BeamInkThreshold {
+    private static final VarHandle GRAY_WORDS =
+            MethodHandles.byteArrayViewVarHandle(long[].class, ByteOrder.nativeOrder());
+    private static final long HIGH_BITS = 0x8080808080808080L;
+    private static final long BYTE_ONES = 0x0101010101010101L;
+    private static final long BRIGHT_BIAS = BYTE_ONES * (197 - 128);
+    private static final long DARK_BIAS = BYTE_ONES * 73;
+
     private BeamInkThreshold() {}
 
     private static final ThreadLocal<int[]> HISTOGRAM = ThreadLocal.withInitial(() -> new int[256]);
@@ -27,15 +37,28 @@ final class BeamInkThreshold {
                 && rows >= 3 && rowWidth >= 4
                 && isIntermediate(gray[firstPixel + (rows / 2) * width + rowWidth / 2])
                 && isIntermediate(gray[last * width + right])) {
+            byte tone = gray[firstPixel];
+            if (tone == gray[firstPixel + (rows / 2) * width + rowWidth / 2]
+                    && tone == gray[last * width + right]
+                    && uniformWindow(gray, width, firstPixel, rowWidth, rows, tone)) {
+                return (tone & 255) - 32;
+            }
             return shadedThreshold(gray, width, firstPixel, rowWidth, rows, upperRank, 0);
         }
         int brightNeeded = upperRank, darkNeeded = total - upperRank + 1;
         int unscanned = total;
         int start = firstPixel;
+        int wordWidth = rowWidth >= 24 ? rowWidth - rowWidth % Long.BYTES : 0;
         // Keep the common black-and-white path allocation-free.
         while (brightNeeded <= unscanned && darkNeeded <= unscanned) {
             int bright = 0, dark = 0;
-            for (int pixel = start, end = start + rowWidth; pixel < end; pixel++) {
+            int pixel = start;
+            for (int end = start + wordWidth; pixel < end; pixel += Long.BYTES) {
+                long tones = (long) GRAY_WORDS.get(gray, pixel);
+                bright += brightPixels(tones);
+                dark += darkPixels(tones);
+            }
+            for (int end = start + rowWidth; pixel < end; pixel++) {
                 int tone = gray[pixel] & 255;
                 bright += (196 - tone) >>> 31;
                 dark += (tone - 73) >>> 31;
@@ -52,7 +75,10 @@ final class BeamInkThreshold {
         if (darkOnly) {
             while (darkNeeded <= unscanned) {
                 int dark = 0;
-                for (int pixel = start, end = start + rowWidth; pixel < end; pixel++)
+                int pixel = start;
+                for (int end = start + wordWidth; pixel < end; pixel += Long.BYTES)
+                    dark += darkPixels((long) GRAY_WORDS.get(gray, pixel));
+                for (int end = start + rowWidth; pixel < end; pixel++)
                     dark += ((gray[pixel] & 255) - 73) >>> 31;
                 darkNeeded -= dark;
                 if (darkNeeded <= 0) return 40;
@@ -62,7 +88,10 @@ final class BeamInkThreshold {
         } else {
             while (brightNeeded <= unscanned) {
                 int bright = 0;
-                for (int pixel = start, end = start + rowWidth; pixel < end; pixel++)
+                int pixel = start;
+                for (int end = start + wordWidth; pixel < end; pixel += Long.BYTES)
+                    bright += brightPixels((long) GRAY_WORDS.get(gray, pixel));
+                for (int end = start + rowWidth; pixel < end; pixel++)
                     bright += (196 - (gray[pixel] & 255)) >>> 31;
                 brightNeeded -= bright;
                 if (brightNeeded <= 0) return 165;
@@ -74,9 +103,34 @@ final class BeamInkThreshold {
                 unscanned == 0 && !darkOnly ? brightNeeded : 0);
     }
 
+    // Bias each unsigned lane independently before counting threshold hits.
+    private static int brightPixels(long tones) {
+        return Long.bitCount(((tones | HIGH_BITS) - BRIGHT_BIAS) & tones & HIGH_BITS);
+    }
+
+    private static int darkPixels(long tones) {
+        return Long.BYTES - Long.bitCount((((tones | HIGH_BITS) - DARK_BIAS) | tones) & HIGH_BITS);
+    }
+
     private static boolean isIntermediate(byte pixel) {
         int tone = pixel & 255;
         return tone > 72 && tone < 197;
+    }
+
+    private static boolean uniformWindow(
+            byte[] gray, int width, int firstPixel, int rowWidth, int rows, byte tone) {
+        if (width == rowWidth) {
+            rowWidth *= rows;
+            rows = 1;
+        }
+        for (int y = 0, start = firstPixel; y < rows; y++, start += width) {
+            int end = start + rowWidth;
+            if (gray[start] != tone
+                    || Arrays.mismatch(gray, start, end - 1, gray, start + 1, end) >= 0) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static int shadedThreshold(

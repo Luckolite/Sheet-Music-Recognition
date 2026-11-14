@@ -17,16 +17,20 @@ final class TieArcBranchInk {
             float gap,
             int limit) {
         int lastX = -1, branches = 0;
+        int radius = Math.max(1, Math.round(gap * .15f));
+        float requiredBranch = gap * .75f;
+        float requiredRule = gap * 3.5f;
+        float ruleReach = gap * 5;
         for (int sample = centers.length / 5; sample < centers.length * 4 / 5; sample++) {
             if (!Float.isFinite(centers[sample])) continue;
             int x = Math.round(left + (sample + .5f) * (right - left) / centers.length);
             if (x == lastX || x < 0 || x >= width) continue;
             lastX = x;
             int start = Math.round(centers[sample]), ink = 0, blanks = 0;
-            int radius = Math.max(1, Math.round(gap * .15f));
+            int first = Math.max(0, x - radius), last = Math.min(width - 1, x + radius);
             boolean rule = false;
-            for (int xx = Math.max(0, x - radius); xx <= Math.min(width - 1, x + radius); xx++)
-                if (verticalSpan(gray, width, height, xx, start, gap, limit) >= gap * 3.5f) {
+            for (int xx = first; xx <= last; xx++)
+                if (hasVerticalRule(gray, width, height, xx, start, ruleReach, requiredRule, limit)) {
                     rule = true;
                     break;
                 }
@@ -35,35 +39,36 @@ final class TieArcBranchInk {
                 int y = start + side * distance;
                 if (y < 0 || y >= height) break;
                 boolean present = false;
-                for (int xx = Math.max(0, x - radius); xx <= Math.min(width - 1, x + radius); xx++)
-                    if ((gray[y * width + xx] & 255) <= limit) {
+                int row = y * width;
+                for (int at = row + first, end = row + last; at <= end; at++)
+                    if ((gray[at] & 255) <= limit) {
                         present = true;
                         break;
                     }
                 if (present) {
-                    ink++;
+                    if (++ink >= requiredBranch) break;
                     blanks = 0;
                 } else if (++blanks > 1) break;
             }
-            if (ink >= gap * .75f && ++branches >= 3) return true;
+            if (ink >= requiredBranch && ++branches >= 3) return true;
         }
         return false;
     }
 
-    private static int verticalSpan(
-            byte[] gray, int width, int height, int x, int start, float gap, int limit) {
+    private static boolean hasVerticalRule(
+            byte[] gray, int width, int height, int x, int start, float reach, float minimum, int limit) {
         int span = 0;
-        for (int side : new int[] {-1, 1}) {
+        for (int side = -1; side <= 1; side += 2) {
             int blanks = 0;
-            for (int distance = 0; distance <= gap * 5; distance++) {
+            for (int distance = 0; distance <= reach; distance++) {
                 int y = start + side * distance;
                 if (y < 0 || y >= height) break;
                 if ((gray[y * width + x] & 255) <= limit) {
-                    span++;
+                    if (++span >= minimum) return true;
                     blanks = 0;
                 } else if (++blanks > 1) break;
             }
         }
-        return span;
+        return span >= minimum;
     }
 }
