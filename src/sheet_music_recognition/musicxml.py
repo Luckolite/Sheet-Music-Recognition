@@ -20,6 +20,8 @@ from . import guitar_export
 from .natural_harmonic_notation import owner_index as natural_harmonic_owner_index
 from .fall_off_notation import owner_index as fall_off_owner_index
 from . import parenthesized_note_group
+from . import beam_export
+from .beam_source import checked as checked_beams
 
 DIVISIONS = 10080  # Exact common binary values and triplet/quintuplet/septuplet subdivisions.
 
@@ -467,6 +469,7 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
     parenthesis_level_ends = [float("-inf")] * 17
     printed_rest_groups = []
     printed_triplets = []
+    printed_beams = []
     continuations = set()
     octave_owned = {}
     offset = 0
@@ -541,40 +544,22 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
         source_notes = score.get('notes', [])
         beam = score.get('beamSource')
         if beam:
-            from .beam_source import checked
-            source = checked(beam, len(source_notes))
-            owners = defaultdict(list)
-            for index, origin in enumerate(source['noteOrigins']):
-                if origin is not None:
-                    owners[origin['pageIndex'], origin['noteIndex']].append(index)
-            emitted_sources = defaultdict(list)
-            for index, event in enumerate(page['events']):
-                owner = event.get('sourceNoteIndex')
-                if type(owner) is int:
-                    emitted_sources[owner].append(index)
-            for group in source['groups']:
-                if len(group['columns']) != 3 or group['bridges'] != [1, 1]:
+            groups = beam_export.bind(checked_beams(beam, len(source_notes)), page['events'])
+            first_event = len(events)
+            for identities, bridges, hooks in groups:
+                columns = [tuple(first_event + index for index in col) for col in identities]
+                printed_beams.append((columns, bridges, hooks))
+                if len(columns) != 3 or bridges != [1, 1] or not all(columns):
                     continue
-                columns = []
                 levels = []
-                for col in group['columns']:
-                    members = []
-                    beams = set()
-                    for anchor in col['members']:
-                        kept = owners[anchor['pageIndex'], anchor['noteIndex']]
-                        if len(kept) != 1 or len(emitted_sources[kept[0]]) != 1:
-                            break
-                        owner = kept[0]
-                        index = emitted_sources[owner][0]
-                        n = source_notes[owner]
-                        if (n.get('tupletDivisor') != 3 or n.get('tupletNormalNotes') != 2
-                                or n.get('augmentationDots') != 0):
-                            break
-                        beams.add(n.get('beamCount'))
-                        members.append(len(events) + index)
-                    if len(members) != len(col['members']) or len(beams) != 1:
+                for col in identities:
+                    members = [source_notes[page['events'][index]['sourceNoteIndex']] for index in col]
+                    if any(n.get('tupletDivisor') != 3 or n.get('tupletNormalNotes') != 2
+                           or n.get('augmentationDots') != 0 for n in members):
                         break
-                    columns.append(tuple(members))
+                    beams = {n.get('beamCount') for n in members}
+                    if len(beams) != 1:
+                        break
                     levels.append(beams.pop())
                 if levels in ([1, 2, 1], [1, 1, 1]):
                     printed_triplets.append((columns, levels, first_bar, len(page['measureBeats'])))
@@ -798,6 +783,8 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
     misc = element(identification, 'miscellaneous')
     element(misc, 'miscellaneous-field', 'Concert-pitch reconstruction; recognition and estimated timing require review.', name='interpretation')
     part_list = element(root, 'part-list')
+    beamed_owners = {owner for columns, _, _ in printed_beams for column in columns for owner in column}
+    rendered_beam_columns = {}
     bar_starts = [bar['start'] for bar in bars]
     bar_ends = [bar['start'] + bar['length'] for bar in bars]
     bar_indexes = {bar['start']: physical_to_output[index]
@@ -1134,6 +1121,16 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
                             octave_owned[emitted] = 0 if event_kind(n) == 'UNPITCHED' else n.get('octaveShift', 0)
                             if fragment_start == n['start'] and n['sourceIdentity'] in requested_slur_owners:
                                 slur_attacks[n['sourceIdentity']] = emitted
+                            if (ci == 0 and n['sourceIdentity'] in beamed_owners
+                                    and start == fragment_start and end == fragment_end
+                                    and all(head['start'] == start and head['end'] == end
+                                            and not head.get('durationFallback', False)
+                                            and not head.get('retainedTremolo')
+                                            and head.get('retainedVisualSize') != 'CUE'
+                                            for head in chord)):
+                                owners = frozenset(head['sourceIdentity'] for head in chord)
+                                rendered_beam_columns[owners] = beam_export.WrittenColumn(
+                                    emitted, part_id, index, voice, start, end)
                         emit_graces(measure, chord, True, fragment_end, bar['key']<0)
                         fragment_start = fragment_end
                     cursor = end
@@ -1150,6 +1147,7 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
                         element(forward, 'voice', voice)
                     else:
                         emit_rest_gap(measure, cursor, b, voice, rest_symbols, literal_edges)
+    beam_export.write(printed_beams, rendered_beam_columns)
     from .octave_shift_export import apply as octave_apply
     octave_apply(root, octave_owned)
     first_score = document['pages'][0].get('score', {})
