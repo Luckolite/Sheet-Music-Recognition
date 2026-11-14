@@ -80,12 +80,7 @@ final class MeterCopyFontEvidence {
                             return null;
                     }
             int cw = crop.right() - crop.left(), ch = crop.bottom() - crop.top();
-            int[] pixels = new int[cw * ch];
-            for (int y = 0; y < ch; y++)
-                for (int x = 0; x < cw; x++) {
-                    int v = gray[(crop.top() + y) * width + crop.left() + x] & 255;
-                    pixels[y * cw + x] = 0xff000000 | v * 0x10101;
-                }
+            int[] pixels = MeterCropRaster.copyGray(gray, width, crop.left(), crop.top(), cw, ch);
             MeterCropRaster.prepare(
                     pixels, cw, ch, crop.top(), crop.firstLine(), crop.gap(), false);
             var reading =

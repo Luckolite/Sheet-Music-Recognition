@@ -48,9 +48,12 @@ public final class MeterFontMatcher {
                             graphics.drawString(glyphs, -bounds.x, -bounds.y);
                             graphics.dispose();
                             boolean[] shape = new boolean[gw * gh];
-                            for (int y = 0; y < gh; y++)
+                            int[] row = new int[gw];
+                            for (int y = 0, dest = 0; y < gh; y++, dest += gw) {
+                                glyph.getRGB(0, y, gw, 1, row, 0, gw);
                                 for (int x = 0; x < gw; x++)
-                                    shape[y * gw + x] = (glyph.getRGB(x, y) & 255) < 150;
+                                    shape[dest + x] = (row[x] & 255) < 150;
+                            }
 
                             return new MeterGlyphMatcher.Glyph(gw, gh, shape);
                         });
@@ -101,12 +104,7 @@ public final class MeterFontMatcher {
             var matcher = Bundled.MATCHER;
             if (matcher == null) break;
             int cw = crop.right() - crop.left(), ch = crop.bottom() - crop.top();
-            int[] pixels = new int[cw * ch];
-            for (int y = 0; y < ch; y++)
-                for (int x = 0; x < cw; x++) {
-                    int value = gray[(crop.top() + y) * width + crop.left() + x] & 255;
-                    pixels[y * cw + x] = 0xff000000 | value << 16 | value << 8 | value;
-                }
+            int[] pixels = MeterCropRaster.copyGray(gray, width, crop.left(), crop.top(), cw, ch);
             MeterCropRaster.prepare(pixels, cw, ch, crop.top(), crop.firstLine(), crop.gap(), false);
             var font = matcher.read(pixels, cw, ch,
                     Math.round(crop.firstLine() + 2 * crop.gap()) - crop.top(),

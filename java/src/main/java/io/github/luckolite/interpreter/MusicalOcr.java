@@ -330,12 +330,7 @@ public final class MusicalOcr {
         int left = Math.max(0, crop.left()), right = Math.min(width, crop.right());
         int cropWidth = right - left, cropHeight = bottom - top;
         if (cropWidth < 2 || cropHeight < 4) return new MeterReading("", 0);
-        int[] cleaned = new int[cropWidth * cropHeight];
-        for (int y = 0; y < cropHeight; y++)
-            for (int x = 0; x < cropWidth; x++) {
-                int value = gray[(top + y) * width + left + x] & 255;
-                cleaned[y * cropWidth + x] = 0xff000000 | value << 16 | value << 8 | value;
-            }
+        int[] cleaned = MeterCropRaster.copyGray(gray, width, left, top, cropWidth, cropHeight);
         int[] raw = cleaned.clone();
         MeterCropRaster.prepare(
                 cleaned, cropWidth, cropHeight, top, crop.firstLine(), crop.gap(), false);
