@@ -318,6 +318,68 @@ final class OwnedTertiaryBeamlets {
         return result;
     }
 
+    /** A short third rail can be labeled as a reversed head by borrowing its owner's shaft. */
+    static boolean ownsBackwardHookAlias(
+            byte[] gray,
+            int w,
+            int h,
+            float x,
+            float y,
+            float ownerX,
+            float ownerY,
+            float peerX,
+            float peerY,
+            float gap) {
+        if (gap < 10 || gap > 27 || ownerY + gap * 2.35f > y || ownerY + gap * 3.4f < y)
+            return false;
+        var budget = new PrintedBeamShafts.Budget(150_000);
+        var own = PrintedBeamShafts.at(gray, w, h, ownerX, ownerY, gap, budget);
+        var peer = PrintedBeamShafts.at(gray, w, h, peerX, peerY, gap, budget);
+        var alias = PrintedBeamShafts.at(gray, w, h, x, y, gap, budget);
+        if (own.size() != 1 || peer.size() != 1 || alias.size() != 1 || budget.refused())
+            return false;
+        var shaft = own.get(0);
+        var previous = peer.get(0);
+        var reversed = alias.get(0);
+        if (shaft.direction() != 1
+                || previous.direction() != 1
+                || reversed.direction() != -1
+                || Math.abs(reversed.endY() - ownerY) > gap * .3f) return false;
+        for (var column : shaft.columns()) {
+            if (column.x() < reversed.left()
+                    || column.x() > reversed.right()
+                    || column.x() - x < gap * .48f
+                    || column.x() - x > gap * .85f
+                    || column.endY() - y < gap * 1.43f
+                    || column.endY() - y > gap * 1.97f) continue;
+            if (!isThinAttachedBand(gray, w, h, x, y, column.x(), gap)) continue;
+            var owner = new Axis(column.x(), column.endY(), 1);
+            var peers = previous.columns().stream().map(c -> new Axis(c.x(), c.endY(), 1)).toList();
+            if (proveSide(gray, w, h, List.of(owner), peers, gap, -1)) return true;
+        }
+        return false;
+    }
+
+    private static boolean isThinAttachedBand(
+            byte[] gray, int w, int h, float x, float y, int shaft, float gap) {
+        int center = Math.round(x), row = Math.round(y);
+        // A filled head at this spot extends farther away from the rail than a short hook.
+        for (int col = center - Math.round(gap * .18f);
+                col <= center + Math.round(gap * .18f);
+                col++) {
+            int top = row, bottom = row;
+            while (top > row - gap && ink(gray, w, h, col, top - 1)) top--;
+            while (bottom < row + gap && ink(gray, w, h, col, bottom + 1)) bottom++;
+            if (bottom - top + 1 > gap * .66f) return false;
+        }
+        for (int col = center; col <= shaft; col++) {
+            if (!ink(gray, w, h, col, row - 1)
+                    || !ink(gray, w, h, col, row)
+                    || !ink(gray, w, h, col, row + 1)) return false;
+        }
+        return true;
+    }
+
     private static boolean proveSide(
             byte[] gray, int w, int h, List<Axis> owners, List<Axis> peers, float gap,int side) {
         for (var own : owners)
