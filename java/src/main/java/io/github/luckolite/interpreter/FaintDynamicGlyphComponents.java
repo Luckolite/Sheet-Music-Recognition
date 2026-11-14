@@ -29,6 +29,7 @@ final class FaintDynamicGlyphComponents {
         Arrays.fill(seen, false);
         boolean hasFaintInk = false;
         boolean narrow = threshold == 185;
+        int broadCount = result.size(), firstBroad = 0, firstNarrow = broadCount;
         for (int p = 0; p < gray.length; p++) {
             if ((gray[p] & 255) >= threshold || seen[p]) continue;
             int read = 0, queued = 1, count = 0, dark = 0;
@@ -74,17 +75,29 @@ final class FaintDynamicGlyphComponents {
                     }
                 }
             }
-            if (count >= 3 && dark < count * darkFraction
-                    && (!narrow || !covered(result, left, top, right + 1, bottom + 1)))
-                result.add(new Bounds(left, top, right + 1, bottom + 1, count));
+            if (count < 3 || dark >= count * darkFraction) continue;
+            if (narrow) {
+                // Seeds start components in top-to-bottom order in each pass.
+                // Earlier bounds ending at or before this top cannot cover this or later seeds.
+                while (firstBroad < broadCount && result.get(firstBroad).bottom() <= top)
+                    firstBroad++;
+                while (firstNarrow < result.size() && result.get(firstNarrow).bottom() <= top)
+                    firstNarrow++;
+                if (covered(result, firstBroad, broadCount, left, top, right + 1, bottom + 1)
+                        || covered(result, firstNarrow, result.size(), left, top, right + 1, bottom + 1))
+                    continue;
+            }
+            result.add(new Bounds(left, top, right + 1, bottom + 1, count));
         }
         return hasFaintInk;
     }
 
-    private static boolean covered(List<Bounds> result, int left, int top, int right, int bottom) {
-        for (int i = 0; i < result.size(); i++) {
+    private static boolean covered(
+            List<Bounds> result, int first, int end, int left, int top, int right, int bottom) {
+        for (int i = first; i < end; i++) {
             var prior = result.get(i);
-            if (prior.left() <= left && prior.top() <= top
+            if (prior.top() > top) break;
+            if (prior.left() <= left
                     && prior.right() >= right && prior.bottom() >= bottom) return true;
         }
         return false;

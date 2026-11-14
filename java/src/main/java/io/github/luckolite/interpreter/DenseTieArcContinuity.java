@@ -15,6 +15,7 @@ final class DenseTieArcContinuity {
         private final int width, left, right, inkLimit, first;
         private final byte[] states;
         private final float minimum;
+        private int[] previousFrontier, skippedFrontier, nextFrontier;
         private float[] flatColumns;
         private int flatColumnsReady;
 
@@ -27,6 +28,13 @@ final class DenseTieArcContinuity {
             this.first = first;
             this.states = new byte[Math.max(0, last - first + 1)];
             minimum = (right - left + 1) * .85f;
+        }
+
+        private void ensureFrontiers(int capacity) {
+            if (previousFrontier != null && previousFrontier.length >= capacity) return;
+            previousFrontier = new int[capacity];
+            skippedFrontier = new int[capacity];
+            nextFrontier = new int[capacity];
         }
 
         float flatColumn(int x, int scanLeft, int scanRight) {
@@ -104,7 +112,12 @@ final class DenseTieArcContinuity {
         if (bottom < top) return false;
         int count = bottom - top + 1, rise = Math.max(1, (int) Math.ceil(gap * .1f) + 1);
         int capacity = (int) Math.min(count, 2L * radius + 1);
-        int[] previous = new int[capacity], skipped = new int[capacity], next = new int[capacity];
+        // Candidate searches sharing these row proofs can reuse storage. Only each
+        // frontier's populated prefix is read, and sizes start at zero for every search.
+        straightRows.ensureFrontiers(capacity);
+        int[] previous = straightRows.previousFrontier;
+        int[] skipped = straightRows.skippedFrontier;
+        int[] next = straightRows.nextFrontier;
         int previousSize = 0, skippedSize = 0;
         int covered = 0;
         int span = right - left + 1;

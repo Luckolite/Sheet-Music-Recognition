@@ -19,27 +19,31 @@ final class ScoreDynamicsDetector {
         List<PlayingTechniqueDetector.Staff> result = new ArrayList<>();
         if (staffs.isEmpty()) return result;
         // Staff geometry is immutable; reuse each note's distances without picking one tie owner.
-        float[] centers = new float[staffs.size()], distances = new float[staffs.size()];
+        float[] centers = new float[staffs.size()], reach = new float[staffs.size()];
+        int[] closest = new int[staffs.size()];
         List<Map<Integer, Integer>> allVotes = new ArrayList<>();
         int index = 0;
         for (var staff : staffs) {
-            centers[index++] = (staff.top() + staff.bottom()) * .5f;
+            centers[index] = (staff.top() + staff.bottom()) * .5f;
+            reach[index++] = staff.gap() * 5;
             allVotes.add(new HashMap<>());
         }
         for (var note : notes) {
             float y = note.pageY() * height, nearest = Float.POSITIVE_INFINITY;
+            int lane = note.staffCount() * 16 + note.staffIndex();
+            int count = 0;
             for (int s = 0; s < centers.length; s++) {
                 float distance = Math.abs(y - centers[s]);
-                distances[s] = distance;
-                if (distance < nearest) nearest = distance;
+                if (distance < nearest) {
+                    nearest = distance;
+                    count = 0;
+                }
+                if (distance == nearest) closest[count++] = s;
+                else if (Float.isNaN(distance)) allVotes.get(s).merge(lane, 1, Integer::sum);
             }
-            index = 0;
-            for (var staff : staffs) {
-                float distance = distances[index];
-                if (!(distance > staff.gap() * 5) && !(nearest < distance))
-                    allVotes.get(index)
-                            .merge(note.staffCount() * 16 + note.staffIndex(), 1, Integer::sum);
-                index++;
+            for (int i = 0; i < count; i++) {
+                int s = closest[i];
+                if (!(nearest > reach[s])) allVotes.get(s).merge(lane, 1, Integer::sum);
             }
         }
         index = 0;

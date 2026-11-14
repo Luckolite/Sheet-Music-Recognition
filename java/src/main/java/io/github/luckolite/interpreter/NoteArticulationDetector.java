@@ -5787,24 +5787,8 @@ final class NoteArticulationDetector {
                             3,
                             Math.max(glyph.right - glyph.left + 1, glyph.bottom - glyph.top + 1)
                                     / 2);
-            int[] hist = new int[256];
-            int count = 0;
-            for (int y = Math.max(0, glyph.top - pad);
-                    y <= Math.min(height - 1, glyph.bottom + pad);
-                    y++)
-                for (int x = Math.max(0, glyph.left - pad);
-                        x <= Math.min(width - 1, glyph.right + pad);
-                        x++) {
-                    hist[gray[y * width + x] & 255]++;
-                    count++;
-                }
-            int total = 0, tone = 255;
-            for (int v = 0; v < 256; v++)
-                if ((total += hist[v]) >= Math.ceil(count * .75)) {
-                    tone = v;
-                    break;
-                }
-            if (tone >= 96 && tone < 185 && printedBodyContrast(glyph, gray, width, height))
+            if (accentPaperTone(gray, width, height, glyph, pad, 185)
+                    && printedBodyContrast(glyph, gray, width, height))
                 result.add(glyph);
         }
         return result;
@@ -5842,24 +5826,24 @@ final class NoteArticulationDetector {
             queue[0] = seed;
             seen[seed] = true;
             while (take < size) {
-                int at = queue[take++], x = at % width, y = at / width;
+                int at = queue[take++], y = at / width, row = y * width, x = at - row;
                 if ((seedInk[at] & 255) < 200) dark++;
                 if ((paper[at] & 255) < 155) softDark++;
                 left = Math.min(left, x);
                 right = Math.max(right, x);
                 top = Math.min(top, y);
                 bottom = Math.max(bottom, y);
-                for (int dy = -1; dy <= 1; dy++)
-                    for (int dx = -1; dx <= 1; dx++) {
-                        int nx = x + dx, ny = y + dy;
-                        if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
-                        int next = ny * width + nx;
+                int first = Math.max(row, at - 1), last = Math.min(row + width - 1, at + 1);
+                for (int ny = Math.max(0, y - 1), delta = (ny - y) * width;
+                        ny <= Math.min(height - 1, y + 1); ny++, delta += width) {
+                    for (int next = first + delta, limit = last + delta; next <= limit; next++) {
                         if (!seen[next] && (paper[next] & 255) < 185) {
                             seen[next] = true;
                             if (size == queue.length) queue = scratch.grow(size);
                             queue[size++] = next;
                         }
                     }
+                }
             }
             if (size < 8
                     || softDark < Math.max(3, Math.round(size * .18f) - 1)
@@ -5880,25 +5864,32 @@ final class NoteArticulationDetector {
                                             == NoteArticulation.MARCATO);
             if (!accent && !peak) continue;
             int pad = Math.max(3, Math.max(right - left + 1, bottom - top + 1) / 2);
-            int[] histogram = new int[256];
-            int count = 0;
-            for (int y = Math.max(0, top - pad); y <= Math.min(height - 1, bottom + pad); y++)
-                for (int x = Math.max(0, left - pad); x <= Math.min(width - 1, right + pad); x++) {
-                    histogram[gray[y * width + x] & 255]++;
-                    count++;
-                }
-            int cumulative = 0, tone = 255;
-            for (int value = 0; value < 256; value++)
-                if ((cumulative += histogram[value]) >= Math.ceil(count * .75)) {
-                    tone = value;
-                    break;
-                }
-            if (tone < 96 || tone >= 240 || !printedBodyContrast(glyph, gray, width, height))
-                continue;
+            if (!accentPaperTone(gray, width, height, glyph, pad, 240)
+                    || !printedBodyContrast(glyph, gray, width, height)) continue;
             if (accent) accents.add(glyph);
             if (peak) peaks.add(glyph);
         }
         return new SoftMarks(accents, peaks);
+    }
+
+    private static boolean accentPaperTone(
+            byte[] gray, int width, int height, Glyph glyph, int pad, int upperTone) {
+        int left = Math.max(0, glyph.left - pad), right = Math.min(width - 1, glyph.right + pad);
+        int top = Math.max(0, glyph.top - pad), bottom = Math.min(height - 1, glyph.bottom + pad);
+        int samples = (right - left + 1) * (bottom - top + 1);
+        if (samples == 0) return false;
+        int rank = samples - samples / 4;
+        // The 75th percentile is in [96, upperTone) exactly when these two counts straddle its rank.
+        int dark = 0, bright = 0;
+        for (int y = top, row = top * width; y <= bottom; y++, row += width) {
+            for (int at = row + left, end = row + right; at <= end; at++) {
+                int tone = gray[at] & 255;
+                if (tone < 96) {
+                    if (++dark >= rank) return false;
+                } else if (tone >= upperTone && ++bright > samples - rank) return false;
+            }
+        }
+        return true;
     }
 
     /** Pale blur may enlarge a complete chevron; only a connected strong stroke can replace its proportional seed budget. */
