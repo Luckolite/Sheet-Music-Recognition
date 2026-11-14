@@ -98,9 +98,16 @@ public final class MeterFontMatcher {
             int measure = MeterChangeDetector.followingMeasure(crop, width, height, measures);
             if (!MeterChangeDetector.precedesNotes(crop, labels, gray, width, height, measure, measures, notes))
                 continue;
-            var font = readCrop(gray, width, height, crop);
-            String supported = MusicalOcrEvidence.fontMeter(
-                    font.text(), font.topScore(), font.bottomScore(), Set.of(), Set.of());
+            String supported = supportedMeter(readCrop(gray, width, height, crop));
+            if (supported.isBlank()) {
+                var trimmed = MeterDoubleRuleCrop.trim(
+                        crop, gray, width, height, measures.get(measure).left() * width);
+                if (trimmed != crop
+                        && MeterChangeDetector.followingMeasure(trimmed, width, height, measures) == measure
+                        && MeterChangeDetector.precedesNotes(
+                                trimmed, labels, gray, width, height, measure, measures, notes))
+                    supported = supportedMeter(readCrop(gray, width, height, trimmed));
+            }
             if (supported.isBlank()) continue;
             String[] digits = supported.split("/");
             var reading = new ScoreMeterChange(measure, Integer.parseInt(digits[0]), Integer.parseInt(digits[1]));
@@ -108,6 +115,11 @@ public final class MeterFontMatcher {
         }
         return choices.values().stream().filter(readings -> readings.size() == 1)
                 .flatMap(Set::stream).toList();
+    }
+
+    private static String supportedMeter(Reading font) {
+        return MusicalOcrEvidence.fontMeter(
+                font.text(), font.topScore(), font.bottomScore(), Set.of(), Set.of());
     }
 
     static Reading readCrop(byte[] gray, int width, int height, MeterChangeDetector.Crop crop) {
