@@ -186,13 +186,25 @@ final class PrintedCadenceDurations {
                     localTop, rails[0], rails[1], staff.index(), staff.count());
             if (completeCadence(gray, width, local, left, right, firstX, lastX, boundary,
                     sameSystem && nextHasMeter, !sameSystem, hasAccidental)) return true;
-            // The nominal region can stop just before the two closing strokes.
-            if (!quarter || sameSystem) return false;
-            float outer = right + local.gap() * .25f;
+            // The fitted right boundary can end just inside a printed closing double bar.
+            if (sameSystem) return false;
+            if (!quarter && !provedIsolatedHalfDyad(gray, width, left, local, chord)) return false;
+            float outer = right + local.gap() * (quarter ? .25f : .35f);
             return completeCadence(gray, width, local, left, outer, firstX, lastX, outer,
                     false, true, hasAccidental);
         }
         return false;
+    }
+
+    private static boolean provedIsolatedHalfDyad(
+            byte[] gray, int width, float left,
+            PlayingTechniqueDetector.Staff staff, List<ScoreNoteEvent> chord) {
+        if (chord.size() != 2) return false;
+        var first = chord.get(0);
+        var second = chord.get(1);
+        if (first.staffStep() == second.staffStep() || first.stemDirection() == 0
+                || first.stemDirection() != second.stemDirection()) return false;
+        return boundaryColumn(gray, width, staff, left - staff.gap() * .53f, true, false) >= 0;
     }
 
     /** A wide isolated dyad closes the staff only when its bounding ink proves both edges. */
