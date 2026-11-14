@@ -512,6 +512,8 @@ public final class SheetInterpreter {
             finalScore = finalScore.withNotes(closedTriplets,
                     java.util.stream.IntStream.range(0, closedTriplets.size()).boxed().toList());
         finalScore =
+                EighthTripletsBeforeSixteenths.capture(finalScore, annotationGray, width, height);
+        finalScore =
                 OpeningBeamPickup.apply(
                         finalScore,
                         labels,

@@ -339,16 +339,160 @@ final class WrappedEighthTriplets {
 
     private static boolean singleRail(byte[] gray, int width, int height,
             PrintedBeamShafts.Shaft a, PrintedBeamShafts.Shaft b, float gap) {
+        return matchesRailCount(gray, width, height, a, b, gap, false);
+    }
+
+    private static boolean matchesRailCount(
+            byte[] gray,
+            int width,
+            int height,
+            PrintedBeamShafts.Shaft a,
+            PrintedBeamShafts.Shaft b,
+            float gap,
+            boolean doubleRail) {
         var ribbon = bestRibbon(gray, width, height, a, b, gap);
         if (ribbon.coverage() < .9f) return false;
-        // A second rail leaves a separate dark ribbon parallel to the outer beam.
         int side = -a.direction();
         for (float separation : new float[] {.69f, .84f, .99f, 1.14f}) {
             int dy = side * Math.round(gap * separation);
-            if (coverage(gray, width, height, a, b, gap, ribbon.leftY() + dy,
-                    ribbon.rightY() + dy, .19f) >= .88f) return false;
+            if (coverage(
+                            gray,
+                            width,
+                            height,
+                            a,
+                            b,
+                            gap,
+                            ribbon.leftY() + dy,
+                            ribbon.rightY() + dy,
+                            .19f)
+                    >= .88f) return doubleRail;
         }
-        return true;
+        return !doubleRail;
+    }
+
+    static boolean mixedCut(
+            byte[] gray,
+            int width,
+            int height,
+            MeasureRegion bar,
+            ScoreNoteEvent left,
+            ScoreNoteEvent right) {
+        float gap = (bar.bottom() - bar.top()) * height / 8.2f;
+        if (!Float.isFinite(gap)
+                || gap < 10
+                || gap > 30
+                || width < 1
+                || height < 1
+                || gray == null
+                || gray.length != (long) width * height) return false;
+        float ax = (bar.left() + (bar.right() - bar.left()) * left.positionInMeasure()) * width;
+        float bx = (bar.left() + (bar.right() - bar.left()) * right.positionInMeasure()) * width;
+        if (bx - ax < gap * 1.65f || bx - ax > gap * 4) return false;
+        var budget = new PrintedBeamShafts.Budget(150_000);
+        var a = PrintedBeamShafts.at(gray, width, height, ax, left.pageY() * height, gap, budget);
+        var b = PrintedBeamShafts.at(gray, width, height, bx, right.pageY() * height, gap, budget);
+        return a.size() == 1
+                && b.size() == 1
+                && a.get(0).direction() == -left.stemDirection()
+                && b.get(0).direction() == -right.stemDirection()
+                && (a.get(0).direction() != b.get(0).direction()
+                        || bestRibbon(gray, width, height, a.get(0), b.get(0), gap).coverage()
+                                <= .46f);
+    }
+
+    static WrappedTripletMeasure.Half doubleRailGroups(
+            byte[] gray,
+            int width,
+            int height,
+            MeasureRegion bar,
+            List<ScoreNoteEvent> notes,
+            List<Integer> candidates) {
+        if (candidates.size() != 8) return null;
+        return mixedRailGroups(gray, width, height, bar, notes, candidates, 4, true);
+    }
+
+    static WrappedTripletMeasure.Half mixedOpeningGroups(
+            byte[] gray,
+            int width,
+            int height,
+            MeasureRegion bar,
+            List<ScoreNoteEvent> notes,
+            List<Integer> candidates) {
+        if (candidates.isEmpty() || candidates.size() % 3 != 0) return null;
+        return mixedRailGroups(gray, width, height, bar, notes, candidates, 3, false);
+    }
+
+    private static WrappedTripletMeasure.Half mixedRailGroups(
+            byte[] gray,
+            int width,
+            int height,
+            MeasureRegion bar,
+            List<ScoreNoteEvent> notes,
+            List<Integer> candidates,
+            int groupSize,
+            boolean doubleRail) {
+        if (width < 1 || height < 1 || gray == null || gray.length != (long) width * height)
+            return null;
+        var owners =
+                candidates.stream()
+                        .sorted(Comparator.comparingDouble(i -> notes.get(i).positionInMeasure()))
+                        .toList();
+        float[] x = new float[owners.size()], y = new float[owners.size()];
+        float left = bar.left() * width, right = bar.right() * width;
+        float gap = (bar.bottom() - bar.top()) * height / 8.2f;
+        if (!Float.isFinite(gap) || gap < 10 || gap > 30) return null;
+        int clef = notes.get(owners.get(0)).clefBottomDiatonic();
+        int reportedExtraRail = 0;
+        var shafts = new ArrayList<PrintedBeamShafts.Shaft>();
+        var budget = new PrintedBeamShafts.Budget(800_000);
+        for (int i = 0; i < owners.size(); i++) {
+            var n = notes.get(owners.get(i));
+            if (n.kind() != ScoreNoteEvent.Kind.PITCHED
+                    || n.staffIndex() != 0
+                    || n.staffCount() != 1
+                    || n.visualSize() != ScoreNoteEvent.VisualSize.FULL
+                    || n.beamCount() < 1
+                    || n.beamCount() > 2
+                    || doubleRail && (n.beamCount() != 2 || n.tupletDivisor() != 1)
+                    || n.augmentationDots() != 0
+                    || n.unbeamedDurationBeats() != 0
+                    || n.crossStaffBeam()
+                    || n.leadingRestBeats() != 0
+                    || n.followingRestBeats() != 0
+                    || n.tiedFromPrevious()
+                    || n.boundaryTies() != 0
+                    || (n.articulations() & NoteOrnament.GRACE) != 0
+                    || clef == ScoreNoteEvent.CLEF_UNKNOWN
+                    || n.clefBottomDiatonic() != clef
+                    || !(n.tupletDivisor() == 1
+                            || n.tupletDivisor() == 3 && n.tupletNormalNotes() == 2)
+                    || Math.abs(n.stemDirection()) != 1) return null;
+            if (!doubleRail && n.beamCount() == 2 && ++reportedExtraRail > 1) return null;
+            x[i] = left + (right - left) * n.positionInMeasure();
+            y[i] = n.pageY() * height;
+            if (i > 0
+                    && (x[i] - x[i - 1] < gap * 1.65f
+                            || x[i] - x[i - 1] > gap * (owners.size() == 6 ? 4f : 3.4f)))
+                return null;
+            var source = PrintedBeamShafts.at(gray, width, height, x[i], y[i], gap, budget);
+            if (source.size() != 1 || source.get(0).direction() != -n.stemDirection()) return null;
+            shafts.add(source.get(0));
+        }
+        for (int i = 0; i + 1 < x.length; i++) {
+            if (WrappedTripletDotInk.uniqueCore(gray, width, height, x[i], y[i], x[i + 1], gap)
+                    != null) return null;
+            var a = shafts.get(i);
+            var b = shafts.get(i + 1);
+            boolean same = a.direction() == b.direction();
+            if (i % groupSize == groupSize - 1) {
+                if (same && bestRibbon(gray, width, height, a, b, gap).coverage() > .46f)
+                    return null;
+                continue;
+            }
+            if (!same) return null;
+            if (!matchesRailCount(gray, width, height, a, b, gap, doubleRail)) return null;
+        }
+        return new WrappedTripletMeasure.Half(owners, x);
     }
 
     private static Ribbon bestRibbon(byte[] gray, int width, int height,

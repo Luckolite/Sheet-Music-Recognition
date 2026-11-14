@@ -45,6 +45,47 @@ public final class InnerBeamShaftEndTest {
         verify("head mask extends outside the beam", false, fixture, outlying);
     }
 
+    @Test
+    public void ledgerEndpointAcceptsOnlyTheSmallMaskOverhang() {
+        byte[] fixture = new byte[WIDTH * HEIGHT];
+        Arrays.fill(fixture, (byte) 255);
+        drawRails(fixture, EARLIER, PREVIOUS, false);
+        drawRails(fixture, PREVIOUS, TERMINAL, true);
+        int[] desired =
+                IntStream.range(109, 127)
+                        .boxed()
+                        .flatMapToInt(x -> IntStream.range(76, 84).map(y -> y * WIDTH + x))
+                        .filter(pixel -> (fixture[pixel] & 255) < 140)
+                        .toArray();
+        int[] smallOverhang = Arrays.copyOf(desired, desired.length + 1);
+        smallOverhang[desired.length] = 81 * WIDTH + TERMINAL[0] + 5;
+        fixture[smallOverhang[desired.length]] = 0;
+        verify("ordinary mask reach unchanged", false, fixture, smallOverhang);
+        assertEquals(
+                "a ledger endpoint allows one extra column",
+                true,
+                InnerBeamShaftEnd.provesLedgerEndpoint(
+                        fixture, WIDTH, GAP, smallOverhang, EARLIER, PREVIOUS, TERMINAL));
+
+        int[] excessive = Arrays.copyOf(smallOverhang, smallOverhang.length + 1);
+        excessive[smallOverhang.length] = smallOverhang[desired.length] + 1;
+        fixture[excessive[smallOverhang.length]] = 0;
+        assertEquals(
+                "two extra columns are outside the endpoint",
+                false,
+                InnerBeamShaftEnd.provesLedgerEndpoint(
+                        fixture, WIDTH, GAP, excessive, EARLIER, PREVIOUS, TERMINAL));
+
+        for (int x = 41; x < 71; x++) {
+            paint(fixture, x, tip(EARLIER, PREVIOUS, x) - 17, 5, 255);
+        }
+        assertEquals(
+                "the additional reach still requires both rails",
+                false,
+                InnerBeamShaftEnd.provesLedgerEndpoint(
+                        fixture, WIDTH, GAP, smallOverhang, EARLIER, PREVIOUS, TERMINAL));
+    }
+
     private static void drawRails(byte[] image, int[] a, int[] b, boolean bridge) {
         for (int x = a[0]; x <= b[0]; x++) {
             int y = tip(a, b, x);

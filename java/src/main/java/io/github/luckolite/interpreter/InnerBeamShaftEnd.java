@@ -8,6 +8,29 @@ final class InnerBeamShaftEnd {
 
     static boolean proves(byte[] raw, int width, float gap, int[] mask,
             int[] earlier, int[] previous, int[] last) {
+        return proves(raw, width, gap, mask, earlier, previous, last, .3f);
+    }
+
+    static boolean provesLedgerEndpoint(
+            byte[] raw,
+            int width,
+            float gap,
+            int[] mask,
+            int[] earlier,
+            int[] previous,
+            int[] last) {
+        return proves(raw, width, gap, mask, earlier, previous, last, .33f);
+    }
+
+    private static boolean proves(
+            byte[] raw,
+            int width,
+            float gap,
+            int[] mask,
+            int[] earlier,
+            int[] previous,
+            int[] last,
+            float rightOverhang) {
         int padding = Math.max(2, Math.round(gap * .34f));
         int radius = Math.max(2, Math.round(gap * .14f));
         int x0 = earlier[0], x1 = previous[0], x2 = last[0];
@@ -20,8 +43,10 @@ final class InnerBeamShaftEnd {
         for (int pixel : mask) {
             int x = pixel % width, y = pixel / width;
             float depth = tip(previous, last, x) - y;
-            if (x < x2 - gap * 1.4f || x > x2 + gap * .3f
-                    || depth < -gap * .10f || depth > gap * 1.35f) return false;
+            if (x < x2 - gap * 1.4f
+                    || x > x2 + gap * rightOverhang
+                    || depth < -gap * .10f
+                    || depth > gap * 1.35f) return false;
             if ((raw[pixel] & 255) < 150) dark++;
         }
         if (dark < mask.length * .93f) return false;

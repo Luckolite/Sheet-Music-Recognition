@@ -1062,6 +1062,17 @@ final class OmrScoreInterpreter {
         var shortDyadEndOwners = new java.util.IdentityHashMap<Component, Boolean>();
         rejectedBeamHeads.addAll(shortDyadBeamEndFragments(
                 labels, gray, annotationGray, width, height, heads, staffs, shortDyadEndOwners));
+        rejectedBeamHeads.addAll(
+                singleLedgerBeamEndHeads(
+                        labels,
+                        gray,
+                        annotationGray,
+                        width,
+                        height,
+                        heads,
+                        staffs,
+                        measures,
+                        closedBeamEndOwners));
         heads.removeAll(rejectedBeamHeads);
         if (gray != null) {
             var last = measures.get(measures.size() - 1);
@@ -24624,6 +24635,86 @@ final class OmrScoreInterpreter {
                 continue;
             rejected.add(fragment);
             for (var owner : terminal) owners.add(owner.head());
+        }
+        return rejected;
+    }
+
+    /** A lower rail mask can borrow a long downstem from a single high-ledger endpoint. */
+    private static List<Component> singleLedgerBeamEndHeads(
+            byte[] labels,
+            byte[] gray,
+            byte[] source,
+            int width,
+            int height,
+            List<Component> heads,
+            List<Staff> staffs,
+            List<MeasureRegion> measures,
+            List<Component> owners) {
+        if (gray == null || source == null) return List.of();
+        var rejected = new ArrayList<Component>();
+        for (var fragment : heads) {
+            var staff = nearestHeadStaff(staffs, fragment.centerY);
+            if (staff == null || staff.count != 1) continue;
+            float gap = staff.gap;
+            float span = fragment.maxX - fragment.minX + 1,
+                    depth = fragment.maxY - fragment.minY + 1;
+            if (gap < 10
+                    || span < gap
+                    || span > gap * 1.22f
+                    || depth < gap * 1.16f
+                    || depth > gap * 1.4f
+                    || fragment.area < gap * gap * .83f
+                    || fragment.area > gap * gap * 1.08f
+                    || filledBeamEndpointCore(gray, width, height, fragment, gap)) continue;
+            int bar =
+                    containingMeasureForStaff(
+                            measures,
+                            fragment.centerX / width,
+                            fragment.centerY / height,
+                            staff,
+                            height);
+            if (bar < 0) continue;
+            var region = measures.get(bar);
+            float toEnd = region.right() * width - fragment.centerX;
+            if (toEnd < gap * 2 || toEnd > gap * 3.4f) continue;
+            var reverse = attachedRawStem(gray, width, height, fragment, gap, 2, 170);
+            if (reverse == null
+                    || reverse[2] != -1
+                    || fragment.centerY - reverse[1] < gap * 4.4f
+                    || reverse[0] < fragment.minX
+                    || reverse[0] > fragment.maxX) continue;
+
+            var witnesses = new ArrayList<TerminalBeamOwner>(3);
+            for (var head : heads) {
+                if (head == fragment
+                        || head.centerX <= reverse[0] - gap * 4.8f
+                        || head.centerX > reverse[0] + gap * .95f
+                        || staff.top - head.centerY < gap * 2.25f
+                        || fragment.centerY - head.centerY > gap * 7
+                        || nearestHeadStaff(staffs, head.centerY) != staff
+                        || !filledBeamEndpointCore(gray, width, height, head, gap)) continue;
+                var shaft = attachedRawStem(gray, width, height, head, gap, 2, 170);
+                if (shaft == null
+                        || shaft[2] != 1
+                        || shaft[1] - head.centerY < gap * 4.2f
+                        || Math.abs(shaft[1] - fragment.centerY) > gap * .7f) continue;
+                witnesses.add(new TerminalBeamOwner(head, shaft));
+            }
+            if (witnesses.size() != 3) continue;
+            witnesses.sort(Comparator.comparingInt(w -> w.stem()[0]));
+            var end = witnesses.get(2);
+            if (Math.abs(reverse[0] - end.stem()[0]) > gap * .15f
+                    || Math.abs(reverse[1] - end.head().centerY) > gap * .4f) continue;
+            var earlier = witnesses.get(0).stem();
+            var previous = witnesses.get(1).stem();
+            int[] mask = completeHeadMembers(labels, width, height, fragment);
+            if (mask == null
+                    || !InnerBeamShaftEnd.provesLedgerEndpoint(
+                            gray, width, gap, mask, earlier, previous, end.stem())
+                    || !InnerBeamShaftEnd.provesLedgerEndpoint(
+                            source, width, gap, mask, earlier, previous, end.stem())) continue;
+            rejected.add(fragment);
+            owners.add(end.head());
         }
         return rejected;
     }
