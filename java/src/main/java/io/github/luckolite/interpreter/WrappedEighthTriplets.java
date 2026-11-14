@@ -10,6 +10,8 @@ import java.util.List;
 final class WrappedEighthTriplets {
     private WrappedEighthTriplets() {}
 
+    private static final class ShaftQuotaExceeded extends RuntimeException {}
+
     private record Ribbon(float coverage, int leftY, int rightY) {}
 
     static WrappedTripletMeasure.Half half(byte[] gray, int width, int height, MeasureRegion bar,
@@ -18,10 +20,15 @@ final class WrappedEighthTriplets {
         return singleRailGroups(gray, width, height, bar, notes, candidates, false);
     }
 
-    /** Four optically distinct eighth-note groups fill a physically closed common-time bar. */
-    static List<ScoreNoteEvent> closeCommonTimeBars(
-            List<ScoreNoteEvent> notes, List<ScoreRestEvent> rests, List<MeasureRegion> regions,
-            List<ScoreMeterChange> meters, byte[] gray, int width, int height) {
+    /** Printed groups of three eighths fill a physically closed bar with a quarter-note beat. */
+    static List<ScoreNoteEvent> closeQuarterBeatBars(
+            List<ScoreNoteEvent> notes,
+            List<ScoreRestEvent> rests,
+            List<MeasureRegion> regions,
+            List<ScoreMeterChange> meters,
+            byte[] gray,
+            int width,
+            int height) {
         if (meters.isEmpty() || notes.isEmpty()) return notes;
         var bars = new ArrayList<List<Integer>>(regions.size());
         for (int i = 0; i < regions.size(); i++) bars.add(new ArrayList<>());
@@ -35,15 +42,20 @@ final class WrappedEighthTriplets {
             while (next < meters.size() && meters.get(next).measureIndex() <= m)
                 meter = meters.get(next++);
             var owners = bars.get(m);
-            if (meter == null || meter.numerator() != 4 || meter.denominator() != 4
-                    || withRests.get(m) || owners.size() != 12
+            if (meter == null
+                    || meter.denominator() != 4
+                    || meter.numerator() != 4 && meter.numerator() != 6
+                    || withRests.get(m)
+                    || owners.size() != 3 * meter.numerator()
                     || owners.stream().map(notes::get).anyMatch(n -> n.beamCount() != 1)
                     || owners.stream().map(notes::get).allMatch(n -> n.tupletDivisor() == 3))
                 continue;
             var bar = regions.get(m);
-            var proof = closedFourGroups(gray, width, height, bar, notes, owners);
-            if (proof == null || !WrappedMeasureBoundaries.confirmsClosed(
-                    gray, width, height, bar, proof.x()[0], proof.x()[11])) continue;
+            var proof = singleRailGroups(gray, width, height, bar, notes, owners, true);
+            if (proof == null
+                    || !WrappedMeasureBoundaries.confirmsClosed(
+                            gray, width, height, bar, proof.x()[0], proof.x()[owners.size() - 1]))
+                continue;
             if (result == notes) result = new ArrayList<>(notes);
             for (int i : owners) {
                 var n = notes.get(i);
@@ -73,6 +85,7 @@ final class WrappedEighthTriplets {
         int reportedExtraRail = 0;
         var shafts = new ArrayList<PrintedBeamShafts.Shaft>();
         var budget = new PrintedBeamShafts.Budget(800_000);
+        PrintedBeamShaftPixels.Frame contrast = null;
         for (int i = 0; i < owners.size(); i++) {
             var n = notes.get(owners.get(i));
             if (n.kind() != ScoreNoteEvent.Kind.PITCHED || n.staffIndex() != 0 || n.staffCount() != 1
@@ -87,8 +100,31 @@ final class WrappedEighthTriplets {
             if (n.beamCount() == 2 && ++reportedExtraRail > 1) return null;
             x[i] = left + (right - left) * n.positionInMeasure();
             y[i] = n.pageY() * height;
-            if (i > 0 && (x[i] - x[i-1] < gap * 1.65f || x[i] - x[i-1] > gap * (closedBar ? 3.85f : 3.4f))) return null;
+            if (i > 0
+                    && (x[i] - x[i - 1] < gap * 1.65f
+                            || x[i] - x[i - 1] > gap * (closedBar ? 3.85f : 3.4f))) return null;
             var source = PrintedBeamShafts.at(gray, width, height, x[i], y[i], gap, budget);
+            if (closedBar && source.isEmpty() && !budget.refused()) {
+                if (contrast == null)
+                    contrast =
+                            new PrintedBeamShaftPixels.Frame(
+                                    gray,
+                                    gray,
+                                    width,
+                                    height,
+                                    0,
+                                    units -> {
+                                        if (!budget.take(units)) throw new ShaftQuotaExceeded();
+                                    },
+                                    true);
+                try {
+                    source =
+                            PrintedBeamShafts.at(
+                                    gray, width, height, x[i], y[i], gap, budget, contrast);
+                } catch (ShaftQuotaExceeded exhausted) {
+                    return null;
+                }
+            }
             if (closedBar && i % 3 == 1 && source.isEmpty() && !budget.refused()) {
                 shafts.add(null);
                 continue;
@@ -96,8 +132,29 @@ final class WrappedEighthTriplets {
             if (source.size() != 1 || source.get(0).direction() != -n.stemDirection()) return null;
             shafts.add(source.get(0));
         }
+        if (x.length == 18) {
+            for (int middle = 1; middle < x.length; middle += 3) {
+                var earlier = shafts.get(middle - 1);
+                var axis = shafts.get(middle);
+                var later = shafts.get(middle + 1);
+                if (earlier == null
+                        || axis == null
+                        || later == null
+                        || axis.pixels() == null
+                        || earlier.direction() != axis.direction()
+                        || later.direction() != axis.direction()) continue;
+                if (singleRail(gray, width, height, earlier, axis, gap)
+                        && singleRail(gray, width, height, axis, later, gap)) continue;
+                var continued = continueMiddleShaft(gray, width, height, earlier, axis, later, gap);
+                if (continued != null) shafts.set(middle, continued);
+            }
+        }
         for (int i = 0; i + 1 < x.length; i++) {
-            if (WrappedTripletDotInk.uniqueCore(gray, width, height, x[i], y[i], x[i+1], gap) != null)
+            var dot =
+                    WrappedTripletDotInk.uniqueCore(gray, width, height, x[i], y[i], x[i + 1], gap);
+            if (dot != null
+                    && (x.length != 18
+                            || !headConnectedLedger(gray, width, height, x[i], y[i], dot, gap)))
                 return null;
             var a = shafts.get(i);
             var b = shafts.get(i+1);
@@ -120,6 +177,124 @@ final class WrappedEighthTriplets {
             if (!same || !singleRail(gray, width, height, a, b, gap)) return null;
         }
         return new WrappedTripletMeasure.Half(owners, x);
+    }
+
+    /** A compact ledger cap can fill the same dark window as an augmentation dot. */
+    private static boolean headConnectedLedger(
+            byte[] gray,
+            int width,
+            int height,
+            float headX,
+            float headY,
+            WrappedTripletDotInk.Center core,
+            float gap) {
+        int left = Math.round(headX - gap), right = Math.round(core.x() + gap * .4f);
+        int top = Math.round(Math.min(core.y(), headY) - gap * .65f);
+        int bottom = Math.round(Math.max(core.y(), headY) + gap * .65f);
+        if (left < 0 || right >= width || top < 0 || bottom >= height) return false;
+        var graph =
+                RawNumeralComponents.capture(
+                        gray, width, height, left, top, right, bottom, 100, () -> {}, () -> {});
+        int radius = Math.max(1, Math.round(gap * .13f));
+        int cx = Math.round(headX), cy = Math.round(headY);
+        int leftLedger = Math.round(headX - gap * .60f);
+        int dark = 0;
+        for (int x = leftLedger; x < cx; x++) {
+            for (int y = core.y() - 2; y <= core.y() + 2; y++) {
+                if ((gray[y * width + x] & 255) > 120) continue;
+                dark++;
+                break;
+            }
+        }
+        if (dark < (cx - leftLedger) * .83f) return false;
+        if (!taperingLedgerTip(gray, width, headX, core, gap)) return false;
+        for (var glyph : graph.components()) {
+            if (core.x() < glyph.left
+                    || core.x() > glyph.right
+                    || core.y() < glyph.top
+                    || core.y() > glyph.bottom
+                    || glyph.left > leftLedger + 1
+                    || glyph.size() < gap * gap * .55f) continue;
+            int center = 0;
+            boolean containsCore = false;
+            for (int i = 0; i < glyph.size(); i++) {
+                int pixel = glyph.pixel(i), x = pixel % width, y = pixel / width;
+                containsCore |= x == core.x() && y == core.y();
+                if (Math.abs(x - cx) <= radius && Math.abs(y - cy) <= radius) center++;
+            }
+            if (containsCore && center >= radius * radius * 4) return true;
+        }
+        return false;
+    }
+
+    private static boolean taperingLedgerTip(
+            byte[] gray, int width, float headX, WrappedTripletDotInk.Center core, float gap) {
+        int prior = Integer.MAX_VALUE;
+        int thinFrom = Math.round(headX + gap * .74f);
+        int right = core.x() + Math.round(gap * .28f);
+        int radius = Math.round(gap * .37f);
+        int thicknessAtCore = 0, occupied = 0;
+        for (int x = thinFrom; x <= right; x++) {
+            int thickness = 0;
+            for (int y = core.y() - radius; y <= core.y() + radius; y++)
+                if ((gray[y * width + x] & 255) < 155) thickness++;
+            if (prior != Integer.MAX_VALUE && thickness > prior + 1) return false;
+            if (x <= core.x() && thickness == 0) return false;
+            if (x == core.x()) thicknessAtCore = thickness;
+            if (x > core.x() && thickness > 0) occupied++;
+            prior = thickness;
+        }
+        return thicknessAtCore <= gap * .35f && occupied >= 2;
+    }
+
+    /** Keep a head-connected middle shaft only if its ink reappears at both flanks' real rail. */
+    private static PrintedBeamShafts.Shaft continueMiddleShaft(
+            byte[] gray,
+            int width,
+            int height,
+            PrintedBeamShafts.Shaft earlier,
+            PrintedBeamShafts.Shaft axis,
+            PrintedBeamShafts.Shaft later,
+            float gap) {
+        int x0 = (earlier.left() + earlier.right()) / 2;
+        int x = (axis.left() + axis.right()) / 2;
+        int x1 = (later.left() + later.right()) / 2;
+        int direction = axis.direction();
+        if (!(x0 < x && x < x1) || !singleRail(gray, width, height, earlier, later, gap))
+            return null;
+        int cap =
+                Math.round(
+                        earlier.endY()
+                                + (later.endY() - earlier.endY()) * (x - x0) / (float) (x1 - x0));
+        int remaining = (cap - axis.endY()) * direction;
+        if (remaining < gap * .75f || remaining > gap * 2.25f) return null;
+        int endpoint = cap - direction * Math.round(gap * .15f);
+        int shoulder = Math.round(gap * .25f);
+        int first = axis.endY() + direction;
+        if (first < 0
+                || first >= height
+                || endpoint < 0
+                || endpoint >= height
+                || axis.left() < 0
+                || axis.right() >= width
+                || x < shoulder
+                || x + shoulder >= width) return null;
+        int missing = 0;
+        for (int y = first; direction * (endpoint - y) >= 0; y += direction) {
+            boolean ink = false;
+            for (int column = axis.left(); column <= axis.right(); column++)
+                ink |= (gray[y * width + column] & 255) < 160;
+            if (!ink && ++missing > 2) return null;
+        }
+        for (int column = x - shoulder; column <= x + shoulder; column++)
+            if ((gray[endpoint * width + column] & 255) >= 155) return null;
+        var revised =
+                new PrintedBeamShafts.Shaft(
+                        axis.left(), axis.right(), axis.startY(), cap, direction, axis.columns());
+        return singleRail(gray, width, height, earlier, revised, gap)
+                        && singleRail(gray, width, height, revised, later, gap)
+                ? revised
+                : null;
     }
 
     private static boolean singleRail(byte[] gray, int width, int height,
