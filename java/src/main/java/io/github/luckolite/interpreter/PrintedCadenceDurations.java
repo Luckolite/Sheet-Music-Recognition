@@ -186,6 +186,8 @@ final class PrintedCadenceDurations {
                     localTop, rails[0], rails[1], staff.index(), staff.count());
             if (completeCadence(gray, width, local, left, right, firstX, lastX, boundary,
                     sameSystem && nextHasMeter, !sameSystem, hasAccidental)) return true;
+            if (quarter && !sameSystem && naturalQuarterDyad(
+                    gray, width, height, left, right, firstX, lastX, local, chord)) return true;
             // The fitted right boundary can end just inside a printed closing double bar.
             if (sameSystem) return false;
             if (!quarter && !provedIsolatedHalfDyad(gray, width, left, local, chord)) return false;
@@ -194,6 +196,53 @@ final class PrintedCadenceDurations {
                     false, true, hasAccidental);
         }
         return false;
+    }
+
+    /** A complete displaced natural can extend left of the usual chord exclusion. */
+    private static boolean naturalQuarterDyad(byte[] gray, int width, int height,
+            float left, float right, double first, double last,
+            PlayingTechniqueDetector.Staff staff, List<ScoreNoteEvent> chord) {
+        if (chord.size() != 2) return false;
+        var a = chord.get(0);
+        var b = chord.get(1);
+        if (a.staffStep() == b.staffStep() || a.stemDirection() == 0
+                || a.stemDirection() != b.stemDirection()) return false;
+        if (b.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_NATURAL) {
+            var other = a;
+            a = b;
+            b = other;
+        }
+        if (a.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_NATURAL
+                || b.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_FROM_KEY) return false;
+        float gap = staff.gap();
+        if (boundaryColumn(gray, width, staff, left - gap * .53f, true, false) < 0)
+            return false;
+        int end = boundaryColumn(gray, width, staff, right, false, true);
+        float edge = right;
+        if (end < 0) {
+            edge = right + gap * .25f;
+            end = boundaryColumn(gray, width, staff, edge, false, true);
+        }
+        if (end < 0) return false;
+        int outermost = -1, innermost = -1;
+        int limit = Math.round(Math.min(edge, end + gap * .45f) - gap * .75f);
+        for (int x = Math.round(left + gap * .75f); x < limit; x++) {
+            if (x >= first - gap * 1.5f && x <= last + gap * 1.2f) continue;
+            int ink = 0;
+            for (int y = Math.round(staff.top()); y <= Math.round(staff.bottom()); y++)
+                if (betweenRules(y, staff) && (gray[y * width + x] & 255) < 155) ink++;
+            if (ink < gap * .55f) continue;
+            if (x < first - gap * 2.1f || x >= first - gap * 1.5f
+                    || innermost >= 0 && x > innermost + 1) return false;
+            if (outermost < 0) outermost = x;
+            innermost = x;
+        }
+        if (outermost < 0 || innermost - outermost > gap * .52f) return false;
+        // Read both natural spines and connectors, never just the blocking dark columns.
+        int from = outermost - Math.max(1, Math.round(gap * .08f));
+        int to = Math.min(Math.round((float) first - gap * .95f), innermost + Math.round(gap * .45f));
+        return OmrScoreInterpreter.provesNaturalMeterInk(gray, width, height,
+                from, to, a.pageY() * height, gap, Math.round(staff.top()));
     }
 
     private static boolean provedIsolatedHalfDyad(
