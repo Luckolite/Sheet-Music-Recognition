@@ -2841,6 +2841,8 @@ final class OmrScoreInterpreter {
                         rawCourtesy);
         List<Component> resolvedHeads =
                 joined.stream().map(n -> n.head).collect(java.util.stream.Collectors.toList());
+        rests = RestCompetingGlyphs.remove(
+                rests, result, measures, labels, gray, annotationGray, width, height);
         List<ScoreNoteEvent> withRests = new ArrayList<>();
         for (DetectedNote note : joined) {
             ScoreNoteEvent event = note.event;

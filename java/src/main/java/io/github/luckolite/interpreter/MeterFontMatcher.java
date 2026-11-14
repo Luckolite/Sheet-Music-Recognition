@@ -98,14 +98,7 @@ public final class MeterFontMatcher {
             int measure = MeterChangeDetector.followingMeasure(crop, width, height, measures);
             if (!MeterChangeDetector.precedesNotes(crop, labels, gray, width, height, measure, measures, notes))
                 continue;
-            var matcher = Bundled.MATCHER;
-            if (matcher == null) break;
-            var font = readCrop(matcher, gray, width, crop, crop.firstLine(), crop.gap());
-            if (font.text().isBlank()) {
-                var refined = MeterCropStaff.refine(gray, width, height, crop);
-                if (!refined.equals(crop))
-                    font = readCrop(matcher, gray, width, refined, refined.firstLine(), refined.gap());
-            }
+            var font = readCrop(gray, width, height, crop);
             String supported = MusicalOcrEvidence.fontMeter(
                     font.text(), font.topScore(), font.bottomScore(), Set.of(), Set.of());
             if (supported.isBlank()) continue;
@@ -115,6 +108,16 @@ public final class MeterFontMatcher {
         }
         return choices.values().stream().filter(readings -> readings.size() == 1)
                 .flatMap(Set::stream).toList();
+    }
+
+    static Reading readCrop(byte[] gray, int width, int height, MeterChangeDetector.Crop crop) {
+        var matcher = Bundled.MATCHER;
+        if (matcher == null) return new Reading("", 0, 0);
+        var font = readCrop(matcher, gray, width, crop, crop.firstLine(), crop.gap());
+        if (!font.text().isBlank()) return font;
+        var refined = MeterCropStaff.refine(gray, width, height, crop);
+        return refined.equals(crop) ? font
+                : readCrop(matcher, gray, width, refined, refined.firstLine(), refined.gap());
     }
 
     private static Reading readCrop(MeterFontMatcher matcher, byte[] gray, int width,

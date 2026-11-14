@@ -382,6 +382,44 @@ def emit_rest_gap(measure, start, end, voice, symbols, literal_edges=()):
             emit_note(measure, duration, voice, fragment_end=cursor, rest_symbols=symbols)
 
 
+def _join_printed_measures(bars, continuations, full_rests, rest_groups):
+    """Project verified system fragments after resolving their physical source anchors."""
+    full = {rest['barIndex'] for rest in full_rests}
+    for group in rest_groups:
+        full.update(range(group['firstBar'], group['firstBar'] + group['measureCount']))
+    projected, physical_to_output = [], []
+    for i, bar in enumerate(bars):
+        if i not in continuations:
+            projected.append(bar)
+        else:
+            first = projected[-1]
+            if (i - 1 in full or i in full or bar['resetTempo']
+                    or first['meter'] != bar['meter'] or first['key'] != bar['key']):
+                raise ValueError('MusicXML system continuation changes the written measure context')
+            length = first['length'] + bar['length']
+            if length > ticks(first['meter'][0] * 4 / first['meter'][1]):
+                raise ValueError('MusicXML system continuation exceeds the written meter')
+
+            def tempo_at(tempo, physical):
+                if '_writtenBarOffset' in tempo:
+                    return tempo
+                source_onset = tempo['_sourceTempoOnset']
+                onset = (ticks(source_onset) if source_onset is not None
+                         else round(physical['length'] * tempo['positionInMeasure']))
+                return dict(tempo, _writtenBarOffset=physical['start'] - first['start'] + onset)
+
+            projected[-1] = dict(first, length=length, tempos=[
+                *(tempo_at(tempo, first) for tempo in first['tempos']),
+                *(tempo_at(tempo, bar) for tempo in bar['tempos']),
+            ])
+        physical_to_output.append(len(projected) - 1)
+    for rest in full_rests:
+        rest['barIndex'] = physical_to_output[rest['barIndex']]
+    for group in rest_groups:
+        group['firstBar'] = physical_to_output[group['firstBar']]
+    return projected, physical_to_output
+
+
 def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
     """Write uncompressed .musicxml; each decoded staff becomes a concert-pitch part.
 
@@ -429,6 +467,7 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
     parenthesis_level_ends = [float("-inf")] * 17
     printed_rest_groups = []
     printed_triplets = []
+    continuations = set()
     octave_owned = {}
     offset = 0
     current_meter, current_key = meter, key_fifths
@@ -436,6 +475,18 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
         score = page['score']
         local_start = 0
         first_bar = len(bars)
+        continuation_rows = page.get('printedMeasureContinuations', [])
+        if not isinstance(continuation_rows, list) or any(
+                type(i) is not int or not 1 <= i < len(page['measureBeats'])
+                for i in continuation_rows) or len(set(continuation_rows)) != len(continuation_rows):
+            raise ValueError('Invalid MusicXML system continuation index')
+        if continuation_rows:
+            regions = score.get('measures', [])
+            if (len(regions) != len(page['measureBeats'])
+                    or any(not 0 <= regions[i-1].get('bottom', -1)
+                           < regions[i].get('top', -1) <= 1 for i in continuation_rows)):
+                raise ValueError('MusicXML system continuation requires successive systems')
+            continuations.update(first_bar + i for i in continuation_rows)
         from . import multi_rest_wire
         for group in multi_rest_wire.checked_score(score):
             printed_rest_groups.append(dict(group, firstBar=first_bar+group['firstMeasureIndex']))
@@ -733,6 +784,11 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
         offset += local_start
     if not bars:
         raise ValueError('No interpreted measures to export')
+    physical_bars = bars
+    physical_to_output = list(range(len(bars)))
+    if continuations:
+        bars, physical_to_output = _join_printed_measures(
+            bars, continuations, full_rests, printed_rest_groups)
     from .sudden_dynamic import combine as combine_sudden_dynamics
     expressions = combine_sudden_dynamics(expressions)
     root = ET.Element('score-partwise', version='4.0')
@@ -744,7 +800,8 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
     part_list = element(root, 'part-list')
     bar_starts = [bar['start'] for bar in bars]
     bar_ends = [bar['start'] + bar['length'] for bar in bars]
-    bar_indexes = {start: index for index, start in enumerate(bar_starts)}
+    bar_indexes = {bar['start']: physical_to_output[index]
+                   for index, bar in enumerate(physical_bars)}
 
     def direction_bar(tick, allow_final=False):
         index = bisect_right(bar_starts, tick) - 1
@@ -909,8 +966,9 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
             key = first['voice'], first['measureIndex']
             if type(key[1]) is not int or not 0 <= key[1] < page_bar_count:
                 continue
-            bar_index = first_bar + key[1]
-            bar = bars[bar_index]
+            physical_bar_index = first_bar + key[1]
+            bar = physical_bars[physical_bar_index]
+            bar_index = physical_to_output[physical_bar_index]
             cursor = first['start']
             if not bar['start'] <= cursor < bar['start'] + bar['length']:
                 continue
@@ -969,7 +1027,8 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
             for group in rest_groups_by_bar.get(index, ()):
                 element(element(attributes, 'measure-style'), 'multiple-rest', group['measureCount'])
             tempos = list(bar['tempos'])
-            if (index == 0 or bar['resetTempo']) and not any(t['positionInMeasure'] == 0 for t in tempos):
+            if (index == 0 or bar['resetTempo']) and not any(
+                    t.get('_writtenBarOffset', t['positionInMeasure']) == 0 for t in tempos):
                 tempos.insert(0, dict(bpm=bpm, positionInMeasure=0))
             for tempo in tempos:
                 unit, dots, marked_bpm = tempo_mark(tempo)
@@ -980,7 +1039,10 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
                     element(metronome, 'beat-unit-dot')
                 element(metronome, 'per-minute', format(Decimal(str(marked_bpm)).normalize(), 'f'))
                 source_onset = tempo.get('_sourceTempoOnset')
-                tempo_offset = ticks(source_onset) if source_onset is not None else round(bar['length']*tempo['positionInMeasure'])
+                tempo_offset = tempo.get('_writtenBarOffset')
+                if tempo_offset is None:
+                    tempo_offset = (ticks(source_onset) if source_onset is not None
+                                    else round(bar['length'] * tempo['positionInMeasure']))
                 element(direction, 'offset', tempo_offset, sound='yes')
                 element(direction, 'sound', tempo=str(tempo['bpm']))
             a, b = bar['start'], bar['start']+bar['length']

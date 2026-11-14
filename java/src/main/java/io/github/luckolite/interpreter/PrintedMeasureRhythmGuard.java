@@ -55,6 +55,7 @@ final class PrintedMeasureRhythmGuard {
     private static List<MeasureRegion> appendTerminalQuarter(
             List<MeasureRegion> fitted, byte[] labels, byte[] gray, int width, int height) {
         if (gray == null || fitted.isEmpty()) return fitted;
+        fitted = SystemHalfDyadCadence.recover(fitted, labels, gray, width, height);
         fitted = SystemQuarterCadence.recover(fitted, labels, gray, width, height);
         int last = fitted.size() - 1;
         var cadence = terminalCadence(fitted.get(last), labels, gray, width, height, true);

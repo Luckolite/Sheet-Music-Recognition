@@ -263,9 +263,11 @@ public final class SheetInterpreter {
         score =
                 RecognizedMultiRestProjection.apply(
                         score, measures, labels, gray, width, height, recognizedRests);
+        var noteOwners = MeterNumeralWholeNoteAlias.remove(
+                score.notes(), measures, labels, gray, annotationGray, width, height);
         var rhythm =
                 TripletRhythmDetector.withRests(
-                        score.notes(), score.rests(), measures, gray, width, height);
+                        noteOwners, score.rests(), measures, gray, width, height);
         var notes = rhythm.notes();
         var staffs =
                 ScoreDynamicsDetector.alignStaffs(
@@ -632,6 +634,8 @@ public final class SheetInterpreter {
         finalInterpretation =
                 PrintedPassOmission.apply(
                         finalInterpretation, words, staffs, gray, width, height, physicalPage);
+        finalInterpretation =
+                PrintedDottedTripletBar.apply(finalInterpretation, null, gray, width, height);
         finalInterpretation =
                 finalInterpretation.withClockContextSource(
                         ScoreClockContextCapture.capture(

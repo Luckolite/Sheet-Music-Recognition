@@ -14,11 +14,17 @@ final class PrintedCadenceDurations {
         if (score.notes().isEmpty()) return score;
         var staffs = OmrScoreInterpreter.techniqueStaffs(labels, gray, width, height, score.measures());
         score = terminalHarmonicQuarter(score, labels, gray, width, height, staffs);
-        return capture(score, gray, width, height, staffs);
+        return capture(score, labels, gray, width, height, staffs);
     }
 
     static ScorePageInterpretation capture(
             ScorePageInterpretation score, byte[] gray, int width, int height,
+            List<PlayingTechniqueDetector.Staff> staffs) {
+        return capture(score, null, gray, width, height, staffs);
+    }
+
+    private static ScorePageInterpretation capture(
+            ScorePageInterpretation score, byte[] labels, byte[] gray, int width, int height,
             List<PlayingTechniqueDetector.Staff> staffs) {
         int count = score.measures().size();
         var notes = new ArrayList<List<ScoreNoteEvent>>(count);
@@ -42,7 +48,9 @@ final class PrintedCadenceDurations {
             var next = i + 1 < count ? score.measures().get(i + 1) : null;
             if (!proved(gray, width, height, measure, next, staffs, chord,
                     next != null && meter[i + 1])
-                    && !expandedTerminalDyad(gray, width, height, measure, next, chord)) continue;
+                    && !expandedTerminalDyad(gray, width, height, measure, next, chord)
+                    && !PrintedQuarterDyadAccidentals.proves(
+                            labels, gray, width, height, measure, next, chord, staffs)) continue;
             regions.set(i, new MeasureRegion(measure.left(), measure.right(), measure.top(),
                     measure.bottom(), (int) duration));
             changed = true;
@@ -313,7 +321,7 @@ final class PrintedCadenceDurations {
                 Math.min(right, stroke + staff.gap() * .45f), first, last, hasAccidental);
     }
 
-    private static boolean emptyOutsideChord(
+    static boolean emptyOutsideChord(
             byte[] gray, int width, PlayingTechniqueDetector.Staff staff,
             float left, float right, double first, double last, boolean hasAccidental) {
         float gap = staff.gap();

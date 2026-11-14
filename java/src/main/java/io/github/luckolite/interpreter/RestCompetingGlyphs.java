@@ -1,0 +1,129 @@
+// Copyright 2026 Luckolite
+// SPDX-License-Identifier: Apache-2.0
+package io.github.luckolite.interpreter;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Comparator;
+import java.util.List;
+
+/** Remove literal rest aliases only when a printed header or two accidental owners prove the ink. */
+final class RestCompetingGlyphs {
+    private RestCompetingGlyphs() {}
+
+    static List<ScoreRestEvent> remove(List<ScoreRestEvent> rests, List<ScoreNoteEvent> notes,
+            List<MeasureRegion> measures, byte[] labels, byte[] gray, byte[] source, int width, int height) {
+        if (rests.isEmpty() || gray == null || source == null || labels.length != gray.length
+                || gray.length != source.length || gray.length != (long) width * height) return rests;
+        var kept = new ArrayList<ScoreRestEvent>(rests.size());
+        List<MeterChangeDetector.Crop> headers = null;
+        for (var rest : rests) {
+            if (rest.staffCount() != 1 || rest.staffIndex() != 0 || rest.isFullMeasure()) {
+                kept.add(rest);
+                continue;
+            }
+            int bar = rest.measureIndex();
+            boolean atOpening = bar == 0 || measures.get(bar).top() > measures.get(bar - 1).bottom();
+            if (rest.durationBeats() == 1 && atOpening && rest.positionInMeasure() < .14f) {
+                if (headers == null) headers = MeterChangeDetector.candidates(labels, gray, width, height);
+                if (meterOwns(rest, notes, measures, headers, labels, gray, source, width, height))
+                    continue;
+            }
+            if (rest.durationBeats() == .125 && accidentalsOwn(
+                    rest, notes, measures.get(bar), labels, gray, source, width, height)) continue;
+            kept.add(rest);
+        }
+        return kept.size() == rests.size() ? rests : List.copyOf(kept);
+    }
+
+    private static boolean meterOwns(ScoreRestEvent rest, List<ScoreNoteEvent> notes,
+            List<MeasureRegion> measures, List<MeterChangeDetector.Crop> headers,
+            byte[] labels, byte[] gray, byte[] source, int width, int height) {
+        int bar = rest.measureIndex();
+        float x = x(measures.get(bar), rest.positionInMeasure(), width), y = rest.pageY() * height;
+        float halfHeight = rest.pageHeight() * height * .5f;
+        for (var crop : headers) {
+            float middle = (crop.left() + crop.right()) * .5f, gap = crop.gap();
+            if (Math.abs(x - middle) > gap * .3f || y-halfHeight < crop.top()
+                    || y+halfHeight > crop.bottom()
+                    || MeterChangeDetector.followingMeasure(crop, width, height, measures) != bar
+                    || !MeterChangeDetector.precedesNotes(crop, labels, gray, width, height, bar, measures, notes))
+                continue;
+            var a = MeterFontMatcher.readCrop(gray, width, height, crop);
+            var b = MeterFontMatcher.readCrop(source, width, height, crop);
+            if (!a.text().isBlank() && a.text().equals(b.text())
+                    && Math.min(Math.min(a.topScore(), a.bottomScore()),
+                            Math.min(b.topScore(), b.bottomScore())) >= .84f) return true;
+        }
+        return false;
+    }
+
+    private static boolean accidentalsOwn(ScoreRestEvent rest, List<ScoreNoteEvent> notes,
+            MeasureRegion region, byte[] labels, byte[] gray, byte[] source, int width, int height) {
+        float rx = x(region, rest.positionInMeasure(), width), ry = rest.pageY() * height;
+        float gap = (region.bottom() - region.top()) * height / 8.2f;
+        if (gap < 6 || gap > 32 || rest.pageHeight()*height < gap * 3.4f
+                || rest.pageHeight()*height > gap * 4.9f) return false;
+        float neighborhood = gap * 3;
+        var row = notes.stream().filter(n -> n.measureIndex() == rest.measureIndex()
+                && Math.abs(x(region, n.positionInMeasure(), width)-rx) < neighborhood)
+                .sorted(Comparator.comparingDouble(ScoreNoteEvent::pageY)).toList();
+        var before = row.stream().filter(n->n.positionInMeasure()<rest.positionInMeasure()).toList();
+        var after = row.stream().filter(n->n.positionInMeasure()>rest.positionInMeasure()).toList();
+        if (before.size() != 2 || after.size() != 2) return false;
+        int stem = before.get(0).stemDirection();
+        if (stem == 0 || row.stream().anyMatch(n->n.staffCount()!=1 || n.staffIndex()!=0
+                || n.beamCount()!=2 || n.stemDirection()!=stem || n.augmentationDots()!=0
+                || n.tupletDivisor()!=1 || n.crossStaffBeam())) return false;
+        float ax = x(region,after.get(0).positionInMeasure(),width);
+        if (ax-rx < gap*1.2f || ax-rx > gap*2.25f
+                || Math.abs(ax-x(region,after.get(1).positionInMeasure(),width))>gap*.25f
+                || Math.abs(x(region,before.get(0).positionInMeasure(),width)
+                        -x(region,before.get(1).positionInMeasure(),width))>gap*.25f) return false;
+        float firstY=after.get(0).pageY()*height, secondY=after.get(1).pageY()*height;
+        if (secondY-firstY<gap*2 || secondY-firstY>gap*3.2f || ry<firstY || ry>secondY)
+            return false;
+
+        var rails = PrintedDirectionStaff.printedRules(gray,width,height,rx,
+                region.bottom()*height-2.1f*gap,gap);
+        if (rails==null) return false;
+        gap=rails[1];
+        int staffTop=Math.round(rails[0]-4*gap);
+        for(byte[] raster: new byte[][]{gray,source}) {
+            for(int i=0;i<2;i++) {
+                var a=before.get(i); var b=after.get(i);
+                if(!PrintedTupletBeamOwner.connectedHeads(raster,width,height,
+                        x(region,a.positionInMeasure(),width),a.pageY()*height,
+                        x(region,b.positionInMeasure(),width),b.pageY()*height,gap,stem)) return false;
+            }
+            if (!naturalPair(labels,raster,width,height,rx,firstY,secondY,gap,staffTop)) return false;
+        }
+        return true;
+    }
+
+    private static boolean naturalPair(byte[] labels,byte[] gray,int width,int height,
+            float rx,float first,float second,float gap,int staffTop) {
+        int left=Math.max(0,Math.round(rx-gap*.75f)), right=Math.min(width-1,Math.round(rx+gap*.78f));
+        int top=Math.max(0,Math.round(first-gap*2.30f)), bottom=Math.min(height-1,Math.round(second+gap*2.30f));
+        int w=right-left+1,h=bottom-top+1;
+        byte[] local=new byte[w*h]; Arrays.fill(local,(byte)255);
+        for(int y=0;y<h;y++) for(int x=0;x<w;x++) {
+            int at=(top+y)*width+left+x;
+            if(labels[at]==OmrMeasurePostProcessor.CLEF_OR_KEY && (gray[at]&255)<155) local[y*w+x]=0;
+        }
+        return natural(local,w,h,first-top-gap*.25f,gap,staffTop-top)
+                && natural(local,w,h,second-top+gap*.25f,gap,staffTop-top);
+    }
+
+    private static boolean natural(byte[] local,int w,int h,float center,float gap,int staffTop) {
+        for(int l=0;l<w;l++)
+            for(int r=l+Math.round(gap*.55f);r<Math.min(w,l+Math.round(gap*1.12f));r++)
+                if(OmrScoreInterpreter.provesNaturalMeterInk(local,w,h,l,r,center,gap,staffTop))
+                    return true;
+        return false;
+    }
+
+    private static float x(MeasureRegion m,float position,int width) {
+        return (m.left()+position*(m.right()-m.left()))*width;
+    }
+}
