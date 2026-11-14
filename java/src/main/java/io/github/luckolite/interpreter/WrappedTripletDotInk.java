@@ -64,6 +64,52 @@ final class WrappedTripletDotInk {
         return best;
     }
 
+    /** A staff/slur crossing can compact the foot of the first of two printed flats.
+     * Require the same pair of spines, clear middle, and tapering right-facing bowls. */
+    static boolean pairedFlatOwns(byte[] gray, int width, int height, Center dot, float gap) {
+        int x = dot.x(), y = dot.y();
+        int top = y - Math.round(gap * 1.75f),
+                taper = y + Math.round(gap * .15f),
+                middle = y - Math.round(gap * .42f);
+        int spineRadius = Math.round(gap * .17f);
+        if (x - spineRadius < 0
+                || x + Math.round(gap * 2.1f) >= width
+                || top < 0
+                || taper + 1 >= height) return false;
+        for (int left = x - spineRadius; left <= x; left++) {
+            if (!flatSpine(gray, width, left, top, y)) continue;
+            for (int right = left + Math.round(gap * .98f);
+                    right <= left + Math.round(gap * 1.18f);
+                    right++) {
+                if (!flatSpine(gray, width, right, top, y)
+                        || !flatBowl(gray, width, left, middle, taper, gap)
+                        || !flatBowl(gray, width, right, middle, taper, gap)) continue;
+                int from = y - Math.round(gap * 1.05f), to = y - Math.round(gap * .28f);
+                int space = right - Math.round(gap * .21f), clear = 0;
+                for (int row = from; row <= to; row++)
+                    if (count(gray, width, space, right - 1, row, row, 155)
+                            <= (right - space) * .4f) clear++;
+                if (clear < (to - from + 1) * .7f) continue;
+                if (count(gray, width, left, x, y, y, 155) == x - left + 1) return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean flatSpine(byte[] gray, int width, int x, int top, int bottom) {
+        return count(gray, width, x, x + 1, top, bottom, 155) >= 2 * (bottom - top + 1) * .96f;
+    }
+
+    private static boolean flatBowl(
+            byte[] gray, int width, int x, int middle, int taper, float gap) {
+        int bowlLeft = x + Math.round(gap * .48f), bowlRight = x + Math.round(gap * .74f) - 1;
+        if (count(gray, width, bowlLeft, bowlRight, middle - 5, middle - 2, 155)
+                < (bowlRight - bowlLeft + 1) * 4 * .55f) return false;
+        int tailLeft = x + Math.round(gap * .31f), tailRight = x + Math.round(gap * .79f) - 1;
+        return count(gray, width, tailLeft, tailRight, taper - 1, taper + 1, 155)
+                <= (tailRight - tailLeft + 1) * 3 * .10f;
+    }
+
     // A vertical contact must meet a short staff/ledger rail on both sides of the dot.
     private static boolean ruleBeside(byte[] gray, int width, int x, int y, float gap, int direction) {
         int far = Math.round(gap * .68f), near = Math.round(gap * .37f);

@@ -59,9 +59,93 @@ public class ClosedEighthTripletBarsTest {
         assertSame(notes, infer(4));
     }
 
+    @Test
+    public void sixGroupsFillSixQuarterBarAndKeepRealDots() {
+        int width = 740, height = 230;
+        var pixels = new byte[width * height];
+        Arrays.fill(pixels, (byte) 255);
+        var region =
+                List.of(new MeasureRegion(40f / width, 640f / width, 46f / height, 177f / height));
+        for (int y = 80; y <= 144; y += 16) ink(pixels, width, 40, 640, y, y + 1, 0);
+        ink(pixels, width, 40, 42, 80, 144, 0);
+        ink(pixels, width, 639, 641, 80, 144, 0);
+        var eighteen = new ArrayList<ScoreNoteEvent>();
+        for (int slot = 0; slot < 18; slot++) {
+            int x = 67 + slot * 32, stem = slot / 3 % 2 == 0 ? 1 : -1;
+            int y = stem > 0 ? 112 + 8 * (slot % 3) : 112 - 8 * (slot % 3);
+
+            int tip = stem > 0 ? 60 : 162;
+            int shaft = x + stem * 9;
+            ink(pixels, width, x - 5, x + 5, y - 4, y + 4, 0);
+            ink(pixels, width, shaft - 1, shaft + 1, Math.min(tip, y), Math.max(tip, y), 0);
+            if (slot % 3 == 0) ink(pixels, width, shaft, shaft + 65, tip - 3, tip + 3, 0);
+            eighteen.add(
+                    new ScoreNoteEvent(
+                            0,
+                            (x - 40) / 600f,
+                            (144 - y) / 8,
+                            0,
+                            1,
+                            y / (float) height,
+                            false,
+                            0,
+                            1,
+                            2,
+                            0,
+                            1,
+                            0,
+                            0,
+                            30,
+                            false,
+                            0,
+                            false,
+                            0,
+                            0,
+                            1,
+                            stem,
+                            ScoreNoteEvent.Kind.PITCHED,
+                            ScoreNoteEvent.VisualSize.FULL,
+                            0,
+                            null));
+        }
+        // A short ruled tip tapers from the actual first head.
+        ink(pixels, width, 55, 80, 109, 113, 0);
+        ink(pixels, width, 81, 84, 109, 112, 0);
+        ink(pixels, width, 85, 86, 110, 111, 0);
+        var sixFour = List.of(new ScoreMeterChange(0, 6, 4));
+        var result =
+                WrappedEighthTriplets.closeQuarterBeatBars(
+                        eighteen, List.of(), region, sixFour, pixels, width, height);
+        assertEquals(18, result.stream().filter(n -> n.tupletDivisor() == 3).count());
+
+        var separated = pixels.clone();
+        ink(separated, width, 116, 120, 117, 121, 0);
+        assertSame(
+                eighteen,
+                WrappedEighthTriplets.closeQuarterBeatBars(
+                        eighteen, List.of(), region, sixFour, separated, width, height));
+        var attached = pixels.clone();
+        ink(attached, width, 79, 85, 106, 116, 0);
+        assertSame(
+                eighteen,
+                WrappedEighthTriplets.closeQuarterBeatBars(
+                        eighteen, List.of(), region, sixFour, attached, width, height));
+    }
+
+    private static void ink(byte[] image, int width, int x0, int x1, int y0, int y1, int value) {
+        for (int y = y0; y <= y1; y++)
+            Arrays.fill(image, y * width + x0, y * width + x1 + 1, (byte) value);
+    }
+
     private List<ScoreNoteEvent> infer(int numerator) {
-        return WrappedEighthTriplets.closeCommonTimeBars(notes, List.of(), bars,
-                List.of(new ScoreMeterChange(0, numerator, 4)), gray, WIDTH, HEIGHT);
+        return WrappedEighthTriplets.closeQuarterBeatBars(
+                notes,
+                List.of(),
+                bars,
+                List.of(new ScoreMeterChange(0, numerator, 4)),
+                gray,
+                WIDTH,
+                HEIGHT);
     }
 
     private void fill(int x0, int x1, int y0, int y1, int value) {

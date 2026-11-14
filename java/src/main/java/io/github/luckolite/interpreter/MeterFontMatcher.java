@@ -112,6 +112,14 @@ public final class MeterFontMatcher {
                                 trimmed, labels, gray, width, height, measure, measures, notes))
                     supported = supportedMeter(readCrop(gray, width, height, trimmed));
             }
+            if (supported.isBlank() && !choices.containsKey(measure)) {
+                var cropped =
+                        TerminalTripleMeter.crop(
+                                crop, labels, gray, width, height, measure, measures, notes);
+                if (cropped != null
+                        && "3/4".equals(supportedMeter(readCrop(gray, width, height, cropped))))
+                    supported = "3/4";
+            }
             if (supported.isBlank()) continue;
             String[] digits = supported.split("/");
             var reading = new ScoreMeterChange(measure, Integer.parseInt(digits[0]), Integer.parseInt(digits[1]));

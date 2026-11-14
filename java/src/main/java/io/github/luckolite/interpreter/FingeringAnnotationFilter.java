@@ -20,6 +20,9 @@ final class FingeringAnnotationFilter {
     private static final Pattern FINGERS_AND_SEGUE =
             Pattern.compile("(?:[1-5]\\s+){4,8}segue[.]?", Pattern.CASE_INSENSITIVE);
 
+    private static final Pattern SHORT_FINGERING_CAPTION =
+            Pattern.compile("[1-5](?:\\s+[1-5]){2}\\s+segue[.]?", Pattern.CASE_INSENSITIVE);
+
     private FingeringAnnotationFilter() {}
 
     private record Candidate(
@@ -44,6 +47,8 @@ final class FingeringAnnotationFilter {
                 || gray.length != (long) width * height) return notes;
         notes = annotatedSingleLines(words, staffs, measures, notes, gray, width, height);
         notes = separatedFingeringCaptions(words, staffs, measures, notes, gray, width, height);
+        notes = shortFingeringCaptions(words, staffs, measures, notes, gray, width, height);
+        notes = overlappingFingeringCaptions(words, staffs, measures, notes, gray, width, height);
         notes = isolatedParentheticalSixteenths(words, staffs, measures, notes, gray, width, height);
         List<Candidate> candidates = null;
         var result = new ArrayList<ScoreNoteEvent>(notes.size());
@@ -201,13 +206,117 @@ final class FingeringAnnotationFilter {
         return notes.stream().filter(n -> !discard.contains(n)).toList();
     }
 
+    /** A merged OCR record retains the caption, including an ink lobe read as a whole note. */
+    private static List<ScoreNoteEvent> shortFingeringCaptions(
+            List<PlayingTechniqueDetector.Word> words, List<PlayingTechniqueDetector.Staff> staffs,
+            List<MeasureRegion> measures, List<ScoreNoteEvent> notes, byte[] gray, int width, int height) {
+        List<ScoreNoteEvent> output = null;
+        for (var caption : words) {
+            if (caption.text() == null || !SHORT_FINGERING_CAPTION.matcher(caption.text().strip()).matches())
+                continue;
+            int measure = uniqueCaptionMeasure(measures, caption, caption, (caption.top() + caption.bottom()) * .5f);
+            if (measure < 0) continue;
+            var region = measures.get(measure);
+            var local = notes.stream().filter(n -> n.measureIndex() == measure).toList();
+            if (local.size() != 13) continue;
+            var alias = local.stream().filter(n -> captionHead(n) && n.unbeamedDurationBeats() == 4
+                    && n.staffStep() == -1).findFirst().orElse(null);
+            if (alias == null) continue;
+            var music = local.stream().filter(n -> n != alias)
+                    .sorted(Comparator.comparingDouble(ScoreNoteEvent::positionInMeasure)).toList();
+            if (music.stream().anyMatch(n -> n.stemDirection() != -1)) continue;
+            int firstTriplet = tripletRunStart(music);
+            if (firstTriplet == -2) continue;
+            var corrected = music.stream()
+                    .map(n -> n.tupletDivisor() == 3 ? n.withTupletRatio(1, 1) : n).toList();
+            for (var staff : staffs) {
+                float gap = staff.gap();
+                if (staff.index() != 0 || staff.count() != 1 || staff.top() < region.top() * height
+                        || staff.bottom() > region.bottom() * height || gap < 10 || gap > 25
+                        || caption.top() * height < staff.bottom() - gap
+                        || caption.top() * height > staff.bottom()
+                        || caption.bottom() * height < staff.bottom() + gap
+                        || caption.bottom() * height > staff.bottom() + gap * 2.6f
+                        || !shortCaptionInitialInk(alias, region, staff, caption, gray, width, height))
+                    continue;
+                if (!closedCaptionSixteenths(
+                        corrected, region, staff, gray, width, height, 3.55f, true)) continue;
+                if (output == null) output = new ArrayList<>(notes);
+                if (firstTriplet >= 0)
+                    for (int i = firstTriplet; i < firstTriplet + 3; i++)
+                        output.set(notes.indexOf(music.get(i)), corrected.get(i));
+                output.set(notes.indexOf(alias), null);
+                break;
+            }
+        }
+        return output == null ? notes : output.stream().filter(Objects::nonNull).toList();
+    }
+
+    /** Returns the one contiguous soft 3:2 run, no run, or an incompatible timing pattern. */
+    private static int tripletRunStart(List<ScoreNoteEvent> notes) {
+        int first = -1, count = 0;
+        for (int i = 0; i < notes.size(); i++) {
+            var note = notes.get(i);
+            if (note.tupletDivisor() == 1 && note.tupletNormalNotes() == 1) continue;
+            if (note.tupletDivisor() != 3 || note.tupletNormalNotes() != 2) return -2;
+            if (first < 0) first = i;
+            if (i != first + count) return -2;
+            count++;
+        }
+        return count == 0 || count == 3 ? first : -2;
+    }
+
+    private static boolean shortCaptionInitialInk(ScoreNoteEvent alias, MeasureRegion region,
+            PlayingTechniqueDetector.Staff staff, PlayingTechniqueDetector.Word caption,
+            byte[] gray, int width, int height) {
+        if (!insideInk(alias, region, staff, List.of(caption), gray, width, height)) return false;
+        float gap = staff.gap();
+        int left = Math.round(caption.left() * width), right = Math.round(caption.right() * width);
+        if (left < 0 || right > width || right - left < gap * 10 || right - left > gap * 17) return false;
+        int top = Math.round(staff.bottom() + .22f * gap);
+        int bottom = Math.round(Math.min(staff.bottom() + 1.8f * gap, caption.bottom() * height));
+        if (top < 0 || bottom >= height || bottom <= top) return false;
+        float x = (region.left() + alias.positionInMeasure() * (region.right() - region.left())) * width;
+        int[] starts = new int[5], ends = new int[5];
+        int count = 0;
+        boolean run = false;
+        for (int xx = left; xx < right; xx++) {
+            int ink = 0;
+            for (int yy = top; yy <= bottom; yy++) if ((gray[yy * width + xx] & 255) < 165) ink++;
+            if (ink < 2) {
+                run = false;
+            } else {
+                if (!run) {
+                    starts[count++] = xx;
+                    run = true;
+                }
+                ends[count - 1] = xx;
+                if (count == starts.length) break;
+            }
+        }
+        if (count != starts.length || x < starts[3] || x > ends[3]) return false;
+        for (int i = 0; i < 4; i++) {
+            float runWidth = ends[i] - starts[i] + 1;
+            float clearance = starts[i + 1] - ends[i] - 1;
+            if (runWidth < gap * .5f || runWidth > gap * 1.15f
+                    || clearance < gap * (i < 3 ? .6f : .10f)
+                    || clearance > gap * (i < 3 ? 2.3f : .8f)) return false;
+        }
+        return starts[3] - left >= gap * 6 && starts[3] - left <= gap * 10;
+    }
+
     private static int uniqueCaptionMeasure(List<MeasureRegion> measures,
             PlayingTechniqueDetector.Word digits, PlayingTechniqueDetector.Word caption) {
+        return uniqueCaptionMeasure(measures, digits, caption, caption.bottom());
+    }
+
+    private static int uniqueCaptionMeasure(List<MeasureRegion> measures,
+            PlayingTechniqueDetector.Word digits, PlayingTechniqueDetector.Word caption, float baselineLimit) {
         int selected = -1;
         for (int i = 0; i < measures.size(); i++) {
             var m = measures.get(i);
             if (m.cadenceQuarterBeats() != 0 || digits.left() < m.left() || caption.right() > m.right()
-                    || digits.top() < m.top() || caption.bottom() > m.bottom()) continue;
+                    || digits.top() < m.top() || baselineLimit > m.bottom()) continue;
             if (selected >= 0) return -1;
             selected = i;
         }
@@ -251,6 +360,18 @@ final class FingeringAnnotationFilter {
 
     private static boolean closedCaptionSixteenths(List<ScoreNoteEvent> music, MeasureRegion region,
             PlayingTechniqueDetector.Staff staff, byte[] gray, int width, int height) {
+        return closedCaptionSixteenths(music, region, staff, gray, width, height, 3.55f, false);
+    }
+
+    private static boolean closedCaptionSixteenths(
+            List<ScoreNoteEvent> music,
+            MeasureRegion region,
+            PlayingTechniqueDetector.Staff staff,
+            byte[] gray,
+            int width,
+            int height,
+            float widestGap,
+            boolean fineBeamSeam) {
         float gap = staff.gap();
         float left = region.left() * width, right = region.right() * width;
         if (right - left < gap * 26 || right - left > gap * 39) return false;
@@ -267,17 +388,353 @@ final class FingeringAnnotationFilter {
                     || (note.articulations() & NoteOrnament.GRACE) != 0) return false;
             float x = left + note.positionInMeasure() * (right - left);
             float y = note.pageY() * height;
-            if (x - previous < gap * 1.65f || x - previous > gap * 3.55f) return false;
+            if (x - previous < gap * 1.65f || x - previous > gap * widestGap) return false;
             previous = x;
             var source = PrintedBeamShafts.at(gray, width, height, x, y, gap, budget);
             if (source.size() != 1 || source.get(0).direction() != 1) return false;
             shafts[i] = source.get(0);
-            if (i > 0 && pairedRails(gray, width, height, shafts[i-1], shafts[i], gap, true) != (i % 4 != 0))
-                return false;
+            if (i > 0) {
+                boolean rails = pairedRails(gray, width, height, shafts[i - 1], shafts[i], gap, true, fineBeamSeam);
+                if (rails != (i % 4 != 0)) return false;
+            }
         }
         if (right - previous < gap * .9f || right - previous > gap * 2.6f) return false;
         return PrintedCadenceDurations.boundaryColumn(gray, width, staff, right, true, false) >= 0
                 && closedWrittenSixteenths(music);
+    }
+
+    /** A split, slightly overlapping OCR caption can seed two digit bowls and one whole-note alias. */
+    private static List<ScoreNoteEvent> overlappingFingeringCaptions(
+            List<PlayingTechniqueDetector.Word> words,
+            List<PlayingTechniqueDetector.Staff> staffs,
+            List<MeasureRegion> measures,
+            List<ScoreNoteEvent> notes,
+            byte[] gray,
+            int width,
+            int height) {
+        var digitRuns =
+                words.stream()
+                        .filter(
+                                w ->
+                                        w.text() != null
+                                                && w.text()
+                                                        .strip()
+                                                        .matches("[1-5](?:\\s+[1-5]){5}"))
+                        .toList();
+        var captions =
+                words.stream()
+                        .filter(
+                                w ->
+                                        w.text() != null
+                                                && SINGLE_SEGUE.matcher(w.text().strip()).matches())
+                        .toList();
+        if (digitRuns.isEmpty() || captions.isEmpty()) return notes;
+        var discard = Collections.newSetFromMap(new IdentityHashMap<ScoreNoteEvent, Boolean>());
+        var replace = new IdentityHashMap<ScoreNoteEvent, ScoreNoteEvent>();
+        for (var caption : captions)
+            for (var digits : digitRuns) {
+                int index = uniqueOverlapMeasure(measures, digits, caption, height);
+                if (index < 0) continue;
+                var bar = measures.get(index);
+                var local = notes.stream().filter(n -> n.measureIndex() == index).toList();
+                if (local.size() != 15) continue;
+                var music =
+                        local.stream()
+                                .filter(n -> n.stemDirection() == -1)
+                                .sorted(
+                                        Comparator.comparingDouble(
+                                                ScoreNoteEvent::positionInMeasure))
+                                .toList();
+                if (music.size() != 12) continue;
+                var whole =
+                        local.stream()
+                                .filter(
+                                        n ->
+                                                possiblyPrintedText(n)
+                                                        && n.staffStep() == -2
+                                                        && n.beamCount() == 0
+                                                        && n.unbeamedDurationBeats() == 4
+                                                        && n.leadingRestBeats() == 0
+                                                        && n.followingRestBeats() == 0)
+                                .toList();
+                var digitAliases =
+                        local.stream()
+                                .filter(
+                                        n ->
+                                                possiblyPrintedText(withoutCaptionDot(n))
+                                                        && n.augmentationDots() <= 1
+                                                        && n.staffStep() == -1
+                                                        && n.beamCount() == 3
+                                                        && n.unbeamedDurationBeats() == 0
+                                                        && n.leadingRestBeats() == 0
+                                                        && n.followingRestBeats() == 0)
+                                .toList();
+                if (whole.size() != 1 || digitAliases.size() != 2) continue;
+                for (var staff : staffs) {
+                    float gap = staff.gap(), left = bar.left() * width, right = bar.right() * width;
+                    if (staff.index() != 0
+                            || staff.count() != 1
+                            || gap < 12
+                            || gap > 24
+                            || staff.top() < bar.top() * height
+                            || staff.bottom() > bar.bottom() * height
+                            || !insideStaffText(digits, bar, staff, width, height)
+                            || (digits.right() - digits.left()) * width < gap * 12
+                            || (digits.right() - digits.left()) * width > gap * 18
+                            || (caption.right() - caption.left()) * width < gap * 5.5f
+                            || (caption.right() - caption.left()) * width > gap * 8.5f
+                            || (digits.right() - caption.left()) * width > gap * .25f
+                            || Math.abs(caption.top() * height - staff.bottom()) > gap * .65f
+                            || caption.bottom() * height - staff.bottom() > gap * 2.6f) continue;
+                    var alias = whole.get(0);
+                    float x = left + (right - left) * alias.positionInMeasure(),
+                            y = height * alias.pageY();
+                    if (y - staff.bottom() < gap * .5f
+                            || y - staff.bottom() > gap * 1.2f
+                            || !insideInk(alias, bar, staff, List.of(caption), gray, width, height)
+                            || !proofCaptionInitial(gray, width, height, staff, caption, x, y))
+                        continue;
+                    if (!proofCaptionDigits(gray, width, height, staff, digits, bar, digitAliases))
+                        continue;
+                    var written = new ArrayList<ScoreNoteEvent>(music);
+                    var first = music.get(0);
+                    if (first.augmentationDots() != 0) {
+                        if (first.augmentationDots() != 1
+                                || !captionDoubleSharpInsteadOfDot(
+                                        gray, width, height, bar, staff, first, music.get(1)))
+                            continue;
+                        written.set(0, withoutCaptionDot(first));
+                    }
+                    long ratios =
+                            music.subList(8, 11).stream()
+                                    .filter(
+                                            n ->
+                                                    n.tupletDivisor() == 3
+                                                            && n.tupletNormalNotes() == 2)
+                                    .count();
+                    if (ratios != 0 && ratios != 3) continue;
+                    if (ratios == 3)
+                        for (int j = 8; j < 11; j++)
+                            written.set(j, music.get(j).withTupletRatio(1, 1));
+                    if (!closedCaptionSixteenths(
+                            written, bar, staff, gray, width, height, 4.10f, false)) continue;
+                    for (int j = 0; j < written.size(); j++)
+                        if (written.get(j) != music.get(j))
+                            replace.put(music.get(j), written.get(j));
+                    discard.add(alias);
+                    discard.addAll(digitAliases);
+                    break;
+                }
+            }
+        if (discard.isEmpty()) return notes;
+        return notes.stream()
+                .filter(n -> !discard.contains(n))
+                .map(n -> replace.getOrDefault(n, n))
+                .toList();
+    }
+
+    private static boolean captionDoubleSharpInsteadOfDot(
+            byte[] gray,
+            int width,
+            int height,
+            MeasureRegion bar,
+            PlayingTechniqueDetector.Staff staff,
+            ScoreNoteEvent first,
+            ScoreNoteEvent next) {
+        float gap = staff.gap(),
+                left = bar.left() * width,
+                span = (bar.right() - bar.left()) * width;
+        float x = left + span * first.positionInMeasure(),
+                nextX = left + span * next.positionInMeasure();
+        float y = first.pageY() * height, nextY = next.pageY() * height;
+        if (LegacyTripletDotInk.singleDotCore(gray, width, height, x, y, nextX, gap)) return false;
+        int radius = Math.round(gap * .48f);
+        int from = Math.round(x + gap), to = Math.round(nextX - gap);
+        int top = Math.round(nextY - gap * .22f), bottom = Math.round(nextY + gap * .22f);
+        for (int xx = from; xx <= to; xx++)
+            for (int yy = top; yy <= bottom; yy++)
+                if (DoubleSharpGlyph.matchesRaw(
+                        gray, width, height, xx - radius, yy - radius, xx + radius, yy + radius,
+                        gap)) return true;
+        return false;
+    }
+
+    private static ScoreNoteEvent withoutCaptionDot(ScoreNoteEvent n) {
+        if (n.augmentationDots() == 0) return n;
+        return new ScoreNoteEvent(
+                n.measureIndex(),
+                n.positionInMeasure(),
+                n.staffStep(),
+                n.staffIndex(),
+                n.staffCount(),
+                n.pageY(),
+                n.tiedFromPrevious(),
+                0,
+                n.beamCount(),
+                n.writtenAccidental(),
+                n.unbeamedDurationBeats(),
+                n.tupletDivisor(),
+                n.followingRestBeats(),
+                n.articulations(),
+                n.clefBottomDiatonic(),
+                n.crossStaffBeam(),
+                n.leadingRestBeats(),
+                n.compactOpening(),
+                n.octaveShift(),
+                n.boundaryTies(),
+                n.tupletNormalNotes(),
+                n.stemDirection(),
+                n.kind(),
+                n.visualSize(),
+                n.harmonicSemitones(),
+                n.openStringTouch());
+    }
+
+    private static int uniqueOverlapMeasure(
+            List<MeasureRegion> measures,
+            PlayingTechniqueDetector.Word digits,
+            PlayingTechniqueDetector.Word caption,
+            int height) {
+        if (!(caption.left() < digits.right() && caption.left() > digits.left())) return -1;
+        int owner = -1;
+        for (int i = 0; i < measures.size(); i++) {
+            var m = measures.get(i);
+            if (m.cadenceQuarterBeats() != 0
+                    || digits.left() < m.left()
+                    || caption.right() > m.right()
+                    || Math.min(digits.top(), caption.top()) < m.top()
+                    || Math.max(digits.bottom(), caption.bottom()) > m.bottom() + 3f / height)
+                continue;
+            if (owner >= 0) return -1;
+            owner = i;
+        }
+        return owner;
+    }
+
+    private static boolean proofCaptionInitial(
+            byte[] gray,
+            int width,
+            int height,
+            PlayingTechniqueDetector.Staff staff,
+            PlayingTechniqueDetector.Word caption,
+            float x,
+            float y) {
+        float gap = staff.gap();
+        var graph = captionComponents(gray, width, height, staff, caption);
+        if (graph == null) return false;
+        var glyphs =
+                graph.components().stream()
+                        .filter(
+                                c ->
+                                        c.top > graph.top
+                                                && c.bottom < graph.bottom
+                                                && c.left > graph.left
+                                                && c.right < graph.right
+                                                && c.size() >= gap * 2.1f
+                                                && c.bottom - c.top >= gap * .65f
+                                                && c.bottom - c.top <= gap * 1.75f
+                                                && c.right - c.left >= gap * .5f
+                                                && c.right - c.left <= gap * 1.5f)
+                        .toList();
+        return glyphs.size() >= 4
+                && ownsTextCenter(glyphs.get(0), x, y, width)
+                && glyphs.stream()
+                                .skip(1)
+                                .filter(
+                                        c ->
+                                                c.left > x
+                                                        && Math.abs(c.top - glyphs.get(0).top)
+                                                                <= gap * .3f)
+                                .count()
+                        >= 3;
+    }
+
+    private static boolean proofCaptionDigits(
+            byte[] gray,
+            int width,
+            int height,
+            PlayingTechniqueDetector.Staff staff,
+            PlayingTechniqueDetector.Word digits,
+            MeasureRegion bar,
+            List<ScoreNoteEvent> aliases) {
+        var graph = captionComponents(gray, width, height, staff, digits);
+        if (graph == null) return false;
+        float gap = staff.gap(),
+                left = bar.left() * width,
+                span = (bar.right() - bar.left()) * width;
+        var glyphs =
+                graph.components().stream()
+                        .filter(
+                                c ->
+                                        c.size() >= gap * 2.1f
+                                                && c.left > graph.left
+                                                && c.right < graph.right
+                                                && c.right - c.left >= gap * .35f
+                                                && c.right - c.left <= gap * 1.0f
+                                                && c.bottom - c.top >= gap * .28f
+                                                && c.bottom - c.top <= gap * .8f)
+                        .toList();
+        if (glyphs.size() != 6) return false;
+        var sorted =
+                aliases.stream()
+                        .sorted(Comparator.comparingDouble(ScoreNoteEvent::positionInMeasure))
+                        .toList();
+        return ownsTextCenter(
+                        glyphs.get(0),
+                        left + span * sorted.get(0).positionInMeasure(),
+                        sorted.get(0).pageY() * height,
+                        width)
+                && ownsTextCenter(
+                        glyphs.get(3),
+                        left + span * sorted.get(1).positionInMeasure(),
+                        sorted.get(1).pageY() * height,
+                        width)
+                && sorted.stream()
+                        .allMatch(
+                                n ->
+                                        insideInk(
+                                                n,
+                                                bar,
+                                                staff,
+                                                List.of(digits),
+                                                gray,
+                                                width,
+                                                height));
+    }
+
+    private static RawNumeralComponents captionComponents(
+            byte[] gray,
+            int width,
+            int height,
+            PlayingTechniqueDetector.Staff staff,
+            PlayingTechniqueDetector.Word word) {
+        int left = Math.round(word.left() * width) - 2,
+                right = Math.round(word.right() * width) + 2;
+        int top =
+                Math.max(
+                        Math.round(word.top() * height) - 2,
+                        Math.round(staff.bottom() + staff.gap() * .14f));
+        int bottom = Math.round(word.bottom() * height) + 2;
+        if (left < 0
+                || right >= width
+                || top < 0
+                || bottom >= height
+                || left >= right
+                || top >= bottom
+                || (long) (right - left + 1) * (bottom - top + 1) > 16384) return null;
+        return RawNumeralComponents.capture(
+                gray, width, height, left, top, right, bottom, () -> {}, () -> {});
+    }
+
+    private static boolean ownsTextCenter(
+            RawNumeralComponents.Component glyph, float x, float y, int width) {
+        if (!(x >= glyph.left && x <= glyph.right && y >= glyph.top && y <= glyph.bottom))
+            return false;
+        for (int j = 0; j < glyph.size(); j++) {
+            int pixel = glyph.pixel(j);
+            if (Math.abs(pixel % width - x) <= 2 && Math.abs(pixel / width - y) <= 2) return true;
+        }
+        return false;
     }
 
     /** Paired below-staff fingerings can seed both a false pitch and a false triplet. */
@@ -374,12 +831,18 @@ final class FingeringAnnotationFilter {
 
     private static boolean pairedRails(byte[] gray,int width,int height,
             PrintedBeamShafts.Shaft a,PrintedBeamShafts.Shaft b,float gap,boolean narrowSeam) {
+        return pairedRails(gray, width, height, a, b, gap, narrowSeam, false);
+    }
+
+    private static boolean pairedRails(byte[] gray, int width, int height,
+            PrintedBeamShafts.Shaft a, PrintedBeamShafts.Shaft b, float gap,
+            boolean narrowSeam, boolean fineSeam) {
         int x0=(a.left()+a.right())/2,x1=(b.left()+b.right())/2;
         int margin=Math.round(gap*.37f),rad=Math.max(2,Math.round(gap*.14f));
         if(x0+margin>=x1-margin) return false;
         for(int offset=-Math.round(gap*.22f);offset<=Math.round(gap*.45f);offset++)
             for(int separation=Math.round(gap*.55f);separation<=Math.round(gap*.92f);separation++) {
-                int first=0,second=0,seam=0,lightSeam=0;
+                int first=0,second=0,seam=0,lightSeam=0,linePaper=0;
                 for(int x=x0+margin;x<=x1-margin;x++) {
                     int axis=Math.round(a.endY()+(b.endY()-a.endY())*(x-x0)/(float)(x1-x0))-offset;
                     if (axis+rad>=height || axis-separation-rad<0) continue;
@@ -387,11 +850,16 @@ final class FingeringAnnotationFilter {
                     if(verticalInk(gray,width,x,axis-separation,rad)>=2*rad) second++;
                     int trough = axis - separation / 2;
                     if(verticalInk(gray,width,x,trough,1)<=1) seam++;
-                    if (narrowSeam && (gray[trough * width + x] & 255) >= 185) lightSeam++;
+                    int shade = gray[trough * width + x] & 255;
+                    if (narrowSeam && shade >= 185) lightSeam++;
+                    if (fineSeam && shade >= 185
+                            && (gray[(trough - 1) * width + x] & 255) < 165
+                            && (gray[(trough + 1) * width + x] & 255) < 165) linePaper++;
                 }
                 int count=x1-x0-2*margin+1;
                 boolean visibleGap = seam >= count * .28f
-                        || narrowSeam && seam >= count * .18f && lightSeam >= count * .50f;
+                        || narrowSeam && seam >= count * .18f && lightSeam >= count * .50f
+                        || fineSeam && lightSeam >= count * .9f && linePaper >= count * .65f;
                 if(first>=count*.96f && second>=count*.96f && visibleGap) return true;
             }
         return false;

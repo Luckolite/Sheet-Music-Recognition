@@ -29,6 +29,9 @@ final class RestCompetingGlyphs {
                 if (meterOwns(rest, notes, measures, headers, labels, gray, source, width, height))
                     continue;
             }
+            if (rest.durationBeats() == 1
+                    && naturalOwnsQuarterAlias(
+                            rest, notes, measures.get(bar), gray, source, width, height)) continue;
             if (rest.durationBeats() == .125 && accidentalsOwn(
                     rest, notes, measures.get(bar), labels, gray, source, width, height)) continue;
             kept.add(rest);
@@ -56,6 +59,70 @@ final class RestCompetingGlyphs {
                             Math.min(b.topScore(), b.bottomScore())) >= .84f) return true;
         }
         return false;
+    }
+
+    private static boolean naturalOwnsQuarterAlias(
+            ScoreRestEvent rest,
+            List<ScoreNoteEvent> notes,
+            MeasureRegion region,
+            byte[] gray,
+            byte[] source,
+            int width,
+            int height) {
+        float gap = (region.bottom() - region.top()) * height / 8.2f;
+        if (gap < 10
+                || gap > 25
+                || rest.pageHeight() * height < gap * 2.25f
+                || rest.pageHeight() * height > gap * 3.05f) return false;
+        var local =
+                notes.stream()
+                        .filter(n -> n.measureIndex() == rest.measureIndex())
+                        .sorted(Comparator.comparingDouble(ScoreNoteEvent::positionInMeasure))
+                        .toList();
+        if (local.size() != 12
+                || local.stream()
+                        .anyMatch(
+                                n ->
+                                        n.kind() != ScoreNoteEvent.Kind.PITCHED
+                                                || n.staffIndex() != 0
+                                                || n.staffCount() != 1
+                                                || n.crossStaffBeam()
+                                                || n.beamCount() != 1
+                                                || n.augmentationDots() != 0
+                                                || n.unbeamedDurationBeats() != 0
+                                                || (n.articulations() & NoteOrnament.GRACE) != 0))
+            return false;
+        var before = local.get(0);
+        var after = local.get(1);
+        if (after.writtenAccidental() != 0) return false;
+        float rx = x(region, rest.positionInMeasure(), width), ry = rest.pageY() * height;
+        float left = x(region, before.positionInMeasure(), width);
+        float right = x(region, after.positionInMeasure(), width);
+        float ay = after.pageY() * height;
+        if (rx - left < gap * 1.25f
+                || rx - left > gap * 1.95f
+                || right - rx < gap * 1.20f
+                || right - rx > gap * 1.70f
+                || Math.abs(ay - ry) > gap * .30f) return false;
+        var frame =
+                PrintedDirectionStaff.printedRules(
+                        gray,
+                        width,
+                        height,
+                        left + gap * 3,
+                        region.bottom() * height - gap * 2.1f,
+                        gap);
+        if (frame == null) return false;
+        int staffTop = Math.round(frame[0] - 4 * frame[1]);
+        int minX = Math.round(rx - gap * .65f), maxX = Math.round(right - gap * .65f);
+        for (var raster : List.of(gray, source)) {
+            if (!OmrScoreInterpreter.provesNaturalMeterInk(
+                    raster, width, height, minX, maxX, ay, frame[1], staffTop)) return false;
+            if (!PrintedTupletBeamOwner.connectedHeads(
+                    raster, width, height, left, before.pageY() * height, right, ay, frame[1], -1))
+                return false;
+        }
+        return true;
     }
 
     private static boolean accidentalsOwn(ScoreRestEvent rest, List<ScoreNoteEvent> notes,
