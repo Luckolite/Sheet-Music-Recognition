@@ -136,8 +136,8 @@ final class TupletNumeralInk {
         int firstEdgeRow = maxEdgeStroke + 2, endEdgeRow = hh - maxEdgeStroke - 2;
         byte[] pixels = new byte[ww * hh];
         int[] occupancy = new int[hh];
-        int inkTotal = 0, firstLevelRow = hh - 1;
-        boolean possibleEdges = false;
+        int firstLevelRow = hh - 1;
+        boolean anyInk = false, possibleEdges = false;
         for (int y = 0, source = top * w + left, target = 0;
                 y < hh; y++, source += w, target += ww) {
             int inkCount = 0;
@@ -147,15 +147,15 @@ final class TupletNumeralInk {
                 if (ink) inkCount++;
             }
             occupancy[y] = inkCount;
-            inkTotal += inkCount;
+            anyInk |= inkCount != 0;
             if (y > 0 && firstLevelRow == hh - 1 && inkCount >= minimum)
                 firstLevelRow = y;
             if (ruleEdges && y >= firstEdgeRow && y < endEdgeRow && inkCount >= edgeMinimum)
                 possibleEdges = true;
         }
-        if (inkTotal == 0) return new Window(pixels, ww, hh, left, top);
+        if (!anyInk) return new Window(pixels, ww, hh, left, top);
         byte[] original = possibleEdges ? pixels.clone() : null;
-        if (possibleEdges) removeLevelRuleEdges(pixels, original, ww, hh, gap);
+        if (possibleEdges) removeLevelRuleEdges(pixels, original, ww, hh, maxEdgeStroke, occupancy);
         int maxLevelStroke = Math.max(2, Math.round(gap * .23f));
         for (int y = firstLevelRow; y < hh - 1; y++) {
             if (occupancy[y] < minimum) continue;
@@ -164,18 +164,19 @@ final class TupletNumeralInk {
             if (end - y + 1 <= maxLevelStroke) {
                 if (original == null) original = pixels.clone();
                 int above = (y - 1) * ww, below = (end + 1) * ww;
+                int crossing = original[above] == 0 || original[below] == 0 ? 1 : 0;
                 for (int x = 0; x < ww; x++) {
-                    boolean crossing = false;
-                    int first = Math.max(0, x - 1), last = Math.min(ww - 1, x + 1);
-                    for (int xx = first; xx <= last && !crossing; xx++)
-                        crossing = original[above + xx] == 0 || original[below + xx] == 0;
-                    if (!crossing)
+                    int next = x + 1;
+                    crossing = (crossing << 1) & 7;
+                    if (next < ww && (original[above + next] == 0 || original[below + next] == 0))
+                        crossing |= 1;
+                    if (crossing == 0)
                         for (int at = above + ww + x; at < below; at += ww) pixels[at] = (byte) 255;
-                }
+            }
             }
             y = end;
         }
-        removeSlopedRules(pixels, ww, hh, gap);
+        removeSlopedRulesWithThickness(pixels, ww, hh, maxEdgeStroke);
         return new Window(pixels, ww, hh, left, top);
     }
 
@@ -183,27 +184,26 @@ final class TupletNumeralInk {
         return Math.max(2, Math.round(gap * .30f));
     }
 
-    private static void removeLevelRuleEdges(byte[] pixels, byte[] original, int w, int h, float gap) {
-        int max = levelRuleThickness(gap);
+    private static void removeLevelRuleEdges(
+            byte[] pixels, byte[] original, int w, int h, int max, int[] occupancy) {
         int first = max + 2, end = h - max - 2;
         if (first >= end || w <= 2) return;
-        float minimumInk = w * .90f, minimumThin = w * .82f;
+        float minimumInk = w * .90f;
+        int nonThinLimit = w - (int) Math.ceil(w * .82f);
         int[] firstPixels = new int[w], lastPixels = new int[w];
         candidate: for (int cy = first; cy < end; cy++) {
-            int missing = 0, nonThin = 0, row = cy * w;
+            if (occupancy[cy] < minimumInk) continue;
+            int nonThin = w - occupancy[cy], row = cy * w;
+            if (nonThin > nonThinLimit) continue;
             for (int x = 0; x < w; x++) {
                 firstPixels[x] = -1;
-                if (original[row + x] != 0) {
-                    if (w - ++missing < minimumInk || w - ++nonThin < minimumThin)
-                        continue candidate;
-                    continue;
-                }
+                if (original[row + x] != 0) continue;
                 int top = cy, bottom = cy;
                 while (top > cy - max && original[(top - 1) * w + x] == 0) top--;
                 int lastThin = top + max - 1;
                 while (bottom <= lastThin && original[(bottom + 1) * w + x] == 0) bottom++;
                 if (bottom > lastThin) {
-                    if (w - ++nonThin < minimumThin) continue candidate;
+                    if (++nonThin > nonThinLimit) continue candidate;
                     continue;
                 }
                 firstPixels[x] = top * w + x;
@@ -223,7 +223,10 @@ final class TupletNumeralInk {
     }
 
     private static void removeSlopedRules(byte[] pixels, int w, int h, float gap) {
-        int max = levelRuleThickness(gap);
+        removeSlopedRulesWithThickness(pixels, w, h, levelRuleThickness(gap));
+    }
+
+    private static void removeSlopedRulesWithThickness(byte[] pixels, int w, int h, int max) {
         int first = max + 2, end = h - max - 2;
         if (first >= end || w <= 2) return;
         int missingLimit = w - (int) Math.ceil(w * .90f);
@@ -233,7 +236,7 @@ final class TupletNumeralInk {
         float center = w * .5f;
         int nonThinLimit = w - (int) Math.ceil(w * .82f);
         float[] shifts = new float[w];
-        int[] rowOffsets = new int[w];
+        int[] pixelOffsets = new int[w];
         int[] abovePixels = new int[w - 2], belowPixels = new int[w - 2];
         // An addition cannot move a shift across a half-pixel boundary by more
         // than this rounding bound over the entire candidate row range.
@@ -245,17 +248,22 @@ final class TupletNumeralInk {
             for (int x = 0; x < w; x++) {
                 float shift = shifts[x] = slope * (x - center);
                 int rounded = Math.round(shift);
-                rowOffsets[x] = .5f - Math.abs(shift - rounded) > roundingMargin
-                        ? rounded : Integer.MIN_VALUE;
+                pixelOffsets[x] = .5f - Math.abs(shift - rounded) > roundingMargin
+                        ? rounded * w + x : Integer.MIN_VALUE;
             }
-            candidate: for (int cy = first; cy < end; cy++) {
+            int firstValid = max * w, endValid = (lastValidRow + 1) * w;
+            // Rounded row offsets are monotone in x. If this interior sample is
+            // clipped, more than the allowed number of columns are clipped.
+            int lowSample = angle < 0 ? w - 1 - missingLimit : missingLimit;
+            int highSample = w - 1 - lowSample;
+            candidate: for (int cy = first, row = first * w; cy < end; cy++, row += w) {
+                if (projectedPixel(cy, row, w, lowSample, shifts, pixelOffsets) < firstValid
+                        || projectedPixel(cy, row, w, highSample, shifts, pixelOffsets) >= endValid)
+                    continue;
                 int missing = 0, nonThin = 0, spans = 0;
                 for (int x = 0; x < w; x++) {
-                    int rowOffset = rowOffsets[x];
-                    int y = rowOffset == Integer.MIN_VALUE
-                            ? Math.round(cy + shifts[x]) : cy + rowOffset;
-                    int offset = y * w + x;
-                    if (y < max || y > lastValidRow || original[offset] != 0) {
+                    int offset = projectedPixel(cy, row, w, x, shifts, pixelOffsets);
+                    if (offset < firstValid || offset >= endValid || original[offset] != 0) {
                         if (++missing > missingLimit || ++nonThin > nonThinLimit)
                             continue candidate;
                         continue;
@@ -269,7 +277,7 @@ final class TupletNumeralInk {
                         if (++nonThin > nonThinLimit) continue candidate;
                         continue;
                     }
-                    if (x > 0 && x < w - 1 && y > max && y < lastValidRow) {
+                    if (x > 0 && x < w - 1 && offset >= firstValid + w && offset < endValid - w) {
                         abovePixels[spans] = above;
                         belowPixels[spans++] = below;
                     }
@@ -287,6 +295,12 @@ final class TupletNumeralInk {
                 }
             }
         }
+    }
+
+    private static int projectedPixel(
+            int cy, int row, int width, int x, float[] shifts, int[] pixelOffsets) {
+        int offset = pixelOffsets[x];
+        return offset == Integer.MIN_VALUE ? Math.round(cy + shifts[x]) * width + x : row + offset;
     }
 
     private static boolean tooFewInkColumns(byte[] pixels, int width, int top, int bottom,
