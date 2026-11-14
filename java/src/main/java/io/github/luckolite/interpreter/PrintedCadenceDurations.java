@@ -48,6 +48,7 @@ final class PrintedCadenceDurations {
             var next = i + 1 < count ? score.measures().get(i + 1) : null;
             if (!proved(gray, width, height, measure, next, staffs, chord,
                     next != null && meter[i + 1])
+                    && !compactTerminalQuarter(gray, width, height, measure, next, chord)
                     && !expandedTerminalDyad(gray, width, height, measure, next, chord)
                     && !PrintedQuarterDyadAccidentals.proves(
                             labels, gray, width, height, measure, next, chord, staffs)) continue;
@@ -262,6 +263,59 @@ final class PrintedCadenceDurations {
         if (first.staffStep() == second.staffStep() || first.stemDirection() == 0
                 || first.stemDirection() != second.stemDirection()) return false;
         return boundaryColumn(gray, width, staff, left - staff.gap() * .53f, true, false) >= 0;
+    }
+
+    /** A short terminal bar cannot always provide a full-width staff sample around its chord. */
+    static boolean compactTerminalQuarter(byte[] gray, int width, int height, MeasureRegion measure,
+            MeasureRegion next, List<ScoreNoteEvent> chord) {
+        if (gray == null || gray.length != (long) width * height || chord.size() != 2
+                || measure.cadenceQuarterBeats() != 0
+                || next == null || next.top() <= measure.bottom()) return false;
+        var a = chord.get(0);
+        var b = chord.get(1);
+        if (!exactCadenceNote(a, 1) || !exactCadenceNote(b, 1)
+                || a.staffStep() == b.staffStep() || a.stemDirection() == 0
+                || a.stemDirection() != b.stemDirection()
+                || a.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_FROM_KEY
+                || b.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_FROM_KEY) return false;
+
+        float left = measure.left() * width, right = measure.right() * width;
+        float gap = (measure.bottom() - measure.top()) * height / 8.2f;
+        float span = right - left;
+        if (gap < 8 || gap > 32 || span < gap * 3f || span > gap * 4.25f) return false;
+        float first = left + Math.min(a.positionInMeasure(), b.positionInMeasure()) * span;
+        float last = left + Math.max(a.positionInMeasure(), b.positionInMeasure()) * span;
+        if (last - first > gap * .22f || first - left < gap * .9f || right - last < gap * 2f)
+            return false;
+
+        float hint = measure.bottom() * height - gap * 2.1f;
+        var lead = compactRails(gray, width, height, left - gap * .22f, first - gap * .7f, hint, gap);
+        var tail = compactRails(gray, width, height, last + gap * .86f, right - gap * .56f, hint, gap);
+        if (lead == null || tail == null
+                || Math.abs(lead[0] - tail[0]) > gap * .11f
+                || Math.abs(lead[1] - tail[1]) > gap * .06f) return false;
+        var staff = new PlayingTechniqueDetector.Staff(tail[0] - 4 * tail[1], tail[0], tail[1], 0, 1);
+        int opening = boundaryColumn(gray, width, staff, left - gap * .53f, true, false);
+        if (opening < 0 || ClosedHeadBarlineGuard.attached(gray, width, height, opening,
+                    Math.round(staff.top()), Math.round(staff.bottom()), staff.gap())
+                || DottedDyadMeasureSeparator.continuesBeyondStaff(gray, width, height, opening,
+                    Math.round(staff.top()), Math.round(staff.bottom()), staff.gap())) return false;
+        return completeCadence(gray, width, staff, left, right, first, last, right,
+                false, false, false);
+    }
+
+    private static float[] compactRails(byte[] gray, int width, int height,
+            float left, float right, float hint, float gap) {
+        int x = Math.round(left), span = Math.round(right) - x;
+        int top = Math.round(hint - gap * 5f), bottom = Math.round(hint + gap);
+        if (x < 0 || x + span > width || top < 0 || bottom > height || span < Math.max(6, gap * .5f))
+            return null;
+        var strip = new byte[span * (bottom - top)];
+        for (int y = top; y < bottom; y++)
+            System.arraycopy(gray, y * width + x, strip, (y - top) * span, span);
+        var rails = StaffPitchTrack.broadStraightPitch(strip, span, bottom - top, hint - top, gap, false);
+        if (rails != null) rails[0] += top;
+        return rails;
     }
 
     /** A wide isolated dyad closes the staff only when its bounding ink proves both edges. */

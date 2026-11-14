@@ -62,6 +62,74 @@ final class WrappedMeasureBoundaries {
                 && openLeftMargin(gray, width, height, startTrack, start.left, secondFirstHeadX, gap);
     }
 
+    static boolean confirmsClosed(
+            byte[] gray, int width, int height, MeasureRegion region, float firstHead, float lastHead) {
+        var bar = box(region, width, height);
+        if (bar == null) return false;
+        var staff = track(gray, width, height, bar);
+        if (staff == null) return false;
+        float gap = staff.at(firstHead)[1];
+        if (firstHead - bar.left < gap * .88f || bar.right - lastHead < gap * 1.2f) return false;
+        return unownedClosedEdge(gray, width, height, staff, bar.left, firstHead, true, gap)
+                && unownedClosedEdge(gray, width, height, staff, bar.right, lastHead, false, gap);
+    }
+
+    static boolean confirmsInitialStaffBar(
+            byte[] gray,int width,int height,List<MeasureRegion> regions,int index,
+            float firstHead,float lastHead) {
+        if(index<1 || index+1>=regions.size()) return false;
+        var bar=box(regions.get(index),width,height);
+        var before=box(regions.get(index-1),width,height);
+        var after=box(regions.get(index+1),width,height);
+        if(bar==null || before==null || after==null) return false;
+        float estimatedGap=bar.height()/8.2f;
+        if(estimatedGap<8 || estimatedGap>30 || bar.top-before.bottom<estimatedGap*3
+                || !sameRow(bar,after,estimatedGap) || firstHead-bar.left<estimatedGap*2
+                || !boundaryPocket(bar.right,after.left,estimatedGap)) return false;
+        var staff=track(gray,width,height,bar);
+        if(staff==null) return false;
+        float gap=staff.at(firstHead)[1];
+        float afterSignature=bar.left+gap*1.15f;
+        float beforeAttack=firstHead-gap*.75f;
+        return beforeAttack-afterSignature>=gap*.8f
+                && staffRules(gray,width,height,staff,Math.round(afterSignature))==5
+                && staffRules(gray,width,height,staff,Math.round(beforeAttack))==5
+                && clearOfVerticalInk(gray,width,height,staff,afterSignature,beforeAttack)
+                && unownedClosedEdge(gray,width,height,staff,bar.right,lastHead,false,gap);
+    }
+
+    private static boolean unownedClosedEdge(byte[] gray,int width,int height,StaffPitchTrack staff,
+            float edge,float nearestHead,boolean opening,float gap) {
+        int left=Math.max(0,Math.round(edge-gap*(opening ? .85f : .25f)));
+        int right=Math.min(width-1,Math.round(edge+gap*(opening ? .25f : .85f)));
+        int consecutive=0;
+        for (int x=left;x<=right;x++) {
+            var f=staff.at(x);
+            int top=Math.round(f[0]-4*f[1]), bottom=Math.round(f[0]);
+            if (top<0 || bottom>=height || (nearestHead-x)*(opening?1:-1)<gap*1.30f
+                    || verticalCoverage(gray,width,height,staff,x)<.92f
+                    || continuedColumn(gray,width,height,x,top,-1,gap)
+                    || continuedColumn(gray,width,height,x,bottom,1,gap)
+                    || DottedDyadMeasureSeparator.continuesBeyondStaff(gray,width,height,x,top,bottom,gap)
+                    || ClosedHeadBarlineGuard.attached(gray,width,height,x,top,bottom,gap)) {
+                consecutive=0;
+                continue;
+            }
+            if (++consecutive>=Math.max(2,Math.round(gap*.15f))) return true;
+        }
+        return false;
+    }
+
+    private static boolean continuedColumn(byte[] gray,int width,int height,
+            int x,int staffEdge,int direction,float gap) {
+        int inner=Math.max(1,Math.round(gap*.28f)), outer=Math.round(gap*1.15f);
+        if (staffEdge+direction*outer<0 || staffEdge+direction*outer>=height) return true;
+        int dark=0;
+        for (int d=inner;d<=outer;d++)
+            if ((gray[(staffEdge+direction*d)*width+x]&255)<165) dark++;
+        return dark>=(outer-inner+1)*.78f;
+    }
+
     private record Box(float left, float right, float top, float bottom) {
         float height() {
             return bottom - top;

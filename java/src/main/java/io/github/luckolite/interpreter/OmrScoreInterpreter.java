@@ -122,6 +122,11 @@ final class OmrScoreInterpreter {
                             List.of(original),
                             staffs,
                             memberCollector);
+            if (exactSplit.size() == 1 && exactSplit.get(0) == original) {
+                var bridged = splitMergedBeamedThird(
+                        labels, gray, width, height, original, staffs, rawHeadComponents, memberCollector);
+                if (!bridged.isEmpty()) exactSplit = bridged;
+            }
             physicalSplitCache.put(original, exactSplit);
             boolean exactSplitOwnersCaptured = false;
             for (Component sourceHead : exactSplit) {
@@ -1051,6 +1056,12 @@ final class OmrScoreInterpreter {
         rejectedBeamHeads.addAll(terminalBeamShaftEndHeads(
                 labels, gray, annotationGray, width, height, heads, staffs, measures));
 
+        var closedBeamEndOwners = new ArrayList<Component>();
+        rejectedBeamHeads.addAll(innerBeamShaftEndHeads(
+                labels, gray, annotationGray, width, height, heads, staffs, closedBeamEndOwners));
+        var shortDyadEndOwners = new java.util.IdentityHashMap<Component, Boolean>();
+        rejectedBeamHeads.addAll(shortDyadBeamEndFragments(
+                labels, gray, annotationGray, width, height, heads, staffs, shortDyadEndOwners));
         heads.removeAll(rejectedBeamHeads);
         if (gray != null) {
             var last = measures.get(measures.size() - 1);
@@ -1894,6 +1905,10 @@ final class OmrScoreInterpreter {
             if (!unpitched && beamCount == 0
                     && longSameStaffBeamEndpoint(gray, width, height, head, rhythmStaff, heads, measure))
                 beamCount = 1;
+            if (!unpitched && beamCount < 2 && closedBeamEndOwners.contains(head))
+                beamCount = 2;
+            if (!unpitched && beamCount < 2 && shortDyadEndOwners.containsKey(head))
+                beamCount = 2;
             int[] tremolo = tremoloStrokeCounts(gray, width, height, head, rhythmStaff, heads);
             beamCount = Math.max(0, beamCount - tremolo[1]);
             if (tremolo[0] > 0)
@@ -10996,6 +11011,101 @@ final class OmrScoreInterpreter {
             }
         }
         return selected;
+    }
+
+    /** The own shaft and its two independent beam links corroborate compact vertical thirds. */
+    private static List<Component> splitMergedBeamedThird(
+            byte[] labels, byte[] gray, int width, int height, Component parent,
+            List<Staff> staffs, List<Component> heads, ExactComponentMembers.Collector collector) {
+        if (gray == null) return List.of();
+        var staff = nearestHeadStaff(staffs, parent.centerY);
+        if (staff == null || staff.count != 1) return List.of();
+        float gap = staff.gap;
+        float w = parent.maxX - parent.minX + 1;
+        float h = parent.maxY - parent.minY + 1;
+        if (gap < 9 || gap > 28 || w < gap * 1.13f || w > gap * 1.59f
+                || h < gap * 1.83f || h > gap * 2.19f
+                || parent.area < w * h * .74f || parent.centerY > staff.top - gap * .24f)
+            return List.of();
+        int split = (parent.minY + parent.maxY) / 2;
+        var top = componentSlice(labels, width, parent, parent.minY, split);
+        var bottom = componentSlice(labels, width, parent, split + 1, parent.maxY);
+        var axis = sharedFilledThirdShaft(gray, width, height, top, bottom, gap, true);
+        if (axis == null) return List.of();
+
+        var left = linkedFilledThirdPeer(labels, gray, width, height, parent, staff, heads, -1);
+        var right = linkedFilledThirdPeer(labels, gray, width, height, parent, staff, heads, 1);
+        boolean linkedOnLeft = left != null && LinkedFilledThirds.joined(gray, width, gap, left.axis(), axis);
+        boolean linkedOnRight = right != null && LinkedFilledThirds.joined(gray, width, gap, axis, right.axis());
+        if (!linkedOnLeft && !linkedOnRight) return List.of();
+        if (!linkedOnLeft || !linkedOnRight) {
+            int side = linkedOnLeft ? -1 : 1;
+            var first = linkedOnLeft ? left : right;
+            var second = linkedFilledThirdPeer(labels, gray, width, height, first.parent(), staff, heads, side);
+            if (second == null || !LinkedFilledThirds.joined(gray, width, gap,
+                    side < 0 ? second.axis() : first.axis(), side < 0 ? first.axis() : second.axis()))
+                return List.of();
+        }
+        if (collector == null) return List.of(top, bottom);
+        var lineage = collector.beginSplit(parent, labels, width);
+        if (lineage == null) return List.of();
+        var parts = List.of(
+                componentSlice(labels, width, parent, parent.minY, split, lineage),
+                componentSlice(labels, width, parent, split + 1, parent.maxY, lineage));
+        return lineage.commit(parts) ? parts : List.of();
+    }
+
+    private record LinkedThird(Component parent, int[] axis) {}
+
+    private static LinkedThird linkedFilledThirdPeer(
+            byte[] labels, byte[] gray, int width, int height, Component parent,
+            Staff staff, List<Component> heads, int side) {
+        float gap = staff.gap;
+        LinkedThird result = null;
+        for (var peer : heads) {
+            float dx = (peer.centerX - parent.centerX) * side;
+            float dy = Math.abs(peer.centerY - parent.centerY);
+            if (dx < gap * 1.85f || dx > gap * 3.05f
+                    || dy < gap * .33f || dy > gap * .65f
+                    || peer.maxY - peer.minY + 1 < gap * 1.75f
+                    || peer.maxY - peer.minY + 1 > gap * 2.25f
+                    || peer.maxX - peer.minX + 1 < gap * 1.12f
+                    || peer.maxX - peer.minX + 1 > gap * 1.65f) continue;
+            var shaft = neighboringThirdShaft(labels, gray, width, height, peer, staff);
+            if (shaft != null) {
+                if (result != null) return null;
+                result = new LinkedThird(peer, shaft);
+            }
+        }
+        return result;
+    }
+
+    private static int[] neighboringThirdShaft(byte[] labels, byte[] gray, int width, int height,
+            Component parent, Staff staff) {
+        var original = splitRegularStack(labels, width, parent, staff);
+        if (original.size() == 2)
+            return sharedFilledThirdShaft(gray, width, height, original.get(0), original.get(1), staff.gap, false);
+        int cut = (parent.minY + parent.maxY) / 2;
+        return sharedFilledThirdShaft(gray, width, height,
+                componentSlice(labels, width, parent, parent.minY, cut),
+                componentSlice(labels, width, parent, cut + 1, parent.maxY), staff.gap, true);
+    }
+
+    private static int[] sharedFilledThirdShaft(byte[] gray, int width, int height,
+            Component a, Component b, float gap, boolean requireOval) {
+        if (a == null || b == null || Math.abs(a.centerX - b.centerX) > gap * .13f
+                || b.centerY - a.centerY < gap * .83f || b.centerY - a.centerY > gap * 1.13f
+                || !filledBeamEndpointCore(gray, width, height, a, gap)
+                || !filledBeamEndpointCore(gray, width, height, b, gap)
+                || requireOval && (!printedFilledOval(gray, width, a, gap)
+                        || !printedFilledOval(gray, width, b, gap)))
+            return null;
+        int[] x = attachedRawStem(gray, width, height, a, gap, 2, 170);
+        int[] y = attachedRawStem(gray, width, height, b, gap, 2, 170);
+        if (x == null || y == null || x[2] != 1 || y[2] != 1
+                || Math.abs(x[0] - y[0]) > 2 || Math.abs(x[1] - y[1]) > 2
+                || Math.min(x[1], y[1]) - b.centerY < gap * 2.15f) return null;
+        return x;
     }
 
     /** Register only the actual exhaustive producer traversal, before the collector seals. */
@@ -24457,6 +24567,192 @@ final class OmrScoreInterpreter {
         return java.util.Arrays.equals(a.stem(), b.stem())
                 && Math.abs(a.head().centerX - b.head().centerX) <= gap * .23f
                 && vertical >= gap * 1.65f && vertical <= gap * 3.2f;
+    }
+
+    private static List<Component> innerBeamShaftEndHeads(
+            byte[] labels, byte[] gray, byte[] source, int width, int height,
+            List<Component> heads, List<Staff> staffs, List<Component> owners) {
+        if (gray == null || source == null) return List.of();
+        var rejected = new ArrayList<Component>();
+        for (var fragment : heads) {
+            var staff = nearestHeadStaff(staffs, fragment.centerY);
+            if (staff == null || staff.count != 1) continue;
+            float gap = staff.gap;
+            float extent = fragment.maxX - fragment.minX + 1;
+            float heightInGaps = (fragment.maxY - fragment.minY + 1) / gap;
+            if (gap < 10 || extent < gap * 1.28f || extent > gap * 1.55f
+                    || heightInGaps < .8f || heightInGaps > 1.13f
+                    || fragment.area < gap * gap * .84f || fragment.area > gap * gap * 1.10f)
+                continue;
+            int[] borrowed = attachedRawStem(gray, width, height, fragment, gap, 2, 170);
+            if (borrowed == null || borrowed[2] != -1
+                    || fragment.centerY - borrowed[1] < gap * 4.7f
+                    || borrowed[0] - fragment.centerX < gap * .42f
+                    || borrowed[0] - fragment.centerX > gap * .69f) continue;
+
+            var terminal = new ArrayList<TerminalBeamOwner>(2);
+            var preceding = new ArrayList<TerminalBeamOwner>(2);
+            int[] earlier = null;
+            boolean ambiguousEarlier = false;
+            for (var head : heads) {
+                float dx = borrowed[0] - head.centerX;
+                float dy = fragment.centerY - head.centerY;
+                if (head == fragment || dx < -gap || dx > gap * 6.7f
+                        || dy < gap * 1.35f || dy > gap * 7.4f
+                        || nearestHeadStaff(staffs, head.centerY) != staff
+                        || !filledBeamEndpointCore(gray, width, height, head, gap)) continue;
+                int[] stem = attachedRawStem(gray, width, height, head, gap, 2, 170);
+                if (stem == null || stem[2] != 1 || stem[1] - head.centerY < gap * 1.9f)
+                    continue;
+                float distance = borrowed[0] - stem[0];
+                if (Math.abs(distance) <= gap * .22f) terminal.add(new TerminalBeamOwner(head, stem));
+                else if (distance >= gap * 2.35f && distance <= gap * 3.7f)
+                    preceding.add(new TerminalBeamOwner(head, stem));
+                else if (distance >= gap * 5.3f && distance <= gap * 6.7f) {
+                    if (earlier != null && Math.abs(earlier[0] - stem[0]) > 1)
+                        ambiguousEarlier = true;
+                    earlier = stem;
+                }
+            }
+            if (earlier == null || ambiguousEarlier || !alignedBeamDyad(preceding, gap)
+                    || !alignedBeamDyad(terminal, gap)) continue;
+            int[] mask = completeHeadMembers(labels, width, height, fragment);
+            if (mask == null) continue;
+            int[] prior = preceding.get(0).stem(), last = terminal.get(0).stem();
+            if (!InnerBeamShaftEnd.proves(gray, width, gap, mask, earlier, prior, last)
+                    || !InnerBeamShaftEnd.proves(source, width, gap, mask, earlier, prior, last))
+                continue;
+            rejected.add(fragment);
+            for (var owner : terminal) owners.add(owner.head());
+        }
+        return rejected;
+    }
+
+    private static boolean alignedBeamDyad(List<TerminalBeamOwner> pair, float gap) {
+        if (pair.size() != 2) return false;
+        var a = pair.get(0);
+        var b = pair.get(1);
+        float separation = Math.abs(a.head().centerY - b.head().centerY);
+        return Math.abs(a.stem()[0] - b.stem()[0]) <= 1
+                && Math.abs(a.stem()[1] - b.stem()[1]) <= 1
+                && Math.abs(a.head().centerX - b.head().centerX) <= gap * .20f
+                && separation >= gap * 2.95f && separation <= gap * 3.75f;
+    }
+
+    private record ShortDyadEnd(Component upper, Component lower, int[] shaft) {}
+
+    /** Before rhythm analysis, let the printed beam own a mask that borrows its closing shaft. */
+    private static List<Component> shortDyadBeamEndFragments(
+            byte[] labels, byte[] gray, byte[] source, int width, int height, List<Component> heads,
+            List<Staff> staffs, java.util.IdentityHashMap<Component, Boolean> beamOwners) {
+        if (gray == null || source == null) return List.of();
+        var rejected = new ArrayList<Component>();
+        for (var fragment : heads) {
+            var staff = nearestHeadStaff(staffs, fragment.centerY);
+            if (staff == null || staff.count != 1) continue;
+            float gap = staff.gap;
+            float boxWidth = fragment.maxX - fragment.minX + 1;
+            float boxHeight = fragment.maxY - fragment.minY + 1;
+            if (gap < 10 || gap > 26 || boxWidth < gap * .94f || boxWidth > gap * 1.25f
+                    || boxHeight < gap * .82f || boxHeight > gap * 1.62f
+                    || fragment.area < gap * .75f * gap || fragment.area > gap * 1.19f * gap
+                    || fragment.centerY < staff.top + gap * 1.48f
+                    || fragment.centerY > staff.top + gap * 2.45f) continue;
+            int[] reverse = attachedRawStem(gray, width, height, fragment, gap, 2, 170);
+            if (reverse == null || reverse[2] != -1
+                    || reverse[0] - fragment.centerX < gap * .35f
+                    || reverse[0] - fragment.centerX > gap * .65f
+                    || fragment.centerY - reverse[1] < gap * 3.65f) continue;
+
+            ShortDyadEnd last = closingThirdAround(gray, width, height, heads,
+                    reverse[0], reverse[1], gap);
+            if (last == null) continue;
+            ShortDyadEnd previous = precedingClosingThird(gray, width, height, heads, last, gap);
+            if (previous == null) continue;
+            ShortDyadEnd earlier = precedingClosingThird(gray, width, height, heads, previous, gap);
+            if (earlier == null) continue;
+            var members = completeHeadMembers(labels, width, height, fragment);
+            if (members == null) {
+                // This label can have already split into two parts against the staff rule.
+                // Keep an exhaustive traversal of only this rectangular child.
+                members = headMembersInBox(labels, width, fragment);
+            }
+            if (members == null
+                    || !ShortDyadBeamEnd.proves(gray, width, gap, members, earlier.shaft, previous.shaft, last.shaft)
+                    || !ShortDyadBeamEnd.proves(source, width, gap, members, earlier.shaft, previous.shaft, last.shaft))
+                continue;
+            rejected.add(fragment);
+            beamOwners.put(last.upper, true);
+            beamOwners.put(last.lower, true);
+        }
+        return rejected;
+    }
+
+    private static int[] headMembersInBox(byte[] labels, int width, Component fragment) {
+        int[] members = new int[fragment.area];
+        int count = 0;
+        for (int y = fragment.minY; y <= fragment.maxY; y++)
+            for (int x = fragment.minX; x <= fragment.maxX; x++) {
+                int pixel = y * width + x;
+                if (labels[pixel] != OmrMeasurePostProcessor.NOTEHEAD) continue;
+                if (count == members.length) return null;
+                members[count++] = pixel;
+            }
+        return count == members.length ? members : null;
+    }
+
+    private static ShortDyadEnd closingThirdAround(byte[] gray, int width, int height,
+            List<Component> heads, int borrowedX, int borrowedY, float gap) {
+        Component upper = null, lower = null;
+        for (var head : heads) {
+            float dx = head.centerX - borrowedX, dy = head.centerY - borrowedY;
+            if (dx < gap * .43f || dx > gap * .83f
+                    || !filledBeamEndpointCore(gray, width, height, head, gap)) continue;
+            if (dy >= -gap * .18f && dy <= gap * .45f) {
+                if (upper != null) return null;
+                upper = head;
+            } else if (dy >= gap * .66f && dy <= gap * 1.43f) {
+                if (lower != null) return null;
+                lower = head;
+            }
+        }
+        var shaft = closingThirdShaft(gray, width, height, upper, lower, gap);
+        if (shaft == null || Math.abs(shaft[0] - borrowedX) > Math.round(gap * .21f))
+            return null;
+        return new ShortDyadEnd(upper, lower, shaft);
+    }
+
+    private static ShortDyadEnd precedingClosingThird(byte[] gray, int width, int height,
+            List<Component> heads, ShortDyadEnd next, float gap) {
+        Component upper = null, lower = null;
+        for (var head : heads) {
+            float dx = next.upper.centerX - head.centerX;
+            float dy = head.centerY - next.upper.centerY;
+            if (dx < gap * 1.92f || dx > gap * 2.76f
+                    || !filledBeamEndpointCore(gray, width, height, head, gap)) continue;
+            if (dy >= gap * .38f && dy <= gap * .67f) {
+                if (upper != null) return null;
+                upper = head;
+            } else if (dy >= gap * 1.29f && dy <= gap * 1.68f) {
+                if (lower != null) return null;
+                lower = head;
+            }
+        }
+        var shaft = closingThirdShaft(gray, width, height, upper, lower, gap);
+        return shaft == null ? null : new ShortDyadEnd(upper, lower, shaft);
+    }
+
+    private static int[] closingThirdShaft(byte[] gray, int width, int height,
+            Component upper, Component lower, float gap) {
+        if (upper == null || lower == null || Math.abs(upper.centerX - lower.centerX) > gap * .14f
+                || lower.centerY - upper.centerY < gap * .84f
+                || lower.centerY - upper.centerY > gap * 1.14f) return null;
+        int[] a = attachedRawStem(gray, width, height, upper, gap, 2, 170);
+        int[] b = attachedRawStem(gray, width, height, lower, gap, 2, 170);
+        if (a == null || b == null || a[2] != 1 || b[2] != 1
+                || Math.abs(a[0] - b[0]) > 2 || Math.abs(a[1] - b[1]) > 2
+                || a[1] - lower.centerY < gap * 2.6f) return null;
+        return a;
     }
 
     /** Small beam masks may trace back up the very shaft that owns the beam. */
