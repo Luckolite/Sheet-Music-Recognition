@@ -1031,6 +1031,9 @@ final class OmrScoreInterpreter {
                         gray, width, height, heads, staffs, recoveredBeamCapGraces));
         rejectedBeamHeads.addAll(ownedSlopedBeamFragments(labels, gray, width, height, heads, staffs));
         rejectedBeamHeads.addAll(filledBeamBandHeads(gray, width, height, heads, staffs));
+        rejectedBeamHeads.addAll(terminalBeamShaftEndHeads(
+                labels, gray, annotationGray, width, height, heads, staffs, measures));
+
         heads.removeAll(rejectedBeamHeads);
         if (gray != null) {
             var last = measures.get(measures.size() - 1);
@@ -23972,6 +23975,72 @@ final class OmrScoreInterpreter {
             if (ink < halfWidth * 2) return false;
         }
         return true;
+    }
+
+
+    private record TerminalBeamOwner(Component head, int[] stem) {}
+
+    /** A terminal beam fragment can borrow its own dyad's shaft in the reverse direction. */
+    private static List<Component> terminalBeamShaftEndHeads(
+            byte[] labels, byte[] gray, byte[] source, int width, int height,
+            List<Component> heads, List<Staff> staffs, List<MeasureRegion> measures) {
+        if (gray == null || source == null) return List.of();
+        var rejected = new ArrayList<Component>();
+        for (var fragment : heads) {
+            var staff = nearestHeadStaff(staffs, fragment.centerY);
+            if (staff == null || staff.count != 1) continue;
+            float gap = staff.gap;
+            float fw = fragment.maxX - fragment.minX + 1;
+            float fh = fragment.maxY - fragment.minY + 1;
+            if (gap < 8 || fw < gap * .52f || fw > gap * .90f
+                    || fh < gap * .88f || fh > gap * 1.40f
+                    || fragment.area < gap * gap * .36f || fragment.area > gap * gap * .76f) continue;
+            int measure = containingMeasureForStaff(
+                    measures, fragment.centerX / width, fragment.centerY / height, staff, height);
+            if (measure < 0) continue;
+            var region = measures.get(measure);
+            float toEnd = region.right() * width - fragment.centerX;
+            if (toEnd < gap * 1.2f || toEnd > gap * 3.4f) continue;
+            int[] borrowed = attachedRawStem(gray, width, height, fragment, gap, 2, 170);
+            if (borrowed == null || (borrowed[1] - fragment.centerY) * borrowed[2] < gap * 4.6f)
+                continue;
+
+            var previous = new ArrayList<TerminalBeamOwner>(2);
+            var terminal = new ArrayList<TerminalBeamOwner>(2);
+            for (var head : heads) {
+                if (head == fragment) continue;
+                float delta = (head.centerY - fragment.centerY) * borrowed[2];
+                float dx = head.centerX - borrowed[0];
+                if (delta < gap * 2.4f || delta > gap * 6.3f || dx < -gap * 2.7f || dx > gap * .85f
+                        || nearestHeadStaff(staffs, head.centerY) != staff
+                        || !filledBeamEndpointCore(gray, width, height, head, gap)) continue;
+                int[] stem = attachedRawStem(gray, width, height, head, gap, 2, 170);
+                if (stem == null || stem[2] != -borrowed[2]
+                        || (stem[1] - head.centerY) * stem[2] < gap * 2.9f) continue;
+                float fromBorrowed = borrowed[0] - stem[0];
+                if (Math.abs(fromBorrowed) <= gap * .18f) terminal.add(new TerminalBeamOwner(head, stem));
+                else if (fromBorrowed >= gap * 1.95f && fromBorrowed <= gap * 3.85f)
+                    previous.add(new TerminalBeamOwner(head, stem));
+            }
+            if (!terminalBeamDyad(previous, gap) || !terminalBeamDyad(terminal, gap)) continue;
+            int[] members = completeHeadMembers(labels, width, height, fragment);
+            if (members == null) continue;
+            int[] left = previous.get(0).stem(), right = terminal.get(0).stem();
+            if (TerminalBeamShaftEnd.proves(gray, width, gap, members, borrowed, left, right)
+                    && TerminalBeamShaftEnd.proves(source, width, gap, members, borrowed, left, right))
+                rejected.add(fragment);
+        }
+        return rejected;
+    }
+
+    private static boolean terminalBeamDyad(List<TerminalBeamOwner> owners, float gap) {
+        if (owners.size() != 2) return false;
+        var a = owners.get(0);
+        var b = owners.get(1);
+        float vertical = Math.abs(a.head().centerY - b.head().centerY);
+        return java.util.Arrays.equals(a.stem(), b.stem())
+                && Math.abs(a.head().centerX - b.head().centerX) <= gap * .23f
+                && vertical >= gap * 1.65f && vertical <= gap * 3.2f;
     }
 
     /** Small beam masks may trace back up the very shaft that owns the beam. */
