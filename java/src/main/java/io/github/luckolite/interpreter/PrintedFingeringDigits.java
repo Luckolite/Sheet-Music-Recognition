@@ -72,6 +72,7 @@ final class PrintedFingeringDigits {
             case "0" -> 0;
             case "1" -> 1;
             case "2" -> 2;
+            case "3" -> 3;
             case "4" -> 4;
             default -> -1;
         };
@@ -104,6 +105,8 @@ final class PrintedFingeringDigits {
                 || (note.articulations() & NoteOrnament.GRACE) != 0 || head.harmonic()
                 || h < .9 || h > 2.2 || Math.abs(box.x() - head.x()) > .36 * gap
                 || Math.abs(box.y() - head.y()) > 3.3 * gap) return false;
+        // A genuine 3 can own a group. Admit it as fingering only on the head side.
+        if (box.digit() == 3 && note.stemDirection() * (box.y() - head.y()) <= 0) return false;
         for (int i = firstHeadAt(heads, box.x() - gap);
                 i < heads.size() && heads.get(i).x() <= box.x() + gap; i++) {
             var other = heads.get(i);
@@ -154,6 +157,7 @@ final class PrintedFingeringDigits {
             return false;
         double aspect = (glyph.right - glyph.left + 1.0) / (glyph.bottom - glyph.top + 1);
         if (!(aspect > .27 && aspect < 1.25)) return false;
+        if (box.digit() == 3) return TripletRhythmDetector.isIsolatedThree(glyph, width);
         return box.digit() != 1 || (aspect >= .35 && aspect <= .72);
     }
 }

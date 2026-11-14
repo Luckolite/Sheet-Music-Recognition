@@ -4373,6 +4373,18 @@ final class TripletRhythmDetector {
         return looksLikeThree(pixels, w, 0, 0, w, h, min, max, count);
     }
 
+    /** Shared optical identity only. No tuplet or fingering ownership follows from shape. */
+    static boolean isIsolatedThree(RawNumeralComponents.Component glyph, int sourceWidth) {
+        int w = glyph.right - glyph.left + 1, h = glyph.bottom - glyph.top + 1;
+        byte[] pixels = new byte[w * h];
+        java.util.Arrays.fill(pixels, (byte) 255);
+        for (int i = 0; i < glyph.size(); i++) {
+            int pixel = glyph.pixel(i);
+            pixels[(pixel / sourceWidth - glyph.top) * w + pixel % sourceWidth - glyph.left] = 0;
+        }
+        return looksLikeThree(pixels, w, 0, 0, w, h);
+    }
+
     private static boolean looksLikeThree(byte[] gray, int width, int left, int top, int w, int h) {
         int[] min = new int[h], max = new int[h];
         int area = 0;

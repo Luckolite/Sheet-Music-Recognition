@@ -75,6 +75,38 @@ public final class PrintedFingeringDigitsTest {
         assertTrue(capture(List.of(word("3", 101, 91)), notes, events).isEmpty());
     }
 
+    @Test
+    public void admitsAnOpticalThreeOnlyOnTheHeadSide() {
+        int[][] rows = {
+            {3, 8}, {1, 10}, {0, 11}, {0, 3, 7, 12}, {0, 2, 8, 12}, {0, 2, 8, 12},
+            {8, 12}, {8, 12}, {7, 12}, {4, 10}, {4, 10}, {7, 11}, {8, 12}, {8, 12},
+            {0, 2, 8, 12}, {0, 2, 8, 12}, {0, 2, 8, 12}, {0, 2, 8, 12},
+            {0, 4, 7, 12}, {0, 11}, {2, 9}, {3, 8}
+        };
+        for (int row = 0; row < rows.length; row++)
+            for (int i = 0; i < rows[row].length; i += 2)
+                rectangle(95 + rows[row][i], 80 + row, 95 + rows[row][i + 1], 80 + row);
+        var words = List.of(word("3", 101, 91));
+        var events = List.of(event(101, 129, 0));
+        var head = note(101, 129).withTupletRatio(3, 2);
+        assertEquals(
+                List.of(new PrintedFingeringDigits.Mark(0, 3, PrintedFingeringDigits.Placement.ABOVE)),
+                capture(words, List.of(head.withStemDirection(-1)), events));
+        assertTrue(capture(words, List.of(head.withStemDirection(1)), events).isEmpty());
+        assertTrue(capture(words, List.of(head), events).isEmpty());
+    }
+
+    @Test
+    public void rejectsAnOcrThreeOnDigitOneInk() {
+        one(101, 91);
+        assertTrue(
+                capture(
+                                List.of(word("3", 101, 91)),
+                                List.of(note(101, 129).withStemDirection(-1)),
+                                List.of(event(101, 129, 0)))
+                        .isEmpty());
+    }
+
     private List<PrintedFingeringDigits.Mark> capture(
             List<SheetInterpreter.Word> words,
             List<ScoreNoteEvent> notes,
