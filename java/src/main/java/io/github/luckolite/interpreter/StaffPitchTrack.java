@@ -61,21 +61,20 @@ final class StaffPitchTrack {
             int at = (firstRow + first) * width + left;
             for (int row = first, base = first * stride; row <= last;
                     row++, base += stride, at += width) {
-                int count = 0;
                 int pixel = at;
                 int out = base + 1;
                 if (excludedFrom <= excludedTo) {
-                    count = fill(gray, pixel, out, base + excludedFrom, flankOffset, threshold, 0);
-                    // Queries never cross the excluded span.
-                    prefix[base + excludedTo] = (char) count;
+                    fill(gray, pixel, out, base + excludedFrom, flankOffset, threshold);
+                    // Each prefix starts at zero. No query crosses the excluded span.
                     out = base + excludedTo + 1;
                     pixel += excludedTo;
                 }
-                fill(gray, pixel, out, base + stride, flankOffset, threshold, count);
+                fill(gray, pixel, out, base + stride, flankOffset, threshold);
             }
         }
 
-        private int fill(byte[] gray, int at, int out, int end, int flankOffset, int threshold, int count) {
+        private void fill(byte[] gray, int at, int out, int end, int flankOffset, int threshold) {
+            int count = 0;
             for (; out < end; at++, out++) {
                 int ink = gray[at] & 255;
                 if (ink <= threshold
@@ -83,7 +82,6 @@ final class StaffPitchTrack {
                         && (gray[at + flankOffset] & 255) >= ink + 12) count++;
                 prefix[out] = (char) count;
             }
-            return count;
         }
     }
 
@@ -1186,29 +1184,30 @@ final class StaffPitchTrack {
             int band,
             int flank,
             int inkThreshold) {
+        int flankOffset = flank * width;
         for (int side = 0; side < 2; side++) {
-            int first = side == 0 ? left : headRight + exclusion + 1,
-                    last = side == 0 ? headLeft - exclusion - 1 : right;
-            int samples = 0, supported = 0;
-            for (int xx = first; xx <= last; xx++) {
-                if (xx < 0 || xx >= width) continue;
-                samples++;
-                boolean ink = false;
+            int first = Math.max(0, side == 0 ? left : headRight + exclusion + 1);
+            int last = Math.min(width - 1, side == 0 ? headLeft - exclusion - 1 : right);
+            int samples = last - first + 1;
+            if (samples < 8) return false;
+            float required = samples * .6f;
+            int supported = 0;
+            for (int xx = first; xx <= last && supported < required; xx++) {
+                if (supported + last - xx + 1 < required) return false;
                 int center = Math.round(row + (xx - x) * slope);
-                for (int y = Math.max(flank, center - band);
-                        y <= Math.min(height - 1 - flank, center + band);
-                        y++) {
-                    int value = gray[y * width + xx] & 255;
+                int start = Math.max(flank, center - band);
+                int end = Math.min(height - 1 - flank, center + band);
+                for (int y = start, pixel = start * width + xx; y <= end; y++, pixel += width) {
+                    int value = gray[pixel] & 255;
                     if (value <= inkThreshold
-                            && (gray[(y - flank) * width + xx] & 255) >= value + 12
-                            && (gray[(y + flank) * width + xx] & 255) >= value + 12) {
-                        ink = true;
+                            && (gray[pixel - flankOffset] & 255) >= value + 12
+                            && (gray[pixel + flankOffset] & 255) >= value + 12) {
+                        supported++;
                         break;
                     }
                 }
-                if (ink) supported++;
             }
-            if (samples < 8 || supported < samples * .6f) return false;
+            if (supported < required) return false;
         }
         return true;
     }
@@ -1233,28 +1232,42 @@ final class StaffPitchTrack {
             int inkThreshold) {
         int covered = 0;
         int thick = Math.max(2, Math.round(gap * .25f));
-        for (int side = 0; side < 2; side++)
+        for (int side = 0; side < 2; side++) {
+            int first = Math.max(0, side == 0 ? left : headRight + exclusion + 1);
+            int last = Math.min(width - 1, side == 0 ? headLeft - exclusion - 1 : right);
+            int samples = last - first + 1;
+            if (samples < 8) return false;
+            float requiredInk = samples * .5f, requiredLabels = samples * .35f;
+            float requiredThick = samples * .6f;
             for (int line = 0; line < 5; line++) {
-                int first = side == 0 ? left : headRight + exclusion + 1;
-                int last = side == 0 ? headLeft - exclusion - 1 : right;
-                int samples = 0, inkColumns = 0, labelColumns = 0, thickColumns = 0;
+                int inkColumns = 0, labelColumns = 0;
+                float lineCenter = base - line * gap;
                 for (int xx = first; xx <= last; xx++) {
-                    if (xx < 0 || xx >= width) continue;
-                    samples++;
                     boolean ink = false, label = false;
-                    int center = Math.round(base - line * gap + (xx - x) * slope);
+                    int center = Math.round(lineCenter + (xx - x) * slope);
                     for (int yy = Math.max(flank, center - band);
                             yy <= Math.min(height - 1 - flank, center + band);
                             yy++) {
-                        int value = gray[yy * width + xx] & 255;
+                        int pixel = yy * width + xx;
+                        int value = gray[pixel] & 255;
                         if (value <= inkThreshold
                                 && (gray[(yy - flank) * width + xx] & 255) >= value + 12
                                 && (gray[(yy + flank) * width + xx] & 255) >= value + 12)
                             ink = true;
-                        if (labels[yy * width + xx] == 4) label = true;
+                        if (labels[pixel] == 4) label = true;
+                        if (ink && label) break;
                     }
                     if (ink) inkColumns++;
                     if (label) labelColumns++;
+                    if (labelColumns >= requiredLabels && inkColumns >= requiredInk) break;
+                }
+                if (labelColumns < requiredLabels) return false;
+                if (inkColumns >= requiredInk) continue;
+                // Thick ink is only a fallback for one occluded staff side.
+                if (!occluded || ++covered > 1) return false;
+                int thickColumns = 0;
+                for (int xx = first; xx <= last && thickColumns < requiredThick; xx++) {
+                    int center = Math.round(lineCenter + (xx - x) * slope);
                     for (int yy = Math.max(thick, center - band);
                             yy <= Math.min(height - 1 - thick, center + band);
                             yy++) {
@@ -1266,11 +1279,9 @@ final class StaffPitchTrack {
                         }
                     }
                 }
-                if (samples < 8 || labelColumns < samples * .35f) return false;
-                if (inkColumns < samples * .5f) {
-                    if (!occluded || thickColumns < samples * .6f || ++covered > 1) return false;
-                }
+                if (thickColumns < requiredThick) return false;
             }
+        }
         return true;
     }
 
