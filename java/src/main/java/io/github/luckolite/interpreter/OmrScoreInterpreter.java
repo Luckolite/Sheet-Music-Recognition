@@ -24852,6 +24852,15 @@ final class OmrScoreInterpreter {
                 rejected.add(fragment);
                 continue;
             }
+            if (staff.count == 1 && gap >= 8 && fragment.area <= gap * gap * .68f
+                    && fragment.maxY - fragment.minY + 1 <= gap * .70f) {
+                int[] reversed = attachedRawStem(gray, width, height, fragment, gap, 2, 170);
+                if (reversed != null && borrowedDenseDyadBeamMask(
+                        labels, gray, width, height, fragment, heads, gap, reversed)) {
+                    rejected.add(fragment);
+                    continue;
+                }
+            }
             int fragmentWidth = fragment.maxX - fragment.minX + 1;
             if (gap >= 8 && fragment.area <= gap * gap * .8f
                     && fragmentWidth > gap * 1.25f && fragmentWidth <= gap * 1.45f
@@ -24914,6 +24923,78 @@ final class OmrScoreInterpreter {
         }
         return rejected;
     }
+
+    /**
+     * A head-shaped mask at the foot of a lower beam can trace backward up a real
+     * dyad shaft. The mask must lie inside both rails between three owned shafts.
+     */
+    private static boolean borrowedDenseDyadBeamMask(
+            byte[] labels, byte[] gray, int width, int height, Component fragment,
+            List<Component> heads, float gap, int[] borrowed) {
+        if (borrowed[2] != -1 || borrowed[0] < fragment.minX || borrowed[0] > fragment.maxX
+                || fragment.centerY - borrowed[1] < gap * 4
+                || fragment.area > gap * gap * .68f
+                || fragment.maxX - fragment.minX + 1 > gap * 1.45f
+                || fragment.maxY - fragment.minY + 1 > gap * .70f
+                || filledBeamEndpointCore(gray, width, height, fragment, gap)) return false;
+        List<int[]> shafts = new ArrayList<>();
+        for (Component head : heads) {
+            if (head == fragment || Math.abs(head.centerX - fragment.centerX) > gap * 4
+                    || fragment.centerY - head.centerY < gap * 2.1f
+                    || fragment.centerY - head.centerY > gap * 8
+                    || !filledBeamEndpointCore(gray, width, height, head, gap)) continue;
+            int[] stem = attachedRawStem(gray, width, height, head, gap, 2, 170);
+            if (stem == null || stem[2] != 1 || stem[1] - head.centerY < gap * 3.2f
+                    || Math.abs(stem[1] - fragment.centerY) > gap * 1.2f) continue;
+            if (shafts.stream().noneMatch(other -> java.util.Arrays.equals(other, stem)))
+                shafts.add(stem);
+        }
+        if (shafts.size() < 3 || shafts.size() > 12) return false;
+        int[] members = completeHeadMembers(labels, width, height, fragment);
+        if (members == null) return false;
+        for (int[] middle : shafts) {
+            if (Math.abs(middle[0] - borrowed[0]) > Math.round(gap * .15f)) continue;
+            for (int[] left : shafts) {
+                if (left[0] > fragment.minX - gap * .7f || middle[0] - left[0] < gap * 1.45f)
+                    continue;
+                for (int[] right : shafts) {
+                    if (right[0] < fragment.maxX + gap || right[0] - middle[0] < gap * 1.45f
+                            || right[0] - left[0] > gap * 5) continue;
+                    float slope = (right[1] - left[1]) / (float) (right[0] - left[0]);
+                    if (Math.abs(slope) > .25f
+                            || Math.abs(middle[1] - left[1] - slope * (middle[0] - left[0])) > gap * .18f)
+                        continue;
+                    if (denseDyadRailMembership(gray, width, height, members, fragment, left, right,
+                            slope, gap)) return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static boolean denseDyadRailMembership(
+            byte[] gray, int width, int height, int[] members, Component fragment,
+            int[] left, int[] right, float slope, float gap) {
+        int margin=Math.round(gap * .25f);
+        int first=left[0]+margin, end=right[0]-margin;
+        int near=Math.round(gap * .22f), far=Math.round(gap * .90f);
+        if (!continuousBeamRail(gray, width, height, left, slope, first, end, near)
+                || !continuousBeamRail(gray, width, height, left, slope, first, end, far))
+            return false;
+        int seam=Math.round((near+far)*.5f), open=0;
+        for (int x=fragment.maxX+1; x<=end; x++) {
+            int tip=Math.round(left[1] + slope * (x-left[0]));
+            if (!beamCore(gray, width, height, x, tip-seam, 0)) open++;
+        }
+        if (open < gap * .75f) return false;
+        for (int member : members) {
+            int x=member%width, y=member/width;
+            float depth=left[1]+slope*(x-left[0])-y;
+            if (depth < 0 || depth > gap*1.08f || (gray[member]&255)>=155) return false;
+        }
+        return true;
+    }
+
 
     /** Two open beam rails can own every pixel of the masked head around a borrowed chord shaft. */
     private static boolean ownedBeamCorridor(
