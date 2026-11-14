@@ -106,9 +106,8 @@ public final class MusicalOcr {
         var fontCopies = new ArrayList<MeterCopyFontEvidence.Copy>();
         var rasterMeasures = new HashSet<Integer>();
         var ineligibleFontMeasures = new HashSet<Integer>();
-        for (var change :
-                MeterChangeDetector.rasterMeterCandidates(
-                        labels, gray, width, height, measures, notes)) {
+        var page = MeterChangeDetector.pageCandidates(labels, gray, width, height, measures, notes);
+        for (var change : page.readings()) {
             clockMeterObservations.add(
                     new ScoreMeterProducerSource.Observation(
                             clockMeterSource,
@@ -123,8 +122,7 @@ public final class MusicalOcr {
             decisive.add(change.measureIndex());
             rasterMeasures.add(change.measureIndex());
         }
-        var candidates =
-                MeterChangeDetector.candidates(labels, gray, width, height, measures, notes);
+        var candidates = page.crops();
         if (TRACE) System.err.println("meter candidates=" + candidates.size());
         for (var crop : candidates) {
             int measure = MeterChangeDetector.followingMeasure(crop, width, height, measures);

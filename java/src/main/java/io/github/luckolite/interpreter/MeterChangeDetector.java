@@ -14,9 +14,8 @@ public final class MeterChangeDetector {
     private record MeterWindow(SignatureStaff geometry, int left, int right) {}
 
     private static List<MeterWindow> localWindows(
-            byte[] labels, byte[] gray, int width, int height) {
+            byte[] gray, int width, int height, List<SignatureStaff> staffs) {
         var out = new ArrayList<MeterWindow>();
-        var staffs = signatureStaffs(labels, gray, width, height);
         for (var g : staffs) out.add(new MeterWindow(g, 0, width));
         for (var g : staffs)
             for (var w :
@@ -44,7 +43,7 @@ public final class MeterChangeDetector {
             List<MeasureRegion> measures,
             List<ScoreNoteEvent> notes) {
         return uniqueRasterReadings(
-                rasterCandidates(labels, gray, width, height, measures, notes, false));
+                rasterCandidates(labels, gray, width, height, measures, notes, false, null));
     }
 
     /** Raster C, cut-C and complete stacked fours share one conflict decision per measure. */
@@ -67,7 +66,17 @@ public final class MeterChangeDetector {
             int height,
             List<MeasureRegion> measures,
             List<ScoreNoteEvent> notes) {
-        return rasterCandidates(labels, gray, width, height, measures, notes, true);
+        return rasterCandidates(labels, gray, width, height, measures, notes, true, null);
+    }
+
+    record PageCandidates(List<ScoreMeterChange> readings, List<Crop> crops) {}
+
+    static PageCandidates pageCandidates(
+            byte[] labels, byte[] gray, int width, int height,
+            List<MeasureRegion> measures, List<ScoreNoteEvent> notes) {
+        var retained = new ArrayList<Crop>();
+        var readings = rasterCandidates(labels, gray, width, height, measures, notes, true, retained);
+        return new PageCandidates(readings, List.copyOf(retained));
     }
 
     private static List<ScoreMeterChange> uniqueRasterReadings(List<ScoreMeterChange> candidates) {
@@ -85,13 +94,14 @@ public final class MeterChangeDetector {
             int height,
             List<MeasureRegion> measures,
             List<ScoreNoteEvent> notes,
-            boolean numeric) {
+            boolean numeric, List<Crop> retained) {
         if (labels == null
                 || gray == null
                 || labels.length != width * height
                 || gray.length != width * height) return List.of();
         var readings = new java.util.TreeMap<Integer, java.util.Set<ScoreMeterChange>>();
-        for (var geometry : signatureStaffs(labels, gray, width, height))
+        var staffs = signatureStaffs(labels, gray, width, height);
+        for (var geometry : staffs)
             for (var reading :
                     CommonTimeMeter.candidates(
                             labels,
@@ -119,10 +129,13 @@ public final class MeterChangeDetector {
                 readings.computeIfAbsent(proof.measureIndex(), ignored -> new java.util.HashSet<>())
                         .add(new ScoreMeterChange(proof.measureIndex(), 4, 4));
         }
-        if (numeric)
-            for (var crop : candidates(labels, gray, width, height, measures, notes)) {
+        if (numeric) {
+            var crops = eligibleCrops(labels, gray, width, height, measures, notes, staffs);
+            if (retained != null) retained.addAll(crops);
+            for (var crop : crops) {
                 int measure = followingMeasure(crop, width, height, measures);
                 if (measure < 0) continue;
+                int lastLine = Math.round(crop.firstLine() + 4 * crop.gap());
                 boolean four = false;
                 for (int x = crop.left(); x < crop.right() && !four; x++)
                     four =
@@ -132,7 +145,7 @@ public final class MeterChangeDetector {
                                     height,
                                     x,
                                     crop.firstLine(),
-                                    Math.round(crop.firstLine() + 4 * crop.gap()),
+                                    lastLine,
                                     crop.gap());
                 if (four)
                     readings.computeIfAbsent(measure, ignored -> new java.util.HashSet<>())
@@ -142,12 +155,13 @@ public final class MeterChangeDetector {
                 for (int x = middle; x < end; x++) {
                     if (!OmrMeasurePostProcessor.twoOverFourCounters(
                             gray, width, height, x, crop.firstLine(),
-                            Math.round(crop.firstLine() + 4 * crop.gap()), crop.gap())) continue;
+                            lastLine, crop.gap())) continue;
                     readings.computeIfAbsent(measure, ignored -> new java.util.HashSet<>())
                             .add(new ScoreMeterChange(measure, 2, 4));
                     break;
                 }
             }
+        }
         var result = new ArrayList<ScoreMeterChange>();
         var meterOrder = java.util.Comparator.comparingInt(ScoreMeterChange::numerator)
                 .thenComparingInt(ScoreMeterChange::denominator);
@@ -349,7 +363,7 @@ public final class MeterChangeDetector {
     }
 
     public static List<Crop> candidates(byte[] labels, byte[] gray, int width, int height) {
-        return candidates(labels, gray, width, height, crop -> true);
+        return candidates(labels, gray, width, height, crop -> true, null);
     }
 
     /** Apply note ownership before the bounded OCR budget, so body ink cannot starve later headers. */
@@ -360,6 +374,13 @@ public final class MeterChangeDetector {
             int height,
             List<MeasureRegion> measures,
             List<ScoreNoteEvent> notes) {
+        return eligibleCrops(labels, gray, width, height, measures, notes, null);
+    }
+
+    private static List<Crop> eligibleCrops(
+            byte[] labels, byte[] gray, int width, int height,
+            List<MeasureRegion> measures, List<ScoreNoteEvent> notes,
+            List<SignatureStaff> staffs) {
         return candidates(
                 labels,
                 gray,
@@ -370,7 +391,7 @@ public final class MeterChangeDetector {
                     return measure >= 0
                             && precedesNotes(
                                     crop, labels, gray, width, height, measure, measures, notes);
-                });
+                }, staffs);
     }
 
     private static List<Crop> candidates(
@@ -378,13 +399,14 @@ public final class MeterChangeDetector {
             byte[] gray,
             int width,
             int height,
-            java.util.function.Predicate<Crop> eligible) {
+            java.util.function.Predicate<Crop> eligible, List<SignatureStaff> staffs) {
         List<Crop> result = new ArrayList<>();
         if (labels == null
                 || gray == null
                 || labels.length != width * height
                 || gray.length != width * height) return result;
-        var windows = localWindows(labels, gray, width, height);
+        if (staffs == null) staffs = signatureStaffs(labels, gray, width, height);
+        var windows = localWindows(gray, width, height, staffs);
         for (var window : windows) {
             var geometry = window.geometry();
             var staff = geometry.lines();
@@ -399,34 +421,41 @@ public final class MeterChangeDetector {
             int firstHead = width, firstSemanticHead = width;
             for (int xx = 0; xx < width; xx++) {
                 int heads = 0;
-                for (int yy = headTop; yy <= headBottom; yy++)
-                    if (labels[yy * width + xx] == OmrMeasurePostProcessor.NOTEHEAD) heads++;
+                for (int yy = headTop; yy <= headBottom; yy++) {
+                    if (labels[yy * width + xx] == OmrMeasurePostProcessor.NOTEHEAD
+                            && ++heads == minimumHeads) break;
+                }
                 if (heads >= minimumHeads) {
                     if (firstHead == width) firstHead = xx;
                     int key = 0;
+                    float keyLimit = gap * gap * .35f;
+                    int lastKeyColumn = Math.min(width - 1, xx + gapPixels);
                     for (int x = Math.max(0, xx - gapPixels);
-                            x <= Math.min(width - 1, xx + gapPixels);
-                            x++)
-                        for (int yy = headTop; yy <= headBottom; yy++)
-                            if (labels[yy * width + x] == OmrMeasurePostProcessor.CLEF_OR_KEY)
-                                key++;
-                    if (key < gap * gap * .35f) {
+                            x <= lastKeyColumn && key < keyLimit; x++) {
+                        for (int y = headTop; y <= headBottom && key < keyLimit; y++) {
+                            if (labels[y * width + x] == OmrMeasurePostProcessor.CLEF_OR_KEY) key++;
+                        }
+                    }
+                    if (key < keyLimit) {
                         firstSemanticHead = xx;
                         break;
                     }
                 }
             }
+            int[] columnShift = new int[window.right() - window.left()];
+            for (int x = window.left(); x < window.right(); x++)
+                columnShift[x - window.left()] = Math.round(slope * (x - width * .5f));
+            boolean[] railRows = new boolean[Math.max(0, bottom - top + 1)];
+            for (int row : staff.rows()) {
+                int from = Math.max(top, row - radius);
+                int to = Math.min(bottom, row + radius);
+                for (int y = from; y <= to; y++) railRows[y - top] = true;
+            }
             int[] ink = new int[width];
             for (int y = top; y <= bottom; y++) {
-                boolean line = false;
-                for (int row : staff.rows())
-                    if (Math.abs(y - row) <= radius) {
-                        line = true;
-                        break;
-                    }
-                if (line) continue;
+                if (railRows[y - top]) continue;
                 for (int x = window.left(); x < window.right(); x++) {
-                    int yy = y + Math.round(slope * (x - width * .5f));
+                    int yy = y + columnShift[x - window.left()];
                     if (yy >= 0 && yy < height && (gray[yy * width + x] & 255) < 155) ink[x]++;
                 }
             }
@@ -454,13 +483,13 @@ public final class MeterChangeDetector {
 
                     for (int xx = left; xx <= last; xx++) {
                         if (ink[xx] < gap * 1.4f) continue;
-                        int shift = Math.round(slope * (xx - width * .5f));
+                        int shift = columnShift[xx - window.left()];
                         if (!OmrMeasurePostProcessor.stackedFourCounters(
                                 gray, width, height, xx, top + shift, bottom + shift, gap))
                             continue;
                         int end = xx, counterRight = Math.min(last, xx + Math.round(gap * .8f));
                         for (int next = xx + 1; next <= counterRight; next++) {
-                            int offset = Math.round(slope * (next - width * .5f));
+                            int offset = columnShift[next - window.left()];
                             if (OmrMeasurePostProcessor.stackedFourCounters(
                                     gray, width, height, next, top + offset, bottom + offset, gap))
                                 end = next;
@@ -533,7 +562,7 @@ public final class MeterChangeDetector {
                 int minY = height, maxY = 0;
                 for (int y = top; y <= bottom; y++)
                     for (int xx = left; xx <= last; xx++) {
-                        int yy = y + Math.round(slope * (xx - width * .5f));
+                        int yy = y + columnShift[xx - window.left()];
                         if (yy < 0 || yy >= height) continue;
                         byte label = labels[yy * width + xx];
                         if (label == OmrMeasurePostProcessor.CLEF_OR_KEY) key++;
@@ -547,13 +576,7 @@ public final class MeterChangeDetector {
                             if (y < top + gap * 1.8f) upperSymbols++;
                             if (y > top + gap * 2.2f) lowerSymbols++;
                         }
-                        boolean onLine = false;
-                        for (int row : staff.rows())
-                            if (Math.abs(y - row) <= radius) {
-                                onLine = true;
-                                break;
-                            }
-                        if (!onLine && (gray[yy * width + xx] & 255) < 155) {
+                        if (!railRows[y - top] && (gray[yy * width + xx] & 255) < 155) {
                             minY = Math.min(minY, y);
                             maxY = Math.max(maxY, y);
                             if (y < top + gap * 1.8f) {
@@ -835,12 +858,15 @@ public final class MeterChangeDetector {
             staffs.add(new SignatureStaff(raw, 0));
         float slope = OmrMeasurePostProcessor.estimateStaffSlope(labels, width, height);
         int[] strength = new int[height];
-        for (int y = 0; y < height; y++)
-            for (int x = 0; x < width; x++)
-                if (labels[y * width + x] == OmrMeasurePostProcessor.STAFF) {
-                    int row = Math.round(y - slope * (x - width * .5f));
-                    if (row >= 0 && row < height) strength[row]++;
-                }
+        float[] offsets = new float[width];
+        for (int x = 0; x < width; x++) offsets[x] = slope * (x - width * .5f);
+        for (int y = 0, pageRow = 0; y < height; y++, pageRow += width) {
+            for (int x = 0; x < width; x++) {
+                if (labels[pageRow + x] != OmrMeasurePostProcessor.STAFF) continue;
+                int row = Math.round(y - offsets[x]);
+                if (row >= 0 && row < height) strength[row]++;
+            }
+        }
         for (var candidate :
                 RawStaffLineDetector.detectFromStrength(
                         strength, Math.max(10, width / 80), height)) {

@@ -95,9 +95,10 @@ public final class MeterFontMatcher {
             byte[] labels, byte[] gray, int width, int height,
             List<MeasureRegion> measures, List<ScoreNoteEvent> notes) {
         var choices = new TreeMap<Integer, Set<ScoreMeterChange>>();
-        for (var reading : MeterChangeDetector.rasterMeterCandidates(labels, gray, width, height, measures, notes))
+        var page = MeterChangeDetector.pageCandidates(labels, gray, width, height, measures, notes);
+        for (var reading : page.readings())
             choices.computeIfAbsent(reading.measureIndex(), ignored -> new HashSet<>()).add(reading);
-        for (var crop : MeterChangeDetector.candidates(labels, gray, width, height, measures, notes)) {
+        for (var crop : page.crops()) {
             int measure = MeterChangeDetector.followingMeasure(crop, width, height, measures);
             if (!MeterChangeDetector.precedesNotes(crop, labels, gray, width, height, measure, measures, notes))
                 continue;
