@@ -785,7 +785,7 @@ final class PrintedMeasureRhythmGuard {
         float gap = (cadence.bottom() - cadence.top()) * height / 8.2f;
         float left = cadence.left() * width, right = cadence.right() * width;
         float precedingRight = before.right() * width;
-        if (gap < 6 || gap > 32 || right - left < gap * 3.5f || right - left > gap * 7.5f
+        if (gap < 6 || gap > 32 || right - left < gap * 3.5f || right - left > gap * 8f
                 || precedingRight - before.left() * width < gap * 12
                 || left - precedingRight < gap * .55f || left - precedingRight > gap * 1.5f)
             return false;
