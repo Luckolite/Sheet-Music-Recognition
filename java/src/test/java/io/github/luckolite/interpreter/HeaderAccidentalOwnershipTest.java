@@ -107,6 +107,31 @@ public class HeaderAccidentalOwnershipTest {
     }
 
     @Test
+    public void repeatedSystemHeaderRequiresTheCompleteInheritedKey() {
+        var printed = new Page(true);
+        assertEquals(
+                52,
+                OmrScoreInterpreter.inheritedFlatHeaderStart(
+                        printed.gray, printed.labels, W, H, 10, 116, 164, 16, 2));
+        assertEquals(
+                -1,
+                OmrScoreInterpreter.inheritedFlatHeaderStart(
+                        printed.gray, printed.labels, W, H, 10, 116, 164, 16, 1));
+        var withoutClef = new Page(false);
+        assertEquals(
+                -1,
+                OmrScoreInterpreter.inheritedFlatHeaderStart(
+                        withoutClef.gray, withoutClef.labels, W, H, 10, 116, 164, 16, 2));
+        for (int y = 76; y < 122; y++)
+            if (Math.floorMod(y - 100, 16) != 0)
+                Arrays.fill(printed.gray, y * W + 99, y * W + 114, (byte) 255);
+        assertEquals(
+                -1,
+                OmrScoreInterpreter.inheritedFlatHeaderStart(
+                        printed.gray, printed.labels, W, H, 10, 116, 164, 16, 2));
+    }
+
+    @Test
     public void sourceArraysRemainUnchanged() {
         var p = new Page(true);
         var l = p.labels.clone();

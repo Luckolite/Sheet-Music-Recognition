@@ -27,6 +27,30 @@ final class WrappedMeasureBoundaries {
     static boolean confirms(
             byte[] gray, int width, int height, List<MeasureRegion> measures, int first,
             float firstLastHeadX, float secondFirstHeadX, boolean singleBeamGroups) {
+        return confirms(
+                gray,
+                width,
+                height,
+                measures,
+                first,
+                firstLastHeadX,
+                secondFirstHeadX,
+                singleBeamGroups,
+                null,
+                0);
+    }
+
+    static boolean confirms(
+            byte[] gray,
+            int width,
+            int height,
+            List<MeasureRegion> measures,
+            int first,
+            float firstLastHeadX,
+            float secondFirstHeadX,
+            boolean singleBeamGroups,
+            byte[] labels,
+            int inheritedKey) {
         if (gray == null || width <= 0 || height <= 0 || gray.length != (long) width * height
                 || measures == null || first < 1 || first >= measures.size() - 2) return false;
         var before = box(measures.get(first - 1), width, height);
@@ -57,9 +81,28 @@ final class WrappedMeasureBoundaries {
         return hasBoundary(gray, width, height, endTrack, before.right, end.left, gap)
                 && hasBoundary(gray, width, height, startTrack, start.right, after.left, gap)
                 && (openRightMargin(gray, width, height, endTrack, end.right, firstLastHeadX, gap)
-                        || singleBeamGroups && openRightEdge(gray, width, height, endTrack,
-                                end.right, firstLastHeadX, gap))
-                && openLeftMargin(gray, width, height, startTrack, start.left, secondFirstHeadX, gap);
+                        || singleBeamGroups
+                                && openRightEdge(
+                                        gray,
+                                        width,
+                                        height,
+                                        endTrack,
+                                        end.right,
+                                        firstLastHeadX,
+                                        gap))
+                && (openLeftMargin(
+                                gray, width, height, startTrack, start.left, secondFirstHeadX, gap)
+                        || singleBeamGroups
+                                && inheritedFlatHeader(
+                                        gray,
+                                        labels,
+                                        width,
+                                        height,
+                                        startTrack,
+                                        start.left,
+                                        secondFirstHeadX,
+                                        gap,
+                                        inheritedKey));
     }
 
     static boolean confirmsClosed(
@@ -308,6 +351,58 @@ final class WrappedMeasureBoundaries {
                 || staffRules(gray, width, height, track, Math.round(firstHead - gap * .7f)) != 5)
             return false;
         return clearOfVerticalInk(gray, width, height, track, start - gap * .7f, firstHead - gap * .65f);
+    }
+
+    private static boolean inheritedFlatHeader(
+            byte[] gray,
+            byte[] labels,
+            int width,
+            int height,
+            StaffPitchTrack staff,
+            float cropLeft,
+            float firstHead,
+            float gap,
+            int inheritedKey) {
+        if (labels == null
+                || labels.length != gray.length
+                || inheritedKey >= 0
+                || inheritedKey < -7) return false;
+        int paperRight = Math.round(firstHead - gap * .95f);
+        int paperLeft = paperRight;
+        while (paperLeft > cropLeft
+                && staffRules(gray, width, height, staff, paperLeft) == 5
+                && verticalCoverage(gray, width, height, staff, paperLeft) <= .35f) paperLeft--;
+        if (paperRight - paperLeft < gap * 1.5f || paperLeft <= cropLeft) return false;
+
+        // Locate the incoming staff edge before the partial signature in the decoder box.
+        int limit = Math.max(0, Math.round(cropLeft - gap * 10));
+        int margin = Math.max(2, Math.round(gap * .65f));
+        for (int x = Math.round(cropLeft - gap * 1.25f); x >= limit + margin; x--) {
+            if (staffRules(gray, width, height, staff, x) != 5
+                    || staffRules(gray, width, height, staff, x - margin) != 0) continue;
+            var frame = staff.at(x);
+            int flats =
+                    OmrScoreInterpreter.inheritedFlatHeaderStart(
+                            gray,
+                            labels,
+                            width,
+                            height,
+                            x,
+                            paperLeft,
+                            frame[0],
+                            frame[1],
+                            -inheritedKey);
+            return flats >= 0
+                    && !hasBoundary(
+                            gray,
+                            width,
+                            height,
+                            staff,
+                            flats + gap * .25f,
+                            firstHead - gap * .85f,
+                            gap);
+        }
+        return false;
     }
 
     private static boolean clearOfVerticalInk(byte[] gray, int width, int height, StaffPitchTrack track,

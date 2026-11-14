@@ -134,8 +134,17 @@ public final class Main {
         boolean[] cadences = PrintedCadenceDurations.apply(score, beats);
         IsolatedDottedHalfCadence.apply(score, labels, decoderGray == null ? gray : decoderGray,
                 width, height, beats, cadences);
-        var wrapped = WrappedTripletMeasure.capture(score, initialMeter,
-                decoderGray == null ? gray : decoderGray, width, height, beats);
+        int[] keys = measureKeys(beats.length, initialKey, score.keyChanges());
+        var wrapped =
+                WrappedTripletMeasure.capture(
+                        score,
+                        initialMeter,
+                        decoderGray == null ? gray : decoderGray,
+                        width,
+                        height,
+                        beats,
+                        labels,
+                        keys);
         score = wrapped.score();
         var tiedCadence = TiedQuarterCadence.capture(score, initialMeter,
                 decoderGray == null ? gray : decoderGray, width, height, beats);
@@ -144,7 +153,6 @@ public final class Main {
                 labels, decoderGray == null ? gray : decoderGray, width, height, score, initialKey);
         double[] starts = new double[beats.length + 1];
         for (int i = 0; i < beats.length; i++) starts[i + 1] = starts[i] + beats[i];
-        int[] keys = measureKeys(beats.length, initialKey, score.keyChanges());
         var events = new ArrayList<Map<String, Object>>();
         try (var timing = ScoreNoteTiming.beginTimingSession(score)) {
             for (int noteIndex = 0; noteIndex < score.notes().size(); noteIndex++) {
