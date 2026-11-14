@@ -2,21 +2,34 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.github.luckolite.interpreter;
 
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.List;
-
 /** Conservative fallback for stacked music-font numerals that ordinary text OCR omits. */
 public final class MeterGlyphMatcher {
     public record Reading(String text, float topScore, float bottomScore) {}
 
     private record Match(int value, float score) {}
 
+    private record Ranking(Match winner, float runnerScore) {}
+
     public record Glyph(int width, int height, boolean[] ink) {}
 
     @FunctionalInterface
     public interface Rasterizer {
         Glyph render(String glyphs, int size);
+    }
+
+    private static final int[] NUMERATORS = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16};
+    private static final int[] DENOMINATORS = {2, 4, 8, 16, 32};
+    private static final int[] CORE_THRESHOLDS = {60, 75, 90};
+    private static final float[] COMPACT_RATIOS = {.8f, .9f};
+
+    private static final String[] GLYPH_TEXT = new String[33];
+    static {
+        for (int value = 1; value < GLYPH_TEXT.length; value++) {
+            char last = (char) (0xe080 + value % 10);
+            GLYPH_TEXT[value] = value < 10
+                    ? String.valueOf(last)
+                    : new String(new char[] {(char) (0xe080 + value / 10), last});
+        }
     }
 
     private final Rasterizer rasterizer;
@@ -67,8 +80,8 @@ public final class MeterGlyphMatcher {
                 || original.topScore() < .65f
                 || original.bottomScore() < .65f) return original;
         Reading accepted = null;
-        for (int threshold : new int[] {60, 75, 90}) {
-            int[] core = pixels.clone();
+        int[] core = new int[pixels.length];
+        for (int threshold : CORE_THRESHOLDS) {
             for (int i = 0; i < core.length; i++)
                 core[i] = (pixels[i] & 255) < threshold ? 0xff000000 : 0xffffffff;
             Reading retry =
@@ -156,7 +169,7 @@ public final class MeterGlyphMatcher {
                         middle,
                         firstLine,
                         gap,
-                        new int[] {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
+                        NUMERATORS,
                         upperEvidence,
                         ignored);
         Match bottom =
@@ -168,7 +181,7 @@ public final class MeterGlyphMatcher {
                         height,
                         firstLine,
                         gap,
-                        new int[] {2, 4, 8, 16, 32},
+                        DENOMINATORS,
                         lowerEvidence,
                         ignored);
         if (top.value() == 0 || bottom.value() == 0)
@@ -200,9 +213,9 @@ public final class MeterGlyphMatcher {
                         corroborated,
                         ignored,
                         false);
-        Match winner = normal.get(0);
+        Match winner = normal.winner();
         if (winner.value() == 0) return winner;
-        if (accepts(winner.value(), winner.score(), normal.get(1).score(), corroborated))
+        if (accepts(winner.value(), winner.score(), normal.runnerScore(), corroborated))
             return winner;
         if (winner.score() >= .80f) {
             var weighted =
@@ -218,17 +231,17 @@ public final class MeterGlyphMatcher {
                             corroborated,
                             ignored,
                             true);
-            Match retry = weighted.get(0);
+            Match retry = weighted.winner();
             if (retry.value() == winner.value()
                     && retry.score() >= winner.score() + .05f
-                    && accepts(retry.value(), retry.score(), weighted.get(1).score(), corroborated))
+                    && accepts(retry.value(), retry.score(), weighted.runnerScore(), corroborated))
                 return retry;
         }
         // A narrow engraving can preserve the winning digit while missing a uniform-size template.
         // Keep the original identity and confidence/separation requirements for this bounded retry.
         if (winner.score() >= .80f) {
             Match compactBest = null;
-            for (float ratio : new float[] {.8f, .9f}) {
+            for (float ratio : COMPACT_RATIOS) {
                 var compact =
                         matches(
                                 pixels,
@@ -243,11 +256,11 @@ public final class MeterGlyphMatcher {
                                 ignored,
                                 false,
                                 ratio);
-                Match retry = compact.get(0);
+                Match retry = compact.winner();
                 if (retry.value() != winner.value()
                         || retry.score() < winner.score() + .03f
                         || !accepts(
-                                retry.value(), retry.score(), compact.get(1).score(), corroborated))
+                                retry.value(), retry.score(), compact.runnerScore(), corroborated))
                     continue;
                 if (compactBest == null || retry.score() > compactBest.score()) compactBest = retry;
             }
@@ -256,7 +269,7 @@ public final class MeterGlyphMatcher {
         return new Match(0, winner.score());
     }
 
-    private List<Match> matches(
+    private Ranking matches(
             int[] pixels,
             int width,
             int height,
@@ -283,7 +296,7 @@ public final class MeterGlyphMatcher {
                 1f);
     }
 
-    private List<Match> matches(
+    private Ranking matches(
             int[] pixels,
             int width,
             int height,
@@ -297,62 +310,103 @@ public final class MeterGlyphMatcher {
             boolean bold,
             float widthRatio) {
         int h = last - first;
-        boolean[] source = new boolean[width * h], valid = new boolean[source.length];
+        // Row prefix counts score each translated ink run with two differences.
+        int stride = width + 1;
+        int[] source = new int[stride * h], valid = new int[source.length];
         int sourceCount = 0;
-        for (int y = 0; y < h; y++)
-            for (int x = 0; x < width; x++) {
-                int color = pixels[(first + y) * width + x];
-                source[y * width + x] = (color & 255) < 150;
-                boolean onLine = false;
-                for (int n = 0; n < 5; n++)
-                    if (Math.abs(first + y - Math.round(firstLine + n * gap))
-                            <= Math.max(1, Math.round(gap * .12f))) onLine = true;
-                if (ignored != null && ignored[(first + y) * width + x]) onLine = true;
-                valid[y * width + x] = !onLine;
-                if (!onLine && source[y * width + x]) sourceCount++;
+        int railRadius = Math.max(1, Math.round(gap * .12f));
+        int[] rails = new int[5];
+        for (int n = 0; n < rails.length; n++) rails[n] = Math.round(firstLine + n * gap);
+        for (int y = 0, dest = 0, page = first * width; y < h;
+                y++, dest += stride, page += width) {
+            boolean onLine = false;
+            for (int rail : rails) {
+                if (Math.abs(first + y - rail) <= railRadius) {
+                    onLine = true;
+                    break;
+                }
             }
-        if (sourceCount < gap * 3) return List.of(new Match(0, 0));
-        List<Match> results = new ArrayList<>();
+            if (onLine) continue;
+            int rowInk = 0, rowValid = 0;
+            for (int x = 0; x < width; x++) {
+                if (ignored == null || !ignored[page + x]) {
+                    rowValid++;
+                    if ((pixels[page + x] & 255) < 150) rowInk++;
+                }
+                source[dest + x + 1] = rowInk;
+                valid[dest + x + 1] = rowValid;
+            }
+            sourceCount += rowInk;
+        }
+        if (sourceCount < gap * 3) return new Ranking(new Match(0, 0), 0);
+        int winner = 0;
+        float winningScore = -1, runnerScore = 0;
         int minSize = Math.round(gap * 2.1f), maxSize = Math.round(gap * 5.15f);
+        int sizeStep = Math.max(2, Math.round(gap * .18f));
         for (int value : values) {
             float best = 0;
-            String glyphs =
-                    Integer.toString(value)
-                            .codePoints()
-                            .map(digit -> 0xe080 + digit - '0')
-                            .collect(
-                                    StringBuilder::new,
-                                    StringBuilder::appendCodePoint,
-                                    StringBuilder::append)
-                            .toString();
-            for (int size = minSize; size <= maxSize; size += Math.max(2, Math.round(gap * .18f))) {
+            String glyphs = GLYPH_TEXT[value];
+            for (int size = minSize; size <= maxSize; size += sizeStep) {
                 Glyph glyph = rasterizer.render(glyphs, size);
                 if (widthRatio != 1f) glyph = widthScaled(glyph, widthRatio);
                 if (bold) glyph = weighted(glyph);
                 int gw = glyph.width(), gh = glyph.height();
                 if (gw < 1 || gh < 1 || gw > width + 8 || gh > h + 8) continue;
-                boolean[] shape = glyph.ink();
-                for (int dx = -4; dx <= width - gw + 4; dx++)
+                var runs = GlyphRuns.from(glyph);
+                int[] rowRuns = runs.rows(), bounds = runs.bounds();
+                for (int dx = -4; dx <= width - gw + 4; dx++) {
                     for (int dy = -4; dy <= h - gh + 4; dy++) {
                         int tp = 0, targetCount = 0;
-                        for (int gy = 0; gy < gh; gy++)
-                            for (int gx = 0; gx < gw; gx++) {
-                                if (!shape[gy * gw + gx]) continue;
-                                int x = gx + dx, y = gy + dy;
-                                if (x < 0 || x >= width || y < 0 || y >= h) continue;
-                                int index = y * width + x;
-                                if (!valid[index]) continue;
-                                targetCount++;
-                                if (source[index]) tp++;
+                        int gyStart = Math.max(0, -dy), gyEnd = Math.min(gh, h - dy);
+                        int row = (gyStart + dy) * stride;
+                        for (int gy = gyStart; gy < gyEnd; gy++, row += stride) {
+                            if (valid[row + width] == 0) continue;
+                            for (int i = rowRuns[gy], end = rowRuns[gy + 1]; i < end; i += 2) {
+                                int left = Math.max(0, dx + bounds[i]);
+                                int right = Math.min(width, dx + bounds[i + 1]);
+                                if (left >= right) continue;
+                                tp += source[row + right] - source[row + left];
+                                targetCount += valid[row + right] - valid[row + left];
                             }
+                        }
                         float score = 2f * tp / Math.max(1, sourceCount + targetCount);
                         if (score > best) best = score;
                     }
+                }
             }
-            results.add(new Match(value, best));
+            if (best > winningScore) {
+                runnerScore = Math.max(0, winningScore);
+                winner = value;
+                winningScore = best;
+            } else if (best > runnerScore) {
+                runnerScore = best;
+            }
         }
-        results.sort(Comparator.comparingDouble(Match::score).reversed());
-        return results;
+        return new Ranking(new Match(winner, winningScore), runnerScore);
+    }
+
+    private record GlyphRuns(int[] rows, int[] bounds) {
+        static GlyphRuns from(Glyph glyph) {
+            int width = glyph.width(), height = glyph.height();
+            boolean[] ink = glyph.ink();
+            int[] rows = new int[height + 1];
+            int[] bounds = new int[(width + (width & 1)) * height];
+            int count = 0;
+            for (int y = 0; y < height; y++) {
+                int row = y * width, x = 0;
+                while (x < width) {
+                    if (!ink[row + x]) {
+                        x++;
+                        continue;
+                    }
+                    bounds[count++] = x++;
+                    while (x < width && ink[row + x]) x++;
+                    bounds[count++] = x;
+                }
+                rows[y + 1] = count;
+            }
+            return new GlyphRuns(rows, bounds);
+        }
     }
 
     private static Glyph widthScaled(Glyph glyph, float ratio) {
