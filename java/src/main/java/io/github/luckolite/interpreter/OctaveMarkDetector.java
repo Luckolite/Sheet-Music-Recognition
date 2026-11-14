@@ -287,7 +287,7 @@ final class OctaveMarkDetector {
     private static byte[] contrastedInk(byte[] gray, int width, int height) {
         if (gray == null || gray.length != (long) width * height || width <= 0 || height <= 0)
             return gray;
-        byte[] result = gray.clone();
+        byte[] result = gray;
         final int tile = 64;
         int[] histogram = new int[256];
         for (int top = 0; top < height; top += tile)
@@ -311,6 +311,7 @@ final class OctaveMarkDetector {
                 // used for the numeral counters, suffixes and dotted-line chain.
                 int shift = Math.max(0, 165 - (background - 24));
                 if (shift == 0) continue;
+                if (result == gray) result = gray.clone();
                 for (int y = top; y < bottom; y++)
                     for (int x = left; x < right; x++)
                         result[y * width + x] =
@@ -393,7 +394,7 @@ final class OctaveMarkDetector {
                 List<InkBox> shortFragments = new ArrayList<>();
                 for (int origin = 0; origin < bandSize; origin++) {
                     if ((gray[bandOffset + origin] & 255) >= 165 || visited.get(origin)) continue;
-                    int count = 0, size = 0, left = width, right = -1, y1 = h, y2 = -1;
+                    int count = 0, size = 0, left = width, right = -1, y1 = origin / width, y2 = y1;
                     stack[size++] = origin;
                     visited.set(origin);
                     while (size > 0) {
@@ -401,7 +402,6 @@ final class OctaveMarkDetector {
                         count++;
                         left = Math.min(left, x);
                         right = Math.max(right, x);
-                        y1 = Math.min(y1, y);
                         y2 = Math.max(y2, y);
                         int firstX = Math.max(0, x - 1), lastX = Math.min(width - 1, x + 1);
                         int lastY = Math.min(h - 1, y + 1);
@@ -434,15 +434,17 @@ final class OctaveMarkDetector {
                 boxes.sort(Comparator.comparingInt(InkBox::left));
                 boolean[] used = new boolean[boxes.size()];
                 int componentCount = boxes.size();
-                var bareBoxes = new ArrayList<>(boxes);
-                bareBoxes.addAll(attachedEightBoxes(gray, width, height, top, bottom, gap, holeScan));
-                var componentBoxes = bareBoxes.size() == componentCount
+                var attachedBoxes = attachedEightBoxes(gray, width, height, top, bottom, gap, holeScan);
+                var componentBoxes = attachedBoxes.isEmpty()
                         ? java.util.Set.<InkBox>of()
                         : new java.util.HashSet<>(boxes);
                 words.addAll(ledgerAttachedWords(gray, width, height, boxes, gap, below));
-                for (int candidateIndex = 0; candidateIndex < bareBoxes.size(); candidateIndex++) {
-                    var box = bareBoxes.get(candidateIndex);
-                    boolean isComponent = candidateIndex < componentCount || componentBoxes.contains(box);
+                int candidateCount = componentCount + attachedBoxes.size();
+                for (int candidateIndex = 0; candidateIndex < candidateCount; candidateIndex++) {
+                    boolean fromComponent = candidateIndex < componentCount;
+                    var box = fromComponent
+                            ? boxes.get(candidateIndex) : attachedBoxes.get(candidateIndex - componentCount);
+                    boolean isComponent = fromComponent || componentBoxes.contains(box);
                     if (centeredInStaff(box, staffs)) continue;
                     boolean closedEight = bareEightShape(gray, width, box, gap);
                     var attached = !below && !closedEight && isComponent
@@ -1057,6 +1059,7 @@ final class OctaveMarkDetector {
         boolean[] seen = scratch.seen;
         int[] queue = scratch.queue;
         var holes = new ArrayList<InkBox>();
+        float minimumArea = gap * gap * .015f, maximumArea = gap * gap * .65f;
         for (int seed = 0; seed < sizeLimit; seed++) {
             if (seen[seed] || (gray[bandOffset + seed] & 255) < 165) continue;
             int take = 0, size = 1, pixels = 0, x0 = w, x1 = -1, y0 = band, y1 = -1;
@@ -1100,8 +1103,8 @@ final class OctaveMarkDetector {
                 }
             }
             if (!edge
-                    && pixels >= gap * gap * .015f
-                    && pixels <= gap * gap * .65f
+                    && pixels >= minimumArea
+                    && pixels <= maximumArea
                     && x1 - x0 < gap
                     && y1 - y0 < gap) holes.add(new InkBox(x0, top + y0, x1, top + y1, pixels));
         }

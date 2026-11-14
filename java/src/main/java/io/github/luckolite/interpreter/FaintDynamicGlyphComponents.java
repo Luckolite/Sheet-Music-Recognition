@@ -11,29 +11,24 @@ final class FaintDynamicGlyphComponents {
     record Bounds(int left, int top, int right, int bottom, int pixels) {}
 
     static List<Bounds> find(byte[] gray, int width, int height, boolean[] seen, int[] queue) {
-        var result = new ArrayList<>(findAt(gray, width, height, seen, queue, 205, .2f));
-        for (var candidate : findAt(gray, width, height, seen, queue, 185, .65f)) {
-            boolean covered = false;
-            for (var prior : result)
-                if (prior.left() <= candidate.left()
-                        && prior.top() <= candidate.top()
-                        && prior.right() >= candidate.right()
-                        && prior.bottom() >= candidate.bottom()) covered = true;
-            if (!covered) result.add(candidate);
-        }
+        var result = new ArrayList<Bounds>();
+        boolean hasFaintInk = findAt(gray, width, height, seen, queue, 205, .2f, result);
+        if (hasFaintInk) findAt(gray, width, height, seen, queue, 185, .65f, result);
         return result;
     }
 
-    private static List<Bounds> findAt(
+    private static boolean findAt(
             byte[] gray,
             int width,
             int height,
             boolean[] seen,
             int[] queue,
             int threshold,
-            float darkFraction) {
+            float darkFraction,
+            List<Bounds> result) {
         Arrays.fill(seen, false);
-        List<Bounds> result = new ArrayList<>();
+        boolean hasFaintInk = false;
+        boolean narrow = threshold == 185;
         for (int p = 0; p < gray.length; p++) {
             if (seen[p] || (gray[p] & 255) >= threshold) continue;
             int read = 0, count = 1;
@@ -45,9 +40,10 @@ final class FaintDynamicGlyphComponents {
                 int at = queue[read++], x = at % width, y = at / width;
                 left = Math.min(left, x);
                 right = Math.max(right, x);
-                top = Math.min(top, y);
                 bottom = Math.max(bottom, y);
-                if ((gray[at] & 255) < 145) dark++;
+                int tone = gray[at] & 255;
+                if (tone < 145) dark++;
+                else if (!narrow && tone < 185) hasFaintInk = true;
                 for (int dy = -1; dy <= 1; dy++)
                     for (int dx = -1; dx <= 1; dx++) {
                         int nx = x + dx, ny = y + dy;
@@ -59,9 +55,19 @@ final class FaintDynamicGlyphComponents {
                         }
                     }
             }
-            if (dark < count * darkFraction && count >= 3)
+            if (count >= 3 && dark < count * darkFraction
+                    && (!narrow || !covered(result, left, top, right + 1, bottom + 1)))
                 result.add(new Bounds(left, top, right + 1, bottom + 1, count));
         }
-        return result;
+        return hasFaintInk;
+    }
+
+    private static boolean covered(List<Bounds> result, int left, int top, int right, int bottom) {
+        for (int i = 0; i < result.size(); i++) {
+            var prior = result.get(i);
+            if (prior.left() <= left && prior.top() <= top
+                    && prior.right() >= right && prior.bottom() >= bottom) return true;
+        }
+        return false;
     }
 }

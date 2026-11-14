@@ -103,6 +103,6 @@ public class ShadedPaperOctaveTest {
         assertArrayEquals(once, twice);
         assertArrayEquals(before, gray);
         assertNotSame(gray, once);
-        assertNotSame(once, twice);
+        assertSame(once, twice);
     }
 }
