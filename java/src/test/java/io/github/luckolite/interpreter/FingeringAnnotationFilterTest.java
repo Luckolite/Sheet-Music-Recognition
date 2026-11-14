@@ -190,7 +190,9 @@ public class FingeringAnnotationFilterTest {
             if (slot % 4 == 3) {
                 int xMin = x - 3 * 43 - 10;
                 drawInk(image, width, xMin, x - 7, 229, 235, 0);
-                drawInk(image, width, xMin, x - 7, 238, 250, 0);
+                drawInk(image, width, xMin, x - 7, 237, 250, 0);
+                for (int shaftX = xMin; shaftX < x; shaftX += 43)
+                    drawInk(image, width, shaftX, shaftX + 3, 236, 237, 0);
             }
         }
         var printed = List.copyOf(notes);
@@ -230,5 +232,50 @@ public class FingeringAnnotationFilterTest {
     private static void drawInk(byte[] image, int width, int left, int right, int top, int bottom, int shade) {
         for (int y = top; y < bottom; y++)
             Arrays.fill(image, y * width + left, y * width + right, (byte) shade);
+    }
+
+    @Test
+    public void mergedShortCaptionRequiresItsInitialLobeAndContinuousFineBeamSeam() {
+        int width = 640;
+        int height = 330;
+        float left = 30, right = 580;
+        var image = new byte[width * height];
+        Arrays.fill(image, (byte) 255);
+        var staff = List.of(new PlayingTechniqueDetector.Staff(215, 279, 16, 0, 1));
+        var region = List.of(new MeasureRegion(left / width, right / width, .35f, .90f));
+        for (int y = 215; y <= 279; y += 16)
+            drawInk(image, width, 1, width - 1, y, y + 1, 0);
+        drawInk(image, width, 584, 586, 215, 280, 0);
+        var notes = new ArrayList<ScoreNoteEvent>();
+        for (int slot = 0; slot < 12; slot++) {
+            int x = 73 + slot * 43, y = 205 - slot % 4 * 8;
+            notes.add(captionNote(x, y, 9 + (279 - y) / 8, -1, 2, 0, height, left, right));
+            drawInk(image, width, x - 10, x + 8, y - 5, y + 3, 0);
+            drawInk(image, width, x - 10, x - 7, y, 250, 0);
+            if (slot % 4 == 3) {
+                int xMin = x - 3 * 43 - 10;
+                drawInk(image, width, xMin, x - 7, 228, 236, 0);
+                drawInk(image, width, xMin, x - 7, 236, 237, 205);
+                drawInk(image, width, xMin, x - 7, 237, 250, 0);
+                for (int shaftX = xMin; shaftX < x; shaftX += 43)
+                    drawInk(image, width, shaftX, shaftX + 3, 236, 237, 0);
+            }
+        }
+        var sixteenths = List.copyOf(notes);
+        for (int i = 8; i < 11; i++) notes.set(i, notes.get(i).withTupletRatio(3, 2));
+        var caption = new PlayingTechniqueDetector.Word("5 4 3 segue", 61f / width,
+                269f / height, 296f / width, 313f / height);
+        for (int x : new int[] {76, 111, 149, 177, 191, 221, 248, 270})
+            drawInk(image, width, x, x + 11, 285, 294, 0);
+        notes.add(captionNote(182, 288, -1, 0, 0, 4, height, left, right));
+        var words = List.of(caption);
+        assertEquals(sixteenths, FingeringAnnotationFilter.apply(words, staff, region, notes, image, width, height));
+        var fusedBeams = image.clone();
+        drawInk(fusedBeams, width, 76, 94, 236, 237, 0);
+        assertSame(notes, FingeringAnnotationFilter.apply(words, staff, region, notes, fusedBeams, width, height));
+        var wrongGlyph = new ArrayList<>(notes);
+        wrongGlyph.set(12, captionNote(195, 288, -1, 0, 0, 4, height, left, right));
+        assertSame(wrongGlyph, FingeringAnnotationFilter.apply(
+                words, staff, region, wrongGlyph, image, width, height));
     }
 }

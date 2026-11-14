@@ -20,6 +20,9 @@ final class FingeringAnnotationFilter {
     private static final Pattern FINGERS_AND_SEGUE =
             Pattern.compile("(?:[1-5]\\s+){4,8}segue[.]?", Pattern.CASE_INSENSITIVE);
 
+    private static final Pattern SHORT_FINGERING_CAPTION =
+            Pattern.compile("[1-5](?:\\s+[1-5]){2}\\s+segue[.]?", Pattern.CASE_INSENSITIVE);
+
     private FingeringAnnotationFilter() {}
 
     private record Candidate(
@@ -44,6 +47,7 @@ final class FingeringAnnotationFilter {
                 || gray.length != (long) width * height) return notes;
         notes = annotatedSingleLines(words, staffs, measures, notes, gray, width, height);
         notes = separatedFingeringCaptions(words, staffs, measures, notes, gray, width, height);
+        notes = shortFingeringCaptions(words, staffs, measures, notes, gray, width, height);
         notes = isolatedParentheticalSixteenths(words, staffs, measures, notes, gray, width, height);
         List<Candidate> candidates = null;
         var result = new ArrayList<ScoreNoteEvent>(notes.size());
@@ -201,13 +205,116 @@ final class FingeringAnnotationFilter {
         return notes.stream().filter(n -> !discard.contains(n)).toList();
     }
 
+    /** A merged OCR record retains the caption, including an ink lobe read as a whole note. */
+    private static List<ScoreNoteEvent> shortFingeringCaptions(
+            List<PlayingTechniqueDetector.Word> words, List<PlayingTechniqueDetector.Staff> staffs,
+            List<MeasureRegion> measures, List<ScoreNoteEvent> notes, byte[] gray, int width, int height) {
+        List<ScoreNoteEvent> output = null;
+        for (var caption : words) {
+            if (caption.text() == null || !SHORT_FINGERING_CAPTION.matcher(caption.text().strip()).matches())
+                continue;
+            int measure = uniqueCaptionMeasure(measures, caption, caption, (caption.top() + caption.bottom()) * .5f);
+            if (measure < 0) continue;
+            var region = measures.get(measure);
+            var local = notes.stream().filter(n -> n.measureIndex() == measure).toList();
+            if (local.size() != 13) continue;
+            var alias = local.stream().filter(n -> captionHead(n) && n.unbeamedDurationBeats() == 4
+                    && n.staffStep() == -1).findFirst().orElse(null);
+            if (alias == null) continue;
+            var music = local.stream().filter(n -> n != alias)
+                    .sorted(Comparator.comparingDouble(ScoreNoteEvent::positionInMeasure)).toList();
+            if (music.stream().anyMatch(n -> n.stemDirection() != -1)) continue;
+            int firstTriplet = tripletRunStart(music);
+            if (firstTriplet == -2) continue;
+            var corrected = music.stream()
+                    .map(n -> n.tupletDivisor() == 3 ? n.withTupletRatio(1, 1) : n).toList();
+            for (var staff : staffs) {
+                float gap = staff.gap();
+                if (staff.index() != 0 || staff.count() != 1 || staff.top() < region.top() * height
+                        || staff.bottom() > region.bottom() * height || gap < 10 || gap > 25
+                        || caption.top() * height < staff.bottom() - gap
+                        || caption.top() * height > staff.bottom()
+                        || caption.bottom() * height < staff.bottom() + gap
+                        || caption.bottom() * height > staff.bottom() + gap * 2.6f
+                        || !shortCaptionInitialInk(alias, region, staff, caption, gray, width, height))
+                    continue;
+                if (!closedCaptionSixteenths(corrected, region, staff, gray, width, height, true)) continue;
+                if (output == null) output = new ArrayList<>(notes);
+                if (firstTriplet >= 0)
+                    for (int i = firstTriplet; i < firstTriplet + 3; i++)
+                        output.set(notes.indexOf(music.get(i)), corrected.get(i));
+                output.set(notes.indexOf(alias), null);
+                break;
+            }
+        }
+        return output == null ? notes : output.stream().filter(Objects::nonNull).toList();
+    }
+
+    /** Returns the one contiguous soft 3:2 run, no run, or an incompatible timing pattern. */
+    private static int tripletRunStart(List<ScoreNoteEvent> notes) {
+        int first = -1, count = 0;
+        for (int i = 0; i < notes.size(); i++) {
+            var note = notes.get(i);
+            if (note.tupletDivisor() == 1 && note.tupletNormalNotes() == 1) continue;
+            if (note.tupletDivisor() != 3 || note.tupletNormalNotes() != 2) return -2;
+            if (first < 0) first = i;
+            if (i != first + count) return -2;
+            count++;
+        }
+        return count == 0 || count == 3 ? first : -2;
+    }
+
+    private static boolean shortCaptionInitialInk(ScoreNoteEvent alias, MeasureRegion region,
+            PlayingTechniqueDetector.Staff staff, PlayingTechniqueDetector.Word caption,
+            byte[] gray, int width, int height) {
+        if (!insideInk(alias, region, staff, List.of(caption), gray, width, height)) return false;
+        float gap = staff.gap();
+        int left = Math.round(caption.left() * width), right = Math.round(caption.right() * width);
+        if (left < 0 || right > width || right - left < gap * 10 || right - left > gap * 17) return false;
+        int top = Math.round(staff.bottom() + .22f * gap);
+        int bottom = Math.round(Math.min(staff.bottom() + 1.8f * gap, caption.bottom() * height));
+        if (top < 0 || bottom >= height || bottom <= top) return false;
+        float x = (region.left() + alias.positionInMeasure() * (region.right() - region.left())) * width;
+        int[] starts = new int[5], ends = new int[5];
+        int count = 0;
+        boolean run = false;
+        for (int xx = left; xx < right; xx++) {
+            int ink = 0;
+            for (int yy = top; yy <= bottom; yy++) if ((gray[yy * width + xx] & 255) < 165) ink++;
+            if (ink < 2) {
+                run = false;
+            } else {
+                if (!run) {
+                    starts[count++] = xx;
+                    run = true;
+                }
+                ends[count - 1] = xx;
+                if (count == starts.length) break;
+            }
+        }
+        if (count != starts.length || x < starts[3] || x > ends[3]) return false;
+        for (int i = 0; i < 4; i++) {
+            float runWidth = ends[i] - starts[i] + 1;
+            float clearance = starts[i + 1] - ends[i] - 1;
+            if (runWidth < gap * .5f || runWidth > gap * 1.15f
+                    || clearance < gap * (i < 3 ? .6f : .10f)
+                    || clearance > gap * (i < 3 ? 2.3f : .8f)) return false;
+        }
+        return starts[3] - left >= gap * 6 && starts[3] - left <= gap * 10;
+    }
+
     private static int uniqueCaptionMeasure(List<MeasureRegion> measures,
             PlayingTechniqueDetector.Word digits, PlayingTechniqueDetector.Word caption) {
+        return uniqueCaptionMeasure(measures, digits, caption, caption.bottom());
+    }
+
+    private static int uniqueCaptionMeasure(List<MeasureRegion> measures,
+            PlayingTechniqueDetector.Word digits, PlayingTechniqueDetector.Word caption, float baselineLimit) {
         int selected = -1;
         for (int i = 0; i < measures.size(); i++) {
             var m = measures.get(i);
             if (m.cadenceQuarterBeats() != 0 || digits.left() < m.left() || caption.right() > m.right()
-                    || digits.top() < m.top() || caption.bottom() > m.bottom()) continue;
+                    || digits.top() < m.top() || baselineLimit > m.bottom()) continue;
             if (selected >= 0) return -1;
             selected = i;
         }
@@ -251,6 +358,11 @@ final class FingeringAnnotationFilter {
 
     private static boolean closedCaptionSixteenths(List<ScoreNoteEvent> music, MeasureRegion region,
             PlayingTechniqueDetector.Staff staff, byte[] gray, int width, int height) {
+        return closedCaptionSixteenths(music, region, staff, gray, width, height, false);
+    }
+
+    private static boolean closedCaptionSixteenths(List<ScoreNoteEvent> music, MeasureRegion region,
+            PlayingTechniqueDetector.Staff staff, byte[] gray, int width, int height, boolean fineBeamSeam) {
         float gap = staff.gap();
         float left = region.left() * width, right = region.right() * width;
         if (right - left < gap * 26 || right - left > gap * 39) return false;
@@ -272,8 +384,10 @@ final class FingeringAnnotationFilter {
             var source = PrintedBeamShafts.at(gray, width, height, x, y, gap, budget);
             if (source.size() != 1 || source.get(0).direction() != 1) return false;
             shafts[i] = source.get(0);
-            if (i > 0 && pairedRails(gray, width, height, shafts[i-1], shafts[i], gap, true) != (i % 4 != 0))
-                return false;
+            if (i > 0) {
+                boolean rails = pairedRails(gray, width, height, shafts[i - 1], shafts[i], gap, true, fineBeamSeam);
+                if (rails != (i % 4 != 0)) return false;
+            }
         }
         if (right - previous < gap * .9f || right - previous > gap * 2.6f) return false;
         return PrintedCadenceDurations.boundaryColumn(gray, width, staff, right, true, false) >= 0
@@ -374,12 +488,18 @@ final class FingeringAnnotationFilter {
 
     private static boolean pairedRails(byte[] gray,int width,int height,
             PrintedBeamShafts.Shaft a,PrintedBeamShafts.Shaft b,float gap,boolean narrowSeam) {
+        return pairedRails(gray, width, height, a, b, gap, narrowSeam, false);
+    }
+
+    private static boolean pairedRails(byte[] gray, int width, int height,
+            PrintedBeamShafts.Shaft a, PrintedBeamShafts.Shaft b, float gap,
+            boolean narrowSeam, boolean fineSeam) {
         int x0=(a.left()+a.right())/2,x1=(b.left()+b.right())/2;
         int margin=Math.round(gap*.37f),rad=Math.max(2,Math.round(gap*.14f));
         if(x0+margin>=x1-margin) return false;
         for(int offset=-Math.round(gap*.22f);offset<=Math.round(gap*.45f);offset++)
             for(int separation=Math.round(gap*.55f);separation<=Math.round(gap*.92f);separation++) {
-                int first=0,second=0,seam=0,lightSeam=0;
+                int first=0,second=0,seam=0,lightSeam=0,linePaper=0;
                 for(int x=x0+margin;x<=x1-margin;x++) {
                     int axis=Math.round(a.endY()+(b.endY()-a.endY())*(x-x0)/(float)(x1-x0))-offset;
                     if (axis+rad>=height || axis-separation-rad<0) continue;
@@ -387,11 +507,16 @@ final class FingeringAnnotationFilter {
                     if(verticalInk(gray,width,x,axis-separation,rad)>=2*rad) second++;
                     int trough = axis - separation / 2;
                     if(verticalInk(gray,width,x,trough,1)<=1) seam++;
-                    if (narrowSeam && (gray[trough * width + x] & 255) >= 185) lightSeam++;
+                    int shade = gray[trough * width + x] & 255;
+                    if (narrowSeam && shade >= 185) lightSeam++;
+                    if (fineSeam && shade >= 185
+                            && (gray[(trough - 1) * width + x] & 255) < 165
+                            && (gray[(trough + 1) * width + x] & 255) < 165) linePaper++;
                 }
                 int count=x1-x0-2*margin+1;
                 boolean visibleGap = seam >= count * .28f
-                        || narrowSeam && seam >= count * .18f && lightSeam >= count * .50f;
+                        || narrowSeam && seam >= count * .18f && lightSeam >= count * .50f
+                        || fineSeam && lightSeam >= count * .9f && linePaper >= count * .65f;
                 if(first>=count*.96f && second>=count*.96f && visibleGap) return true;
             }
         return false;
