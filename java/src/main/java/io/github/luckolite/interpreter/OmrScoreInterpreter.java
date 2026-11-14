@@ -6128,7 +6128,8 @@ final class OmrScoreInterpreter {
     }
 
     private static boolean isRepeatedMeterFragment(
-            byte[] labels, byte[] gray, int width, int height, Component head, Staff staff) {
+            byte[] labels, byte[] gray, int width, int height, Component head, Staff staff,
+            int[] originalStem) {
         float gap = staff.gap;
         if (head.area > gap * gap * .55f
                 || head.maxX - head.minX > gap
@@ -6141,22 +6142,25 @@ final class OmrScoreInterpreter {
                 || head.maxY - head.minY > gap
                 || head.centerY < staffTop + gap * 2.25f
                 || head.centerY > staffBottom) return false;
+        int boundaryTop = Math.max(0, Math.round(staffTop));
+        int boundaryBottom = Math.min(height - 1, Math.round(staffBottom));
+        int total = Math.max(0, boundaryBottom - boundaryTop + 1);
+        if (total < gap * 3.8f) return false;
+        float requiredInk = total * .94f;
         boolean boundary = false;
         for (int x = Math.max(0, Math.round(head.minX - gap * 4)); x < head.minX - gap * .7f; x++) {
-            int ink = 0, total = 0;
-            for (int y = Math.max(0, Math.round(staffTop));
-                    y <= Math.min(height - 1, Math.round(staffBottom));
-                    y++) {
-                total++;
-                if ((gray[y * width + x] & 255) < 155) ink++;
+            int ink = 0;
+            for (int y = boundaryTop, at = y * width + x; y <= boundaryBottom; y++, at += width) {
+                if ((gray[at] & 255) < 155) ink++;
+                if (ink + boundaryBottom - y < requiredInk) break;
             }
-            if (total >= gap * 3.8f && ink >= total * .94f) {
+            if (ink >= requiredInk) {
                 boundary = true;
                 break;
             }
         }
         if (!boundary) return false;
-        int[] stem = attachedRawStem(gray, width, height, head, gap);
+        int[] stem = gap == staff.gap ? originalStem : attachedRawStem(gray, width, height, head, gap);
         if (stem != null && (stem[1] < staffTop - gap * .25f || stem[1] > staffBottom + gap * .25f))
             return false;
         int left = Math.max(0, Math.round(head.centerX - gap * 1.25f));
@@ -6164,37 +6168,50 @@ final class OmrScoreInterpreter {
         int top = Math.max(0, Math.round(staffTop)),
                 bottom = Math.min(height - 1, Math.round(staffTop + gap * 1.95f));
         int upperHeads = 0;
-        for (int y = top; y <= bottom; y++)
+        float maximumUpperHeads = gap * gap * .08f;
+        for (int y = top; y <= bottom; y++) {
+            int row = y * width;
             for (int x = left; x <= right; x++)
-                if (labels[y * width + x] == OmrMeasurePostProcessor.NOTEHEAD) upperHeads++;
-        if (upperHeads > gap * gap * .08f) return false;
-        for (int dy = Math.round(gap * 1.75f); dy <= Math.round(gap * 2.15f); dy++)
-            for (int dx = -Math.round(gap * .2f); dx <= Math.round(gap * .2f); dx++) {
+                if (labels[row + x] == OmrMeasurePostProcessor.NOTEHEAD
+                        && ++upperHeads > maximumUpperHeads) return false;
+        }
+        int xReach = Math.round(gap * .2f);
+        float margin = gap * .16f, lowerLimit = staffBottom + gap * .15f;
+        int minShift = Math.round(gap * 1.75f), maxShift = Math.round(gap * 2.15f);
+        int lastRow = Math.min(height - 1, bottom + maxShift);
+        if (lastRow < top || bottom < top || right < left) return false;
+        boolean[] excluded = new boolean[lastRow - top + 1];
+        for (int y = top; y <= lastRow; y++) {
+            float phase = (y - staffTop) / gap;
+            excluded[y - top] = Math.abs(phase - Math.round(phase)) * gap < margin;
+        }
+        int[] candidateRows = new int[bottom - top + 1];
+        for (int dy = minShift; dy <= maxShift; dy++) {
+            int rowCount = 0;
+            for (int y = top; y <= bottom; y++) {
+                int yy = y + dy;
+                if (yy < 0 || yy >= height || yy > lowerLimit) continue;
+                if (!excluded[y - top] && !excluded[yy - top]) candidateRows[rowCount++] = y;
+            }
+            // No horizontal displacement can restore missing vertical support.
+            if (rowCount == 0 || candidateRows[rowCount - 1] - candidateRows[0] <= gap * 1.2f)
+                continue;
+            for (int dx = -xReach; dx <= xReach; dx++) {
                 int intersection = 0,
-                        union = 0,
                         inkA = 0,
                         inkB = 0,
                         minX = width,
                         maxX = -1,
                         minY = height,
                         maxY = -1;
-                for (int y = top; y <= bottom; y++)
-                    for (int x = left; x <= right; x++) {
-                        int xx = x + dx, yy = y + dy;
-                        if (xx < 0
-                                || xx >= width
-                                || yy < 0
-                                || yy >= height
-                                || yy > staffBottom + gap * .15f) continue;
-                        float aDistance =
-                                Math.abs((y - staffTop) / gap - Math.round((y - staffTop) / gap))
-                                        * gap;
-                        float bDistance =
-                                Math.abs((yy - staffTop) / gap - Math.round((yy - staffTop) / gap))
-                                        * gap;
-                        if (aDistance < gap * .16f || bDistance < gap * .16f) continue;
-                        boolean a = (gray[y * width + x] & 255) < 155,
-                                b = (gray[yy * width + xx] & 255) < 155;
+                int firstX = Math.max(left, -dx), lastX = Math.min(right, width - 1 - dx);
+                if ((long) rowCount * (lastX - firstX + 1) <= gap * gap * .45f) continue;
+                for (int i = 0; i < rowCount; i++) {
+                    int y = candidateRows[i];
+                    int row = y * width, shifted = (y + dy) * width + dx;
+                    for (int x = firstX; x <= lastX; x++) {
+                        boolean a = (gray[row + x] & 255) < 155,
+                                b = (gray[shifted + x] & 255) < 155;
                         if (a) {
                             inkA++;
                             minX = Math.min(minX, x);
@@ -6203,15 +6220,16 @@ final class OmrScoreInterpreter {
                             maxY = Math.max(maxY, y);
                         }
                         if (b) inkB++;
-                        if (a || b) union++;
                         if (a && b) intersection++;
                     }
+                }
                 if (inkA > gap * gap * .45f
                         && inkB > gap * gap * .45f
                         && maxX - minX > gap * .75f
                         && maxY - minY > gap * 1.2f
-                        && intersection > union * .72f) return true;
+                        && intersection > (inkA + inkB - intersection) * .72f) return true;
             }
+        }
         return false;
     }
 
@@ -6388,7 +6406,7 @@ final class OmrScoreInterpreter {
         int[] stem = attachedRawStem(gray, width, height, head, gap);
         // Establish a real oval stack before a repeated-shape meter heuristic:
         // two identical filled heads are not repeated numerals.
-        List<Component> chord = splitRegularStack(labels, width, head, staff);
+        List<Component> chord = stem == null ? List.of() : splitRegularStack(labels, width, head, staff);
         if (stem != null
                 && chord.size() >= 2
                 && chord.stream()
@@ -6397,7 +6415,7 @@ final class OmrScoreInterpreter {
                                         printedOpenOval(labels, gray, width, height, part, gap)
                                                 || printedFilledOval(gray, width, part, gap)))
             return false;
-        if (isRepeatedMeterFragment(labels, gray, width, height, head, staff)) return true;
+        if (isRepeatedMeterFragment(labels, gray, width, height, head, staff, stem)) return true;
         if (head.centerY < staff.top + gap * 2.2f
                 || head.centerY > staff.bottom + gap * .2f
                 || head.maxX - head.minX > gap * 2.2f
@@ -6423,18 +6441,20 @@ final class OmrScoreInterpreter {
         int bottom =
                 Math.min(head.minY - 1, Math.min(height - 1, Math.round(staff.top + gap * 1.85f)));
         int ink = 0, heads = 0, minY = height, maxY = -1;
-        for (int y = top; y <= bottom; y++)
+        float lineMargin = Math.max(1, gap * .15f);
+        for (int y = top; y <= bottom; y++) {
+            int row = y * width;
+            float phase = (y - staff.top) / gap;
+            boolean offRule = !(Math.abs(phase - Math.round(phase)) * gap <= lineMargin);
             for (int x = left; x <= right; x++) {
-                if (labels[y * width + x] == OmrMeasurePostProcessor.NOTEHEAD) heads++;
-                float lineDistance =
-                        Math.abs((y - staff.top) / gap - Math.round((y - staff.top) / gap)) * gap;
-                if (lineDistance <= Math.max(1, gap * .15f)) continue;
-                if ((gray[y * width + x] & 255) <= 155) {
+                if (labels[row + x] == OmrMeasurePostProcessor.NOTEHEAD) heads++;
+                if (offRule && (gray[row + x] & 255) <= 155) {
                     ink++;
                     minY = Math.min(minY, y);
-                    maxY = Math.max(maxY, y);
+                    maxY = y;
                 }
             }
+        }
         // Another genuine note above this head is a chord, not a stacked numeral pair.
         return heads < gap * gap * .15f && ink > gap * 3 && maxY - minY > gap * 1.1f;
     }
