@@ -499,6 +499,15 @@ public final class SheetInterpreter {
                         gray,
                         width,
                         height);
+        closedTriplets =
+                ClosedOctaveTripletBars.apply(
+                        closedTriplets,
+                        finalScore.rests(),
+                        finalScore.measures(),
+                        finalScore.meterChanges(),
+                        gray,
+                        width,
+                        height);
         if (closedTriplets != finalScore.notes())
             finalScore = finalScore.withNotes(closedTriplets,
                     java.util.stream.IntStream.range(0, closedTriplets.size()).boxed().toList());
