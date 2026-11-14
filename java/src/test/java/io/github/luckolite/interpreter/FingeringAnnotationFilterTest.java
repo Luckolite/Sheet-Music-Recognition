@@ -165,4 +165,70 @@ public class FingeringAnnotationFilterTest {
         assertEquals(" 3\n", digits.get(0).text());
         assertEquals("H\n3", hand.get(0).text());
     }
+
+    @Test
+    public void separatedFingeringAndSegueRequireThreeCompletePrintedBeamGroups() {
+        int width = 640;
+        int height = 330;
+        float left = 30;
+        float right = 580;
+        var image = new byte[width * height];
+        Arrays.fill(image, (byte) 255);
+        var staff = List.of(new PlayingTechniqueDetector.Staff(215, 279, 16, 0, 1));
+        var region = List.of(new MeasureRegion(left / width, right / width, .35f, .98f));
+        for (int y = 215; y <= 279; y += 16)
+            drawInk(image, width, 1, width - 1, y, y + 1, 0);
+        drawInk(image, width, 584, 586, 215, 280, 0);
+
+        var notes = new ArrayList<ScoreNoteEvent>();
+        for (int slot = 0; slot < 12; slot++) {
+            int x = 73 + slot * 43;
+            int y = 205 - slot % 4 * 8;
+            notes.add(captionNote(x, y, 9 + (279 - y) / 8, -1, 2, 0, height, left, right));
+            drawInk(image, width, x - 10, x + 8, y - 5, y + 6, 0);
+            drawInk(image, width, x - 10, x - 7, y, 250, 0);
+            if (slot % 4 == 3) {
+                int xMin = x - 3 * 43 - 10;
+                drawInk(image, width, xMin, x - 7, 229, 235, 0);
+                drawInk(image, width, xMin, x - 7, 238, 250, 0);
+            }
+        }
+        var printed = List.copyOf(notes);
+        var digits = new PlayingTechniqueDetector.Word("4 3 2 1 4", 58f / width,
+                258f / height, 248f / width, 293f / height);
+        var segue = new PlayingTechniqueDetector.Word("segue", 275f / width,
+                263f / height, 410f / width, 302f / height);
+        var words = List.of(digits, segue);
+        for (int x : new int[] {75, 316, 342, 370}) {
+            notes.add(captionNote(x, 283, 0, 0, 0, 4, height, left, right));
+            drawInk(image, width, x - 5, x + 5, 280, 288, 0);
+        }
+
+        assertEquals(printed, FingeringAnnotationFilter.apply(words, staff, region, notes, image, width, height));
+        var thinSeam = image.clone();
+        drawInk(thinSeam, width, 150, 192, 235, 238, 0);
+        drawInk(thinSeam, width, 150, 192, 236, 237, 200);
+        drawInk(thinSeam, width, 164, 170, 235, 236, 200);
+        assertEquals(printed, FingeringAnnotationFilter.apply(words, staff, region, notes, thinSeam, width, height));
+        assertSame(notes, FingeringAnnotationFilter.apply(
+                List.of(segue), staff, region, notes, image, width, height));
+        var brokenGroup = image.clone();
+        drawInk(brokenGroup, width, 127, 150, 228, 251, 255);
+        assertSame(notes, FingeringAnnotationFilter.apply(words, staff, region, notes, brokenGroup, width, height));
+        var separateShaft = image.clone();
+        drawInk(separateShaft, width, 305, 308, 282, 321, 0);
+        assertSame(notes, FingeringAnnotationFilter.apply(words, staff, region, notes, separateShaft, width, height));
+    }
+
+    private static ScoreNoteEvent captionNote(int x, int y, int step, int stem, int beams,
+            float whole, int height, float left, float right) {
+        return new ScoreNoteEvent(0, (x - left) / (right - left), step, 0, 1, y / (float) height,
+                false, 0, beams, ScoreNoteEvent.ACCIDENTAL_FROM_KEY, whole, 1, 0, 0, 30, false, 0,
+                false, 0, 0, 1, stem, ScoreNoteEvent.Kind.PITCHED, ScoreNoteEvent.VisualSize.FULL, 0, null);
+    }
+
+    private static void drawInk(byte[] image, int width, int left, int right, int top, int bottom, int shade) {
+        for (int y = top; y < bottom; y++)
+            Arrays.fill(image, y * width + left, y * width + right, (byte) shade);
+    }
 }

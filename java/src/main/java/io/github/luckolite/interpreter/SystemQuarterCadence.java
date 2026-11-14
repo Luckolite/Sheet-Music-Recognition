@@ -22,6 +22,7 @@ final class SystemQuarterCadence {
             boolean lastInRow = i + 1 < regions.size()
                     && Math.abs(regions.get(i + 1).top() * height - top) > gap * 5;
             var split = lastInRow ? prove(region, labels, gray, width, height) : List.<MeasureRegion>of();
+            if (lastInRow && split.isEmpty()) split=proveQuarterAfterThirds(region,labels,gray,width,height);
             if (split.isEmpty()) result.add(region);
             else {
                 result.addAll(split);
@@ -100,6 +101,112 @@ final class SystemQuarterCadence {
                                          region.top(), region.bottom()),
                        new MeasureRegion((float) (cut + margin) / width, region.right(),
                                          region.top(), region.bottom(), 1));
+    }
+
+    static List<MeasureRegion> proveQuarterAfterThirds(
+            MeasureRegion region, byte[] labels, byte[] gray, int width, int height) {
+        if (region.cadenceQuarterBeats()!=0) return List.of();
+        float left=region.left()*width, right=region.right()*width, span=right-left;
+        float bottom=region.bottom()*height, gap=(region.bottom()-region.top())*height/8.2f;
+        if (gap<10 || gap>25 || span<gap*50 || span>gap*60 || right+gap>=width)
+            return List.of();
+        var rails=PrintedDirectionStaff.printedRules(gray,width,height,right-gap*2.5f,bottom-gap*2.1f,gap);
+        if (rails==null) return List.of();
+        var staff=new PlayingTechniqueDetector.Staff(rails[0]-4*rails[1],rails[0],rails[1],0,1);
+        int end=PrintedCadenceDurations.boundaryColumn(gray,width,staff,right,false,true);
+        if (end<0) return List.of();
+        int first=-1,last=-1;
+        for (int x=Math.round(right-gap*12);x<=right-gap*8;x++) {
+            if (!crossesSpaces(gray,width,staff,x)) continue;
+            if (last>=0 && x!=last+1) return List.of();
+            if (first<0) first=x;
+            last=x;
+        }
+        if (first<0 || last-first<1 || last-first>gap*.48f) return List.of();
+        int cut=(first+last)/2;
+        int staffTop=Math.round(staff.top()), staffBottom=Math.round(staff.bottom());
+        if (ClosedHeadBarlineGuard.attached(gray,width,height,cut,staffTop,staffBottom,staff.gap())
+                || DottedDyadMeasureSeparator.continuesBeyondStaff(
+                        gray,width,height,cut,staffTop,staffBottom,staff.gap())) return List.of();
+
+        var raw=OmrScoreInterpreter.analyze(labels,gray,width,height,List.of(region));
+        if (!raw.rests().isEmpty() || (raw.notes().size()!=25 && raw.notes().size()!=26)) return List.of();
+        var notes=raw.notes().stream().sorted(Comparator.comparingDouble(ScoreNoteEvent::positionInMeasure)).toList();
+        var columns=new ArrayList<List<ScoreNoteEvent>>();
+        var anchors=new ArrayList<Float>();
+        for(var n:notes) {
+            if (n.kind()!=ScoreNoteEvent.Kind.PITCHED || n.staffCount()!=1 || n.staffIndex()!=0
+                    || n.visualSize()!=ScoreNoteEvent.VisualSize.FULL || n.stemDirection()!=-1
+                    || n.augmentationDots()!=0 || n.tupletDivisor()!=1 || n.crossStaffBeam()
+                    || n.boundaryTies()!=0 || n.leadingRestBeats()!=0
+                    || n.followingRestBeats()!=0 || (n.articulations() & NoteOrnament.GRACE)!=0)
+                return List.of();
+            float x=left+n.positionInMeasure()*span;
+            if (anchors.isEmpty() || x-anchors.get(anchors.size()-1)>gap*.25f) {
+                anchors.add(x);
+                columns.add(new ArrayList<>(2));
+            }
+            columns.get(columns.size()-1).add(n);
+        }
+        if (columns.size()!=13) return List.of();
+
+        for(int i=0;i<columns.size();i++) {
+            var owners=columns.get(i);
+            var primary=owners.stream().min(Comparator.comparingInt(ScoreNoteEvent::staffStep)).orElseThrow();
+            boolean cadence=i==12;
+            if ((owners.size()!=2 && (i!=0 || owners.size()!=1))
+                    || owners.stream().anyMatch(n -> n.beamCount()!=(cadence?0:2)
+                            || n.unbeamedDurationBeats()!=(cadence?1:0)))
+                return List.of();
+            if(owners.size()==2 && Math.abs(owners.get(0).staffStep()-owners.get(1).staffStep())!=2)
+                return List.of();
+            float x=anchors.get(i);
+            if (cadence) {
+                if (owners.stream().anyMatch(ScoreNoteEvent::tiedFromPrevious)
+                        || x-cut<gap*3.3f || x-cut>gap*5.5f || cut-anchors.get(11)<gap*1.75f
+                        || !PrintedCadenceDurations.emptyOutsideChord(gray,width,staff,
+                                cut,end,x-gap*1.55,x,true)) return List.of();
+                continue;
+            }
+            if (i>0) {
+                var prior=columns.get(i-1).stream()
+                        .min(Comparator.comparingInt(ScoreNoteEvent::staffStep)).orElseThrow();
+                float x0=left+span*prior.positionInMeasure(), x1=left+span*primary.positionInMeasure();
+                if (x1-x0<gap*2.55f || x1-x0>gap*4.7f) return List.of();
+                if (i%4!=0 && !PrintedTupletBeamOwner.connectedHeads(
+                        gray,width,height,x0,prior.pageY()*height,x1,primary.pageY()*height,gap,-1))
+                    return List.of();
+                if (i%4==0 && !wideGapBetweenThirdBeams(
+                        gray,width,height,staff,x0,x1,prior.pageY()*height,primary.pageY()*height)) return List.of();
+            }
+        }
+        int padding=Math.round(gap*.5f);
+        return List.of(new MeasureRegion(region.left(),(cut-padding)/(float)width,
+                            region.top(),region.bottom()),
+                       new MeasureRegion((cut+padding)/(float)width,region.right(),
+                            region.top(),region.bottom(),1));
+    }
+
+    private static boolean wideGapBetweenThirdBeams(byte[] gray,int width,int height,
+            PlayingTechniqueDetector.Staff staff,float left,float right,float leftHead,float rightHead) {
+        float gap=staff.gap();
+        int a=Math.round(left+gap*.48f),b=Math.round(right-gap*.95f);
+        if (b-a<gap*.5f) return false;
+        int start=Math.max(0,Math.round(Math.min(leftHead,rightHead)+gap*1.05f));
+        int end=Math.min(height-1,Math.round(staff.bottom()-gap*.75f));
+        if (a<0 || b>=width || end-start<gap*2) return false;
+        int clean=0;
+        for (int x=a;x<=b;x++) {
+            int ink=0;
+            for (int y=start;y<=end;y++) {
+                float line=(staff.bottom()-y)/gap;
+                if (line>=-.12f && line<=4.12f && Math.abs(Math.round(line)-line)<.27f) continue;
+                if ((gray[y*width+x]&255)<155) ink++;
+            }
+            if (ink<=Math.round(gap*.17f) && ++clean>=Math.round(gap*.42f)) return true;
+            if (ink>Math.round(gap*.17f)) clean=0;
+        }
+        return false;
     }
 
     private static boolean crossesSpaces(
