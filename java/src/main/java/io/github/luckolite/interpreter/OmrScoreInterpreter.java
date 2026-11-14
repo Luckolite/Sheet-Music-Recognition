@@ -11738,15 +11738,30 @@ final class OmrScoreInterpreter {
         float typical = gaps.get(gaps.size() / 2);
         int flank = Math.max(2, Math.round(typical * .22f));
         int[] rows = new int[height];
-        for (int y = flank; y < height - flank; y++)
-            for (int x = 0; x < width; x++) {
-                int ink = gray[y * width + x] & 255;
+        int flankOffset = flank * width;
+        // Float rounding is significant for oblique staff rows.
+        boolean flat = slope == 0 && height <= (1 << 24);
+        float[] shifts = flat ? null : new float[width];
+        if (shifts != null) {
+            float middle = width * .5f;
+            for (int x = 0; x < width; x++) shifts[x] = slope * (x - middle);
+        }
+        for (int y = flank; y < height - flank; y++) {
+            int start = y * width, end = start + width, aligned = 0;
+            for (int at = start; at < end; at++) {
+                int ink = gray[at] & 255;
                 if (ink > 225
-                        || (gray[(y - flank) * width + x] & 255) < ink + 12
-                        || (gray[(y + flank) * width + x] & 255) < ink + 12) continue;
-                int row = Math.round(y - slope * (x - width * .5f));
-                if (row >= 0 && row < height) rows[row]++;
+                        || (gray[at - flankOffset] & 255) < ink + 12
+                        || (gray[at + flankOffset] & 255) < ink + 12) continue;
+                if (flat) {
+                    aligned++;
+                } else {
+                    int row = Math.round(y - shifts[at - start]);
+                    if (row >= 0 && row < height) rows[row]++;
+                }
             }
+            if (flat) rows[y] = aligned;
+        }
         for (var raw :
                 RawStaffLineDetector.detectFromStrength(
                         rows, Math.max(24, Math.round(width * .25f)), height)) {

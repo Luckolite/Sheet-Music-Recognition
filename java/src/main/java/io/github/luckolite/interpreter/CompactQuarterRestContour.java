@@ -68,54 +68,8 @@ final class CompactQuarterRestContour {
             for (int x = Math.max(0, left); x <= Math.min(width - 1, right); x++) {
                 if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
 
-                boolean spine = false;
-                {
-                    if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
-                    for (int first = Math.max(0, minY);
-                            first + span <= Math.min(height, maxY + 1);
-                            first++) {
-                        if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
-
-                        int ink = 0, total = 0;
-                        {
-                            if (quarterBudget != null)
-                                FaintQuarterRestInk.charge(quarterBudget, 1, 0);
-                            for (int y = first; y < first + span; y++) {
-                                if (quarterBudget != null)
-                                    FaintQuarterRestInk.charge(quarterBudget, 1, 0);
-
-                                if (y - lineTop >= 0
-                                        && y - lineTop < staffLines.length
-                                        && staffLines[y - lineTop]) continue;
-                                total++;
-                                boolean dark = false;
-                                {
-                                    if (quarterBudget != null)
-                                        FaintQuarterRestInk.charge(quarterBudget, 1, 0);
-                                    for (int xx = Math.max(left, x - 1);
-                                            xx <= Math.min(right, x + 1);
-                                            xx++) {
-                                        if (quarterBudget != null)
-                                            FaintQuarterRestInk.charge(quarterBudget, 1, 0);
-                                        if (xx >= 0
-                                                && xx < width
-                                                && (gray[y * width + xx] & 255) < 125) {
-                                            dark = true;
-                                            break;
-                                        }
-                                    }
-                                }
-
-                                if (dark) ink++;
-                            }
-                        }
-
-                        if (total >= gap && ink >= total * .88f) {
-                            spine = true;
-                            break;
-                        }
-                    }
-                }
+                boolean spine = hasSpine(gray, width, height, x, left, right, minY, maxY,
+                        staffLines, lineTop, gap, span, quarterBudget);
 
                 if (spine)
                     FaintQuarterRestInk.add(
@@ -139,6 +93,107 @@ final class CompactQuarterRestContour {
 
         return false;
     }
+
+    private static boolean hasSpine(
+            byte[] gray, int width, int height, int x, int left, int right, int minY, int maxY,
+            boolean[] staffLines, int lineTop, float gap, int span,
+            FaintQuarterRestInk.Budget quarterBudget) {
+        int start = Math.max(0, minY), end = Math.min(height, maxY + 1);
+        if (span > 0 && staffLines != null && end >= start && span <= end - start
+                && (quarterBudget == null || quarterBudget.canPrepayLocal(
+                        1L + (end - start - span + 1L) * (2L + 5L * span)))) {
+            long verdict = rollingSpine(gray, width, Math.max(left, x - 1),
+                    Math.min(right, x + 1), start, end, staffLines, lineTop, gap, span);
+            if (quarterBudget == null || quarterBudget.tryPrepayLocal(Math.abs(verdict)))
+                return verdict > 0;
+        }
+        // Retain fine-grained charging for linked budgets and partial refusals.
+        {
+            if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
+            for (int first = Math.max(0, minY);
+                    first + span <= Math.min(height, maxY + 1);
+                    first++) {
+                if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
+
+                int ink = 0, total = 0;
+                {
+                    if (quarterBudget != null)
+                        FaintQuarterRestInk.charge(quarterBudget, 1, 0);
+                    for (int y = first; y < first + span; y++) {
+                        if (quarterBudget != null)
+                            FaintQuarterRestInk.charge(quarterBudget, 1, 0);
+
+                        if (y - lineTop >= 0
+                                && y - lineTop < staffLines.length
+                                && staffLines[y - lineTop]) continue;
+                        total++;
+                        boolean dark = false;
+                        {
+                            if (quarterBudget != null)
+                                FaintQuarterRestInk.charge(quarterBudget, 1, 0);
+                            for (int xx = Math.max(left, x - 1);
+                                    xx <= Math.min(right, x + 1);
+                                    xx++) {
+                                if (quarterBudget != null)
+                                    FaintQuarterRestInk.charge(quarterBudget, 1, 0);
+                                if (xx >= 0
+                                        && xx < width
+                                        && (gray[y * width + xx] & 255) < 125) {
+                                    dark = true;
+                                    break;
+                                }
+                            }
+                        }
+
+                        if (dark) ink++;
+                    }
+                }
+
+                if (total >= gap && ink >= total * .88f) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /** Return the signed work charge of the first passing window or the full search. */
+    private static long rollingSpine(
+            byte[] gray, int width, int left, int right, int first, int end,
+            boolean[] staffLines, int lineTop, float gap, int span) {
+        int total = 0, ink = 0, windowWork = 0;
+        for (int y = first; y < first + span; y++) {
+            int row = spineRow(gray, width, left, right, y, staffLines, lineTop);
+            total += (row >>> 3) & 1;
+            ink += row >>> 4;
+            windowWork += row & 7;
+        }
+        long work = 1;
+        for (int next = first + span; ; next++) {
+            work += 2L + windowWork;
+            if (total >= gap && ink >= total * .88f) return work;
+            if (next == end) return -work;
+            int incoming = spineRow(gray, width, left, right, next, staffLines, lineTop);
+            int outgoing = spineRow(gray, width, left, right, next - span, staffLines, lineTop);
+            total += ((incoming >>> 3) & 1) - ((outgoing >>> 3) & 1);
+            ink += (incoming >>> 4) - (outgoing >>> 4);
+            windowWork += (incoming & 7) - (outgoing & 7);
+        }
+    }
+
+    /** Pack the row charge (at most five), eligible-row flag, and ink flag. */
+    private static int spineRow(
+            byte[] gray, int width, int left, int right, int y, boolean[] staffLines, int lineTop) {
+        int staffRow = y - lineTop;
+        if (staffRow >= 0 && staffRow < staffLines.length && staffLines[staffRow]) return 1;
+        int work = 2, row = y * width;
+        for (int x = left; x <= right; x++) {
+            work++;
+            if (x >= 0 && x < width && (gray[row + x] & 255) < 125) return 24 + work;
+        }
+        return 8 + work;
+    }
+
 
     static boolean hasContrastedInk(
             byte[] gray,

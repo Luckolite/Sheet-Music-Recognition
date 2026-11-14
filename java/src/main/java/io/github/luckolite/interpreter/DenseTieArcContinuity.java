@@ -9,6 +9,8 @@ final class DenseTieArcContinuity {
         private final int width, left, right, inkLimit, first;
         private final byte[] states;
         private final float minimum;
+        private float[] flatColumns;
+        private int flatColumnsReady;
 
         StraightRows(byte[] gray, int width, int left, int right, int inkLimit, int first, int last) {
             this.gray = gray;
@@ -19,6 +21,19 @@ final class DenseTieArcContinuity {
             this.first = first;
             this.states = new byte[Math.max(0, last - first + 1)];
             minimum = (right - left + 1) * .85f;
+        }
+
+        float flatColumn(int x, int scanLeft, int scanRight) {
+            int column = x - scanLeft;
+            if (scanLeft != left || scanRight != right || right - left >= 4096)
+                return flatProfile(column / (float) (scanRight - scanLeft));
+            if (flatColumns == null) flatColumns = new float[right - left + 1];
+            // Scans start at the first column and can stop at a disconnected shoulder.
+            while (flatColumnsReady <= column) {
+                int next = flatColumnsReady++;
+                flatColumns[next] = flatProfile(next / (float) (right - left));
+            }
+            return flatColumns[column];
         }
 
         boolean contains(int y) {
@@ -67,7 +82,9 @@ final class DenseTieArcContinuity {
         int bottom = Math.min(height - 1, (int) Math.ceil(centerY + gap * 3.3f + radius));
         if (bottom < top) return false;
         int count = bottom - top + 1, rise = Math.max(1, (int) Math.ceil(gap * .1f) + 1);
-        boolean[] previous = new boolean[count], skipped = new boolean[count], next = new boolean[count];
+        int capacity = (int) Math.min(count, 2L * radius + 1);
+        int[] previous = new int[capacity], skipped = new int[capacity], next = new int[capacity];
+        int previousSize = 0, skippedSize = 0;
         int covered = 0;
         int span = right - left + 1;
         int edgeSlack = Math.min(Math.round(gap * 1.4f), (int) Math.floor(span * .15f));
@@ -76,11 +93,10 @@ final class DenseTieArcContinuity {
         int reach = Math.max(2, Math.round(gap * .4f));
         float maximumThickness = gap * .6f;
         for (int x = left; x <= right; x++) {
-            java.util.Arrays.fill(next, false);
+            int nextSize = 0, previousCursor = 0, skippedCursor = 0;
             float t = (x - left) / (float) (right - left);
-            float profile = flat ? flatProfile(t) : 4 * t * (1 - t);
+            float profile = flat ? straightRows.flatColumn(x, left, right) : 4 * t * (1 - t);
             int requestedY = Math.round(centerY + side * gap * (offset + bend * profile));
-            boolean connected = false;
             for (int y = Math.max(top, requestedY - radius);
                     y <= Math.min(bottom, requestedY + radius);
                     y++) {
@@ -93,6 +109,7 @@ final class DenseTieArcContinuity {
                             paper = Math.max(paper, gray[(y - distance) * width + x] & 255);
                         if (y + distance < height)
                             paper = Math.max(paper, gray[(y + distance) * width + x] & 255);
+                        if (paper >= shade + 20) break;
                     }
                     if (paper < shade + 20) continue;
                 }
@@ -102,18 +119,22 @@ final class DenseTieArcContinuity {
                     int a = y, b = y;
                     while (a > Math.max(0, y - reach)
                             && (gray[(a - 1) * width + x] & 255) <= inkLimit) a--;
+                    if (y - a > maximumThickness) continue;
                     while (b < Math.min(height - 1, y + reach)
                             && (gray[(b + 1) * width + x] & 255) <= inkLimit) b++;
                     if (b - a > maximumThickness) continue;
                 }
-                int index = y - top;
+                // Both frontiers and candidate rows are ordered, so cursors only advance.
+                while (previousCursor < previousSize && previous[previousCursor] < y - rise)
+                    previousCursor++;
+                while (skippedCursor < skippedSize && skipped[skippedCursor] < y - rise * 2)
+                    skippedCursor++;
                 if (!started
-                        || reaches(previous, index, rise)
-                        || reaches(skipped, index, rise * 2)) {
-                    next[index] = true;
-                    connected = true;
-                }
+                        || (previousCursor < previousSize && previous[previousCursor] <= y + rise)
+                        || (skippedCursor < skippedSize && skipped[skippedCursor] <= y + rise * 2))
+                    next[nextSize++] = y;
             }
+            boolean connected = nextSize != 0;
             // One column of missing raster ink is tolerated; two consecutive empty
             // columns cannot inherit a frontier. No semantic label invents pixels.
             if (!connected && !previousConnected) {
@@ -128,19 +149,14 @@ final class DenseTieArcContinuity {
             started |= connected;
             if (connected) covered++;
             previousConnected = connected;
-            boolean[] reusable = skipped;
+            int[] reusable = skipped;
             skipped = previous;
+            skippedSize = previousSize;
             previous = next;
+            previousSize = nextSize;
             next = reusable;
         }
         return covered >= (right - left + 1) * .8f;
-    }
-
-    private static boolean reaches(boolean[] frontier, int index, int radius) {
-        for (int i = Math.max(0, index - radius);
-                i <= Math.min(frontier.length - 1, index + radius);
-                i++) if (frontier[i]) return true;
-        return false;
     }
 
     private static float flatProfile(float t) {
