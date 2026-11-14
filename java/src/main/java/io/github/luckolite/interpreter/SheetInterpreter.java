@@ -511,8 +511,9 @@ public final class SheetInterpreter {
         if (closedTriplets != finalScore.notes())
             finalScore = finalScore.withNotes(closedTriplets,
                     java.util.stream.IntStream.range(0, closedTriplets.size()).boxed().toList());
-        finalScore =
+        var mixedBeamTransition =
                 EighthTripletsBeforeSixteenths.capture(finalScore, annotationGray, width, height);
+        finalScore = mixedBeamTransition.score();
         finalScore =
                 OpeningBeamPickup.apply(
                         finalScore,
@@ -676,6 +677,7 @@ public final class SheetInterpreter {
                             staffs,
                             physicalPage,
                             phrasePending);
+        finalInterpretation = mixedBeamTransition.projectBeams(finalInterpretation, physicalPage);
         finalInterpretation =
                 PrintedPassOmission.apply(
                         finalInterpretation, words, staffs, gray, width, height, physicalPage);

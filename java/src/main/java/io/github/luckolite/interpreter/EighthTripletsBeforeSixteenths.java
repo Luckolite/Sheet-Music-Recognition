@@ -3,7 +3,10 @@
 package io.github.luckolite.interpreter;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.stream.IntStream;
 
@@ -11,14 +14,77 @@ import java.util.stream.IntStream;
 final class EighthTripletsBeforeSixteenths {
     private EighthTripletsBeforeSixteenths() {}
 
-    static ScorePageInterpretation capture(
-            ScorePageInterpretation score, byte[] source, int width, int height) {
+    private record BeamRun(List<Integer> owners) {}
+
+    record Capture(ScorePageInterpretation score, List<List<BeamRun>> transitions) {
+        ScorePageInterpretation projectBeams(ScorePageInterpretation retained, int page) {
+            if (transitions.isEmpty()
+                    || page < 0
+                    || !score.measures().equals(retained.measures())
+                    || score.notes().size() != retained.notes().size()) return retained;
+            var source = retained.beamSource();
+            var origins = source.noteOrigins();
+            var originCount = new HashMap<ScoreBeamSource.Anchor, Integer>();
+            for (var origin : origins) origin.ifPresent(a -> originCount.merge(a, 1, Integer::sum));
+            var claims = new HashSet<ScoreBeamSource.Anchor>();
+            var ids = new HashSet<String>();
+            for (var group : source.groups()) {
+                ids.add(group.id());
+                for (var column : group.columns()) claims.addAll(column.members());
+            }
+            for (var detached : source.detachedColumns()) claims.addAll(detached.members());
+            var groups = new ArrayList<>(source.groups());
+            for (var transition : transitions) {
+                var additions = new ArrayList<ScoreBeamSource.Group>(transition.size());
+                for (var run : transition) {
+                    var columns = new ArrayList<ScoreBeamSource.Column>(run.owners().size());
+                    for (int owner : run.owners()) {
+                        var origin = origins.get(owner).orElse(null);
+                        if (origin == null
+                                || origin.pageIndex() != page
+                                || origin.noteIndex() != owner
+                                || originCount.getOrDefault(origin, 0) != 1
+                                || claims.contains(origin)
+                                || !score.notes().get(owner).equals(retained.notes().get(owner)))
+                            break;
+                        columns.add(new ScoreBeamSource.Column(List.of(origin)));
+                    }
+                    if (columns.size() != run.owners().size()) break;
+                    String id =
+                            "printed-beam:"
+                                    + page
+                                    + ":"
+                                    + columns.get(0).members().get(0).noteIndex();
+                    if (ids.contains(id)) break;
+                    additions.add(
+                            new ScoreBeamSource.Group(
+                                    id,
+                                    columns,
+                                    Collections.nCopies(columns.size() - 1, 3),
+                                    List.of()));
+                }
+                if (additions.size() == transition.size()) {
+                    groups.addAll(additions);
+                    for (var group : additions) {
+                        ids.add(group.id());
+                        for (var column : group.columns()) claims.addAll(column.members());
+                    }
+                }
+            }
+            return groups.size() == source.groups().size()
+                    ? retained
+                    : retained.withBeamSource(
+                            new ScoreBeamSource(groups, source.detachedColumns(), origins));
+        }
+    }
+
+    static Capture capture(ScorePageInterpretation score, byte[] source, int width, int height) {
         if (width < 1
                 || height < 1
                 || source == null
                 || source.length != (long) width * height
                 || score.measures().size() < 2
-                || score.meterChanges().isEmpty()) return score;
+                || score.meterChanges().isEmpty()) return new Capture(score, List.of());
         var notes = new ArrayList<>(score.notes());
         var bars = score.measures();
         var owners = new ArrayList<List<Integer>>(bars.size());
@@ -34,7 +100,8 @@ final class EighthTripletsBeforeSixteenths {
                 denominators[m.measureIndex()] = m.denominator();
             }
         int numerator = 0, denominator = 0;
-        boolean previousCommon = false, changed = false;
+        boolean previousCommon = false;
+        var transitions = new ArrayList<List<BeamRun>>();
         for (int i = 0; i < bars.size(); i++) {
             if (denominators[i] != 0) {
                 numerator = numerators[i];
@@ -53,16 +120,22 @@ final class EighthTripletsBeforeSixteenths {
                             source,
                             width,
                             height)) {
-                for (int index : owners.get(i).subList(0, 6))
+                var ordered = owners.get(i);
+                for (int index : ordered.subList(0, 6))
                     notes.set(index, notes.get(index).withTupletRatio(3, 2));
-                changed = true;
+                // The single rails establish timing, but do not prove a printed tuplet mark.
+                transitions.add(
+                        List.of(
+                                new BeamRun(List.copyOf(ordered.subList(6, 10))),
+                                new BeamRun(List.copyOf(ordered.subList(10, 14)))));
             }
             previousCommon = common;
         }
-        return changed
-                ? score.withNotes(notes, IntStream.range(0, notes.size()).boxed().toList())
-                        .withClockContextSource(score.clockContextSource())
-                : score;
+        if (transitions.isEmpty()) return new Capture(score, List.of());
+        return new Capture(
+                score.withNotes(notes, IntStream.range(0, notes.size()).boxed().toList())
+                        .withClockContextSource(score.clockContextSource()),
+                List.copyOf(transitions));
     }
 
     private static boolean ownsClosedTransition(

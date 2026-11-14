@@ -23,7 +23,8 @@ public final class EighthTripletsBeforeSixteenthsTest {
     public void assignsOnlyTheTwoTripletGroupsBeforeWrittenSixteenths() {
         var sheet = fixture(4);
         var timing =
-                EighthTripletsBeforeSixteenths.capture(sheet.score(), sheet.ink(), WIDTH, HEIGHT);
+                EighthTripletsBeforeSixteenths.capture(sheet.score(), sheet.ink(), WIDTH, HEIGHT)
+                        .score();
         assertEquals(26, timing.notes().size());
         for (int i = 0; i < timing.notes().size(); i++) {
             var original = sheet.score().notes().get(i);
@@ -56,12 +57,12 @@ public final class EighthTripletsBeforeSixteenthsTest {
                 255);
         assertSame(
                 joined.score(),
-                EighthTripletsBeforeSixteenths.capture(
-                        joined.score(), joined.ink(), WIDTH, HEIGHT));
+                EighthTripletsBeforeSixteenths.capture(joined.score(), joined.ink(), WIDTH, HEIGHT)
+                        .score());
         assertSame(
                 erased.score(),
-                EighthTripletsBeforeSixteenths.capture(
-                        erased.score(), erased.ink(), WIDTH, HEIGHT));
+                EighthTripletsBeforeSixteenths.capture(erased.score(), erased.ink(), WIDTH, HEIGHT)
+                        .score());
     }
 
     @Test
@@ -69,7 +70,79 @@ public final class EighthTripletsBeforeSixteenthsTest {
         var sheet = fixture(3);
         assertSame(
                 sheet.score(),
-                EighthTripletsBeforeSixteenths.capture(sheet.score(), sheet.ink(), WIDTH, HEIGHT));
+                EighthTripletsBeforeSixteenths.capture(sheet.score(), sheet.ink(), WIDTH, HEIGHT)
+                        .score());
+    }
+
+    @Test
+    public void projectsLiteralRunsAfterOrdinaryCapture() {
+        var sheet = fixture(4);
+        var proof =
+                EighthTripletsBeforeSixteenths.capture(sheet.score(), sheet.ink(), WIDTH, HEIGHT);
+        var earlier = group(0, 1);
+        var regular =
+                proof.score()
+                        .withBeamSource(
+                                ScoreBeamSource.capture(
+                                        3,
+                                        proof.score().notes().size(),
+                                        List.of(earlier),
+                                        List.of()));
+        var projected = proof.projectBeams(regular, 3);
+        assertEquals(regular.notes(), projected.notes());
+        var found = projected.beamSource().groups();
+        assertEquals(3, found.size());
+        assertEquals(earlier, found.get(0));
+        assertEquals(
+                List.of(4, 4), found.subList(1, 3).stream().map(g -> g.columns().size()).toList());
+        assertEquals(
+                List.of(List.of(3, 3, 3), List.of(3, 3, 3)),
+                found.subList(1, 3).stream().map(ScoreBeamSource.Group::bridges).toList());
+        assertEquals(
+                List.of(18, 22),
+                found.subList(1, 3).stream()
+                        .map(g -> g.columns().get(0).members().get(0).noteIndex())
+                        .toList());
+        assertSame(projected, proof.projectBeams(projected, 3));
+        assertSame(regular, proof.projectBeams(regular, 4));
+        assertSame(proof.score(), proof.projectBeams(proof.score(), 3));
+    }
+
+    @Test
+    public void doesNotClaimAbsentAmbiguousOrPreviouslyOwnedStems() {
+        var sheet = fixture(4);
+        var proof =
+                EighthTripletsBeforeSixteenths.capture(sheet.score(), sheet.ink(), WIDTH, HEIGHT);
+        var score = proof.score();
+        var occupied =
+                score.withBeamSource(
+                        ScoreBeamSource.capture(
+                                3, score.notes().size(), List.of(), List.of(column(25))));
+        assertSame(occupied, proof.projectBeams(occupied, 3));
+        var valid = ScoreBeamSource.capture(3, score.notes().size(), List.of(), List.of());
+        var origins = new ArrayList<>(valid.noteOrigins());
+        origins.set(11, origins.get(18));
+        var ambiguous = score.withBeamSource(new ScoreBeamSource(List.of(), List.of(), origins));
+        assertSame(ambiguous, proof.projectBeams(ambiguous, 3));
+        var changedNotes = new ArrayList<>(score.notes());
+        changedNotes.set(18, changedNotes.get(18).withStemDirection(1));
+        var changed =
+                score.withNotes(
+                                changedNotes,
+                                java.util.stream.IntStream.range(0, changedNotes.size())
+                                        .boxed()
+                                        .toList())
+                        .withBeamSource(valid);
+        assertSame(changed, proof.projectBeams(changed, 3));
+    }
+
+    private static ScoreBeamSource.Group group(int a, int b) {
+        return new ScoreBeamSource.Group(
+                "earlier", List.of(column(a), column(b)), List.of(1), List.of());
+    }
+
+    private static ScoreBeamSource.Column column(int index) {
+        return new ScoreBeamSource.Column(List.of(new ScoreBeamSource.Anchor(3, index)));
     }
 
     private record Fixture(ScorePageInterpretation score, byte[] ink) {}
