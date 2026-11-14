@@ -40,6 +40,7 @@ final class FingeringAnnotationFilter {
                 || height <= 0
                 || gray.length != (long) width * height) return notes;
         notes = annotatedSingleLines(words, staffs, measures, notes, gray, width, height);
+        notes = isolatedParentheticalSixteenths(words, staffs, measures, notes, gray, width, height);
         List<Candidate> candidates = null;
         var result = new ArrayList<ScoreNoteEvent>(notes.size());
         for (var note : notes) {
@@ -154,6 +155,120 @@ final class FingeringAnnotationFilter {
                     && closedWrittenSixteenths(music)) result.removeAll(falseHeads);
         }
         return result.size()==notes.size()?notes:List.copyOf(result);
+    }
+
+    /** Paired below-staff fingerings can seed both a false pitch and a false triplet. */
+    private static List<ScoreNoteEvent> isolatedParentheticalSixteenths(
+            List<PlayingTechniqueDetector.Word> words,List<PlayingTechniqueDetector.Staff> staffs,
+            List<MeasureRegion> regions,List<ScoreNoteEvent> notes,byte[] gray,int width,int height) {
+        var opening=words.stream().filter(w->w.text()!=null && w.text().strip().equals("(3")).toList();
+        var closing=words.stream().filter(w->w.text()!=null && w.text().strip().equals("3)")).toList();
+        if(opening.isEmpty() || closing.isEmpty()) return notes;
+        List<ScoreNoteEvent> output=null;
+        for (int index=0;index<notes.size();index++) {
+            var falseHead=notes.get(index);
+            if (!possiblyPrintedText(falseHead) || falseHead.beamCount()!=0
+                    || falseHead.unbeamedDurationBeats()!=4 || falseHead.staffStep()!=-1
+                    || falseHead.leadingRestBeats()!=0 || falseHead.followingRestBeats()!=0)
+                continue;
+            int measure=falseHead.measureIndex();
+            if (measure<0 || measure>=regions.size()) continue;
+            var bar=regions.get(measure);
+            float left=bar.left()*width, right=bar.right()*width, span=right-left;
+            float falseX=left+span*falseHead.positionInMeasure(),falseY=falseHead.pageY()*height;
+            var real=notes.stream().filter(n->n.measureIndex()==measure && n!=falseHead)
+                    .sorted(Comparator.comparingDouble(ScoreNoteEvent::positionInMeasure)).toList();
+            if(real.size()!=16) continue;
+            for (var staff:staffs) {
+                if (staff.count()!=1 || staff.index()!=0 || staff.top()<bar.top()*height
+                        || staff.bottom()>bar.bottom()*height || staff.gap()<10 || staff.gap()>24)
+                    continue;
+                float gap=staff.gap();
+                if (falseY<staff.bottom()+gap*.32f || falseY>staff.bottom()+gap*.9f) continue;
+                var pair=parenthesizedBoxes(opening,closing,bar,staff,width,height);
+                if (pair.isEmpty() || !insideInk(falseHead,bar,staff,pair.subList(0,1),gray,width,height))
+                    continue;
+                float first=left+span*real.get(0).positionInMeasure(),last=left+span*real.get(15).positionInMeasure();
+                if (!WrappedMeasureBoundaries.confirmsInitialStaffBar(
+                        gray,width,height,regions,measure,first,last)) continue;
+                var replacement=printedSixteenthLine(real,pair.get(1),left,span,staff,gray,width,height);
+                if(replacement.isEmpty()) continue;
+                if(output==null) output=new ArrayList<>(notes);
+                for (int j=9;j<=11;j++) {
+                    int owner=notes.indexOf(real.get(j));
+                    output.set(owner,replacement.get(j));
+                }
+                output.set(index,null);
+                break;
+            }
+        }
+        return output==null?notes:output.stream().filter(Objects::nonNull).toList();
+    }
+
+    private static List<ScoreNoteEvent> printedSixteenthLine(
+            List<ScoreNoteEvent> notes,PlayingTechniqueDetector.Word closing,float left,float span,
+            PlayingTechniqueDetector.Staff staff,byte[] gray,int width,int height) {
+        float gap=staff.gap();
+        var heads=new PrintedBeamShafts.Shaft[16];
+        var x=new float[16];
+        var y=new float[16];
+        var budget=new PrintedBeamShafts.Budget(180000);
+        for(int i=0;i<notes.size();i++) {
+            var n=notes.get(i);
+            int ratio=i>=9 && i<=11?3:1;
+            if(n.kind()!=ScoreNoteEvent.Kind.PITCHED || n.staffCount()!=1 || n.staffIndex()!=0
+                    || n.visualSize()!=ScoreNoteEvent.VisualSize.FULL || n.stemDirection()!=-1
+                    || n.beamCount()!=2 || n.unbeamedDurationBeats()!=0 || n.tupletDivisor()!=ratio
+                    || n.tupletNormalNotes()!=(ratio==3?2:1) || n.augmentationDots()!=0
+                    || n.leadingRestBeats()!=0 || n.followingRestBeats()!=0 || n.tiedFromPrevious()
+                    || n.boundaryTies()!=0 || n.crossStaffBeam()) return List.of();
+            x[i]=left+span*n.positionInMeasure();
+            y[i]=n.pageY()*height;
+            if (i>0 && (x[i]-x[i-1]<gap*1.5f || x[i]-x[i-1]>gap*4)) return List.of();
+            var axes=PrintedBeamShafts.at(gray,width,height,x[i],y[i],gap,budget);
+            if (axes.size()==1 && axes.get(0).direction()==1) heads[i]=axes.get(0);
+            else if (!axes.isEmpty() || i%4!=1 || i<12) return List.of();
+        }
+        float close=(closing.left()+closing.right())*width*.5f;
+        if (Math.abs(close-x[11])>gap*.65f) return List.of();
+        for(int i=0;i+1<heads.length;i++) {
+            if (heads[i]==null || heads[i+1]==null) {
+                int middle=heads[i]==null?i:i+1;
+                if (!PrintedTupletBeamOwner.connectedHeads(gray,width,height,x[i],y[i],x[i+1],y[i+1],gap,-1)
+                        || !pairedRails(gray,width,height,heads[middle-1],heads[middle+1],gap))
+                    return List.of();
+            } else if (i%4==3 ? pairedRails(gray,width,height,heads[i],heads[i+1],gap)
+                              : !pairedRails(gray,width,height,heads[i],heads[i+1],gap)) return List.of();
+        }
+        var result=notes.stream().map(n -> n.tupletDivisor()==3?n.withTupletRatio(1,1):n).toList();
+        return closedWrittenSixteenths(result)?result:List.of();
+    }
+
+    private static boolean pairedRails(byte[] gray,int width,int height,
+            PrintedBeamShafts.Shaft a,PrintedBeamShafts.Shaft b,float gap) {
+        int x0=(a.left()+a.right())/2,x1=(b.left()+b.right())/2;
+        int margin=Math.round(gap*.37f),rad=Math.max(2,Math.round(gap*.14f));
+        if(x0+margin>=x1-margin) return false;
+        for(int offset=-Math.round(gap*.22f);offset<=Math.round(gap*.45f);offset++)
+            for(int separation=Math.round(gap*.55f);separation<=Math.round(gap*.92f);separation++) {
+                int first=0,second=0,seam=0;
+                for(int x=x0+margin;x<=x1-margin;x++) {
+                    int axis=Math.round(a.endY()+(b.endY()-a.endY())*(x-x0)/(float)(x1-x0))-offset;
+                    if (axis+rad>=height || axis-separation-rad<0) continue;
+                    if(verticalInk(gray,width,x,axis,rad)>=2*rad) first++;
+                    if(verticalInk(gray,width,x,axis-separation,rad)>=2*rad) second++;
+                    if(verticalInk(gray,width,x,axis-separation/2,1)<=1) seam++;
+                }
+                int count=x1-x0-2*margin+1;
+                if(first>=count*.96f && second>=count*.96f && seam>=count*.28f) return true;
+            }
+        return false;
+    }
+
+    private static int verticalInk(byte[] gray,int width,int x,int y,int radius) {
+        int dark=0;
+        for(int dy=-radius;dy<=radius;dy++) if((gray[(y+dy)*width+x]&255)<165) dark++;
+        return dark;
     }
 
     private static boolean possiblyPrintedText(ScoreNoteEvent n) {
