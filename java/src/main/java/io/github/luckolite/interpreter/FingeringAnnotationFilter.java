@@ -12,6 +12,10 @@ final class FingeringAnnotationFilter {
     private static final Pattern HAND_SEQUENCE = Pattern.compile("[LRH]{2,3}");
     private static final Pattern DIGIT_SEQUENCE = Pattern.compile("[1-5]{2,4}");
     private static final Pattern WHITESPACE = Pattern.compile("\\s+");
+    private static final Pattern OPEN_FINGER = Pattern.compile("\\(\\s*[1-5]");
+    private static final Pattern CLOSE_FINGER = Pattern.compile("[1-5]\\s*\\)");
+    private static final Pattern FINGERS_AND_SEGUE =
+            Pattern.compile("(?:[1-5]\\s+){4,8}segue[.]?", Pattern.CASE_INSENSITIVE);
 
     private FingeringAnnotationFilter() {}
 
@@ -35,6 +39,7 @@ final class FingeringAnnotationFilter {
                 || width <= 0
                 || height <= 0
                 || gray.length != (long) width * height) return notes;
+        notes = annotatedSingleLines(words, staffs, measures, notes, gray, width, height);
         List<Candidate> candidates = null;
         var result = new ArrayList<ScoreNoteEvent>(notes.size());
         for (var note : notes) {
@@ -104,6 +109,117 @@ final class FingeringAnnotationFilter {
             if (!annotation) result.add(note);
         }
         return result.size() == notes.size() ? notes : List.copyOf(result);
+    }
+
+    /** Staff-line fragments can be notehead-shaped while belonging to an alternate fingering. */
+    private static List<ScoreNoteEvent> annotatedSingleLines(
+            List<PlayingTechniqueDetector.Word> words, List<PlayingTechniqueDetector.Staff> staffs,
+            List<MeasureRegion> measures, List<ScoreNoteEvent> notes, byte[] gray, int width, int height) {
+        var openings = words.stream().filter(w -> OPEN_FINGER.matcher(w.text().strip()).matches()).toList();
+        var closings = words.stream().filter(w -> CLOSE_FINGER.matcher(w.text().strip()).matches()).toList();
+        var captions = words.stream().filter(w -> FINGERS_AND_SEGUE.matcher(w.text().strip()).matches()).toList();
+        if (captions.isEmpty() && (openings.isEmpty() || closings.isEmpty())) return notes;
+        var result = new ArrayList<>(notes);
+        for (int m = 0; m < measures.size(); m++) {
+            int index=m;
+            var local=notes.stream().filter(n -> n.measureIndex()==index).toList();
+            long whole=local.stream().filter(FingeringAnnotationFilter::possiblyPrintedText).count();
+            boolean parenthesized=local.size()==19 && whole==3;
+            if (!parenthesized && (local.size()!=15 || whole!=3)) continue;
+            var region=measures.get(m);
+            var music=local.stream().filter(n->!possiblyPrintedText(n)).toList();
+            if (music.stream().anyMatch(n -> n.kind()!=ScoreNoteEvent.Kind.PITCHED
+                    || n.staffCount()!=1 || n.staffIndex()!=0 || n.stemDirection()!=-1
+                    || n.beamCount()!=2 || n.unbeamedDurationBeats()!=0 || n.tupletDivisor()!=1
+                    || n.augmentationDots()!=0 || n.leadingRestBeats()!=0 || n.followingRestBeats()!=0))
+                continue;
+            var staff=staffs.stream().filter(st -> st.count()==1 && st.index()==0
+                    && st.top()>=region.top()*height && st.bottom()<=region.bottom()*height)
+                    .min(Comparator.comparingDouble(st -> Math.abs((st.top()+st.bottom())*.5
+                            -(region.top()+region.bottom())*height*.5))).orElse(null);
+            if (staff==null) continue;
+            float gap=staff.gap();
+            var approved=parenthesized
+                    ? parenthesizedBoxes(openings,closings,region,staff,width,height)
+                    : captions.stream().filter(w -> insideStaffText(w,region,staff,width,height)
+                            && (w.right()-w.left())*width>=gap*13
+                            && (w.right()-w.left())*width<=gap*25).toList();
+            if (approved.isEmpty()) continue;
+            var falseHeads=local.stream().filter(FingeringAnnotationFilter::possiblyPrintedText).toList();
+            if (falseHeads.stream().allMatch(n -> insideInk(n,region,staff,approved,gray,width,height))
+                    && closedWrittenSixteenths(music)) result.removeAll(falseHeads);
+        }
+        return result.size()==notes.size()?notes:List.copyOf(result);
+    }
+
+    private static boolean possiblyPrintedText(ScoreNoteEvent n) {
+        return n.kind()==ScoreNoteEvent.Kind.PITCHED && n.staffCount()==1 && n.staffIndex()==0
+                && n.stemDirection()==0 && n.visualSize()==ScoreNoteEvent.VisualSize.FULL
+                && n.staffStep()>=-2 && n.staffStep()<=2
+                && n.writtenAccidental()==ScoreNoteEvent.ACCIDENTAL_FROM_KEY
+                && n.augmentationDots()==0 && n.tupletDivisor()==1 && n.articulations()==0
+                && !n.tiedFromPrevious() && n.boundaryTies()==0
+                && (n.beamCount()>0 || n.unbeamedDurationBeats()==4);
+    }
+
+    private static List<PlayingTechniqueDetector.Word> parenthesizedBoxes(
+            List<PlayingTechniqueDetector.Word> openings, List<PlayingTechniqueDetector.Word> closings,
+            MeasureRegion measure, PlayingTechniqueDetector.Staff staff, int width, int height) {
+        float gap=staff.gap();
+        for (var a:openings) {
+            if (!insideStaffText(a,measure,staff,width,height)) continue;
+            for (var b:closings) {
+                float distance=(b.left()-a.right())*width;
+                if (distance>=gap*7 && distance<=gap*13
+                        && insideStaffText(b,measure,staff,width,height)
+                        && Math.abs(a.top()-b.top())*height<gap*.3f
+                        && (a.right()-a.left())*width<gap*3
+                        && (b.right()-b.left())*width<gap*3) return List.of(a,b);
+            }
+        }
+        return List.of();
+    }
+
+    private static boolean insideStaffText(
+            PlayingTechniqueDetector.Word word, MeasureRegion region, PlayingTechniqueDetector.Staff staff,
+            int width, int height) {
+        float gap=staff.gap(), left=word.left()*width, right=word.right()*width;
+        float top=word.top()*height, bottom=word.bottom()*height;
+        return left>=region.left()*width && right<=region.right()*width
+                && top>=staff.bottom()-gap*2.25f && top<=staff.bottom()+gap*.35f
+                && bottom>=staff.bottom() && bottom<=staff.bottom()+gap*1.65f
+                && bottom-top>=gap*1.15f && bottom-top<=gap*3;
+    }
+
+    private static boolean insideInk(ScoreNoteEvent n, MeasureRegion region,
+            PlayingTechniqueDetector.Staff staff, List<PlayingTechniqueDetector.Word> words,
+            byte[] gray, int width, int height) {
+        float x=(region.left()+n.positionInMeasure()*(region.right()-region.left()))*width;
+        float y=n.pageY()*height, gap=staff.gap();
+        for (var word:words) {
+            float t=word.top()*height,b=word.bottom()*height;
+            if (x<word.left()*width || x>word.right()*width || y<t || y>b
+                    || printedStemBeyondWord(gray,width,height,x,y,t,b,gap)) continue;
+            int ink=0;
+            for(int yy=Math.max(0,Math.round(y-gap*.33f));yy<=Math.min(height-1,Math.round(y+gap*.33f));yy++) {
+                float staffLine=(staff.bottom()-yy)/gap;
+                if(staffLine>=-.22f && staffLine<=4.22f
+                        && Math.abs(staffLine-Math.round(staffLine))<.22f) continue;
+                for(int xx=Math.max(0,Math.round(x-gap*.34f));xx<=Math.min(width-1,Math.round(x+gap*.34f));xx++)
+                    if((gray[yy*width+xx]&255)<160) ink++;
+            }
+            if (ink>=gap*.7f) return true;
+        }
+        return false;
+    }
+
+    private static boolean closedWrittenSixteenths(List<ScoreNoteEvent> music) {
+        int count=music.size();
+        for (int i=0;i<count;i++) {
+            var p=ScoreNoteTiming.writtenPlacement(music.get(i),music,count*.25f).orElse(null);
+            if (p==null || p.onsetBeats()!=i*.25f || p.durationBeats()!=.25f) return false;
+        }
+        return true;
     }
 
     private static List<Candidate> candidates(
