@@ -5485,36 +5485,59 @@ final class OmrScoreInterpreter {
         bottom = Math.min(height - 1, bottom);
         int rw = right - left + 1, rh = bottom - top + 1;
         if (rw <= 0 || rh <= 0) return List.of();
-        boolean[] seen = new boolean[rw * rh];
-        int[] queue = new int[seen.length];
+        int cropSize = rw * rh;
+        boolean[] seen = null;
+        int[] queue = null;
         List<TempoInk> result = new ArrayList<>();
-        for (int start = 0; start < seen.length; start++) {
-            if (seen[start] || (gray[(top + start / rw) * width + left + start % rw] & 255) >= 155)
-                continue;
-            int take = 0, size = 1, minX = rw, maxX = -1, minY = rh, maxY = -1;
-            boolean edge = false;
-            queue[0] = start;
-            seen[start] = true;
-            while (take < size) {
-                int pos = queue[take++], x = pos % rw, y = pos / rw;
-                minX = Math.min(minX, x);
-                maxX = Math.max(maxX, x);
-                minY = Math.min(minY, y);
-                maxY = Math.max(maxY, y);
-                edge |= x == 0 || y == 0 || x == rw - 1 || y == rh - 1;
-                for (int dy = -1; dy <= 1; dy++)
-                    for (int dx = -1; dx <= 1; dx++) {
-                        int nx = x + dx, ny = y + dy;
-                        if (nx < 0 || nx >= rw || ny < 0 || ny >= rh) continue;
-                        int next = ny * rw + nx;
-                        if (!seen[next] && (gray[(top + ny) * width + left + nx] & 255) < 155) {
+        for (int y0 = 0, row = top * width + left; y0 < rh; y0++, row += width) {
+            for (int x0 = 0, start = y0 * rw; x0 < rw; x0++, start++) {
+                if ((gray[row + x0] & 255) >= 155 || seen != null && seen[start]) continue;
+                if (seen == null) {
+                    seen = new boolean[cropSize];
+                    queue = new int[Math.min(64, cropSize)];
+                }
+                int take = 0, size = 1, minX = x0, maxX = x0, maxY = y0;
+                int area = 0;
+                boolean edge = false;
+                queue[0] = start;
+                seen[start] = true;
+                while (take < size) {
+                    int pos = queue[take++], y = pos / rw, x = pos - y * rw;
+                    int localRow = y * rw, sourceRow = (top + y) * width + left;
+                    int first = x, last = x;
+                    while (first > 0 && !seen[localRow + first - 1]
+                            && (gray[sourceRow + first - 1] & 255) < 155) first--;
+                    while (last + 1 < rw && !seen[localRow + last + 1]
+                            && (gray[sourceRow + last + 1] & 255) < 155) last++;
+                    java.util.Arrays.fill(seen, localRow + first, localRow + last + 1, true);
+                    area += last - first + 1;
+                    minX = Math.min(minX, first);
+                    maxX = Math.max(maxX, last);
+                    maxY = Math.max(maxY, y);
+                    edge |= first == 0 || last == rw - 1 || y == 0 || y == rh - 1;
+                    // Include both diagonals to preserve eight-connected glyphs.
+                    int firstNeighbor = Math.max(0, first - 1);
+                    int lastNeighbor = Math.min(rw - 1, last + 1);
+                    for (int step = -1; step <= 1; step += 2) {
+                        int neighborY = y + step;
+                        if (neighborY < 0 || neighborY >= rh) continue;
+                        int neighborRow = localRow + step * rw;
+                        int neighborSource = sourceRow + step * width;
+                        for (int nx = firstNeighbor; nx <= lastNeighbor; nx++) {
+                            int next = neighborRow + nx;
+                            if (seen[next] || (gray[neighborSource + nx] & 255) >= 155) continue;
                             seen[next] = true;
+                            if (size == queue.length)
+                                queue = java.util.Arrays.copyOf(queue, size + Math.min(size, cropSize - size));
                             queue[size++] = next;
+                            while (nx < lastNeighbor && !seen[neighborRow + nx + 1]
+                                    && (gray[neighborSource + nx + 1] & 255) < 155) nx++;
                         }
                     }
+                }
+                if (!edge)
+                    result.add(new TempoInk(left + minX, left + maxX, top + y0, top + maxY, area));
             }
-            if (!edge)
-                result.add(new TempoInk(left + minX, left + maxX, top + minY, top + maxY, size));
         }
         return result;
     }
