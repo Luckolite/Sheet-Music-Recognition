@@ -258,12 +258,27 @@ final class PrintedEndingBrackets {
         }
         return List.copyOf(values);
     }
+    private static final java.lang.invoke.VarHandle INK_WORDS =
+            java.lang.invoke.MethodHandles.byteArrayViewVarHandle(
+                    long[].class, java.nio.ByteOrder.nativeOrder());
+    private static final long INK_HIGH_BITS = 0x8080808080808080L;
+    private static final long INK_BIAS = 0x0101010101010101L * (170 - 128);
+
+    private static boolean inkWord(byte[] gray, int offset) {
+        long tones = (long) INK_WORDS.get(gray, offset);
+        return (((tones | INK_HIGH_BITS) - INK_BIAS) & tones & INK_HIGH_BITS) == 0;
+    }
+
     private static int runStart(byte[] gray, int offset, int seed, int rowStart) {
+        while (seed - rowStart >= Long.BYTES && inkWord(gray, offset + seed - Long.BYTES))
+            seed -= Long.BYTES;
         while (seed > rowStart && (gray[offset + seed - 1] & 255) < 170) seed--;
         return seed;
     }
 
     private static int runEnd(byte[] gray, int offset, int seed, int rowEnd) {
+        while (rowEnd - seed > Long.BYTES && inkWord(gray, offset + seed + 1))
+            seed += Long.BYTES;
         while (seed + 1 < rowEnd && (gray[offset + seed + 1] & 255) < 170) seed++;
         return seed;
     }

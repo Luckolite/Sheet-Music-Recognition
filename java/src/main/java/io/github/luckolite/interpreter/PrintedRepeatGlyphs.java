@@ -8,7 +8,7 @@ import java.util.*;
 final class PrintedRepeatGlyphs {
     record Mark(int boundary, boolean outgoing, float x, int staffIndex, int staffCount) {}
 
-    private record Dot(float x, float y, int width, int height, int area) {}
+    private record Dot(float x, float y) {}
 
     private record Bar(int left, int right) {
         float center() {
@@ -37,8 +37,10 @@ final class PrintedRepeatGlyphs {
                 bottom = Math.min(height - 1, Math.round(staffBottom + gap));
         if (bottom <= top) return result;
         var found = dots(gray, width, top, bottom, gap);
+        var neighbors = new DotNeighbors(found, gap);
         for (var a : found)
-            for (var b : found) {
+            for (int index = neighbors.first(a); index >= 0; index = neighbors.next()) {
+                var b = found.get(index);
                 if (Math.abs(a.x - b.x) > gap * .2f
                         || b.y - a.y < gap * .7f
                         || b.y - a.y > gap * 1.3f) continue;
@@ -47,20 +49,13 @@ final class PrintedRepeatGlyphs {
                 // Either flank can prove the staff rules for both bar sides.
                 if (!staffRails(gray, width, height, cx, cy, measuredGap, -1)
                         && !staffRails(gray, width, height, cx, cy, measuredGap, 1)) continue;
-                var accepted = new ArrayList<List<Bar>>();
-                for (int side = -1; side <= 1; side += 2) {
-                    var pair = bars(gray, width, height, cx, cy, measuredGap, gap, side);
-                    if (pair.size() != 2) continue;
-                    pair.sort(Comparator.comparingDouble(bar -> Math.abs(bar.center() - cx)));
-                    var inner = pair.get(0);
-                    var outer = pair.get(1);
-                    if (inner.width() > gap * .35f
-                            || outer.width() < Math.max(2, inner.width() * 1.5f)
-                            || outer.width() > gap * .85f) continue;
-                    accepted.add(pair);
+                var left = bars(gray, width, height, cx, cy, measuredGap, gap, -1);
+                var right = bars(gray, width, height, cx, cy, measuredGap, gap, 1);
+                boolean leftProved = repeatInner(left, cx, gap) != null;
+                boolean rightProved = repeatInner(right, cx, gap) != null;
+                if (leftProved != rightProved) {
+                    for (var bar : leftProved ? left : right) result.set(bar.left, bar.right + 1);
                 }
-                if (accepted.size() == 1)
-                    for (var bar : accepted.get(0)) result.set(bar.left, bar.right + 1);
             }
         return result;
     }
@@ -85,8 +80,10 @@ final class PrintedRepeatGlyphs {
             int bottom = Math.min(height - 1, Math.round(staff.bottom() + gap));
             if (bottom <= top) continue;
             var dots = dots(gray, width, top, bottom, gap);
+            var neighbors = new DotNeighbors(dots, gap);
             for (var a : dots)
-                for (var b : dots) {
+                for (int index = neighbors.first(a); index >= 0; index = neighbors.next()) {
+                    var b = dots.get(index);
                     if (Math.abs(a.x - b.x) > gap * .2f
                             || b.y - a.y < gap * .7f
                             || b.y - a.y > gap * 1.3f) continue;
@@ -95,33 +92,96 @@ final class PrintedRepeatGlyphs {
                     // Either flank can prove the staff rules for both bar sides.
                     if (!staffRails(gray, width, height, cx, cy, measuredGap, -1)
                             && !staffRails(gray, width, height, cx, cy, measuredGap, 1)) continue;
-                    var sides = new ArrayList<Mark>();
+                    Mark mark = null;
                     for (int side = -1; side <= 1; side += 2) {
-                        var bars = bars(gray, width, height, cx, cy, measuredGap, gap, side);
-                        if (bars.size() != 2) continue;
-                        bars.sort(Comparator.comparingDouble(bar -> Math.abs(bar.center() - cx)));
-                        var inner = bars.get(0);
-                        var outer = bars.get(1);
-                        if (inner.width() > gap * .35f
-                                || outer.width() < Math.max(2, inner.width() * 1.5f)
-                                || outer.width() > gap * .85f) continue;
-                        int boundary =
-                                boundary(measures, staff, inner.center(), side > 0, width, height);
-                        if (boundary >= 0)
-                            sides.add(
-                                    new Mark(
-                                            boundary,
-                                            side > 0,
-                                            inner.center() / width,
-                                            staff.index(),
-                                            staff.count()));
+                        var inner = repeatInner(
+                                bars(gray, width, height, cx, cy, measuredGap, gap, side), cx, gap);
+                        if (inner == null) continue;
+                        int boundary = boundary(measures, staff, inner.center(), side > 0, width, height);
+                        if (boundary < 0) continue;
+                        if (mark != null) {
+                            mark = null;
+                            break;
+                        }
+                        mark = new Mark(boundary, side > 0, inner.center() / width,
+                                staff.index(), staff.count());
                     }
-                    if (sides.size() == 1 && !result.contains(sides.get(0)))
-                        result.add(sides.get(0));
+                    if (mark != null && !result.contains(mark)) result.add(mark);
                 }
         }
         result.sort(Comparator.comparingInt(Mark::boundary).thenComparing(Mark::outgoing));
         return List.copyOf(result);
+    }
+
+    /** Merge nearby column buckets in the original dot order. */
+    private static final class DotNeighbors {
+        private final int[] heads, links;
+        private final double bucketWidth;
+        private int left, center, right;
+
+        DotNeighbors(List<Dot> dots, float gap) {
+            bucketWidth = 2d * (gap * .2f);
+            int lastBucket = 0;
+            if (dots.size() >= 32) {
+                for (Dot dot : dots) lastBucket = Math.max(lastBucket, bucket(dot));
+            }
+            // Small or very sparse inputs cost less to scan than to index.
+            if (dots.size() < 32 || lastBucket >= 8L * dots.size()) {
+                heads = null;
+                links = null;
+                right = dots.size();
+                return;
+            }
+            heads = new int[lastBucket + 2];
+            Arrays.fill(heads, -1);
+            links = new int[dots.size()];
+            for (int i = dots.size() - 1; i >= 0; i--) {
+                int b = bucket(dots.get(i));
+                links[i] = heads[b];
+                heads[b] = i;
+            }
+        }
+
+        private int bucket(Dot dot) {
+            return (int) (dot.x / bucketWidth);
+        }
+
+        int first(Dot dot) {
+            if (heads == null) {
+                center = 0;
+            } else {
+                int b = bucket(dot);
+                left = b == 0 ? -1 : heads[b - 1];
+                center = heads[b];
+                right = heads[b + 1];
+            }
+            return next();
+        }
+
+        int next() {
+            if (heads == null) return center < right ? center++ : -1;
+            int index = center;
+            if (left >= 0 && (index < 0 || left < index)) index = left;
+            if (right >= 0 && (index < 0 || right < index)) index = right;
+            if (index >= 0) {
+                if (index == left) left = links[index];
+                else if (index == center) center = links[index];
+                else right = links[index];
+            }
+            return index;
+        }
+    }
+
+    private static Bar repeatInner(List<Bar> pair, float center, float gap) {
+        if (pair.size() != 2) return null;
+        Bar first = pair.get(0), second = pair.get(1);
+        boolean firstIsInner = Math.abs(first.center() - center) <= Math.abs(second.center() - center);
+        Bar inner = firstIsInner ? first : second;
+        Bar outer = firstIsInner ? second : first;
+        if (inner.width() > gap * .35f
+                || outer.width() < Math.max(2, inner.width() * 1.5f)
+                || outer.width() > gap * .85f) return null;
+        return inner;
     }
 
     private static boolean staffRails(
@@ -271,7 +331,7 @@ final class PrintedRepeatGlyphs {
                     || w / (float) h < .5f
                     || w / (float) h > 2
                     || size < w * h * .5f) continue;
-            result.add(new Dot(sx / (float) size, top + sy / (float) size, w, h, size));
+            result.add(new Dot(sx / (float) size, top + sy / (float) size));
         }
         return result;
     }

@@ -19757,12 +19757,17 @@ final class OmrScoreInterpreter {
             byte[] ink, int width, Component glyph, float gap) {
         int end = glyph.minY + Math.max(2, Math.round((glyph.maxY - glyph.minY + 1) * .45f));
         int required = Math.max(2, (int) Math.ceil((end - glyph.minY) * .68f));
+        int separation = Math.max(2, Math.round(gap * .2f));
         int last = -1;
         for (int x = glyph.minX; x <= glyph.maxX; x++) {
             int count = 0;
-            for (int y = glyph.minY; y < end; y++) if (ink[y * width + x] != 0) count++;
+            for (int y = glyph.minY, at = y * width + x;
+                    count < required && required - count <= end - y;
+                    y++, at += width) {
+                if (ink[at] != 0) count++;
+            }
             if (count < required) continue;
-            if (last >= 0 && x - last > Math.max(2, Math.round(gap * .2f))) return true;
+            if (last >= 0 && x - last > separation) return true;
             last = x;
         }
         return false;
@@ -19781,22 +19786,32 @@ final class OmrScoreInterpreter {
         int w = right - left + 1, h = bottom - top + 1;
         byte[] ink = new byte[w * h];
         int reach = Math.max(3, Math.round(gap * .6f)), probe = Math.max(2, Math.round(gap * .2f));
+        int start = Math.max(0, left - reach), end = Math.min(width - 1, right + reach);
+        int outside = left - start + end - right;
+        float required = outside * .8f;
+        int probeOffset = probe * width;
         for (int y = top; y <= bottom; y++) {
-            int outside = 0, dark = 0;
-            for (int x = Math.max(0, left - reach); x <= Math.min(width - 1, right + reach); x++)
-                if (x < left || x > right) {
-                    outside++;
-                    if ((gray[y * width + x] & 255) <= threshold) dark++;
+            int row = y * width;
+            int dark = 0;
+            for (int p = row + start; p < row + left; p++)
+                if ((gray[p] & 255) <= threshold) dark++;
+            for (int p = row + right + 1; p <= row + end; p++)
+                if ((gray[p] & 255) <= threshold) dark++;
+            boolean rule = outside > 0 && dark >= required;
+            if (rule && (y < probe || y + probe >= height)) continue;
+            int source = row + left, dest = (y - top) * w;
+            if (rule) {
+                for (int x = 0; x < w; x++) {
+                    int p = source + x;
+                    if ((gray[p] & 255) <= threshold
+                            && (gray[p - probeOffset] & 255) <= threshold
+                            && (gray[p + probeOffset] & 255) <= threshold)
+                        ink[dest + x] = OmrMeasurePostProcessor.SYMBOL;
                 }
-            boolean rule = outside > 0 && dark >= outside * .8f;
-            for (int x = left; x <= right; x++) {
-                if ((gray[y * width + x] & 255) > threshold) continue;
-                if (rule
-                        && (y < probe
-                                || y + probe >= height
-                                || (gray[(y - probe) * width + x] & 255) > threshold
-                                || (gray[(y + probe) * width + x] & 255) > threshold)) continue;
-                ink[(y - top) * w + x - left] = OmrMeasurePostProcessor.SYMBOL;
+            } else {
+                for (int x = 0; x < w; x++)
+                    if ((gray[source + x] & 255) <= threshold)
+                        ink[dest + x] = OmrMeasurePostProcessor.SYMBOL;
             }
         }
         return ink;
@@ -32626,15 +32641,35 @@ final class OmrScoreInterpreter {
     }
 
     private static final int TIE_PROBE_SLOTS = 4;
+    private static final int[] BOTH_TIE_SIDES = {-1, 1};
     private static final ThreadLocal<TieArcScratch> TIE_ARC_SCRATCH =
             ThreadLocal.withInitial(TieArcScratch::new);
     // A regular arc can synchronously retry at strict contrast before using its witness.
     private static final ThreadLocal<TieArcScratch> STRICT_TIE_ARC_SCRATCH =
             ThreadLocal.withInitial(TieArcScratch::new);
 
+    private static final int[][] COMMON_TIE_OFFSETS = commonTieOffsets();
+
+    private static int[][] commonTieOffsets() {
+        int[][] offsets = new int[9][];
+        for (int radius = 1; radius < offsets.length; radius++)
+            offsets[radius] = tieOffsets(radius);
+        return offsets;
+    }
+
+    private static int[] tieOffsets(int radius) {
+        int[] offsets = new int[2 * radius + 1];
+        for (int distance = 1; distance <= radius; distance++) {
+            offsets[2 * distance - 1] = -distance;
+            offsets[2 * distance] = distance;
+        }
+        return offsets;
+    }
+
     private static final class TieArcScratch {
         final int[] sampleColumns = new int[50], paper = new int[63];
         final int[] bins = new int[5], coveredBins = new int[5];
+        final int[] contrastOffsets = new int[3], oneSide = new int[1];
         final float[] supportedCenters = new float[50], strokeCenters = new float[50];
         final float[] residuals = new float[50];
         final long[] probeKeys = new long[50 * TIE_PROBE_SLOTS];
@@ -32679,17 +32714,13 @@ final class OmrScoreInterpreter {
             }
         }
         int radius = Math.max(1, Math.round(gap * .1f));
-        int[] searchOffsets = new int[2 * radius + 1];
-        for (int d = 1; d <= radius; d++) {
-            searchOffsets[2 * d - 1] = -d;
-            searchOffsets[2 * d] = d;
-        }
+        int[] searchOffsets = radius < COMMON_TIE_OFFSETS.length
+                ? COMMON_TIE_OFFSETS[radius] : tieOffsets(radius);
         float[] profile = flatProfile ? FLAT_TIE_PROFILE : PARABOLIC_TIE_PROFILE;
-        int[] contrastOffsets = {
-            Math.max(1, Math.round(gap * .18f)),
-            Math.max(2, Math.round(gap * .35f)),
-            Math.max(3, Math.round(gap * .65f))
-        };
+        int[] contrastOffsets = scratch.contrastOffsets;
+        contrastOffsets[0] = Math.max(1, Math.round(gap * .18f));
+        contrastOffsets[1] = Math.max(2, Math.round(gap * .35f));
+        contrastOffsets[2] = Math.max(3, Math.round(gap * .65f));
         var straightRows = new DenseTieArcContinuity.StraightRows(gray, width, left, right, inkLimit,
                 Math.max(0, Math.round(centerY - gap * 3.2f)),
                 Math.min(height - 1, Math.round(centerY + gap * 3.2f)));
@@ -32718,7 +32749,8 @@ final class OmrScoreInterpreter {
         boolean countNonStrong = requireStrongInk || longArc;
         // Keep the original grid: fractional sampling can move across rasterized ink.
         // Short arcs get an additional finer pass after those candidates fail.
-        int[] sides = requiredSide == 0 ? new int[] {-1, 1} : new int[] {requiredSide};
+        scratch.oneSide[0] = requiredSide;
+        int[] sides = requiredSide == 0 ? BOTH_TIE_SIDES : scratch.oneSide;
         for (int grid = 0; grid < (span < gap * 2 ? 2 : 1); grid++)
             for (int side : sides)
                 for (float offset = .2f, sideGap = side * gap;
