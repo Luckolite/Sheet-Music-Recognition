@@ -872,7 +872,9 @@ public final class ScoreExpressionDetector {
     }
 
     /** Re-use exact silent-slot accounting; a spatially selected rest supplies no guessed beat. */
-    private static double restRelease(ScorePageInterpretation score, Column column, float beats) {
+    private static double restRelease(
+            ScorePageInterpretation score, Column column, float beats, double start) {
+        if (!Double.isFinite(start) || start < 0) return Double.NaN;
         ScoreRestEvent target = null;
         for (var rest : score.rests())
             if (rest.measureIndex() == column.measure()
@@ -883,18 +885,8 @@ public final class ScoreExpressionDetector {
                 target = rest;
             }
         if (target == null) return Double.NaN;
-        double start =
-                PrintedRestDirection.onset(
-                        score,
-                        column.measure(),
-                        column.staff(),
-                        column.count(),
-                        column.position(),
-                        beats);
         double duration = target.resolvedDurationBeats(beats), end = start + duration;
-        if (!Double.isFinite(start)
-                || start < 0
-                || !Double.isFinite(duration)
+        if (!Double.isFinite(duration)
                 || duration <= 0
                 || !Double.isFinite(end)
                 || end <= start
@@ -1020,8 +1012,9 @@ public final class ScoreExpressionDetector {
         var meter = new ScoreMeterMap(openingBeats, score.meterChanges());
         var events = new ArrayList<ScoreExpressiveEvent>();
         Map<NoteLane, List<Integer>> noteLanes = null;
+        Map<Column, Double> restOnsets = null;
         Deque<Optional<Column>> parsedAhead = null;
-        boolean firstColumn = true, indexDecision = false;
+        boolean firstNoteColumn = true, indexDecision = false;
         int nextEventIndex = 0;
         try (var session = ScoreNoteTiming.beginTimingSession(score)) {
             for (var event : score.expressiveEvents()) {
@@ -1040,21 +1033,21 @@ public final class ScoreExpressionDetector {
                     continue;
                 }
                 List<Integer> indices;
-                if (!firstColumn && !indexDecision) {
+                Column target = c.get();
+                if (!target.rest() && !firstNoteColumn && !indexDecision) {
                     indexDecision = true;
                     if (score.expressiveEvents().size() - nextEventIndex >= 3) {
                         parsedAhead = new ArrayDeque<>();
                         if (hasThreeMoreColumns(
-                                score.expressiveEvents(), nextEventIndex, parsedAhead))
+                                score.expressiveEvents(), nextEventIndex, parsedAhead, currentRestOccurrences))
                             noteLanes = indexNoteLanes(score);
                     }
                 }
-                indices =
-                        noteLanes == null
-                                ? targetIndicesForColumn(score, c.get())
-                                : targetIndicesForColumn(score, c.get(), noteLanes);
-                if (c.get().rest()) indices = List.of();
-                firstColumn = false;
+                indices = target.rest() ? List.of()
+                        : noteLanes == null
+                                ? targetIndicesForColumn(score, target)
+                                : targetIndicesForColumn(score, target, noteLanes);
+                if (!target.rest()) firstNoteColumn = false;
                 double start = -1, release = -1;
                 boolean proved = !indices.isEmpty();
                 for (int index : indices) {
@@ -1076,51 +1069,43 @@ public final class ScoreExpressionDetector {
                     start = onset;
                     release = end;
                 }
-                if (c.get().rest()) {
-                    start =
-                            PrintedRestDirection.onset(
-                                    score,
-                                    c.get().measure(),
-                                    c.get().staff(),
-                                    c.get().count(),
-                                    c.get().position(),
-                                    meter.beatsInMeasure(c.get().measure()));
-                    proved =
-                            (PrintedRestDirection.allows(event.kind())
-                                            || PrintedRestDirection.pedalCaption(event))
-                                    && Double.isFinite(start)
-                                    && start >= 0
-                                    && start < meter.beatsInMeasure(c.get().measure());
-                }
                 boolean breath = event.kind() == Kind.BREATH || event.kind() == Kind.CAESURA;
-                if (c.get().rest()
-                        && breath
-                        && event.evidence().stream().anyMatch(e -> e.sourceId().equals(SYMBOL))) {
-                    release = restRelease(score, c.get(), meter.beatsInMeasure(c.get().measure()));
-                    proved = Double.isFinite(release);
+                boolean pedalCaption = false;
+                if (target.rest()) {
+                    pedalCaption = PrintedRestDirection.pedalCaption(event);
+                    boolean onsetRole = PrintedRestDirection.allows(event.kind()) || pedalCaption;
+                    boolean releaseRole = breath && event.evidence().stream()
+                            .anyMatch(e -> e.sourceId().equals(SYMBOL));
+                    if (onsetRole || releaseRole) {
+                        float beats = meter.beatsInMeasure(target.measure());
+                        if (restOnsets == null) restOnsets = new HashMap<>();
+                        start = restOnsets.computeIfAbsent(target, column ->
+                                PrintedRestDirection.onset(score, column.measure(), column.staff(),
+                                        column.count(), column.position(), beats));
+                        proved = onsetRole && Double.isFinite(start) && start >= 0 && start < beats;
+                        if (releaseRole) {
+                            release = restRelease(score, target, beats, start);
+                            proved = Double.isFinite(release);
+                        }
+                    }
                 }
                 boolean attack =
                         event.kind() == Kind.SFORZANDO
                                 || event.kind() == Kind.SFORZATO
                                 || event.kind() == Kind.SFORZANDO_PIANO;
+                Optional<ScoreAnchor> anchor = proved
+                        ? Optional.of(new ScoreAnchor(target.measure(), breath ? release : start)
+                                .canonical(meter, score.measures().size()))
+                        : Optional.empty();
                 events.add(
                         new ScoreExpressiveEvent(
                                 event.eventId(),
                                 event.kind(),
-                                proved
-                                        ? Optional.of(
-                                                new ScoreAnchor(
-                                                                c.get().measure(),
-                                                                breath ? release : start)
-                                                        .canonical(meter, score.measures().size()))
-                                        : Optional.empty(),
+                                anchor,
                                 proved
                                         ? PrintedTempoSpans.preserveEnd(
                                                 event,
-                                                new ScoreAnchor(
-                                                                c.get().measure(),
-                                                                breath ? release : start)
-                                                        .canonical(meter, score.measures().size()),
+                                                anchor.orElseThrow(),
                                                 meter,
                                                 score.measures().size(),
                                                 score.tempoChanges())
@@ -1135,8 +1120,7 @@ public final class ScoreExpressionDetector {
                                                                                 == Kind.PEDAL_DOWN
                                                                         || event.kind()
                                                                                 == Kind.PEDAL_UP
-                                                                        || PrintedRestDirection
-                                                                                .pedalCaption(event)
+                                                                        || pedalCaption
                                                                         || PrintedCueSize.owns(
                                                                                 event)
                                                                         || event.kind()
@@ -1200,12 +1184,15 @@ public final class ScoreExpressionDetector {
 
     /** Build only when at least four queries remain to share the allocation cost. */
     private static boolean hasThreeMoreColumns(
-            List<ScoreExpressiveEvent> events, int from, Deque<Optional<Column>> parsedAhead) {
+            List<ScoreExpressiveEvent> events, int from, Deque<Optional<Column>> parsedAhead,
+            Set<Integer> currentRestOccurrences) {
         int found = 0;
         for (int i = from; i < events.size(); i++) {
             var value = column(events.get(i));
             parsedAhead.addLast(value);
-            if (value.isPresent() && ++found == 3) return true;
+            if (value.isPresent() && !value.get().rest()
+                    && (currentRestOccurrences == null || !currentRestOccurrences.contains(i))
+                    && ++found == 3) return true;
         }
         return false;
     }
@@ -1227,10 +1214,7 @@ public final class ScoreExpressionDetector {
         var lane = new NoteLane(a.measure(), a.staff(), a.count());
         for (int i : lanes.getOrDefault(lane, List.of())) {
             var note = score.notes().get(i);
-            if (note.measureIndex() == a.measure()
-                    && note.staffIndex() == a.staff()
-                    && note.staffCount() == a.count()
-                    && Math.abs(note.positionInMeasure() - a.position()) <= .018f) result.add(i);
+            if (Math.abs(note.positionInMeasure() - a.position()) <= .018f) result.add(i);
         }
         return List.copyOf(result);
     }
