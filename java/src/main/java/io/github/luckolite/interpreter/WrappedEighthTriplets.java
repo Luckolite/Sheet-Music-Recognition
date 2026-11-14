@@ -100,9 +100,17 @@ final class WrappedEighthTriplets {
             if (n.beamCount() == 2 && ++reportedExtraRail > 1) return null;
             x[i] = left + (right - left) * n.positionInMeasure();
             y[i] = n.pageY() * height;
-            if (i > 0
-                    && (x[i] - x[i - 1] < gap * 1.65f
-                            || x[i] - x[i - 1] > gap * (closedBar ? 3.85f : 3.4f))) return null;
+            if (i > 0) {
+                float space = x[i] - x[i - 1];
+                if (space < gap * 1.65f) return null;
+                if (space > gap * (closedBar ? 3.85f : 3.4f)
+                        && !(closedBar
+                                && x.length == 12
+                                && space <= gap * 4.2f
+                                && pairedFlatAfter(
+                                        gray, width, height, x[i - 1], y[i - 1], x[i], gap, n)))
+                    return null;
+            }
             var source = PrintedBeamShafts.at(gray, width, height, x[i], y[i], gap, budget);
             if (closedBar && source.isEmpty() && !budget.refused()) {
                 if (contrast == null)
@@ -154,7 +162,12 @@ final class WrappedEighthTriplets {
                     WrappedTripletDotInk.uniqueCore(gray, width, height, x[i], y[i], x[i + 1], gap);
             if (dot != null
                     && (x.length != 18
-                            || !headConnectedLedger(gray, width, height, x[i], y[i], dot, gap)))
+                            || !headConnectedLedger(gray, width, height, x[i], y[i], dot, gap))
+                    && !(x.length == 12
+                            && closedBar
+                            && notes.get(owners.get(i + 1)).writtenAccidental()
+                                    == ScoreNoteEvent.ACCIDENTAL_FLAT
+                            && WrappedTripletDotInk.pairedFlatOwns(gray, width, height, dot, gap)))
                 return null;
             var a = shafts.get(i);
             var b = shafts.get(i+1);
@@ -177,6 +190,20 @@ final class WrappedEighthTriplets {
             if (!same || !singleRail(gray, width, height, a, b, gap)) return null;
         }
         return new WrappedTripletMeasure.Half(owners, x);
+    }
+
+    private static boolean pairedFlatAfter(
+            byte[] gray,
+            int width,
+            int height,
+            float x,
+            float y,
+            float next,
+            float gap,
+            ScoreNoteEvent following) {
+        if (following.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_FLAT) return false;
+        var dot = WrappedTripletDotInk.uniqueCore(gray, width, height, x, y, next, gap);
+        return dot != null && WrappedTripletDotInk.pairedFlatOwns(gray, width, height, dot, gap);
     }
 
     /** A compact ledger cap can fill the same dark window as an augmentation dot. */
