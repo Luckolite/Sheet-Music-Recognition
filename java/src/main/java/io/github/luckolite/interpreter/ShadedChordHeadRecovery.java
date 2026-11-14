@@ -50,10 +50,11 @@ final class ShadedChordHeadRecovery {
             }
         }
         if (core == null) return result;
-        var scratch = new FloodScratch(Math.min(256, size));
+        var scratch = new ShadedComponentRuns(Math.min(256, size));
+        int[] paper = new int[18];
         if (hasStrictCore)
-            result = find(labels, gray, width, height, gap, top, bottom, 155, core, scratch);
-        for (Chord candidate : find(labels, gray, width, height, gap, top, bottom, 130, core, scratch)) {
+            result = find(labels, gray, width, height, gap, top, bottom, 155, core, scratch, paper);
+        for (Chord candidate : find(labels, gray, width, height, gap, top, bottom, 130, core, scratch, paper)) {
             boolean overlaps = false;
             for (Chord existing : result)
                 if (candidate.right >= existing.left
@@ -76,7 +77,7 @@ final class ShadedChordHeadRecovery {
             float gap,
             int top,
             int bottom,
-            int minimum, byte[] core, FloodScratch scratch) {
+            int minimum, byte[] core, ShadedComponentRuns scratch, int[] paper) {
         List<Chord> result = new ArrayList<>();
         int size = core.length;
         // The first pass demotes its visited pixels into the second pass.
@@ -158,7 +159,6 @@ final class ShadedChordHeadRecovery {
                     && !clippedByRule(gray, width, height, left, right, lower, gap)) curved = false;
             if (!curved) continue;
             float cx = (left + right) * .5f, cy = (upper + lower) * .5f;
-            int[] paper = scratch.paper;
             int samples = 0;
             for (int side : new int[] {-1, 1})
                 for (int dy = -1; dy <= 1; dy++)
@@ -208,28 +208,6 @@ final class ShadedChordHeadRecovery {
                             List.copyOf(heads)));
         }
         return result;
-    }
-
-    private static final class FloodScratch {
-        final int[] paper = new int[18];
-        int[] queue;
-
-        FloodScratch(int size) {
-            queue = new int[size];
-        }
-
-        int enqueue(byte[] core, int seed, int required, byte visited, int count) {
-            // The empty border columns bound every horizontal run.
-            int start = seed, finish = seed;
-            while (core[start - 1] == required) start--;
-            while (core[finish + 1] == required) finish++;
-            Arrays.fill(core, start, finish + 1, visited);
-            if (count + 2 > queue.length)
-                queue = Arrays.copyOf(queue, count + Math.max(2, count));
-            queue[count] = start;
-            queue[count + 1] = finish;
-            return count + 2;
-        }
     }
 
     private static boolean outlinedNecks(

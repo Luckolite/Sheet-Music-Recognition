@@ -30,30 +30,49 @@ final class FaintDynamicGlyphComponents {
         boolean hasFaintInk = false;
         boolean narrow = threshold == 185;
         for (int p = 0; p < gray.length; p++) {
-            if (seen[p] || (gray[p] & 255) >= threshold) continue;
-            int read = 0, count = 1;
+            if ((gray[p] & 255) >= threshold || seen[p]) continue;
+            int read = 0, queued = 1, count = 0, dark = 0;
             queue[0] = p;
             seen[p] = true;
-            int left = p % width, right = left, top = p / width, bottom = top;
-            int dark = 0;
-            while (read < count) {
-                int at = queue[read++], x = at % width, y = at / width;
-                left = Math.min(left, x);
-                right = Math.max(right, x);
-                bottom = Math.max(bottom, y);
-                int tone = gray[at] & 255;
+            int top = p / width, bottom = top, left = width, right = 0;
+            while (read < queued) {
+                int seed = queue[read++], y = seed / width, row = y * width;
+                int first = seed, last = seed;
+                int tone = gray[seed] & 255;
                 if (tone < 145) dark++;
                 else if (!narrow && tone < 185) hasFaintInk = true;
-                for (int dy = -1; dy <= 1; dy++)
-                    for (int dx = -1; dx <= 1; dx++) {
-                        int nx = x + dx, ny = y + dy;
-                        if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
-                        int next = ny * width + nx;
-                        if (!seen[next] && (gray[next] & 255) < threshold) {
-                            seen[next] = true;
-                            queue[count++] = next;
-                        }
+                while (first > row && !seen[first - 1]) {
+                    tone = gray[first - 1] & 255;
+                    if (tone >= threshold) break;
+                    first--;
+                    if (tone < 145) dark++;
+                    else if (!narrow && tone < 185) hasFaintInk = true;
+                }
+                while (last < row + width - 1 && !seen[last + 1]) {
+                    tone = gray[last + 1] & 255;
+                    if (tone >= threshold) break;
+                    last++;
+                    if (tone < 145) dark++;
+                    else if (!narrow && tone < 185) hasFaintInk = true;
+                }
+                Arrays.fill(seen, first, last + 1, true);
+                left = Math.min(left, first - row);
+                right = Math.max(right, last - row);
+                bottom = Math.max(bottom, y);
+                count += last - first + 1;
+                int neighborFirst = Math.max(row, first - 1);
+                int neighborLast = Math.min(row + width - 1, last + 1);
+                for (int step = -1; step <= 1; step += 2) {
+                    if (y + step < 0 || y + step >= height) continue;
+                    int end = neighborLast + step * width;
+                    for (int next = neighborFirst + step * width; next <= end; next++) {
+                        if (seen[next] || (gray[next] & 255) >= threshold) continue;
+                        seen[next] = true;
+                        queue[queued++] = next;
+                        while (next < end && !seen[next + 1] && (gray[next + 1] & 255) < threshold)
+                            next++;
                     }
+                }
             }
             if (count >= 3 && dark < count * darkFraction
                     && (!narrow || !covered(result, left, top, right + 1, bottom + 1)))

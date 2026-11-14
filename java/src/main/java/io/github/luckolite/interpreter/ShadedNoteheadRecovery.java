@@ -14,9 +14,46 @@ final class ShadedNoteheadRecovery {
 
     static List<Head> find(
             byte[] labels, byte[] gray, int width, int height, float gap, int top, int bottom) {
-        List<Head> result = find(labels, gray, width, height, gap, top, bottom, 155);
-        for (int minimum : new int[] {130, 105})
-            for (Head candidate : find(labels, gray, width, height, gap, top, bottom, minimum)) {
+        List<Head> result = new ArrayList<>();
+        if (gray == null
+                || labels == null
+                || width < 3
+                || height < 3
+                || gray.length != (long) width * height
+                || labels.length != gray.length
+                || gap < 6
+                || !Float.isFinite(gap)) return result;
+        top = Math.max(1, top);
+        bottom = Math.min(height - 2, bottom);
+        if (bottom <= top) return result;
+        int size = width * (bottom - top + 1);
+        byte[] core = null;
+        int highest = 0;
+        for (int y = top; y <= bottom; y++) {
+            int row = y * width, band = (y - top) * width;
+            for (int x = 1; x < width - 1; x++) {
+                int at = row + x;
+                int center = gray[at] & 255;
+                if (center < 105 || center > 205) continue;
+                int left = gray[at - 1] & 255, right = gray[at + 1] & 255;
+                int above = gray[at - width] & 255, below = gray[at + width] & 255;
+                int darkest = Math.min(center, Math.min(Math.min(left, right), Math.min(above, below)));
+                int lightest = Math.max(Math.max(left, right), Math.max(above, below));
+                if (darkest < 105 || lightest > 205) continue;
+                int level = darkest >= 155 ? 3 : darkest >= 130 ? 2 : 1;
+                if (core == null) core = new byte[size];
+                core[band + x] = (byte) level;
+                highest = Math.max(highest, level);
+            }
+        }
+        if (core == null) return result;
+        var queue = new ShadedComponentRuns(Math.min(size, 256));
+        int[] paper = new int[18];
+        if (highest == 3)
+            result = find(labels, gray, width, height, gap, top, bottom, 155, 3, core, queue, paper);
+        for (int level = Math.min(2, highest); level >= 1; level--)
+            for (Head candidate : find(labels, gray, width, height, gap, top, bottom,
+                    level == 2 ? 130 : 105, level, core, queue, paper)) {
                 boolean duplicate = false;
                 for (Head existing : result)
                     if (Math.abs(existing.centerX - candidate.centerX) < gap * .8f
@@ -37,52 +74,29 @@ final class ShadedNoteheadRecovery {
             float gap,
             int top,
             int bottom,
-            int minimum) {
+            int minimum, int level, byte[] core, ShadedComponentRuns queue, int[] paper) {
         List<Head> result = new ArrayList<>();
-        if (gray == null
-                || labels == null
-                || width < 3
-                || height < 3
-                || gray.length != (long) width * height
-                || labels.length != gray.length
-                || gap < 6
-                || !Float.isFinite(gap)) return result;
-        top = Math.max(1, top);
-        bottom = Math.min(height - 2, bottom);
-        if (bottom <= top) return result;
-        int size = width * (bottom - top + 1);
-        boolean[] core = new boolean[size], seen = new boolean[size];
-        int[] queue = new int[size];
-        for (int y = top; y <= bottom; y++)
-            for (int x = 1; x < width - 1; x++) {
-                int p = y * width + x;
-                core[(y - top) * width + x] =
-                        middle(gray[p], minimum)
-                                && middle(gray[p - 1], minimum)
-                                && middle(gray[p + 1], minimum)
-                                && middle(gray[p - width], minimum)
-                                && middle(gray[p + width], minimum);
-            }
+        int size = core.length;
+        byte visited = (byte) (level - 1);
         for (int seed = 0; seed < size; seed++) {
-            if (seen[seed] || !core[seed]) continue;
-            int read = 0, end = 1;
-            queue[0] = seed;
-            seen[seed] = true;
-            int left = width, right = 0, upper = bottom, lower = top;
-            while (read < end) {
-                int p = queue[read++], x = p % width, y = top + p / width;
-                left = Math.min(left, x);
-                right = Math.max(right, x);
-                upper = Math.min(upper, y);
-                lower = Math.max(lower, y);
-                for (int direction = 0; direction < 4; direction++) {
-                    int nx = x + (direction == 0 ? -1 : direction == 1 ? 1 : 0),
-                            ny = y + (direction == 2 ? -1 : direction == 3 ? 1 : 0);
-                    if (nx < 0 || nx >= width || ny < top || ny > bottom) continue;
-                    int next = (ny - top) * width + nx;
-                    if (!seen[next] && core[next]) {
-                        seen[next] = true;
-                        queue[end++] = next;
+            if (core[seed] != level) continue;
+            int end = queue.enqueue(core, seed, level, visited, 0);
+            int area = 0, left = width, right = 0;
+            int upper = top + seed / width, lower = upper;
+            for (int read = 0; read < end; read += 2) {
+                int start = queue.queue[read], finish = queue.queue[read + 1];
+                int row = start / width, rowStart = row * width;
+                left = Math.min(left, start - rowStart);
+                right = Math.max(right, finish - rowStart);
+                lower = Math.max(lower, top + row);
+                area += finish - start + 1;
+                for (int step = -width; step <= width; step += 2 * width) {
+                    int next = start + step, last = finish + step;
+                    if (next < 0 || last >= size) continue;
+                    for (; next <= last; next++) {
+                        if (core[next] != level) continue;
+                        end = queue.enqueue(core, next, level, visited, end);
+                        next = queue.queue[end - 1];
                     }
                 }
             }
@@ -93,16 +107,18 @@ final class ShadedNoteheadRecovery {
                     || h > gap * 1.05f
                     || w < h * .65f
                     || w > h * 2.4f
-                    || end < w * h * .65f
+                    || area < w * h * .65f
                     || upper == top
                     || lower == bottom) continue;
-            int[] rowLeft = new int[h], rowRight = new int[h], values = new int[end];
+            int[] rowLeft = new int[h], rowRight = new int[h], values = new int[area];
             Arrays.fill(rowLeft, width);
-            for (int i = 0; i < end; i++) {
-                int x = queue[i] % width, y = top + queue[i] / width;
-                values[i] = gray[y * width + x] & 255;
-                rowLeft[y - upper] = Math.min(rowLeft[y - upper], x);
-                rowRight[y - upper] = Math.max(rowRight[y - upper], x);
+            int value = 0, source = top * width;
+            for (int i = 0; i < end; i += 2) {
+                int start = queue.queue[i], finish = queue.queue[i + 1];
+                int row = start / width, rowStart = row * width, index = top + row - upper;
+                rowLeft[index] = Math.min(rowLeft[index], start - rowStart);
+                rowRight[index] = Math.max(rowRight[index], finish - rowStart);
+                for (int at = start; at <= finish; at++) values[value++] = gray[source + at] & 255;
             }
             int middle = h / 2, edge = Math.max(0, Math.round(h * .12f));
             float bow =
@@ -115,7 +131,7 @@ final class ShadedNoteheadRecovery {
             // gray oval may instead show its bow on two adjacent inner rows;
             // never accept a lone raster nick or an uncurved rectangle.
             if (bow < minimumBow)
-                for (int row = Math.max(1, h / 3); row < Math.min(h - 2, h * 2 / 3); row++) {
+                for (int row = Math.max(1, h / 3); row < Math.min(h - 2, h * 2 / 3) && bow < minimumBow; row++) {
                     float leftBow =
                             (rowLeft[edge] + rowLeft[h - 1 - edge]) * .5f
                                     - Math.max(rowLeft[row], rowLeft[row + 1]);
@@ -126,8 +142,7 @@ final class ShadedNoteheadRecovery {
                 }
             if (bow < minimumBow) continue;
             Arrays.sort(values);
-            int fill = values[end / 2];
-            int[] paper = new int[18];
+            int fill = values[area / 2];
             int count = 0;
             float cx = (left + right) * .5f, cy = (upper + lower) * .5f;
             for (int side : new int[] {-1, 1})
@@ -138,16 +153,17 @@ final class ShadedNoteheadRecovery {
                         if (x >= 0 && x < width && y >= 0 && y < height)
                             paper[count++] = gray[y * width + x] & 255;
                     }
-            Arrays.sort(paper, 0, count);
             if (count < 12) continue;
+            Arrays.sort(paper, 0, count);
+            int background = paper[count * 3 / 4];
             if (minimum == 105) {
-                if (fill > 150 || paper[count * 3 / 4] < 190 || paper[count * 3 / 4] - fill < 65)
+                if (fill > 150 || background < 190 || background - fill < 65)
                     continue;
             } else if (minimum == 130) {
-                if (fill > 170 || paper[count * 3 / 4] < 190 || paper[count * 3 / 4] - fill < 50)
+                if (fill > 170 || background < 190 || background - fill < 50)
                     continue;
-            } else if (paper[count * 3 / 4] < 205
-                    || paper[count * 3 / 4] - fill < (paper[count * 3 / 4] < 220 ? 50 : 30))
+            } else if (background < 205
+                    || background - fill < (background < 220 ? 50 : 30))
                 continue;
             int down = stem(labels, gray, width, height, left - 3, cy, gap, 1);
             int up = stem(labels, gray, width, height, right + 3, cy, gap, -1);
@@ -166,11 +182,6 @@ final class ShadedNoteheadRecovery {
         return result;
     }
 
-    private static boolean middle(byte pixel, int minimum) {
-        int value = pixel & 255;
-        return value >= minimum && value <= 205;
-    }
-
     private static int stem(
             byte[] labels,
             byte[] gray,
@@ -180,16 +191,27 @@ final class ShadedNoteheadRecovery {
             float cy,
             float gap,
             int direction) {
+        int center = Math.round(cy), first = Math.round(gap * .75f);
+        float limit = gap * 2.3f;
+        int last = (int) limit;
+        // Int-to-float comparison can include additional distances for very large crops.
+        while (last < Integer.MAX_VALUE && last + 1 <= limit) last++;
+        long startY = (long) center + direction * (long) first;
+        long endY = (long) center + direction * (long) last;
+        if (first > last || startY < 0 || startY >= height || endY < 0 || endY >= height)
+            return -1;
+        int total = last - first + 1, stride = direction * width;
+        float inkNeeded = total * .85f, semanticNeeded = total * .5f;
         for (int x = Math.max(0, edge - 3); x <= Math.min(width - 1, edge + 3); x++) {
-            int ink = 0, semantic = 0, total = 0;
-            for (int d = Math.round(gap * .75f); d <= gap * 2.3f; d++) {
-                int y = Math.round(cy) + direction * d;
-                if (y < 0 || y >= height) return -1;
-                total++;
-                if ((gray[y * width + x] & 255) < 160) ink++;
-                if (labels[y * width + x] == OmrMeasurePostProcessor.STEM_OR_REST) semantic++;
+            int ink = 0, semantic = 0;
+            for (int remaining = total - 1, at = (int) startY * width + x;
+                    remaining >= 0; remaining--, at += stride) {
+                if ((gray[at] & 255) < 160) ink++;
+                else if (ink + remaining < inkNeeded) break;
+                if (labels[at] == OmrMeasurePostProcessor.STEM_OR_REST) semantic++;
+                else if (semantic + remaining < semanticNeeded) break;
+                if (ink >= inkNeeded && semantic >= semanticNeeded) return x;
             }
-            if (total > 0 && ink >= total * .85f && semantic >= total * .5f) return x;
         }
         return -1;
     }
