@@ -3741,10 +3741,11 @@ final class TripletRhythmDetector {
         int bottom = Math.min(height - 1, Math.round(lastY + gap * searchGaps));
         int localWidth = right - left + 1, localHeight = bottom - top + 1;
         if (localWidth < 3 || localHeight < 3) return null;
-        int firstOrigin = firstNumeralInk(gray, width, left, right, top, bottom, localWidth);
+        int firstOrigin = firstNumeralInk(gray, width, left, top, bottom, localWidth);
         if (firstOrigin < 0) return null;
         int cells = localWidth * localHeight;
-        int[] component = null;
+        int rasterStart = top * width + left;
+
         boolean usesComponentShape = number != 2 && number != 4 && number != 5
                 && number != 6 && number != 7;
         float maximumHeight = gap * 2.3f, maximumWidth = maximumHeight * .95f;
@@ -3756,152 +3757,217 @@ final class TripletRhythmDetector {
                         * Math.min(localWidth, (int) maximumWidth));
         boolean rescueBracket = number == 3 && shortNotes;
         float upperNumeralLimit = firstY - gap, lowerNumeralLimit = lastY + gap;
-        boolean[] visited = new boolean[cells];
-        // Only the last paper row above the seed can border any component.
-        java.util.Arrays.fill(visited, Math.max(0, firstOrigin - localWidth - 1), firstOrigin, true);
-        int initialCapacity = Math.min(128, cells);
-        int[] queue = new int[initialCapacity];
-        for (int origin = firstOrigin; origin < cells; origin++) {
-            if (visited[origin]) continue;
-            visited[origin] = true;
-            int seedY = origin / localWidth, seedX = origin - seedY * localWidth;
-            if (origin != firstOrigin && !dark(gray, width, left + seedX, top + seedY)) continue;
-            int count = 0, pending = 1;
-            queue[0] = origin;
-            int minX = seedX, maxX = seedX, maxY = seedY;
-            boolean keepShape = usesComponentShape && seedY > 0
-                    && seedX > 0 && seedX < localWidth - 1 && seedY < localHeight - 1;
-            while (pending > 0) {
-                int current = queue[--pending];
-                int y = current / localWidth, x = current - y * localWidth;
-                minX = Math.min(minX, x);
-                maxX = Math.max(maxX, x);
-                maxY = Math.max(maxY, y);
-                if (keepShape && count < shapeLimit) {
-                    if (component == null) component = new int[Math.min(initialCapacity, shapeLimit)];
-                    if (count == component.length)
-                        component = growNumeralScratch(component, shapeLimit);
-                    component[count] = current;
+        var flood = new NumeralRuns(gray, rasterStart, width, localWidth, localHeight, firstOrigin);
+        int firstSeedRow = firstOrigin / localWidth;
+        int firstSeedColumn = firstOrigin - firstSeedRow * localWidth;
+        for (int seedY = firstSeedRow, row = firstSeedRow * localWidth,
+                raster = rasterStart + firstSeedRow * width; seedY < localHeight;
+                seedY++, row += localWidth, raster += width) {
+            for (int seedX = seedY == firstSeedRow ? firstSeedColumn : 0;
+                    seedX < localWidth; seedX++) {
+                int origin = row + seedX;
+                if (flood.visited[origin]) continue;
+                if (origin != firstOrigin && (gray[raster + seedX] & 255) > NUMERAL_INK_LIMIT) {
+                    flood.visited[origin] = true;
+                    continue;
                 }
-                count++;
-                int firstRow = Math.max(0, y - 1), lastRow = Math.min(localHeight - 1, y + 1);
-                int firstColumn = Math.max(0, x - 1), lastColumn = Math.min(localWidth - 1, x + 1);
-                for (int ny = firstRow; ny <= lastRow; ny++) {
-                    int row = ny * localWidth, raster = (top + ny) * width + left;
-                    for (int nx = firstColumn; nx <= lastColumn; nx++) {
-                        int next = row + nx;
-                        if (visited[next]) continue;
-                        visited[next] = true;
-                        if ((gray[raster + nx] & 255) <= NUMERAL_INK_LIMIT) {
-                            if (pending == queue.length)
-                                queue = growNumeralScratch(queue, cells);
-                            queue[pending++] = next;
-                        }
-                    }
+                flood.collect(seedX, seedY, usesComponentShape ? shapeLimit : 0);
+                int count = flood.count, minX = flood.minX, maxX = flood.maxX, maxY = flood.maxY;
+                int[] component = flood.component;
+                minX += left;
+                maxX += left;
+                int minY = top + seedY;
+                maxY += top;
+                if (rescueBracket && minX <= left && maxX >= right && minY < upperNumeralLimit) {
+                    Glyph joined =
+                            bracketedCurveThree(
+                                    gray, width, height, left, right, minY, firstX, lastX, firstY, gap,
+                                    ownership);
+                    if (joined != null
+                            && (!Float.isFinite(headX)
+                                    || headX >= joined.left() - gap * .1f
+                                            && headX <= joined.right() + gap * .1f
+                                            && headY >= joined.top() - gap * .1f
+                                            && headY <= joined.bottom() + gap * .1f)) return joined;
                 }
-            }
-            minX += left;
-            maxX += left;
-            int minY = top + seedY;
-            maxY += top;
-            if (rescueBracket && minX <= left && maxX >= right && minY < upperNumeralLimit) {
-                Glyph joined =
-                        bracketedCurveThree(
-                                gray, width, height, left, right, minY, firstX, lastX, firstY, gap,
-                                ownership);
-                if (joined != null
-                        && (!Float.isFinite(headX)
-                                || headX >= joined.left() - gap * .1f
-                                        && headX <= joined.right() + gap * .1f
-                                        && headY >= joined.top() - gap * .1f
-                                        && headY <= joined.bottom() + gap * .1f)) return joined;
-            }
-            int gw = maxX - minX + 1, gh = maxY - minY + 1;
-            if (minX <= left
-                    || maxX >= right
-                    || minY <= top
-                    || maxY >= bottom
-                    || gh < gap * .7f
-                    || gh > maximumHeight
-                    || gw < gh * .30f
-                    || gw > gh * .95f
-                    || count < gw * gh * .15f
-                    || count > gw * gh * .70f
-                    || !(maxY < upperNumeralLimit || minY > lowerNumeralLimit)) continue;
-            if (Float.isFinite(headX)
-                    && (headX < minX - gap * .1f
-                            || headX > maxX + gap * .1f
-                            || headY < minY - gap * .1f
-                            || headY > maxY + gap * .1f)) continue;
-            if (!(number == 2
-                    ? looksLikeTwo(gray, width, count, minX, maxX, minY, maxY)
-                    : number == 4
-                            ? looksLikeFingerFour(gray, width, count, minX, maxX, minY, maxY)
-                            : number == 7
-                                    ? looksLikeSeven(gray, width, minX, minY, gw, gh)
-                                    : number == 5
-                                            ? looksLikeFive(gray, width, minX, minY, gw, gh)
-                                            : number == 6
-                                                    ? TupletSixGlyph.matches(
-                                                            gray, width, minX, minY, gw, gh)
-                                                    : looksLikeComponentThree(
-                                                            component,
-                                                            count,
-                                                            localWidth,
-                                                            left,
-                                                            top,
-                                                            minX,
-                                                            minY,
-                                                            gw,
-                                                            gh))) continue;
-            if (TupletNumeralNeighbors.joinedText(gray, width, height, minX, minY, maxX, maxY))
-                continue;
-            // Quarter-note tuplets need the two bracket arms. For beamed/flagged short notes,
-            // publishers routinely print only the numeral, so its shape/group alignment suffices.
-            boolean bracket =
-                    bracketArm(
-                                    gray,
-                                    width,
-                                    height,
-                                    Math.round(firstX - gap * .3f),
-                                    minX - 2,
-                                    minY,
-                                    maxY,
-                                    gap)
-                            && bracketArm(
-                                    gray,
-                                    width,
-                                    height,
-                                    maxX + 2,
-                                    Math.round(lastX + gap * .3f),
-                                    minY,
-                                    maxY,
-                                    gap);
-            // An unbracketed two-bowl shape inside five actual staff rules can be
-            // a rest, not a numeral below an elevated beamed melody. Explicit
-            // brackets still prove in-staff tuplets; isolated beam rules do not.
-            if (number == 3
-                    && !boundedSecondary
-                    && !bracket
-                    && insideFiveLineStaff(gray, width, height, minX, minY, maxX, maxY, gap))
-                continue;
-            if ((minY <= normalTop || maxY >= normalBottom)
-                    && !bracket
-                    && !extendedOwnership.test(new Glyph(minX, minY, maxX, maxY))) continue;
-            if (shortNotes || bracket) {
-                Glyph glyph = new Glyph(minX, minY, maxX, maxY);
-                if (ownership.test(glyph)) return glyph;
+                int gw = maxX - minX + 1, gh = maxY - minY + 1;
+                if (minX <= left
+                        || maxX >= right
+                        || minY <= top
+                        || maxY >= bottom
+                        || gh < gap * .7f
+                        || gh > maximumHeight
+                        || gw < gh * .30f
+                        || gw > gh * .95f
+                        || count < gw * gh * .15f
+                        || count > gw * gh * .70f
+                        || !(maxY < upperNumeralLimit || minY > lowerNumeralLimit)) continue;
+                if (Float.isFinite(headX)
+                        && (headX < minX - gap * .1f
+                                || headX > maxX + gap * .1f
+                                || headY < minY - gap * .1f
+                                || headY > maxY + gap * .1f)) continue;
+                if (!(number == 2
+                        ? looksLikeTwo(gray, width, count, minX, maxX, minY, maxY)
+                        : number == 4
+                                ? looksLikeFingerFour(gray, width, count, minX, maxX, minY, maxY)
+                                : number == 7
+                                        ? looksLikeSeven(gray, width, minX, minY, gw, gh)
+                                        : number == 5
+                                                ? looksLikeFive(gray, width, minX, minY, gw, gh)
+                                                : number == 6
+                                                        ? TupletSixGlyph.matches(
+                                                                gray, width, minX, minY, gw, gh)
+                                                        : looksLikeComponentThree(
+                                                                component,
+                                                                count,
+                                                                localWidth,
+                                                                left,
+                                                                top,
+                                                                minX,
+                                                                minY,
+                                                                gw,
+                                                                gh))) continue;
+                if (TupletNumeralNeighbors.joinedText(gray, width, height, minX, minY, maxX, maxY))
+                    continue;
+                // Quarter-note tuplets need the two bracket arms. For beamed/flagged short notes,
+                // publishers routinely print only the numeral, so its shape/group alignment suffices.
+                boolean bracket =
+                        bracketArm(
+                                        gray,
+                                        width,
+                                        height,
+                                        Math.round(firstX - gap * .3f),
+                                        minX - 2,
+                                        minY,
+                                        maxY,
+                                        gap)
+                                && bracketArm(
+                                        gray,
+                                        width,
+                                        height,
+                                        maxX + 2,
+                                        Math.round(lastX + gap * .3f),
+                                        minY,
+                                        maxY,
+                                        gap);
+                // An unbracketed two-bowl shape inside five actual staff rules can be
+                // a rest, not a numeral below an elevated beamed melody. Explicit
+                // brackets still prove in-staff tuplets; isolated beam rules do not.
+                if (number == 3
+                        && !boundedSecondary
+                        && !bracket
+                        && insideFiveLineStaff(gray, width, height, minX, minY, maxX, maxY, gap))
+                    continue;
+                if ((minY <= normalTop || maxY >= normalBottom)
+                        && !bracket
+                        && !extendedOwnership.test(new Glyph(minX, minY, maxX, maxY))) continue;
+                if (shortNotes || bracket) {
+                    Glyph glyph = new Glyph(minX, minY, maxX, maxY);
+                    if (ownership.test(glyph)) return glyph;
+                }
             }
         }
         return null;
     }
 
-    private static int firstNumeralInk(byte[] gray, int width, int left, int right,
+    private static final class NumeralRuns {
+        private final byte[] gray;
+        private final int rasterStart, stride, width, height;
+        private final boolean[] visited;
+        private int[] starts, ends, component;
+        private int pending, count, minX, maxX, maxY;
+
+        NumeralRuns(byte[] gray, int rasterStart, int stride, int width, int height, int first) {
+            this.gray = gray;
+            this.rasterStart = rasterStart;
+            this.stride = stride;
+            this.width = width;
+            this.height = height;
+            visited = new boolean[width * height];
+            java.util.Arrays.fill(visited, Math.max(0, first - width - 1), first, true);
+            starts = new int[Math.min(64, visited.length)];
+            ends = new int[starts.length];
+        }
+
+        void collect(int x, int y, int shapeLimit) {
+            count = 0;
+            minX = maxX = x;
+            maxY = y;
+            boolean keepShape = shapeLimit > 0 && y > 0;
+            push(x, y * width, rasterStart + y * stride);
+            while (pending > 0) {
+                int start = starts[--pending], end = ends[pending];
+                int row = start / width, base = row * width;
+                int left = start - base, right = end - base;
+                minX = Math.min(minX, left);
+                maxX = Math.max(maxX, right);
+                maxY = Math.max(maxY, row);
+                int size = end - start + 1;
+                keepShape &= left > 0 && right < width - 1 && row < height - 1;
+                if (keepShape && count + size <= shapeLimit) {
+                    if (component == null) component = new int[Math.min(128, shapeLimit)];
+                    while (count + size > component.length)
+                        component = growNumeralScratch(component, shapeLimit);
+                    for (int i = 0; i < size; i++) component[count + i] = start + i;
+                }
+                count += size;
+                int from = Math.max(0, left - 1), to = Math.min(width - 1, right + 1);
+                if (row > 0) visit(from, to, base - width, rasterStart + (row - 1) * stride);
+                if (row + 1 < height) visit(from, to, base + width, rasterStart + (row + 1) * stride);
+            }
+        }
+
+        private void visit(int from, int to, int row, int raster) {
+            for (int x = from; x <= to; x++) {
+                if (visited[row + x]) continue;
+                if ((gray[raster + x] & 255) <= NUMERAL_INK_LIMIT) x = push(x, row, raster);
+                else visited[row + x] = true;
+            }
+        }
+
+        private int push(int x, int row, int raster) {
+            int left = x, right = x;
+            while (left > 0 && !visited[row + left - 1]
+                    && (gray[raster + left - 1] & 255) <= NUMERAL_INK_LIMIT) left--;
+            while (right + 1 < width && !visited[row + right + 1]
+                    && (gray[raster + right + 1] & 255) <= NUMERAL_INK_LIMIT) right++;
+            java.util.Arrays.fill(visited, row + left, row + right + 1, true);
+            if (pending == starts.length) {
+                starts = growNumeralScratch(starts, visited.length);
+                ends = growNumeralScratch(ends, visited.length);
+            }
+            starts[pending] = row + left;
+            ends[pending++] = row + right;
+            return right;
+        }
+    }
+
+    private static final int NUMERAL_INK_LIMIT = 165;
+    private static final java.lang.invoke.VarHandle NUMERAL_WORDS =
+            java.lang.invoke.MethodHandles.byteArrayViewVarHandle(
+                    long[].class, java.nio.ByteOrder.nativeOrder());
+    private static final long NUMERAL_BYTE_HIGH_BITS = 0x8080808080808080L;
+    private static final long NUMERAL_BRIGHT_LOW_BITS =
+            0x0101010101010101L * (NUMERAL_INK_LIMIT + 1 - 128);
+
+    private static int firstNumeralInk(byte[] gray, int width, int left,
             int top, int bottom, int localWidth) {
-        for (int y = top, origin = 0, row = top * width; y <= bottom;
-                y++, origin += localWidth, row += width) {
-            for (int at = row + left, end = row + right; at <= end; at++)
-                if ((gray[at] & 255) <= NUMERAL_INK_LIMIT) return origin + at - (row + left);
+        int words = localWidth - localWidth % Long.BYTES;
+        for (int y = top, origin = 0, start = top * width + left; y <= bottom;
+                y++, origin += localWidth, start += width) {
+            int at = start, wordEnd = start + words, end = start + localWidth;
+            for (; at < wordEnd; at += Long.BYTES) {
+                long word = (long) NUMERAL_WORDS.get(gray, at);
+                // With the high bits set before subtracting, no byte borrows from its neighbor.
+                long bright = ((word | NUMERAL_BYTE_HIGH_BITS) - NUMERAL_BRIGHT_LOW_BITS)
+                        & word & NUMERAL_BYTE_HIGH_BITS;
+                if (bright == NUMERAL_BYTE_HIGH_BITS) continue;
+                for (int i = at; i < at + Long.BYTES; i++)
+                    if ((gray[i] & 255) <= NUMERAL_INK_LIMIT) return origin + i - start;
+            }
+            for (; at < end; at++)
+                if ((gray[at] & 255) <= NUMERAL_INK_LIMIT) return origin + at - start;
         }
         return -1;
     }
@@ -4505,7 +4571,6 @@ final class TripletRhythmDetector {
         return occupied >= (right - left + 1) * .76f;
     }
 
-    private static final int NUMERAL_INK_LIMIT = 165;
 
     private static boolean dark(byte[] gray, int width, int x, int y) {
         return (gray[y * width + x] & 0xff) <= NUMERAL_INK_LIMIT;
