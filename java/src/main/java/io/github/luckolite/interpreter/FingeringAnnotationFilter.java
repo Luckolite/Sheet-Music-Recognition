@@ -115,7 +115,8 @@ final class FingeringAnnotationFilter {
     private static List<ScoreNoteEvent> annotatedSingleLines(
             List<PlayingTechniqueDetector.Word> words, List<PlayingTechniqueDetector.Staff> staffs,
             List<MeasureRegion> measures, List<ScoreNoteEvent> notes, byte[] gray, int width, int height) {
-        var openings = words.stream().filter(w -> OPEN_FINGER.matcher(w.text().strip()).matches()).toList();
+        var openings = words.stream().filter(w -> OPEN_FINGER.matcher(w.text().strip()).matches()
+                || w.text().strip().equalsIgnoreCase("(a")).toList();
         var closings = words.stream().filter(w -> CLOSE_FINGER.matcher(w.text().strip()).matches()).toList();
         var captions = words.stream().filter(w -> FINGERS_AND_SEGUE.matcher(w.text().strip()).matches()).toList();
         if (captions.isEmpty() && (openings.isEmpty() || closings.isEmpty())) return notes;
@@ -124,7 +125,8 @@ final class FingeringAnnotationFilter {
             int index=m;
             var local=notes.stream().filter(n -> n.measureIndex()==index).toList();
             long whole=local.stream().filter(FingeringAnnotationFilter::possiblyPrintedText).count();
-            boolean parenthesized=local.size()==19 && whole==3;
+            boolean isolatedOpening = local.size() == 17 && whole == 1;
+            boolean parenthesized = isolatedOpening || local.size() == 19 && whole == 3;
             if (!parenthesized && (local.size()!=15 || whole!=3)) continue;
             var region=measures.get(m);
             var music=local.stream().filter(n->!possiblyPrintedText(n)).toList();
@@ -140,7 +142,9 @@ final class FingeringAnnotationFilter {
             if (staff==null) continue;
             float gap=staff.gap();
             var approved=parenthesized
-                    ? parenthesizedBoxes(openings,closings,region,staff,width,height)
+                    ? isolatedOpening
+                            ? isolatedOpeningBox(openings, closings, region, staff, music, width, height)
+                            : parenthesizedBoxes(openings,closings,region,staff,width,height)
                     : captions.stream().filter(w -> insideStaffText(w,region,staff,width,height)
                             && (w.right()-w.left())*width>=gap*13
                             && (w.right()-w.left())*width<=gap*25).toList();
@@ -167,7 +171,8 @@ final class FingeringAnnotationFilter {
             MeasureRegion measure, PlayingTechniqueDetector.Staff staff, int width, int height) {
         float gap=staff.gap();
         for (var a:openings) {
-            if (!insideStaffText(a,measure,staff,width,height)) continue;
+            if (!OPEN_FINGER.matcher(a.text().strip()).matches()
+                    || !insideStaffText(a,measure,staff,width,height)) continue;
             for (var b:closings) {
                 float distance=(b.left()-a.right())*width;
                 if (distance>=gap*7 && distance<=gap*13
@@ -175,6 +180,38 @@ final class FingeringAnnotationFilter {
                         && Math.abs(a.top()-b.top())*height<gap*.3f
                         && (a.right()-a.left())*width<gap*3
                         && (b.right()-b.left())*width<gap*3) return List.of(a,b);
+            }
+        }
+        return List.of();
+    }
+
+    // A lowest staff rule can cross the opening fingering while the final digit lies below it.
+    private static List<PlayingTechniqueDetector.Word> isolatedOpeningBox(
+            List<PlayingTechniqueDetector.Word> openings, List<PlayingTechniqueDetector.Word> closings,
+            MeasureRegion measure, PlayingTechniqueDetector.Staff staff, List<ScoreNoteEvent> music,
+            int width, int height) {
+        float gap = staff.gap();
+        float scale = (measure.right() - measure.left()) * width / gap;
+        for (int i = 1; i < music.size(); i++) {
+            float dx = (music.get(i).positionInMeasure() - music.get(i - 1).positionInMeasure()) * scale;
+            if (dx < 1.3f || dx > 2.4f) return List.of();
+        }
+        for (var opening : openings) {
+            if ((!opening.text().strip().equalsIgnoreCase("(a")
+                            && !opening.text().strip().equals("(3"))
+                    || !insideStaffText(opening, measure, staff, width, height)
+                    || (opening.right() - opening.left()) * width > gap * 3) continue;
+            for (var closing : closings) {
+                if (!closing.text().strip().equals("3)")) continue;
+                float dx = (closing.left() - opening.right()) * width / gap;
+                float dy = (closing.top() - opening.top()) * height / gap;
+                float h = (closing.bottom() - closing.top()) * height / gap;
+                if (dx >= 8 && dx <= 11 && dy >= .8f && dy <= 1.4f
+                        && closing.right() <= measure.right()
+                        && closing.top() * height >= staff.bottom() - .35f * gap
+                        && closing.bottom() * height <= staff.bottom() + 2.6f * gap
+                        && (closing.right() - closing.left()) * width <= gap * 3
+                        && h >= 1.5f && h <= 2.5f) return List.of(opening);
             }
         }
         return List.of();

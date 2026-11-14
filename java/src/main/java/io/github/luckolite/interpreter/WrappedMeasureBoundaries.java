@@ -62,6 +62,18 @@ final class WrappedMeasureBoundaries {
                 && openLeftMargin(gray, width, height, startTrack, start.left, secondFirstHeadX, gap);
     }
 
+    static boolean confirmsClosed(
+            byte[] gray, int width, int height, MeasureRegion region, float firstHead, float lastHead) {
+        var bar = box(region, width, height);
+        if (bar == null) return false;
+        var staff = track(gray, width, height, bar);
+        if (staff == null) return false;
+        float gap = staff.at(firstHead)[1];
+        if (firstHead - bar.left < gap * 1.2f || bar.right - lastHead < gap * 1.2f) return false;
+        return hasBoundary(gray, width, height, staff, bar.left - gap * .35f, bar.left + gap * .35f, gap)
+                && hasBoundary(gray, width, height, staff, bar.right - gap * .35f, bar.right + gap * .35f, gap);
+    }
+
     private record Box(float left, float right, float top, float bottom) {
         float height() {
             return bottom - top;

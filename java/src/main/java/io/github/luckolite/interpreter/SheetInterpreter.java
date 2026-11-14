@@ -490,6 +490,12 @@ public final class SheetInterpreter {
                 TripletRhythmDetector.ordinarySixteenthDyadBars(finalScore.notes(), finalScore.rests(),
                         finalScore.measures(), finalScore.meterChanges(), gray, width, height),
                 java.util.stream.IntStream.range(0, finalScore.notes().size()).boxed().toList());
+        var closedTriplets = WrappedEighthTriplets.closeCommonTimeBars(
+                finalScore.notes(), finalScore.rests(), finalScore.measures(), finalScore.meterChanges(),
+                gray, width, height);
+        if (closedTriplets != finalScore.notes())
+            finalScore = finalScore.withNotes(closedTriplets,
+                    java.util.stream.IntStream.range(0, closedTriplets.size()).boxed().toList());
         finalScore =
                 OpeningBeamPickup.apply(
                         finalScore,

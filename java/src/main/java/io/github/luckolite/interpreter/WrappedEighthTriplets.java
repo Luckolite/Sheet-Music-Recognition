@@ -14,9 +14,58 @@ final class WrappedEighthTriplets {
 
     static WrappedTripletMeasure.Half half(byte[] gray, int width, int height, MeasureRegion bar,
             List<ScoreNoteEvent> notes, List<Integer> candidates) {
+        if (candidates.size() != 9) return null;
+        return singleRailGroups(gray, width, height, bar, notes, candidates, false);
+    }
+
+    /** Four optically distinct eighth-note groups fill a physically closed common-time bar. */
+    static List<ScoreNoteEvent> closeCommonTimeBars(
+            List<ScoreNoteEvent> notes, List<ScoreRestEvent> rests, List<MeasureRegion> regions,
+            List<ScoreMeterChange> meters, byte[] gray, int width, int height) {
+        if (meters.isEmpty() || notes.isEmpty()) return notes;
+        var bars = new ArrayList<List<Integer>>(regions.size());
+        for (int i = 0; i < regions.size(); i++) bars.add(new ArrayList<>());
+        for (int i = 0; i < notes.size(); i++) bars.get(notes.get(i).measureIndex()).add(i);
+        var result = notes;
+        int next = 0;
+        ScoreMeterChange meter = null;
+        var withRests = new java.util.BitSet(regions.size());
+        for (var rest : rests) withRests.set(rest.measureIndex());
+        for (int m = 0; m < regions.size(); m++) {
+            while (next < meters.size() && meters.get(next).measureIndex() <= m)
+                meter = meters.get(next++);
+            var owners = bars.get(m);
+            if (meter == null || meter.numerator() != 4 || meter.denominator() != 4
+                    || withRests.get(m) || owners.size() != 12
+                    || owners.stream().map(notes::get).anyMatch(n -> n.beamCount() != 1)
+                    || owners.stream().map(notes::get).allMatch(n -> n.tupletDivisor() == 3))
+                continue;
+            var bar = regions.get(m);
+            var proof = closedFourGroups(gray, width, height, bar, notes, owners);
+            if (proof == null || !WrappedMeasureBoundaries.confirmsClosed(
+                    gray, width, height, bar, proof.x()[0], proof.x()[11])) continue;
+            if (result == notes) result = new ArrayList<>(notes);
+            for (int i : owners) {
+                var n = notes.get(i);
+                if (n.tupletDivisor() != 3) result.set(i, n.withTupletRatio(3, 2));
+            }
+        }
+        return result == notes ? notes : List.copyOf(result);
+    }
+
+    static WrappedTripletMeasure.Half closedFourGroups(
+            byte[] gray, int width, int height, MeasureRegion bar,
+            List<ScoreNoteEvent> notes, List<Integer> candidates) {
+        if (candidates.size() != 12) return null;
+        return singleRailGroups(gray, width, height, bar, notes, candidates, true);
+    }
+
+    private static WrappedTripletMeasure.Half singleRailGroups(
+            byte[] gray, int width, int height, MeasureRegion bar,
+            List<ScoreNoteEvent> notes, List<Integer> candidates, boolean closedBar) {
         var owners = candidates.stream()
                 .sorted(Comparator.comparingDouble(i -> notes.get(i).positionInMeasure())).toList();
-        float[] x = new float[9], y = new float[9];
+        float[] x = new float[owners.size()], y = new float[owners.size()];
         float left = bar.left() * width, right = bar.right() * width;
         float gap = (bar.bottom() - bar.top()) * height / 8.2f;
         if (!Float.isFinite(gap) || gap < 10 || gap > 30) return null;
@@ -38,8 +87,12 @@ final class WrappedEighthTriplets {
             if (n.beamCount() == 2 && ++reportedExtraRail > 1) return null;
             x[i] = left + (right - left) * n.positionInMeasure();
             y[i] = n.pageY() * height;
-            if (i > 0 && (x[i] - x[i-1] < gap * 1.65f || x[i] - x[i-1] > gap * 3.4f)) return null;
+            if (i > 0 && (x[i] - x[i-1] < gap * 1.65f || x[i] - x[i-1] > gap * (closedBar ? 3.85f : 3.4f))) return null;
             var source = PrintedBeamShafts.at(gray, width, height, x[i], y[i], gap, budget);
+            if (closedBar && i % 3 == 1 && source.isEmpty() && !budget.refused()) {
+                shafts.add(null);
+                continue;
+            }
             if (source.size() != 1 || source.get(0).direction() != -n.stemDirection()) return null;
             shafts.add(source.get(0));
         }
@@ -48,23 +101,39 @@ final class WrappedEighthTriplets {
                 return null;
             var a = shafts.get(i);
             var b = shafts.get(i+1);
+            if (a == null || b == null) {
+                int middle = a == null ? i : i + 1;
+                int stem = notes.get(owners.get(middle)).stemDirection();
+                if (stem != notes.get(owners.get(i)).stemDirection()
+                        || stem != notes.get(owners.get(i+1)).stemDirection()
+                        || !PrintedTupletBeamOwner.connectedHeads(
+                                gray, width, height, x[i], y[i], x[i+1], y[i+1], gap, stem)
+                        || !singleRail(gray, width, height, shafts.get(middle-1), shafts.get(middle+1), gap))
+                    return null;
+                continue;
+            }
             boolean same = a.direction() == b.direction();
             if (i % 3 == 2) {
                 if (same && bestRibbon(gray, width, height, a, b, gap).coverage() > .46f) return null;
                 continue;
             }
-            if (!same) return null;
-            var ribbon = bestRibbon(gray, width, height, a, b, gap);
-            if (ribbon.coverage() < .9f) return null;
-            // A second rail leaves a separate dark ribbon parallel to the outer beam.
-            int side = -a.direction();
-            for (float separation : new float[] {.69f, .84f, .99f, 1.14f}) {
-                int dy = side * Math.round(gap * separation);
-                if (coverage(gray, width, height, a, b, gap, ribbon.leftY() + dy,
-                        ribbon.rightY() + dy, .19f) >= .88f) return null;
-            }
+            if (!same || !singleRail(gray, width, height, a, b, gap)) return null;
         }
         return new WrappedTripletMeasure.Half(owners, x);
+    }
+
+    private static boolean singleRail(byte[] gray, int width, int height,
+            PrintedBeamShafts.Shaft a, PrintedBeamShafts.Shaft b, float gap) {
+        var ribbon = bestRibbon(gray, width, height, a, b, gap);
+        if (ribbon.coverage() < .9f) return false;
+        // A second rail leaves a separate dark ribbon parallel to the outer beam.
+        int side = -a.direction();
+        for (float separation : new float[] {.69f, .84f, .99f, 1.14f}) {
+            int dy = side * Math.round(gap * separation);
+            if (coverage(gray, width, height, a, b, gap, ribbon.leftY() + dy,
+                    ribbon.rightY() + dy, .19f) >= .88f) return false;
+        }
+        return true;
     }
 
     private static Ribbon bestRibbon(byte[] gray, int width, int height,
