@@ -47,19 +47,31 @@ final class BeamInkThreshold {
             unscanned -= rowWidth;
             start += width;
         }
-        // Once the dark cutoff is unreachable, only the bright proof can
-        // finish early. Use the histogram when neither proof can finish.
-        while (brightNeeded <= unscanned) {
-            int bright = 0;
-            for (int pixel = start, end = start + rowWidth; pixel < end; pixel++)
-                bright += (196 - (gray[pixel] & 255)) >>> 31;
-            brightNeeded -= bright;
-            if (brightNeeded <= 0) return 165;
-            unscanned -= rowWidth;
-            start += width;
+        // When only one cutoff is reachable, count only its qualifying tones.
+        boolean darkOnly = darkNeeded <= unscanned;
+        if (darkOnly) {
+            while (darkNeeded <= unscanned) {
+                int dark = 0;
+                for (int pixel = start, end = start + rowWidth; pixel < end; pixel++)
+                    dark += ((gray[pixel] & 255) - 73) >>> 31;
+                darkNeeded -= dark;
+                if (darkNeeded <= 0) return 40;
+                unscanned -= rowWidth;
+                start += width;
+            }
+        } else {
+            while (brightNeeded <= unscanned) {
+                int bright = 0;
+                for (int pixel = start, end = start + rowWidth; pixel < end; pixel++)
+                    bright += (196 - (gray[pixel] & 255)) >>> 31;
+                brightNeeded -= bright;
+                if (brightNeeded <= 0) return 165;
+                unscanned -= rowWidth;
+                start += width;
+            }
         }
         return shadedThreshold(gray, width, firstPixel, rowWidth, rows, upperRank,
-                unscanned == 0 ? brightNeeded : 0);
+                unscanned == 0 && !darkOnly ? brightNeeded : 0);
     }
 
     private static boolean isIntermediate(byte pixel) {

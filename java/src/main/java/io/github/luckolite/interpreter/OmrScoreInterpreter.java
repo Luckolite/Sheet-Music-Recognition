@@ -28843,26 +28843,37 @@ final class OmrScoreInterpreter {
                         gray, width, height, Math.round(head.centerX), head.minY, head.maxY, gap);
         if (localInk < 185 - 32) inkThreshold = Math.min(inkThreshold, localInk + 15);
         int bestLength = 0;
-        int[] best = null;
-        for (int direction : new int[] {-1, 1}) {
+        int bestX = 0, bestEnd = 0, bestDirection = 0;
+        int centerY = Math.round(head.centerY);
+        int edgeReach = Math.round(gap * .3f);
+        int scanLength = Math.round(gap * maxStemGaps);
+        int firstColumn = 1, lastColumn = width - 2;
+        if (restBand != null) {
+            int leftGuard = restBand[0] + restBand[4];
+            int rightGuard = restBand[1] - restBand[4];
+            if (leftGuard >= lastColumn || rightGuard <= firstColumn) return null;
+            firstColumn = Math.max(firstColumn, leftGuard + 1);
+            lastColumn = Math.min(lastColumn, rightGuard - 1);
+            if (firstColumn > lastColumn) return null;
+        }
+        for (int direction = -1; direction <= 1; direction += 2) {
             int edge = direction < 0 ? head.maxX : head.minX;
-            for (int x = Math.max(1, edge - Math.round(gap * .3f));
-                    x <= Math.min(width - 2, edge + Math.round(gap * .3f));
+            int rows = rawStemRows(height, centerY, direction, scanLength);
+            int maxLength = rows - 1;
+            if (maxLength <= bestLength
+                    || !rawStemClearsRest(restBand, centerY + direction * maxLength, direction))
+                continue;
+            for (int x = Math.max(firstColumn, edge - edgeReach);
+                    bestLength < maxLength && x <= Math.min(lastColumn, edge + edgeReach);
                     x++) {
-                int blank = 0, end = Math.round(head.centerY);
-                for (int d = 0; d < Math.round(gap * maxStemGaps); d++) {
-                    int y = Math.round(head.centerY) + direction * d;
-                    if (y < 0 || y >= height) break;
-                    boolean ink = (gray[y * width + x] & 255) < inkThreshold;
-                    if (ink) {
-                        end = y;
-                        blank = 0;
-                    } else if (++blank > maxBlank) break;
-                }
-                int length = Math.abs(end - Math.round(head.centerY));
-                if (length > bestLength && eligibleRestBandShaft(restBand, x, end, direction)) {
+                int end = rawStemEnd(
+                        gray, width, x, centerY, direction, rows, maxBlank, inkThreshold);
+                int length = Math.abs(end - centerY);
+                if (length > bestLength && rawStemClearsRest(restBand, end, direction)) {
                     bestLength = length;
-                    best = new int[] {x, end, direction};
+                    bestX = x;
+                    bestEnd = end;
+                    bestDirection = direction;
                 }
             }
         }
@@ -28874,34 +28885,59 @@ final class OmrScoreInterpreter {
                 && head.maxY - head.minY + 1 >= gap * .95f
                 && head.maxY - head.minY + 1 <= gap * 2.1f) {
             int directions = 0;
-            for (int direction : new int[] {-1, 1})
-                for (int x = Math.max(1, head.minX + Math.round(gap * .55f));
-                        x <= Math.min(width - 2, head.maxX - Math.round(gap * .55f));
+            int innerReach = Math.round(gap * .55f);
+            for (int direction = -1; direction <= 1; direction += 2) {
+                int rows = rawStemRows(height, centerY, direction, scanLength);
+                if (rows <= 0) continue;
+                int furthest = centerY + direction * (rows - 1);
+                int possibleOutside = direction < 0 ? head.minY - furthest : furthest - head.maxY;
+                if (possibleOutside < gap * 2 || !rawStemClearsRest(restBand, furthest, direction))
+                    continue;
+                for (int x = Math.max(firstColumn, head.minX + innerReach);
+                        x <= Math.min(lastColumn, head.maxX - innerReach);
                         x++) {
-                    int blank = 0, end = Math.round(head.centerY);
-                    for (int d = 0; d < Math.round(gap * maxStemGaps); d++) {
-                        int y = Math.round(head.centerY) + direction * d;
-                        if (y < 0 || y >= height) break;
-                        if ((gray[y * width + x] & 255) < inkThreshold) {
-                            end = y;
-                            blank = 0;
-                        } else if (++blank > maxBlank) break;
-                    }
+                    int end = rawStemEnd(
+                            gray, width, x, centerY, direction, rows, maxBlank, inkThreshold);
                     int outside = direction < 0 ? head.minY - end : end - head.maxY;
-                    int length = Math.abs(end - Math.round(head.centerY));
-                    if (outside >= gap * 2 && eligibleRestBandShaft(restBand, x, end, direction)) {
+                    int length = Math.abs(end - centerY);
+                    if (outside >= gap * 2 && rawStemClearsRest(restBand, end, direction)) {
+                        // One interior shaft on each side makes the direction ambiguous.
                         directions |= direction < 0 ? 1 : 2;
+                        if (directions == 3) return null;
                         if (length > bestLength) {
                             bestLength = length;
-                            best = new int[] {x, end, direction};
+                            bestX = x;
+                            bestEnd = end;
+                            bestDirection = direction;
                         }
                     }
                 }
-            // A shaft can pass through other chord heads in the opposite direction.
-            // Do not replace established beam evidence with an ambiguous interior trace.
-            if (directions == 3) return null;
+            }
         }
-        return bestLength >= gap * 2.3f ? best : null;
+        return bestDirection != 0 && bestLength >= gap * 2.3f
+                ? new int[] {bestX, bestEnd, bestDirection} : null;
+    }
+
+    private static int rawStemEnd(
+            byte[] gray, int width, int x, int centerY,
+            int direction, int rows, int maxBlank, int inkThreshold) {
+        int end = centerY, blank = 0, step = direction * width;
+        for (int d = 0, at = centerY * width + x; d < rows; d++, at += step) {
+            if ((gray[at] & 255) < inkThreshold) {
+                end = centerY + direction * d;
+                blank = 0;
+            } else if (++blank > maxBlank) break;
+        }
+        return end;
+    }
+
+    private static int rawStemRows(int height, int centerY, int direction, int scanLength) {
+        if (centerY < 0 || centerY >= height) return 0;
+        return Math.min(scanLength, direction < 0 ? centerY + 1 : height - centerY);
+    }
+
+    private static boolean rawStemClearsRest(int[] band, int end, int direction) {
+        return band == null || (direction < 0 ? end < band[2] : end > band[3]);
     }
 
     /**
@@ -28913,33 +28949,52 @@ final class OmrScoreInterpreter {
             List<DetectedNote> source, byte[] labels, byte[] gray, int width, int height) {
         if (gray == null) return source;
         List<DetectedNote> result = new ArrayList<>(source);
-        boolean[] visited = new boolean[source.size()];
+        int size = source.size();
+        boolean[] visited = new boolean[size];
+        // Link notes in the same measure and staff in their original encounter order.
+        int[] nextInStaff = new int[size];
+        var firstByStaff = new HashMap<ChordStaff, Integer>();
+        for (int i = size - 1; i >= 0; i--) {
+            var note = source.get(i).event;
+            var key = new ChordStaff(note.measureIndex(), note.staffIndex(), note.staffCount());
+            Integer next = firstByStaff.put(key, i);
+            nextInStaff[i] = next == null ? -1 : next;
+        }
         for (int i = 0; i < source.size(); i++) {
             if (visited[i]) continue;
             DetectedNote seed = source.get(i);
             float gap = seed.staffGap;
+            if (nextInStaff[i] < 0) continue;
             List<Integer> group = new ArrayList<>();
-            for (int j = i; j < source.size(); j++) {
+            boolean rhythmDiffers = false;
+            for (int j = i; j >= 0; j = nextInStaff[j]) {
                 DetectedNote n = source.get(j);
-                if (n.event.measureIndex() == seed.event.measureIndex()
-                        && n.event.staffIndex() == seed.event.staffIndex()
-                        && n.event.staffCount() == seed.event.staffCount()
-                        && (Math.abs(n.event.positionInMeasure() - seed.event.positionInMeasure())
-                                        < .002f
-                                || Math.abs(n.head.centerX - seed.head.centerX) <= gap * .12f)
-                        && Math.abs(n.head.centerX - seed.head.centerX) < gap * 1.8f) group.add(j);
+                float offset = Math.abs(n.head.centerX - seed.head.centerX);
+                if ((Math.abs(n.event.positionInMeasure() - seed.event.positionInMeasure()) < .002f
+                                || offset <= gap * .12f)
+                        && offset < gap * 1.8f) {
+                    group.add(j);
+                    rhythmDiffers |= n.event.beamCount() != seed.event.beamCount()
+                            || n.event.augmentationDots() != seed.event.augmentationDots();
+                }
             }
+            // Opposing-voice filtering only removes notes, so uniform rhythms stay uniform.
+            if (!rhythmDiffers || group.size() < 2) continue;
             int seedDirection =
                     PrintedStemDirection.detect(
                             gray, width, height, seed.head.centerX, seed.head.centerY, gap);
             boolean opposing = false;
             if (seedDirection != 0)
                 for (int j : group) {
+                    if (j == i) continue;
                     var n = source.get(j);
                     int d =
                             PrintedStemDirection.detect(
                                     gray, width, height, n.head.centerX, n.head.centerY, gap);
-                    opposing |= d != 0 && d != seedDirection;
+                    if (d != 0 && d != seedDirection) {
+                        opposing = true;
+                        break;
+                    }
                 }
             if (opposing)
                 opposing = provedOpposingChordVoices(group, source, gray, width, height, gap);
@@ -29100,6 +29155,8 @@ final class OmrScoreInterpreter {
         }
         return result;
     }
+
+    private record ChordStaff(int measure, int staff, int staffCount) {}
 
     /**
      * Outer oval tips are not the musical span of a chord. Extend the existing six-gap window only
