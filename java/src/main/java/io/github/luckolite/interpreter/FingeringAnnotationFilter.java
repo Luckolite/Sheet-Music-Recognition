@@ -14,6 +14,9 @@ final class FingeringAnnotationFilter {
     private static final Pattern WHITESPACE = Pattern.compile("\\s+");
     private static final Pattern OPEN_FINGER = Pattern.compile("\\(\\s*[1-5]");
     private static final Pattern CLOSE_FINGER = Pattern.compile("[1-5]\\s*\\)");
+    private static final Pattern SPLIT_FINGERING_RUN =
+            Pattern.compile("[1-5](?:\\s+[1-5]){3,7}");
+    private static final Pattern SINGLE_SEGUE = Pattern.compile("segue[.]?", Pattern.CASE_INSENSITIVE);
     private static final Pattern FINGERS_AND_SEGUE =
             Pattern.compile("(?:[1-5]\\s+){4,8}segue[.]?", Pattern.CASE_INSENSITIVE);
 
@@ -40,6 +43,7 @@ final class FingeringAnnotationFilter {
                 || height <= 0
                 || gray.length != (long) width * height) return notes;
         notes = annotatedSingleLines(words, staffs, measures, notes, gray, width, height);
+        notes = separatedFingeringCaptions(words, staffs, measures, notes, gray, width, height);
         notes = isolatedParentheticalSixteenths(words, staffs, measures, notes, gray, width, height);
         List<Candidate> candidates = null;
         var result = new ArrayList<ScoreNoteEvent>(notes.size());
@@ -157,6 +161,125 @@ final class FingeringAnnotationFilter {
         return result.size()==notes.size()?notes:List.copyOf(result);
     }
 
+    /** OCR can split the printed fingering line and its following word into separate boxes. */
+    private static List<ScoreNoteEvent> separatedFingeringCaptions(
+            List<PlayingTechniqueDetector.Word> words, List<PlayingTechniqueDetector.Staff> staffs,
+            List<MeasureRegion> measures, List<ScoreNoteEvent> notes, byte[] gray, int width, int height) {
+        var fingerings = words.stream().filter(w -> w.text() != null
+                && SPLIT_FINGERING_RUN.matcher(w.text().strip()).matches()).toList();
+        var captions = words.stream().filter(w -> w.text() != null
+                && SINGLE_SEGUE.matcher(w.text().strip()).matches()).toList();
+        if (fingerings.isEmpty() || captions.isEmpty()) return notes;
+        var byMeasure = new HashMap<Integer, List<ScoreNoteEvent>>();
+        for (var note : notes)
+            byMeasure.computeIfAbsent(note.measureIndex(), ignored -> new ArrayList<>()).add(note);
+        var discard = Collections.newSetFromMap(new IdentityHashMap<ScoreNoteEvent, Boolean>());
+        for (var caption : captions) {
+            for (var digits : fingerings) {
+                if (!(digits.right() < caption.left())) continue;
+                int measure = uniqueCaptionMeasure(measures, digits, caption);
+                if (measure < 0) continue;
+                var region = measures.get(measure);
+                var staff = captionStaff(staffs, digits, caption, region, width, height);
+                if (staff == null) continue;
+                var local = byMeasure.getOrDefault(measure, List.of());
+                var music = local.stream().filter(n -> n.stemDirection() == -1)
+                        .sorted(Comparator.comparingDouble(ScoreNoteEvent::positionInMeasure)).toList();
+                if (music.size() != 12 || local.size() < 15 || local.size() > 18) continue;
+                var nonMusic = local.stream().filter(n -> n.stemDirection() != -1).toList();
+                if (nonMusic.stream().anyMatch(n -> !captionHead(n)
+                        || !insideInk(n, region, staff, List.of(digits, caption), gray, width, height)))
+                    continue;
+                long wordHeads = nonMusic.stream().filter(n -> (region.left() + n.positionInMeasure()
+                        * (region.right() - region.left())) > caption.left()).count();
+                if (wordHeads < 2 || wordHeads == nonMusic.size()) continue;
+                if (closedCaptionSixteenths(music, region, staff, gray, width, height))
+                    discard.addAll(nonMusic);
+            }
+        }
+        if (discard.isEmpty()) return notes;
+        return notes.stream().filter(n -> !discard.contains(n)).toList();
+    }
+
+    private static int uniqueCaptionMeasure(List<MeasureRegion> measures,
+            PlayingTechniqueDetector.Word digits, PlayingTechniqueDetector.Word caption) {
+        int selected = -1;
+        for (int i = 0; i < measures.size(); i++) {
+            var m = measures.get(i);
+            if (m.cadenceQuarterBeats() != 0 || digits.left() < m.left() || caption.right() > m.right()
+                    || digits.top() < m.top() || caption.bottom() > m.bottom()) continue;
+            if (selected >= 0) return -1;
+            selected = i;
+        }
+        return selected;
+    }
+
+    private static PlayingTechniqueDetector.Staff captionStaff(
+            List<PlayingTechniqueDetector.Staff> staffs, PlayingTechniqueDetector.Word digits,
+            PlayingTechniqueDetector.Word word, MeasureRegion region, int width, int height) {
+        PlayingTechniqueDetector.Staff chosen = null;
+        for (var staff : staffs) {
+            float gap = staff.gap();
+            if (staff.index() != 0 || staff.count() != 1 || staff.top() < region.top() * height
+                    || staff.bottom() > region.bottom() * height || gap < 10 || gap > 25
+                    || !insideStaffText(digits, region, staff, width, height)
+                    || !insideStaffText(word, region, staff, width, height)
+                    || (word.left() - digits.right()) * width < gap * .7f
+                    || (word.left() - digits.right()) * width > gap * 2.7f
+                    || (word.right() - word.left()) * width < gap * 5
+                    || (word.right() - word.left()) * width > gap * 10
+                    || Math.abs(word.top() - digits.top()) * height > gap * .75f
+                    || Math.abs(word.bottom() - digits.bottom()) * height > gap * .85f) continue;
+            if (chosen != null) return null;
+            chosen = staff;
+        }
+        return chosen;
+    }
+
+    private static boolean captionHead(ScoreNoteEvent n) {
+        return n.kind() == ScoreNoteEvent.Kind.PITCHED && n.staffCount() == 1 && n.staffIndex() == 0
+                && n.stemDirection() == 0 && n.visualSize() == ScoreNoteEvent.VisualSize.FULL
+                && n.staffStep() >= -2 && n.staffStep() <= 1 && !n.crossStaffBeam()
+                && n.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_FROM_KEY
+                && n.augmentationDots() == 0 && n.tupletDivisor() == 1
+                && (n.articulations() & (NoteOrnament.GRACE | NoteOrnament.TYPE_MASK)) == 0
+                && !n.tiedFromPrevious() && n.boundaryTies() == 0
+                && n.leadingRestBeats() == 0 && n.followingRestBeats() == 0
+                && (n.beamCount() >= 1 && n.beamCount() <= 2 && n.unbeamedDurationBeats() == 0
+                        || n.beamCount() == 0 && n.unbeamedDurationBeats() == 4);
+    }
+
+    private static boolean closedCaptionSixteenths(List<ScoreNoteEvent> music, MeasureRegion region,
+            PlayingTechniqueDetector.Staff staff, byte[] gray, int width, int height) {
+        float gap = staff.gap();
+        float left = region.left() * width, right = region.right() * width;
+        if (right - left < gap * 26 || right - left > gap * 39) return false;
+        var shafts = new PrintedBeamShafts.Shaft[12];
+        var budget = new PrintedBeamShafts.Budget(180000);
+        float previous = left;
+        for (int i = 0; i < shafts.length; i++) {
+            var note = music.get(i);
+            if (note.kind() != ScoreNoteEvent.Kind.PITCHED || note.staffCount() != 1 || note.staffIndex() != 0
+                    || note.beamCount() != 2 || note.unbeamedDurationBeats() != 0
+                    || note.tupletDivisor() != 1 || note.augmentationDots() != 0 || note.crossStaffBeam()
+                    || note.leadingRestBeats() != 0 || note.followingRestBeats() != 0
+                    || note.boundaryTies() != 0
+                    || (note.articulations() & NoteOrnament.GRACE) != 0) return false;
+            float x = left + note.positionInMeasure() * (right - left);
+            float y = note.pageY() * height;
+            if (x - previous < gap * 1.65f || x - previous > gap * 3.55f) return false;
+            previous = x;
+            var source = PrintedBeamShafts.at(gray, width, height, x, y, gap, budget);
+            if (source.size() != 1 || source.get(0).direction() != 1) return false;
+            shafts[i] = source.get(0);
+            if (i > 0 && pairedRails(gray, width, height, shafts[i-1], shafts[i], gap, true) != (i % 4 != 0))
+                return false;
+        }
+        if (right - previous < gap * .9f || right - previous > gap * 2.6f) return false;
+        return PrintedCadenceDurations.boundaryColumn(gray, width, staff, right, true, false) >= 0
+                && closedWrittenSixteenths(music);
+    }
+
     /** Paired below-staff fingerings can seed both a false pitch and a false triplet. */
     private static List<ScoreNoteEvent> isolatedParentheticalSixteenths(
             List<PlayingTechniqueDetector.Word> words,List<PlayingTechniqueDetector.Staff> staffs,
@@ -246,21 +369,30 @@ final class FingeringAnnotationFilter {
 
     private static boolean pairedRails(byte[] gray,int width,int height,
             PrintedBeamShafts.Shaft a,PrintedBeamShafts.Shaft b,float gap) {
+        return pairedRails(gray, width, height, a, b, gap, false);
+    }
+
+    private static boolean pairedRails(byte[] gray,int width,int height,
+            PrintedBeamShafts.Shaft a,PrintedBeamShafts.Shaft b,float gap,boolean narrowSeam) {
         int x0=(a.left()+a.right())/2,x1=(b.left()+b.right())/2;
         int margin=Math.round(gap*.37f),rad=Math.max(2,Math.round(gap*.14f));
         if(x0+margin>=x1-margin) return false;
         for(int offset=-Math.round(gap*.22f);offset<=Math.round(gap*.45f);offset++)
             for(int separation=Math.round(gap*.55f);separation<=Math.round(gap*.92f);separation++) {
-                int first=0,second=0,seam=0;
+                int first=0,second=0,seam=0,lightSeam=0;
                 for(int x=x0+margin;x<=x1-margin;x++) {
                     int axis=Math.round(a.endY()+(b.endY()-a.endY())*(x-x0)/(float)(x1-x0))-offset;
                     if (axis+rad>=height || axis-separation-rad<0) continue;
                     if(verticalInk(gray,width,x,axis,rad)>=2*rad) first++;
                     if(verticalInk(gray,width,x,axis-separation,rad)>=2*rad) second++;
-                    if(verticalInk(gray,width,x,axis-separation/2,1)<=1) seam++;
+                    int trough = axis - separation / 2;
+                    if(verticalInk(gray,width,x,trough,1)<=1) seam++;
+                    if (narrowSeam && (gray[trough * width + x] & 255) >= 185) lightSeam++;
                 }
                 int count=x1-x0-2*margin+1;
-                if(first>=count*.96f && second>=count*.96f && seam>=count*.28f) return true;
+                boolean visibleGap = seam >= count * .28f
+                        || narrowSeam && seam >= count * .18f && lightSeam >= count * .50f;
+                if(first>=count*.96f && second>=count*.96f && visibleGap) return true;
             }
         return false;
     }
