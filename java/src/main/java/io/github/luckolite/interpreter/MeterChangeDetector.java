@@ -670,13 +670,16 @@ public final class MeterChangeDetector {
 
     private static boolean completeBarlineBefore(
             byte[] gray, int width, int height, int left, int top, int bottom, float gap) {
+        int first = Math.max(0, top), last = Math.min(height - 1, bottom);
+        int total = Math.max(0, last - first + 1);
+        if (total < gap * 3.8f) return false;
+        int allowedLight = total - (int) Math.ceil(total * .94f);
         for (int x = Math.max(0, Math.round(left - gap * 3f)); x < left - gap * .5f; x++) {
-            int ink = 0, total = 0;
-            for (int y = Math.max(0, top); y <= Math.min(height - 1, bottom); y++) {
-                total++;
-                if ((gray[y * width + x] & 255) < 155) ink++;
+            int light = 0;
+            for (int y = first, pixel = first * width + x; y <= last; y++, pixel += width) {
+                if ((gray[pixel] & 255) >= 155 && ++light > allowedLight) break;
             }
-            if (total >= gap * 3.8f && ink >= total * .94f) return true;
+            if (light <= allowedLight) return true;
         }
         return false;
     }
@@ -751,18 +754,26 @@ public final class MeterChangeDetector {
         int start = -1, last = -1, blanks = 0;
         int minSymbol = Math.max(3, Math.round(gap * .25f));
         int maximumBlanks = internal ? Math.max(2, Math.round(gap * .3f)) : 2;
+        float upperLimit = top + gap * 1.8f, lowerLimit = top + gap * 2.2f;
         for (int x = left; x <= right + maximumBlanks + 1; x++) {
-            int upper = 0, lower = 0;
-            if (x <= right)
-                for (int y = top; y <= bottom; y++) {
-                    int yy = y + Math.round(slope * (x - width * .5f));
-                    if (yy < 0
-                            || yy >= height
-                            || labels[yy * width + x] != OmrMeasurePostProcessor.SYMBOL) continue;
-                    if (y < top + gap * 1.8f) upper++;
-                    if (y > top + gap * 2.2f) lower++;
+            boolean paired = false;
+            if (x <= right) {
+                int shift = Math.round(slope * (x - width * .5f));
+                int first = Math.max(top, -shift), end = Math.min(bottom, height - 1 - shift);
+                int upper = 0, lower = 0;
+                for (int y = first, at = (first + shift) * width + x;
+                        y <= end && y < upperLimit && upper < minSymbol; y++, at += width) {
+                    if (labels[at] == OmrMeasurePostProcessor.SYMBOL) upper++;
                 }
-            if (upper >= minSymbol && lower >= minSymbol) {
+                if (upper >= minSymbol) {
+                    for (int y = end, at = (end + shift) * width + x;
+                            y >= first && y > lowerLimit && lower < minSymbol; y--, at -= width) {
+                        if (labels[at] == OmrMeasurePostProcessor.SYMBOL) lower++;
+                    }
+                    paired = lower >= minSymbol;
+                }
+            }
+            if (paired) {
                 if (start < 0) start = x;
                 last = x;
                 blanks = 0;
@@ -770,28 +781,28 @@ public final class MeterChangeDetector {
                 int glyphWidth = last - start + 1;
                 if (glyphWidth >= gap * .55f && glyphWidth <= gap * 2.6f) {
                     int head = 0, middleHead = 0, header = 0, upperHead = 0;
-                    for (int xx = start; xx <= last; xx++)
-                        for (int y = top; y <= bottom; y++) {
-                            int yy = y + Math.round(slope * (xx - width * .5f));
-                            if (yy >= 0
-                                    && yy < height
-                                    && labels[yy * width + xx]
-                                            == OmrMeasurePostProcessor.NOTEHEAD) {
-                                head++;
-                                if (y < top + gap * 1.8f) upperHead++;
-                                if (Math.abs(y - top - gap * 2) < gap * .4f) middleHead++;
+                    for (int xx = start; xx <= last; xx++) {
+                        int shift = Math.round(slope * (xx - width * .5f));
+                        for (int y = Math.max(top, -shift); y <= Math.min(bottom, height - 1 - shift); y++) {
+                            if (labels[(y + shift) * width + xx] != OmrMeasurePostProcessor.NOTEHEAD)
+                                continue;
+                            head++;
+                            if (y < upperLimit) upperHead++;
+                            if (Math.abs(y - top - gap * 2) < gap * .4f) middleHead++;
+                        }
+                    }
+                    if (!internal) {
+                        for (int xx = Math.max(0, start - Math.round(gap * 6));
+                                xx < start - Math.round(gap * .5f);
+                                xx++) {
+                            int shift = Math.round(slope * (xx - width * .5f));
+                            for (int y = Math.max(top, -shift);
+                                    y <= Math.min(bottom, height - 1 - shift); y++) {
+                                if (labels[(y + shift) * width + xx] == OmrMeasurePostProcessor.CLEF_OR_KEY)
+                                    header++;
                             }
                         }
-                    for (int xx = Math.max(0, start - Math.round(gap * 6));
-                            xx < start - Math.round(gap * .5f);
-                            xx++)
-                        for (int y = top; y <= bottom; y++) {
-                            int yy = y + Math.round(slope * (xx - width * .5f));
-                            if (yy >= 0
-                                    && yy < height
-                                    && labels[yy * width + xx]
-                                            == OmrMeasurePostProcessor.CLEF_OR_KEY) header++;
-                        }
+                    }
                     boolean smallGlyphFragment =
                             tolerateGlyphHead
                                     && head < gap * gap * .2f
@@ -858,8 +869,15 @@ public final class MeterChangeDetector {
             staffs.add(new SignatureStaff(raw, 0));
         float slope = OmrMeasurePostProcessor.estimateStaffSlope(labels, width, height);
         int[] strength = new int[height];
+        float halfWidth = width * .5f;
         float[] offsets = new float[width];
-        for (int x = 0; x < width; x++) offsets[x] = slope * (x - width * .5f);
+        int[] shifts = slope == 0 ? null : new int[width];
+        if (shifts != null) {
+            for (int x = 0; x < width; x++) {
+                offsets[x] = slope * (x - halfWidth);
+                shifts[x] = Math.round(offsets[x]);
+            }
+        }
         for (int y = 0, pageRow = 0; y < height; y++, pageRow += width) {
             for (int x = 0; x < width; x++) {
                 if (labels[pageRow + x] != OmrMeasurePostProcessor.STAFF) continue;
@@ -881,7 +899,7 @@ public final class MeterChangeDetector {
                 }
             }
             if (match >= 0 && Math.abs(slope) * width < candidate.gap()) continue;
-            int support = printedStaffSupport(gray, width, height, candidate, slope);
+            int support = printedStaffSupport(gray, width, height, candidate, shifts);
             if (support == 0) continue;
             if (match < 0) {
                 staffs.add(new SignatureStaff(candidate, slope));
@@ -890,7 +908,7 @@ public final class MeterChangeDetector {
                 // A horizontal projection can select the wrong rail phase on a slanted scan.
                 // Use one frame for that staff, and require substantially stronger printed rails.
                 if (support > printedStaffSupport(gray, width, height, existing.lines(),
-                        existing.slope()) + width * .6f)
+                        existing.slope() == 0 ? null : shifts) + width * .6f)
                     staffs.set(match, new SignatureStaff(candidate, slope));
             }
         }
@@ -904,20 +922,18 @@ public final class MeterChangeDetector {
             int width,
             int height,
             RawStaffLineDetector.StaffLines staff,
-            float slope) {
+            int[] shifts) {
         int radius = Math.max(1, Math.round(staff.gap() * .15f));
         int flank = Math.max(2, Math.round(staff.gap() * .35f)), supported = 0;
         int supportBottom = height - 1 - flank,
                 minimumSupport = Math.max(24, Math.round(width * .2f));
         int total = 0;
         int flankStride = flank * width;
-        int[] shifts = new int[width];
-        for (int x = 0; x < width; x++) shifts[x] = Math.round(slope * (x - width * .5f));
         int remaining = staff.rows().length;
         for (int row : staff.rows()) {
             int hits = 0;
             for (int x = 0; x < width; x++) {
-                int center = row + shifts[x];
+                int center = shifts == null ? row : row + shifts[x];
                 int first = Math.max(flank, center - radius);
                 int last = Math.min(supportBottom, center + radius);
                 if (first > last) continue;

@@ -4,6 +4,8 @@ package io.github.luckolite.interpreter;
 
 /** Rejects exterior texture while retaining weak semantic staffs within printed systems. */
 final class PrintedStaffAdmission {
+    private static final float[] BACKGROUND_PHASES = {.25f, .5f, .75f};
+
     interface Rules {
         float y(int line, int x);
     }
@@ -50,42 +52,45 @@ final class PrintedStaffAdmission {
         int probe = Math.max(2, Math.round(gap * .32f)),
                 radius = Math.max(0, Math.round(gap * .10f));
         int aligned = 0, run = 0, longest = 0, dark = 0, samples = 0, min = 255, max = 0;
+        int probeOffset = probe * width;
         for (int x = left; x <= right; x++) {
             int support = 0;
+            float previous = 0;
             for (int line = 0; line < 5; line++) {
-                int center = Math.round(rules.y(line, x));
-                boolean printed = false;
-                for (int dy = -radius; dy <= radius; dy++) {
-                    int y = center + dy;
-                    if (y - probe < 0 || y + probe >= height) continue;
-                    int ink = gray[y * width + x] & 255;
-                    if (ink <= 238
-                            && (gray[(y - probe) * width + x] & 255) >= ink + 12
-                            && (gray[(y + probe) * width + x] & 255) >= ink + 12) {
-                        printed = true;
-                        break;
+                float position = rules.y(line, x);
+                if (support < 4 && support + 5 - line >= 4) {
+                    int center = Math.round(position);
+                    int first = Math.max(probe, center - radius);
+                    int last = Math.min(height - 1 - probe, center + radius);
+                    for (int y = first, pixel = first * width + x; y <= last; y++, pixel += width) {
+                        int ink = gray[pixel] & 255;
+                        if (ink <= 238
+                                && (gray[pixel - probeOffset] & 255) >= ink + 12
+                                && (gray[pixel + probeOffset] & 255) >= ink + 12) {
+                            support++;
+                            break;
+                        }
                     }
                 }
-                if (printed) support++;
+                if (line != 0) {
+                    float distance = position - previous;
+                    for (float phase : BACKGROUND_PHASES) {
+                        int y = Math.round(previous + phase * distance);
+                        if (y >= 0 && y < height) {
+                            int ink = gray[y * width + x] & 255;
+                            samples++;
+                            min = Math.min(min, ink);
+                            max = Math.max(max, ink);
+                            if (ink <= 205) dark++;
+                        }
+                    }
+                }
+                previous = position;
             }
             if (support >= 4) {
                 aligned++;
                 longest = Math.max(longest, ++run);
             } else run = 0;
-            for (int line = 0; line < 4; line++)
-                for (float phase : new float[] {.25f, .5f, .75f}) {
-                    int y =
-                            Math.round(
-                                    rules.y(line, x)
-                                            + phase * (rules.y(line + 1, x) - rules.y(line, x)));
-                    if (y >= 0 && y < height) {
-                        int ink = gray[y * width + x] & 255;
-                        samples++;
-                        min = Math.min(min, ink);
-                        max = Math.max(max, ink);
-                        if (ink <= 205) dark++;
-                    }
-                }
         }
         return new Evidence(
                 Math.max(0, right - left + 1),
