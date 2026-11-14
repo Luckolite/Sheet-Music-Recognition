@@ -23,36 +23,27 @@ public class CaretClaimPriorityOriginalTest {
 
     static List<?> acquired(byte[] raw, List<NoteArticulationDetector.Anchor> notes, boolean paper)
             throws Exception {
-        Method method =
-                paper
-                        ? NoteArticulationDetector.class.getDeclaredMethod(
-                                "paperGlyphs",
-                                byte[].class,
-                                int.class,
-                                int.class,
-                                List.class,
-                                boolean[].class,
-                                int[].class)
-                        : NoteArticulationDetector.class.getDeclaredMethod(
-                                "faintAccentGlyphs",
-                                byte[].class,
-                                int.class,
-                                int.class,
-                                boolean[].class,
-                                int[].class);
+        var detector = NoteArticulationDetector.class;
+        var scratchType = Class.forName(detector.getName() + "$GlyphFloodScratch");
+        var constructor = scratchType.getDeclaredConstructor(int.class);
+        constructor.setAccessible(true);
+        var scratch = constructor.newInstance(raw.length);
+        var seen = new boolean[raw.length];
+        if (paper) {
+            var gap = detector.getDeclaredMethod("medianArticulationGap", List.class);
+            gap.setAccessible(true);
+            var estimate = RestPaperTone.estimate(raw, W, H, (float) gap.invoke(null, notes));
+            if (estimate == null) return List.of();
+            var method = detector.getDeclaredMethod(
+                    "paperGlyphs", byte[].class, byte[].class, int.class, int.class,
+                    boolean[].class, scratchType);
+            method.setAccessible(true);
+            return (List<?>) method.invoke(null, raw, estimate.normalize(340f), W, H, seen, scratch);
+        }
+        var method = detector.getDeclaredMethod(
+                "faintAccentGlyphs", byte[].class, int.class, int.class, boolean[].class, scratchType);
         method.setAccessible(true);
-        return (List<?>)
-                (paper
-                        ? method.invoke(
-                                null,
-                                raw,
-                                W,
-                                H,
-                                notes,
-                                new boolean[raw.length],
-                                new int[raw.length])
-                        : method.invoke(
-                                null, raw, W, H, new boolean[raw.length], new int[raw.length]));
+        return (List<?>) method.invoke(null, raw, W, H, seen, scratch);
     }
 
     static int field(Object g, String name) throws Exception {

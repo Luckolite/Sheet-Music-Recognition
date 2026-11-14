@@ -286,7 +286,7 @@ final class NoteArticulationDetector {
                 }
                 // Every fully certified UP shape uses the same centroid-or-tip union.
                 // Existing tolerances and all distinct-attack rivals remain unchanged.
-                boolean upShape = upBowShape(g, width) || capAwareUpBowShape(g, width, capProof);
+                boolean upShape = upBowShape(g, width, capProof);
                 tipQualified = upShape && !downShape && completeUpBowRows(g, width, capProof);
                 if (tipQualified)
                     for (int slot = 0; slot < geometryCount; slot++) {
@@ -358,7 +358,7 @@ final class NoteArticulationDetector {
                 capMeasured = true;
             }
             boolean up =
-                    tipQualified || upBowShape(g, width) || capAwareUpBowShape(g, width, capProof);
+                    tipQualified || upBowShape(g, width, capProof);
             if (up == down) continue;
             if (up && !tipQualified) {
                 // New component-only row certificate: all loops and row storage
@@ -679,31 +679,39 @@ final class NoteArticulationDetector {
     }
 
     private static boolean upBowShape(Glyph g, int width) {
+        return upBowShape(g, width, null);
+    }
+
+    /** Cap-only pixels can count as fit hits without filling arm-coverage bins. */
+    private static boolean upBowShape(Glyph g, int width, BowCapProof proof) {
+        int widthSpan = Math.max(1, g.right - g.left);
+        double tipRow = g.bottom - (g.bottom - g.top) * .15;
         double tip = 0;
-        int tips = 0;
-        for (int p : g.pixels)
-            if (p / width >= g.bottom - (g.bottom - g.top) * .15) {
-                tip += p % width;
+        int tips = 0, leftTop = g.bottom, rightTop = g.bottom;
+        for (int p : g.pixels) {
+            int row = p / width, column = p - row * width;
+            if (row >= tipRow) {
+                tip += column;
                 tips++;
             }
-        if (tips == 0) return false;
-        double apex = (tip / tips - g.left) / Math.max(1, g.right - g.left);
-        if (apex < .2 || apex > .85) return false;
-        int leftTop = g.bottom, rightTop = g.bottom;
-        for (int p : g.pixels) {
-            double x = (p % width - g.left) / (double) Math.max(1, g.right - g.left);
-            if (x < .25) leftTop = Math.min(leftTop, p / width);
-            if (x > .75) rightTop = Math.min(rightTop, p / width);
+            double x = (column - g.left) / (double) widthSpan;
+            if (x < .25) leftTop = Math.min(leftTop, row);
+            if (x > .75) rightTop = Math.min(rightTop, row);
         }
+        if (tips == 0) return false;
+        double apex = (tip / tips - g.left) / widthSpan;
+        if (apex < .2 || apex > .85) return false;
         double leftY = (leftTop - g.top) / (double) Math.max(1, g.bottom - g.top);
         double rightY = (rightTop - g.top) / (double) Math.max(1, g.bottom - g.top);
         if (leftY > .45 || rightY > .45) return false;
-        int hits = 0;
         int binCount = Math.min(12, g.right - g.left + 1);
-        boolean[] bins = new boolean[binCount];
+        int bins = 0, misses = 0;
+        int maxMisses = g.pixels.length - (int) Math.ceil(g.count * .85);
         for (int p : g.pixels) {
-            double x = (p % width - g.left) / (double) Math.max(1, g.right - g.left);
-            double y = (p / width - g.top) / (double) Math.max(1, g.bottom - g.top);
+            int row = p / width, column = p - row * width;
+            int localX = column - g.left, localY = row - g.top;
+            double x = localX / (double) widthSpan;
+            double y = localY / (double) Math.max(1, g.bottom - g.top);
             double expected =
                     x < apex
                             ? leftY + (1 - leftY) * x / apex
@@ -712,61 +720,14 @@ final class NoteArticulationDetector {
             double distance = Math.abs(y - expected) / Math.sqrt(1 + slope * slope);
             // Independently rounded stroke edges need a full raster pixel of
             // tolerance. Precision and complete coverage still prove both arms.
-            if (distance < .14 + 1.0 / Math.max(1, Math.min(g.right - g.left, g.bottom - g.top))) {
-                hits++;
-                bins[Math.min(binCount - 1, (int) (x * binCount))] = true;
-            }
-        }
-        int covered = 0;
-        for (boolean bin : bins) if (bin) covered++;
-        return hits >= g.count * .85 && covered >= Math.ceil(binCount * 10d / 12);
-    }
-
-    /** The original arm-fit law is unchanged. Only literal cap-run pixels from
-     * a complete independent graph proof may also count as fit hits. Cap-only
-     * pixels never fill the original arm-coverage bins. */
-    private static boolean capAwareUpBowShape(Glyph g, int width, BowCapProof proof) {
-        if (proof == null) return false;
-        double tip = 0;
-        int tips = 0;
-        for (int p : g.pixels)
-            if (p / width >= g.bottom - (g.bottom - g.top) * .15) {
-                tip += p % width;
-                tips++;
-            }
-        if (tips == 0) return false;
-        double apex = (tip / tips - g.left) / Math.max(1, g.right - g.left);
-        if (apex < .2 || apex > .85) return false;
-        int leftTop = g.bottom, rightTop = g.bottom;
-        for (int p : g.pixels) {
-            double x = (p % width - g.left) / (double) Math.max(1, g.right - g.left);
-            if (x < .25) leftTop = Math.min(leftTop, p / width);
-            if (x > .75) rightTop = Math.min(rightTop, p / width);
-        }
-        double leftY = (leftTop - g.top) / (double) Math.max(1, g.bottom - g.top);
-        double rightY = (rightTop - g.top) / (double) Math.max(1, g.bottom - g.top);
-        if (leftY > .45 || rightY > .45) return false;
-        int hits = 0;
-        int binCount = Math.min(12, g.right - g.left + 1);
-        boolean[] bins = new boolean[binCount];
-        for (int p : g.pixels) {
-            double x = (p % width - g.left) / (double) Math.max(1, g.right - g.left);
-            double y = (p / width - g.top) / (double) Math.max(1, g.bottom - g.top);
-            double expected =
-                    x < apex
-                            ? leftY + (1 - leftY) * x / apex
-                            : rightY + (1 - rightY) * (1 - x) / (1 - apex);
-            double slope = x < apex ? (1 - leftY) / apex : (1 - rightY) / (1 - apex);
-            double distance = Math.abs(y - expected) / Math.sqrt(1 + slope * slope);
             boolean armFit =
-                    distance
-                            < .14 + 1.0 / Math.max(1, Math.min(g.right - g.left, g.bottom - g.top));
-            if (armFit) bins[Math.min(binCount - 1, (int) (x * binCount))] = true;
-            if (armFit || proof.contains(p % width - g.left, p / width - g.top)) hits++;
+                    distance < .14 + 1.0 / Math.max(1, Math.min(g.right - g.left, g.bottom - g.top));
+            if (armFit) bins |= 1 << Math.min(binCount - 1, (int) (x * binCount));
+            if (!armFit && (proof == null || !proof.contains(localX, localY))
+                    && ++misses > maxMisses) return false;
         }
-        int covered = 0;
-        for (boolean bin : bins) if (bin) covered++;
-        return hits >= g.count * .85 && covered >= Math.ceil(binCount * 10d / 12);
+        int covered = Integer.bitCount(bins);
+        return misses <= maxMisses && covered >= Math.ceil(binCount * 10d / 12);
     }
 
     private static long completeUpBowCapWork(Glyph g) {
@@ -1133,7 +1094,7 @@ final class NoteArticulationDetector {
     }
 
     private static int completeBowStrokeSpanTwice(Glyph g, int width, BowCapProof proof) {
-        boolean up = upBowShape(g, width) || capAwareUpBowShape(g, width, proof);
+        boolean up = upBowShape(g, width, proof);
         boolean down = completeDownBowShape(g, width) || measuredDownBowShape(g, width);
         if (up == down || up && !completeUpBowRows(g, width, proof)) return -1;
         int w = g.right - g.left + 1, h = g.bottom - g.top + 1;
@@ -2915,8 +2876,9 @@ final class NoteArticulationDetector {
             any |= rules[y - top];
         }
         if (!any) return false;
-        boolean[] seen = new boolean[w * h];
-        int[] queue = new int[Math.min(64, seen.length)];
+        int cropSize = w * h;
+        boolean[] seen = null;
+        int[] queue = null;
         byte[][] bridgeInk = null;
         List<Glyph> fragments = new ArrayList<>(), marks = new ArrayList<>();
         int maxBridgeDistance = (int) Math.ceil(gap * .25f) + 1;
@@ -2941,7 +2903,7 @@ final class NoteArticulationDetector {
             }
         }
         for (int origin = 0, oy = 0, ox = 0, rasterRow = top * width + left;
-                origin < seen.length; origin++, ox++) {
+                origin < cropSize; origin++, ox++) {
             if (ox == w) {
                 ox = 0;
                 oy++;
@@ -2952,13 +2914,16 @@ final class NoteArticulationDetector {
                 ox = w - 1;
                 continue;
             }
-            if (seen[origin]) continue;
+            if ((gray[rasterRow + ox] & 255) >= 155 || (seen != null && seen[origin])) continue;
+            if (seen == null) {
+                seen = new boolean[cropSize];
+                queue = new int[Math.min(64, cropSize)];
+            }
             seen[origin] = true;
-            if ((gray[rasterRow + ox] & 255) >= 155) continue;
             int size = 1, take = 0;
             queue[0] = origin;
             boolean clipped = false, joined = false;
-            int gx0 = width, gx1 = 0, gy0 = height, gy1 = 0, notation = 0;
+            int gx0 = left + ox, gx1 = gx0, gy1 = top + oy, notation = 0;
             while (take < size) {
                 int at = queue[take++], y = at / w, x = at - y * w;
                 if (!clipped) {
@@ -2966,7 +2931,6 @@ final class NoteArticulationDetector {
                     if (!clipped) {
                         gx0 = Math.min(gx0, left + x);
                         gx1 = Math.max(gx1, left + x);
-                        gy0 = Math.min(gy0, top + y);
                         gy1 = Math.max(gy1, top + y);
                         byte label = labels[rasterRows[y] + x];
                         if (label == OmrMeasurePostProcessor.NOTEHEAD
@@ -3027,14 +2991,14 @@ final class NoteArticulationDetector {
                 }
             }
             if (clipped) continue;
-            float gw = gx1 - gx0 + 1, gh = gy1 - gy0 + 1;
+            float gw = gx1 - gx0 + 1, gh = gy1 - (top + oy) + 1;
             if (notation > size * .25f || gw > gap * 3f || gh > gap * 2.2f) continue;
             int[] pixels = new int[size];
             for (int i = 0; i < size; i++) {
                 int local = queue[i], row = local / w;
                 pixels[i] = rasterRows[row] + local - row * w;
             }
-            Glyph glyph = new Glyph(gx0, gy0, gx1, gy1, size, pixels);
+            Glyph glyph = new Glyph(gx0, top + oy, gx1, gy1, size, pixels);
             fragments.add(glyph);
             if (joined
                     && Math.abs(glyph.x() - note.x) <= gap * .7f
