@@ -246,6 +246,10 @@ final class RestPaperTone {
         if (first < 96 && (gray[middle] & 255) < 96 && (gray[last] & 255) < 96
                 && hasDarkRank(gray, width, firstRow, endRow, left, right,
                         count - upperRank + 1, count)) return 255;
+        if (first >= 188 && first < 255 && (gray[middle] & 255) == first
+                && (gray[last] & 255) == first
+                && matchesSampledRank(gray, width, firstRow, endRow, left, right, first, upperRank, count))
+            return first;
         // A bright tile still contributes its exact tone to neighbouring shaded tiles.
         java.util.Arrays.fill(histogram, 0);
         if (tileWidth == width) {
@@ -260,6 +264,33 @@ final class RestPaperTone {
             if (upperRank <= 0) return tone;
         }
         return 255;
+    }
+
+    private static boolean matchesSampledRank(
+            byte[] gray, int width, int firstRow, int endRow, int left, int right,
+            int sample, int upperRank, int count) {
+        int brighter = 0, darker = 0, allowedDarker = count - upperRank;
+        int wordWidth = right - left;
+        wordWidth -= wordWidth % Long.BYTES;
+        long repeated = BYTE_ONES * sample;
+        long brightBias = BYTE_ONES * (sample + 1 - 128), sampleBias = BYTE_ONES * (sample - 128);
+        for (int row = firstRow; row < endRow; row += width) {
+            int at = row + left, end = row + right;
+            for (int wordEnd = at + wordWidth; at < wordEnd; at += Long.BYTES) {
+                long word = (long) GRAY_WORDS.get(gray, at);
+                if (word == repeated) continue;
+                long upper = word | HIGH_BITS, high = word & HIGH_BITS;
+                brighter += Long.bitCount((upper - brightBias) & high);
+                darker += Long.BYTES - Long.bitCount((upper - sampleBias) & high);
+            }
+            for (; at < end; at++) {
+                int tone = gray[at] & 255;
+                if (tone > sample) brighter++;
+                else if (tone < sample) darker++;
+            }
+            if (brighter >= upperRank || darker > allowedDarker) return false;
+        }
+        return true;
     }
 
     private static boolean isUniformTile(

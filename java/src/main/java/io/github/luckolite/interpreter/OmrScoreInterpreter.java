@@ -31199,19 +31199,14 @@ final class OmrScoreInterpreter {
     }
 
     private static int countVertical(byte[] labels, int width, int x, int top, int bottom) {
+        int first = Math.max(0, x - 1), last = Math.min(width - 1, x + 1);
+        if (first > last) return 0;
+        int span = last - first;
         int count = 0;
-        for (int y = top; y <= bottom; y++) {
-            boolean ink = false;
-            for (int dx = -1; dx <= 1; dx++) {
-                int check = x + dx;
-                if (check >= 0
-                        && check < width
-                        && labels[y * width + check] == OmrMeasurePostProcessor.STEM_OR_REST) {
-                    ink = true;
-                    break;
-                }
-            }
-            if (ink) count++;
+        for (int y = top, at = top * width + first; y <= bottom; y++, at += width) {
+            if (labels[at] == OmrMeasurePostProcessor.STEM_OR_REST
+                    || (span >= 1 && labels[at + 1] == OmrMeasurePostProcessor.STEM_OR_REST)
+                    || (span == 2 && labels[at + 2] == OmrMeasurePostProcessor.STEM_OR_REST)) count++;
         }
         return count;
     }

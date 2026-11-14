@@ -3700,31 +3700,45 @@ final class NoteArticulationDetector {
                 Math.max(
                         3,
                         Math.max(glyph.right - glyph.left + 1, glyph.bottom - glyph.top + 1) / 2);
-        int[] background = new int[256], tones = new int[glyph.count];
-        int samples = 0;
-        for (int y = Math.max(0, glyph.top - padding);
-                y <= Math.min(height - 1, glyph.bottom + padding);
-                y++)
-            for (int x = Math.max(0, glyph.left - padding);
-                    x <= Math.min(width - 1, glyph.right + padding);
-                    x++) {
-                background[gray[y * width + x] & 255]++;
-                samples++;
-            }
-        int paper = 255, cumulative = 0;
-        for (int tone = 0; tone < 256; tone++) {
-            cumulative += background[tone];
-            if (cumulative >= Math.ceil(samples * .75)) {
-                paper = tone;
-                break;
+        int top = Math.max(0, glyph.top - padding), bottom = Math.min(height - 1, glyph.bottom + padding);
+        int left = Math.max(0, glyph.left - padding), right = Math.min(width - 1, glyph.right + padding);
+        int samples = (bottom - top + 1) * (right - left + 1);
+        int rank = samples - samples / 4;
+        int minimum = 255;
+        for (int i = 0; i < glyph.count; i++) {
+            minimum = Math.min(minimum, gray[glyph.pixels[i]] & 255);
+            if (minimum == 0) return true;
+        }
+        if (minimum <= 127
+                && paperAtLeast(gray, width, left, right, top, bottom, minimum * 2, samples, rank))
+            return true;
+        int[] background = new int[256];
+        for (int y = top, row = top * width; y <= bottom; y++, row += width)
+            for (int at = row + left, end = row + right; at <= end; at++)
+                background[gray[at] & 255]++;
+        int paper = 0, cumulative = background[0];
+        while (cumulative < rank) cumulative += background[++paper];
+
+
+        int maximumMedian = Math.min(paper - 25, minimum + Math.max(8, Math.round(paper * .05f)));
+        int needed = glyph.count / 2 + 1;
+        for (int i = 0; needed > 0 && needed <= glyph.count - i; i++)
+            if ((gray[glyph.pixels[i]] & 255) <= maximumMedian) needed--;
+        return needed == 0;
+    }
+
+    private static boolean paperAtLeast(byte[] gray, int width, int left, int right,
+            int top, int bottom, int tone, int samples, int rank) {
+        int needed = samples - rank + 1;
+        int remaining = samples;
+        for (int y = top, row = top * width; y <= bottom; y++, row += width) {
+            for (int at = row + left, end = row + right; at <= end; at++) {
+                remaining--;
+                if ((gray[at] & 255) >= tone && --needed == 0) return true;
+                if (needed > remaining) return false;
             }
         }
-        for (int i = 0; i < tones.length; i++) tones[i] = gray[glyph.pixels[i]] & 255;
-        java.util.Arrays.sort(tones);
-        int minimum = tones[0], median = tones[tones.length / 2];
-        return minimum <= paper * .5f
-                || (median - minimum <= Math.max(8, Math.round(paper * .05f))
-                        && paper - median >= 25);
+        return false;
     }
 
     /** Antialiased letters can split into peak-shaped arms on one word baseline.

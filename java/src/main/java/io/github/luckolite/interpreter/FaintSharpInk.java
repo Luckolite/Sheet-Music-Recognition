@@ -117,19 +117,47 @@ final class FaintSharpInk {
         int limit = Math.max(1, Math.round(gap * maximumGap));
         for (int y = 1, row = width; y < height - 3; y++, row += width) {
             int lastSkip = Math.min(limit, height - y - 3);
-            for (long starts = pairs[y]; starts != 0; starts &= starts - 1) {
+            long current = pairs[y];
+            if (current == 0) continue;
+            long downstream = pairs[y + 3];
+            // For one missing row, a diagonal fills its right-hand column after rounding.
+            long middle = (current & downstream) | ((current << 1) & downstream) | (current & (downstream << 1));
+            closed = fillColumns(mask, closed, row + width, middle);
+            if (lastSkip < 2) continue;
+
+            // With two missing rows, interpolation uses the start column then the end column.
+            downstream = pairs[y + 4];
+            long firstFill = current & (downstream | (downstream << 1) | (downstream >>> 1));
+            long second = downstream & (current | (current << 1) | (current >>> 1));
+            closed = fillColumns(mask, closed, row + width, firstFill);
+            closed = fillColumns(mask, closed, row + 2 * width, second);
+            if (lastSkip < 3) continue;
+
+            for (long starts = current; starts != 0; starts &= starts - 1) {
                 int x = Long.numberOfTrailingZeros(starts);
-                for (int skip = 1; skip <= lastSkip; skip++) {
+                for (int skip = 3; skip <= lastSkip; skip++) {
+                    downstream = pairs[y + skip + 2];
+                    if (downstream == 0) continue;
                     int radius = Math.max(1, Math.round((skip + 1) * .3f));
                     int first = Math.max(0, x - radius);
                     int last = Math.min(width - 1, x + radius);
-                    long ends = (pairs[y + skip + 2] & (-1L >>> (Long.SIZE - 1 - last))) >>> first;
+                    long ends = (downstream & (-1L >>> (Long.SIZE - 1 - last))) >>> first;
                     for (; ends != 0; ends &= ends - 1) {
                         int end = first + Long.numberOfTrailingZeros(ends);
                         closed = closeGap(mask, closed, width, row, x, end, skip);
                     }
                 }
             }
+        }
+        return closed;
+    }
+
+    private static byte[] fillColumns(byte[] mask, byte[] closed, int row, long columns) {
+        for (; columns != 0; columns &= columns - 1) {
+            int at = row + Long.numberOfTrailingZeros(columns);
+            if (closed[at] != 0) continue;
+            if (closed == mask) closed = mask.clone();
+            closed[at] = OmrMeasurePostProcessor.CLEF_OR_KEY;
         }
         return closed;
     }
