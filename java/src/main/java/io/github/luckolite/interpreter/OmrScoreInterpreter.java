@@ -19120,49 +19120,53 @@ final class OmrScoreInterpreter {
     /** A nearby disconnected slur must not become an endpoint of the seeded accidental. */
     private static Component retainSeedConnectedInk(
             byte[] ink, int width, int height, Component seed, int left, int top) {
-        boolean[] kept = new boolean[ink.length];
-        int[] queue = new int[ink.length];
+        boolean[] kept = null;
+        int[] queue = null;
         int tail = 0;
-        for (int y = Math.max(0, seed.minY - top); y <= Math.min(height - 1, seed.maxY - top); y++)
-            for (int x = Math.max(0, seed.minX - left);
-                    x <= Math.min(width - 1, seed.maxX - left);
-                    x++) {
-                int at = y * width + x;
+        int firstX = Math.max(0, seed.minX - left), lastX = Math.min(width - 1, seed.maxX - left);
+        int lastY = Math.min(height - 1, seed.maxY - top);
+        for (int y = Math.max(0, seed.minY - top); y <= lastY; y++) {
+            int row = y * width;
+            for (int at = row + firstX, end = row + lastX; at <= end; at++) {
                 if (ink[at] != 0) {
+                    if (kept == null) {
+                        kept = new boolean[ink.length];
+                        queue = new int[ink.length];
+                    }
                     kept[at] = true;
                     queue[tail++] = at;
                 }
             }
-        for (int head = 0; head < tail; head++) {
-            int at = queue[head], x = at % width, y = at / width;
-            for (int yy = Math.max(0, y - 1); yy <= Math.min(height - 1, y + 1); yy++)
-                for (int xx = Math.max(0, x - 1); xx <= Math.min(width - 1, x + 1); xx++) {
-                    int next = yy * width + xx;
-                    if (ink[next] != 0 && !kept[next]) {
-                        kept[next] = true;
-                        queue[tail++] = next;
-                    }
-                }
         }
-        int area = 0, minX = width, maxX = -1, minY = height, maxY = -1;
+        if (tail == 0) {
+            java.util.Arrays.fill(ink, (byte) 0);
+            return null;
+        }
+        int minX = width, maxX = -1, minY = height, maxY = -1;
         long sx = 0, sy = 0;
-        for (int at = 0; at < ink.length; at++) {
-            if (!kept[at]) {
-                ink[at] = 0;
-                continue;
-            }
-            int x = at % width, y = at / width;
-            area++;
+        for (int head = 0; head < tail; head++) {
+            int at = queue[head], y = at / width, x = at - y * width;
             sx += x;
             sy += y;
             minX = Math.min(minX, x);
             maxX = Math.max(maxX, x);
             minY = Math.min(minY, y);
             maxY = Math.max(maxY, y);
+            int from = Math.max(0, x - 1), to = Math.min(width - 1, x + 1);
+            for (int yy = Math.max(0, y - 1), endY = Math.min(height - 1, y + 1); yy <= endY; yy++) {
+                int row = yy * width;
+                for (int next = row + from, end = row + to; next <= end; next++) {
+                    if (ink[next] != 0 && !kept[next]) {
+                        kept[next] = true;
+                        queue[tail++] = next;
+                    }
+                }
+            }
         }
-        return area == 0
-                ? null
-                : new Component(area, minX, maxX, minY, maxY, sx / (float) area, sy / (float) area);
+        if (tail != ink.length)
+            for (int at = 0; at < ink.length; at++)
+                if (!kept[at] && ink[at] != 0) ink[at] = 0;
+        return new Component(tail, minX, maxX, minY, maxY, sx / (float) tail, sy / (float) tail);
     }
 
     private static boolean rawStrokeLeavesCrop(
@@ -19190,19 +19194,20 @@ final class OmrScoreInterpreter {
             float gap,
             int threshold) {
         int reach = Math.max(2, Math.round(gap * .16f));
-        for (int side : new int[] {-1, 1}) {
+        for (int side = -1; side <= 1; side += 2) {
             int edge = side < 0 ? 0 : h - 1;
+            int startRow = top + edge + side, lastRow = top + edge + side * reach;
+            if (startRow < 0 || startRow >= height || lastRow < 0 || lastRow >= height) continue;
+            int edgeOffset = edge * w, first = startRow * width + left;
+            int stride = side * width;
             for (int x = 0; x < w; x++) {
-                if (ink[edge * w + x] == 0) continue;
-                boolean continues = true;
-                for (int d = 1; d <= reach; d++) {
-                    int y = top + edge + side * d;
-                    if (y < 0 || y >= height || (gray[y * width + left + x] & 255) > threshold) {
-                        continues = false;
-                        break;
-                    }
+                if (ink[edgeOffset + x] == 0) continue;
+                int count = 0, at = first + x;
+                while (count < reach && (gray[at] & 255) <= threshold) {
+                    count++;
+                    at += stride;
                 }
-                if (continues) return true;
+                if (count == reach) return true;
             }
         }
         return false;
@@ -20964,26 +20969,32 @@ final class OmrScoreInterpreter {
 
         // Two shaft peaks must have a lower-ink column between them. A sheared
         // flat upright cannot provide both shafts from the same broad peak.
+        float valleyThreshold = Math.min(columns[leftSpine], columns[rightSpine]) * .85f;
         boolean separatedSpines = false;
         for (int column = leftSpine + 1; column < rightSpine; column++)
-            if (columns[column] < Math.min(columns[leftSpine], columns[rightSpine]) * .85f)
+            if (columns[column] < valleyThreshold) {
                 separatedSpines = true;
+                break;
+            }
         if (!separatedSpines) return Float.NaN;
 
         // Two thick but disconnected spines are not a crossbar.
         // Require ink to bridge their inner gap before considering row width.
-        for (int row = 0; row < glyphHeight; row++) {
+        int wideThreshold = Math.max(2, Math.round((rightSpine - leftSpine + 1) * 1.15f));
+        int terminalMargin = Math.max(2, Math.round(glyphHeight * .10f));
+        float bridgeThreshold = (rightSpine - leftSpine + 1) * .70f;
+        byte[] bridgeInk = crossbarInk == null ? labels : crossbarInk;
+        for (int row = terminalMargin; row < glyphHeight - terminalMargin; row++) {
+            if (rows[row] < wideThreshold) continue;
             int bridge = 0;
+            int at = (glyph.minY + row) * width + glyph.minX + leftSpine;
             for (int col = leftSpine; col <= rightSpine; col++)
-                if (candidate.matches(
-                        (crossbarInk == null ? labels : crossbarInk)
-                                [(glyph.minY + row) * width + glyph.minX + col])) bridge++;
-            if (bridge < (rightSpine - leftSpine + 1) * .70f) rows[row] = 0;
+                if (candidate.matches(bridgeInk[at++]) && ++bridge >= bridgeThreshold) break;
+            if (bridge < bridgeThreshold) rows[row] = 0;
         }
         // Measure crossbars against the two spines, not stray ink at the glyph edge.
-        int wideThreshold = Math.max(2, Math.round((rightSpine - leftSpine + 1) * 1.15f));
         List<int[]> crossbars = new ArrayList<>();
-        int terminalMargin = Math.max(2, Math.round(glyphHeight * .10f));
+        int minimumBandHeight = Math.max(2, Math.round(gap * .12f));
         for (int row = terminalMargin; row < rows.length - terminalMargin; ) {
             if (rows[row] < wideThreshold) {
                 row++;
@@ -20992,51 +21003,64 @@ final class OmrScoreInterpreter {
             int first = row;
             while (row < rows.length - terminalMargin && rows[row] >= wideThreshold) row++;
             // A painted staff stripe at a spine tip is not a sharp crossbar.
-            if (row - first < Math.max(2, Math.round(gap * .12f))) continue;
+            if (row - first < minimumBandHeight) continue;
             crossbars.add(new int[] {first, row - 1});
+        }
+        if (crossbars.size() < 2) return Float.NaN;
+
+        // Each spine must have enough rows above and below the selected bands.
+        // Measure the last required row at each end once for all pairs.
+        int upperExtension = -1, lowerExtension = glyphHeight;
+        int radius = Math.max(1, Math.round(glyphWidth * .09f));
+        int required = Math.max(1, Math.round(glyphHeight * .05f));
+        int maximumBlank = Math.max(2, Math.round(gap * .22f));
+        int firstTop = -1, firstBottom = -1;
+        for (int side = 0; side < 2; side++) {
+            int spine = side == 0 ? leftSpine : rightSpine;
+            int low = Math.max(0, spine - radius), high = Math.min(glyphWidth - 1, spine + radius);
+            int top = -1, bottom = -1, rowsWithInk = 0;
+            for (int row = 0, source = glyph.minY * width + glyph.minX;
+                    row < glyphHeight; row++, source += width) {
+                for (int col = low; col <= high; col++) {
+                    if (!candidate.matches(labels[source + col])) continue;
+                    if (top < 0) top = row;
+                    else if (row - bottom - 1 > maximumBlank) return Float.NaN;
+                    bottom = row;
+                    if (++rowsWithInk == required) upperExtension = Math.max(upperExtension, row);
+                    break;
+                }
+            }
+            if (rowsWithInk < 2 * required) return Float.NaN;
+            int remaining = required;
+            int rowBase = glyph.minY * width + glyph.minX;
+            lower:
+            for (int row = bottom, source = rowBase + bottom * width;
+                    row >= top; row--, source -= width) {
+                for (int col = low; col <= high; col++) {
+                    if (!candidate.matches(labels[source + col])) continue;
+                    if (--remaining == 0) {
+                        lowerExtension = Math.min(lowerExtension, row);
+                        break lower;
+                    }
+                    break;
+                }
+            }
+            if (side == 0) {
+                firstTop = top;
+                firstBottom = bottom;
+            } else if (Math.abs(top - firstTop) > glyphHeight * .22f
+                    || Math.abs(bottom - firstBottom) > glyphHeight * .22f) return Float.NaN;
         }
         float bestCenter = Float.NaN;
         int bestSupport = -1;
         for (int i = 0; i < crossbars.size(); i++)
-            pair:
             for (int j = i + 1; j < crossbars.size(); j++) {
                 int[] firstBand = crossbars.get(i), lastBand = crossbars.get(j);
                 int firstCrossbar = firstBand[0], lastCrossbar = lastBand[1];
                 if (lastCrossbar - firstCrossbar < glyphHeight * .18f) continue;
                 // Both sharp spines protrude through both crossbars. A flat's bowl can
                 // supply a long second column, but cannot supply its upper extension.
-                int radius = Math.max(1, Math.round(glyphWidth * .09f));
-                int required = Math.max(1, Math.round(glyphHeight * .05f));
-                int firstTop = -1, firstBottom = -1;
-                for (int spine : new int[] {leftSpine, rightSpine}) {
-                    int above = 0, below = 0, top = -1, bottom = -1, blank = 0, longestBlank = 0;
-                    for (int row = 0; row < glyphHeight; row++) {
-                        boolean ink = false;
-                        for (int col = Math.max(0, spine - radius);
-                                col <= Math.min(glyphWidth - 1, spine + radius);
-                                col++)
-                            if (candidate.matches(
-                                    labels[(glyph.minY + row) * width + glyph.minX + col]))
-                                ink = true;
-                        if (ink) {
-                            if (top < 0) top = row;
-                            bottom = row;
-                            longestBlank = Math.max(longestBlank, blank);
-                            blank = 0;
-                        }
-                        if (!ink && top >= 0) blank++;
-                        if (ink && row < firstCrossbar) above++;
-                        if (ink && row > lastCrossbar) below++;
-                    }
-                    if (above < required
-                            || below < required
-                            || longestBlank > Math.max(2, Math.round(gap * .22f))) continue pair;
-                    if (firstTop < 0) {
-                        firstTop = top;
-                        firstBottom = bottom;
-                    } else if (Math.abs(top - firstTop) > glyphHeight * .22f
-                            || Math.abs(bottom - firstBottom) > glyphHeight * .22f) continue pair;
-                }
+                if (firstCrossbar <= upperExtension || lastCrossbar >= lowerExtension) continue;
                 // A hairpin or staff stripe can add a third short band near a tip.
                 // Prefer the two substantial crossbars with support on both spines.
                 int firstSize = firstBand[1] - firstBand[0] + 1,
@@ -21081,53 +21105,54 @@ final class OmrScoreInterpreter {
         int bottom = Math.min(height - 1, Math.round(seed.centerY + gap * 2.5f));
         int w = right - left + 1, h = bottom - top + 1, reach = Math.max(3, Math.round(gap * .7f));
         int probe = Math.max(2, Math.round(gap * .2f));
-        for (int threshold : new int[] {180, 205}) {
-            byte[] ink = new byte[w * h];
+        int firstFlank = Math.max(0, left - reach), lastFlank = Math.min(width - 1, right + reach);
+        int outside = left - firstFlank + lastFlank - right;
+        float minimumFlank = outside * .8f;
+        int verticalProbe = probe * width;
+        for (int threshold = 180; threshold <= 205; threshold += 25) {
+            byte[] ink = null;
             for (int y = top; y <= bottom; y++) {
-                int outside = 0, dark = 0;
-                for (int x = Math.max(0, left - reach);
-                        x <= Math.min(width - 1, right + reach);
-                        x++)
-                    if (x < left || x > right) {
-                        outside++;
-                        if ((gray[y * width + x] & 255) <= threshold) dark++;
-                    }
-                boolean rule = outside > 0 && dark >= outside * .8f;
-                for (int x = left; x <= right; x++) {
-                    if ((gray[y * width + x] & 255) > threshold) continue;
-                    if (rule
-                            && (y < probe
-                                    || y + probe >= height
-                                    || (gray[(y - probe) * width + x] & 255) > threshold
-                                    || (gray[(y + probe) * width + x] & 255) > threshold)) continue;
-                    ink[(y - top) * w + x - left] = OmrMeasurePostProcessor.SYMBOL;
+                int row = y * width;
+                int possible = outside, dark = 0;
+                for (int at = row + firstFlank; at < row + left
+                        && possible >= minimumFlank && dark < minimumFlank; at++) {
+                    if ((gray[at] & 255) > threshold) possible--;
+                    else dark++;
+                }
+                for (int at = row + right + 1; at <= row + lastFlank
+                        && possible >= minimumFlank && dark < minimumFlank; at++) {
+                    if ((gray[at] & 255) > threshold) possible--;
+                    else dark++;
+                }
+                boolean rule = outside > 0 && dark >= minimumFlank;
+                if (rule && (y < probe || y + probe >= height)) continue;
+                int source = row + left, dest = (y - top) * w;
+                for (int x = 0; x < w; x++) {
+                    int at = source + x;
+                    if ((gray[at] & 255) > threshold) continue;
+                    if (rule && ((gray[at - verticalProbe] & 255) > threshold
+                            || (gray[at + verticalProbe] & 255) > threshold)) continue;
+                    if (ink == null) ink = new byte[w * h];
+                    ink[dest + x] = OmrMeasurePostProcessor.SYMBOL;
                 }
             }
+            if (ink == null) continue;
             Component glyph = retainSeedConnectedInk(ink, w, h, seed, left, top);
             if (glyph == null
                     || glyph.minX == 0
                     || glyph.maxX == w - 1
                     || rawStrokeLeavesCrop(gray, width, height, ink, w, h, left, top, gap))
                 continue;
-            if (isSharpGlyph(
-                    ink,
-                    w,
-                    h,
-                    new AccidentalCandidate(glyph, OmrMeasurePostProcessor.SYMBOL),
-                    gap)) {
+            var sharp = new AccidentalCandidate(glyph, OmrMeasurePostProcessor.SYMBOL);
+            float sharpCenter = sharpPitchCenter(ink, w, h, sharp, gap);
+            if (Float.isFinite(sharpCenter)) {
+                float center = top + sharpCenter;
                 if (observed != null)
                     observed[0] =
                             new SignatureGlyph(
                                     left + glyph.centerX,
                                     ScoreNoteEvent.ACCIDENTAL_SHARP,
-                                    top
-                                            + sharpPitchCenter(
-                                                    ink,
-                                                    w,
-                                                    h,
-                                                    new AccidentalCandidate(
-                                                            glyph, OmrMeasurePostProcessor.SYMBOL),
-                                                    gap),
+                                    center,
                                     new Component(
                                             glyph.area,
                                             left + glyph.minX,
@@ -21136,16 +21161,7 @@ final class OmrScoreInterpreter {
                                             top + glyph.maxY,
                                             left + glyph.centerX,
                                             top + glyph.centerY));
-                return pitch
-                        ? top
-                                + sharpPitchCenter(
-                                        ink,
-                                        w,
-                                        h,
-                                        new AccidentalCandidate(
-                                                glyph, OmrMeasurePostProcessor.SYMBOL),
-                                        gap)
-                        : left + glyph.centerX;
+                return pitch ? center : left + glyph.centerX;
             }
         }
         byte[] faint = FaintSharpInk.crop(gray, width, height, left, top, right, bottom, gap);
