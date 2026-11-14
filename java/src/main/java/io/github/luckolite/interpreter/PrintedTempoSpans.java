@@ -7,6 +7,8 @@ import static io.github.luckolite.interpreter.ScoreExpressiveEvent.*;
 
 /** Connects proved text, extension ink, and numeric endpoints without converting pixels to beats. */
 final class PrintedTempoSpans {
+    private static final float[] STAFF_PROBE_FRACTIONS = {.125f, .25f, .375f, .5f, .625f, .75f, .875f};
+    private static final java.util.regex.Pattern FASTER = java.util.regex.Pattern.compile("(?i)\\s*(?:[mpf]{1,3}\\s+)?faster\\s*[-.!]*\\s*");
     private static final String SOURCE = "printed-tempo-dash-span";
     static final String OPEN_HINT = "printed-tempo-dash-page-edge-v1:";
     static final String END_HINT = "printed-tempo-dash-end-v1:";
@@ -23,12 +25,12 @@ final class PrintedTempoSpans {
                 || staffs.stream().anyMatch(s -> s.count() != 1)
                 || width <= 0
                 || height <= 0) return score;
-        var sizes = staffs.stream().map(PlayingTechniqueDetector.Staff::gap).sorted().toList();
-        float gap = sizes.get(sizes.size() / 2), gx = gap / width, gy = gap / height;
         boolean eligible =
                 score.expressiveEvents().stream()
                         .anyMatch(e -> (gradual(e.kind()) || bareFaster(e)) && e.end().isEmpty());
         if (!eligible) return score;
+        var sizes = staffs.stream().map(PlayingTechniqueDetector.Staff::gap).sorted().toList();
+        float gap = sizes.get(sizes.size() / 2), gx = gap / width, gy = gap / height;
         var runs = PrintedDashChains.detect(gray, width, height, gap);
         if (runs.isEmpty()) return score;
         var systems = new ArrayList<PrintedDashSpan.SystemBand>();
@@ -52,24 +54,32 @@ final class PrintedTempoSpans {
             }
             row[i] = systems.size() - 1;
         }
+        float[] lastColumns = new float[systems.size()];
+        Arrays.fill(lastColumns, Float.NaN);
         for (var n : score.notes()) {
             var m = score.measures().get(n.measureIndex());
             int at = row[n.measureIndex()];
-            var s = systems.get(at);
             float x = m.left() + n.positionInMeasure() * (m.right() - m.left());
-            systems.set(
-                    at,
-                    new PrintedDashSpan.SystemBand(
-                            s.left(),
-                            s.right(),
-                            s.top(),
-                            s.bottom(),
-                            Float.isFinite(s.lastColumn()) ? Math.max(s.lastColumn(), x) : x));
+            float prior = lastColumns[at];
+            lastColumns[at] = Float.isFinite(prior) ? Math.max(prior, x) : x;
+        }
+        for (int i = 0; i < systems.size(); i++) {
+            var system = systems.get(i);
+            systems.set(i, new PrintedDashSpan.SystemBand(system.left(), system.right(),
+                    system.top(), system.bottom(), lastColumns[i]));
         }
         var ownershipSystems = printedOwnershipSystems(systems, staffs, gray, width, height);
-        var events = new ArrayList<ScoreExpressiveEvent>();
+        var spanCache = new HashMap<SpanQuery, Optional<PrintedDashSpan.Span>>();
+        java.util.function.Function<SpanQuery, Optional<PrintedDashSpan.Span>> follow =
+                query -> spanCache.computeIfAbsent(query, key ->
+                        PrintedDashSpan.follow(runs, systems, key.word(), gx, gy,
+                                ownershipSystems == systems ? List.of() : ownershipSystems,
+                                key.system()));
+        var competingEvidence = new IdentityHashMap<ScoreExpressiveEvent, Claim>();
+        var events = new ArrayList<ScoreExpressiveEvent>(score.expressiveEvents().size());
         for (var event : score.expressiveEvents()) {
-            if ((!gradual(event.kind()) && !bareFaster(event)) || event.end().isPresent()) {
+            boolean faster = bareFaster(event);
+            if ((!gradual(event.kind()) && !faster) || event.end().isPresent()) {
                 events.add(event);
                 continue;
             }
@@ -84,22 +94,13 @@ final class PrintedTempoSpans {
             boolean conflict = false;
             float endpointX = Float.NaN;
             boolean open = false;
+            var sourceTexts = new HashSet<String>();
+            for (var evidence : event.evidence())
+                if (evidence.sourceId().equals("printed-expression-word"))
+                    sourceTexts.add(evidence.printedText());
             for (var word : words) {
-                if (event.evidence().stream()
-                        .noneMatch(
-                                e ->
-                                        e.sourceId().equals("printed-expression-word")
-                                                && e.printedText().equals(word.text()))) continue;
-                var span =
-                        PrintedDashSpan.follow(
-                                runs,
-                                systems,
-                                new PrintedDashSpan.WordBox(
-                                        word.left(), word.right(), word.top(), word.bottom()),
-                                gx,
-                                gy,
-                                ownershipSystems == systems ? List.of() : ownershipSystems,
-                                row[measure.getAsInt()]);
+                if (!sourceTexts.contains(word.text())) continue;
+                var span = follow.apply(query(word, row[measure.getAsInt()]));
                 if (span.isPresent()
                         && ownershipSystems != systems
                         && competingClaim(
@@ -107,12 +108,9 @@ final class PrintedTempoSpans {
                                 span.get(),
                                 score,
                                 words,
-                                runs,
-                                systems,
-                                ownershipSystems,
                                 row,
-                                gx,
-                                gy)) continue;
+                                follow,
+                                competingEvidence)) continue;
                 if (span.isEmpty()
                         || start.measureIndex() >= row.length
                         || row[start.measureIndex()] != span.get().firstSystem()) continue;
@@ -164,7 +162,7 @@ final class PrintedTempoSpans {
                                 evidence));
                 continue;
             }
-            if (endpoint == null || conflict || open || bareFaster(event)) {
+            if (endpoint == null || conflict || open || faster) {
                 events.add(event);
                 continue;
             }
@@ -254,13 +252,19 @@ final class PrintedTempoSpans {
                         .anyMatch(
                                 e ->
                                         e.sourceId().equals("printed-expression-word")
-                                                && e.printedText()
-                                                        .matches(
-                                                                "(?i)\\s*(?:[mpf]{1,3}\\s+)?faster\\s*[-.!]*\\s*"));
+                                                && FASTER.matcher(e.printedText()).matches());
     }
 
     private static boolean gradual(Kind kind) {
         return kind == Kind.ACCELERANDO || kind == Kind.RITARDANDO || kind == Kind.RALLENTANDO;
+    }
+
+    private record SpanQuery(PrintedDashSpan.WordBox word, int system) {}
+
+    private static SpanQuery query(PlayingTechniqueDetector.Word word, int system) {
+        return new SpanQuery(
+                new PrintedDashSpan.WordBox(word.left(), word.right(), word.top(), word.bottom()),
+                system);
     }
 
     private static boolean competingClaim(
@@ -268,38 +272,40 @@ final class PrintedTempoSpans {
             PrintedDashSpan.Span span,
             ScorePageInterpretation score,
             List<PlayingTechniqueDetector.Word> words,
-            List<PrintedDashChains.Run> runs,
-            List<PrintedDashSpan.SystemBand> systems,
-            List<PrintedDashSpan.SystemBand> printed,
             int[] row,
-            float gx,
-            float gy) {
+            java.util.function.Function<SpanQuery, Optional<PrintedDashSpan.Span>> follow,
+            Map<ScoreExpressiveEvent, Claim> competingEvidence) {
         for (var event : score.expressiveEvents()) {
-            if (event == source || (!gradual(event.kind()) && !bareFaster(event))) continue;
-            var measure = ScoreExpressionDetector.measureOf(event);
-            if (measure.isEmpty() || measure.getAsInt() >= row.length) continue;
+            if (event == source) continue;
+            Claim claim = competingEvidence.get(event);
+            if (claim == null && !competingEvidence.containsKey(event)) {
+                claim = claim(event, row);
+                competingEvidence.put(event, claim);
+            }
+            if (claim == null) continue;
             for (var word : words) {
-                if (event.evidence().stream()
-                        .noneMatch(
-                                e ->
-                                        e.sourceId().equals("printed-expression-word")
-                                                && e.printedText().equals(word.text()))) continue;
-                var competing =
-                        PrintedDashSpan.follow(
-                                runs,
-                                systems,
-                                new PrintedDashSpan.WordBox(
-                                        word.left(), word.right(), word.top(), word.bottom()),
-                                gx,
-                                gy,
-                                printed,
-                                row[measure.getAsInt()]);
+                if (!claim.texts().contains(word.text())) continue;
+                var competing = follow.apply(query(word, claim.system()));
                 if (competing.isPresent()
                         && competing.get().runs().stream().anyMatch(span.runs()::contains))
                     return true;
             }
         }
         return false;
+    }
+
+    private record Claim(int system, Set<String> texts) {}
+
+    private static Claim claim(ScoreExpressiveEvent event, int[] row) {
+        if (!gradual(event.kind()) && !bareFaster(event)) return null;
+        var measure = ScoreExpressionDetector.measureOf(event);
+        if (measure.isEmpty() || measure.getAsInt() >= row.length) return null;
+        var sourceTexts = new HashSet<String>();
+        for (var evidence : event.evidence())
+            if (evidence.sourceId().equals("printed-expression-word"))
+                sourceTexts.add(evidence.printedText());
+        if (sourceTexts.isEmpty()) return null;
+        return new Claim(row[measure.getAsInt()], sourceTexts);
     }
 
     // Measure rectangles include engraving gutters. Only complete independently
@@ -325,7 +331,7 @@ final class PrintedTempoSpans {
             float minX = Float.POSITIVE_INFINITY, maxX = Float.NEGATIVE_INFINITY;
             float bottoms = 0, gaps = 0;
             int witnesses = 0;
-            for (float part : new float[] {.125f, .25f, .375f, .5f, .625f, .75f, .875f}) {
+            for (float part : STAFF_PROBE_FRACTIONS) {
                 float x = (system.left() + (system.right() - system.left()) * part) * width;
                 var found =
                         PrintedDirectionStaff.printedRules(
