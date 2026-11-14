@@ -264,6 +264,10 @@ public final class SheetInterpreter {
         measures =
                 PrintedMeasureRhythmGuard.reconcile(
                         rawMeasures, measures, labels, gray, width, height);
+        var tripleRuns =
+                MidstaffSixteenthTripleBars.recover(
+                        measures, labels, gray, annotationGray, width, height);
+        measures = tripleRuns.measures();
         recognizedRests.reindexed(measures);
         int firstMeasureNumber = MeasureNumberReconciler.firstMeasureNumber(measures, numbers);
         if (firstMeasureNumber == 0 && ocr != null)
@@ -279,6 +283,7 @@ public final class SheetInterpreter {
                         score, measures, labels, gray, width, height, recognizedRests);
         var noteOwners = MeterNumeralWholeNoteAlias.remove(
                 score.notes(), measures, labels, gray, annotationGray, width, height);
+        noteOwners = tripleRuns.retain(noteOwners, labels, gray, annotationGray, width, height);
         var rhythm =
                 TripletRhythmDetector.withRests(
                         noteOwners, score.rests(), measures, gray, width, height);
@@ -377,6 +382,9 @@ public final class SheetInterpreter {
         var inferredMeters = ocr != null
                 ? meterEvidence.changes()
                 : MeterFontMatcher.standaloneReadings(labels, gray, width, height, measures, notes);
+        if (tripleRuns.first() >= 0
+                && meters.stream().noneMatch(m -> m.measureIndex() == tripleRuns.first()))
+            meters.add(new ScoreMeterChange(tripleRuns.first(), 3, 4));
         if (!inferredMeters.isEmpty()) {
             var occupiedMeasures = new HashSet<Integer>();
             for (var meter : meters) occupiedMeasures.add(meter.measureIndex());
