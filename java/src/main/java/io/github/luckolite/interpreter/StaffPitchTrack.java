@@ -15,7 +15,7 @@ final class StaffPitchTrack {
     private static final class RuleProjection {
         private static final int MAX_CELLS = 16384;
         char[] prefix;
-        boolean[] ready;
+        int readyFrom = Integer.MAX_VALUE, readyTo = -1;
         int[] strength, semanticShifts;
         int firstRow, left, stride, excludedFrom, excludedTo;
         boolean prepared;
@@ -31,32 +31,47 @@ final class StaffPitchTrack {
             long cells = (long) rows * stride;
             if (rows <= 0 || stride < 2 || cells > MAX_CELLS) return;
             prefix = new char[(int) cells];
-            ready = new boolean[rows];
         }
 
         void accumulate(byte[] gray, int width, int start, int end, int shift, int top,
                 int from, int to, int flankOffset, int threshold, int[] strength) {
-            int index = start + shift - firstRow;
-            int at = (start + shift) * width + left;
-            int fromOffset = from - left;
-            int toOffset = to - left + 1;
-            for (int y = start, base = index * stride; y <= end;
-                    y++, index++, base += stride, at += width) {
-                if (!ready[index]) {
-                    int count = 0;
-                    int pixel = at;
-                    int out = base + 1;
-                    if (excludedFrom <= excludedTo) {
-                        count = fill(gray, pixel, out, base + excludedFrom, flankOffset, threshold, 0);
-                        // Queries never cross the excluded span.
-                        prefix[base + excludedTo] = (char) count;
-                        out = base + excludedTo + 1;
-                        pixel += excludedTo;
-                    }
-                    fill(gray, pixel, out, base + stride, flankOffset, threshold, count);
-                    ready[index] = true;
+            if (start > end) return;
+            int first = start + shift - firstRow, last = end + shift - firstRow;
+            if (first < readyFrom || last > readyTo) {
+                if (readyTo < 0) {
+                    populate(gray, width, first, last, flankOffset, threshold);
+                } else {
+                    populate(gray, width, first, readyFrom - 1, flankOffset, threshold);
+                    populate(gray, width, readyTo + 1, last, flankOffset, threshold);
                 }
-                strength[y - top] += prefix[base + toOffset] - prefix[base + fromOffset];
+                readyFrom = Math.min(readyFrom, first);
+                readyTo = Math.max(readyTo, last);
+            }
+            int base = first * stride;
+            int fromIndex = base + from - left, toIndex = base + to - left + 1;
+            for (int row = start - top, lastRow = end - top; row <= lastRow;
+                    row++, fromIndex += stride, toIndex += stride) {
+                strength[row] += prefix[toIndex] - prefix[fromIndex];
+            }
+        }
+
+        // Deskew moves the same physical row interval by a few pixels per trial.
+        private void populate(byte[] gray, int width, int first, int last, int flankOffset,
+                int threshold) {
+            int at = (firstRow + first) * width + left;
+            for (int row = first, base = first * stride; row <= last;
+                    row++, base += stride, at += width) {
+                int count = 0;
+                int pixel = at;
+                int out = base + 1;
+                if (excludedFrom <= excludedTo) {
+                    count = fill(gray, pixel, out, base + excludedFrom, flankOffset, threshold, 0);
+                    // Queries never cross the excluded span.
+                    prefix[base + excludedTo] = (char) count;
+                    out = base + excludedTo + 1;
+                    pixel += excludedTo;
+                }
+                fill(gray, pixel, out, base + stride, flankOffset, threshold, count);
             }
         }
 
@@ -999,7 +1014,7 @@ final class StaffPitchTrack {
                     (int) Math.min(height - 1 - flank, (long) lastScanY + padding),
                     excludedLeft, excludedRight);
         }
-        boolean cached = projection != null && projection.ready != null;
+        boolean cached = projection != null && projection.prefix != null;
         for (int xx = left; xx <= right; ) {
             if (xx >= excludedLeft && xx <= excludedRight) {
                 if (excludedRight >= right) break;

@@ -1640,6 +1640,21 @@ final class NoteArticulationDetector {
                 gray);
     }
 
+    private static final class GlyphFloodScratch {
+        private final int limit;
+        private int[] queue;
+
+        GlyphFloodScratch(int limit) {
+            this.limit = limit;
+            queue = new int[Math.min(256, limit)];
+        }
+
+        int[] grow(int size) {
+            queue = Arrays.copyOf(queue, size + Math.min(size, limit - size));
+            return queue;
+        }
+    }
+
     private static int[] detectWithWordBodies(
             byte[] labels,
             byte[] gray,
@@ -1660,7 +1675,8 @@ final class NoteArticulationDetector {
         boolean raw = gray != null && gray.length == labels.length;
         java.util.BitSet octaveDashInk = null;
         boolean[] seen = new boolean[labels.length];
-        int[] queue = new int[labels.length];
+        GlyphFloodScratch scratch = new GlyphFloodScratch(labels.length);
+        int[] queue = scratch.queue;
         List<Glyph> glyphs = new ArrayList<>();
         java.util.IdentityHashMap<Glyph, Integer> joinedOwners = new java.util.IdentityHashMap<>();
         java.util.Set<Glyph> provedJoinedAccents =
@@ -1668,13 +1684,13 @@ final class NoteArticulationDetector {
         SlurEndpointAccents.Work accentWork = new SlurEndpointAccents.Work();
         List<Anchor> accentFrames = null;
         for (int p = 0; p < labels.length; p++) {
-            if (!ink(labels, gray, p, raw) || seen[p]) continue;
+            if (seen[p] || !ink(labels, gray, p, raw)) continue;
             int start = 0, end = 1;
             queue[0] = p;
             seen[p] = true;
             int left = p % width, right = left, top = p / width, bottom = top;
             while (start < end) {
-                int point = queue[start++], x = point % width, y = point / width;
+                int point = queue[start++], y = point / width, x = point - y * width;
                 left = Math.min(left, x);
                 right = Math.max(right, x);
                 top = Math.min(top, y);
@@ -1686,6 +1702,8 @@ final class NoteArticulationDetector {
                     for (int next = row + firstX; next <= row + lastX; next++) {
                         if (!seen[next] && ink(labels, gray, next, raw)) {
                             seen[next] = true;
+                            if (end == queue.length)
+                                queue = scratch.grow(end);
                             queue[end++] = next;
                         }
                     }
@@ -1743,20 +1761,25 @@ final class NoteArticulationDetector {
         }
         List<Glyph> faintAccents =
                 new ArrayList<>(
-                        raw ? faintAccentGlyphs(gray, width, height, seen, queue) : List.of());
+                        raw ? faintAccentGlyphs(gray, width, height, seen, scratch) : List.of());
+        float paperGap = raw ? medianArticulationGap(notes) : Float.NaN;
+        RestPaperTone.Estimate paperEstimate =
+                RestPaperTone.estimate(raw ? gray : null, width, height, paperGap);
+        byte[] strongPaper = paperEstimate == null ? gray : paperEstimate.normalize(340f);
         SoftMarks softMarks =
-                raw
-                        ? softShadedDirectionBodies(gray, width, height, notes, seen, queue)
-                        : new SoftMarks(List.of(), List.of());
+                paperEstimate == null
+                        ? new SoftMarks(List.of(), List.of())
+                        : softShadedDirectionBodies(gray, paperEstimate.normalize(220f), strongPaper,
+                                width, height, paperGap, seen, scratch);
+        if (strongPaper != gray)
+            faintAccents.addAll(shadedAccentGlyphs(gray, strongPaper, width, height, seen, scratch));
         List<Glyph> softFaintAccents = softMarks.accents;
-        if (raw) {
-            faintAccents.addAll(shadedAccentGlyphs(gray, width, height, notes, seen, queue));
-            faintAccents.addAll(softFaintAccents);
-        }
+        faintAccents.addAll(softFaintAccents);
         List<Glyph> originalGlyphs = List.copyOf(glyphs);
         List<Glyph> paperCandidates =
-                new ArrayList<>(
-                        raw ? paperGlyphs(gray, width, height, notes, seen, queue) : List.of());
+                strongPaper == gray
+                        ? new ArrayList<>()
+                        : paperGlyphs(gray, strongPaper, width, height, seen, scratch);
         paperCandidates.addAll(softMarks.peaks);
         glyphs.addAll(paperCandidates);
         List<Glyph> candidates = new ArrayList<>(faintAccents), claimedAccents = new ArrayList<>();
@@ -4014,18 +4037,12 @@ final class NoteArticulationDetector {
     /** Recover detached dark bodies when photographed paper joined the raw component.
      * Original components and all later shape, notation and ownership proofs remain in force. */
     private static List<Glyph> paperGlyphs(
-            byte[] gray, int width, int height, List<Anchor> notes, boolean[] seen, int[] queue) {
-        float[] gaps = new float[notes.size()];
-        int valid = 0;
-        for (Anchor note : notes)
-            if (Float.isFinite(note.gap) && note.gap > 0) gaps[valid++] = note.gap;
-        if (valid == 0) return List.of();
-        java.util.Arrays.sort(gaps, 0, valid);
-        byte[] normalized = RestPaperTone.normalize(gray, width, height, gaps[valid / 2]);
-        if (normalized == gray) return List.of();
+            byte[] gray, byte[] normalized, int width, int height,
+            boolean[] seen, GlyphFloodScratch scratch) {
+        int[] queue = scratch.queue;
         java.util.Arrays.fill(seen, false);
         List<Glyph> result = new ArrayList<>();
-        for (int seed = 0; seed < gray.length; seed++) {
+        for (int seed = 0; seed < normalized.length; seed++) {
             if (seen[seed] || (normalized[seed] & 255) >= 200) continue;
             int read = 0, size = 1;
             queue[0] = seed;
@@ -4044,6 +4061,7 @@ final class NoteArticulationDetector {
                         int next = ny * width + nx;
                         if (!seen[next] && (normalized[next] & 255) < 200) {
                             seen[next] = true;
+                            if (size == queue.length) queue = scratch.grow(size);
                             queue[size++] = next;
                         }
                     }
@@ -5770,16 +5788,9 @@ final class NoteArticulationDetector {
 
     /** Complete chevron recovery may retain a pale bridge on darker photographed paper. */
     private static List<Glyph> shadedAccentGlyphs(
-            byte[] gray, int width, int height, List<Anchor> notes, boolean[] seen, int[] queue) {
-        float[] gaps = new float[notes.size()];
-        int n = 0;
-        for (Anchor a : notes) if (Float.isFinite(a.gap) && a.gap > 0) gaps[n++] = a.gap;
-        if (n == 0) return List.of();
-        java.util.Arrays.sort(gaps, 0, n);
-        byte[] paper = RestPaperTone.normalize(gray, width, height, gaps[n / 2]);
-        if (paper == gray) return List.of();
+            byte[] gray, byte[] paper, int width, int height, boolean[] seen, GlyphFloodScratch scratch) {
         List<Glyph> result = new ArrayList<>();
-        for (Glyph glyph : faintAccentGlyphs(paper, width, height, seen, queue, 235, 200)) {
+        for (Glyph glyph : faintAccentGlyphs(paper, width, height, seen, scratch, 235, 200)) {
             int pad =
                     Math.max(
                             3,
@@ -5810,22 +5821,22 @@ final class NoteArticulationDetector {
 
     private record SoftMarks(List<Glyph> accents, List<Glyph> peaks) {}
 
-    /** Soft paper retains complete chevrons and carets without widening their meaning. */
-    private static SoftMarks softShadedDirectionBodies(
-            byte[] gray, int width, int height, List<Anchor> notes, boolean[] seen, int[] queue) {
+    private static float medianArticulationGap(List<Anchor> notes) {
         float[] gaps = new float[notes.size()];
         int n = 0;
         for (Anchor note : notes)
             if (Float.isFinite(note.gap) && note.gap > 0) gaps[n++] = note.gap;
-        if (n == 0) return new SoftMarks(List.of(), List.of());
-        java.util.Arrays.sort(gaps, 0, n);
-        float gap = gaps[n / 2];
-        var estimate = RestPaperTone.estimate(gray, width, height, gap);
-        if (estimate == null) return new SoftMarks(List.of(), List.of());
-        // Shape connectivity and dark seed evidence use distinct tones from the same paper estimate.
-        byte[] paper = estimate.normalize(220f);
-        byte[] seedInk = estimate.normalize(340f);
+        if (n == 0) return Float.NaN;
+        Arrays.sort(gaps, 0, n);
+        return gaps[n / 2];
+    }
+
+    /** Soft paper retains complete chevrons and carets without widening their meaning. */
+    private static SoftMarks softShadedDirectionBodies(
+            byte[] gray, byte[] paper, byte[] seedInk, int width, int height, float gap,
+            boolean[] seen, GlyphFloodScratch scratch) {
         List<Glyph> accents = new ArrayList<>(), peaks = new ArrayList<>();
+        int[] queue = scratch.queue;
         java.util.Arrays.fill(seen, false);
         for (int seed = 0; seed < paper.length; seed++) {
             if (seen[seed] || (paper[seed] & 255) >= 185) continue;
@@ -5854,6 +5865,7 @@ final class NoteArticulationDetector {
                         int next = ny * width + nx;
                         if (!seen[next] && (paper[next] & 255) < 185) {
                             seen[next] = true;
+                            if (size == queue.length) queue = scratch.grow(size);
                             queue[size++] = next;
                         }
                     }
@@ -5958,18 +5970,18 @@ final class NoteArticulationDetector {
 
     /** Recover only complete open chevrons; pale ink never becomes a dot or dash. */
     private static List<Glyph> faintAccentGlyphs(
-            byte[] gray, int width, int height, boolean[] seen, int[] queue) {
-        return faintAccentGlyphs(gray, width, height, seen, queue, 185, 155);
+            byte[] gray, int width, int height, boolean[] seen, GlyphFloodScratch scratch) {
+        return faintAccentGlyphs(gray, width, height, seen, scratch, 185, 155);
     }
 
     private static List<Glyph> faintAccentGlyphs(
             byte[] gray,
             int width,
             int height,
-            boolean[] seen,
-            int[] queue,
+            boolean[] seen, GlyphFloodScratch scratch,
             int threshold,
             int darkThreshold) {
+        int[] queue = scratch.queue;
         java.util.Arrays.fill(seen, false);
         List<Glyph> result = new ArrayList<>();
         for (int p = 0; p < gray.length; p++) {
@@ -5992,6 +6004,7 @@ final class NoteArticulationDetector {
                         int next = ny * width + nx;
                         if (!seen[next] && (gray[next] & 255) < threshold) {
                             seen[next] = true;
+                            if (end == queue.length) queue = scratch.grow(end);
                             queue[end++] = next;
                         }
                     }

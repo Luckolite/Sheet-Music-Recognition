@@ -640,6 +640,18 @@ final class MaximalRawBarExtractor {
         int activeCount = 0;
         for (int at = 0; at < laneWidth; at++)
             if (runCounts[at] != 0) activeColumns[activeCount++] = at;
+        if (!joined && activeCount == 0) {
+            // Empty intercepts only charge their lane width; preserve the exact refusal point.
+            long intercepts = (long) (lane.bottom - lane.top + 1) * 24;
+            long affordable = Math.min(intercepts, (workBudget - work) / laneWidth);
+            work += affordable * laneWidth;
+            if (affordable < intercepts)
+                return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), work);
+            // The final alias pass has no candidates and charges zero work.
+            return new Discovery(Status.CANDIDATES, List.of(), work);
+        }
+        int scanLeft = joined ? lane.left : lane.left + activeColumns[0];
+        int scanRight = joined ? lane.right : lane.left + activeColumns[activeCount - 1];
         int maxSectionWidth = joined ? 2 * maxWidth : maxWidth;
         int[] firstSplit = joined ? new int[laneWidth] : null;
         long[] remaining = joined ? new long[1] : null;
@@ -649,8 +661,10 @@ final class MaximalRawBarExtractor {
             if (tick == 0 || Math.abs(tick) < 2) continue;
             double slope = tick * .05;
             double norm = Math.sqrt(1 + slope * slope);
-            for (int column = 0; column < laneWidth; column++)
+            for (int index = 0; index < activeCount; index++) {
+                int column = activeColumns[index];
                 offsets[column] = slope * (lane.left + column - mid);
+            }
             java.util.Arrays.fill(firstRun, 0);
             if (joined) java.util.Arrays.fill(firstSplit, 0);
             for (int intercept = lane.top; intercept <= lane.bottom; intercept++) {
@@ -759,11 +773,12 @@ final class MaximalRawBarExtractor {
                         return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), workBudget);
                     if (!admitted) continue;
                 }
-                int x = lane.left;
-                while (x <= lane.right) {
-                    while (x <= lane.right && widths[x - lane.left] == 0) x++;
+                int x = scanLeft;
+                int lastSectionX = scanRight;
+                while (x <= lastSectionX) {
+                    while (x <= lastSectionX && widths[x - lane.left] == 0) x++;
                     int first = x;
-                    while (x <= lane.right && widths[x - lane.left] > 0) x++;
+                    while (x <= lastSectionX && widths[x - lane.left] > 0) x++;
                     int last = x - 1;
                     if (last - first + 1 < minLength) continue;
                     // Every interior column in this contiguous run has positive width.
