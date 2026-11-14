@@ -273,6 +273,83 @@ final class TripletRhythmDetector {
         return result;
     }
 
+    /** A complete ordinary 4/4 bar can disambiguate a numeral over its final dyads. */
+    static List<ScoreNoteEvent> ordinarySixteenthDyadBars(
+            List<ScoreNoteEvent> notes, List<ScoreRestEvent> rests, List<MeasureRegion> measures,
+            List<ScoreMeterChange> meters, byte[] gray, int width, int height) {
+        if (meters.isEmpty()) return notes;
+        var groups = onsets(notes);
+        ArrayList<ScoreNoteEvent> revised = null;
+        for (int begin = 0; begin < groups.size();) {
+            var first = notes.get(groups.get(begin).indices().get(0));
+            int bar = first.measureIndex();
+            int end = begin + 1;
+            while (end < groups.size() && notes.get(groups.get(end).indices().get(0)).measureIndex() == bar)
+                end++;
+            if (end - begin == 16 && first.staffCount() == 1 && bar >= 0 && bar < measures.size()
+                    && rests.stream().noneMatch(rest -> rest.measureIndex() == bar)
+                    && meterAt(meters, bar).filter(m -> m.numerator() == 4 && m.denominator() == 4).isPresent()
+                    && completeOrdinaryDyads(notes, groups.subList(begin, end), measures, measures.get(bar),
+                            gray, width, height)) {
+                if (revised == null) revised = new ArrayList<>(notes);
+                for (int i = end - 3; i < end; i++)
+                    for (int owner : groups.get(i).indices())
+                        revised.set(owner, notes.get(owner).withTupletRatio(1, 1));
+            }
+            begin = end;
+        }
+        return revised == null ? notes : revised;
+    }
+
+    private static boolean completeOrdinaryDyads(List<ScoreNoteEvent> notes, List<Onset> groups,
+            List<MeasureRegion> measures, MeasureRegion bar, byte[] gray, int width, int height) {
+        if (bar.cadenceQuarterBeats() != 0) return false;
+        float gap = (bar.bottom() - bar.top()) * height / 8;
+        float left = bar.left() * width, span = (bar.right() - bar.left()) * width;
+        for (int i = 0; i < groups.size(); i++) {
+            var indices = groups.get(i).indices();
+            if (indices.size() != 2) return false;
+            int ratio = i < 13 ? 1 : 3;
+            int stem = notes.get(groups.get(i / 4 * 4).indices().get(0)).stemDirection();
+            if (stem == 0) return false;
+            for (int index : indices) {
+                var note = notes.get(index);
+                if (note.staffIndex() != 0 || note.staffCount() != 1 || note.kind() != ScoreNoteEvent.Kind.PITCHED
+                        || note.visualSize() != ScoreNoteEvent.VisualSize.FULL || note.beamCount() != 2
+                        || note.tupletDivisor() != ratio || note.tupletNormalNotes() != (ratio == 1 ? 1 : 2)
+                        || note.augmentationDots() != 0 || note.unbeamedDurationBeats() != 0
+                        || note.stemDirection() != stem || note.tiedFromPrevious() || note.boundaryTies() != 0
+                        || note.crossStaffBeam() || note.leadingRestBeats() != 0 || note.followingRestBeats() != 0
+                        || note.harmonicSemitones() != 0 || note.openStringTouch() != null
+                        || (note.articulations() & NoteOrnament.GRACE) != 0) return false;
+            }
+        }
+        float x1 = left + groups.get(13).position() * span;
+        float x2 = left + groups.get(14).position() * span;
+        float x3 = left + groups.get(15).position() * span;
+        float y1 = (float) groups.subList(13, 16).stream().mapToDouble(Onset::top).min().orElseThrow() * height;
+        float y2 = (float) groups.subList(13, 16).stream().mapToDouble(Onset::bottom).max().orElseThrow() * height;
+        var first = notes.get(groups.get(13).indices().get(0));
+        var digit = findOwnedNumeral(gray, width, height, x1, x3, y1, y2, gap, true,
+                Float.NaN, Float.NaN, 3, true, false, first, notes, bar, measures);
+        if (digit == null || Math.abs((digit.left() + digit.right()) * .5f - x2) > gap * .30f
+                || bracketArm(gray, width, height, Math.round(x1 - gap * .3f), digit.left() - 2,
+                            digit.top(), digit.bottom(), gap * .25f)
+                        && bracketArm(gray, width, height, digit.right() + 2, Math.round(x3 + gap * .3f),
+                            digit.top(), digit.bottom(), gap * .25f)) return false;
+        for (int start = 0; start < groups.size(); start += 4) {
+            var heads = new ClosedFourDyadBeam.Head[4];
+            for (int j = 0; j < heads.length; j++) {
+                var onset = groups.get(start + j);
+                heads[j] = new ClosedFourDyadBeam.Head(left + onset.position() * span,
+                        onset.top() * height, onset.bottom() * height);
+            }
+            int stem = notes.get(groups.get(start).indices().get(0)).stemDirection();
+            if (!ClosedFourDyadBeam.proves(gray, width, height, heads, gap, -stem)) return false;
+        }
+        return true;
+    }
+
     private static boolean sameVoice(ScoreNoteEvent a, ScoreNoteEvent b) {
         return a.measureIndex() == b.measureIndex()
                 && a.staffIndex() == b.staffIndex()
