@@ -34,6 +34,18 @@ final class RestVerticalWave {
             return false;
         int first = Math.max(0, Math.round(top - gap * 3)),
                 last = Math.min(height - 1, Math.round(bottom + gap * 3));
+        int ruleLeft = Math.round(left - gap), ruleRight = Math.round(right + gap);
+        boolean hasRuleFlanks =
+                left - gap >= 0 && right + gap < width && ruleLeft >= 0 && ruleRight < width;
+        int blankLimit = Math.max(1, Math.round(gap * .3f));
+        float excursion = Math.max(1.5f, gap * .12f);
+        // Keep the budgeted traversal and its charges intact.
+        boolean unmeteredRaster =
+                quarterBudget == null && width > 0 && height > 0 && (long) width * height == gray.length;
+        float latestStart = top + gap * .3f;
+        float earliestEnd = bottom - gap * .3f;
+        float minimumLength = gap * 3.7f;
+        if (unmeteredRaster && last - first < minimumLength) return false;
         int runStart = -1, runEnd = -1, blank = 0, turns = 0, direction = 0;
         float extreme = Float.NaN;
         {
@@ -42,16 +54,21 @@ final class RestVerticalWave {
                 if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
 
                 int x0 = -1, x1 = -1;
-                int ruleLeft = Math.round(left - gap), ruleRight = Math.round(right + gap);
                 boolean rule =
-                        left - gap >= 0
-                                && right + gap < width
-                                && ruleLeft >= 0
-                                && ruleRight < width
+                        hasRuleFlanks
                                 && dark(gray, width, ruleLeft, y, quarterBudget)
                                 && dark(gray, width, ruleRight, y, quarterBudget);
                 if (rule) continue;
-                {
+                if (unmeteredRaster) {
+                    int row = y * width;
+                    int firstInk = left;
+                    while (firstInk <= right && (gray[row + firstInk] & 255) >= 150) firstInk++;
+                    if (firstInk <= right) {
+                        x0 = firstInk;
+                        x1 = right;
+                        while (x1 > x0 && (gray[row + x1] & 255) >= 150) x1--;
+                    }
+                } else {
                     if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
                     for (int x = left; x <= right; x++) {
                         if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
@@ -63,9 +80,10 @@ final class RestVerticalWave {
                 }
 
                 if (x0 < 0) {
-                    if (++blank > Math.max(1, Math.round(gap * .3f))) {
+                    if (++blank > blankLimit) {
                         if (valid(runStart, runEnd, turns, top, bottom, gap, quarterBudget))
                             return true;
+                        if (unmeteredRaster && y > latestStart) return false;
                         runStart = -1;
                         runEnd = -1;
                         turns = 0;
@@ -77,7 +95,7 @@ final class RestVerticalWave {
                 blank = 0;
                 if (runStart < 0) runStart = y;
                 runEnd = y;
-                float center = (x0 + x1) * .5f, excursion = Math.max(1.5f, gap * .12f);
+                float center = (x0 + x1) * .5f;
                 if (Float.isNaN(extreme)) {
                     extreme = center;
                     continue;
@@ -93,6 +111,11 @@ final class RestVerticalWave {
                     direction = -direction;
                     extreme = center;
                 }
+                if (unmeteredRaster
+                        && turns >= 5
+                        && runStart <= latestStart
+                        && runEnd >= earliestEnd
+                        && runEnd - runStart >= minimumLength) return true;
             }
         }
 

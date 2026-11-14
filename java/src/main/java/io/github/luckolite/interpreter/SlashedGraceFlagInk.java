@@ -2,8 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.github.luckolite.interpreter;
 
-import java.util.*;
-
 /** Separates descending grace flags from the oppositely sloping acciaccatura slash. */
 final class SlashedGraceFlagInk {
     private SlashedGraceFlagInk() {}
@@ -61,28 +59,30 @@ final class SlashedGraceFlagInk {
             int threshold,
             float gap,
             boolean[] rules) {
-        float[] slopes = null;
+        int maxRootSpacing = Math.max(2, Math.round(gap * .16f));
+        int span = right - left;
         for (float contrast : new float[] {.8f, 1f}) {
             int th = Math.round(threshold * contrast);
-            var roots = new ArrayList<Integer>();
+            int bands = 0, previous = -1;
             boolean slash = false;
             for (int y = top; y <= bottom; y++) {
                 boolean down = false;
-                if (slopes == null) slopes = new float[] {.75f, 1f, 1.25f, 1.5f, 1.75f, 2f};
-                for (float slope : slopes) {
-                    if (y + (right - left) * slope <= bottom)
-                        down |= line(gray, width, height, left, right, y, slope, th, rules);
-                    slash |= line(gray, width, height, left, right, y, -slope, th, rules);
+                for (float slope = .75f; slope <= 2f; slope += .25f) {
+                    if (!down && y + span * slope <= bottom) {
+                        down = line(gray, width, height, left, right, y, slope, th, rules);
+                    }
+                    if (!slash) {
+                        slash = line(gray, width, height, left, right, y, -slope, th, rules);
+                    }
+                    if (down && slash) break;
                 }
-                if (down) roots.add(y);
+                if (down) {
+                    if (bands == 0 || y - previous > maxRootSpacing) bands++;
+                    if (bands > 3) break;
+                    previous = y;
+                }
             }
-            if (!slash || roots.isEmpty()) continue;
-            int bands = 1, previous = roots.get(0);
-            for (int y : roots) {
-                if (y - previous > Math.max(2, Math.round(gap * .16f))) bands++;
-                previous = y;
-            }
-            if (bands > 0 && bands <= 3) return bands;
+            if (slash && bands > 0 && bands <= 3) return bands;
         }
         return 0;
     }
@@ -97,17 +97,17 @@ final class SlashedGraceFlagInk {
             float slope,
             int threshold,
             boolean[] rules) {
-        int hits = 0, total = 0;
+        int misses = 0, total = Math.max(0, right - left + 1);
+        float minimum = total * .90f;
         for (int x = left; x <= right; x++) {
             int yy = Math.round(y + (x - left) * slope);
             if (yy < 1 || yy >= height - 1) return false;
-            total++;
             boolean hit = false;
-            for (int dy = -1; dy <= 1; dy++)
+            for (int dy = -1; dy <= 1 && !hit; dy++)
                 if ((rules == null || !rules[yy + dy])
                         && (gray[(yy + dy) * width + x] & 255) < threshold) hit = true;
-            if (hit) hits++;
+            if (!hit && total - ++misses < minimum) return false;
         }
-        return hits >= total * .90f;
+        return true;
     }
 }

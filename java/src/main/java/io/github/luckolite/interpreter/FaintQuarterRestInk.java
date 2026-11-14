@@ -275,6 +275,15 @@ final class FaintQuarterRestInk {
             long area = (long) w * h;
             // Fixed local arrays, cardinal samples, crossing scans, flood and closure census.
             if (!budget.prepay(128 * area + 256L * h + 512, 6 * area + 16L * h + 512)) return null;
+            // Explicit paper at the crop boundary; unclassified gray is not paper.
+            for (int y = first; y <= last; y++)
+                if (!rules[y]) {
+                    if ((raw[y * width + left] & 255) < 230 || (raw[y * width + right] & 255) < 230)
+                        return null;
+                    if (y == first || y == last)
+                        for (int x = left; x <= right; x++)
+                            if ((raw[y * width + x] & 255) < 230) return null;
+                }
             byte[] support = new byte[(int) area];
             byte[] crossing = new byte[(int) area];
             int[] queue = new int[(int) area];
@@ -316,15 +325,6 @@ final class FaintQuarterRestInk {
                     if ((raw[y * width + x] & 255) < 230) support[(y - first) * w + x - left] = 1;
                 }
             }
-            // Explicit paper at the crop boundary; unclassified gray is not paper.
-            for (int y = first; y <= last; y++)
-                if (!rules[y]) {
-                    if ((raw[y * width + left] & 255) < 230 || (raw[y * width + right] & 255) < 230)
-                        return null;
-                    if (y == first || y == last)
-                        for (int x = left; x <= right; x++)
-                            if ((raw[y * width + x] & 255) < 230) return null;
-                }
             // Every admitted rule-band fragment must connect both unique approach spans.
             for (int y = first; y <= last; y++)
                 if (rules[y]) {
@@ -502,15 +502,7 @@ final class FaintQuarterRestInk {
                     y <= Math.min(height - 1, (int) Math.ceil(center + gap * .35f));
                     y++) {
                 if (Math.abs(y - center) > gap * .35f) continue;
-                int total = 0, run = 0, longest = 0;
-                for (int x = 0; x < width; x++) {
-                    if ((raw[y * width + x] & 255) < 230) {
-                        total++;
-                        run++;
-                        longest = Math.max(longest, run);
-                    } else run = 0;
-                }
-                boolean rule = total > width * .25f || longest >= gap * 5;
+                boolean rule = printedRuleRow(raw, y * width, width, gap);
                 if (rule && ended) return null;
                 if (rule) found = true;
                 else if (found) ended = true;
@@ -518,6 +510,23 @@ final class FaintQuarterRestInk {
             }
         }
         return new Scan(raw, width, height, top, bottom, gap, rules, budget);
+    }
+
+    private static boolean printedRuleRow(byte[] raw, int start, int width, float gap) {
+        int required = width / 4 + 1;
+        int requiredRun = (int) Math.ceil(gap * 5);
+        int end = start + width, at = start;
+        while (at < end) {
+            while (at < end && (raw[at] & 255) >= 230) at++;
+            int first = at;
+            int stop = at + Math.min(end - at, Math.min(required, requiredRun));
+            while (at < stop && (raw[at] & 255) < 230) at++;
+            int count = at - first;
+            if (count >= requiredRun || count >= required) return true;
+            required -= count;
+            at++;
+        }
+        return false;
     }
 
     /** Shape-classification material only. Physical frame, rest and rivals remain caller gates. */
