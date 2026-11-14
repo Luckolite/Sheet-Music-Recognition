@@ -332,6 +332,8 @@ final class CompactQuarterRestContour {
         double start = average(smooth, 0, Math.max(1, n / 10), quarterBudget);
         double foot = average(smooth, n - Math.max(2, n / 12), n, quarterBudget);
         double lateFoot = average(smooth, n - 2, n, quarterBudget);
+        if (quarterBudget == null)
+            return matchesHook(smooth, gap, gap, start, foot, lateFoot, .22);
         {
             if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
             for (int first = (int) (n * .22); first <= n * .40; first++) {
@@ -443,6 +445,8 @@ final class CompactQuarterRestContour {
         double start = average(smooth, 0, Math.max(1, n / 10), quarterBudget);
         double foot = average(smooth, n - Math.max(2, n / 12), n, quarterBudget);
         double lateFoot = average(smooth, n - 2, n, quarterBudget);
+        if (quarterBudget == null)
+            return matchesHook(smooth, gap, horizontal, start, foot, lateFoot, .15);
         {
             if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
             for (int first = (int) (n * .15); first <= n * .40; first++) {
@@ -497,6 +501,58 @@ final class CompactQuarterRestContour {
         }
 
         return false;
+    }
+
+    private static boolean matchesHook(
+            double[] rows, float gap, double horizontal, double start,
+            double foot, double lateFoot, double firstPhase) {
+        int n = rows.length;
+        int spacing = Math.max(3, Math.round(gap * .25f));
+        int firstStart = (int) (n * firstPhase);
+        int lastLate = Math.min((int) (n * .93), n - (int) Math.ceil(gap * .25f));
+        int lastEarly = Math.min(lastLate, n - (int) Math.ceil(gap * .65f));
+        int firstLate = (int) Math.ceil(n * .80);
+        int lastHook = lastLate >= firstLate ? lastLate : lastEarly;
+        if (2L * spacing > lastHook - 2L - firstStart) return false;
+        int firstSecond = firstStart + 2 * spacing;
+        int lastSecond = Math.min((int) (n * .73), lastHook - 2);
+        if (firstSecond > lastSecond) return false;
+        int[] latestHooks = null;
+        for (int first = firstStart; first <= n * .40; first++) {
+            if (rows[first] - start < horizontal * .26) continue;
+            for (int valley = first + spacing; valley <= n * .57; valley++) {
+                if (rows[first] - rows[valley] < horizontal * .20) continue;
+                for (int second = valley + spacing; second <= lastSecond; second++) {
+                    if (rows[second] - rows[valley] < horizontal * .18) continue;
+                    if (latestHooks == null) latestHooks = new int[lastSecond - firstSecond + 1];
+                    int index = second - firstSecond;
+                    int hook = latestHooks[index];
+                    if (hook == 0) {
+                        hook = latestHook(rows, second, horizontal, foot, lateFoot,
+                                firstLate, lastLate, lastEarly);
+                        latestHooks[index] = hook;
+                    }
+                    // The latest valid hook leaves the largest distance from any valley.
+                    if (hook >= 0 && !(hook - valley < gap * .45f)) return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static int latestHook(
+            double[] rows, int second, double horizontal, double foot, double lateFoot,
+            int firstLate, int lastLate, int lastEarly) {
+        int minimum = second + 2;
+        for (int hook = lastLate; hook >= Math.max(minimum, firstLate); hook--) {
+            if (!(rows[second] - rows[hook] < horizontal * .10
+                    || lateFoot - rows[hook] < horizontal * .04)) return hook;
+        }
+        for (int hook = Math.min(lastEarly, firstLate - 1); hook >= minimum; hook--) {
+            if (!(rows[second] - rows[hook] < horizontal * .10
+                    || foot - rows[hook] < horizontal * .09)) return hook;
+        }
+        return -1;
     }
 
     /** Additive overlapping ink can obscure the centre while leaving the full left silhouette. */
@@ -741,6 +797,7 @@ final class CompactQuarterRestContour {
                 || top < 0
                 || bottom >= gray.length / width
                 || bottom < top) return false;
+        if (quarterBudget == null) return connectedInkMask(gray, width, left, right, top, bottom);
         int w = right - left + 1, h = bottom - top + 1, first = -1, ink = 0;
         boolean[] seen =
                 (quarterBudget == null
@@ -814,6 +871,67 @@ final class CompactQuarterRestContour {
         }
 
         return reached == ink;
+    }
+
+    private static boolean connectedInkMask(
+            byte[] gray, int width, int left, int right, int top, int bottom) {
+        int w = right - left + 1, h = bottom - top + 1;
+        int raster = top * width + left;
+        int first = -1, firstY = 0, firstX = 0;
+        for (int y = 0, source = raster; y < h && first < 0; y++, source += width) {
+            for (int x = 0; x < w; x++) {
+                if ((gray[source + x] & 255) >= 170) continue;
+                first = y * w + x;
+                firstY = y;
+                firstX = x;
+                break;
+            }
+        }
+        if (first < 0) return false;
+        boolean[] ink = new boolean[w * h];
+        int remaining = 1;
+        for (int y = firstY, source = raster + firstY * width, row = firstY * w;
+                y < h; y++, source += width, row += w) {
+            int start = y == firstY ? firstX + 1 : 0;
+            for (int x = start; x < w; x++) {
+                if ((gray[source + x] & 255) >= 170) continue;
+                ink[row + x] = true;
+                remaining++;
+            }
+        }
+        if (remaining == 1) return true;
+        int[] pending = new int[Math.min(32, remaining)];
+        int size = 1;
+        pending[0] = first;
+        ink[first] = false;
+        remaining--;
+        while (size > 0) {
+            int at = pending[--size], y = at / w, row = y * w;
+            int start = at - row, end = start;
+            while (start > 0 && ink[row + start - 1]) start--;
+            while (end + 1 < w && ink[row + end + 1]) end++;
+            remaining -= end - start;
+            if (remaining == 0) return true;
+            java.util.Arrays.fill(ink, row + start, row + end + 1, false);
+            int firstNeighbor = Math.max(0, start - 1);
+            int lastNeighbor = Math.min(w - 1, end + 1);
+            for (int step = -1; step <= 1; step += 2) {
+                int nextRow = y + step;
+                if (nextRow < 0 || nextRow >= h) continue;
+                int base = row + step * w;
+                int last = base + lastNeighbor;
+                for (int next = base + firstNeighbor; next <= last; next++) {
+                    if (!ink[next]) continue;
+                    if (--remaining == 0) return true;
+                    ink[next] = false;
+                    if (size == pending.length)
+                        pending = java.util.Arrays.copyOf(pending, size + Math.min(size, ink.length - size));
+                    pending[size++] = next;
+                    while (next < last && ink[next + 1]) next++;
+                }
+            }
+        }
+        return false;
     }
 
     private static boolean observedPair(boolean[] observed, int i) {
