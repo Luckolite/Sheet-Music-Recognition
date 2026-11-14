@@ -64,6 +64,7 @@ final class SourceLocalAccidental {
     private final int width, height, glyphCount, headCount;
     private final List<Glyph> glyphs;
     private final List<Choice> choices;
+    private final Set<Integer> joinedNaturalOwners;
     private final List<Head> headAlternatives;
     private final List<Integer> unrepresentedGlyphMembers;
     private final boolean complete;
@@ -79,6 +80,7 @@ final class SourceLocalAccidental {
             List<Glyph> glyphs,
             List<Head> headAlternatives,
             List<Choice> choices,
+            Set<Integer> joinedNaturalOwners,
             List<Integer> unrepresentedGlyphMembers,
             boolean complete,
             boolean authenticatedFrame) {
@@ -92,6 +94,7 @@ final class SourceLocalAccidental {
         this.glyphs = List.copyOf(glyphs);
         this.headAlternatives = List.copyOf(headAlternatives);
         this.choices = List.copyOf(choices);
+        this.joinedNaturalOwners = Set.copyOf(joinedNaturalOwners);
         this.unrepresentedGlyphMembers = List.copyOf(unrepresentedGlyphMembers);
         this.complete = complete;
         this.authenticatedFrame = authenticatedFrame;
@@ -111,6 +114,7 @@ final class SourceLocalAccidental {
                 && glyphs.equals(other.glyphs)
                 && headAlternatives.equals(other.headAlternatives)
                 && choices.equals(other.choices)
+                && joinedNaturalOwners.equals(other.joinedNaturalOwners)
                 && unrepresentedGlyphMembers.equals(other.unrepresentedGlyphMembers);
     }
 
@@ -126,6 +130,7 @@ final class SourceLocalAccidental {
                 glyphs,
                 headAlternatives,
                 choices,
+                joinedNaturalOwners,
                 unrepresentedGlyphMembers,
                 complete,
                 authenticatedFrame);
@@ -133,7 +138,8 @@ final class SourceLocalAccidental {
 
     static SourceLocalAccidental unavailable() {
         return new SourceLocalAccidental(
-                "", "", 0, 0, 0, 0, List.of(), List.of(), List.of(), List.of(), false, false);
+                "", "", 0, 0, 0, 0, List.of(), List.of(), List.of(), Set.of(), List.of(), false,
+                false);
     }
 
     List<Choice> choices() {
@@ -169,6 +175,30 @@ final class SourceLocalAccidental {
             Map<?, OmrScoreInterpreter.WrittenAccidentalChoice> actualChoices,
             List<?> finalHeads,
             List<ScoreNoteEvent> notes) {
+        return capture(
+                symbols,
+                clefs,
+                originalGlyphs,
+                allHeads,
+                heads,
+                actualChoices,
+                finalHeads,
+                notes,
+                Map.of(),
+                Set.of());
+    }
+
+    static SourceLocalAccidental capture(
+            ExactComponentMembers.Collector symbols,
+            ExactComponentMembers.Collector clefs,
+            List<?> originalGlyphs,
+            List<?> allHeads,
+            ExactComponentMembers.Collector heads,
+            Map<?, OmrScoreInterpreter.WrittenAccidentalChoice> actualChoices,
+            List<?> finalHeads,
+            List<ScoreNoteEvent> notes,
+            Map<Object, List<Object>> accidentalFragments,
+            Set<Object> provedNaturalHeads) {
         var budget = new ExactComponentMembers.Budget(64_000_000, 128L * 1024 * 1024);
         if (symbols == null || clefs == null || heads == null || finalHeads.size() != notes.size())
             return unavailable();
@@ -235,6 +265,19 @@ final class SourceLocalAccidental {
                             partition == null ? List.of() : partition.residual(),
                             status));
         }
+        var joinedNaturalOwners = new HashSet<Integer>();
+        var fragmentClaims = new IdentityHashMap<Object, Integer>();
+        if (!provedNaturalHeads.isEmpty()) {
+            for (var head : finalHeads) {
+                var choice = actualChoices.get(head);
+                if (choice == null || choice.glyph() == null) continue;
+                for (var parent :
+                        accidentalFragments.getOrDefault(choice.glyph(), List.of(choice.glyph())))
+                    fragmentClaims.merge(parent, 1, Integer::sum);
+            }
+        }
+        var exactGlyphs = new HashMap<Integer, Glyph>();
+        for (var glyph : entries) exactGlyphs.put(glyph.index(), glyph);
         var rows = new ArrayList<Choice>();
         for (int n = 0; n < notes.size(); n++) {
             Object head = finalHeads.get(n);
@@ -243,6 +286,27 @@ final class SourceLocalAccidental {
             Integer glyph = glyphIds.get(choice.glyph()), headId = headIds.get(head);
             var note = notes.get(n);
             var headToken = heads.acceptedProbeHead(head, note.measureIndex(), note.staffIndex());
+            if (authenticatedFrame
+                    && glyph == null
+                    && headId != null
+                    && headToken != null
+                    && choice.head() == head
+                    && !choice.ambiguous()
+                    && provedNaturalHeads.contains(head)
+                    && choice.accidental() == ScoreNoteEvent.ACCIDENTAL_NATURAL
+                    && choice.accidental() == note.writtenAccidental()
+                    && exclusivelyOwnedNaturalUnion(
+                            accidentalFragments.get(choice.glyph()),
+                            glyphIds,
+                            exactGlyphs,
+                            fragmentClaims)) {
+                int[] members = headToken.pixels(budget);
+                var partition = partitions.get(head);
+                if (members != null
+                        && members.length == headToken.stats().area()
+                        && partition != null
+                        && partition.residual().isEmpty()) joinedNaturalOwners.add(n);
+            }
             String status = "UNKNOWN_UNBOUND_OR_CHANGED_PICKER_ROLE";
             if (choice.head() == head
                     && glyph != null
@@ -281,9 +345,30 @@ final class SourceLocalAccidental {
                 entries,
                 alternatives,
                 rows,
+                joinedNaturalOwners,
                 unrepresented,
                 complete,
                 authenticatedFrame);
+    }
+
+    private static boolean exclusivelyOwnedNaturalUnion(
+            List<Object> parents,
+            Map<Object, Integer> glyphIds,
+            Map<Integer, Glyph> exactGlyphs,
+            Map<Object, Integer> fragmentClaims) {
+        if (parents == null || parents.size() < 2 || parents.size() > 3) return false;
+        int clefMembers = 0, symbolMembers = 0, clefComponents = 0;
+        for (var parent : parents) {
+            var glyph = exactGlyphs.get(glyphIds.get(parent));
+            if (glyph == null || fragmentClaims.getOrDefault(parent, 0) != 1) return false;
+            if (glyph.label() == OmrMeasurePostProcessor.CLEF_OR_KEY) {
+                clefMembers += glyph.pixels().size();
+                clefComponents++;
+            } else if (glyph.label() == OmrMeasurePostProcessor.SYMBOL) {
+                symbolMembers += glyph.pixels().size();
+            } else return false;
+        }
+        return clefComponents == 1 && symbolMembers > 0 && clefMembers >= symbolMembers * 4;
     }
 
     List<PrintedMark> printedMarks(List<ScoreNoteEvent> original, List<ScoreNoteEvent> retained) {
@@ -301,10 +386,13 @@ final class SourceLocalAccidental {
             retainedIndexes.merge(new NoteLocation(retained.get(index)), index, (a, b) -> -1);
         var marks = new ArrayList<PrintedMark>();
         for (var choice : choices) {
-            if (!choice.status().equals(SUPPORTED)
-                    || glyphOwners.getOrDefault(choice.glyph(), 0) != 1
-                    || !representedGlyphs.get(choice.glyph())
-                    || choice.note() < 0 || choice.note() >= original.size()) continue;
+            boolean originalGlyph =
+                    choice.status().equals(SUPPORTED)
+                            && glyphOwners.getOrDefault(choice.glyph(), 0) == 1
+                            && representedGlyphs.get(choice.glyph());
+            if ((!originalGlyph && !joinedNaturalOwners.contains(choice.note()))
+                    || choice.note() < 0
+                    || choice.note() >= original.size()) continue;
             var originalNote = original.get(choice.note());
             if (originalNote.kind() != ScoreNoteEvent.Kind.PITCHED
                     || !choice.originalNote().equals(originalNote)) continue;

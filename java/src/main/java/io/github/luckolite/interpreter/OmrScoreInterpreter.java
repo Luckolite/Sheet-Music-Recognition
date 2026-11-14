@@ -1483,10 +1483,18 @@ final class OmrScoreInterpreter {
                 heads,
                 headerAccidentals,
                 rawCourtesy);
+        var accidentalFragments = new java.util.IdentityHashMap<Object, List<Object>>();
+        var rawNaturalGaps = new java.util.IdentityHashMap<Object, Float>();
         List<AccidentalCandidate> localAccidentals =
                 new ArrayList<>(
                         joinLocalAccidentalFragments(
-                                labels, gray, width, height, accidentalCandidates, staffs));
+                                labels,
+                                gray,
+                                width,
+                                height,
+                                accidentalCandidates,
+                                staffs,
+                                accidentalFragments));
         localAccidentals.removeIf(
                 candidate ->
                         headerAccidentals.stream()
@@ -2260,6 +2268,15 @@ final class OmrScoreInterpreter {
                                 gray);
                 writtenAccidentalChoices.put(head, writtenChoice);
                 writtenAccidental = writtenChoice.accidental();
+                if (writtenAccidental == ScoreNoteEvent.ACCIDENTAL_NATURAL
+                        && !writtenChoice.ambiguous()
+                        && writtenChoice.glyph() instanceof Component glyph
+                        && accidentalFragments.containsKey(glyph)
+                        && glyph.maxX <= head.minX
+                        && head.minX - glyph.maxX <= accidentalGap * .65f
+                        && Math.abs(glyph.centerY - head.centerY) <= accidentalGap * .35f) {
+                    rawNaturalGaps.put(head, accidentalGap);
+                }
                 if (writtenAccidental == ScoreNoteEvent.ACCIDENTAL_FROM_KEY
                         && (rawWideDoubleSharp(
                                         gray, width, height, localAccidentals, head, accidentalGap)
@@ -3445,7 +3462,15 @@ final class OmrScoreInterpreter {
                                                 memberCollector,
                                                 writtenAccidentalChoices,
                                                 clockFinalHeads,
-                                                voicedNotes)));
+                                                voicedNotes,
+                                                accidentalFragments,
+                                                verifiedNaturalUnions(
+                                                        labels,
+                                                        gray,
+                                                        width,
+                                                        height,
+                                                        rawNaturalGaps,
+                                                        writtenAccidentalChoices))));
         var page =
                 new ScorePageInterpretation(
                         measures,
@@ -18647,6 +18672,34 @@ final class OmrScoreInterpreter {
                         && fadedEnclosed >= Math.max(8, Math.round(w * h * .025f));
     }
 
+    private static java.util.Set<Object> verifiedNaturalUnions(
+            byte[] labels,
+            byte[] gray,
+            int width,
+            int height,
+            java.util.IdentityHashMap<Object, Float> gaps,
+            java.util.IdentityHashMap<Object, WrittenAccidentalChoice> choices) {
+        var proved =
+                java.util.Collections.newSetFromMap(
+                        new java.util.IdentityHashMap<Object, Boolean>());
+        if (gray == null) return proved;
+        for (var entry : gaps.entrySet()) {
+            var head = (Component) entry.getKey();
+            var choice = choices.get(head);
+            if (choice == null
+                    || choice.accidental() != ScoreNoteEvent.ACCIDENTAL_NATURAL
+                    || choice.ambiguous()
+                    || !(choice.glyph() instanceof Component glyph)) continue;
+            var merged = new AccidentalCandidate(glyph, (byte) 0);
+            float gap = entry.getValue();
+            if (isNaturalGlyph(labels, width, height, merged, gap)
+                    && rawNaturalAtSeed(gray, width, height, glyph, head, gap)) {
+                proved.add(head);
+            }
+        }
+        return proved;
+    }
+
     /** Reconnect narrow cuts in an accidental's semantic mask using the printed ink. */
     private static List<AccidentalCandidate> joinLocalAccidentalFragments(
             byte[] labels,
@@ -18655,8 +18708,20 @@ final class OmrScoreInterpreter {
             int height,
             List<AccidentalCandidate> candidates,
             List<Staff> staffs) {
+        return joinLocalAccidentalFragments(labels, gray, width, height, candidates, staffs, null);
+    }
+
+    private static List<AccidentalCandidate> joinLocalAccidentalFragments(
+            byte[] labels,
+            byte[] gray,
+            int width,
+            int height,
+            List<AccidentalCandidate> candidates,
+            List<Staff> staffs,
+            java.util.IdentityHashMap<Object, List<Object>> fragments) {
         List<AccidentalCandidate> sameLabel =
-                joinAccidentalFragments(labels, gray, width, height, candidates, staffs, false);
+                joinAccidentalFragments(
+                        labels, gray, width, height, candidates, staffs, false, fragments);
         List<AccidentalCandidate> result = new ArrayList<>();
         List<Component> nearby = new ArrayList<>();
         // Preserve compact crosses before a greedy union can absorb nearby ledger ink.
@@ -18722,7 +18787,8 @@ final class OmrScoreInterpreter {
         // Keep the original glyphs: a cross-label union can also include a
         // nearby rule fragment and must not replace an already legible natural.
         for (AccidentalCandidate candidate :
-                joinAccidentalFragments(labels, gray, width, height, sameLabel, staffs, true))
+                joinAccidentalFragments(
+                        labels, gray, width, height, sameLabel, staffs, true, fragments))
             if (candidate.label == 0) result.add(candidate);
         return result;
     }
@@ -18734,7 +18800,8 @@ final class OmrScoreInterpreter {
             int height,
             List<AccidentalCandidate> candidates,
             List<Staff> staffs,
-            boolean mixedLabels) {
+            boolean mixedLabels,
+            java.util.IdentityHashMap<Object, List<Object>> fragments) {
         if (gray == null || gray.length != labels.length) return candidates;
         List<AccidentalCandidate> joined = new ArrayList<>(candidates);
         for (int i = 0; i < joined.size(); i++) {
@@ -18802,6 +18869,11 @@ final class OmrScoreInterpreter {
                                         (ac.centerX * ac.area + bc.centerX * bc.area) / area,
                                         (ac.centerY * ac.area + bc.centerY * bc.area) / area),
                                 (byte) (a.label == b.label ? a.label : 0));
+                if (fragments != null) {
+                    var originals = new ArrayList<>(fragments.getOrDefault(ac, List.of(ac)));
+                    originals.addAll(fragments.getOrDefault(bc, List.of(bc)));
+                    fragments.put(a.component(), List.copyOf(originals));
+                }
                 joined.set(i, a);
                 joined.remove(j);
                 j = i;
