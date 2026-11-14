@@ -7,11 +7,11 @@ import java.util.*;
 /** A complete metronome equation below a printed part header can own the opening staff. */
 final class OpeningPartTempo {
     // Reuse ScoreCreditsDetector's instrument/voice label vocabulary and its short part aliases.
-    private static final String INSTRUMENT =
-            "(?iu)^(?:for\\h+)?(?:(?:soprano|alto|tenor|bass|treble|descant)\\h+)?(?:violin|viola|cello|piano|harp|guitar|flute|clarinet|oboe|bassoon|trumpet|trombone|horn|tuba|saxophone|recorder|percussion|drums|voices?|vocals?|vln[.]|vla[.]|vc[.]|fl[.]|cl[.]|ob[.]|bsn[.]|pno[.])(?:\\h+(?:solo|duet|part|[1-9]|I{1,3}))?$";
+    private static final java.util.regex.Pattern INSTRUMENT = java.util.regex.Pattern.compile(
+            "(?iu)^(?:for\\h+)?(?:(?:soprano|alto|tenor|bass|treble|descant)\\h+)?(?:violin|viola|cello|piano|harp|guitar|flute|clarinet|oboe|bassoon|trumpet|trombone|horn|tuba|saxophone|recorder|percussion|drums|voices?|vocals?|vln[.]|vla[.]|vc[.]|fl[.]|cl[.]|ob[.]|bsn[.]|pno[.])(?:\\h+(?:solo|duet|part|[1-9]|I{1,3}))?$");
 
     static boolean part(String value) {
-        return value != null && value.length() <= 80 && value.strip().matches(INSTRUMENT);
+        return value != null && value.length() <= 80 && INSTRUMENT.matcher(value.strip()).matches();
     }
 
     private static boolean valid(PlayingTechniqueDetector.Word w) {
@@ -56,18 +56,18 @@ final class OpeningPartTempo {
                 bottom = Math.min(height - 1, Math.round(word.bottom() * height));
         long area = (long) (right - left + 1) * (bottom - top + 1);
         if (area < 9 || area > 500000) return false;
+        float inkLimit = area * .75f;
         int ink = 0, minX = right, maxX = left, minY = bottom, maxY = top;
         for (int y = top; y <= bottom; y++)
             for (int x = left; x <= right; x++)
                 if ((gray[y * width + x] & 255) < 165) {
-                    ink++;
+                    if (++ink > inkLimit) return false;
                     minX = Math.min(minX, x);
                     maxX = Math.max(maxX, x);
                     minY = Math.min(minY, y);
                     maxY = Math.max(maxY, y);
                 }
         return ink >= Math.max(8, area * .015f)
-                && ink <= area * .75f
                 && maxX - minX >= (right - left) * .5f
                 && maxY - minY >= (bottom - top) * .4f;
     }
@@ -92,6 +92,18 @@ final class OpeningPartTempo {
             int height,
             List<MeasureRegion> measures,
             Set<PlayingTechniqueDetector.Word> ownedLaterEquations) {
+        return owner(equation, words, gray, width, height, measures, ownedLaterEquations, null);
+    }
+
+    static int owner(
+            PlayingTechniqueDetector.Word equation,
+            List<PlayingTechniqueDetector.Word> words,
+            byte[] gray,
+            int width,
+            int height,
+            List<MeasureRegion> measures,
+            Set<PlayingTechniqueDetector.Word> ownedLaterEquations,
+            List<RawStaffLineDetector.StaffLines> verifiedStaffs) {
         if (!valid(equation)
                 || words == null
                 || words.size() > 10000
@@ -103,7 +115,8 @@ final class OpeningPartTempo {
                 || measures.isEmpty()) return -1;
         int first = firstMeasure(measures);
         var opening = measures.get(first);
-        var staffs = RawStaffLineDetector.detect(gray, width, height);
+        var staffs = verifiedStaffs == null
+                ? RawStaffLineDetector.detect(gray, width, height) : verifiedStaffs;
         RawStaffLineDetector.StaffLines staff = null;
         for (var s : staffs)
             if (Math.abs(s.top() - opening.top() * height) <= s.gap() * .3f

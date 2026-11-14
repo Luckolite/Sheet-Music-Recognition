@@ -29,20 +29,26 @@ final class StaffHeaderTempoOcr {
             if (bottom <= top) continue;
             int window = Math.min(width, Math.max(1, Math.round(32 * gap)));
             int step = Math.max(1, window / 2);
+            int ch = bottom - top;
+            int previousRight = 0;
+            int inkColumn = -1;
             for (int left = 0; left < width; left += step) {
-                int cw = Math.min(window, width - left), ch = bottom - top;
+                int cw = Math.min(window, width - left);
                 if (cw < 8 * gap) break;
-                boolean ink = false;
-                for (int y = top; y < bottom && !ink; y++)
-                    for (int x = left; x < left + cw; x++)
-                        if ((gray[y * width + x] & 255) < 240) {
-                            ink = true;
-                            break;
-                        }
-                if (!ink) continue;
+                int right = left + cw;
+                if (inkColumn < left) {
+                    // A blank window proves its overlap blank. Otherwise reuse
+                    // the previous witness as long as it is still inside the crop.
+                    int scanLeft = inkColumn < 0 ? Math.max(left, previousRight) : left;
+                    inkColumn = firstInkColumn(gray, width, top, bottom, scanLeft, right);
+                }
+                previousRight = right;
+                if (inkColumn < 0) continue;
                 byte[] crop = new byte[cw * ch];
-                for (int y = 0; y < ch; y++)
-                    System.arraycopy(gray, (top + y) * width + left, crop, y * cw, cw);
+                for (int source = top * width + left, dest = 0; dest < crop.length;
+                        source += width, dest += cw) {
+                    System.arraycopy(gray, source, crop, dest, cw);
+                }
                 OcrText text = reader.read(crop, cw, ch);
                 if (text == null) continue;
                 for (var block : text.blocks())
@@ -67,5 +73,16 @@ final class StaffHeaderTempoOcr {
             }
         }
         return List.copyOf(result);
+    }
+
+    private static int firstInkColumn(
+            byte[] gray, int width, int top, int bottom, int left, int right) {
+        for (int row = top * width, end = bottom * width; row < end; row += width) {
+            int limit = row + right;
+            for (int at = row + left; at < limit; at++) {
+                if ((gray[at] & 255) < 240) return at - row;
+            }
+        }
+        return -1;
     }
 }

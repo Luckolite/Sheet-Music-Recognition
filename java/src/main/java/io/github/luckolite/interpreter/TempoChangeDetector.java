@@ -213,24 +213,16 @@ final class TempoChangeDetector {
             int width,
             int height,
             List<MeasureRegion> measures) {
-        return detectProved(tokens, gray, width, height, measures, java.util.Map.of());
-    }
-
-    private static List<ScoreTempoChange> detectProved(
-            List<MeasureNumberReconciler.NumberToken> tokens,
-            byte[] gray,
-            int width,
-            int height,
-            List<MeasureRegion> measures,
-            java.util.Map<MeasureNumberReconciler.NumberToken, Integer> provedEquals) {
-        return detectProved(tokens, gray, width, height, measures, provedEquals, java.util.Map.of());
+        return detectProved(tokens, gray, width, height, measures, java.util.Map.of(),
+                java.util.Map.of(), new DirectionGeometry(gray, width, height, measures));
     }
 
     private static List<ScoreTempoChange> detectProved(
             List<MeasureNumberReconciler.NumberToken> tokens,
             byte[] gray, int width, int height, List<MeasureRegion> measures,
             java.util.Map<MeasureNumberReconciler.NumberToken, Integer> provedEquals,
-            java.util.Map<MeasureNumberReconciler.NumberToken, Double> decimalRates) {
+            java.util.Map<MeasureNumberReconciler.NumberToken, Double> decimalRates,
+            DirectionGeometry geometry) {
         if (tokens == null
                 || tokens.isEmpty()
                 || gray == null
@@ -247,7 +239,7 @@ final class TempoChangeDetector {
         List<MeasureRegion> directionMeasures =
                 canDeferStaffSearch(tokens, gray, width, height, measures)
                         ? null
-                        : directionMeasures(measures, gray, width, height);
+                        : geometry.measures();
         for (MeasureNumberReconciler.NumberToken token : tokens) {
             if (token.value() < 30 || token.value() > 400) continue;
             double rate = decimalRates.getOrDefault(token, (double) token.value());
@@ -258,7 +250,7 @@ final class TempoChangeDetector {
                             : equalsSignLeft(token, gray, width, height);
             if (equalsLeft < 0) continue;
             if (directionMeasures == null)
-                directionMeasures = directionMeasures(measures, gray, width, height);
+                directionMeasures = geometry.measures();
             token = printedDigitBounds(token, gray, width, height);
             float equationLeft = provedEquationLeft(token, gray, width, height, equalsLeft);
             // A direction such as "Lento, poco rubato (quarter = c. 88)" starts at the
@@ -288,11 +280,11 @@ final class TempoChangeDetector {
             if (measureIndex < 0)
                 measureIndex =
                         provedOpeningTempo(
-                                token, gray, width, height, equalsLeft, directionMeasures);
+                                token, gray, width, height, equalsLeft, directionMeasures, geometry);
             if (measureIndex < 0)
                 measureIndex =
                         provedElevatedSystemTempo(
-                                token, gray, width, height, equalsLeft, directionMeasures);
+                                token, gray, width, height, equalsLeft, directionMeasures, geometry);
             if (measureIndex < 0) continue;
             MeasureRegion measure = directionMeasures.get(measureIndex);
             float position =
@@ -352,7 +344,7 @@ final class TempoChangeDetector {
             int width,
             int height,
             int equals,
-            List<MeasureRegion> measures) {
+            List<MeasureRegion> measures, DirectionGeometry geometry) {
         if (measures.isEmpty()) return -1;
         int first = 0;
         for (int i = 1; i < measures.size(); i++) {
@@ -362,7 +354,7 @@ final class TempoChangeDetector {
                     || Math.abs(a.top() - b.top()) <= .002f && a.left() < b.left()) first = i;
         }
         var opening = measures.get(first);
-        for (var staff : RawStaffLineDetector.detect(gray, width, height)) {
+        for (var staff : geometry.staffs()) {
             if (Math.abs(staff.top() - opening.top() * height) > staff.gap() * .3f
                     || staff.bottom() > opening.bottom() * height) continue;
             float y = token.bottom() * height;
@@ -383,11 +375,18 @@ final class TempoChangeDetector {
     /** A complete tempo equation may sit above a chord row at a later system start. */
     private static int provedElevatedSystemTempo(
             MeasureNumberReconciler.NumberToken token,
+            byte[] gray, int width, int height, int equals, List<MeasureRegion> measures) {
+        return provedElevatedSystemTempo(token, gray, width, height, equals, measures,
+                new DirectionGeometry(gray, width, height, measures));
+    }
+
+    private static int provedElevatedSystemTempo(
+            MeasureNumberReconciler.NumberToken token,
             byte[] gray,
             int width,
             int height,
             int equals,
-            List<MeasureRegion> measures) {
+            List<MeasureRegion> measures, DirectionGeometry geometry) {
         float cx = (token.left() + token.right()) * .5f, cy = (token.top() + token.bottom()) * .5f;
         for (var m : measures)
             if (cx >= m.left() - .025f
@@ -398,7 +397,7 @@ final class TempoChangeDetector {
                 && !Double.isFinite(printedBeatUnit(token, gray, width, height, equals, 165)))
             return -1;
         int found = -1;
-        for (var staff : RawStaffLineDetector.detect(gray, width, height)) {
+        for (var staff : geometry.staffs()) {
             float gap = staff.gap(), y = token.bottom() * height;
             if (y >= staff.top() || staff.top() - y > gap * 8) continue;
             int first = -1;
@@ -456,10 +455,6 @@ final class TempoChangeDetector {
         if (tokens != null) all.addAll(tokens);
         var proved = new java.util.HashMap<MeasureNumberReconciler.NumberToken, Integer>();
         var decimalRates = new java.util.HashMap<MeasureNumberReconciler.NumberToken, Double>();
-        var syntax =
-                java.util.regex.Pattern.compile(
-                        "^[♩♪♫♬√J.]?\\s*=\\s*(?:ca\\.?|c\\.|circa|~|\u2248)\\s*([0-9]{2,3})$",
-                        java.util.regex.Pattern.CASE_INSENSITIVE);
         for (var word : words) {
             if (word == null || word.text() == null) continue;
             var range = printedTempoRange(word, gray, width, height);
@@ -486,7 +481,7 @@ final class TempoChangeDetector {
                 }
                 continue;
             }
-            var match = syntax.matcher(word.text().trim());
+            var match = APPROXIMATE_EQUATION.matcher(word.text().trim());
             if (!match.matches()) continue;
             int value = Integer.parseInt(match.group(1)), count = match.group(1).length();
             if (value < 30
@@ -567,11 +562,12 @@ final class TempoChangeDetector {
             all.add(accepted);
             proved.put(accepted, eq);
         }
-        var ordinary = detectProved(all, gray, width, height, measures, proved, decimalRates);
+        var geometry = new DirectionGeometry(gray, width, height, measures);
+        var ordinary = detectProved(all, gray, width, height, measures, proved, decimalRates, geometry);
         if (measures == null || measures.isEmpty() || all.isEmpty() || words.isEmpty()
                 || all.size() > 10000 || words.size() > 10000)
             return ordinary;
-        var contextualMeasures = directionMeasures(measures, gray, width, height);
+        var contextualMeasures = geometry.measures();
         int physicalOpening = OpeningPartTempo.firstMeasure(contextualMeasures);
         if (ordinary.stream()
                 .anyMatch(
@@ -589,7 +585,8 @@ final class TempoChangeDetector {
                         && !Double.isFinite(
                                 printedBeatUnit(bounded, gray, width, height, equals, 165)))
                     continue;
-                var literal = detectProved(List.of(token), gray, width, height, measures, proved);
+                var literal = detectProved(List.of(token), gray, width, height, measures,
+                        proved, java.util.Map.of(), geometry);
                 if (literal.stream()
                         .anyMatch(
                                 event ->
@@ -617,7 +614,8 @@ final class TempoChangeDetector {
                                 width,
                                 height,
                                 contextualMeasures,
-                                ownedLaterEquations);
+                                ownedLaterEquations,
+                                geometry.staffs());
                 if (owner < 0) continue;
                 double rate = decimalRates.getOrDefault(token, (double) token.value());
                 var event = new ScoreTempoChange(owner, 0, rate * unit, unit);
@@ -631,6 +629,11 @@ final class TempoChangeDetector {
                         .thenComparingDouble(ScoreTempoChange::positionInMeasure));
         return List.copyOf(result);
     }
+
+    private static final java.util.regex.Pattern APPROXIMATE_EQUATION =
+            java.util.regex.Pattern.compile(
+                        "^[♩♪♫♬√J.]?\\s*=\\s*(?:ca\\.?|c\\.|circa|~|\u2248)\\s*([0-9]{2,3})$",
+                        java.util.regex.Pattern.CASE_INSENSITIVE);
 
     private record TempoRange(MeasureNumberReconciler.NumberToken lower, int equalsLeft) { }
 
@@ -746,9 +749,33 @@ final class TempoChangeDetector {
         return true;
     }
 
+    private static final class DirectionGeometry {
+        private final byte[] gray;
+        private final int width, height;
+        private final List<MeasureRegion> original;
+        private List<RawStaffLineDetector.StaffLines> staffs;
+        private List<MeasureRegion> measures;
+
+        DirectionGeometry(byte[] gray, int width, int height, List<MeasureRegion> original) {
+            this.gray = gray;
+            this.width = width;
+            this.height = height;
+            this.original = original;
+        }
+
+        List<RawStaffLineDetector.StaffLines> staffs() {
+            if (staffs == null) staffs = RawStaffLineDetector.detect(gray, width, height);
+            return staffs;
+        }
+
+        List<MeasureRegion> measures() {
+            if (measures == null) measures = directionMeasures(original, staffs(), height);
+            return measures;
+        }
+    }
+
     private static List<MeasureRegion> directionMeasures(
-            List<MeasureRegion> measures, byte[] gray, int width, int height) {
-        var staffs = RawStaffLineDetector.detect(gray, width, height);
+            List<MeasureRegion> measures, List<RawStaffLineDetector.StaffLines> staffs, int height) {
         List<MeasureRegion> result = new ArrayList<>();
         for (var measure : measures) {
             float top = measure.top();
