@@ -100,17 +100,12 @@ public final class MeterFontMatcher {
                 continue;
             var matcher = Bundled.MATCHER;
             if (matcher == null) break;
-            int cw = crop.right() - crop.left(), ch = crop.bottom() - crop.top();
-            int[] pixels = new int[cw * ch];
-            for (int y = 0; y < ch; y++)
-                for (int x = 0; x < cw; x++) {
-                    int value = gray[(crop.top() + y) * width + crop.left() + x] & 255;
-                    pixels[y * cw + x] = 0xff000000 | value << 16 | value << 8 | value;
-                }
-            MeterCropRaster.prepare(pixels, cw, ch, crop.top(), crop.firstLine(), crop.gap(), false);
-            var font = matcher.read(pixels, cw, ch,
-                    Math.round(crop.firstLine() + 2 * crop.gap()) - crop.top(),
-                    crop.firstLine() - crop.top(), crop.gap());
+            var font = readCrop(matcher, gray, width, crop, crop.firstLine(), crop.gap());
+            if (font.text().isBlank()) {
+                var refined = MeterCropStaff.refine(gray, width, height, crop);
+                if (!refined.equals(crop))
+                    font = readCrop(matcher, gray, width, refined, refined.firstLine(), refined.gap());
+            }
             String supported = MusicalOcrEvidence.fontMeter(
                     font.text(), font.topScore(), font.bottomScore(), Set.of(), Set.of());
             if (supported.isBlank()) continue;
@@ -120,5 +115,20 @@ public final class MeterFontMatcher {
         }
         return choices.values().stream().filter(readings -> readings.size() == 1)
                 .flatMap(Set::stream).toList();
+    }
+
+    private static Reading readCrop(MeterFontMatcher matcher, byte[] gray, int width,
+            MeterChangeDetector.Crop crop, int firstLine, float gap) {
+        int cw = crop.right() - crop.left(), ch = crop.bottom() - crop.top();
+        int[] pixels = new int[cw * ch];
+        for (int y = 0; y < ch; y++)
+            for (int x = 0; x < cw; x++) {
+                int value = gray[(crop.top() + y) * width + crop.left() + x] & 255;
+                pixels[y * cw + x] = 0xff000000 | value << 16 | value << 8 | value;
+            }
+        MeterCropRaster.prepare(pixels, cw, ch, crop.top(), firstLine, gap, false);
+        return matcher.read(pixels, cw, ch,
+                Math.round(firstLine + 2 * gap) - crop.top(),
+                firstLine - crop.top(), gap);
     }
 }

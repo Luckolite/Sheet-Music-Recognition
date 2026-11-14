@@ -1005,6 +1005,15 @@ final class TripletRhythmDetector {
                         && a.indices().size() == 1
                         && b.indices().size() == 1
                         && c.indices().size() == 1) {
+                    var middleHead = result.get(b.indices().get(0));
+                    var lastHead = result.get(c.indices().get(0));
+                    float numeralX = (numeral.left() + numeral.right()) * .5f;
+                    float numeralY = (numeral.top() + numeral.bottom()) * .5f;
+                    int stem = first.stemDirection();
+                    boolean centeredOnHead = first.beamCount() == 2 && stem != 0
+                            && middleHead.stemDirection() == stem && lastHead.stemDirection() == stem
+                            && Math.abs(numeralX - x2) <= gap * .22f
+                            && stem * (middleHead.pageY() * height - numeralY) < -gap;
                     boolean fingering = false;
                     for (int adjacent : new int[] {i - 1, i + 3}) {
                         if (adjacent < 0 || adjacent >= groups.size()) continue;
@@ -1027,7 +1036,15 @@ final class TripletRhythmDetector {
                         if (SeparateBeamGroups.connected(
                                         gray, width, height, leftX, leftY, rightX, rightY, gap,
                                         side)
-                                && hasNearbyFour(gray, width, height, numeral, gap)) {
+                                && hasNearbyFour(gray, width, height, numeral, gap)
+                                || centeredOnHead && extra.beamCount() == 2
+                                    && extra.stemDirection() == stem && extra.tupletDivisor() == 1
+                                    && (extra.articulations() & NoteOrnament.GRACE) == 0
+                                    && (SeparateBeamGroups.connected(gray, width, height,
+                                            leftX, leftY, rightX, rightY, gap, -stem)
+                                        || fingerSequence(gray, width, height, numeral, gap, stem,
+                                            x1, a.top() * height, x2, b.top() * height,
+                                            x3, c.top() * height, xx, fourth.top() * height))) {
                             fingering = true;
                             break;
                         }
@@ -4049,6 +4066,59 @@ final class TripletRhythmDetector {
             if (separation >= Math.max(2, gap * .2f) && separation <= gap) return true;
         }
         return false;
+    }
+
+    /** Opposite-side digits follow individual heads even when a curved staff crosses the beam. */
+    private static boolean fingerSequence(byte[] gray, int width, int height, Glyph numeral,
+            float gap, int stem, float a, float ay, float b, float by,
+            float c, float cy, float extra, float extraY) {
+        float[] xs = extra < a ? new float[] {extra, a, b, c} : new float[] {a, b, c, extra};
+        float[] ys = extra < a ? new float[] {extraY, ay, by, cy} : new float[] {ay, by, cy, extraY};
+        int glyphHeight = numeral.bottom() - numeral.top() + 1;
+        int left = Math.round(xs[0] - gap * .85f), right = Math.round(xs[3] + gap * .85f);
+        int top = Math.round(numeral.top() - gap * 1.1f);
+        int bottom = Math.round(numeral.bottom() + gap * 1.1f);
+        if (left < 0 || right >= width || top < 0 || bottom >= height
+                || (long) (right - left + 1) * (bottom - top + 1) > 16384) return false;
+        var ink = RawNumeralComponents.capture(gray, width, height, left, top, right, bottom,
+                () -> {}, () -> {});
+        int otherDigits = 0;
+        for (int i = 0; i < xs.length; i++) {
+            if (i > 0 && !PrintedTupletBeamOwner.connectedHeads(gray, width, height,
+                    xs[i - 1], ys[i - 1], xs[i], ys[i], gap, stem)) return false;
+            if (xs[i] == b) continue;
+            for (var component : ink.components()) {
+                int cw = component.right - component.left + 1, ch = component.bottom - component.top + 1;
+                float x = (component.left + component.right) * .5f;
+                float y = (component.top + component.bottom) * .5f;
+                if (component.left <= left || component.right >= right || component.top <= top
+                        || component.bottom >= bottom || Math.abs(x - xs[i]) > gap * .40f
+                        || Math.abs(component.bottom - numeral.bottom()) > gap * .85f
+                        || (ys[i] - y) * stem >= -gap
+                        || ch < glyphHeight * .75f || ch > glyphHeight * 1.25f
+                        || cw < ch * .28f || cw > ch * .9f) continue;
+                if (looksLikeTwo(gray, width, component.size(), component.left, component.right,
+                                component.top, component.bottom)
+                        || fingerOne(gray, width, component)) {
+                    otherDigits++;
+                    break;
+                }
+            }
+        }
+        return otherDigits >= 2;
+    }
+
+    private static boolean fingerOne(byte[] gray, int width, RawNumeralComponents.Component glyph) {
+        int h = glyph.bottom - glyph.top + 1, w = glyph.right - glyph.left + 1;
+        if (w > h * .65f) return false;
+        int spine = 0;
+        for (int x = glyph.left + 1; x < glyph.right; x++) {
+            int ink = 0;
+            for (int y = glyph.top + 1; y < glyph.bottom; y++)
+                if ((gray[y * width + x] & 255) <= 165) ink++;
+            spine = Math.max(spine, ink);
+        }
+        return spine >= h * .80f;
     }
 
     private static boolean hasNearbyFour(

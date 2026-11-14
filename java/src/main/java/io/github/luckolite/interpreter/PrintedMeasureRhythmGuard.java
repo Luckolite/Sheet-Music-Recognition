@@ -27,6 +27,8 @@ final class PrintedMeasureRhythmGuard {
         if (gray != null && !fitted.isEmpty()) {
             int last = fitted.size() - 1;
             var cadence = terminalHalfNoteCadence(fitted.get(last), labels, gray, width, height);
+            if (cadence.isEmpty())
+                cadence = terminalTripletBar(fitted.get(last), labels, gray, width, height);
             if (!cadence.isEmpty()) {
                 var withCadence = new ArrayList<>(fitted.subList(0, last));
                 withCadence.addAll(cadence);
@@ -35,20 +37,83 @@ final class PrintedMeasureRhythmGuard {
         }
         final var guarded = fitted;
         boolean split = raw.stream().anyMatch(region -> fragments(region, guarded).size() == 2);
-        if (!split && mergedOpening(raw, fitted).isEmpty()) return fitted;
+        if (!split && mergedOpening(raw, fitted).isEmpty())
+            return appendTerminalQuarter(fitted, labels, gray, width, height);
         var analysis = OmrScoreInterpreter.analyze(labels, gray, width, height, raw);
         var notes = analysis.notes();
         fitted =
                 preservePartialWrittenBars(
                         raw, fitted, notes, analysis.rests(), gray, width, height);
         var preserved = preserveWrittenOpening(raw, fitted, notes);
-        if (!split) return preserved;
+        if (!split) return appendTerminalQuarter(preserved, labels, gray, width, height);
         var aligned = alignPrintedSeparators(raw, preserved, notes, gray, width, height);
-        return preserveCompleteRuns(raw, aligned, notes, gray, width, height);
+        return appendTerminalQuarter(
+                preserveCompleteRuns(raw, aligned, notes, gray, width, height),
+                labels, gray, width, height);
+    }
+
+    private static List<MeasureRegion> appendTerminalQuarter(
+            List<MeasureRegion> fitted, byte[] labels, byte[] gray, int width, int height) {
+        if (gray == null || fitted.isEmpty()) return fitted;
+        fitted = SystemQuarterCadence.recover(fitted, labels, gray, width, height);
+        int last = fitted.size() - 1;
+        var cadence = terminalCadence(fitted.get(last), labels, gray, width, height, true);
+        if (cadence.isEmpty()) return fitted;
+        var result = new ArrayList<>(fitted.subList(0, last));
+        result.addAll(cadence);
+        return List.copyOf(result);
+    }
+
+    private static List<MeasureRegion> terminalTripletBar(
+            MeasureRegion region, byte[] labels, byte[] gray, int width, int height) {
+        float left = region.left() * width, right = region.right() * width;
+        float gap = (region.bottom() - region.top()) * height / 8.2f;
+        if (gap < 6 || right - left < gap * 26 || right + gap >= width) return List.of();
+        float bottom = region.bottom() * height - 2.1f * gap;
+        for (float inset : new float[] {2, 2.5f, 3, 4}) {
+            var rails = PrintedDirectionStaff.printedRules(gray, width, height, right - inset * gap, bottom, gap);
+            if (rails == null) continue;
+            var staff = new PlayingTechniqueDetector.Staff(rails[0] - 4 * rails[1], rails[0], rails[1], 0, 1);
+            if (PrintedCadenceDurations.boundaryColumn(gray, width, staff, right, false, true) < 0) continue;
+            int first = -1, end = -1;
+            int searchStart = Math.round(Math.max(left + 10 * gap, right - 20 * gap));
+            for (int x = searchStart; x <= right - 12 * gap; x++) {
+                int top = Math.round(staff.top()), base = Math.round(staff.bottom());
+                if (!OmrMeasurePostProcessor.verticalRuleAt(gray, width, x, top, base, staff.gap())
+                        || ClosedHeadBarlineGuard.attached(gray, width, height, x, top, base, staff.gap())) continue;
+                if (first < 0) first = x;
+                if (end >= 0 && x > end + 1) {
+                    first = -1;
+                    break;
+                }
+                end = x;
+            }
+            if (first < 0 || end - first > gap) continue;
+            int cut = (first + end) / 2, padding = Math.max(2, Math.round(gap * .45f));
+            var before = new MeasureRegion(region.left(), (cut - padding) / (float) width,
+                    region.top(), region.bottom());
+            var after = new MeasureRegion((cut + padding) / (float) width, region.right(),
+                    region.top(), region.bottom());
+            var analysis = OmrScoreInterpreter.analyze(labels, gray, width, height, List.of(before, after));
+            if (analysis.rests().stream().anyMatch(rest -> rest.measureIndex() == 1)) continue;
+            var score = new ScorePageInterpretation(List.of(before, after), analysis.notes());
+            // The geometry pass has no inherited meter. A separate written 4/4 region
+            // is proved by two connected three-note groups and the closing half note.
+            var recognized = ClosingTripletRhythm.apply(
+                    score, new ScoreMeterChange(0, 4, 4), labels, gray, width, height);
+            if (recognized != score) return List.of(before, after);
+        }
+        return List.of();
     }
 
     private static List<MeasureRegion> terminalHalfNoteCadence(
             MeasureRegion region, byte[] labels, byte[] gray, int width, int height) {
+        return terminalCadence(region, labels, gray, width, height, false);
+    }
+
+    private static List<MeasureRegion> terminalCadence(
+            MeasureRegion region, byte[] labels, byte[] gray, int width, int height,
+            boolean quarter) {
         int left = Math.round(region.left() * width), right = Math.round(region.right() * width);
         float gap = (region.bottom() - region.top()) * height / 8.2f;
         if (gap < 6 || right - left < gap * 16 || right + 2 * gap >= width) return List.of();
@@ -56,6 +121,11 @@ final class PrintedMeasureRhythmGuard {
         var rails = PrintedDirectionStaff.printedRules(gray, width, height, right - 2 * gap, bottom, gap);
         if (rails == null)
             rails = PrintedDirectionStaff.printedRules(gray, width, height, right - 2.5f * gap, bottom, gap);
+        if (!quarter && rails == null)
+            rails = TerminalDirectionRails.read(
+                    gray, width, height, right - 2 * gap, bottom, gap, region.left(), region.right());
+        if (quarter && rails == null)
+            rails = PrintedDirectionStaff.printedRules(gray, width, height, right - 4 * gap, bottom, gap);
         if (rails == null) return List.of();
         var staff = new PlayingTechniqueDetector.Staff(rails[0] - 4 * rails[1], rails[0], rails[1], 0, 1);
         int top = Math.round(staff.top()), base = Math.round(staff.bottom());
@@ -66,7 +136,7 @@ final class PrintedMeasureRhythmGuard {
         if (closing < 0) return List.of();
 
         int firstRule = -1, lastRule = -1;
-        for (int x = Math.round(right - gap * 8); x <= right - gap * 3; x++) {
+        for (int x = Math.round(right - gap * 10); x <= right - gap * 3; x++) {
             if (!OmrMeasurePostProcessor.verticalRuleAt(gray, width, x, top, base, gap)
                     || ClosedHeadBarlineGuard.attached(gray, width, height, x, top, base, gap)) continue;
             if (lastRule >= 0 && x - lastRule > 1) return List.of();
@@ -81,10 +151,15 @@ final class PrintedMeasureRhythmGuard {
         if (analysis.rests().stream().anyMatch(rest -> rest.positionInMeasure() >= split))
             return List.of();
         var chord = analysis.notes().stream().filter(n -> n.positionInMeasure() > split).toList();
-        if (chord.isEmpty() || chord.size() > 3 || analysis.notes().size() - chord.size() < 8
-                || !chord.stream().allMatch(n -> n.kind() == ScoreNoteEvent.Kind.PITCHED
+        if (chord.isEmpty() || chord.size() > 3 || analysis.notes().size() - chord.size() < 8)
+            return List.of();
+        float duration = quarter ? 1 : 2;
+        if (quarter && (!analysis.rests().isEmpty()
+                || !closedQuarterDyad(chord, analysis.notes(), split, right - left, gap)))
+            return List.of();
+        if (!chord.stream().allMatch(n -> n.kind() == ScoreNoteEvent.Kind.PITCHED
                         && n.staffCount() == 1 && n.beamCount() == 0 && n.tupletDivisor() == 1
-                        && n.unbeamedDurationBeats() == 2
+                        && n.unbeamedDurationBeats() == duration
                         && n.augmentationDots() == chord.get(0).augmentationDots()
                         && n.augmentationDots() <= 1
                         && Math.abs(n.positionInMeasure() - chord.get(0).positionInMeasure()) <= .012f))
@@ -94,7 +169,46 @@ final class PrintedMeasureRhythmGuard {
                 new MeasureRegion(region.left(), (cut - padding) / (float) width,
                         region.top(), region.bottom()),
                 new MeasureRegion((cut + padding) / (float) width, Math.max(right, closing) / (float) width,
-                        region.top(), region.bottom()));
+                        region.top(), region.bottom(), quarter ? 1 : 0));
+    }
+
+    /** A separated terminal quarter follows a complete run of twelve written sixteenths. */
+    private static boolean closedQuarterDyad(
+            List<ScoreNoteEvent> chord, List<ScoreNoteEvent> notes,
+            float cut, float span, float gap) {
+        if (chord.size() != 2) return false;
+        var first = chord.get(0);
+        var second = chord.get(1);
+        if (first.staffStep() == second.staffStep()
+                || Math.abs(first.stemDirection()) != 1
+                || first.stemDirection() != second.stemDirection()
+                || chord.stream().anyMatch(n -> n.augmentationDots() != 0
+                        || n.tiedFromPrevious() || n.boundaryTies() != 0
+                        || n.crossStaffBeam() || (n.articulations() & NoteOrnament.GRACE) != 0)
+                || Math.abs(first.positionInMeasure() - second.positionInMeasure()) * span > gap * .4f)
+            return false;
+        var run = notes.stream().filter(n -> n.positionInMeasure() <= cut)
+                .sorted(Comparator.comparingDouble(ScoreNoteEvent::positionInMeasure)).toList();
+        int columns = 0;
+        int members = 0;
+        float column = -1;
+        // Local ties do not consume extra written slots. Their pitch ownership is checked later.
+        for (var note : run) {
+            if (note.kind() != ScoreNoteEvent.Kind.PITCHED || note.staffCount() != 1
+                    || note.beamCount() != 2 || note.augmentationDots() != 0
+                    || note.tupletDivisor() != 1 || note.crossStaffBeam()
+                    || note.leadingRestBeats() != 0 || note.followingRestBeats() != 0
+                    || note.boundaryTies() != 0
+                    || (note.articulations() & NoteOrnament.GRACE) != 0)
+                return false;
+            if (columns == 0 || (note.positionInMeasure() - column) * span > gap * .4f) {
+                column = note.positionInMeasure();
+                columns++;
+                members = 0;
+            }
+            if (++members > 2) return false;
+        }
+        return columns == 12;
     }
 
     /** A count inferred from other systems cannot insert a barline across clear paper. */
@@ -629,12 +743,28 @@ final class PrintedMeasureRhythmGuard {
             for (int i = 1; complete && i < pieces.size(); i++) {
                 float cut = (pieces.get(i - 1).right() + pieces.get(i).left()) * .5f;
                 complete = printedBarline(region, cut, gray, width, height)
-                        || printedDoubleBarline(region, cut, gray, width, height);
+                        || printedDoubleBarline(region, cut, gray, width, height)
+                        || printedBarlineNearCut(region, cut, gray, width, height);
             }
             if (complete) result.addAll(pieces);
             else result.add(region);
         }
         return List.copyOf(result);
+    }
+
+    /** A tilted staff can lose its rule peaks in the projection of a long merged measure. */
+    private static boolean printedBarlineNearCut(
+            MeasureRegion region, float cut, byte[] gray, int width, int height) {
+        float estimatedGap = (region.bottom() - region.top()) * height / 8.2f;
+        if (estimatedGap < 6) return false;
+        float radius = estimatedGap * 8 / width;
+        float left = Math.max(region.left(), cut - radius);
+        float right = Math.min(region.right(), cut + radius);
+        if (left == region.left() && right == region.right()
+                || (cut - left) * width < estimatedGap * 5
+                || (right - cut) * width < estimatedGap * 5) return false;
+        var local = new MeasureRegion(left, right, region.top(), region.bottom());
+        return printedBarline(local, cut, gray, width, height, true);
     }
 
     /** A detected two-rule separator can sit inside a crop with extra vertical padding. */

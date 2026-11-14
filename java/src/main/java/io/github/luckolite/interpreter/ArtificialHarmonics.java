@@ -262,8 +262,16 @@ final class ArtificialHarmonics {
                     && ledgerJoinedDiamond(gray, w, h,
                             (m.left() + pairedTouch.positionInMeasure() * (m.right() - m.left())) * w,
                             pairedTouch.pageY() * h, y, gap, n.stemDirection());
-            ScoreNoteEvent shaftTouch = n.beamCount() >= 2 && n.stemDirection() != 0
+            // A tied-to-shaft hollow diamond can be misread as a half-note attack.
+            boolean pairedHalfEighth = n.beamCount() == 1
+                    && n.unbeamedDurationBeats() == 0 && n.augmentationDots() == 0
+                    && pairedTouch != null && pairedTouch.beamCount() == 0
+                    && pairedTouch.unbeamedDurationBeats() == ScoreNoteEvent.DURATION_HALF
+                    && pairedTouch.stemDirection() == n.stemDirection();
+            ScoreNoteEvent shaftTouch = (n.beamCount() >= 2 || pairedHalfEighth)
+                    && n.stemDirection() != 0
                     ? shaftPairedFourth(gray, w, h, x, y, gap, n, m, notes) : null;
+            if (pairedHalfEighth && shaftTouch != pairedTouch) shaftTouch = null;
             boolean shaftPairedTouch = shaftTouch != null;
             boolean rawTouch = pairedTouch == null && shaftTouch == null && !strictDiamond
                     && !symbolTouch && !ruleCrossedTouch && n.beamCount() >= 2
@@ -336,7 +344,7 @@ final class ArtificialHarmonics {
                 && diamondEvidence(gray, labels, w, h, x, y, gap, true);
     }
 
-    private static boolean quarterTouchDiamond(
+    static boolean quarterTouchDiamond(
             byte[] labels, byte[] gray, int w, int h, float x, float stoppedY, float gap) {
         float touchY = stoppedY - 1.5f * gap;
         if (symbolDiamond(labels, gray, w, h, x, touchY, gap)) return true;
@@ -354,7 +362,7 @@ final class ArtificialHarmonics {
     }
 
     /** An unbeamed touch must share the printed shaft with the stopped quarter note. */
-    private static boolean joinedQuarterStem(
+    static boolean joinedQuarterStem(
             byte[] gray, int w, int h, float x, float y, float gap, int direction) {
         for (int offset = Math.round(gap * .35f); offset <= Math.round(gap * .9f); offset++) {
             int column = Math.round(x) + direction * offset;
@@ -702,7 +710,7 @@ final class ArtificialHarmonics {
         return shaftCrossedDiamond(gray, width, height, x, y, gap, shaft, direction, false);
     }
 
-    private static boolean shaftCrossedDiamond(
+    static boolean shaftCrossedDiamond(
             byte[] gray, int width, int height, float x, float y, float gap, int shaft,
             int direction, boolean allowSplitCounter) {
         for (int cy = Math.round(y - gap * .32f); cy <= Math.round(y + gap * .32f); cy++)

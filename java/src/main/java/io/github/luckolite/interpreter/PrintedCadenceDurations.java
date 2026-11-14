@@ -13,6 +13,7 @@ final class PrintedCadenceDurations {
             ScorePageInterpretation score, byte[] labels, byte[] gray, int width, int height) {
         if (score.notes().isEmpty()) return score;
         var staffs = OmrScoreInterpreter.techniqueStaffs(labels, gray, width, height, score.measures());
+        score = terminalHarmonicQuarter(score, labels, gray, width, height, staffs);
         return capture(score, gray, width, height, staffs);
     }
 
@@ -40,7 +41,8 @@ final class PrintedCadenceDurations {
             var measure = score.measures().get(i);
             var next = i + 1 < count ? score.measures().get(i + 1) : null;
             if (!proved(gray, width, height, measure, next, staffs, chord,
-                    next != null && meter[i + 1])) continue;
+                    next != null && meter[i + 1])
+                    && !expandedTerminalDyad(gray, width, height, measure, next, chord)) continue;
             regions.set(i, new MeasureRegion(measure.left(), measure.right(), measure.top(),
                     measure.bottom(), (int) duration));
             changed = true;
@@ -51,6 +53,77 @@ final class PrintedCadenceDurations {
                 score.techniqueChanges(), score.dynamicChanges(), score.playbackDirections(),
                 score.expressiveEvents(), score.slurSource(), score.openingPickup(), score.tremoloSource(),
                 score.multiRestGroups(), score.beamSource(), score.clockContextSource());
+    }
+
+    static ScorePageInterpretation terminalHarmonicQuarter(
+            ScorePageInterpretation score, byte[] labels, byte[] gray, int width, int height,
+            List<PlayingTechniqueDetector.Staff> staffs) {
+        int last = score.measures().size() - 1;
+        if (last < 1 || score.rests().stream().anyMatch(r -> r.measureIndex() == last)) return score;
+        var owners = new ArrayList<Integer>(2);
+        for (int i = score.notes().size() - 1; i >= 0; i--) {
+            if (score.notes().get(i).measureIndex() == last) owners.add(i);
+            if (owners.size() > 2) return score;
+        }
+        if (owners.size() != 2) return score;
+        owners.sort(java.util.Comparator.comparingDouble(i -> score.notes().get(i).positionInMeasure()));
+        var lower = score.notes().get(owners.get(0));
+        var upper = score.notes().get(owners.get(1));
+        if (!exactCadenceNote(lower, 1)
+                || upper.kind() != ScoreNoteEvent.Kind.PITCHED
+                || upper.staffIndex() != 0 || upper.staffCount() != 1
+                || upper.beamCount() != 1 || upper.unbeamedDurationBeats() != 0
+                || upper.augmentationDots() != 0 || upper.tupletDivisor() != 1
+                || upper.tiedFromPrevious() || upper.crossStaffBeam() || upper.boundaryTies() != 0
+                || upper.leadingRestBeats() != 0 || upper.followingRestBeats() != 0
+                || (upper.articulations() & NoteOrnament.GRACE) != 0
+                || lower.octaveShift() != 2 || upper.octaveShift() != 2
+                || lower.stemDirection() != 1 || upper.stemDirection() != -1) return score;
+
+        var bar = score.measures().get(last);
+        float left = bar.left() * width, right = bar.right() * width;
+        float lowX = left + lower.positionInMeasure() * (right - left);
+        float highX = left + upper.positionInMeasure() * (right - left);
+        float lowY = lower.pageY() * height, highY = upper.pageY() * height;
+        for (var staff : staffs) {
+            float gap = staff.gap();
+            if (staff.count() != 1 || staff.index() != 0 || gap < 6 || right-left > gap*8
+                    || staff.top() < bar.top()*height-gap
+                    || staff.bottom() > bar.bottom()*height+gap) continue;
+            var rules = PrintedDirectionStaff.printedRules(
+                    gray, width, height, right-gap*3f, staff.bottom(), gap);
+            if (rules == null) continue;
+            gap = rules[1];
+            var local = new PlayingTechniqueDetector.Staff(
+                    rules[0]-4*gap, rules[0], gap, staff.index(), staff.count());
+            if (!TerminalSharedQuarter.proves(
+                    labels, gray, width, height, lowX, lowY, highX, highY, gap, local.top())
+                    || !ArtificialHarmonics.joinedQuarterStem(
+                            gray, width, height, lowX, lowY, gap, lower.stemDirection())
+                    || !ArtificialHarmonics.joinedQuarterStem(
+                            gray, width, height, highX, highY, gap, upper.stemDirection())
+                    || !ArtificialHarmonics.quarterTouchDiamond(labels,gray,width,height,lowX,lowY,gap)
+                    || !ArtificialHarmonics.quarterTouchDiamond(labels,gray,width,height,highX,highY,gap)
+                    || !completeCadence(gray,width,local,left,right,lowX,highX,right,false,true,false))
+                continue;
+            var notes = new ArrayList<>(score.notes());
+            notes.set(owners.get(1), new ScoreNoteEvent(
+                    upper.measureIndex(), upper.positionInMeasure(), upper.staffStep(), upper.staffIndex(),
+                    upper.staffCount(), upper.pageY(), upper.tiedFromPrevious(), upper.augmentationDots(), 0,
+                    upper.writtenAccidental(), 1, upper.tupletDivisor(), upper.followingRestBeats(),
+                    upper.articulations(), upper.clefBottomDiatonic(), upper.crossStaffBeam(),
+                    upper.leadingRestBeats(), upper.compactOpening(), upper.octaveShift(), upper.boundaryTies(),
+                    upper.tupletNormalNotes(), 1, upper.kind(), upper.visualSize(),
+                    upper.harmonicSemitones(), upper.openStringTouch()));
+            var regions = new ArrayList<>(score.measures());
+            regions.set(last,new MeasureRegion(bar.left(),bar.right(),bar.top(),bar.bottom(),1));
+            return new ScorePageInterpretation(regions, notes, score.firstMeasureNumber(),
+                    score.keyChanges(),score.tempoChanges(),score.meterChanges(),score.rests(),
+                    score.techniqueChanges(),score.dynamicChanges(),score.playbackDirections(),
+                    score.expressiveEvents(),score.slurSource(),score.openingPickup(),score.tremoloSource(),
+                    score.multiRestGroups(),score.beamSource(),score.clockContextSource());
+        }
+        return score;
     }
 
     static boolean[] apply(ScorePageInterpretation score, float[] beats) {
@@ -86,12 +159,15 @@ final class PrintedCadenceDurations {
                     || staff.bottom() >= height || staff.top() < measure.top() * height - gap
                     || staff.bottom() > measure.bottom() * height + gap) continue;
             float span = (measure.right() - measure.left()) * width;
-            if (span > gap * 8) return false;
             double first = chord.stream().mapToDouble(ScoreNoteEvent::positionInMeasure).min().orElseThrow();
             double last = chord.stream().mapToDouble(ScoreNoteEvent::positionInMeasure).max().orElseThrow();
             if (first < .15 || last > .8 || (last - first) * span > gap * .4) return false;
             float left = measure.left() * width, right = measure.right() * width;
             boolean sameSystem = next != null && Math.abs(next.top() - measure.top()) * height < gap;
+            boolean quarter = chord.get(0).unbeamedDurationBeats() == 1;
+            // A wide quarter cadence still needs both closing strokes.
+            boolean wideQuarter = quarter && (!sameSystem || !nextHasMeter);
+            if (span > gap * (wideQuarter ? 10.25f : 8f)) return false;
             float boundary = sameSystem ? (right + next.left() * width) * .5f : right;
             double firstX = left + first * span, lastX = left + last * span;
             boolean hasAccidental = chord.stream().anyMatch(
@@ -108,10 +184,61 @@ final class PrintedCadenceDurations {
             if (localTop < 0 || rails[0] >= height) return false;
             var local = new PlayingTechniqueDetector.Staff(
                     localTop, rails[0], rails[1], staff.index(), staff.count());
-            return completeCadence(gray, width, local, left, right, firstX, lastX, boundary,
-                    sameSystem && nextHasMeter, !sameSystem, hasAccidental);
+            if (completeCadence(gray, width, local, left, right, firstX, lastX, boundary,
+                    sameSystem && nextHasMeter, !sameSystem, hasAccidental)) return true;
+            // The nominal region can stop just before the two closing strokes.
+            if (!quarter || sameSystem) return false;
+            float outer = right + local.gap() * .25f;
+            return completeCadence(gray, width, local, left, outer, firstX, lastX, outer,
+                    false, true, hasAccidental);
         }
         return false;
+    }
+
+    /** A wide isolated dyad closes the staff only when its bounding ink proves both edges. */
+    static boolean expandedTerminalDyad(byte[] gray, int width, int height,
+            MeasureRegion measure, MeasureRegion next, List<ScoreNoteEvent> chord) {
+        if (gray == null || gray.length != (long) width * height || chord.size() != 2
+                || measure.cadenceQuarterBeats() != 0) return false;
+        var lower = chord.get(0);
+        var upper = chord.get(1);
+        float duration = lower.unbeamedDurationBeats();
+        if ((duration != 1 && duration != 2)
+                || !exactCadenceNote(lower, duration) || !exactCadenceNote(upper, duration)
+                || lower.staffStep() == upper.staffStep()
+                || lower.stemDirection() == 0 || lower.stemDirection() != upper.stemDirection())
+            return false;
+        float left = measure.left() * width, right = measure.right() * width;
+        float gap = (measure.bottom() - measure.top()) * height / 8.2f;
+        if (gap < 6 || gap > 32 || right - left > gap * 11.25f
+                || right - left <= gap * (duration == 1 ? 10.25f : 8f)
+                || next != null && Math.abs(next.top() - measure.top()) * height < gap)
+            return false;
+        float a = lower.positionInMeasure(), b = upper.positionInMeasure();
+        double first = left + Math.min(a, b) * (right - left);
+        double last = left + Math.max(a, b) * (right - left);
+        if (Math.min(a, b) < .2f || Math.max(a, b) > .57f || last - first > gap * .38f)
+            return false;
+        float hint = measure.bottom() * height - gap * 2.1f;
+        var leftRails = PrintedDirectionStaff.printedRules(
+                gray, width, height, left + gap * 1.85f, hint, gap);
+        if (leftRails == null) return false;
+        var leftStaff = new PlayingTechniqueDetector.Staff(
+                leftRails[0] - 4 * leftRails[1], leftRails[0], leftRails[1], 0, 1);
+        if (boundaryColumn(gray, width, leftStaff, left - leftStaff.gap() * .53f,
+                true, false) < 0) return false;
+        var rightRails = PrintedDirectionStaff.printedRules(
+                gray, width, height, right - gap * 2.5f, hint, gap);
+        if (rightRails == null) return false;
+        var rightStaff = new PlayingTechniqueDetector.Staff(
+                rightRails[0] - 4 * rightRails[1], rightRails[0], rightRails[1], 0, 1);
+        boolean hasAccidental = lower.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_FROM_KEY
+                || upper.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_FROM_KEY;
+        if (completeCadence(gray, width, rightStaff, left, right, first, last,
+                right, false, true, hasAccidental)) return true;
+        float outer = right + gap * .35f;
+        return completeCadence(gray, width, rightStaff, left, outer, first, last,
+                outer, false, true, hasAccidental);
     }
 
     private static boolean completeCadence(

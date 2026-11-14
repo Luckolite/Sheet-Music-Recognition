@@ -14,6 +14,7 @@ final class ClosingTripletRhythm {
     static ScorePageInterpretation apply(
             ScorePageInterpretation score, ScoreMeterChange inherited,
             byte[] labels, byte[] gray, int width, int height) {
+        score = SystemClosingHarmonicRun.apply(score, inherited, gray, width, height);
         int barIndex = score.measures().size() - 1;
         if (barIndex < 1) return score;
         ScoreMeterChange meter = inherited;
@@ -26,8 +27,11 @@ final class ClosingTripletRhythm {
                 .filter(i -> notes.get(i).measureIndex() == barIndex).boxed()
                 .sorted(Comparator.comparingDouble(i -> notes.get(i).positionInMeasure())).toList();
         var bar = score.measures().get(barIndex);
-        if (indices.size() == 7)
+        if (indices.size() == 7) {
+            var dotted = dottedClosingHalf(score, meter, gray, width, height, bar, indices);
+            if (dotted != score) return dotted;
             return closingHalf(score, meter, labels, gray, width, height, barIndex, bar, indices);
+        }
         if (indices.size() != 10) return score;
         float[] xs = new float[10], ys = new float[10];
         int direction = notes.get(indices.get(0)).stemDirection();
@@ -80,6 +84,98 @@ final class ClosingTripletRhythm {
                 .withClockContextSource(score.clockContextSource());
     }
 
+    private static ScorePageInterpretation dottedClosingHalf(
+            ScorePageInterpretation score, ScoreMeterChange meter, byte[] gray, int width, int height,
+            MeasureRegion bar, List<Integer> indices) {
+        if (meter == null || gray == null || gray.length != (long) width * height) return score;
+        var notes = score.notes();
+        float[] x = new float[7], y = new float[7];
+        for (int i = 0; i < indices.size(); i++) {
+            var n = notes.get(indices.get(i));
+            int beams = i == 6 ? 0 : i % 3 == 1 ? 2 : 1;
+            boolean dotted = i < 6 && i % 3 == 0;
+            if (n.kind() != ScoreNoteEvent.Kind.PITCHED || n.staffCount() != 1 || n.crossStaffBeam()
+                    || n.beamCount() != beams || n.tupletDivisor() != 1
+                    || n.leadingRestBeats() != 0 || n.followingRestBeats() != 0
+                    || n.tiedFromPrevious() || n.boundaryTies() != 0
+                    || (n.articulations() & NoteOrnament.GRACE) != 0
+                    || (dotted ? n.augmentationDots() < 1 : n.augmentationDots() != 0)
+                    || i == 6 && n.unbeamedDurationBeats() != 2) return score;
+            x[i] = (bar.left() + n.positionInMeasure() * (bar.right() - bar.left())) * width;
+            y[i] = n.pageY() * height;
+        }
+        float gap = (bar.bottom() - bar.top()) * height / 8.2f;
+        float edge = bar.right() * width;
+        if (gap < 6 || gap > 32 || edge - x[6] < gap * 1.7f) return score;
+        float floor = bar.bottom() * height - gap * 2.1f;
+        var owner = new PlayingTechniqueDetector.Staff(floor - 4 * gap, floor, gap, 0, 1);
+        if (!doubleRule(gray, width, height, owner, edge)) return score;
+        int first = tripletDirection(gray, width, height, x, y, gap, 0);
+        int second = tripletDirection(gray, width, height, x, y, gap, 3);
+        if (first == 0 || second == 0 || first == second) return score;
+        for (int i : new int[] {0, 3})
+            if (!singleDotCore(gray, width, height, x[i], y[i], x[i + 1], gap)) return score;
+        var result = new ArrayList<>(notes);
+        for (int i = 0; i < 6; i++) {
+            int index = indices.get(i);
+            var n = notes.get(index);
+            result.set(index, i % 3 == 0 ? dottedTriplet(n) : n.withTupletRatio(3, 2));
+        }
+        return score.withNotes(result, IntStream.range(0, notes.size()).boxed().toList())
+                .withClockContextSource(score.clockContextSource());
+    }
+
+    /** Screen the inter-note engraving slot for one isolated round dark core. */
+    private static boolean singleDotCore(byte[] gray, int width, int height,
+            float x, float y, float nextX, float gap) {
+        int left = Math.round(x + gap * .7f), right = Math.round(nextX - gap * .55f);
+        int top = Math.round(y - gap * .85f), bottom = Math.round(y + gap * .65f);
+        if (right <= left || bottom <= top || left < 0 || top < 0 || right >= width
+                || bottom >= height || right - left > gap * 2) return false;
+        int w = right - left + 1, h = bottom - top + 1;
+        boolean[] seen = new boolean[w * h];
+        int[] queue = new int[seen.length];
+        int round = 0;
+        for (int start = 0; start < seen.length; start++) {
+            if (seen[start] || (gray[(top + start / w) * width + left + start % w] & 255) >= 90)
+                continue;
+            seen[start] = true;
+            queue[0] = start;
+            int count = 1, a = w, b = -1, c = h, d = -1;
+            for (int i = 0; i < count; i++) {
+                int q = queue[i], xx = q % w, yy = q / w;
+                a = Math.min(a, xx);
+                b = Math.max(b, xx);
+                c = Math.min(c, yy);
+                d = Math.max(d, yy);
+                for (int ny = Math.max(0, yy - 1); ny <= Math.min(h - 1, yy + 1); ny++)
+                    for (int nx = Math.max(0, xx - 1); nx <= Math.min(w - 1, xx + 1); nx++) {
+                        int p = ny * w + nx;
+                        if (seen[p] || (gray[(top + ny) * width + left + nx] & 255) >= 90) continue;
+                        seen[p] = true;
+                        queue[count++] = p;
+                    }
+            }
+            int dotW = b - a + 1, dotH = d - c + 1;
+            if (a > 0 && b < w - 1 && c > 0 && d < h - 1
+                    && dotW >= gap * .22f && dotW <= gap * .6f
+                    && dotH >= gap * .22f && dotH <= gap * .6f
+                    && Math.max(dotW, dotH) <= 1.5f * Math.min(dotW, dotH)
+                    && count >= dotW * dotH * .55f) round++;
+        }
+        return round == 1;
+    }
+
+    private static ScoreNoteEvent dottedTriplet(ScoreNoteEvent n) {
+        return new ScoreNoteEvent(
+                n.measureIndex(), n.positionInMeasure(), n.staffStep(), n.staffIndex(), n.staffCount(),
+                n.pageY(), n.tiedFromPrevious(), 1, n.beamCount(), n.writtenAccidental(),
+                n.unbeamedDurationBeats(), 3, n.followingRestBeats(), n.articulations(),
+                n.clefBottomDiatonic(), n.crossStaffBeam(), n.leadingRestBeats(), n.compactOpening(),
+                n.octaveShift(), n.boundaryTies(), 2, n.stemDirection(), n.kind(), n.visualSize(),
+                n.harmonicSemitones(), n.openStringTouch());
+    }
+
     private static ScorePageInterpretation closingHalf(
             ScorePageInterpretation score, ScoreMeterChange meter, byte[] labels, byte[] gray,
             int width, int height, int barIndex, MeasureRegion bar, List<Integer> indices) {
@@ -123,7 +219,7 @@ final class ClosingTripletRhythm {
     private static boolean doubleRule(
             byte[] gray, int width, int height, PlayingTechniqueDetector.Staff staff, float edge) {
         float gap = staff.gap();
-        for (float inset : new float[] {3, 2.5f, 4}) {
+        for (float inset : new float[] {3, 2.5f, 4, 2}) {
             float[] rails = PrintedDirectionStaff.printedRules(
                     gray, width, height, edge - inset * gap, staff.bottom(), gap);
             if (rails == null) continue;
