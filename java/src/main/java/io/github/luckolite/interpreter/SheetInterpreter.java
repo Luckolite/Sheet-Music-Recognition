@@ -637,6 +637,8 @@ public final class SheetInterpreter {
         finalInterpretation =
                 PrintedDottedTripletBar.apply(finalInterpretation, null, gray, width, height);
         finalInterpretation =
+                TerminalDottedCadenceHooks.apply(finalInterpretation, null, gray, width, height);
+        finalInterpretation =
                 finalInterpretation.withClockContextSource(
                         ScoreClockContextCapture.capture(
                                 labels,
