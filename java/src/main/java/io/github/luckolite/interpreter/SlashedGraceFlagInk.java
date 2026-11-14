@@ -22,7 +22,8 @@ final class SlashedGraceFlagInk {
                 right = stemX + Math.max(5, Math.round(gap * .65f));
         int top = Math.max(1, Math.round(headY - gap * 2.8f)),
                 bottom = Math.min(height - 2, Math.round(headY - gap * .45f));
-        if (left < 1 || right >= width - 1 || top >= bottom) return 0;
+        if (left < 1 || right >= width - 1 || top >= bottom
+                || top + (right - left) * .75f > bottom) return 0;
         int threshold = BeamInkThreshold.at(gray, width, height, stemX, top, bottom, gap);
         int original = scan(gray, width, height, left, right, top, bottom, threshold, gap, null);
         if (original <= 1) return original;
@@ -61,18 +62,25 @@ final class SlashedGraceFlagInk {
             boolean[] rules) {
         int maxRootSpacing = Math.max(2, Math.round(gap * .16f));
         int span = right - left;
+        int total = left > right ? 0 : span + 1;
+        float minimum = total * .90f;
         for (float contrast : new float[] {.8f, 1f}) {
             int th = Math.round(threshold * contrast);
             int bands = 0, previous = -1;
             boolean slash = false;
             for (int y = top; y <= bottom; y++) {
+                int rootRow = Math.round((float) y);
+                if (total != 0 && (rootRow < 1 || rootRow >= height - 1)) continue;
+                int rootMisses = total == 0 || hasColumnInk(gray, width, left, rootRow, th, rules)
+                        ? 0 : 1;
+                if (total - rootMisses < minimum) continue;
                 boolean down = false;
                 for (float slope = .75f; slope <= 2f; slope += .25f) {
                     if (!down && y + span * slope <= bottom) {
-                        down = line(gray, width, height, left, right, y, slope, th, rules);
+                        down = line(gray, width, height, left, right, y, slope, th, rules, rootMisses, total, minimum);
                     }
                     if (!slash) {
-                        slash = line(gray, width, height, left, right, y, -slope, th, rules);
+                        slash = line(gray, width, height, left, right, y, -slope, th, rules, rootMisses, total, minimum);
                     }
                     if (down && slash) break;
                 }
@@ -96,18 +104,26 @@ final class SlashedGraceFlagInk {
             int y,
             float slope,
             int threshold,
-            boolean[] rules) {
-        int misses = 0, total = Math.max(0, right - left + 1);
-        float minimum = total * .90f;
-        for (int x = left; x <= right; x++) {
+            boolean[] rules,
+            int misses,
+            int total,
+            float minimum) {
+        if (left > right) return true;
+        for (int x = left + 1; x <= right; x++) {
             int yy = Math.round(y + (x - left) * slope);
             if (yy < 1 || yy >= height - 1) return false;
-            boolean hit = false;
-            for (int dy = -1; dy <= 1 && !hit; dy++)
-                if ((rules == null || !rules[yy + dy])
-                        && (gray[(yy + dy) * width + x] & 255) < threshold) hit = true;
-            if (!hit && total - ++misses < minimum) return false;
+            if (!hasColumnInk(gray, width, x, yy, threshold, rules)
+                    && total - ++misses < minimum) return false;
         }
         return true;
+    }
+
+    private static boolean hasColumnInk(
+            byte[] gray, int width, int x, int y, int threshold, boolean[] rules) {
+        int at = (y - 1) * width + x;
+        for (int row = y - 1; row <= y + 1; row++, at += width) {
+            if ((rules == null || !rules[row]) && (gray[at] & 255) < threshold) return true;
+        }
+        return false;
     }
 }

@@ -285,11 +285,11 @@ final class FaintQuarterRestInk {
                             if ((raw[y * width + x] & 255) < 230) return null;
                 }
             byte[] support = new byte[(int) area];
-            byte[] crossing = new byte[(int) area];
-            int[] queue = new int[(int) area];
+            byte[] crossing = null;
+            int[] queue = null;
             int[] lo = new int[h], hi = new int[h];
             Arrays.fill(lo, -1);
-            Arrays.fill(hi, -1);
+            boolean hasSupport = false;
             for (int y = first; y <= last; y++) {
                 if (rules[y]) continue;
                 int runs = 0;
@@ -304,8 +304,10 @@ final class FaintQuarterRestInk {
                     }
                     prior = ink;
                 }
+                if (runs != 0) hasSupport = true;
                 if (runs > 1) lo[y - first] = -2;
             }
+            if (!hasSupport) return null;
             for (int y = first; y <= last; y++) {
                 if (!rules[y]) continue;
                 int before = y - 1, after = y + 1;
@@ -336,7 +338,11 @@ final class FaintQuarterRestInk {
                         for (int row = y; row <= end; row++)
                             for (int x = 0; x < w; x++) any |= support[(row - first) * w + x] != 0;
                         if (any) {
-                            Arrays.fill(crossing, (byte) 0);
+                            if (crossing == null) {
+                                crossing = new byte[(int) area];
+                                queue = new int[(int) area];
+                            }
+                            else Arrays.fill(crossing, (byte) 0);
                             for (int direction = 0; direction < 2; direction++) {
                                 int edge = direction == 0 ? before : after, from = 0, to = 0;
                                 byte bit = (byte) (1 << direction);
@@ -381,6 +387,7 @@ final class FaintQuarterRestInk {
             }
             if (start < 0) return null;
             int count = 1;
+            if (queue == null) queue = new int[(int) area];
             queue[0] = start;
             support[start] = 2;
             int x0 = w, x1 = -1, y0 = h, y1 = -1;

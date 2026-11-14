@@ -1150,11 +1150,27 @@ final class OctaveMarkDetector {
         return result;
     }
 
+    private static final java.lang.invoke.VarHandle PAPER_WORDS =
+            java.lang.invoke.MethodHandles.byteArrayViewVarHandle(
+                    long[].class, java.nio.ByteOrder.nativeOrder());
+    private static final long PAPER_HIGH_BITS = 0x8080808080808080L;
+    private static final long PAPER_BIAS = 0x0101010101010101L * (165 - 128);
+
+    private static boolean paperWord(byte[] gray, int offset) {
+        long tones = (long) PAPER_WORDS.get(gray, offset);
+        return (((tones | PAPER_HIGH_BITS) - PAPER_BIAS) & tones & PAPER_HIGH_BITS)
+                == PAPER_HIGH_BITS;
+    }
+
     private static int enqueuePaperRun(
             byte[] gray, int bandOffset, int width, int row, int seed, int size, HoleScanScratch scratch) {
         int first = seed, last = seed;
         int end = row + width;
         // A discovered run is marked in full, so an unmarked seed cannot share a run with it.
+        while (first - row >= Long.BYTES && paperWord(gray, bandOffset + first - Long.BYTES))
+            first -= Long.BYTES;
+        while (end - last > Long.BYTES && paperWord(gray, bandOffset + last + 1))
+            last += Long.BYTES;
         while (first > row && (gray[bandOffset + first - 1] & 255) >= 165) first--;
         while (last + 1 < end && (gray[bandOffset + last + 1] & 255) >= 165) last++;
         java.util.Arrays.fill(scratch.seen, first, last + 1, true);
