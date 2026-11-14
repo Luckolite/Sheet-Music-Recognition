@@ -2763,17 +2763,30 @@ final class NoteArticulationDetector {
             int w = right - left + 1, h = bottom - top + 1;
             if (w < 3 || h < 3) continue;
             boolean[] rules = new boolean[h];
-            boolean any = false;
+            int firstRule = h, lastRule = -1;
             for (int y = top; y <= bottom; y++) {
                 rules[y - top] =
                         thinIndependentRule(gray, width, height, Math.round(note.x), y, gap);
-                any |= rules[y - top];
+                if (rules[y - top]) {
+                    firstRule = Math.min(firstRule, y - top);
+                    lastRule = y - top;
+                }
             }
-            if (!any) continue;
+            if (lastRule < 0) continue;
+            // A component on the far side of the last eligible rule cannot touch a rule at its tip.
+            int firstRow = direction < 0 ? 0 : firstRule + 1;
+            int endRow = direction < 0 ? lastRule : h;
+            if (endRow <= firstRow) continue;
             boolean[] seen = new boolean[w * h];
             int[] queue = new int[w * h];
-            for (int origin = 0; origin < seen.length; origin++) {
-                int ox = origin % w, oy = origin / w;
+            for (int origin = firstRow * w; origin < endRow * w; origin++) {
+                int oy = origin / w;
+                int tipRow = oy - direction;
+                if (tipRow < 0 || tipRow >= h || !rules[tipRow]) {
+                    origin = (oy + 1) * w - 1;
+                    continue;
+                }
+                int ox = origin - oy * w;
                 if (seen[origin]
                         || rules[oy]
                         || (gray[(top + oy) * width + left + ox] & 255) >= 155) continue;
@@ -2814,8 +2827,8 @@ final class NoteArticulationDetector {
                     beyond -= direction;
                 boolean continues = beyond < top || beyond > bottom;
                 if (!continues)
-                    for (int x = Math.max(0, gx0 - 1); x <= Math.min(width - 1, gx1 + 1); x++)
-                        continues |= (gray[beyond * width + x] & 255) < 155;
+                    for (int x = Math.max(0, gx0 - 1); !continues && x <= Math.min(width - 1, gx1 + 1); x++)
+                        continues = (gray[beyond * width + x] & 255) < 155;
                 if (continues) continue;
                 // A flag can be sliced at both ends by two independent rules.
                 // The broad face of a real wedge may overlap the second rule,
@@ -2826,16 +2839,16 @@ final class NoteArticulationDetector {
                         opposite += direction;
                     boolean broadContinues = opposite < top || opposite > bottom;
                     if (!broadContinues)
-                        for (int x = Math.max(0, gx0 - 1); x <= Math.min(width - 1, gx1 + 1); x++)
-                            broadContinues |= (gray[opposite * width + x] & 255) < 155;
+                        for (int x = Math.max(0, gx0 - 1); !broadContinues && x <= Math.min(width - 1, gx1 + 1); x++)
+                            broadContinues = (gray[opposite * width + x] & 255) < 155;
                     if (broadContinues) continue;
                 }
+                if (Math.abs((gx0 + gx1) * .5f - note.x) > gap * .7f) continue;
                 int[] pixels = new int[size];
                 for (int i = 0; i < size; i++)
                     pixels[i] = (top + queue[i] / w) * width + left + queue[i] % w;
                 Glyph glyph = new Glyph(gx0, gy0, gx1, gy1, size, pixels);
-                if (Math.abs(glyph.x() - note.x) > gap * .7f
-                        || nearHead(glyph, notes)
+                if (nearHead(glyph, notes)
                         || classify(glyph, width, gap, direction < 0)
                                 != NoteArticulation.STACCATISSIMO
                         || !filledTaper(glyph, width, direction < 0)
@@ -4942,46 +4955,45 @@ final class NoteArticulationDetector {
             float distance,
             boolean independentlyOwned,
             boolean certifiedClosedFringe) {
-        for (int direction : new int[] {-1, 1}) {
-            int occupied = 0;
+        int start = Math.max(1, Math.round(gap * .35f)), end = Math.round(gap * 1.45f);
+        int centerY = Math.round(glyph.y());
+        for (int direction = -1; direction <= 1; direction += 2) {
+            boolean occupied = true;
             for (int bin = -2; bin <= 2; bin++) {
                 int x = Math.round(glyph.x() + bin * gap * .3f);
                 boolean found = false;
-                for (int d = Math.max(1, Math.round(gap * .35f));
-                        d <= Math.round(gap * 1.45f);
-                        d++) {
-                    int y = Math.round(glyph.y()) + direction * d;
-                    if (x < 0 || x >= width || y < 0 || y >= height) continue;
+                for (int d = start; x >= 0 && x < width && d <= end; d++) {
+                    int y = centerY + direction * d;
+                    if (y < 0 || y >= height) continue;
                     int p = y * width + x;
                     // Nearby notation does not shelter a fermata dot.
                     if (labels[p] == OmrMeasurePostProcessor.NOTEHEAD
                             || labels[p] == OmrMeasurePostProcessor.STAFF
                             || labels[p] == OmrMeasurePostProcessor.STEM_OR_REST) continue;
-                    if (horizontalStaffInk(gray, width, height, x, y, gap)) continue;
-                    if ((gray[p] & 255) < 155) found = true;
+                    if ((gray[p] & 255) < 155 && !horizontalStaffInk(gray, width, height, x, y, gap)) {
+                        found = true;
+                        break;
+                    }
                 }
-                if (found) occupied++;
+                if (!found) {
+                    occupied = false;
+                    break;
+                }
             }
-            if (occupied == 5) {
+            if (occupied) {
                 if (distance > 2.5f
                         && !independentlyOwned
                         && !longStraightShelter(glyph, gray, width, height, gap, direction))
                     return true;
-                int[] tone = new int[glyph.pixels.length];
-                for (int i = 0; i < tone.length; i++) tone[i] = gray[glyph.pixels[i]] & 255;
-                java.util.Arrays.sort(tone);
-                // Only the new tail has a closed-fringe certificate proving that every
-                // raw<155 pixel belongs to its actual original complete core. Gray
-                // antialiasing supplies shape, not the core's independent darkness.
-                int medianIndex = tone.length / 2;
-                if (certifiedClosedFringe) {
-                    int coreSize = 0;
-                    while (coreSize < tone.length && tone[coreSize] < 155) coreSize++;
-                    if (coreSize >= 3) medianIndex = coreSize / 2;
+                int dark = 0, core = 0;
+                for (int pixel : glyph.pixels) {
+                    int tone = gray[pixel] & 255;
+                    if (tone <= 130) dark++;
+                    if (tone < 155) core++;
                 }
-                // Near independently dark dots retain the existing <=130 law;
-                // distant ownership and actual curved roofs still veto below/above.
-                if (tone[medianIndex] > 130
+                // Only certified closed fringe may use the median of the original dark core.
+                int medianIndex = (certifiedClosedFringe && core >= 3 ? core : glyph.pixels.length) / 2;
+                if (dark <= medianIndex
                         || connectedFermataRoof(glyph, labels, gray, width, height, gap, direction))
                     return true;
             }

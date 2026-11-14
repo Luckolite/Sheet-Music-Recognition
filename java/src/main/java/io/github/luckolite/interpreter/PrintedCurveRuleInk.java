@@ -2,16 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.github.luckolite.interpreter;
 
-import java.util.HashMap;
-import java.util.Map;
-
 /** Removes only independently corroborated rule contrast from a local curve witness. */
 final class PrintedCurveRuleInk {
-    private record Reference(int line, float center, float contrast, float mass) {}
+    private record Reference(float center, float contrast, float mass) {}
 
-    private record Profile(float center, float[] referenceCenters) {}
+    private record Profile(float center, int referenceLines) {}
 
-    private static final Profile NO_PROFILE = new Profile(0, new float[0]);
+    private static final Profile NO_PROFILE = new Profile(0, 0);
 
     private static final class ColumnProof {
         final float top, gap;
@@ -22,7 +19,7 @@ final class PrintedCurveRuleInk {
         int scannedLines;
         int fittedLines;
         float fittedTop, fittedGap;
-        float[] fittedCenters;
+        boolean fitVerified;
 
         ColumnProof(float top, float gap) {
             this.top = top;
@@ -37,14 +34,15 @@ final class PrintedCurveRuleInk {
     private final byte[] labels, gray;
     private final int width, height, threshold;
     private final StaffPitchTrack track;
-    private final Map<Integer, ColumnProof> columns = new HashMap<>();
+    private static final int COLUMN_BLOCK_SIZE = 64;
+    private ColumnProof[][] columns;
     private ColumnProof columnProof;
     private final float[] samples = new float[4];
-    private final Reference[] referenceScratch = new Reference[4];
+    private final int[] referenceScratch = new int[4];
     private int lastColumn = -1;
     private boolean columnVerified;
     private float columnTop, columnGap;
-    private Integer firstCrossing;
+    private int firstCrossing = -1;
     private boolean corroborated;
 
     PrintedCurveRuleInk(
@@ -97,7 +95,8 @@ final class PrintedCurveRuleInk {
         lastColumn = x;
         columnVerified = track.verifiedAt(x);
         if (!columnVerified) return;
-        columnProof = columns.get(x);
+        ColumnProof[] block = columns == null ? null : columns[x / COLUMN_BLOCK_SIZE];
+        columnProof = block == null ? null : block[x % COLUMN_BLOCK_SIZE];
         if (columnProof == null) {
             float[] frame = track.at(x);
             columnGap = frame[1];
@@ -139,7 +138,11 @@ final class PrintedCurveRuleInk {
             return original;
         if (columnProof == null) {
             columnProof = new ColumnProof(columnTop, columnGap);
-            columns.put(x, columnProof);
+            if (columns == null) columns = new ColumnProof[(width - 1) / COLUMN_BLOCK_SIZE + 1][];
+            int blockIndex = x / COLUMN_BLOCK_SIZE;
+            ColumnProof[] block = columns[blockIndex];
+            if (block == null) block = columns[blockIndex] = new ColumnProof[COLUMN_BLOCK_SIZE];
+            block[x % COLUMN_BLOCK_SIZE] = columnProof;
         }
         Profile profile = columnProof.profiles[line];
         if (profile == null) {
@@ -148,14 +151,16 @@ final class PrintedCurveRuleInk {
             columnProof.profiles[line] = profile;
         }
         if (profile == NO_PROFILE) return original;
-        int count = profile.referenceCenters.length;
-        for (int i = 0; i < count; i++) {
-            samples[i] = interpolate(x, profile.referenceCenters[i] + y - profile.center);
+        int count = 0;
+        for (int bits = profile.referenceLines; bits != 0; bits &= bits - 1) {
+            int referenceLine = Integer.numberOfTrailingZeros(bits);
+            samples[count++] = interpolate(
+                    x, columnProof.references[referenceLine].center + y - profile.center);
         }
         float reference = upperMedian(samples, count);
         int adjusted = Math.min(255, Math.round(original + Math.max(0, 255 - reference)));
         if (!corroborated && original < threshold && adjusted >= threshold) {
-            if (firstCrossing == null) firstCrossing = x;
+            if (firstCrossing < 0) firstCrossing = x;
             else if (firstCrossing != x) corroborated = true;
         }
         return adjusted;
@@ -170,62 +175,65 @@ final class PrintedCurveRuleInk {
             if ((column.scannedLines & bit) == 0) {
                 int center = Math.round(column.top + line * column.gap);
                 column.references[line] = scanReference(
-                        x, line, center, column.radius, column.maxThickness);
+                        x, center, column.radius, column.maxThickness);
                 column.scannedLines |= bit;
             }
             Reference reference = column.references[line];
-            if (reference != null) referenceScratch[count++] = reference;
+            if (reference != null) referenceScratch[count++] = line;
             else if (++missing == 2) return null;
         }
-        for (int i = 0; i < count; i++) samples[i] = referenceScratch[i].contrast;
+        for (int i = 0; i < count; i++) samples[i] = column.references[referenceScratch[i]].contrast;
         float contrast = upperMedian(samples, count);
-        for (int i = 0; i < count; i++) samples[i] = referenceScratch[i].mass;
+        for (int i = 0; i < count; i++) samples[i] = column.references[referenceScratch[i]].mass;
         float mass = upperMedian(samples, count);
         float minContrast = contrast / 1.35f, maxContrast = contrast * 1.35f;
         float minMass = mass / 1.35f, maxMass = mass * 1.35f;
         int accepted = 0, acceptedLines = 0, rejectionsLeft = count - 3;
-        float meanLine = 0, meanCenter = 0;
         for (int i = 0; i < count; i++) {
-            Reference r = referenceScratch[i];
+            int line = referenceScratch[i];
+            Reference r = column.references[line];
             if (r.contrast < minContrast || r.contrast > maxContrast
                     || r.mass < minMass || r.mass > maxMass) {
                 if (--rejectionsLeft < 0) return null;
                 continue;
             }
-            referenceScratch[accepted++] = r;
-            acceptedLines |= 1 << r.line;
-            meanLine += r.line;
-            meanCenter += r.center;
+            referenceScratch[accepted++] = line;
+            acceptedLines |= 1 << line;
         }
         if (column.fittedLines != acceptedLines) {
+            float meanLine = 0, meanCenter = 0;
+            for (int i = 0; i < accepted; i++) {
+                int line = referenceScratch[i];
+                meanLine += line;
+                meanCenter += column.references[line].center;
+            }
             meanLine /= accepted;
             meanCenter /= accepted;
             float covariance = 0, variance = 0;
             for (int i = 0; i < accepted; i++) {
-                Reference r = referenceScratch[i];
-                float lineOffset = r.line - meanLine;
-                covariance += lineOffset * (r.center - meanCenter);
+                int line = referenceScratch[i];
+                float lineOffset = line - meanLine;
+                covariance += lineOffset * (column.references[line].center - meanCenter);
                 variance += lineOffset * lineOffset;
             }
             float fittedGap = covariance / variance, fittedTop = meanCenter - fittedGap * meanLine;
             column.fittedLines = acceptedLines;
             column.fittedTop = fittedTop;
             column.fittedGap = fittedGap;
-            column.fittedCenters = null;
+            column.fitVerified = false;
             if (Math.abs(fittedGap - column.gap) > column.gapTolerance) return null;
             for (int i = 0; i < accepted; i++) {
-                Reference r = referenceScratch[i];
-                if (Math.abs(r.center - fittedTop - r.line * fittedGap) > .75f) return null;
+                int line = referenceScratch[i];
+                if (Math.abs(column.references[line].center - fittedTop - line * fittedGap) > .75f)
+                    return null;
             }
-            float[] centers = new float[accepted];
-            for (int i = 0; i < accepted; i++) centers[i] = referenceScratch[i].center;
-            column.fittedCenters = centers;
+            column.fitVerified = true;
         }
-        if (column.fittedCenters == null) return null;
+        if (!column.fitVerified) return null;
         float center = column.fittedTop + target * column.fittedGap;
         if (Math.abs(center - column.top - target * column.gap) > column.centerTolerance)
             return null;
-        return new Profile(center, column.fittedCenters);
+        return new Profile(center, acceptedLines);
     }
 
     /** Select the upper median of three or four finite reference values. */
@@ -236,17 +244,18 @@ final class PrintedCurveRuleInk {
         return Math.max(Math.min(high, otherHigh), Math.max(low, otherLow));
     }
 
-    private Reference scanReference(int x, int line, int center, int radius, int maxThickness) {
+    private Reference scanReference(int x, int center, int radius, int maxThickness) {
         int lo = center - radius, hi = center + radius;
         if (lo < 1 || hi >= height - 1
                 || (gray[lo * width + x] & 255) < 230
                 || (gray[hi * width + x] & 255) < 230) return null;
         int first = -1, last = -1;
-        float mass = 0, contrast = 0;
+        float mass = 0;
+        int darkest = 255;
         for (int y = lo, pixel = lo * width + x; y <= hi; y++, pixel += width) {
             int value = gray[pixel] & 255;
             mass += 255 - value;
-            contrast = Math.max(contrast, 255 - value);
+            darkest = Math.min(darkest, value);
             if (value >= threshold) continue;
             if (first < 0) first = y;
             else if (y != last + 1) return null;
@@ -256,7 +265,7 @@ final class PrintedCurveRuleInk {
             if (label != 0 && label != OmrMeasurePostProcessor.STAFF) return null;
         }
         if (first <= lo || last >= hi || last - first + 1 < 2) return null;
-        return new Reference(line, (first + last) * .5f, contrast, mass);
+        return new Reference((first + last) * .5f, 255 - darkest, mass);
     }
 
     private float interpolate(int x, float y) {
