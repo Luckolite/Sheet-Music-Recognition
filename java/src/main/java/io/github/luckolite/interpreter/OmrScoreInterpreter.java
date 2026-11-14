@@ -31516,6 +31516,8 @@ final class OmrScoreInterpreter {
         float[] probeStrokeCenters = new float[probeKeys.length];
         boolean[] probeStrong = new boolean[probeKeys.length];
         boolean requireStrongInk = inkLimit > 165;
+        boolean longArc = span >= gap * 8 && span <= gap * (flatProfile ? 48 : 24);
+        boolean countNonStrong = requireStrongInk || longArc;
         // Keep the original grid: fractional sampling can move across rasterized ink.
         // Short arcs get an additional finer pass after those candidates fail.
         int[] sides = requiredSide == 0 ? new int[] {-1, 1} : new int[] {requiredSide};
@@ -31619,7 +31621,7 @@ final class OmrScoreInterpreter {
                                 strokeCenters[sample] = stroke;
                                 supportedCenters[sample] = supportedRow < 0 ? Float.NaN : supportedRow;
                                 // At most 20 of the 50 votes may lack strong ink when it is required.
-                                if (!strongProbe && ++nonStrong > 20 && requireStrongInk)
+                                if (countNonStrong && !strongProbe && ++nonStrong > 20 && requireStrongInk)
                                     continue candidate;
                                 if (!Float.isNaN(stroke)) {
                                     hits++;
@@ -31785,8 +31787,7 @@ final class OmrScoreInterpreter {
                         // A long, deeply bowed tie can cross several distinct staff rules.
                         // Require every sampled bin to be fully covered, both returning
                         // shoulders and a dark core; unrelated straight fragments cannot qualify.
-                        if (right - left >= gap * 8
-                                && right - left <= gap * (flatProfile ? 48 : 24)
+                        if (longArc
                                 && hits >= 36
                                 && nonStrong <= 14
                                 && obscured > 0
@@ -31850,8 +31851,7 @@ final class OmrScoreInterpreter {
                         // Antialiased shoulders can reduce the dark count while staff rules
                         // obscure a returning curve. Require nearly complete coverage in
                         // every bin, both shoulders, an independently dark core and contrast.
-                        if (right - left >= gap * 8
-                                && right - left <= gap * (flatProfile ? 48 : 24)
+                        if (longArc
                                 && hits >= 36
                                 && nonStrong <= 20
                                 && obscured > 0
@@ -32071,40 +32071,43 @@ final class OmrScoreInterpreter {
         int pixels = 0, columns = 0, minX = right + 1, maxX = left - 1;
         int minY = safeBottom + 1, maxY = safeTop - 1;
         boolean rawAvailable = gray != null && gray.length == labels.length;
-        boolean[] horizontalRows = new boolean[Math.max(0, safeBottom - safeTop + 1)];
-        if (rawAvailable)
+        int span = right - left + 1;
+        boolean[] horizontalRows = rawAvailable
+                ? new boolean[Math.max(0, safeBottom - safeTop + 1)] : null;
+        if (rawAvailable) {
+            int minimumDark = (int) Math.ceil(span * .85f);
             for (int y = safeTop; y <= safeBottom; y++) {
                 int dark = 0;
-                for (int x = left; x <= right; x++) if ((gray[y * width + x] & 0xff) <= 165) dark++;
-                horizontalRows[y - safeTop] = dark >= (right - left + 1) * .85f;
+                for (int at = y * width + left, end = at + span; at < end; at++) {
+                    if ((gray[at] & 255) <= 165 && ++dark >= minimumDark) break;
+                    if (dark + end - at - 1 < minimumDark) break;
+                }
+                horizontalRows[y - safeTop] = dark >= minimumDark;
             }
-        float[] columnCenters = new float[right - left + 1];
+        }
+        float[] columnCenters = new float[span];
         java.util.Arrays.fill(columnCenters, Float.NaN);
         for (int x = left; x <= right; x++) {
             int columnPixels = 0, columnY = 0;
-            for (int y = safeTop; y <= safeBottom; y++) {
-                byte label = labels[y * width + x];
-                boolean semanticArc =
-                        label == OmrMeasurePostProcessor.SYMBOL
-                                || label == OmrMeasurePostProcessor.STEM_OR_REST
-                                || label == OmrMeasurePostProcessor.CLEF_OR_KEY;
-                boolean rawArc =
-                        rawAvailable
-                                && (gray[y * width + x] & 0xff) <= 165
-                                && !horizontalRows[y - safeTop]
-                                && label != OmrMeasurePostProcessor.STAFF
-                                && label != OmrMeasurePostProcessor.NOTEHEAD;
-                if (rawAvailable ? !rawArc : !semanticArc) continue;
+            for (int y = safeTop, at = safeTop * width + x; y <= safeBottom; y++, at += width) {
+                byte label = labels[at];
+                if (rawAvailable) {
+                    if (horizontalRows[y - safeTop] || label == OmrMeasurePostProcessor.STAFF
+                            || label == OmrMeasurePostProcessor.NOTEHEAD || (gray[at] & 255) > 165)
+                        continue;
+                } else if (label != OmrMeasurePostProcessor.SYMBOL
+                        && label != OmrMeasurePostProcessor.STEM_OR_REST
+                        && label != OmrMeasurePostProcessor.CLEF_OR_KEY) continue;
                 columnPixels++;
                 columnY += y;
-                pixels++;
-                minX = Math.min(minX, x);
-                maxX = Math.max(maxX, x);
                 minY = Math.min(minY, y);
                 maxY = Math.max(maxY, y);
             }
             if (columnPixels > 0) {
+                pixels += columnPixels;
                 columns++;
+                minX = Math.min(minX, x);
+                maxX = x;
                 columnCenters[x - left] = columnY / (float) columnPixels;
             }
         }

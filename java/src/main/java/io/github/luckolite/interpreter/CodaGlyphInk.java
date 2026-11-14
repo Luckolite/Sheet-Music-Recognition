@@ -2,8 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.github.luckolite.interpreter;
 
-import java.util.*;
-
 /** A coda has a crossed ring enclosing four curved white quadrants. */
 final class CodaGlyphInk {
     static boolean matches(
@@ -35,35 +33,52 @@ final class CodaGlyphInk {
                 || w / (float) h < .65f
                 || w / (float) h > 1.15f
                 || (long) w * h > 65536) return false;
-        boolean[] seen = new boolean[w * h];
+        // A coda must have both cross strokes before its enclosed paper is examined.
+        if (!hasCrossStroke(gray, width, left, top, w, h, 1, width)
+                || !hasCrossStroke(gray, width, left, top, h, w, width, 1)) return false;
+        int stride = w + 2, firstRow = stride + 1;
+        boolean[] paper = new boolean[stride * (h + 2)];
+        for (int y = 0; y < h; y++) {
+            int row = (top + y) * width + left, crop = firstRow + y * stride;
+            for (int x = 0; x < w; x++) paper[crop + x] = (gray[row + x] & 255) >= 175;
+        }
         int[] queue = new int[w * h];
         int holes = 0, quadrants = 0;
-        for (int seed = 0; seed < seen.length; seed++) {
-            if (seen[seed] || (gray[(top + seed / w) * width + left + seed % w] & 255) < 175)
-                continue;
-            int count = 1, take = 0, l = w, r = 0, t = h, b = 0;
+        for (int seed = firstRow; seed < firstRow + h * stride; seed++) {
+            if (!paper[seed]) continue;
+            int count = 1, take = 0, l = w, r = 0, t = seed / stride - 1, b = t;
             boolean border = false;
-            long sx = 0, sy = 0;
-            seen[seed] = true;
+            int sx = 0, sy = 0;
+            paper[seed] = false;
             queue[0] = seed;
             while (take < count) {
-                int k = queue[take++], x = k % w, y = k / w;
+                int at = queue[take++], yy = at / stride;
+                int x = at - yy * stride - 1, y = yy - 1;
                 l = Math.min(l, x);
                 r = Math.max(r, x);
-                t = Math.min(t, y);
                 b = Math.max(b, y);
                 sx += x;
                 sy += y;
                 border |= x == 0 || y == 0 || x == w - 1 || y == h - 1;
-                for (int dir = 0; dir < 4; dir++) {
-                    int xx = x + (dir == 0 ? -1 : dir == 1 ? 1 : 0),
-                            yy = y + (dir == 2 ? -1 : dir == 3 ? 1 : 0);
-                    if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
-                    int n = yy * w + xx;
-                    if (!seen[n] && (gray[(top + yy) * width + left + xx] & 255) >= 175) {
-                        seen[n] = true;
-                        queue[count++] = n;
-                    }
+                int next = at - 1;
+                if (paper[next]) {
+                    paper[next] = false;
+                    queue[count++] = next;
+                }
+                next = at + 1;
+                if (paper[next]) {
+                    paper[next] = false;
+                    queue[count++] = next;
+                }
+                next = at - stride;
+                if (paper[next]) {
+                    paper[next] = false;
+                    queue[count++] = next;
+                }
+                next = at + stride;
+                if (paper[next]) {
+                    paper[next] = false;
+                    queue[count++] = next;
                 }
             }
             if (border) continue;
@@ -84,17 +99,22 @@ final class CodaGlyphInk {
             quadrants |= 1 << quadrant;
         }
         if (holes != 4 || quadrants != 15) return false;
-        int vertical = 0, horizontal = 0;
-        for (int x = Math.max(0, w / 2 - 2); x <= Math.min(w - 1, w / 2 + 2); x++) {
-            int ink = 0;
-            for (int y = 0; y < h; y++) if ((gray[(top + y) * width + left + x] & 255) < 175) ink++;
-            vertical = Math.max(vertical, ink);
+        return true;
+    }
+
+    private static boolean hasCrossStroke(
+            byte[] gray, int width, int left, int top, int breadth, int length,
+            int acrossStep, int alongStep) {
+        int offset = top * width + left;
+        int required = (int) Math.ceil(length * .85f);
+        for (int across = Math.max(0, breadth / 2 - 2);
+                across <= Math.min(breadth - 1, breadth / 2 + 2); across++) {
+            int remaining = required, at = offset + across * acrossStep;
+            for (int along = 0; along < length && remaining <= length - along;
+                    along++, at += alongStep) {
+                if ((gray[at] & 255) < 175 && --remaining == 0) return true;
+            }
         }
-        for (int y = Math.max(0, h / 2 - 2); y <= Math.min(h - 1, h / 2 + 2); y++) {
-            int ink = 0;
-            for (int x = 0; x < w; x++) if ((gray[(top + y) * width + left + x] & 255) < 175) ink++;
-            horizontal = Math.max(horizontal, ink);
-        }
-        return vertical >= h * .85f && horizontal >= w * .85f;
+        return false;
     }
 }
