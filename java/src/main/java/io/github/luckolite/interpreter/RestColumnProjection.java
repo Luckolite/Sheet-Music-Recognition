@@ -64,8 +64,12 @@ final class RestColumnProjection {
             dark = new int[rowDark[y]];
             int count = 0, row = y * width;
             for (int x = 0; x < width; x++)
-                if ((gray[row + x] & 255) < 170) dark[count++] = x;
+                if ((gray[row + x] & 255) < 170) {
+                    dark[count++] = x;
+                    columns[x]++;
+                }
             rowColumns[y] = dark;
+            return;
         }
         for (int x : dark) columns[x]++;
     }

@@ -2040,13 +2040,14 @@ final class SixteenthRestDetector {
             Staff staff = placement.staff();
             float gap = staff.gap();
             float tolerance = gap * .1f, maximumShift = gap * 6.1f;
-            boolean ordinary = false, deepVoice = false, shallowLowered = false;
+            boolean ordinary = false, deepVoice = false, shallowLowered = false, lowered = false;
             boolean highVoice = false, farRaised = false;
             for (Staff printed : staffs) {
                 if (printed.index() != staff.index() || printed.count() != staff.count()) continue;
                 float down = staff.top() - printed.top(), up = printed.top() - staff.top();
                 ordinary |= Math.abs(up) < tolerance;
                 deepVoice |= down > gap * 1.9f && down < maximumShift;
+                lowered |= down > gap * .9f && down < maximumShift;
                 shallowLowered |= Math.abs(down - gap) < tolerance;
                 highVoice |= Math.abs(down - gap * 2) < tolerance;
                 farRaised |= up > gap * 2.9f && up < maximumShift;
@@ -2056,7 +2057,7 @@ final class SixteenthRestDetector {
             int bottom =
                     Math.min(height - 1, Math.round(staff.bottom() + (highVoice ? 0 : gap * .3f)));
             if (bottom < top) continue;
-            Boolean loweredPlacement = null;
+            final boolean loweredPlacement = lowered;
             boolean[] line = new boolean[bottom - top + 1];
             boolean[] narrowLine = new boolean[line.length];
             // Remove only long horizontal ink rows, including a line's antialiased edge.
@@ -2071,12 +2072,17 @@ final class SixteenthRestDetector {
             for (int y = top; y <= bottom; y++) {
                 if (rowDark[y] < 0) {
                     int dark = 0, longest = 0, run = 0;
-                    for (int x = 0; x < width; x++) {
-                        if ((gray[y * width + x] & 255) < 170) {
+                    int offset = y * width;
+                    for (int pixel = offset, limit = offset + width; pixel < limit; pixel++) {
+                        if ((gray[pixel] & 255) < 170) {
                             dark++;
-                            longest = Math.max(longest, ++run);
-                        } else run = 0;
+                            run++;
+                        } else if (run > 0) {
+                            longest = Math.max(longest, run);
+                            run = 0;
+                        }
                     }
+                    longest = Math.max(longest, run);
                     rowDark[y] = dark;
                     rowLongest[y] = longest;
                 }
@@ -2141,42 +2147,15 @@ final class SixteenthRestDetector {
                                     : java.util.Arrays.copyOfRange(
                                             baseMask, scanTop - top, scanBottom - top + 1);
                     int[] columnInk = projection.sum(scanTop, scanBottom, mask);
-                    int start = -1;
-                    for (int x = 0; x <= width; x++) {
-                        int ink = x < width ? columnInk[x] : 0;
-                        if (ink >= 2) {
-                            if (start < 0) start = x;
-                        } else if (start >= 0) {
-                            if (loweredPlacement == null)
-                                loweredPlacement =
-                                        staffs.stream()
-                                                .anyMatch(
-                                                        s ->
-                                                                s.index() == staff.index()
-                                                                        && s.count() == staff.count()
-                                                                        && staff.top() - s.top()
-                                                                                > gap * .9f
-                                                                        && staff.top() - s.top()
-                                                                                < gap * 6.1f);
-                            boolean lowered = loweredPlacement;
-                            if (recovery != null && ordinary && pass == 0 && baseMask == line)
-                                recovery.capture(
-                                        view,
-                                        gray,
-                                        height,
-                                        measures,
-                                        notes,
-                                        staff,
-                                        scanTop,
-                                        scanBottom,
-                                        mask,
-                                        start,
-                                        x - 1,
-                                        columnInk);
-                            int previousRestCount = result.size();
-                            inspectCounter(
+                    for (int x = 0; x < width; ) {
+                        while (x < width && columnInk[x] < 2) x++;
+                        if (x == width) break;
+                        int start = x++;
+                        while (x < width && columnInk[x] >= 2) x++;
+                        if (recovery != null && ordinary && pass == 0 && baseMask == line)
+                            recovery.capture(
+                                    view,
                                     gray,
-                                    width,
                                     height,
                                     measures,
                                     notes,
@@ -2186,116 +2165,128 @@ final class SixteenthRestDetector {
                                     mask,
                                     start,
                                     x - 1,
-                                    result,
-                                    restDots,
-                                    ordinary,
-                                    lowered,
-                                    deepVoice,
-                                    baseMask != line && baseMask != narrowLine,
-                                    (ordinary
-                                                    || shallowLowered
-                                                    || farRaised
-                                                    || deepVoice && pass == 2)
-                                            && pass > 0,
-                                    quarterOnly,
-                                    farRaised,
-                                    placement.printedCenter() / height,
-                                    faintShapes,
-                                    counter);
-                            if (result.size() == previousRestCount
-                                    && x - start >= staff.gap() * .7f) {
-                                if (!componentOriginalResolved) {
-                                    componentOriginal = RestComponentRuleDomain.originalPlane(
-                                            notes, gray, width, height);
-                                    componentOriginalResolved = true;
-                                }
-                                var componentDomain =
-                                        RestComponentRuleDomain.bindResolved(
-                                                gray,
-                                                width,
-                                                height,
-                                                start,
-                                                x - 1,
-                                                scanTop,
-                                                scanBottom,
-                                                mask,
-                                                placement.printedCenter(),
-                                                staff.gap(),
-                                                componentOriginal);
-                                for (var body :
-                                        componentDomain == null
-                                                ? List.<SeparatedRestInk.Body>of()
-                                                : SeparatedRestInk.find(
+                                    columnInk);
+                        int previousRestCount = result.size();
+                        inspectCounter(
+                                gray,
+                                width,
+                                height,
+                                measures,
+                                notes,
+                                staff,
+                                scanTop,
+                                scanBottom,
+                                mask,
+                                start,
+                                x - 1,
+                                result,
+                                restDots,
+                                ordinary,
+                                loweredPlacement,
+                                deepVoice,
+                                baseMask != line && baseMask != narrowLine,
+                                (ordinary
+                                                || shallowLowered
+                                                || farRaised
+                                                || deepVoice && pass == 2)
+                                        && pass > 0,
+                                quarterOnly,
+                                farRaised,
+                                placement.printedCenter() / height,
+                                faintShapes,
+                                counter);
+                        if (result.size() == previousRestCount
+                                && x - start >= staff.gap() * .7f) {
+                            if (!componentOriginalResolved) {
+                                componentOriginal = RestComponentRuleDomain.originalPlane(
+                                        notes, gray, width, height);
+                                componentOriginalResolved = true;
+                            }
+                            var componentDomain =
+                                    RestComponentRuleDomain.bindResolved(
+                                            gray,
+                                            width,
+                                            height,
+                                            start,
+                                            x - 1,
+                                            scanTop,
+                                            scanBottom,
+                                            mask,
+                                            placement.printedCenter(),
+                                            staff.gap(),
+                                            componentOriginal);
+                            for (var body :
+                                    componentDomain == null
+                                            ? List.<SeparatedRestInk.Body>of()
+                                            : SeparatedRestInk.find(
+                                                    gray,
+                                                    width,
+                                                    height,
+                                                    componentDomain.left(),
+                                                    componentDomain.right(),
+                                                    scanTop,
+                                                    scanBottom,
+                                                    componentDomain.line(),
+                                                    staff.gap())) {
+                                int bodyTop = Math.max(scanTop, body.top() - 1);
+                                int bodyBottom = Math.min(scanBottom, body.bottom() + 1);
+                                boolean[] bodyMask =
+                                        java.util.Arrays.copyOfRange(
+                                                componentDomain.line(),
+                                                bodyTop - scanTop,
+                                                bodyBottom - scanTop + 1);
+                                boolean componentBulbOnly =
+                                        (ordinary
+                                                        || shallowLowered
+                                                        || farRaised
+                                                        || deepVoice && pass == 2)
+                                                && pass > 0;
+                                componentReads.add(
+                                        () -> {
+                                            if (SeparatedRestInk.represented(
+                                                    body, staff, measures, result, width,
+                                                    height)) return;
+                                            if (isolatedInk[0] == null)
+                                                isolatedInk[0] = gray.clone();
+                                            try {
+                                                inspectOwnedCounter(
+                                                        body.owned(
+                                                                gray,
+                                                                isolatedInk[0],
+                                                                width,
+                                                                height,
+                                                                bodyMask,
+                                                                bodyTop),
                                                         gray,
                                                         width,
                                                         height,
-                                                        componentDomain.left(),
-                                                        componentDomain.right(),
-                                                        scanTop,
-                                                        scanBottom,
-                                                        componentDomain.line(),
-                                                        staff.gap())) {
-                                    int bodyTop = Math.max(scanTop, body.top() - 1);
-                                    int bodyBottom = Math.min(scanBottom, body.bottom() + 1);
-                                    boolean[] bodyMask =
-                                            java.util.Arrays.copyOfRange(
-                                                    componentDomain.line(),
-                                                    bodyTop - scanTop,
-                                                    bodyBottom - scanTop + 1);
-                                    boolean componentBulbOnly =
-                                            (ordinary
-                                                            || shallowLowered
-                                                            || farRaised
-                                                            || deepVoice && pass == 2)
-                                                    && pass > 0;
-                                    componentReads.add(
-                                            () -> {
-                                                if (SeparatedRestInk.represented(
-                                                        body, staff, measures, result, width,
-                                                        height)) return;
-                                                if (isolatedInk[0] == null)
-                                                    isolatedInk[0] = gray.clone();
-                                                try {
-                                                    inspectOwnedCounter(
-                                                            body.owned(
-                                                                    gray,
-                                                                    isolatedInk[0],
-                                                                    width,
-                                                                    height,
-                                                                    bodyMask,
-                                                                    bodyTop),
-                                                            gray,
-                                                            width,
-                                                            height,
-                                                            measures,
-                                                            notes,
-                                                            staff,
-                                                            bodyTop,
-                                                            bodyBottom,
-                                                            bodyMask,
-                                                            body.left(),
-                                                            body.right(),
-                                                            result,
-                                                            restDots,
-                                                            ordinaryPlacement,
-                                                            lowered,
-                                                            deepPlacement,
-                                                            baseMask != line
-                                                                    && baseMask != narrowLine,
-                                                            componentBulbOnly,
-                                                            quarterOnly,
-                                                            farPlacement,
-                                                            placement.printedCenter() / height,
-                                                            faintShapes,
-                                                            counter);
-                                                } finally {
-                                                    body.restore(
-                                                            isolatedInk[0], gray, width, height);
-                                                }
-                                            });
-                                }
+                                                        measures,
+                                                        notes,
+                                                        staff,
+                                                        bodyTop,
+                                                        bodyBottom,
+                                                        bodyMask,
+                                                        body.left(),
+                                                        body.right(),
+                                                        result,
+                                                        restDots,
+                                                        ordinaryPlacement,
+                                                        loweredPlacement,
+                                                        deepPlacement,
+                                                        baseMask != line
+                                                                && baseMask != narrowLine,
+                                                        componentBulbOnly,
+                                                        quarterOnly,
+                                                        farPlacement,
+                                                        placement.printedCenter() / height,
+                                                        faintShapes,
+                                                        counter);
+                                            } finally {
+                                                body.restore(
+                                                        isolatedInk[0], gray, width, height);
+                                            }
+                                        });
                             }
-                            start = -1;
                         }
                     }
                 }

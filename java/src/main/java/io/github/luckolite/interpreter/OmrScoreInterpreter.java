@@ -18379,13 +18379,14 @@ final class OmrScoreInterpreter {
         List<AccidentalCandidate> sameLabel =
                 joinAccidentalFragments(labels, gray, width, height, candidates, staffs, false);
         List<AccidentalCandidate> result = new ArrayList<>();
+        List<Component> nearby = new ArrayList<>();
         // Preserve compact crosses before a greedy union can absorb nearby ledger ink.
         // Only complete four-arm glyphs qualify; partial islands remain ordinary candidates.
         for (int i = 0; i < candidates.size(); i++) {
             Component a = candidates.get(i).component;
             Staff staff = nearestHeadStaff(staffs, a.centerY);
             if (staff == null) continue;
-            List<Component> nearby = new ArrayList<>();
+            nearby.clear();
             for (int j = i + 1; j < candidates.size(); j++) {
                 Component b = candidates.get(j).component;
                 if (Math.max(a.maxX, b.maxX) - Math.min(a.minX, b.minX) + 1 <= staff.gap * 1.4f
@@ -18462,21 +18463,28 @@ final class OmrScoreInterpreter {
             Staff staff = nearestHeadStaff(staffs, a.component.centerY);
             if (staff == null) continue;
             float gap = staff.gap;
+            int reach = Math.max(2, Math.round(gap * .42f));
+            float maximumWidth = gap * 1.65f, maximumHeight = gap * 3.70f;
+            if (a.component.maxX - a.component.minX + 1 > maximumWidth
+                    || a.component.maxY - a.component.minY + 1 > maximumHeight) continue;
             for (int j = i + 1; j < joined.size(); j++) {
                 AccidentalCandidate b = joined.get(j);
                 if (!mixedLabels && a.label != b.label) continue;
                 Component ac = a.component, bc = b.component;
                 int left = Math.min(ac.minX, bc.minX), right = Math.max(ac.maxX, bc.maxX);
                 int top = Math.min(ac.minY, bc.minY), bottom = Math.max(ac.maxY, bc.maxY);
-                int reach = Math.max(2, Math.round(gap * .42f));
-                if (right - left + 1 > gap * 1.65f
-                        || bottom - top + 1 > gap * 3.70f
+                if (right - left + 1 > maximumWidth
+                        || bottom - top + 1 > maximumHeight
                         || Math.max(ac.minX, bc.minX) - Math.min(ac.maxX, bc.maxX) > reach
                         || Math.max(ac.minY, bc.minY) - Math.min(ac.maxY, bc.maxY) > reach)
                     continue;
                 boolean connected = false;
-                for (int y = ac.minY; y <= ac.maxY && !connected; y++)
-                    for (int x = ac.minX; x <= ac.maxX && !connected; x++) {
+                int firstX = Math.max(ac.minX, bc.minX - reach);
+                int lastX = Math.min(ac.maxX, bc.maxX + reach);
+                int firstY = Math.max(ac.minY, bc.minY - reach);
+                int lastY = Math.min(ac.maxY, bc.maxY + reach);
+                for (int y = firstY; y <= lastY && !connected; y++)
+                    for (int x = firstX; x <= lastX && !connected; x++) {
                         if (!a.matches(labels[y * width + x])) continue;
                         for (int by = Math.max(bc.minY, y - reach);
                                 by <= Math.min(bc.maxY, y + reach) && !connected;
@@ -22964,8 +22972,8 @@ final class OmrScoreInterpreter {
         if (localWidth < 3 || localHeight < 3) return List.of();
         // A real dot can touch a thin staff rule after downsampling. Remove only
         // rows supported across the entire search width, never a rounded local mark.
-        boolean[] ruleRows = threshold <= 70 ? new boolean[localHeight] : null;
-        if (ruleRows != null) {
+        boolean[] ruleRows = null;
+        if (threshold <= 70) {
             int maxRuleHeight = Math.max(2, Math.round(gap * .23f));
             int maxLight = localWidth - (int) Math.ceil(localWidth * .90f);
             int start = 0;
@@ -22975,11 +22983,16 @@ final class OmrScoreInterpreter {
                     if ((gray[pixel] & 255) > threshold && ++light > maxLight) break;
                 }
                 if (light <= maxLight) continue;
-                if (y - start <= maxRuleHeight) java.util.Arrays.fill(ruleRows, start, y, true);
+                if (y > start && y - start <= maxRuleHeight) {
+                    if (ruleRows == null) ruleRows = new boolean[localHeight];
+                    java.util.Arrays.fill(ruleRows, start, y, true);
+                }
                 start = y + 1;
             }
-            if (localHeight - start <= maxRuleHeight)
+            if (localHeight > start && localHeight - start <= maxRuleHeight) {
+                if (ruleRows == null) ruleRows = new boolean[localHeight];
                 java.util.Arrays.fill(ruleRows, start, localHeight, true);
+            }
         }
         int pixelCount = localWidth * localHeight;
         int rasterStart = top * width + left;
@@ -23009,7 +23022,7 @@ final class OmrScoreInterpreter {
                 int stackSize = 0;
                 stack[stackSize++] = localOrigin;
                 examined[localOrigin] = true;
-                int area = 0, minX = lastColumn, maxX = 0, minY = lastRow, maxY = 0;
+                int area = 0, minX = lastColumn, maxX = 0, minY = originY, maxY = originY;
                 long sumX = 0, sumY = 0;
                 double momentX = 0, momentY = 0, momentXX = 0, momentYY = 0, momentXY = 0;
                 boolean touchesBoundary = false;
@@ -23031,7 +23044,6 @@ final class OmrScoreInterpreter {
                             momentXY += localX * localY;
                             minX = Math.min(minX, lx);
                             maxX = Math.max(maxX, lx);
-                            minY = Math.min(minY, ly);
                             maxY = Math.max(maxY, ly);
                         }
                     }
