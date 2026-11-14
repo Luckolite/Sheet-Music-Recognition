@@ -6,7 +6,7 @@ package io.github.luckolite.interpreter;
 final class TupletNumeralInk {
     private TupletNumeralInk() {}
 
-    record Window(byte[] pixels, int width, int height, int left, int top) {}
+    record Window(byte[] pixels, int width, int height, int left, int top, boolean hasRuleEdges) {}
 
     /** A binary-looking paper stain is not a printed numeral. Use original gray
      * values, not the normalized mask, to require local glyph-to-paper contrast. */
@@ -115,11 +115,18 @@ final class TupletNumeralInk {
             int offset = y * w;
             for (int x = left; x <= right; x++) histogram[gray[offset + x] & 255]++;
         }
-        return new Crop(gray, w, left, top, ww, hh, percentile(histogram, ww * hh, .85f) - 22, gap);
+        return new Crop(gray, w, left, top, ww, hh, percentile(histogram, ww * hh, .85f) - 22, gap, histogram);
     }
 
     record Crop(byte[] gray, int sourceWidth, int left, int top, int width, int height,
-                int paperLimit, float gap) {
+                int paperLimit, float gap, int[] histogram) {
+        int effectiveThreshold(int requested) {
+            int threshold = Math.min(requested, paperLimit);
+            if (threshold < 100) return -1;
+            while (threshold >= 0 && histogram[threshold] == 0) threshold--;
+            return threshold;
+        }
+
         Window window(int requested, boolean ruleEdges) {
             return cleanWindow(this, Math.min(requested, paperLimit), ruleEdges);
         }
@@ -150,12 +157,12 @@ final class TupletNumeralInk {
             anyInk |= inkCount != 0;
             if (y > 0 && firstLevelRow == hh - 1 && inkCount >= minimum)
                 firstLevelRow = y;
-            if (ruleEdges && y >= firstEdgeRow && y < endEdgeRow && inkCount >= edgeMinimum)
+            if (y >= firstEdgeRow && y < endEdgeRow && inkCount >= edgeMinimum)
                 possibleEdges = true;
         }
-        if (!anyInk) return new Window(pixels, ww, hh, left, top);
-        byte[] original = possibleEdges ? pixels.clone() : null;
-        if (possibleEdges) removeLevelRuleEdges(pixels, original, ww, hh, maxEdgeStroke, occupancy);
+        if (!anyInk) return new Window(pixels, ww, hh, left, top, possibleEdges);
+        byte[] original = ruleEdges && possibleEdges ? pixels.clone() : null;
+        if (original != null) removeLevelRuleEdges(pixels, original, ww, hh, maxEdgeStroke, occupancy);
         int maxLevelStroke = Math.max(2, Math.round(gap * .23f));
         for (int y = firstLevelRow; y < hh - 1; y++) {
             if (occupancy[y] < minimum) continue;
@@ -177,7 +184,7 @@ final class TupletNumeralInk {
             y = end;
         }
         removeSlopedRulesWithThickness(pixels, ww, hh, maxEdgeStroke);
-        return new Window(pixels, ww, hh, left, top);
+        return new Window(pixels, ww, hh, left, top, possibleEdges);
     }
 
     private static int levelRuleThickness(float gap) {

@@ -3466,10 +3466,46 @@ final class TripletRhythmDetector {
         int[] pendingLevels = pendingEnabled ? new int[admitted.length] : null;
         int pendingCount = 0;
         var crop = TupletNumeralInk.crop(gray, width, height, firstX, lastX, firstY, lastY, gap);
-        for (int pass = 0; crop != null && pass < 2; pass++)
-            for (int level : levels) {
-                var local = crop.window(level, pass != 0);
+        // Equal effective thresholds have the same binary ink. Keep the requested
+        // levels and ownership call order for consensus and budget accounting.
+        int[] thresholds = new int[levels.length];
+        if (crop != null)
+            for (int i = 0; i < levels.length; i++) thresholds[i] = crop.effectiveThreshold(levels[i]);
+        // Keep cross-pass masks only for small crops to bound retained pixel storage.
+        var unchanged = crop != null && (long) crop.width() * crop.height() <= 16_384
+                ? new TupletNumeralInk.Window[levels.length] : null;
+        boolean[] consultedOwner = {false};
+        int crossPassMisses = 0;
+        int paperIndex = -1;
+        if (crop != null)
+            for (int i = 0; i < levels.length; i++)
+                if (levels[i] >= crop.paperLimit()) {
+                    paperIndex = i;
+                    break;
+                }
+        for (int pass = 0; crop != null && crop.paperLimit() >= 100 && pass < 2; pass++) {
+            TupletNumeralInk.Window paperLimited = null;
+            int misses = 0;
+            for (int retryIndex = 0; retryIndex < levels.length; retryIndex++) {
+                int level = levels[retryIndex], threshold = thresholds[retryIndex];
+                if (threshold < 0) continue;
+                int key = 0;
+                while (thresholds[key] != threshold) key++;
+                int retryBit = 1 << key;
+                if ((misses & retryBit) != 0 || (pass != 0 && (crossPassMisses & retryBit) != 0))
+                    continue;
+                var saved = unchanged == null ? null : unchanged[key];
+                TupletNumeralInk.Window local;
+                if (paperIndex >= 0 && threshold == thresholds[paperIndex]) {
+                    if (paperLimited == null)
+                        paperLimited = saved != null ? saved : crop.window(level, pass != 0);
+                    local = paperLimited;
+                } else {
+                    local = saved != null ? saved : crop.window(level, pass != 0);
+                }
                 if (local == null) continue;
+                if (pass == 0 && unchanged != null && !local.hasRuleEdges()) unchanged[key] = local;
+                consultedOwner[0] = false;
                 Glyph retry =
                         findPrintedNumeral(
                                 local.pixels(),
@@ -3485,13 +3521,20 @@ final class TripletRhythmDetector {
                                 headY - local.top(),
                                 number,
                                 boundedSecondary,
-                                glyph ->
-                                        ownership.test(
+                                glyph -> {
+                                    consultedOwner[0] = true;
+                                    return ownership.test(
                                                 new Glyph(
                                                         glyph.left() + local.left(),
                                                                 glyph.top() + local.top(),
                                                         glyph.right() + local.left(),
-                                                                glyph.bottom() + local.top())));
+                                                                glyph.bottom() + local.top()));
+                                });
+                if (retry == null && !consultedOwner[0]) {
+                    misses |= retryBit;
+                    if (pass == 0 && !local.hasRuleEdges()) crossPassMisses |= retryBit;
+                    continue;
+                }
                 if (retry != null
                         && TupletNumeralInk.hasGlyphContrast(
                                 gray,
@@ -3550,6 +3593,7 @@ final class TripletRhythmDetector {
                     }
                 }
             }
+        }
         if (deferredConsensus != null) return deferredConsensus;
         return pendingEnabled
                 ? literalFallback(
