@@ -19,49 +19,49 @@ public final class CompleteOwnedBeamValueOriginalTest {
                 new Object[][] {
                     {
                         "paperCounter",
-                        "49ecbb6bdf134f85ac70122d8905ff10615ba6611b2ea4eabc1de595eeaf6b69",
+                        "44b7d4429aa28736124c399fba8309c6cb2646560282df521867a66821ed364d",
                         2,
                         0d,
                         true
                     },
                     {
                         "paperCounterDown",
-                        "08253b1104f5b24f1e9150eb9678212cda90285cad896426e82454bca48f30c5",
+                        "64f7848dd1a1a5e4f1e3b2e866b8a2be71a595d9b336f821d94bbae8043ae7d6",
                         2,
                         0d,
                         true
                     },
                     {
                         "paperCounterSlope",
-                        "f08801a4f7bbb92b2c3fffffbaead81f1bfaca24e18d2f9b94099b4a731f02a8",
+                        "6d8f68c05e6b91448da70713039d7c237721a33b254d03dafa2992fcd1d6af10",
                         2,
                         0d,
                         true
                     },
                     {
                         "paleCounter230",
-                        "b7da2145628d9f85a7f9811309d31dab3f1c6c000b82ac2835eeaf1499bf6fe1",
+                        "06fc66c2e63796b74c217619b0ba2577ee78bbff15a487c42a27e3ccebfdfe33",
                         2,
                         0d,
                         false
                     },
                     {
                         "paleCounter245",
-                        "be6903251f2c626e5689c5046c3c0ed60d9fc468fa86c91fcafd2ec6623a811e",
+                        "988ac76df196b6d855d6b5838761d9b9d267df60a45198464e57a08408952259",
                         2,
                         0d,
                         true
                     },
                     {
                         "sustainedHalfBesideForeignGroup",
-                        "b1ad16b170fd918e85216c62ab805c2c3c26693dbb9df97313062a0706d4fb52",
+                        "7d200280c7e2b6d3cbbb38548513512ca32d0f7320ae03686d91acc903bca000",
                         0,
                         2d,
                         false
                     },
                     {
                         "sustainedWholeBesideForeignGroup",
-                        "3c84a2230c25772b48a512d2b4a6b36b4811b0c77fa9d947ea4335a1a3b78f5e",
+                        "7f7ff498879eb5308a22c2a6833051a33dcb23380cedd0499c13ce48b0132b49",
                         0,
                         4d,
                         false

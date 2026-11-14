@@ -24,7 +24,7 @@ public final class CompleteRailOwnershipOriginalTest {
                 new Object[][] {
                     {
                         "positiveUp",
-                        "9a53ba6bf80c0da2499e46f04ef1d88cda1184de306decffa655bc66f7012704",
+                        "fba186193a9a89824d8291f5189d699b76b34b66ebe7cf26eac938e07c17e416",
                         3,
                         2,
                         0.0f,
@@ -32,7 +32,7 @@ public final class CompleteRailOwnershipOriginalTest {
                     },
                     {
                         "positiveDown",
-                        "3667399b31614b2fbcff2a7bc7d2858b1af519ef2af49469ded3f9c2f244f460",
+                        "53c895b01e2b16c9626dc0552390b42a677329986e0ddb8c2dc28f314072fbf3",
                         3,
                         2,
                         0.0f,
@@ -40,7 +40,7 @@ public final class CompleteRailOwnershipOriginalTest {
                     },
                     {
                         "positiveSlope",
-                        "9f03e3d64b30a016607013ec10da870e265c6121c71bda10c67833906b528f1b",
+                        "bc29ecb711d788ee51b144b7e20a67932918c30d8ef94a1cb1574f39389dc9e0",
                         3,
                         2,
                         0.0f,
@@ -48,7 +48,7 @@ public final class CompleteRailOwnershipOriginalTest {
                     },
                     {
                         "compactControl",
-                        "01c2d9a1486e83205adbb354be56cdf97c2f2d9372e4a07922b34f06b8081d71",
+                        "69aa4bb9dbc5c6cff1e2a1626d3619d06a40043424bf73f5de3322c1bfe25f19",
                         3,
                         2,
                         0.0f,
@@ -56,7 +56,7 @@ public final class CompleteRailOwnershipOriginalTest {
                     },
                     {
                         "nearLeft1",
-                        "30f1145c7c05833c9bae3e0c78c39f21e6c1fa8918b709a950a5e3c221e0d431",
+                        "bb4a1745db35a50d16b79ece02c68dad26db1fee180a7978e53b1853e22d76a1",
                         3,
                         0,
                         2.0f,
@@ -64,7 +64,7 @@ public final class CompleteRailOwnershipOriginalTest {
                     },
                     {
                         "nearLeft2",
-                        "6818db9fd410e0cc45d1fe459051dc1507e4de6af6cf5c03e4e631dc5f8220d5",
+                        "599e350658d890d4a8da4399b12968d946a80e99ca177fdcbb652677a84a0490",
                         3,
                         0,
                         2.0f,
@@ -72,7 +72,7 @@ public final class CompleteRailOwnershipOriginalTest {
                     },
                     {
                         "nearRight1",
-                        "cb179a765b4c8260fdaaee19132e254511bd52dec16d9fea9293876747031fa5",
+                        "47e66475f97557612558e66a60233b56574302333fe1a78fce383256861fa4b7",
                         3,
                         0,
                         2.0f,
@@ -80,7 +80,7 @@ public final class CompleteRailOwnershipOriginalTest {
                     },
                     {
                         "nearRight2",
-                        "0152090c741a136c2bd00109c56c749c590a0cf2785f709329f722519fc4f823",
+                        "4b6b52775d401a1d783fe4e26dad7377b8c002ed7d1ea3888ad2f64f6e66842e",
                         3,
                         0,
                         2.0f,
@@ -88,7 +88,7 @@ public final class CompleteRailOwnershipOriginalTest {
                     },
                     {
                         "brokenInterior",
-                        "84eb0868438ac0c4d437ec510f92ad1a01d0cb98613c5f73e82dad1541b5bac4",
+                        "ce5c769b97b1ae045f69d893ad0b32aeb222b146ff42104ae03f96ac780353f4",
                         3,
                         0,
                         2.0f,
@@ -96,7 +96,7 @@ public final class CompleteRailOwnershipOriginalTest {
                     },
                     {
                         "staffBridge",
-                        "389d1aac76d30ff6bc6eb7eca512a308a5ba11a9872a08876224070d68ba7b4f",
+                        "64c4913e6060c13341fda783f5f03c01fafc677e2c4131054627829d42e0fd05",
                         3,
                         2,
                         0.0f,
@@ -104,7 +104,7 @@ public final class CompleteRailOwnershipOriginalTest {
                     },
                     {
                         "slurBridge",
-                        "bec145a3ff6e443e8d155866c313324ebeddb36b9edfe01d1296935a13c552ed",
+                        "a38fa97546a617b86e8a5edc294ac018a2af78f8c9f39a9798e732140dd67ef6",
                         3,
                         2,
                         0.0f,
@@ -112,7 +112,7 @@ public final class CompleteRailOwnershipOriginalTest {
                     },
                     {
                         "otherRailOnly",
-                        "84eb0868438ac0c4d437ec510f92ad1a01d0cb98613c5f73e82dad1541b5bac4",
+                        "ce5c769b97b1ae045f69d893ad0b32aeb222b146ff42104ae03f96ac780353f4",
                         3,
                         0,
                         2.0f,
@@ -120,7 +120,7 @@ public final class CompleteRailOwnershipOriginalTest {
                     },
                     {
                         "foreignStem",
-                        "8cc39eeb533aec830d3573abc2de9f111038f6ff4294e9fc7616109173b54077",
+                        "8b11e852b0106937b8e2bbe39d76db1c90aea1ab07e9a257bfc4a14e258d0596",
                         3,
                         1,
                         0.0f,
@@ -128,7 +128,7 @@ public final class CompleteRailOwnershipOriginalTest {
                     },
                     {
                         "omittedOwner",
-                        "47383aecc0a4f8a18f07597aa99c5cef69a760465e02c90369e465c038b80eab",
+                        "0682a9c2940774fff64a344b8d1110642afafcd120705f850bb47c428c4bd920",
                         2,
                         0,
                         2.0f,
@@ -136,7 +136,7 @@ public final class CompleteRailOwnershipOriginalTest {
                     },
                     {
                         "crossBar",
-                        "01f4ee7b044f4fdc33c9def5454c76b19bb38d08e5ac851a6c29d4caf94e2037",
+                        "e9edfb208a6111611a1a6c535f6bb6a0763873be490a03b298aa6e5f8dc8fb32",
                         3,
                         0,
                         2.0f,
@@ -144,7 +144,7 @@ public final class CompleteRailOwnershipOriginalTest {
                     },
                     {
                         "dualStem",
-                        "b41cd0a5a42f553fc5be78d80718f9b0da9cc48483a6e7e714329b9265536e78",
+                        "75aef863905a0bcbee8673dde5b7b9344c5f9fc71684be1507d2c2afc8ae8651",
                         3,
                         0,
                         2.0f,
@@ -152,7 +152,7 @@ public final class CompleteRailOwnershipOriginalTest {
                     },
                     {
                         "whole",
-                        "1bfc6dbb101dc29586ba19d4a94038fe37ba777040634476efcd5f7daca6e682",
+                        "db57e322c4a18ff7aeb5013530e4a4998c8948232be4183991aa3e97dd00d9e6",
                         3,
                         0,
                         4.0f,
@@ -160,7 +160,7 @@ public final class CompleteRailOwnershipOriginalTest {
                     },
                     {
                         "half",
-                        "3e41b27b7bc2ab7088e6b6e011ea7e8041bf10c14a4a63c24ee2b11b457a04de",
+                        "183164cd0cbe10bd7adbf22553561b9f43515c3aa972297d5270739c3f507dc1",
                         3,
                         0,
                         2.0f,
@@ -168,7 +168,7 @@ public final class CompleteRailOwnershipOriginalTest {
                     },
                     {
                         "paperCounter",
-                        "49ecbb6bdf134f85ac70122d8905ff10615ba6611b2ea4eabc1de595eeaf6b69",
+                        "44b7d4429aa28736124c399fba8309c6cb2646560282df521867a66821ed364d",
                         3,
                         2,
                         0.0f,
@@ -176,7 +176,7 @@ public final class CompleteRailOwnershipOriginalTest {
                     },
                     {
                         "separateGroups",
-                        "c126e063a2918cba483c97303b16be161cf59923c2c5aa49678842a1097803ff",
+                        "8c72a4986593afdcb6e9db6b1b8203a1270f6440abca628cde0c23de4fb6c5ff",
                         6,
                         2,
                         0.0f,
@@ -184,7 +184,7 @@ public final class CompleteRailOwnershipOriginalTest {
                     },
                     {
                         "attachedTremolo",
-                        "ef2865696056483bbd654b56dd42a431b0e09ca65b6b49eb3d789eb0dd2a78d4",
+                        "98a9c1efee6111b180ba992ed813c03a5de56ea54e996b3e3f257956c9e2a741",
                         3,
                         2,
                         0.0f,
@@ -192,7 +192,7 @@ public final class CompleteRailOwnershipOriginalTest {
                     },
                     {
                         "detachedTremolo",
-                        "c181e908a8195d9212595d3724936c4c20aa51e8ce2eeb133e472601c60fd560",
+                        "97b2d4f043b1333ee3655f7ff401774d58037c39a359a95f88033960f7b7e7e8",
                         3,
                         2,
                         0.0f,
@@ -200,7 +200,7 @@ public final class CompleteRailOwnershipOriginalTest {
                     },
                     {
                         "pairedTremolo",
-                        "5b56c888edbead46891c29518742eaf8b10f2085abc6448bf60519a2a3cda082",
+                        "8f860dfdc9ce617c2bf546c065d9d5286b68e6d6fc566c2aa05d6ef9f0d08eba",
                         3,
                         0,
                         2.0f,
@@ -208,7 +208,7 @@ public final class CompleteRailOwnershipOriginalTest {
                     },
                     {
                         "pairedTremolo3",
-                        "c63fe9a4b905e4ceb3e9db33a1a9996535ec2c03eca6920a51ae4d9ef04a990c",
+                        "2ff25b65f50406f40bd1c360f960755e223d75d90ef52a633be73ec1c28c1fa9",
                         3,
                         0,
                         2.0f,
@@ -216,7 +216,7 @@ public final class CompleteRailOwnershipOriginalTest {
                     },
                     {
                         "sharedShaft",
-                        "69d7a6ee3489f921aa0ae482f59f6816105539330f83593e37e8fb4dcddf65cd",
+                        "95780dd6f612d08a77d4a23e699ad659a114c3b7ec568e6e3974208510cbbe42",
                         4,
                         2,
                         0.0f,
@@ -224,7 +224,7 @@ public final class CompleteRailOwnershipOriginalTest {
                     },
                     {
                         "competingHead",
-                        "3230d92e9d1777c4534b7442b48591d896c0f6eb04e0d1494b6f67426c71efdb",
+                        "1c87a6d97bdaefc584eeacf058dc8e9fd1899c64e40ce4b62e1e30645ff1b1b7",
                         4,
                         0,
                         2.0f,
@@ -232,7 +232,7 @@ public final class CompleteRailOwnershipOriginalTest {
                     },
                     {
                         "railLabelSymbol",
-                        "0a92c2af7d4d6bee2ed58183e7df40aaee9863160522743cbe2d6ad61a624642",
+                        "5ff22ad50749237bf30af1f3dd9aeb5553fa8fbe88dc66b16ee0d896f461775c",
                         3,
                         2,
                         0.0f,
@@ -240,7 +240,7 @@ public final class CompleteRailOwnershipOriginalTest {
                     },
                     {
                         "railLabelBackground",
-                        "00d9b06803fdf0af7774ceb2dbaff6fd169630cf80a3bb521762d1c7d4d66b55",
+                        "9d1fbb44ce4982e54fec312143585e0300a335182f39039ce68481d0dedd21ce",
                         3,
                         2,
                         0.0f,
@@ -248,7 +248,7 @@ public final class CompleteRailOwnershipOriginalTest {
                     },
                     {
                         "thinInteriorSymbol",
-                        "185741b30017b676ecc3e3b8e7d2a386cc3bba2d499918aa977853935c53b9ad",
+                        "cc9c0ae0254ae6623419305dc55c2eabb99e285cc8a9d019354c54bf6ee368a8",
                         3,
                         2,
                         0.0f,
@@ -256,7 +256,7 @@ public final class CompleteRailOwnershipOriginalTest {
                     },
                     {
                         "thinInteriorBackground",
-                        "7f2f0030194cd0dec7b101a2a39abaeee22b51f185d67987023fe1bcc2b37961",
+                        "68ed447cf3075c8dc149c31a3798edaa0fa4d49874d7df3f42a29453e9d0f9a7",
                         3,
                         2,
                         0.0f,
@@ -264,7 +264,7 @@ public final class CompleteRailOwnershipOriginalTest {
                     },
                     {
                         "ordinaryTwoShaft",
-                        "44c4e233e7c0c556b2bc85f794ae0f2a14a9efb052ed5d54505a7f59e5c0a689",
+                        "e510b84c244ad83156f49002e1596ac9c5794549506a277e803aaf2a4ff1bc7b",
                         2,
                         0,
                         2.0f,
@@ -272,7 +272,7 @@ public final class CompleteRailOwnershipOriginalTest {
                     },
                     {
                         "chordTwoShaft",
-                        "fbb33407c3130cd3307ac96a420d9faf4d3c97d9a1f1251d47e2df27e9251883",
+                        "046670e4d7637738c175d941c149ff5b59b7f743cd37ce66c38ba4c12b284922",
                         3,
                         0,
                         2.0f,
@@ -280,7 +280,7 @@ public final class CompleteRailOwnershipOriginalTest {
                     },
                     {
                         "pairedIssuerControl",
-                        "6aa494faa7d855ed3a711e761cfc8f1346ccb2f87bf69bf36a8572d61e241d26",
+                        "074d340e427a961a67fd135f6fd3d74491e2c036c5ce1725ad16e103b9c64bbf",
                         2,
                         0,
                         1.0f,
