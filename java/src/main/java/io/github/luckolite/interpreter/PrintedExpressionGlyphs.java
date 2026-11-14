@@ -115,7 +115,9 @@ final class PrintedExpressionGlyphs {
                 int x0 = Math.max(0, (int) (left * width - gap * 2)),
                         x1 = Math.min(width, (int) (right * width + gap * 2));
                 if (x1 <= x0) continue;
-                var parts = components(gray, width, x0, top, x1, bottom, threshold);
+                // A metric equation may span the barline and its courtesy meter at the system end.
+                int metricRight = above ? Math.min(width, (int) (right * width + gap * 5)) : x1;
+                var parts = components(gray, width, x0, top, metricRight, bottom, threshold);
                 var notes = new ArrayList<Pulse>();
                 for (var part : parts) {
                     if (part.height() >= gap * .65f
@@ -128,6 +130,7 @@ final class PrintedExpressionGlyphs {
                         }
                     }
                     if (!above
+                            || part.right > x1
                             || part.height() < gap * .6f
                             || part.height() > gap * 1.9f
                             || part.width() > gap * 1.9f) continue;
@@ -206,7 +209,7 @@ final class PrintedExpressionGlyphs {
                                 && r.value != 4
                                 && Math.abs(l.part.height() - r.part.height()) > gap * 1.4f)
                             continue;
-                        int[] ld = dots(l, parts, gap, el), rd = dots(r, parts, gap, x1);
+                        int[] ld = dots(l, parts, gap, el), rd = dots(r, parts, gap, metricRight);
                         if (ld == null || rd == null) continue;
                         int y0 = Math.min(l.part.top, r.part.top),
                                 y1 = Math.max(l.part.bottom, r.part.bottom);

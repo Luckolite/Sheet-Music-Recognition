@@ -185,6 +185,23 @@ public final class ScoreExpressionDetector {
                 staff = PrintedDirectionWordStaff.nearTempoWord(
                         staffs, score.measures(), score.notes(), gray, width, height, word);
             }
+            if (metric && staff != null && symbols.contains(word)) {
+                int boundary = terminalMetricBoundary(score.measures(), staff, word, width, height);
+                if (boundary >= 0) {
+                    var direction = directions.get(0);
+                    String id = "printed-metric-boundary:" + boundary;
+                    if (events.stream().noneMatch(e -> e.eventId().equals(id))) {
+                        events.add(new ScoreExpressiveEvent(
+                                id, Kind.METRIC_MODULATION,
+                                Optional.of(new ScoreAnchor(boundary, 0)), Optional.empty(),
+                                Scope.SCORE, staff.index(), staff.count(), Optional.empty(),
+                                direction.strength(), direction.qualifierText(),
+                                List.of(new Evidence(SYMBOL, 0, word.left(), staff.index(),
+                                        staff.count(), direction.printedText()))));
+                    }
+                    continue;
+                }
+            }
             ScoreNoteEvent closest =
                     staff == null ? null : closestDirectionNote(score, staff, width, height, x, x);
             boolean metricBoundary = false;
@@ -627,6 +644,26 @@ public final class ScoreExpressionDetector {
             }
         }
         return first != null ? first : closestDirectionNote(score, staff, width, height, left, left);
+    }
+
+    /** A proved equation straddling the last barline in its system belongs to the next bar. */
+    private static int terminalMetricBoundary(
+            List<MeasureRegion> measures,
+            PlayingTechniqueDetector.Staff staff,
+            PlayingTechniqueDetector.Word word,
+            int width,
+            int height) {
+        float center = (staff.top() + staff.bottom()) * .5f / height;
+        float margin = staff.gap() / height;
+        int last = -1;
+        for (int i = 0; i < measures.size(); i++) {
+            var bar = measures.get(i);
+            if (center < bar.top() - margin || center > bar.bottom() + margin) continue;
+            if (last < 0 || bar.right() >= measures.get(last).right()) last = i;
+        }
+        if (last < 0 || word.bottom() * height >= staff.top()) return -1;
+        float edge = measures.get(last).right();
+        return word.left() < edge && edge < word.right() ? last + 1 : -1;
     }
 
     private static ScoreNoteEvent closestDirectionNote(

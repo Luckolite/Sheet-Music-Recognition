@@ -111,6 +111,24 @@ public final class PrintedExpressionGlyphsTest {
     }
 
     @Test
+    public void terminalEquationSurvivesPastTheHorizontalMeasureSearch() throws Exception {
+        var image = page();
+        int leftEnd = draw(image, "quarter", 532, 105, 43);
+        equals(image, leftEnd + 6, 124);
+        int rightEnd = draw(image, "quarter", leftEnd + 23, 105, 43);
+        var g = image.createGraphics();
+        g.setColor(Color.BLACK);
+        g.fillOval(rightEnd + 4, 142, 4, 4);
+        g.dispose();
+        var events = detect(image, true).expressiveEvents();
+        assertEquals(1, events.size());
+        var event = events.get(0);
+        assertEquals(Kind.METRIC_MODULATION, event.kind());
+        assertEquals(new ScoreAnchor(1, 0), event.start().orElseThrow());
+        assertEquals(1.5, MetricModulationText.decode(event.qualifierText()).orElseThrow().ratio(), 0);
+    }
+
+    @Test
     public void bothPrintedNoteShapesDetermineRelativePulse() throws Exception {
         for (int height : new int[] {28, 36, 44}) {
             var result = detect(equation("quarter", "half", height, false), true);
