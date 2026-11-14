@@ -415,7 +415,7 @@ def _join_printed_measures(bars, continuations, full_rests, rest_groups):
                          else round(physical['length'] * tempo['positionInMeasure']))
                 return dict(tempo, _writtenBarOffset=physical['start'] - first['start'] + onset)
 
-            projected[-1] = dict(first, length=length, tempos=[
+            projected[-1] = dict(first, length=length, rightBarline=bar.get('rightBarline'), tempos=[
                 *(tempo_at(tempo, first) for tempo in first['tempos']),
                 *(tempo_at(tempo, bar) for tempo in bar['tempos']),
             ])
@@ -504,6 +504,18 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
         tempos_by_measure = defaultdict(list)
         for change in score.get('tempoChanges', []):
             tempos_by_measure[change['measureIndex']].append(change)
+        barline_rows = page.get('printedBarlineStyles', [])
+        barline_styles = {}
+        if not isinstance(barline_rows, list):
+            raise ValueError('Invalid MusicXML printed barline styles')
+        for row in barline_rows:
+            if (not isinstance(row, dict) or type(row.get('measureIndex')) is not int
+                    or not 0 <= row['measureIndex'] < len(page['measureBeats'])
+                    or row['measureIndex'] in barline_styles
+                    or row.get('style') not in ('light-light', 'light-heavy')
+                    or row['measureIndex'] + 1 in continuation_rows):
+                raise ValueError('Invalid MusicXML printed barline style ownership')
+            barline_styles[row['measureIndex']] = row['style']
         # Source anchors use the unrounded beat clock, separate from bar lengths in ticks.
         measure_starts = list(accumulate(page['measureBeats'], initial=0))
         for index, beats in enumerate(page['measureBeats']):
@@ -519,6 +531,8 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
                        resetTempo=index == 0 and page_index in tempo_restarts,
                        tempos=[dict(c, _sourceTempoOnset=source_tempo_clock.onset(page, c))
                                for c in tempos_by_measure.get(index, ())])
+            if index in barline_styles:
+                bar['rightBarline'] = barline_styles[index]
             bars.append(bar)
             local_start += length
         for row in score.get('rests', []):
@@ -1155,6 +1169,8 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
                         element(forward, 'voice', voice)
                     else:
                         emit_rest_gap(measure, cursor, b, voice, rest_symbols, literal_edges)
+            if bar.get('rightBarline'):
+                element(element(measure, 'barline', location='right'), 'bar-style', bar['rightBarline'])
     beam_export.write(printed_beams, rendered_beam_columns)
     from .octave_shift_export import apply as octave_apply
     octave_apply(root, octave_owned)

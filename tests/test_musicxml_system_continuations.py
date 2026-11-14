@@ -75,6 +75,25 @@ class SystemContinuationMusicXmlTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "continuation changes"):
             self.write(page)
 
+    def test_barline_is_attached_to_the_last_physical_fragment(self):
+        page = self.page()
+        page["printedBarlineStyles"] = [
+            {"measureIndex": 1, "style": "light-light"},
+            {"measureIndex": 2, "style": "light-heavy"},
+        ]
+        measures = self.write(page)
+        self.assertEqual(["light-light", "light-heavy"],
+                         [measure.findtext("barline/bar-style") for measure in measures])
+        self.assertEqual(["right", "right"],
+                         [measure.find("barline").get("location") for measure in measures])
+        self.assertTrue(all(measure[-1].tag == "barline" for measure in measures))
+
+    def test_barline_within_a_continuation_is_rejected(self):
+        page = self.page()
+        page["printedBarlineStyles"] = [{"measureIndex": 0, "style": "light-light"}]
+        with self.assertRaisesRegex(ValueError, "barline style ownership"):
+            self.write(page)
+
 
 if __name__ == "__main__":
     unittest.main()
