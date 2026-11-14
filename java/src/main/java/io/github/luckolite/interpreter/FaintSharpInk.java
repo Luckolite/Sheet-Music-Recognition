@@ -58,25 +58,39 @@ final class FaintSharpInk {
         int allowedBright = outside - (int) Math.ceil(outside * .8);
         int probeStride = probe * width;
         byte[] mask = new byte[w * h];
+        long[] pairs = w <= Long.SIZE && h >= 5 ? new long[h] : null;
+        long previous = 0;
         for (int y = top, row = top * width, dest = 0;
                 y <= bottom; y++, row += width, dest += w) {
             int firstInk = row + left, end = row + right;
             while (firstInk <= end && !ink(gray, width, firstInk, side)) firstInk++;
-            if (firstInk > end) continue;
+            if (firstInk > end) {
+                previous = 0;
+                continue;
+            }
             boolean rule = staffRule(gray, row + firstFlank, row + left,
                     row + right + 1, row + lastFlank, allowedBright);
             int at = firstInk;
+            long current = 0;
             do {
                 if (!rule
                         || ink(gray, width, at - probeStride, side)
                                 && ink(gray, width, at + probeStride, side)) {
-                    mask[dest + at - row - left] = OmrMeasurePostProcessor.CLEF_OR_KEY;
+                    int x = at - row - left;
+                    mask[dest + x] = OmrMeasurePostProcessor.CLEF_OR_KEY;
+                    if (pairs != null) current |= 1L << x;
                 }
                 do {
                     at++;
                 } while (at <= end && !ink(gray, width, at, side));
             } while (at <= end);
+            if (pairs != null) {
+                pairs[y - top] = previous & current;
+                previous = current;
+            }
         }
+        if (h < 5) return mask;
+        if (pairs != null) return closeNarrowGaps(mask, pairs, w, h, gap, maximumGap);
         byte[] closed = mask;
         int limit = Math.min(h - 4, Math.max(1, Math.round(gap * maximumGap)));
         for (int y = 1, row = w; y < h - 3; y++, row += w) {
@@ -89,16 +103,45 @@ final class FaintSharpInk {
                     int endLimit = Math.min(w - 1, x + radius);
                     for (int end = Math.max(0, x - radius); end <= endLimit; end++) {
                         if (mask[downstream + end] == 0 || mask[downstream + w + end] == 0) continue;
-                        // Only fill missing pixels, and keep new ink out of the evidence mask.
-                        for (int dy = 1, between = row + w; dy <= skip; dy++, between += w) {
-                            int xx = x + Math.round((end - x) * dy / (float) (skip + 1));
-                            if (closed[between + xx] != 0) continue;
-                            if (closed == mask) closed = mask.clone();
-                            closed[between + xx] = OmrMeasurePostProcessor.CLEF_OR_KEY;
-                        }
+                        closed = closeGap(mask, closed, w, row, x, end, skip);
                     }
                 }
             }
+        }
+        return closed;
+    }
+
+    private static byte[] closeNarrowGaps(byte[] mask, long[] pairs, int width, int height,
+            float gap, float maximumGap) {
+        byte[] closed = mask;
+        int limit = Math.max(1, Math.round(gap * maximumGap));
+        for (int y = 1, row = width; y < height - 3; y++, row += width) {
+            int lastSkip = Math.min(limit, height - y - 3);
+            for (long starts = pairs[y]; starts != 0; starts &= starts - 1) {
+                int x = Long.numberOfTrailingZeros(starts);
+                for (int skip = 1; skip <= lastSkip; skip++) {
+                    int radius = Math.max(1, Math.round((skip + 1) * .3f));
+                    int first = Math.max(0, x - radius);
+                    int last = Math.min(width - 1, x + radius);
+                    long ends = (pairs[y + skip + 2] & (-1L >>> (Long.SIZE - 1 - last))) >>> first;
+                    for (; ends != 0; ends &= ends - 1) {
+                        int end = first + Long.numberOfTrailingZeros(ends);
+                        closed = closeGap(mask, closed, width, row, x, end, skip);
+                    }
+                }
+            }
+        }
+        return closed;
+    }
+
+    private static byte[] closeGap(byte[] mask, byte[] closed, int width,
+            int row, int x, int end, int skip) {
+        // Only fill missing pixels, and keep new ink out of the evidence mask.
+        for (int dy = 1, between = row + width; dy <= skip; dy++, between += width) {
+            int xx = x + Math.round((end - x) * dy / (float) (skip + 1));
+            if (closed[between + xx] != 0) continue;
+            if (closed == mask) closed = mask.clone();
+            closed[between + xx] = OmrMeasurePostProcessor.CLEF_OR_KEY;
         }
         return closed;
     }

@@ -667,13 +667,21 @@ final class StaffPitchTrack {
                 right = Math.min(width - 1, Math.round(x + gap * 4));
         int top = Math.max(0, Math.round(bottom - gap * 5)),
                 last = Math.min(height - 1, Math.round(bottom + gap));
-        int samples = 0, shaded = 0;
-        for (int y = top; y <= last; y += 2)
-            for (int xx = left; xx <= right; xx += 2) {
-                samples++;
-                if ((gray[y * width + xx] & 255) <= 205) shaded++;
-            }
-        return samples >= 24 && shaded >= samples * .65f;
+        if (left > right || top > last) return false;
+        int columns = (right - left) / 2 + 1;
+        int samples = columns * ((last - top) / 2 + 1);
+        if (samples < 24) return false;
+        float required = samples * .65f;
+        int shaded = 0, remaining = samples;
+        for (int y = top; y <= last; y += 2) {
+            int row = y * width;
+            for (int at = row + left, end = row + right; at <= end; at += 2)
+                if ((gray[at] & 255) <= 205) shaded++;
+            remaining -= columns;
+            if (shaded >= required) return true;
+            if (shaded + remaining < required) return false;
+        }
+        return false;
     }
 
     static float[] localRules(

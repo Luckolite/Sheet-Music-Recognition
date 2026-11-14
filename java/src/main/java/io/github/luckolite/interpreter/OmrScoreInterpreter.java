@@ -6116,12 +6116,6 @@ final class OmrScoreInterpreter {
 
     private static boolean inlineEightMeterFragment(
             byte[] gray, int width, int height, Component head, List<Staff> staffs) {
-        return inlineEightMeterFragment(gray, width, height, head, staffs, false)
-                || inlineEightMeterFragment(gray, width, height, head, staffs, true);
-    }
-
-    private static boolean inlineEightMeterFragment(
-            byte[] gray, int width, int height, Component head, List<Staff> staffs, boolean wide) {
         if (gray == null) return false;
         Staff staff = nearestHeadStaff(staffs, head.centerY);
         if (staff == null) return false;
@@ -6134,23 +6128,29 @@ final class OmrScoreInterpreter {
         int[] stem = attachedRawStem(gray, width, height, head, gap);
         if (stem != null && (stem[1] < top - gap * .25f || stem[1] > bottom + gap * .25f))
             return false;
-        boolean rule = false;
+        int firstY = Math.max(0, Math.round(top));
+        int lastY = Math.min(height - 1, Math.round(bottom));
+        int total = Math.max(0, lastY - firstY + 1);
+        if (!(total >= gap * 3.8f)) return false;
+        float required = total * .94f;
         for (int x = Math.max(0, Math.round(head.minX - gap * 4f));
                 x < head.minX - gap * .7f;
                 x++) {
-            int ink = 0, total = 0;
-            for (int y = Math.max(0, Math.round(top));
-                    y <= Math.min(height - 1, Math.round(bottom));
-                    y++) {
-                total++;
-                if ((gray[y * width + x] & 255) < 155) ink++;
-            }
-            if (total >= gap * 3.8f && ink >= total * .94f) {
-                rule = true;
-                break;
+            int ink = 0;
+            for (int y = firstY, at = y * width + x;
+                    y <= lastY && ink + (lastY - y + 1) >= required;
+                    y++, at += width) {
+                if ((gray[at] & 255) < 155 && ++ink >= required)
+                    return inlineEightMeterCounters(gray, width, height, head, staff, false)
+                            || inlineEightMeterCounters(gray, width, height, head, staff, true);
             }
         }
-        if (!rule) return false;
+        return false;
+    }
+
+    private static boolean inlineEightMeterCounters(
+            byte[] gray, int width, int height, Component head, Staff staff, boolean wide) {
+        float gap = staff.gap, top = staff.top, bottom = staff.bottom;
         if (wide) {
             // A wider counter aperture is admitted only under separate printed numerator ink.
             int numerator = 0, upperNumerator = 0, lowerNumerator = 0;
@@ -6184,6 +6184,7 @@ final class OmrScoreInterpreter {
         boolean[] seen = new boolean[w * h];
         int[] queue = new int[w * h];
         List<float[]> holes = new ArrayList<>();
+        int[] steps = {-1, 1, -w, w};
         for (int seed = 0; seed < w * h; seed++) {
             if (seen[seed] || (gray[(upper + seed / w) * width + left + seed % w] & 255) < 200)
                 continue;
@@ -6201,7 +6202,7 @@ final class OmrScoreInterpreter {
                 maxX = Math.max(maxX, px);
                 minY = Math.min(minY, py);
                 maxY = Math.max(maxY, py);
-                for (int step : new int[] {-1, 1, -w, w}) {
+                for (int step : steps) {
                     int next = point + step;
                     if (next < 0 || next >= w * h) continue;
                     if (step == -1 && px == 0 || step == 1 && px == w - 1) continue;
@@ -12202,10 +12203,12 @@ final class OmrScoreInterpreter {
         float[] centers = new float[5];
         int radius = Math.max(2, Math.round(raw.gap() * .28f));
         int strongRules = 0;
+        float requiredSupport = width * support;
+        int[] strength = new int[(int) Math.min(height, 2L * radius + 1)];
         for (int line = 0; line < 5; line++) {
             int first = Math.max(0, raw.rows()[line] - radius),
                     last = Math.min(height - 1, raw.rows()[line] + radius);
-            int[] strength = new int[last - first + 1];
+            int rows = last - first + 1;
             int strongest = 0, peak = 0;
             for (int y = first; y <= last; y++) {
                 int n = 0;
@@ -12216,11 +12219,11 @@ final class OmrScoreInterpreter {
                     peak = y - first;
                 }
             }
-            if (strongest < width * support) return null;
+            if (strongest < requiredSupport) return null;
             if (strongest >= width * .9f) strongRules++;
             int start = peak, end = peak;
             while (start > 0 && strength[start - 1] >= strongest * .85f) start--;
-            while (end + 1 < strength.length && strength[end + 1] >= strongest * .85f) end++;
+            while (end + 1 < rows && strength[end + 1] >= strongest * .85f) end++;
             if (end - start + 1 > Math.max(3, raw.gap() * .4f)) return null;
             centers[line] = first + (start + end) * .5f;
             // A dense row of beams can outscore an outer staff rule in the
@@ -12228,7 +12231,8 @@ final class OmrScoreInterpreter {
             // even on a skewed scan; beams do not. Do not let such a candidate
             // move the pitch reference by an entire staff gap.
             int thinColumns = 0, maxThickness = Math.max(3, Math.round(raw.gap() * .4f));
-            for (int x = 0; x < width; x++) {
+            for (int x = 0; x < width && thinColumns < requiredSupport; x++) {
+                if (thinColumns + (width - x) < requiredSupport) return null;
                 for (int y = first; y <= last; y++) {
                     if ((gray[y * width + x] & 255) > 170) continue;
                     int a = y, b = y;
@@ -12245,7 +12249,7 @@ final class OmrScoreInterpreter {
                     y = b;
                 }
             }
-            if (thinColumns < width * support) return null;
+            if (thinColumns < requiredSupport) return null;
         }
         // Regional recovery is deliberately stricter than the page-wide fallback. One
         // interrupted rule is common under a note or dynamic; two make the vertical phase
@@ -13242,6 +13246,7 @@ final class OmrScoreInterpreter {
             if (candidate < distance) {
                 distance = candidate;
                 best = staff;
+                if (distance == 0) break;
             }
         }
         return best != null && distance <= best.gap * maximumGapDistance ? best : null;
@@ -22169,21 +22174,16 @@ final class OmrScoreInterpreter {
                             head.maxX,
                             referenceBottom,
                             gap);
-        if (complete != null
-                && !curved
-                && Math.abs(Math.abs(complete[0] - referenceBottom) - gap) < gap * .2f) {
-            // A slur plus four rules is not a new staff phase when all five
-            // original straight rules independently survive across the page.
-            float[] broad =
-                    StaffPitchTrack.broadStraightPitch(
-                            gray, width, height, referenceBottom, gap, false);
-            if (broad != null) return broad;
-        }
-        if (complete != null && Math.abs(complete[1] - gap) > gap * .04f && !curved) {
-            float[] broad =
-                    StaffPitchTrack.broadStraightPitch(
-                            gray, width, height, referenceBottom, gap, false);
-            if (broad != null && Math.abs(complete[1] - broad[1]) > gap * .035f) return broad;
+        if (complete != null && !curved) {
+            boolean shiftedRule = Math.abs(Math.abs(complete[0] - referenceBottom) - gap) < gap * .2f;
+            boolean shiftedGap = Math.abs(complete[1] - gap) > gap * .04f;
+            if (shiftedRule || shiftedGap) {
+                // Verify the five original rules once when either the phase or spacing changed.
+                float[] broad = StaffPitchTrack.broadStraightPitch(
+                        gray, width, height, referenceBottom, gap, false);
+                if (broad != null && (shiftedRule || Math.abs(complete[1] - broad[1]) > gap * .035f))
+                    return broad;
+            }
         }
         if (complete != null
                 && (!staff.printedPhase || Math.abs(complete[0] - referenceBottom) < gap * .5f))
@@ -22199,7 +22199,14 @@ final class OmrScoreInterpreter {
             // space away. Require agreement from several of the five printed
             // rules before using that edge as a local pitch reference.
             // If dark ink is too sparse, require four matching light-ink rules.
+            int leftEnd = Math.min(right, head.minX - exclusion - 1);
+            int rightStart = Math.max(left, head.maxX + exclusion + 1);
+            int samples = Math.max(0, leftEnd - left + 1) + Math.max(0, right - rightStart + 1);
+            if (samples < 8) return new float[] {referenceBottom, gap};
+            int flank = Math.max(2, Math.round(gap * .32f));
+            int flankOffset = flank * width;
             for (float support : new float[] {.70f, .40f}) {
+                int threshold = support < .7f ? 205 : 165;
                 List<Float> offsets = new ArrayList<>();
                 List<float[]> rules = new ArrayList<>();
                 for (int line = 0; line < 5; line++) {
@@ -22209,24 +22216,13 @@ final class OmrScoreInterpreter {
                     float closest = Float.NaN, distance = Float.MAX_VALUE;
                     int start = -1;
                     for (int y = first; y <= last + 1; y++) {
-                        int dark = 0, samples = 0;
-                        if (y <= last)
-                            for (int x = left; x <= right; x++) {
-                                if (x >= head.minX - exclusion && x <= head.maxX + exclusion)
-                                    continue;
-                                samples++;
-                                int ink = gray[y * width + x] & 255,
-                                        flank = Math.max(2, Math.round(gap * .32f));
-                                if (ink <= (support < .7f ? 205 : 165)
-                                        && (!shaded
-                                                || (y >= flank
-                                                        && y + flank < height
-                                                        && (gray[(y - flank) * width + x] & 255)
-                                                                >= ink + 12
-                                                        && (gray[(y + flank) * width + x] & 255)
-                                                                >= ink + 12))) dark++;
-                            }
-                        boolean rule = samples >= 8 && dark >= samples * support;
+                        int dark = 0;
+                        if (y <= last && (!shaded || y >= flank && y + flank < height)) {
+                            int row = y * width;
+                            dark = staffPitchInk(gray, row + left, row + leftEnd, threshold, shaded, flankOffset)
+                                    + staffPitchInk(gray, row + rightStart, row + right, threshold, shaded, flankOffset);
+                        }
+                        boolean rule = dark >= samples * support;
                         if (rule && start < 0) start = y;
                         if (!rule && start >= 0) {
                             float offset = (start + y - 1) * .5f - reference;
@@ -22299,6 +22295,18 @@ final class OmrScoreInterpreter {
         return new float[] {
             pixels >= Math.max(4, radius / 3) ? weightedY / (float) pixels : referenceBottom, gap
         };
+    }
+
+    private static int staffPitchInk(
+            byte[] gray, int first, int last, int threshold, boolean shaded, int flankOffset) {
+        int count = 0;
+        for (int at = first; at <= last; at++) {
+            int ink = gray[at] & 255;
+            if (ink <= threshold && (!shaded
+                    || (gray[at - flankOffset] & 255) >= ink + 12
+                            && (gray[at + flankOffset] & 255) >= ink + 12)) count++;
+        }
+        return count;
     }
 
     /** Augmentation dots are small, aligned components to the right of a real notehead. */
