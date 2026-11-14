@@ -17888,7 +17888,7 @@ final class OmrScoreInterpreter {
             List<Component> heads,
             float gap) {
         List<Component> chord = new ArrayList<>();
-        boolean wide = false;
+        int wideHeads = 0;
         int top = Integer.MAX_VALUE, bottom = Integer.MIN_VALUE;
         for (var other : heads) {
             if (Math.abs(other.centerX - head.centerX) > gap * .45f
@@ -17899,11 +17899,16 @@ final class OmrScoreInterpreter {
                             && other.maxY - other.minY + 1 > gap * 1.1f
                     || !hasOpenCenter(labels, gray, width, height, other, gap)) continue;
             chord.add(other);
-            wide |= other.maxX - other.minX + 1 >= gap * 1.7f;
+            if (other.maxX - other.minX + 1 >= gap * 1.7f) wideHeads++;
             top = Math.min(top, other.minY);
             bottom = Math.max(bottom, other.maxY);
         }
-        if (chord.size() < 2 || !wide || !chord.contains(head)) return false;
+        if (chord.size() < 2 || !chord.contains(head)) return false;
+        if (wideHeads == 0 && (chord.size() < 3 || chord.stream()
+                .filter(other -> WholeHeadPocketEvidence.proved(
+                        gray, width, height, other.minX, other.minY,
+                        other.maxX, other.maxY, gap))
+                .limit(2).count() < 2)) return false;
         for (var other : chord) {
             int[] shaft =
                     attachedRawStem(

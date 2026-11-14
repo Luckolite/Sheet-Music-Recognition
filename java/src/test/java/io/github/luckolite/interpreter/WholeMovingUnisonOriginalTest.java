@@ -97,6 +97,16 @@ public class WholeMovingUnisonOriginalTest {
     }
 
     @Test
+    public void chordWithNarrowSegmentedWholeHeadsRejectsAnInteriorStem() {
+        var page = new Page();
+        for (int y : new int[] {87, 101, 115, 129}) page.oval(200, y, 11, true);
+        for (int y = 101; y <= 115; y++) page.labels[y * W + 209] = 1;
+        var notes = page.notes();
+        assertEquals(4, notes.size());
+        assertTrue(notes.toString(), notes.stream().allMatch(n -> n.unbeamedDurationBeats() == 4));
+    }
+
+    @Test
     public void stemlessWholeLeftAndMovingRightRetainBothValues() {
         hasBoth(leftWhole());
     }
