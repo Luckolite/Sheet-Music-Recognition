@@ -292,6 +292,12 @@ final class WrappedMeasureBoundaries {
         return right >= left && right - left <= gap * 1.8f;
     }
 
+    static StaffPitchTrack closedTripletStaff(
+            byte[] gray, int width, int height, MeasureRegion region) {
+        var bounds = box(region, width, height);
+        return bounds == null ? null : track(gray, width, height, bounds);
+    }
+
     private static StaffPitchTrack track(byte[] gray, int width, int height, Box box) {
         float gap = box.height() / 8.2f, hint = box.bottom - 2.1f * gap;
         var samples = new ArrayList<float[]>();
