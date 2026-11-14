@@ -620,6 +620,8 @@ public final class SheetInterpreter {
                             staffs,
                             techniqueWords,
                             physicalPage);
+        finalInterpretation = InSystemClosingDyad.apply(
+                finalInterpretation, annotationGray, width, height);
         if (physicalPage >= 0)
             finalInterpretation =
                     PrintedBeamSource.apply(
