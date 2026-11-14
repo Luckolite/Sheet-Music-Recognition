@@ -46,14 +46,21 @@ final class WrappedTripletMeasure {
                 continue;
             var lead = half(gray, width, height, regions.get(i), notes, byMeasure.get(i));
             var tail = half(gray, width, height, regions.get(i+1), notes, byMeasure.get(i+1));
-            if (lead == null || tail == null
-                    || !WrappedMeasureBoundaries.confirms(
-                            gray, width, height, regions, i, lead.x()[8], tail.x()[0])) continue;
+            boolean undotted = false;
+            if (lead == null || tail == null) {
+                if (beats[i-1] != 6 || beats[i+2] != 6
+                        || byMeasure.get(i-1).size() != 18 || byMeasure.get(i+2).size() != 18) continue;
+                lead = WrappedEighthTriplets.half(gray, width, height, regions.get(i), notes, byMeasure.get(i));
+                tail = WrappedEighthTriplets.half(gray, width, height, regions.get(i+1), notes, byMeasure.get(i+1));
+                undotted = true;
+            }
+            if (lead == null || tail == null || !WrappedMeasureBoundaries.confirms(
+                    gray, width, height, regions, i, lead.x()[8], tail.x()[0], undotted)) continue;
             if (notes.get(lead.owners().get(0)).clefBottomDiatonic()
                     != notes.get(tail.owners().get(0)).clefBottomDiatonic())
                 continue;
-            assign(lead, notes, written);
-            assign(tail, notes, written);
+            assign(lead, notes, written, undotted);
+            assign(tail, notes, written, undotted);
             beats[i] = 3;
             beats[i+1] = 3;
             continuations.add(i+1);
@@ -115,14 +122,17 @@ final class WrappedTripletMeasure {
         return new Half(owners, x);
     }
 
-    private static void assign(Half half, List<ScoreNoteEvent> notes, Timing[] written) {
-        double[] onset = {0, .5, 2.0/3}, duration = {.5, 1.0/6, 1.0/3};
+    private static void assign(Half half, List<ScoreNoteEvent> notes, Timing[] written, boolean undotted) {
+        double[] onset = undotted ? new double[] {0, 1.0/3, 2.0/3} : new double[] {0, .5, 2.0/3};
+        double[] duration = undotted
+                ? new double[] {1.0/3, 1.0/3, 1.0/3} : new double[] {.5, 1.0/6, 1.0/3};
         for (int i = 0; i < 9; i++) {
             int index = half.owners().get(i);
             var n = notes.get(index);
             var replacement = new ScoreNoteEvent(
                     n.measureIndex(), n.positionInMeasure(), n.staffStep(), n.staffIndex(), n.staffCount(),
-                    n.pageY(), n.tiedFromPrevious(), i % 3 == 0 ? 1 : 0, n.beamCount(), n.writtenAccidental(),
+                    n.pageY(), n.tiedFromPrevious(), !undotted && i % 3 == 0 ? 1 : 0,
+                    undotted ? 1 : n.beamCount(), n.writtenAccidental(),
                     n.unbeamedDurationBeats(), 3, n.followingRestBeats(), n.articulations(),
                     n.clefBottomDiatonic(), n.crossStaffBeam(), n.leadingRestBeats(), n.compactOpening(),
                     n.octaveShift(), n.boundaryTies(), 2, n.stemDirection(), n.kind(), n.visualSize(),

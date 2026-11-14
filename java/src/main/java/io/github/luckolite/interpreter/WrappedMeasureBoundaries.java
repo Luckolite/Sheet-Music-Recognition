@@ -21,6 +21,12 @@ final class WrappedMeasureBoundaries {
             int first,
             float firstLastHeadX,
             float secondFirstHeadX) {
+        return confirms(gray, width, height, measures, first, firstLastHeadX, secondFirstHeadX, false);
+    }
+
+    static boolean confirms(
+            byte[] gray, int width, int height, List<MeasureRegion> measures, int first,
+            float firstLastHeadX, float secondFirstHeadX, boolean singleBeamGroups) {
         if (gray == null || width <= 0 || height <= 0 || gray.length != (long) width * height
                 || measures == null || first < 1 || first >= measures.size() - 2) return false;
         var before = box(measures.get(first - 1), width, height);
@@ -37,7 +43,7 @@ final class WrappedMeasureBoundaries {
                 || start.top - end.bottom < initialGap * 3
                 || end.right - start.left < initialGap * 16
                 || !Float.isFinite(firstLastHeadX) || firstLastHeadX <= end.left
-                || firstLastHeadX > end.right - initialGap * .75f
+                || firstLastHeadX > end.right - initialGap * (singleBeamGroups ? .50f : .75f)
                 || !Float.isFinite(secondFirstHeadX)
                 || secondFirstHeadX < start.left + initialGap * 1.3f
                 || secondFirstHeadX >= start.right) return false;
@@ -50,7 +56,9 @@ final class WrappedMeasureBoundaries {
         // Opening and closing barlines lie in the spaces between the neighboring cropped measures.
         return hasBoundary(gray, width, height, endTrack, before.right, end.left, gap)
                 && hasBoundary(gray, width, height, startTrack, start.right, after.left, gap)
-                && openRightMargin(gray, width, height, endTrack, end.right, firstLastHeadX, gap)
+                && (openRightMargin(gray, width, height, endTrack, end.right, firstLastHeadX, gap)
+                        || singleBeamGroups && openRightEdge(gray, width, height, endTrack,
+                                end.right, firstLastHeadX, gap))
                 && openLeftMargin(gray, width, height, startTrack, start.left, secondFirstHeadX, gap);
     }
 
@@ -115,6 +123,18 @@ final class WrappedMeasureBoundaries {
                 || staffRules(gray, width, height, track, Math.round(end + gap * .75f)) > 1
                 || staffRules(gray, width, height, track, Math.round(end + gap * 1.3f)) > 1) return false;
         return clearOfVerticalInk(gray, width, height, track, start, end + gap * .5f);
+    }
+
+    private static boolean openRightEdge(byte[] gray, int width, int height, StaffPitchTrack track,
+            float end, float lastHead, float gap) {
+        // Sample five distinct, continuous rails approaching the end. One weak
+        // column can be crossed without treating a full-height rule as an edge.
+        return staffRules(gray, width, height, track, Math.round(end - gap * .8f)) == 5
+                && staffRules(gray, width, height, track, Math.round(end - gap * .25f)) == 5
+                && staffRules(gray, width, height, track, Math.round(end + gap * .75f)) <= 1
+                && staffRules(gray, width, height, track, Math.round(end + gap * 1.3f)) <= 1
+                && clearOfVerticalInk(gray, width, height, track,
+                        Math.max(lastHead + gap * .4f, end - gap * 1.1f), end + gap * .5f);
     }
 
     private static boolean openLeftMargin(byte[] gray, int width, int height, StaffPitchTrack track,
