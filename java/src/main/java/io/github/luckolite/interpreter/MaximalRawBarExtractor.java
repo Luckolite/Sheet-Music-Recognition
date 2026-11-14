@@ -578,6 +578,8 @@ final class MaximalRawBarExtractor {
         int[] runCounts = new int[laneWidth];
         int[][] staffSplitRuns = joined ? new int[laneWidth][runCapacity * 2] : null;
         int[] staffSplitCounts = joined ? new int[laneWidth] : null;
+        int[] activeColumns = new int[laneWidth];
+        int activeCount = 0;
         for (int x = lane.left; x <= lane.right; x++) {
             int column = x - lane.left;
             int[] columnTops = runTops[column], columnBottoms = runBottoms[column];
@@ -617,6 +619,7 @@ final class MaximalRawBarExtractor {
             }
             if (inRun) columnBottoms[runCount++] = spanBottom;
             runCounts[column] = runCount;
+            if (runCount != 0) activeColumns[activeCount++] = column;
             // Retain the established logical work charge for the former reverse scan.
             if (spanHeight > workBudget - work)
                 return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), workBudget);
@@ -632,14 +635,6 @@ final class MaximalRawBarExtractor {
                 staffSplitCounts[column] = splitCount;
             }
         }
-        List<IndexedBody> rawCandidates = new ArrayList<>();
-        int[] widths = new int[laneWidth], tops = new int[laneWidth], bottoms = new int[laneWidth];
-        double[] offsets = new double[laneWidth];
-        int[] firstRun = new int[laneWidth];
-        int[] activeColumns = new int[laneWidth];
-        int activeCount = 0;
-        for (int at = 0; at < laneWidth; at++)
-            if (runCounts[at] != 0) activeColumns[activeCount++] = at;
         if (!joined && activeCount == 0) {
             // Empty intercepts only charge their lane width; preserve the exact refusal point.
             long intercepts = (long) (lane.bottom - lane.top + 1) * 24;
@@ -650,11 +645,15 @@ final class MaximalRawBarExtractor {
             // The final alias pass has no candidates and charges zero work.
             return new Discovery(Status.CANDIDATES, List.of(), work);
         }
-        int scanLeft = joined ? lane.left : lane.left + activeColumns[0];
-        int scanRight = joined ? lane.right : lane.left + activeColumns[activeCount - 1];
+        List<IndexedBody> rawCandidates = new ArrayList<>();
+        int[] widths = new int[laneWidth], tops = new int[laneWidth], bottoms = new int[laneWidth];
+        double[] offsets = new double[laneWidth];
+        int[] firstRun = new int[laneWidth];
+        int[] remainingColumns = new int[activeCount];
         int maxSectionWidth = joined ? 2 * maxWidth : maxWidth;
         int[] firstSplit = joined ? new int[laneWidth] : null;
         long[] remaining = joined ? new long[1] : null;
+        var partitionScratch = joined ? new RawStaffBarPartition.Scratch() : null;
         ProjectedCaps projectedCaps = null;
         // Enumerate all raw intercepts over the entire lane for every already-supported slope.
         for (int tick = -13; tick <= 13; tick++) {
@@ -665,24 +664,45 @@ final class MaximalRawBarExtractor {
                 int column = activeColumns[index];
                 offsets[column] = slope * (lane.left + column - mid);
             }
+            java.util.Arrays.fill(widths, 0);
             java.util.Arrays.fill(firstRun, 0);
             if (joined) java.util.Arrays.fill(firstSplit, 0);
+            int remainingCount = activeCount;
+            System.arraycopy(activeColumns, 0, remainingColumns, 0, activeCount);
             for (int intercept = lane.top; intercept <= lane.bottom; intercept++) {
+                if (remainingCount == 0) {
+                    // Empty intercepts still charge lane width, one whole intercept at a time.
+                    long intercepts = (long) lane.bottom - intercept + 1;
+                    long affordable = Math.min(intercepts, (workBudget - work) / laneWidth);
+                    work += affordable * laneWidth;
+                    if (affordable < intercepts)
+                        return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), work);
+                    break;
+                }
                 if (laneWidth > workBudget - work)
                     return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), work);
                 work += laneWidth;
-                for (int index = 0; index < activeCount; index++) {
-                    int at = activeColumns[index];
+                int nextCount = 0;
+                int firstSection = lane.right + 1, lastSection = lane.left - 1;
+                for (int index = 0; index < remainingCount; index++) {
+                    int at = remainingColumns[index];
                     int runCount = runCounts[at];
                     // Only nonzero widths expose a cross-section to later scans.
                     widths[at] = 0;
                     int y = (int) Math.rint(intercept + offsets[at]);
-                    if (y - radius < spanTop || y + radius > spanBottom) continue;
+                    if (y + radius > spanBottom) continue;
+                    if (y - radius < spanTop) {
+                        remainingColumns[nextCount++] = at;
+                        continue;
+                    }
                     // A centered raw cross-section is one contiguous body, not a sum of nearby ink.
                     int[] columnTops = runTops[at], columnBottoms = runBottoms[at];
                     // Rounded rows are nondecreasing as the intercept advances.
                     int lo = firstRun[at], firstRow = y - radius, lastRow = y + radius;
                     while (lo < runCount && columnTops[lo] < firstRow) lo++;
+                    // Later intercepts cannot bring a finished column back into range.
+                    if (lo == runCount) continue;
+                    remainingColumns[nextCount++] = at;
                     firstRun[at] = lo;
                     int best = 0, bestTop = -1, bestBottom = -1, bestDistance = Integer.MAX_VALUE;
                     boolean tie = false;
@@ -750,15 +770,19 @@ final class MaximalRawBarExtractor {
                                 && (top != bestTop || bottom != bestBottom)) tie = true;
                     }
                     if (!tie && best >= minWidth) {
+                        if (firstSection > lane.right) firstSection = lane.left + at;
+                        lastSection = lane.left + at;
                         widths[at] = best;
                         tops[at] = bestTop;
                         bottoms[at] = bestBottom;
                     }
                 }
+                remainingCount = nextCount;
+                if (firstSection > lastSection) continue;
                 if (joined) {
                     remaining[0] = workBudget - work;
                     boolean admitted =
-                            RawStaffBarPartition.apply(
+                            RawStaffBarPartition.applyRange(
                                     widths,
                                     tops,
                                     bottoms,
@@ -767,14 +791,15 @@ final class MaximalRawBarExtractor {
                                     lane.gap,
                                     maxWidth,
                                     staffPixels,
-                                    remaining);
+                                    remaining, null, null,
+                                    firstSection - lane.left, lastSection - lane.left + 1, partitionScratch);
                     work = workBudget - remaining[0];
                     if (remaining[0] < 0)
                         return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), workBudget);
                     if (!admitted) continue;
                 }
-                int x = scanLeft;
-                int lastSectionX = scanRight;
+                int x = firstSection;
+                int lastSectionX = lastSection;
                 while (x <= lastSectionX) {
                     while (x <= lastSectionX && widths[x - lane.left] == 0) x++;
                     int first = x;

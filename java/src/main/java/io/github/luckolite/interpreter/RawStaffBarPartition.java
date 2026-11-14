@@ -61,12 +61,19 @@ final class RawStaffBarPartition {
             long[] budget,
             StringBuilder reason,
             boolean[] excludeStaffMembers) {
-        int n = widths.length;
+        return applyRange(widths, top, bottom, firstX, pageWidth, gap, cap, staff,
+                budget, reason, excludeStaffMembers, 0, widths.length, new Scratch());
+    }
+
+    static boolean applyRange(
+            int[] widths, int[] top, int[] bottom, int firstX, int pageWidth, int gap, int cap,
+            Set<Integer> staff, long[] budget, StringBuilder reason, boolean[] excludeStaffMembers,
+            int fromColumn, int endColumn, Scratch workspace) {
         boolean any = false;
-        boolean[] columnContact = null;
+        boolean[] columnContact = workspace.columnContact;
         // Distinct finite strokes must never constrain one another's width through
         // an intervening staff-only column. Such a column is UNKNOWN as bar ink.
-        for (int i = 0; i < n; i++)
+        for (int i = fromColumn; i < endColumn; i++)
             if (widths[i] > 0) {
                 long length = Math.max(0L, (long) bottom[i] - top[i] + 1);
                 if (length > 0 && !take(budget, length)) {
@@ -82,22 +89,24 @@ final class RawStaffBarPartition {
                     if (exposed && contact) break;
                 }
                 if (!exposed) widths[i] = 0;
-                else if (contact) {
-                    if (columnContact == null) columnContact = new boolean[n];
-                    columnContact[i] = true;
+                else {
+                    // Only positive widths are read by the segment pass.
+                    if (contact && columnContact == null)
+                        workspace.columnContact = columnContact = new boolean[widths.length];
+                    if (columnContact != null) columnContact[i] = contact;
                 }
             }
-        SegmentScratch scratch = null;
-        for (int from = 0; from < n; ) {
-            while (from < n && widths[from] == 0) from++;
-            if (from == n) break;
+        SegmentScratch scratch = workspace.segment;
+        for (int from = fromColumn; from < endColumn; ) {
+            while (from < endColumn && widths[from] == 0) from++;
+            if (from == endColumn) break;
             int to = from;
             boolean contact = false, withinCap = true;
             do {
                 withinCap &= widths[to] <= cap;
                 contact |= columnContact != null && columnContact[to];
                 to++;
-            } while (to < n && widths[to] > 0);
+            } while (to < endColumn && widths[to] > 0);
             int len = to - from;
             if (!take(budget, 4L * len)) {
                 if (reason != null) reason.append("BUDGET_SEGMENT");
@@ -106,7 +115,7 @@ final class RawStaffBarPartition {
             boolean ok = withinCap;
             if (contact) {
                 if (scratch == null || scratch.widths.length < len)
-                    scratch = new SegmentScratch(len, reason != null);
+                    workspace.segment = scratch = new SegmentScratch(len, reason != null);
                 scratch.reset();
                 ok = applyOne(scratch, widths, top, bottom, len, from, columnContact,
                         firstX + from, pageWidth, gap, cap, staff, budget);
@@ -144,6 +153,12 @@ final class RawStaffBarPartition {
         }
         if (!any && reason != null && reason.length() == 0) reason.append("NO_EXPOSED_SEGMENT");
         return any;
+    }
+
+    /** One discovery owns this storage for all of its joined intercepts. */
+    static final class Scratch {
+        private boolean[] columnContact;
+        private SegmentScratch segment;
     }
 
     private static final class SegmentScratch {
