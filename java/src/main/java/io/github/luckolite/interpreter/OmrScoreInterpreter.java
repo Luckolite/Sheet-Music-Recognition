@@ -29883,8 +29883,10 @@ final class OmrScoreInterpreter {
                     if (tied) previousIndex = candidate;
                 }
             }
+            // System-break proof ignores shoulder extension and already ran for this pair.
             if (!tied
                     && previousIndex >= 0
+                    && !systemBreakTieCandidate(result.get(previousIndex), current, width)
                     && hasTieArc(
                             labels,
                             gray,
@@ -29973,6 +29975,7 @@ final class OmrScoreInterpreter {
             byte[] labels, byte[] gray, int width, int height,
             List<DetectedNote> source, List<DetectedNote> result, int[] predecessors) {
         if (gray == null) return;
+        SystemTieInkCache ink = null;
         for (int i = 0; i < predecessors.length; i++) {
             if (predecessors[i] < 0) continue;
             var end = source.get(i);
@@ -29983,12 +29986,13 @@ final class OmrScoreInterpreter {
                 if (predecessors[j] < 0) continue;
                 var otherStart = source.get(predecessors[j]);
                 if (!samePrintedOnset(start, otherStart)) continue;
-                int startOwner = systemTieInkOwner(labels, gray, width, height, start, otherStart, true);
-                if (startOwner == 0 || startOwner != systemTieInkOwner(
-                        labels, gray, width, height, end, otherEnd, false)) continue;
+                if (ink == null) ink = new SystemTieInkCache(labels, gray, width, height);
+                int startOwner = systemTieInkOwner(ink, start, otherStart, true);
+                if (startOwner == 0 || startOwner != systemTieInkOwner(ink, end, otherEnd, false))
+                    continue;
                 // A chord can have a separate outer curve for each pitch on both systems.
-                if (hasOpposedSystemTieInk(labels, gray, width, height, start, otherStart, true)
-                        && hasOpposedSystemTieInk(labels, gray, width, height, end, otherEnd, false))
+                if (hasOpposedSystemTieInk(ink, start, otherStart, true)
+                        && hasOpposedSystemTieInk(ink, end, otherEnd, false))
                     continue;
                 int redundant = startOwner < 0 ? j : i;
                 result.set(redundant, source.get(redundant));
@@ -29999,27 +30003,25 @@ final class OmrScoreInterpreter {
     }
 
     private static boolean hasOpposedSystemTieInk(
-            byte[] labels, byte[] gray, int width, int height,
-            DetectedNote first, DetectedNote second, boolean outgoing) {
+            SystemTieInkCache ink, DetectedNote first, DetectedNote second, boolean outgoing) {
         var upper = first.head.centerY < second.head.centerY ? first : second;
         var lower = upper == first ? second : first;
-        var above = new SystemTieInk();
-        var below = new SystemTieInk();
-        return hasSystemEndTieArc(labels, gray, width, height, upper, outgoing, -1, above)
-                && hasSystemEndTieArc(labels, gray, width, height, lower, outgoing, 1, below)
+        var above = ink.proof(upper, outgoing, -1);
+        if (above == null) return false;
+        var below = ink.proof(lower, outgoing, 1);
+        return below != null
                 && above.nearY(outgoing) < upper.head.centerY
                 && below.nearY(outgoing) > lower.head.centerY
                 && !above.overlaps(below);
     }
+
     private static int systemTieInkOwner(
-            byte[] labels, byte[] gray, int width, int height,
-            DetectedNote first, DetectedNote second, boolean outgoing) {
-        var a = new SystemTieInk();
-        var b = new SystemTieInk();
+            SystemTieInkCache ink, DetectedNote first, DetectedNote second, boolean outgoing) {
         for (int side : new int[] {-1, 1}) {
-            if (!hasSystemEndTieArc(labels, gray, width, height, first, outgoing, side, a)
-                    || !hasSystemEndTieArc(labels, gray, width, height, second, outgoing, side, b)
-                    || !a.overlaps(b)) continue;
+            var a = ink.proof(first, outgoing, side);
+            if (a == null) continue;
+            var b = ink.proof(second, outgoing, side);
+            if (b == null || !a.overlaps(b)) continue;
             float firstDistance = Math.abs(a.nearY(outgoing) - first.head.centerY);
             float secondDistance = Math.abs(b.nearY(outgoing) - second.head.centerY);
             if (Math.abs(firstDistance - secondDistance) >= Math.min(first.staffGap, second.staffGap) * .4f)
@@ -30028,34 +30030,74 @@ final class OmrScoreInterpreter {
         return 0;
     }
 
+    /** Retains the first witness for each queried note, direction and side on this raster. */
+    private static final class SystemTieInkCache {
+        private static final SystemTieInk NO_INK = new SystemTieInk();
+        private final java.util.IdentityHashMap<DetectedNote, SystemTieInk[]> notes =
+                new java.util.IdentityHashMap<>();
+        private final byte[] labels;
+        private final byte[] gray;
+        private final int width;
+        private final int height;
+
+        SystemTieInkCache(byte[] labels, byte[] gray, int width, int height) {
+            this.labels = labels;
+            this.gray = gray;
+            this.width = width;
+            this.height = height;
+        }
+
+        SystemTieInk proof(DetectedNote note, boolean outgoing, int side) {
+            int slot = (outgoing ? 2 : 0) + (side < 0 ? 0 : 1);
+            SystemTieInk[] proofs = notes.get(note);
+            if (proofs == null) {
+                proofs = new SystemTieInk[4];
+                notes.put(note, proofs);
+            }
+            SystemTieInk proof = proofs[slot];
+            if (proof == null) {
+                proof = new SystemTieInk();
+                if (!hasSystemEndTieArc(labels, gray, width, height, note, outgoing, side, proof))
+                    proof = NO_INK;
+                proofs[slot] = proof;
+            }
+            return proof == NO_INK ? null : proof;
+        }
+    }
+
     private static final class SystemTieInk {
         int[] columns;
         float[] rows;
+        private int firstRow;
+        private int lastRow;
 
         boolean accept(int[] columns, float[] rows) {
             this.columns = columns.clone();
             this.rows = rows.clone();
+            firstRow = 0;
+            while (firstRow < rows.length && !Float.isFinite(rows[firstRow])) firstRow++;
+            lastRow = rows.length - 1;
+            while (lastRow >= firstRow && !Float.isFinite(rows[lastRow])) lastRow--;
             return true;
         }
 
         float nearY(boolean outgoing) {
-            for (int i = 0; i < rows.length; i++) {
-                float row = rows[outgoing ? i : rows.length - 1 - i];
-                if (Float.isFinite(row)) return row;
-            }
-            return Float.NaN;
+            return firstRow <= lastRow ? rows[outgoing ? firstRow : lastRow] : Float.NaN;
         }
 
         boolean overlaps(SystemTieInk other) {
             int shared = 0, compared = 0;
-            for (int i = 0; i < columns.length; i++) {
+            int j = other.firstRow;
+            for (int i = firstRow; i <= lastRow; i++) {
+                if (compared + (lastRow - i + 1) < 8) return false;
                 if (!Float.isFinite(rows[i])) continue;
-                for (int j = 0; j < other.columns.length; j++) {
-                    if (columns[i] != other.columns[j] || !Float.isFinite(other.rows[j])) continue;
-                    compared++;
-                    if (Math.abs(rows[i] - other.rows[j]) <= 1) shared++;
-                    break;
-                }
+                while (j <= other.lastRow
+                        && (other.columns[j] < columns[i] || !Float.isFinite(other.rows[j]))) j++;
+                if (j > other.lastRow) break;
+                // Rounded sample columns can repeat. Every sample compares to the first finite match.
+                if (columns[i] != other.columns[j]) continue;
+                compared++;
+                if (Math.abs(rows[i] - other.rows[j]) <= 1) shared++;
             }
             return compared >= 8 && shared >= compared * .8f;
         }
@@ -30891,6 +30933,7 @@ final class OmrScoreInterpreter {
     private static boolean hasSystemEndTieArc(
             byte[] labels, byte[] gray, int width, int height, DetectedNote note,
             boolean outgoing, int side, SystemTieInk witness) {
+        if (gray == null || gray.length != (long) width * height) return false;
         float gap = note.staffGap;
         int step = Math.max(2, Math.round(gap * .2f));
         int maximumSpan =
@@ -30899,16 +30942,24 @@ final class OmrScoreInterpreter {
                         : outgoing ? 14 : 7;
         // Returning shoulders may start underneath a head, as with in-system ties.
         // Keep the complete two-ended raw-curve proof on both systems.
-        for (int initial : new int[] {step, -Math.round(gap * .65f), -Math.round(gap * 1.3f)}) {
+        int inner = -Math.round(gap * .65f), deepest = -Math.round(gap * 1.3f);
+        boolean sharedClearances = deepest <= inner && ((long) inner - deepest) % step == 0;
+        float maximumCoarseSpan = gap * maximumSpan;
+        int firstCoarseSpan = Math.round(gap * 1.6f);
+        for (int band = 0; band < 3; band++) {
+            int initial = band == 0 ? step : band == 1 ? inner : deepest;
+            float lastClearance = initial == step ? gap * 1.8f : 0;
+            if (band == 2 && sharedClearances) lastClearance = Math.min(lastClearance, (long) inner - 1);
             for (int clearance = initial;
-                    clearance <= (initial == step ? gap * 1.8f : 0);
+                    clearance <= lastClearance;
                     clearance += step) {
-                for (int span = Math.round(gap * 1.6f); span <= gap * maximumSpan; span += step) {
-                    int left =
-                            outgoing
-                                    ? note.head.maxX + clearance
-                                    : note.head.minX - clearance - span;
-                    int right = outgoing ? left + span : note.head.minX - clearance;
+                int near = outgoing ? note.head.maxX + clearance : note.head.minX - clearance;
+                int room = outgoing ? width - 1 - near : near;
+                if (near < 0 || near >= width) continue;
+                for (int span = firstCoarseSpan;
+                        span <= maximumCoarseSpan && span <= room; span += step) {
+                    int left = outgoing ? near : near - span;
+                    int right = outgoing ? near + span : near;
                     if (left < 0 || right >= width) continue;
                     if (hasContinuousTieArc(
                             labels,
@@ -30927,41 +30978,30 @@ final class OmrScoreInterpreter {
         }
         // Preserve the coarse search, then resolve detached miniature outgoing bows.
         // The existing ink, continuity and paired-endpoint requirements still apply.
-        if (outgoing) {
-            for (int clearance = 0; clearance <= Math.round(gap * 1.8f); clearance++) {
-                for (int span = Math.max(6, Math.round(gap * .35f));
-                        span <= Math.round(gap * 3f);
-                        span++) {
-                    int left = note.head.maxX + clearance;
-                    int right = left + span;
-                    if (left < 0 || right >= width) continue;
-                    if (hasContinuousTieArc(
-                            labels,
-                            gray,
-                            width,
-                            height,
-                            left,
-                            right,
-                            note.head.centerY,
-                            gap,
-                            null,
-                            205,
-                            side,
-                            true,
-                            false,
-                            null, witness)) return true;
-                }
+        int miniatureFirst = Math.max(6, Math.round(gap * .35f));
+        int clearanceEnd = Math.round(gap * 1.8f);
+        int spanEnd = Math.round(gap * 3f);
+        for (int clearance = 0; clearance <= clearanceEnd; clearance++) {
+            int near = outgoing ? note.head.maxX + clearance : note.head.minX - clearance;
+            if (near < 0 || near >= width) continue;
+            int maximum = Math.min(spanEnd, outgoing ? width - 1 - near : near);
+            for (int span = miniatureFirst; span <= maximum; span++) {
+                int left = outgoing ? near : near - span;
+                int right = outgoing ? near + span : near;
+                if (hasContinuousTieArc(
+                        labels, gray, width, height, left, right, note.head.centerY, gap,
+                        null, outgoing ? 205 : 225, side, true, false, null, witness)) return true;
             }
         }
         // A short outgoing bow can start above the head before crossing its outer edge.
         // Require the same complete raw arc and a separately proved matching incoming end.
         if (outgoing) {
             for (int left = Math.round(note.head.centerX); left < note.head.maxX; left++) {
-                for (int span = Math.max(6, Math.round(gap * .35f));
-                        span < Math.round(gap * 1.6f);
-                        span++) {
+                if (left < 0 || left >= width) continue;
+                int maximum = Math.min(firstCoarseSpan - 1, width - 1 - left);
+                for (int span = miniatureFirst; span <= maximum; span++) {
                     int right = left + span;
-                    if (left < 0 || right >= width || right < note.head.maxX + gap * .35f) continue;
+                    if (right < note.head.maxX + gap * .35f) continue;
                     if (hasContinuousTieArc(
                             labels,
                             gray,
@@ -30973,34 +31013,6 @@ final class OmrScoreInterpreter {
                             gap,
                             null,
                             205,
-                            side,
-                            true,
-                            false,
-                            null, witness)) return true;
-                }
-            }
-        }
-        // A miniature returning shoulder can precede the first head at a system or page edge.
-        // Keep the original search first, then require the complete raw-curve proof.
-        if (!outgoing) {
-            for (int clearance = 0; clearance <= Math.round(gap * 1.8f); clearance++) {
-                for (int span = Math.max(6, Math.round(gap * .35f));
-                        span <= Math.round(gap * 3f);
-                        span++) {
-                    int right = note.head.minX - clearance;
-                    int left = right - span;
-                    if (left < 0 || right >= width) continue;
-                    if (hasContinuousTieArc(
-                            labels,
-                            gray,
-                            width,
-                            height,
-                            left,
-                            right,
-                            note.head.centerY,
-                            gap,
-                            null,
-                            225,
                             side,
                             true,
                             false,
@@ -31302,22 +31314,24 @@ final class OmrScoreInterpreter {
             boolean strictContrast, boolean flatProfile, TieFrame frame, SystemTieInk witness) {
         // Boundary arc evidence needs raw pixels; semantic-only decoding remains supported.
         if (gray == null || gray.length != (long) width * height) return false;
+        int[] sampleColumns = new int[50];
+        int span = right - left;
         {
+            for (int col = 0; col < 9; col++)
+                sampleColumns[col] = Math.max(0, Math.min(width - 1, left + span * col / 8));
             int[] paper = new int[63];
             int count = 0;
             int bright = 0;
             paperSamples:
-            for (int row = -3; row <= 3; row++)
+            for (int row = -3; row <= 3; row++) {
+                int y = Math.max(0, Math.min(height - 1, Math.round(centerY + (row + .37f) * gap)));
+                int rowStart = y * width;
                 for (int col = 0; col < 9; col++) {
-                    int x = Math.max(0, Math.min(width - 1, left + (right - left) * col / 8));
-                    int y =
-                            Math.max(
-                                    0,
-                                    Math.min(height - 1, Math.round(centerY + (row + .37f) * gap)));
-                    int tone = gray[y * width + x] & 255;
+                    int tone = gray[rowStart + sampleColumns[col]] & 255;
                     paper[count++] = tone;
                     if (!strictContrast && tone >= 210 && ++bright == 16) break paperSamples;
                 }
+            }
             if (bright < 16) {
                 java.util.Arrays.sort(paper);
                 if (strictContrast || paper[47] < 210)
@@ -31336,38 +31350,36 @@ final class OmrScoreInterpreter {
             Math.max(2, Math.round(gap * .35f)),
             Math.max(3, Math.round(gap * .65f))
         };
-        boolean[] straightRows = new boolean[height];
-        float straightMinimum = (right - left + 1) * .85f;
-        for (int y = Math.max(0, Math.round(centerY - gap * 3.2f));
-                y <= Math.min(height - 1, Math.round(centerY + gap * 3.2f));
-                y++) {
-            int dark = 0, row = y * width;
-            for (int x = left; x <= right; x++) {
-                if ((gray[row + x] & 255) <= inkLimit && ++dark >= straightMinimum) break;
-                if (dark + (right - x) < straightMinimum) break;
-            }
-            straightRows[y] = dark >= straightMinimum;
-        }
+        var straightRows = new DenseTieArcContinuity.StraightRows(gray, width, left, right, inkLimit,
+                Math.max(0, Math.round(centerY - gap * 3.2f)),
+                Math.min(height - 1, Math.round(centerY + gap * 3.2f)));
         // Each candidate is evaluated synchronously; scratch arrays belong to this call.
         int[] bins = new int[5], coveredBins = new int[5];
         float[] supportedCenters = new float[50], strokeCenters = new float[50];
         int reach = Math.max(2, Math.round(gap * .4f));
-        int span = right - left;
         boolean compact = span < gap * 2.6f;
         float maximumThickness = gap * .6f;
         float centerTolerance = radius + Math.max(1f, gap * .06f);
         // Pixel columns are identical for every candidate curve in this call.
-        int[] sampleColumns = new int[50];
         for (int sample = 0; sample < sampleColumns.length; sample++) {
             float t = (sample + .5f) / 50f;
-            sampleColumns[sample] = Math.round(left + t * (right - left));
+            sampleColumns[sample] = Math.round(left + t * span);
         }
+        // Cache the ordered probe result for each original sample position and requested row.
+        // A fixed number of slots per sample bounds scratch independently of the page geometry.
+        int probeSlots = 4;
+        long[] probeKeys = new long[sampleColumns.length * probeSlots];
+        int[] probeRows = new int[probeKeys.length];
+        float[] probeStrokeCenters = new float[probeKeys.length];
+        boolean[] probeStrong = new boolean[probeKeys.length];
+        boolean requireStrongInk = inkLimit > 165;
         // Keep the original grid: fractional sampling can move across rasterized ink.
         // Short arcs get an additional finer pass after those candidates fail.
         int[] sides = requiredSide == 0 ? new int[] {-1, 1} : new int[] {requiredSide};
         for (int grid = 0; grid < (span < gap * 2 ? 2 : 1); grid++)
             for (int side : sides)
-                for (float offset = .2f; offset <= 1.15f; offset += grid == 1 ? .075f : .15f)
+                for (float offset = .2f, sideGap = side * gap;
+                        offset <= 1.15f; offset += grid == 1 ? .075f : .15f)
                     candidate:
                     for (float bend = -.75f; bend <= 1.8f; bend += grid == 1 ? .05f : .1f) {
                         if (Math.abs(bend) < .24f || offset + bend < .12f) continue;
@@ -31376,100 +31388,112 @@ final class OmrScoreInterpreter {
                         if (compact && offset + Math.max(0, bend) > 1.6f)
                             continue;
                         if (target != null
-                                && Math.abs(centerY + side * gap * (offset + bend) - target.centerY)
+                                && Math.abs(centerY + sideGap * (offset + bend) - target.centerY)
                                         > gap * .25f) continue;
-                        int hits = 0, obscured = 0, strong = 0;
-                        java.util.Arrays.fill(bins, 0);
-                        java.util.Arrays.fill(coveredBins, 0);
-                        for (int sample = 0; sample < 50; sample++) {
-                            // Every acceptance path needs at least 34 visible hits, 43 total
-                            // samples, and seven covered samples in every ten-sample bin.
-                            // Remaining samples cannot repair a failed bound; skip only then.
-                            int remaining = 50 - sample;
-                            int bin = sample / 10;
-                            if (hits + remaining < 34
-                                    || hits + obscured + remaining < 43
-                                    || (inkLimit > 165 && strong + remaining < 30)
-                                    || coveredBins[bin] + 10 - sample % 10 < 7
-                                    || (sample % 10 == 0 && bin > 0 && coveredBins[bin - 1] < 7))
-                                continue candidate;
-                            // Only completed candidates reach curvature checks. Initialize each
-                            // visited sample; abandoned candidates never read their stale tail.
-                            supportedCenters[sample] = strokeCenters[sample] = Float.NaN;
-                            int x = sampleColumns[sample];
-                            int y =
-                                    Math.round(
-                                            centerY + side * gap * (offset + bend * profile[sample]));
-                            boolean ink = false;
-                            int obscuredY = -1;
-                            for (int dy : searchOffsets) {
-                                int yy = y + dy;
-                                if (yy < 0 || yy >= height) continue;
-                                int at = yy * width + x;
-                                int shade = gray[at] & 255;
-                                if (shade > inkLimit
-                                        || labels[at] == OmrMeasurePostProcessor.NOTEHEAD) continue;
-                                if (strictContrast && shade > 125) {
-                                    int paper = 0;
-                                    for (int distance : contrastOffsets) {
-                                        if (yy >= distance)
-                                            paper =
-                                                    Math.max(
-                                                            paper,
-                                                            gray[(yy - distance) * width + x]
-                                                                    & 255);
-                                        if (yy + distance < height)
-                                            paper =
-                                                    Math.max(
-                                                            paper,
-                                                            gray[(yy + distance) * width + x]
-                                                                    & 255);
-                                        if (paper >= shade + 20) break;
-                                    }
-                                    if (paper < shade + 20) continue;
-                                }
-                                // Semantic staff bands can cover a curved tie crest. Raw
-                                // straight rules stay occluded; the remaining thin stroke
-                                // must independently pass the returning-curve checks.
-                                if (straightRows[yy]) {
-                                    if (obscuredY < 0) obscuredY = yy;
+                        int hits = 0, obscured = 0, nonStrong = 0, missing = 0;
+                        for (int bin = 0, sample = 0; bin < 5; bin++) {
+                            int binHits = 0, binMissing = 0;
+                            for (int end = sample + 10; sample < end; sample++) {
+                                int x = sampleColumns[sample];
+                                int y = Math.round(centerY + sideGap * (offset + bend * profile[sample]));
+                                int probeSlot = sample * probeSlots + (y & (probeSlots - 1));
+                                long probeKey = ((long) y << 32) | (side & 0xffffffffL);
+                                int supportedRow;
+                                float stroke;
+                                boolean strongProbe;
+                                if (probeKeys[probeSlot] == probeKey) {
+                                    supportedRow = probeRows[probeSlot];
+                                    stroke = probeStrokeCenters[probeSlot];
+                                    strongProbe = probeStrong[probeSlot];
                                 } else {
-                                    // Measure the printed stroke center, not whichever edge
-                                    // best fits the requested curve. Alternating between the
-                                    // top and bottom edges can bend a thick straight rule.
-                                    int inkTop = yy, inkBottom = yy;
-                                    while (inkTop > Math.max(0, yy - reach)
-                                            && (gray[(inkTop - 1) * width + x] & 255) <= inkLimit)
-                                        inkTop--;
-                                    if (yy - inkTop > maximumThickness) continue;
-                                    while (inkBottom < Math.min(height - 1, yy + reach)
-                                            && (gray[(inkBottom + 1) * width + x] & 255)
-                                                    <= inkLimit) inkBottom++;
-                                    // Follow the actual thin stroke, not the convenient
-                                    // edge of a thick accidental, rest bulb or letter.
-                                    if (inkBottom - inkTop > maximumThickness) continue;
-                                    float strokeCenter = (inkTop + inkBottom) * .5f;
-                                    if (compact && side * (strokeCenter - centerY) > gap * 1.6f)
-                                        continue;
-                                    if (Math.abs(strokeCenter - y) > centerTolerance) continue;
-                                    strokeCenters[sample] = strokeCenter;
-                                    ink = true;
-                                    supportedCenters[sample] = yy;
-                                    if (shade <= 165) strong++;
-                                    break;
+                                    supportedRow = -1;
+                                    stroke = Float.NaN;
+                                    strongProbe = false;
+                                    int obscuredY = -1;
+                                    for (int dy : searchOffsets) {
+                                        int yy = y + dy;
+                                        if (yy < 0 || yy >= height) continue;
+                                        int at = yy * width + x;
+                                        int shade = gray[at] & 255;
+                                        if (shade > inkLimit
+                                                || labels[at] == OmrMeasurePostProcessor.NOTEHEAD) continue;
+                                        if (strictContrast && shade > 125) {
+                                            int paper = 0;
+                                            for (int distance : contrastOffsets) {
+                                                if (yy >= distance)
+                                                    paper =
+                                                            Math.max(
+                                                                    paper,
+                                                                    gray[(yy - distance) * width + x]
+                                                                            & 255);
+                                                if (yy + distance < height)
+                                                    paper =
+                                                            Math.max(
+                                                                    paper,
+                                                                    gray[(yy + distance) * width + x]
+                                                                            & 255);
+                                                if (paper >= shade + 20) break;
+                                            }
+                                            if (paper < shade + 20) continue;
+                                        }
+                                        // Semantic staff bands can cover a curved tie crest. Raw
+                                        // straight rules stay occluded; the remaining thin stroke
+                                        // must independently pass the returning-curve checks.
+                                        if (straightRows.contains(yy)) {
+                                            if (obscuredY < 0) obscuredY = yy;
+                                        } else {
+                                            // Measure the printed stroke center, not whichever edge
+                                            // best fits the requested curve. Alternating between the
+                                            // top and bottom edges can bend a thick straight rule.
+                                            int inkTop = yy, inkBottom = yy;
+                                            while (inkTop > Math.max(0, yy - reach)
+                                                    && (gray[(inkTop - 1) * width + x] & 255) <= inkLimit)
+                                                inkTop--;
+                                            if (yy - inkTop > maximumThickness) continue;
+                                            while (inkBottom < Math.min(height - 1, yy + reach)
+                                                    && (gray[(inkBottom + 1) * width + x] & 255)
+                                                            <= inkLimit) inkBottom++;
+                                            // Follow the actual thin stroke, not the convenient
+                                            // edge of a thick accidental, rest bulb or letter.
+                                            if (inkBottom - inkTop > maximumThickness) continue;
+                                            float strokeCenter = (inkTop + inkBottom) * .5f;
+                                            if (compact && side * (strokeCenter - centerY) > gap * 1.6f)
+                                                continue;
+                                            if (Math.abs(strokeCenter - y) > centerTolerance) continue;
+                                            stroke = strokeCenter;
+                                            supportedRow = yy;
+                                            strongProbe = shade <= 165;
+                                            break;
+                                        }
+                                    }
+                                    if (supportedRow < 0) supportedRow = obscuredY;
+                                    probeKeys[probeSlot] = probeKey;
+                                    probeRows[probeSlot] = supportedRow;
+                                    probeStrokeCenters[probeSlot] = stroke;
+                                    probeStrong[probeSlot] = strongProbe;
+                                }
+                                // Abandoned candidates never read the unwritten tail of these arrays.
+                                strokeCenters[sample] = stroke;
+                                supportedCenters[sample] = supportedRow < 0 ? Float.NaN : supportedRow;
+                                // At most 20 of the 50 votes may lack strong ink when it is required.
+                                if (!strongProbe && ++nonStrong > 20 && requireStrongInk)
+                                    continue candidate;
+                                if (!Float.isNaN(stroke)) {
+                                    hits++;
+                                    binHits++;
+                                } else {
+                                    // All acceptance paths require at least 34 visible votes.
+                                    if (supportedRow >= 0) {
+                                        obscured++;
+                                    } else if (++missing > 7 || ++binMissing > 3) {
+                                        continue candidate;
+                                    }
+                                    if (obscured + missing > 16) continue candidate;
                                 }
                             }
-                            if (ink) {
-                                hits++;
-                                bins[sample / 10]++;
-                                coveredBins[sample / 10]++;
-                            } else if (obscuredY >= 0) {
-                                obscured++;
-                                coveredBins[sample / 10]++;
-                                supportedCenters[sample] = obscuredY;
-                            }
+                            bins[bin] = binHits;
+                            coveredBins[bin] = 10 - binMissing;
                         }
-                        if (inkLimit > 165 && strong < 30) continue;
                         // A changing stroke width can supply two curved boundaries while
                         // its printed center remains straight. Do not let the search
                         // switch boundaries to manufacture a returning arc.
@@ -31621,7 +31645,7 @@ final class OmrScoreInterpreter {
                         if (right - left >= gap * 8
                                 && right - left <= gap * (flatProfile ? 48 : 24)
                                 && hits >= 36
-                                && strong >= 36
+                                && nonStrong <= 14
                                 && obscured > 0
                                 && obscured <= 14
                                 && hits + obscured == 50
@@ -31686,7 +31710,7 @@ final class OmrScoreInterpreter {
                         if (right - left >= gap * 8
                                 && right - left <= gap * (flatProfile ? 48 : 24)
                                 && hits >= 36
-                                && strong >= 30
+                                && nonStrong <= 20
                                 && obscured > 0
                                 && obscured <= 14
                                 && hits + obscured >= 48
