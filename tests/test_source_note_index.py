@@ -81,6 +81,18 @@ public final class SheetInterpreter {
             TablatureDecoder.Prepared preparedTabs) {
         return analyze(labels, gray, width, height, annotations);
     }
+
+    record AnalyzedPage(ScorePageInterpretation score, List<ScoreNoteEvent> originalNotes,
+            SourceLocalAccidental accidentalSource) {}
+
+    static AnalyzedPage analyzeWithPrintedSources(byte[] labels, byte[] gray, int width, int height,
+            Annotations annotations, MusicalOcr ocr, int physicalPage, byte[] decoderGray,
+            TablatureDecoder.Prepared preparedTabs) {
+        var score = analyze(labels, gray, width, height, annotations, ocr, physicalPage,
+                decoderGray, preparedTabs);
+        return new AnalyzedPage(score, score.notes(), SourceLocalAccidental.unavailable());
+    }
+
 }
 '''
 
