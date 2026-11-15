@@ -33610,7 +33610,7 @@ final class OmrScoreInterpreter {
                 target, inkLimit, requiredSide, strictContrast, flatProfile, frame, null);
     }
 
-    private static final int TIE_PROBE_SLOTS = 4;
+    private static final int TIE_PROBE_SLOTS = 8;
     private static final int[] BOTH_TIE_SIDES = {-1, 1};
     private static final ThreadLocal<TieArcScratch> TIE_ARC_SCRATCH =
             ThreadLocal.withInitial(TieArcScratch::new);
@@ -33636,13 +33636,48 @@ final class OmrScoreInterpreter {
         return offsets;
     }
 
+    private record TieShape(float offset, float bend, float tip, boolean compact,
+            float[] parabolic, float[] flat) {}
+
+    private static TieShape[][] tieShapes(float offsetStep, float bendStep) {
+        var groups = new ArrayList<TieShape[]>();
+        // Use the original float increments. Replacing them with an integer product
+        // can shift a rounded raster sample by one pixel.
+        for (float offset = .2f; offset <= 1.15f; offset += offsetStep) {
+            var shapes = new ArrayList<TieShape>();
+            for (float bend = -.75f; bend <= 1.8f; bend += bendStep) {
+                float tip = offset + bend;
+                if (Math.abs(bend) < .24f || tip < .12f) continue;
+                float[] parabolic = new float[PARABOLIC_TIE_PROFILE.length];
+                float[] flat = new float[FLAT_TIE_PROFILE.length];
+                for (int sample = 0; sample < parabolic.length; sample++) {
+                    parabolic[sample] = offset + bend * PARABOLIC_TIE_PROFILE[sample];
+                    flat[sample] = offset + bend * FLAT_TIE_PROFILE[sample];
+                }
+                shapes.add(new TieShape(offset, bend, tip, offset + Math.max(0, bend) <= 1.6f,
+                        parabolic, flat));
+            }
+            groups.add(shapes.toArray(TieShape[]::new));
+        }
+        return groups.toArray(TieShape[][]::new);
+    }
+
+    private static final class CoarseTieGrid {
+        static final TieShape[][] SHAPES = tieShapes(.15f, .1f);
+    }
+
+    private static final class FineTieGrid {
+        static final TieShape[][] SHAPES = tieShapes(.075f, .05f);
+    }
+
     private static final class TieArcScratch {
         final int[] sampleColumns = new int[50], paper = new int[63];
+        final int[] sampleBases = new int[sampleColumns.length];
         final int[] bins = new int[5], coveredBins = new int[5];
         final int[] contrastOffsets = new int[3], oneSide = new int[1];
         final float[] supportedCenters = new float[50], strokeCenters = new float[50];
         final float[] residuals = new float[50];
-        final long[] probeKeys = new long[50 * TIE_PROBE_SLOTS];
+        final long[] probeKeys = new long[2 * 50 * TIE_PROBE_SLOTS];
         final int[] probeRows = new int[probeKeys.length];
         final float[] probeStrokeCenters = new float[probeKeys.length];
         final boolean[] probeStrong = new boolean[probeKeys.length];
@@ -33686,7 +33721,6 @@ final class OmrScoreInterpreter {
         int radius = Math.max(1, Math.round(gap * .1f));
         int[] searchOffsets = radius < COMMON_TIE_OFFSETS.length
                 ? COMMON_TIE_OFFSETS[radius] : tieOffsets(radius);
-        float[] profile = flatProfile ? FLAT_TIE_PROFILE : PARABOLIC_TIE_PROFILE;
         int[] contrastOffsets = scratch.contrastOffsets;
         contrastOffsets[0] = Math.max(1, Math.round(gap * .18f));
         contrastOffsets[1] = Math.max(2, Math.round(gap * .35f));
@@ -33702,15 +33736,21 @@ final class OmrScoreInterpreter {
         float maximumThickness = gap * .6f;
         float centerTolerance = radius + Math.max(1f, gap * .06f);
         // Pixel columns are identical for every candidate curve in this call.
+        int[] sampleBases = scratch.sampleBases;
+        int distinctColumns = 0;
         for (int sample = 0; sample < sampleColumns.length; sample++) {
             float t = (sample + .5f) / 50f;
-            sampleColumns[sample] = Math.round(left + t * span);
+            int x = Math.round(left + t * span);
+            sampleColumns[sample] = x;
+            if (sample == 0 || x != sampleColumns[sample - 1]) distinctColumns++;
+            sampleBases[sample] = (distinctColumns - 1) * TIE_PROBE_SLOTS;
         }
-        // Cache the ordered probe result for each original sample position and requested row.
-        // A fixed number of slots per sample bounds scratch independently of the page geometry.
+        // Cache ordered probes by physical column and row, with separate banks for
+        // the two sides. Short spans may sample the same column multiple times.
         long[] probeKeys = scratch.probeKeys;
-        // Keys carry a nonzero side. Their payload is valid only after a match in this call.
-        java.util.Arrays.fill(probeKeys, 0L);
+        // A nonzero key identifies a row whose payload was filled in this call.
+        int bankSize = distinctColumns * TIE_PROBE_SLOTS;
+        java.util.Arrays.fill(probeKeys, 0, requiredSide == 0 ? 2 * bankSize : bankSize, 0L);
         int[] probeRows = scratch.probeRows;
         float[] probeStrokeCenters = scratch.probeStrokeCenters;
         boolean[] probeStrong = scratch.probeStrong;
@@ -33721,28 +33761,28 @@ final class OmrScoreInterpreter {
         // Short arcs get an additional finer pass after those candidates fail.
         scratch.oneSide[0] = requiredSide;
         int[] sides = requiredSide == 0 ? BOTH_TIE_SIDES : scratch.oneSide;
-        for (int grid = 0; grid < (span < gap * 2 ? 2 : 1); grid++)
+        int gridCount = span < gap * 2 ? 2 : 1;
+        for (int grid = 0; grid < gridCount; grid++)
             for (int side : sides)
-                for (float offset = .2f, sideGap = side * gap;
-                        offset <= 1.15f; offset += grid == 1 ? .075f : .15f)
+                for (TieShape[] shapes : grid == 0 ? CoarseTieGrid.SHAPES : FineTieGrid.SHAPES)
                     candidate:
-                    for (float bend = -.75f; bend <= 1.8f; bend += grid == 1 ? .05f : .1f) {
-                        if (Math.abs(bend) < .24f || offset + bend < .12f) continue;
-                        // A compact span cannot own a deep bowl under the heads;
-                        // rounded dynamics and rest bulbs can supply unrelated ink.
-                        if (compact && offset + Math.max(0, bend) > 1.6f)
-                            continue;
+                    for (TieShape shape : shapes) {
+                        float sideGap = side * gap;
+                        int bank = side > 0 && requiredSide == 0 ? bankSize : 0;
+                        // A compact span cannot own a deep bowl under the heads.
+                        if (compact && !shape.compact) continue;
                         if (target != null
-                                && Math.abs(centerY + sideGap * (offset + bend) - target.centerY)
+                                && Math.abs(centerY + sideGap * shape.tip - target.centerY)
                                         > gap * .25f) continue;
+                        float[] ordinates = flatProfile ? shape.flat : shape.parabolic;
+                        float offset = shape.offset, bend = shape.bend;
                         int hits = 0, obscured = 0, nonStrong = 0, missing = 0;
                         for (int bin = 0, sample = 0; bin < 5; bin++) {
                             int binHits = 0, binMissing = 0;
                             for (int end = sample + 10; sample < end; sample++) {
-                                int x = sampleColumns[sample];
-                                int y = Math.round(centerY + sideGap * (offset + bend * profile[sample]));
-                                int probeSlot = sample * TIE_PROBE_SLOTS + (y & (TIE_PROBE_SLOTS - 1));
-                                long probeKey = ((long) y << 32) | (side & 0xffffffffL);
+                                int y = Math.round(centerY + sideGap * ordinates[sample]);
+                                int probeSlot = bank + sampleBases[sample] + (y & (TIE_PROBE_SLOTS - 1));
+                                long probeKey = ((long) y << 1) | 1L;
                                 int supportedRow;
                                 float stroke;
                                 boolean strongProbe;
@@ -33751,6 +33791,7 @@ final class OmrScoreInterpreter {
                                     stroke = probeStrokeCenters[probeSlot];
                                     strongProbe = probeStrong[probeSlot];
                                 } else {
+                                    int x = sampleColumns[sample];
                                     supportedRow = -1;
                                     stroke = Float.NaN;
                                     strongProbe = false;
@@ -33791,15 +33832,22 @@ final class OmrScoreInterpreter {
                                             // best fits the requested curve. Alternating between the
                                             // top and bottom edges can bend a thick straight rule.
                                             int inkTop = yy, inkBottom = yy;
-                                            while (inkTop > Math.max(0, yy - reach)
-                                                    && (gray[(inkTop - 1) * width + x] & 255) <= inkLimit)
+                                            int firstRow = Math.max(0, yy - reach);
+                                            int pixel = at - width;
+                                            while (inkTop > firstRow && (gray[pixel] & 255) <= inkLimit) {
                                                 inkTop--;
+                                                pixel -= width;
+                                            }
                                             if (yy - inkTop > maximumThickness) continue;
-                                            while (inkBottom < Math.min(height - 1, yy + reach)
-                                                    && (gray[(inkBottom + 1) * width + x] & 255)
-                                                            <= inkLimit) inkBottom++;
-                                            // Follow the actual thin stroke, not the convenient
-                                            // edge of a thick accidental, rest bulb or letter.
+                                            int lastRow = Math.min(height - 1, yy + reach);
+                                            // One extra ink row is enough to prove excessive thickness.
+                                            if (maximumThickness < (1 << 24) && lastRow - inkTop > maximumThickness)
+                                                lastRow = inkTop + (int) maximumThickness + 1;
+                                            pixel = at + width;
+                                            while (inkBottom < lastRow && (gray[pixel] & 255) <= inkLimit) {
+                                                inkBottom++;
+                                                pixel += width;
+                                            }
                                             if (inkBottom - inkTop > maximumThickness) continue;
                                             float strokeCenter = (inkTop + inkBottom) * .5f;
                                             if (compact && side * (strokeCenter - centerY) > gap * 1.6f)

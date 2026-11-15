@@ -261,29 +261,45 @@ final class CommonTimeMeter {
         if (span < gap * .65f || span > gap * 1.75f) return false;
         int radius = Math.max(1, Math.round(gap * .12f));
         int lo = Math.round(firstLine - gap), hi = Math.round(firstLine + gap * 5);
+        int slant = Math.round(gap * .65f);
+        int maskTop = Math.min(lo, height) - slant - 1;
+        int maskBottom = hi + slant + 1;
+        boolean[] staffRows = new boolean[maskBottom - maskTop + 1];
+        int[] clearRows = new int[staffRows.length + 1];
+        for (int row = 0; row < staffRows.length; row++) {
+            staffRows[row] = sharpStaffRule(
+                    gray, width, height, left, right, row + maskTop, firstLine, gap, radius, slope);
+            clearRows[row + 1] = clearRows[row] + (staffRows[row] ? 0 : 1);
+        }
         int[] tops = new int[span], bottoms = new int[span];
         java.util.Arrays.fill(tops, height);
         java.util.Arrays.fill(bottoms, -1);
+        int[] deskew = new int[span];
         for (int x = left; x <= right; x++) {
+            int shift = Math.round(slope * (x - width * .5f));
+            deskew[x - left] = shift;
             int hits = 0;
             for (int y = lo; y <= hi; y++) {
-                if (sharpStaffRule(
-                                gray, width, height, left, right, y, firstLine, gap, radius, slope)
-                        || !ink(gray, width, height, x, y, slope)) continue;
+                if (staffRows[y - maskTop] || !inkAt(gray, width, height, x, y + shift)) continue;
                 tops[x - left] = Math.min(tops[x - left], y);
                 bottoms[x - left] = Math.max(bottoms[x - left], y);
                 hits++;
             }
-            int rows = 0;
-            for (int y = tops[x - left]; y <= bottoms[x - left]; y++)
-                if (!sharpStaffRule(
-                        gray, width, height, left, right, y, firstLine, gap, radius, slope)) rows++;
-            if (bottoms[x - left] - tops[x - left] < gap * 2.1f || hits < rows * .85f) {
+            int top = tops[x - left], bottom = bottoms[x - left];
+            if (bottom < 0 || bottom - top < gap * 2.1f
+                    || hits < (clearRows[bottom - maskTop + 1] - clearRows[top - maskTop]) * .85f) {
                 tops[x - left] = height;
                 bottoms[x - left] = -1;
             }
         }
         int wing = Math.max(2, Math.round(gap * .12f));
+        int join = Math.max(2, (int) Math.ceil(gap * .4f));
+        float[] centers = null;
+        int slantCount = 2 * slant + 1;
+        long offsetCells = (long) slantCount * span;
+        long fitCells = (long) slantCount * staffRows.length;
+        int[] rowOffsets = null;
+        long[] fits = null;
         for (int a = left + wing; a <= right - wing; a++) {
             if (bottoms[a - left] < 0) continue;
             for (int b = a + Math.max(2, Math.round(gap * .25f));
@@ -295,68 +311,89 @@ final class CommonTimeMeter {
                 int top = Math.max(tops[a - left], tops[b - left]);
                 int bottom = Math.min(bottoms[a - left], bottoms[b - left]);
                 if (bottom - top < gap * 1.9f) continue;
-                var bars = new ArrayList<Integer>();
+                if (rowOffsets == null && offsetCells <= 65_536) {
+                    rowOffsets = new int[(int) offsetCells];
+                    for (int angle = 0; angle < slantCount; angle++) {
+                        int dy = angle - slant;
+                        for (int column = 0; column < span; column++)
+                            rowOffsets[angle * span + column] =
+                                    Math.round(dy * column / (float) (span - 1));
+                    }
+                }
+                if (fits == null && fitCells <= 65_536) fits = new long[(int) fitCells];
+                int bandStart = top, bandEnd = top - 1, n = 0;
                 for (int y = top; y <= bottom; y++) {
                     boolean crossed = false;
-                    for (int dy = -Math.round(gap * .65f); dy <= Math.round(gap * .65f); dy++) {
-                        int hits = 0, total = 0, leftWing = 0, rightWing = 0;
-                        for (int x = left; x <= right; x++) {
-                            int yy = y + Math.round(dy * (x - left) / (float) (span - 1));
-                            if (sharpStaffRule(
-                                    gray, width, height, left, right, yy, firstLine, gap, radius,
-                                    slope)) continue;
-                            total++;
-                            boolean dark =
-                                    ink(gray, width, height, x, yy, slope)
-                                            || !sharpStaffRule(
-                                                            gray, width, height, left, right,
-                                                            yy - 1, firstLine, gap, radius, slope)
-                                                    && ink(gray, width, height, x, yy - 1, slope)
-                                            || !sharpStaffRule(
-                                                            gray, width, height, left, right,
-                                                            yy + 1, firstLine, gap, radius, slope)
-                                                    && ink(gray, width, height, x, yy + 1, slope);
-                            if (dark) {
-                                hits++;
-                                if (x < a) leftWing++;
-                                if (x > b) rightWing++;
+                    for (int angle = 0; angle < slantCount; angle++) {
+                        int fitIndex = fits == null ? 0 : (y - maskTop) * slantCount + angle;
+                        long edges = fits == null ? 0 : fits[fitIndex];
+                        if (edges == 0) {
+                            int dy = angle - slant;
+                            int offset = rowOffsets == null ? 0 : angle * span;
+                            int hits = 0, total = 0, firstDark = -1, lastDark = -1;
+                            for (int column = 0; column < span; column++) {
+                                int rowOffset = rowOffsets == null
+                                        ? Math.round(dy * column / (float) (span - 1))
+                                        : rowOffsets[offset + column];
+                                int yy = y + rowOffset;
+                                int row = yy - maskTop;
+                                if (staffRows[row]) continue;
+                                total++;
+                                int x = left + column;
+                                int physicalY = yy + deskew[column];
+                                boolean dark = inkAt(gray, width, height, x, physicalY)
+                                        || !staffRows[row - 1]
+                                                && inkAt(gray, width, height, x, physicalY - 1)
+                                        || !staffRows[row + 1]
+                                                && inkAt(gray, width, height, x, physicalY + 1);
+                                if (dark) {
+                                    if (hits++ == 0) firstDark = x;
+                                    lastDark = x;
+                                }
                             }
+                            // A fit is independent of the spine pair until its two wings are checked.
+                            edges = total >= Math.max(6, span * .35f) && hits >= total * .86f
+                                    ? (((long) firstDark + 1) << 32) | lastDark
+                                    : -1;
+                            if (fits != null) fits[fitIndex] = edges;
                         }
-                        if (total >= Math.max(6, span * .35f)
-                                && hits >= total * .86f
-                                && leftWing > 0
-                                && rightWing > 0) {
+                        if (edges > 0 && (edges >>> 32) - 1 < a && (int) edges > b) {
                             crossed = true;
                             break;
                         }
                     }
-                    if (crossed) bars.add(y);
-                }
-                // One broad terminal can satisfy several nearby row fits. Staff-rule
-                // masking can split it, so nearby fits still belong to the same band.
-                var centers = new ArrayList<Float>();
-                int join = Math.max(2, (int) Math.ceil(gap * .4f));
-                for (int i = 0; i < bars.size(); ) {
-                    int first = bars.get(i), last = first;
-                    i++;
-                    while (i < bars.size() && bars.get(i) - last <= join) {
-                        boolean maskedRule = true;
-                        for (int y = last + 1; y < bars.get(i); y++)
-                            if (!sharpStaffRule(
-                                    gray, width, height, left, right, y, firstLine, gap, radius,
-                                    slope)) maskedRule = false;
-                        if (!maskedRule) break;
-                        last = bars.get(i++);
+                    if (!crossed) continue;
+                    // A nearby fit belongs to the same band only if every intervening row was masked.
+                    if (bandEnd >= bandStart && y - bandEnd <= join
+                            && clearRows[y - maskTop] == clearRows[bandEnd - maskTop + 1]) {
+                        bandEnd = y;
+                        continue;
                     }
-                    centers.add((first + last) * .5f);
-                }
-                for (int i = 0; i < centers.size(); i++)
-                    for (int j = i + 1; j < centers.size(); j++) {
-                        float separation = centers.get(j) - centers.get(i);
-                        // Both fitted band centers can shift by one antialiased edge pixel.
-                        if (separation >= gap * .5f && separation <= gap * 1.4f + 2) return true;
+                    if (bandEnd >= bandStart) {
+                        float center = (bandStart + bandEnd) * .5f;
+                        if (matchesBandCenter(centers, n, center, gap)) return true;
+                        if (centers == null) centers = new float[hi - Math.min(lo, height) + 1];
+                        centers[n++] = center;
                     }
+                    bandStart = y;
+                    bandEnd = y;
+                }
+                if (bandEnd >= bandStart
+                        && matchesBandCenter(centers, n, (bandStart + bandEnd) * .5f, gap)) return true;
             }
+        }
+        return false;
+    }
+
+    private static boolean inkAt(byte[] gray, int width, int height, int x, int y) {
+        return y >= 0 && y < height && (gray[y * width + x] & 255) < 155;
+    }
+
+    private static boolean matchesBandCenter(float[] centers, int count, float center, float gap) {
+        for (int i = 0; i < count; i++) {
+            float separation = center - centers[i];
+            // Both fitted centers can shift by one antialiased edge pixel.
+            if (separation >= gap * .5f && separation <= gap * 1.4f + 2) return true;
         }
         return false;
     }
@@ -495,6 +532,6 @@ final class CommonTimeMeter {
 
     private static boolean ink(byte[] gray, int width, int height, int x, int y, float slope) {
         int yy = y + Math.round(slope * (x - width * .5f));
-        return x >= 0 && x < width && yy >= 0 && yy < height && (gray[yy * width + x] & 255) < 155;
+        return x >= 0 && x < width && inkAt(gray, width, height, x, yy);
     }
 }
