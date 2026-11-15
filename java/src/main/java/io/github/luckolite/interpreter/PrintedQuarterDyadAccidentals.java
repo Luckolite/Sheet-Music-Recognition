@@ -34,6 +34,90 @@ final class PrintedQuarterDyadAccidentals {
         return proves(labels, gray, width, height, measure, next, chord, staffs, false, true);
     }
 
+    /** Verifies two literal flats in a quarter-note chord at the end of a 3/4 system. */
+    static boolean provesClosedTripleSystemEnd(
+            byte[] labels,
+            byte[] gray,
+            int width,
+            int height,
+            MeasureRegion measure,
+            MeasureRegion next,
+            List<ScoreNoteEvent> chord) {
+        if (gray == null
+                || labels == null
+                || gray.length != (long) width * height
+                || labels.length != gray.length
+                || measure.cadenceQuarterBeats() != 0
+                || next != null && next.top() <= measure.bottom()
+                || chord.size() != 2) return false;
+        var upper = chord.get(0);
+        var lower = chord.get(1);
+        if (upper.pageY() > lower.pageY()) {
+            var first = upper;
+            upper = lower;
+            lower = first;
+        }
+        if (upper.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_FLAT
+                || lower.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_FLAT
+                || upper.stemDirection() == 0
+                || upper.stemDirection() != lower.stemDirection()) return false;
+        float left = measure.left() * width, right = measure.right() * width, span = right - left;
+        float gap = (measure.bottom() - measure.top()) * height / 8.2f;
+        float ax = left + span * upper.positionInMeasure(),
+                bx = left + span * lower.positionInMeasure();
+        float ay = upper.pageY() * height, by = lower.pageY() * height;
+        if (gap < 8
+                || gap > 28
+                || span < gap * 5.5f
+                || span > gap * 9.4f
+                || Math.abs(ax - bx) > gap * .3f
+                || by - ay < gap * .7f
+                || by - ay > gap * 3.0f
+                || upper.positionInMeasure() < .25f
+                || lower.positionInMeasure() > .67f) return false;
+        float hint = measure.bottom() * height - gap * 2.1f;
+        var rails =
+                PrintedDirectionStaff.printedRules(
+                        gray, width, height, left + span * .38f, hint, gap);
+        if (rails == null) return false;
+        gap = rails[1];
+        float top = rails[0] - 4 * gap;
+        if (top < 0 || rails[0] >= height) return false;
+        var staff = new PlayingTechniqueDetector.Staff(top, rails[0], gap, 0, 1);
+        int opening =
+                PrintedCadenceDurations.boundaryColumn(
+                        gray, width, staff, left - gap * .5f, true, false);
+        int closing =
+                PrintedCadenceDurations.boundaryColumn(gray, width, staff, right, false, true);
+        if (closing < 0)
+            closing =
+                    PrintedCadenceDurations.boundaryColumn(
+                            gray, width, staff, right + .35f * gap, false, true);
+        if (closing < 0) {
+            closing =
+                    PrintedCadenceDurations.boundaryColumn(gray, width, staff, right, true, false);
+            if (closing < 0
+                    || !PrintedCadenceDurations.terminalSingleRule(
+                            gray, width, height, closing, staff)) return false;
+        }
+        if (opening < 0 || ax - opening < gap * 2.5f || closing - ax < gap * 2.5f) return false;
+        return ownedPair(
+                labels,
+                gray,
+                width,
+                height,
+                staff,
+                opening,
+                closing,
+                ax,
+                ay,
+                bx,
+                by,
+                true,
+                by - ay >= gap * 2.1f,
+                false);
+    }
+
     private static boolean proves(
             byte[] labels,
             byte[] gray,

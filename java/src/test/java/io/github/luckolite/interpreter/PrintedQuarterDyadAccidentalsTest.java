@@ -37,6 +37,57 @@ public class PrintedQuarterDyadAccidentalsTest {
         assertFalse(proved(anotherHead));
     }
 
+    @Test
+    public void twoFlatsWithADoubleRuleCloseTheSystem() {
+        assertTrue(closed(twoFlats(false)));
+    }
+
+    @Test
+    public void singleRuleNeedsTheStaffToEndAtTheCadence() {
+        assertTrue(closed(twoFlats(true)));
+        var continued = twoFlats(true);
+        for (int y = 80; y <= 144; y += 16) paint(continued.gray(), 277, 310, y, y + 1, 0);
+        assertFalse(closed(continued));
+    }
+
+    @Test
+    public void staffEndDoesNotRescueAnUnownedFlatOrMissingBarline() {
+        var missingFlat = twoFlats(false);
+        paint(missingFlat.labels(), 150, 169, 49, 87, 0);
+        assertFalse(closed(missingFlat));
+
+        var missingRule = twoFlats(false);
+        paint(missingRule.gray(), 274, 284, 78, 145, 255);
+        for (int y = 80; y <= 144; y += 16) paint(missingRule.gray(), 274, 284, y, y + 1, 0);
+        assertFalse(closed(missingRule));
+    }
+
+    private static boolean closed(Page image) {
+        var region =
+                new MeasureRegion(
+                        LEFT / (float) WIDTH, RIGHT / (float) WIDTH, 45f / HEIGHT, 177f / HEIGHT);
+        var next = new MeasureRegion(50f / WIDTH, 325f / WIDTH, 183f / HEIGHT, 255f / HEIGHT);
+        var upper = note(182, 80, 8, ScoreNoteEvent.ACCIDENTAL_FLAT);
+        var lower = note(183, 120, 3, ScoreNoteEvent.ACCIDENTAL_FLAT);
+        return PrintedQuarterDyadAccidentals.provesClosedTripleSystemEnd(
+                image.labels(), image.gray(), WIDTH, HEIGHT, region, next, List.of(upper, lower));
+    }
+
+    private static Page twoFlats(boolean single) {
+        var image = twoSigns();
+        paint(image.gray(), 152, 166, 49, 105, 255);
+        paint(image.labels(), 152, 166, 49, 105, 0);
+        for (int y = 80; y <= 96; y += 16) paint(image.gray(), 152, 166, y, y + 1, 0);
+        mark(image, 153, 156, 52, 88);
+        mark(image, 153, 166, 72, 78);
+        mark(image, 153, 164, 79, 82);
+        mark(image, 153, 160, 83, 86);
+        if (single) {
+            paint(image.gray(), 277, 284, 78, 145, 255);
+        }
+        return image;
+    }
+
     private static boolean proved(Page image) {
         var bar = new MeasureRegion(LEFT / (float) WIDTH, RIGHT / (float) WIDTH,
                 45f / HEIGHT, 165f / HEIGHT);

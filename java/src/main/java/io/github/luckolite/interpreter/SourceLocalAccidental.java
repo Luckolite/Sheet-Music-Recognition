@@ -38,6 +38,58 @@ final class SourceLocalAccidental {
 
     record PrintedMark(int noteIndex, int accidental) {}
 
+    /** Optically proved sloping crossbars. Each strip is checked against the exact parent pixels. */
+    record SharpStrips(
+            int left,
+            int right,
+            int rise,
+            int topFirst,
+            int topLast,
+            int bottomFirst,
+            int bottomLast) {
+        int top() {
+            return topFirst - edge();
+        }
+
+        int bottom() {
+            return bottomLast + edge();
+        }
+
+        private int edge() {
+            return (int) Math.ceil(rise * .05 * (right - left));
+        }
+
+        boolean represented(Set<Integer> pixels, int width) {
+            return band(pixels, width, topFirst, topLast)
+                    && band(pixels, width, bottomFirst, bottomLast);
+        }
+
+        private boolean band(Set<Integer> pixels, int width, int first, int last) {
+            float center = (left + right) * .5f;
+            int minimum = Math.max(3, (right - left + 2) / 2);
+            int rows = 0;
+            for (int y = first; y <= last; y++) {
+                int run = 0;
+                for (int x = left; x <= right; x++) {
+                    int row = Math.round(y - rise * .1f * (x - center));
+                    run = pixels.contains(row * width + x) ? run + 1 : 0;
+                    if (run == minimum) {
+                        rows++;
+                        break;
+                    }
+                }
+            }
+            return rows >= 2;
+        }
+    }
+
+    record SplitSharp(
+            Object parent,
+            Object upper,
+            Object lower,
+            SharpStrips upperInk,
+            SharpStrips lowerInk) {}
+
     private record NoteLocation(
             int measure, int staff, int staffCount, float position, float pageY, int staffStep) {
         NoteLocation(ScoreNoteEvent note) {
@@ -65,6 +117,7 @@ final class SourceLocalAccidental {
     private final List<Glyph> glyphs;
     private final List<Choice> choices;
     private final Set<Integer> joinedNaturalOwners;
+    private final Set<Integer> splitSharpOwners;
     private final List<Head> headAlternatives;
     private final List<Integer> unrepresentedGlyphMembers;
     private final boolean complete;
@@ -81,6 +134,7 @@ final class SourceLocalAccidental {
             List<Head> headAlternatives,
             List<Choice> choices,
             Set<Integer> joinedNaturalOwners,
+            Set<Integer> splitSharpOwners,
             List<Integer> unrepresentedGlyphMembers,
             boolean complete,
             boolean authenticatedFrame) {
@@ -95,6 +149,7 @@ final class SourceLocalAccidental {
         this.headAlternatives = List.copyOf(headAlternatives);
         this.choices = List.copyOf(choices);
         this.joinedNaturalOwners = Set.copyOf(joinedNaturalOwners);
+        this.splitSharpOwners = Set.copyOf(splitSharpOwners);
         this.unrepresentedGlyphMembers = List.copyOf(unrepresentedGlyphMembers);
         this.complete = complete;
         this.authenticatedFrame = authenticatedFrame;
@@ -115,6 +170,7 @@ final class SourceLocalAccidental {
                 && headAlternatives.equals(other.headAlternatives)
                 && choices.equals(other.choices)
                 && joinedNaturalOwners.equals(other.joinedNaturalOwners)
+                && splitSharpOwners.equals(other.splitSharpOwners)
                 && unrepresentedGlyphMembers.equals(other.unrepresentedGlyphMembers);
     }
 
@@ -131,6 +187,7 @@ final class SourceLocalAccidental {
                 headAlternatives,
                 choices,
                 joinedNaturalOwners,
+                splitSharpOwners,
                 unrepresentedGlyphMembers,
                 complete,
                 authenticatedFrame);
@@ -138,8 +195,8 @@ final class SourceLocalAccidental {
 
     static SourceLocalAccidental unavailable() {
         return new SourceLocalAccidental(
-                "", "", 0, 0, 0, 0, List.of(), List.of(), List.of(), Set.of(), List.of(), false,
-                false);
+                "", "", 0, 0, 0, 0, List.of(), List.of(), List.of(), Set.of(), Set.of(), List.of(),
+                false, false);
     }
 
     List<Choice> choices() {
@@ -199,6 +256,32 @@ final class SourceLocalAccidental {
             List<ScoreNoteEvent> notes,
             Map<Object, List<Object>> accidentalFragments,
             Set<Object> provedNaturalHeads) {
+        return capture(
+                symbols,
+                clefs,
+                originalGlyphs,
+                allHeads,
+                heads,
+                actualChoices,
+                finalHeads,
+                notes,
+                accidentalFragments,
+                provedNaturalHeads,
+                List.of());
+    }
+
+    static SourceLocalAccidental capture(
+            ExactComponentMembers.Collector symbols,
+            ExactComponentMembers.Collector clefs,
+            List<?> originalGlyphs,
+            List<?> allHeads,
+            ExactComponentMembers.Collector heads,
+            Map<?, OmrScoreInterpreter.WrittenAccidentalChoice> actualChoices,
+            List<?> finalHeads,
+            List<ScoreNoteEvent> notes,
+            Map<Object, List<Object>> accidentalFragments,
+            Set<Object> provedNaturalHeads,
+            List<SplitSharp> splitProofs) {
         var budget = new ExactComponentMembers.Budget(64_000_000, 128L * 1024 * 1024);
         if (symbols == null || clefs == null || heads == null || finalHeads.size() != notes.size())
             return unavailable();
@@ -335,6 +418,19 @@ final class SourceLocalAccidental {
                             choice.ambiguous(),
                             status));
         }
+        var splitSharpOwners =
+                authenticatedFrame
+                        ? splitSharpOwners(
+                                splitProofs,
+                                glyphIds,
+                                exactGlyphs,
+                                partitions,
+                                finalHeads,
+                                notes,
+                                actualChoices,
+                                accidentalFragments,
+                                symbols.width)
+                        : Set.<Integer>of();
         return new SourceLocalAccidental(
                 symbols.rawSha,
                 symbols.labelSha,
@@ -346,9 +442,101 @@ final class SourceLocalAccidental {
                 alternatives,
                 rows,
                 joinedNaturalOwners,
+                splitSharpOwners,
                 unrepresented,
                 complete,
                 authenticatedFrame);
+    }
+
+    private static Set<Integer> splitSharpOwners(
+            List<SplitSharp> proofs,
+            Map<Object, Integer> glyphIds,
+            Map<Integer, Glyph> glyphs,
+            ExactComponentMembers.ProducerPartitionBatch partitions,
+            List<?> finalHeads,
+            List<ScoreNoteEvent> notes,
+            Map<?, OmrScoreInterpreter.WrittenAccidentalChoice> choices,
+            Map<Object, List<Object>> fragments,
+            int width) {
+        Set<Integer> owners = new HashSet<>();
+        if (proofs.isEmpty()) return owners;
+
+        var site = new IdentityHashMap<Object, Integer>();
+        for (int index = 0; index < finalHeads.size(); index++)
+            site.merge(finalHeads.get(index), index, (first, second) -> -1);
+        var byParent = new IdentityHashMap<Object, SplitSharp>();
+        var conflicts = Collections.newSetFromMap(new IdentityHashMap<Object, Boolean>());
+        for (SplitSharp proof : proofs) {
+            SplitSharp prior = byParent.putIfAbsent(proof.parent(), proof);
+            if (prior != null
+                    && (prior.upper() != proof.upper()
+                            || prior.lower() != proof.lower()
+                            || !prior.upperInk().equals(proof.upperInk())
+                            || !prior.lowerInk().equals(proof.lowerInk())))
+                conflicts.add(proof.parent());
+        }
+
+        var candidates = new ArrayList<int[]>();
+        var ownerClaims = new HashMap<Integer, Integer>();
+        for (SplitSharp proof : byParent.values()) {
+            if (conflicts.contains(proof.parent())) continue;
+            Integer id = glyphIds.get(proof.parent());
+            Glyph glyph = id == null ? null : glyphs.get(id);
+            if (glyph == null
+                    || glyph.label() != OmrMeasurePostProcessor.CLEF_OR_KEY
+                    || proof.upperInk().bottom() >= proof.lowerInk().top()) continue;
+            int upper = site.getOrDefault(proof.upper(), -1);
+            int lower = site.getOrDefault(proof.lower(), -1);
+            if (upper < 0
+                    || lower < 0
+                    || upper == lower
+                    || !retainedSharp(choices, partitions, proof.upper(), notes.get(upper))
+                    || !retainedSharp(choices, partitions, proof.lower(), notes.get(lower)))
+                continue;
+            var a = notes.get(upper);
+            var b = notes.get(lower);
+            if (a.measureIndex() != b.measureIndex()
+                    || a.staffIndex() != b.staffIndex()
+                    || a.staffCount() != b.staffCount()
+                    || a.pageY() >= b.pageY()) continue;
+            var pixels = new HashSet<>(glyph.pixels());
+            if (!proof.upperInk().represented(pixels, width)
+                    || !proof.lowerInk().represented(pixels, width)) continue;
+            boolean borrowed = false;
+            for (var head : finalHeads) {
+                if (head == proof.upper() || head == proof.lower()) continue;
+                var claim = choices.get(head);
+                if (claim == null || claim.glyph() == null) continue;
+                for (var parent : fragments.getOrDefault(claim.glyph(), List.of(claim.glyph())))
+                    if (parent == proof.parent()) borrowed = true;
+            }
+            if (borrowed) continue;
+            ownerClaims.merge(upper, 1, Integer::sum);
+            ownerClaims.merge(lower, 1, Integer::sum);
+            candidates.add(new int[] {upper, lower});
+        }
+        for (var pair : candidates)
+            if (ownerClaims.get(pair[0]) == 1 && ownerClaims.get(pair[1]) == 1) {
+                owners.add(pair[0]);
+                owners.add(pair[1]);
+            }
+        return owners;
+    }
+
+    private static boolean retainedSharp(
+            Map<?, OmrScoreInterpreter.WrittenAccidentalChoice> choices,
+            ExactComponentMembers.ProducerPartitionBatch partitions,
+            Object head,
+            ScoreNoteEvent note) {
+        var choice = choices.get(head);
+        var partition = partitions.get(head);
+        return choice != null
+                && choice.head() == head
+                && !choice.ambiguous()
+                && partition != null
+                && partition.residual().isEmpty()
+                && note.kind() == ScoreNoteEvent.Kind.PITCHED
+                && note.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_SHARP;
     }
 
     private static boolean exclusivelyOwnedNaturalUnion(
@@ -390,7 +578,8 @@ final class SourceLocalAccidental {
                     choice.status().equals(SUPPORTED)
                             && glyphOwners.getOrDefault(choice.glyph(), 0) == 1
                             && representedGlyphs.get(choice.glyph());
-            if ((!originalGlyph && !joinedNaturalOwners.contains(choice.note()))
+            boolean splitSharp = splitSharpOwners.contains(choice.note());
+            if ((!originalGlyph && !joinedNaturalOwners.contains(choice.note()) && !splitSharp)
                     || choice.note() < 0
                     || choice.note() >= original.size()) continue;
             var originalNote = original.get(choice.note());
@@ -400,9 +589,10 @@ final class SourceLocalAccidental {
             int index = retainedIndexes.getOrDefault(location, -1);
             if (index < 0 || originalLocations.get(location) != 1) continue;
             var note = retained.get(index);
+            int accidental = splitSharp ? ScoreNoteEvent.ACCIDENTAL_SHARP : choice.accidental();
             if (note.kind() == ScoreNoteEvent.Kind.PITCHED
-                    && note.writtenAccidental() == choice.accidental())
-                marks.add(new PrintedMark(index, choice.accidental()));
+                    && note.writtenAccidental() == accidental)
+                marks.add(new PrintedMark(index, accidental));
         }
         marks.sort(Comparator.comparingInt(PrintedMark::noteIndex));
         return List.copyOf(marks);

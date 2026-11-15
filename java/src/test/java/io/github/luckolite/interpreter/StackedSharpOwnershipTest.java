@@ -76,7 +76,45 @@ public class StackedSharpOwnershipTest {
         assertEquals(ScoreNoteEvent.ACCIDENTAL_FROM_KEY, kind(ink, false, 166f));
     }
 
+    @Test
+    public void separatelySlopedSharpsOwnTheTopStaffCrossing() throws Exception {
+        var withStaff = staffInk();
+        assertEquals(ScoreNoteEvent.ACCIDENTAL_SHARP, crossing(withStaff, true));
+        assertEquals(ScoreNoteEvent.ACCIDENTAL_SHARP, crossing(withStaff, false));
+    }
+
+    @Test
+    public void unchangedStaffCannotStandInForAnErasedSharpCrossbar() throws Exception {
+        var erased = staffInk();
+        erase(erased, 147, 150, 157, 168);
+        assertEquals(ScoreNoteEvent.ACCIDENTAL_FROM_KEY, crossing(erased, true));
+        assertEquals(ScoreNoteEvent.ACCIDENTAL_FROM_KEY, crossing(erased, false));
+    }
+
+    @Test
+    public void aNearbyLedgerStrokeDoesNotAuthorizeTheStaffCrossingRoute() throws Exception {
+        var withOneLine = staffInk();
+        erase(withOneLine, 80, 110, 155, 157);
+        assertEquals(ScoreNoteEvent.ACCIDENTAL_FROM_KEY, crossing(withOneLine, true));
+        assertEquals(ScoreNoteEvent.ACCIDENTAL_FROM_KEY, crossing(withOneLine, false));
+    }
+
+    private byte[] staffInk() {
+        var withStaff = ink.clone();
+        for (int y : new int[] {156, 172}) for (int x = 75; x <= 217; x++) withStaff[y * W + x] = 0;
+        return withStaff;
+    }
+
+    private int crossing(byte[] source, boolean upper) throws Exception {
+        return kind(source, upper, 156f, true);
+    }
+
     private int kind(byte[] source, boolean upper, float staffTop) throws Exception {
+        return kind(source, upper, staffTop, false);
+    }
+
+    private int kind(byte[] source, boolean upper, float staffTop, boolean crossesStaff)
+            throws Exception {
         var interpreter = OmrScoreInterpreter.class;
         var component = Class.forName(interpreter.getName() + "$Component");
         Method components =
@@ -102,7 +140,8 @@ public class StackedSharpOwnershipTest {
                         component,
                         List.class,
                         float.class,
-                        float.class);
+                        float.class,
+                        boolean.class);
         ownership.setAccessible(true);
         return (int)
                 ownership.invoke(
@@ -115,7 +154,8 @@ public class StackedSharpOwnershipTest {
                         sorted.get(upper ? 0 : 1),
                         heads,
                         GAP,
-                        staffTop);
+                        staffTop,
+                        crossesStaff);
     }
 
     private static float y(Object body, Method method) {

@@ -48,21 +48,92 @@ final class PrintedCadenceDurations {
             triple = nextTriple;
         }
         var regions = new ArrayList<>(score.measures());
+        List<ScoreNoteEvent> repairedNotes = null;
         boolean changed = false;
         var falseMeters = new java.util.HashSet<Integer>();
         for (int i = 0; i < count; i++) {
             var chord = notes.get(i);
             if (rests[i] || chord.isEmpty()) continue;
             float duration = chord.get(0).unbeamedDurationBeats();
-            if (duration != 1 && duration != 2) continue;
-            if (!chord.stream().allMatch(note -> exactCadenceNote(note, duration))) continue;
             var measure = score.measures().get(i);
             var next = i + 1 < count ? score.measures().get(i + 1) : null;
+            boolean isolatedBeamAlias =
+                    duration == 0
+                            && next != null
+                            && i > 0
+                            && interruptedTriple[i + 1]
+                            && !rests[i - 1]
+                            && enclosedQuarterAfterSixteenths(
+                                    labels,
+                                    gray,
+                                    width,
+                                    height,
+                                    score.measures().get(i - 1),
+                                    measure,
+                                    next,
+                                    notes.get(i - 1),
+                                    chord,
+                                    true)
+                            && chord.stream().noneMatch(note -> hasBeamOwner(score, note));
+            if (isolatedBeamAlias) {
+                if (repairedNotes == null) repairedNotes = new ArrayList<>(score.notes());
+                for (var note : chord)
+                    repairedNotes.set(score.notes().indexOf(note), quarterNote(note));
+                regions.set(
+                        i,
+                        new MeasureRegion(
+                                measure.left(),
+                                measure.right(),
+                                measure.top(),
+                                measure.bottom(),
+                                1));
+                changed = true;
+                continue;
+            }
+            if (duration != 1 && duration != 2) continue;
+            if (!chord.stream().allMatch(note -> exactCadenceNote(note, duration))) continue;
+            boolean independentlyClosedQuarter =
+                    duration == 1
+                            && next != null
+                            && i > 0
+                            && repeatedTripleMeter[i + 1]
+                            && !rests[i - 1]
+                            && enclosedQuarterAfterSixteenths(
+                                    labels,
+                                    gray,
+                                    width,
+                                    height,
+                                    score.measures().get(i - 1),
+                                    measure,
+                                    next,
+                                    notes.get(i - 1),
+                                    chord,
+                                    false);
+            boolean closedFlatSystemEnd =
+                    duration == 1
+                            && i > 0
+                            && (next == null ? triple : repeatedTripleMeter[i + 1])
+                            && !rests[i - 1]
+                            && notes.get(i - 1).size() == 24
+                            && notes.get(i - 1).stream()
+                                    .allMatch(
+                                            n ->
+                                                    n.kind() == ScoreNoteEvent.Kind.PITCHED
+                                                            && n.staffIndex() == 0
+                                                            && n.staffCount() == 1
+                                                            && !n.crossStaffBeam()
+                                                            && n.beamCount() >= 2
+                                                            && n.unbeamedDurationBeats() == 0)
+                            && PrintedQuarterDyadAccidentals.provesClosedTripleSystemEnd(
+                                    labels, gray, width, height, measure, next, chord);
             boolean accidentalMeterAlias = duration == 1 && next != null
                     && interruptedTriple[i] && tripleMeter[i + 1]
                     && PrintedQuarterDyadAccidentals.provesSeparatedTerminalFlats(
                             labels, gray, width, height, measure, next, chord, staffs);
-            if (!accidentalMeterAlias && !proved(
+            if (!accidentalMeterAlias
+                    && !independentlyClosedQuarter
+                    && !closedFlatSystemEnd
+                    && !proved(
                             gray,
                             width,
                             height,
@@ -97,11 +168,24 @@ final class PrintedCadenceDurations {
         if (!changed) return score;
         var meterChanges = falseMeters.isEmpty() ? score.meterChanges() : score.meterChanges().stream()
                 .filter(change -> !falseMeters.contains(change.measureIndex())).toList();
-        return new ScorePageInterpretation(regions, score.notes(), score.firstMeasureNumber(),
-                score.keyChanges(), score.tempoChanges(), meterChanges, score.rests(),
-                score.techniqueChanges(), score.dynamicChanges(), score.playbackDirections(),
-                score.expressiveEvents(), score.slurSource(), score.openingPickup(), score.tremoloSource(),
-                score.multiRestGroups(), score.beamSource(), score.clockContextSource());
+        return new ScorePageInterpretation(
+                regions,
+                repairedNotes == null ? score.notes() : repairedNotes,
+                score.firstMeasureNumber(),
+                score.keyChanges(),
+                score.tempoChanges(),
+                meterChanges,
+                score.rests(),
+                score.techniqueChanges(),
+                score.dynamicChanges(),
+                score.playbackDirections(),
+                score.expressiveEvents(),
+                score.slurSource(),
+                score.openingPickup(),
+                score.tremoloSource(),
+                score.multiRestGroups(),
+                score.beamSource(),
+                score.clockContextSource());
     }
 
     static ScorePageInterpretation terminalHarmonicQuarter(
@@ -187,14 +271,220 @@ final class PrintedCadenceDurations {
         return shortened;
     }
 
+    private static boolean hasBeamOwner(ScorePageInterpretation score, ScoreNoteEvent note) {
+        var beam = score.beamSource();
+        int slot = score.notes().indexOf(note);
+        if (slot < 0 || slot >= beam.noteOrigins().size()) return false;
+        var source = beam.noteOrigins().get(slot);
+        return source.isPresent()
+                && beam.groups().stream()
+                        .flatMap(g -> g.columns().stream())
+                        .anyMatch(column -> column.members().contains(source.get()));
+    }
+
+    private static ScoreNoteEvent quarterNote(ScoreNoteEvent note) {
+        return new ScoreNoteEvent(
+                note.measureIndex(),
+                note.positionInMeasure(),
+                note.staffStep(),
+                note.staffIndex(),
+                note.staffCount(),
+                note.pageY(),
+                note.tiedFromPrevious(),
+                note.augmentationDots(),
+                0,
+                note.writtenAccidental(),
+                1,
+                note.tupletDivisor(),
+                note.followingRestBeats(),
+                note.articulations(),
+                note.clefBottomDiatonic(),
+                note.crossStaffBeam(),
+                note.leadingRestBeats(),
+                note.compactOpening(),
+                note.octaveShift(),
+                note.boundaryTies(),
+                note.tupletNormalNotes(),
+                note.stemDirection(),
+                note.kind(),
+                note.visualSize(),
+                note.harmonicSemitones(),
+                note.openStringTouch());
+    }
+
+    static boolean enclosedQuarterAfterSixteenths(
+            byte[] labels,
+            byte[] gray,
+            int width,
+            int height,
+            MeasureRegion before,
+            MeasureRegion measure,
+            MeasureRegion next,
+            List<ScoreNoteEvent> prior,
+            List<ScoreNoteEvent> chord,
+            boolean beamAlias) {
+        if (gray == null
+                || gray.length != (long) width * height
+                || measure.cadenceQuarterBeats() != 0
+                || chord.size() != 2
+                || prior.size() < 23
+                || prior.size() > 24
+                || prior.stream().anyMatch(n -> !exactCadenceRhythm(n, 0, 2))) return false;
+        var a = chord.get(0);
+        var b = chord.get(1);
+        int direction = a.stemDirection();
+        if (!exactCadenceRhythm(a, beamAlias ? 0 : 1, beamAlias ? 1 : 0)
+                || !exactCadenceRhythm(b, beamAlias ? 0 : 1, beamAlias ? 1 : 0)
+                || !ordinaryWideQuarter(a)
+                || !ordinaryWideQuarter(b)
+                || direction == 0
+                || direction != b.stemDirection()
+                || beamAlias && direction != -1
+                || a.staffStep() == b.staffStep()) return false;
+        float left = measure.left() * width, right = measure.right() * width;
+        float gap = (measure.bottom() - measure.top()) * height / 8.2f;
+        float span = right - left;
+        if (gap < 8
+                || gap > 28
+                || span < gap * 6
+                || span > gap * 9
+                || Math.abs(before.top() - measure.top()) * height > gap * .35f
+                || (before.right() - before.left()) * width < gap * 32
+                || (measure.left() - before.right()) * width < gap * .55f
+                || (measure.left() - before.right()) * width > gap * 1.55f
+                || next.top() <= measure.bottom()) return false;
+        float ax = left + a.positionInMeasure() * span;
+        float bx = left + b.positionInMeasure() * span;
+        float first = Math.min(ax, bx), last = Math.max(ax, bx);
+        if (last - first > gap * .25f
+                || first - left < gap * 1.5f
+                || first - left > gap * 3.5f
+                || right - last < gap * 3.5f) return false;
+        float hint = measure.bottom() * height - gap * 2.1f;
+        var rails =
+                PrintedDirectionStaff.printedRules(
+                        gray, width, height, right - gap * 2.5f, hint, gap);
+        if (rails == null) return false;
+        var staff =
+                new PlayingTechniqueDetector.Staff(
+                        rails[0] - 4 * rails[1], rails[0], rails[1], 0, 1);
+        gap = staff.gap();
+        int top = Math.round(staff.top()), bottom = Math.round(staff.bottom());
+        if (top < 0 || bottom >= height) return false;
+        float opening = (left + before.right() * width) * .5f;
+        int start = boundaryColumn(gray, width, staff, opening, true, false);
+        int end = boundaryColumn(gray, width, staff, right, !beamAlias, beamAlias);
+        if (start < 0
+                || end < 0
+                || ClosedHeadBarlineGuard.attached(gray, width, height, start, top, bottom, gap)
+                || DottedDyadMeasureSeparator.continuesBeyondStaff(
+                        gray, width, height, start, top, bottom, gap)
+                || !emptyOutsideChord(
+                        gray, width, staff, left, end + gap * .4f, first, last, false))
+            return false;
+        if (beamAlias)
+            return sharedDownshaftWithoutFlag(
+                    labels,
+                    gray,
+                    width,
+                    height,
+                    staff,
+                    ax,
+                    a.pageY() * height,
+                    bx,
+                    b.pageY() * height);
+        return terminalSingleRule(gray, width, height, end, staff);
+    }
+
+    static boolean terminalSingleRule(
+            byte[] gray, int width, int height, int x, PlayingTechniqueDetector.Staff staff) {
+        float gap = staff.gap();
+        int top = Math.round(staff.top()), bottom = Math.round(staff.bottom());
+        if (ClosedHeadBarlineGuard.attached(gray, width, height, x, top, bottom, gap)
+                || DottedDyadMeasureSeparator.continuesBeyondStaff(
+                        gray, width, height, x, top, bottom, gap)) return false;
+        int from = x + Math.round(gap * .55f), to = x + Math.round(gap * 1.2f);
+        if (to >= width) return false;
+        for (int line = 0; line < 5; line++) {
+            int y = Math.round(staff.top() + line * gap);
+            for (int col = from; col <= to; col++)
+                if ((gray[y * width + col] & 255) < 185) return false;
+        }
+        return true;
+    }
+
+    private static boolean sharedDownshaftWithoutFlag(
+            byte[] labels,
+            byte[] gray,
+            int width,
+            int height,
+            PlayingTechniqueDetector.Staff staff,
+            float ax,
+            float ay,
+            float bx,
+            float by) {
+        if (labels == null || labels.length != gray.length) return false;
+        float gap = staff.gap();
+        float first = Math.min(ax, bx);
+        float upper = Math.min(ay, by), lower = Math.max(ay, by);
+        int begin = Math.round(upper + gap * .28f);
+        int stop = Math.round(lower + gap * 3.6f);
+        if (lower - upper < gap * .8f
+                || lower - upper > gap * 1.25f
+                || upper - gap * .24f < 0
+                || begin < 0
+                || stop >= height) return false;
+        for (int shaft = Math.round(first - gap * .75f);
+                shaft <= Math.round(first - gap * .35f);
+                shaft++) {
+            if (shaft < 0
+                    || shaft + gap >= width
+                    || !joinsRightHead(labels, gray, width, shaft, ay, gap)
+                    || !joinsRightHead(labels, gray, width, shaft, by, gap)) continue;
+            int y = begin, stemLabels = 0;
+            while (y <= stop && (gray[y * width + shaft] & 255) < 155) {
+                if (labels[y * width + shaft] == OmrMeasurePostProcessor.STEM_OR_REST) stemLabels++;
+                y++;
+            }
+            int tip = y - 1;
+            if (y > stop || tip - lower < gap * 2.5f || stemLabels < (y - begin) * .68f) continue;
+            if (ArtificialHarmonics.unflaggedQuarterTip(
+                    gray, width, height, shaft, upper, lower, tip, -1, staff)) return true;
+        }
+        return false;
+    }
+
+    private static boolean joinsRightHead(
+            byte[] labels, byte[] gray, int width, int shaft, float y, float gap) {
+        int radius = Math.round(gap * .23f);
+        int reach = Math.round(gap * .56f);
+        for (int row = Math.round(y) - radius; row <= Math.round(y) + radius; row++) {
+            for (int dx = 0; dx <= reach; dx++) {
+                int at = row * width + shaft + dx;
+                if ((gray[at] & 255) >= 155) break;
+                if (dx >= reach / 2 && labels[at] == OmrMeasurePostProcessor.NOTEHEAD) return true;
+            }
+        }
+        return false;
+    }
+
     private static boolean exactCadenceNote(ScoreNoteEvent note, float duration) {
+        return exactCadenceRhythm(note, duration, 0);
+    }
+
+    private static boolean exactCadenceRhythm(ScoreNoteEvent note, float duration, int beams) {
         return note.kind() == ScoreNoteEvent.Kind.PITCHED
-                && note.staffIndex() == 0 && note.staffCount() == 1
+                && note.staffIndex() == 0
+                && note.staffCount() == 1
                 && note.unbeamedDurationBeats() == duration
-                && note.beamCount() == 0 && note.augmentationDots() == 0
-                && note.tupletDivisor() == 1 && !note.crossStaffBeam()
-                && !note.tiedFromPrevious() && note.boundaryTies() == 0
-                && note.leadingRestBeats() == 0 && note.followingRestBeats() == 0
+                && note.beamCount() == beams
+                && note.augmentationDots() == 0
+                && note.tupletDivisor() == 1
+                && !note.crossStaffBeam()
+                && !note.tiedFromPrevious()
+                && note.boundaryTies() == 0
+                && note.leadingRestBeats() == 0
+                && note.followingRestBeats() == 0
                 && (note.articulations() & NoteOrnament.GRACE) == 0;
     }
 

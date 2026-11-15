@@ -669,6 +669,7 @@ final class OmrScoreInterpreter {
                         clefKeyMembers);
         symbolMembers.seal(new ExactComponentMembers.Budget(2L * labels.length + 4096, 4096));
         clefKeyMembers.seal(new ExactComponentMembers.Budget(2L * labels.length + 4096, 4096));
+        var splitSharpProofs = new ArrayList<SourceLocalAccidental.SplitSharp>();
         var originalAccidentalGlyphs = new ArrayList<Object>();
         originalAccidentalGlyphs.addAll(symbolComponents);
         originalAccidentalGlyphs.addAll(clefOrKeyComponents);
@@ -2386,6 +2387,26 @@ final class OmrScoreInterpreter {
                         typedStackedAccidental = true;
                     }
                 }
+                if (!typedStackedAccidental
+                        && (writtenAccidental == ScoreNoteEvent.ACCIDENTAL_FROM_KEY
+                                || writtenAccidental == ScoreNoteEvent.ACCIDENTAL_FLAT
+                                || writtenAccidental == ScoreNoteEvent.ACCIDENTAL_NATURAL)
+                        && stackedAccidentalForWideDyad(
+                                        gray,
+                                        annotationGray,
+                                        width,
+                                        height,
+                                        clefOrKeyComponents,
+                                        head,
+                                        heads,
+                                        accidentalGap,
+                                        staff.top,
+                                        true,
+                                        splitSharpProofs)
+                                == ScoreNoteEvent.ACCIDENTAL_SHARP) {
+                    writtenAccidental = ScoreNoteEvent.ACCIDENTAL_SHARP;
+                    typedStackedAccidental = true;
+                }
                 if (writtenAccidental == ScoreNoteEvent.ACCIDENTAL_FROM_KEY
                         && rawFlatFromBowl(
                                 gray,
@@ -3561,7 +3582,8 @@ final class OmrScoreInterpreter {
                                                         width,
                                                         height,
                                                         rawNaturalGaps,
-                                                        writtenAccidentalChoices))));
+                                                        writtenAccidentalChoices),
+                                                splitSharpProofs)));
         var page =
                 new ScorePageInterpretation(
                         measures,
@@ -21619,6 +21641,47 @@ final class OmrScoreInterpreter {
             List<Component> heads,
             float gap,
             float staffTop) {
+        return stackedAccidentalForWideDyad(
+                gray, source, width, height, glyphs, head, heads, gap, staffTop, false);
+    }
+
+    private static int stackedAccidentalForWideDyad(
+            byte[] gray,
+            byte[] source,
+            int width,
+            int height,
+            List<Component> glyphs,
+            Component head,
+            List<Component> heads,
+            float gap,
+            float staffTop,
+            boolean crossesStaff) {
+        return stackedAccidentalForWideDyad(
+                gray,
+                source,
+                width,
+                height,
+                glyphs,
+                head,
+                heads,
+                gap,
+                staffTop,
+                crossesStaff,
+                null);
+    }
+
+    private static int stackedAccidentalForWideDyad(
+            byte[] gray,
+            byte[] source,
+            int width,
+            int height,
+            List<Component> glyphs,
+            Component head,
+            List<Component> heads,
+            float gap,
+            float staffTop,
+            boolean crossesStaff,
+            List<SourceLocalAccidental.SplitSharp> splitProofs) {
         if (gray == null
                 || source == null
                 || width <= 0
@@ -21628,7 +21691,8 @@ final class OmrScoreInterpreter {
                 || !Float.isFinite(gap + staffTop)
                 || gap < 12
                 || gap > 24
-                || head.centerY > staffTop - gap * .20f) return ScoreNoteEvent.ACCIDENTAL_FROM_KEY;
+                || !stackedAccidentalHeadBand(head.centerY, staffTop, gap, crossesStaff))
+            return ScoreNoteEvent.ACCIDENTAL_FROM_KEY;
         for (var glyph : glyphs) {
             int span = glyph.maxX - glyph.minX + 1;
             int depth = glyph.maxY - glyph.minY + 1;
@@ -21639,8 +21703,10 @@ final class OmrScoreInterpreter {
                     || depth > gap * 6.1f
                     || clear < gap * .08f
                     || clear > gap * .30f
-                    || Math.abs(glyph.centerY - head.centerY) > gap * 1.6f) continue;
-            if (!filledBeamEndpointCore(gray, width, height, head, gap + .5f))
+                    || Math.abs(glyph.centerY - head.centerY)
+                            > gap * (crossesStaff ? 1.70f : 1.60f)) continue;
+            float filledHeadGap = gap + (crossesStaff ? 1f : .5f);
+            if (!filledBeamEndpointCore(gray, width, height, head, filledHeadGap))
                 return ScoreNoteEvent.ACCIDENTAL_FROM_KEY;
             int[] shaft = attachedRawStem(gray, width, height, head, gap, 2, 170);
             if (shaft == null || shaft[2] != 1) return ScoreNoteEvent.ACCIDENTAL_FROM_KEY;
@@ -21648,13 +21714,14 @@ final class OmrScoreInterpreter {
             for (var other : heads) {
                 float separation = Math.abs(other.centerY - head.centerY);
                 float otherClear = other.minX - glyph.maxX;
-                if (other.centerY > staffTop - gap * .20f
+                if (!stackedAccidentalHeadBand(other.centerY, staffTop, gap, crossesStaff)
+                        || crossesStaff && (head.centerY < staffTop) == (other.centerY < staffTop)
                         || Math.abs(other.centerX - head.centerX) > gap * .17f
                         || separation < gap * 2.38f
                         || separation > gap * 2.88f
                         || otherClear < gap * .08f
                         || otherClear > gap * .30f
-                        || !filledBeamEndpointCore(gray, width, height, other, gap + .5f)
+                        || !filledBeamEndpointCore(gray, width, height, other, filledHeadGap)
                         || !sameDownwardLedgerShaft(
                                 shaft, attachedRawStem(gray, width, height, other, gap, 2, 170)))
                     continue;
@@ -21669,15 +21736,84 @@ final class OmrScoreInterpreter {
                     || top - glyph.minY > gap * 1.65f
                     || glyph.maxY - bottom < gap * 1.0f
                     || glyph.maxY - bottom > gap * 1.72f) continue;
-            int upper = stackedAccidentalCrossbars(gray, source, width, height, glyph, top, gap);
-            int lower = stackedAccidentalCrossbars(gray, source, width, height, glyph, bottom, gap);
+            if (crossesStaff
+                    && (!FlagRootStaffRule.matches(
+                                    source,
+                                    width,
+                                    height,
+                                    Math.round(bottom),
+                                    Math.round(glyph.centerX),
+                                    gap,
+                                    165)
+                            || !FlagRootStaffRule.matches(
+                                    source,
+                                    width,
+                                    height,
+                                    Math.round(bottom - gap),
+                                    Math.round(glyph.centerX),
+                                    gap,
+                                    165))) continue;
+            var strips = splitProofs == null ? null : new SourceLocalAccidental.SharpStrips[2];
+            int upper =
+                    stackedAccidentalCrossbars(
+                            gray, source, width, height, glyph, top, gap, crossesStaff, strips, 0);
+            int lower =
+                    stackedAccidentalCrossbars(
+                            gray,
+                            source,
+                            width,
+                            height,
+                            glyph,
+                            bottom,
+                            gap,
+                            crossesStaff,
+                            strips,
+                            1);
+            if (crossesStaff
+                    && (upper != ScoreNoteEvent.ACCIDENTAL_SHARP
+                            || lower != ScoreNoteEvent.ACCIDENTAL_SHARP)) continue;
             if (upper != ScoreNoteEvent.ACCIDENTAL_FROM_KEY
                     && lower != ScoreNoteEvent.ACCIDENTAL_FROM_KEY
                     && (upper == ScoreNoteEvent.ACCIDENTAL_SHARP
-                            || lower == ScoreNoteEvent.ACCIDENTAL_SHARP))
-                return head.centerY < peer.centerY ? upper : lower;
+                            || lower == ScoreNoteEvent.ACCIDENTAL_SHARP)) {
+                boolean first = head.centerY < peer.centerY;
+                if (strips != null
+                        && strips[0] != null
+                        && strips[1] != null
+                        && soleStackedSharpGlyph(glyphs, glyph, gap))
+                    splitProofs.add(
+                            new SourceLocalAccidental.SplitSharp(
+                                    glyph,
+                                    first ? head : peer,
+                                    first ? peer : head,
+                                    strips[0],
+                                    strips[1]));
+                return first ? upper : lower;
+            }
         }
         return ScoreNoteEvent.ACCIDENTAL_FROM_KEY;
+    }
+
+    private static boolean soleStackedSharpGlyph(
+            List<Component> glyphs, Component selected, float gap) {
+        for (var other : glyphs) {
+            if (other == selected) continue;
+            int w = other.maxX - other.minX + 1, h = other.maxY - other.minY + 1;
+            if (w >= gap * .88f
+                    && w <= gap * 1.22f
+                    && h >= gap * 4.8f
+                    && h <= gap * 6.1f
+                    && Math.abs(other.maxX - selected.maxX) <= gap * .23f
+                    && Math.abs(other.centerY - selected.centerY) <= gap * .70f) return false;
+        }
+        return true;
+    }
+
+    private static boolean stackedAccidentalHeadBand(
+            float y, float staffTop, float gap, boolean crossesStaff) {
+        if (!crossesStaff) return y <= staffTop - gap * .20f;
+        float relative = (y - staffTop) / gap;
+        return relative >= -1.80f && relative <= -1.25f || relative >= .70f && relative <= 1.30f;
     }
 
     private static int stackedAccidentalCrossbars(
@@ -21687,7 +21823,10 @@ final class OmrScoreInterpreter {
             int height,
             Component glyph,
             float headY,
-            float gap) {
+            float gap,
+            boolean crossesStaff,
+            SourceLocalAccidental.SharpStrips[] strips,
+            int ownerIndex) {
         int center = Math.round(headY);
         int reach = Math.round(gap * .88f);
         int margin = Math.max(2, Math.round(gap * .18f));
@@ -21699,6 +21838,14 @@ final class OmrScoreInterpreter {
                 || center - reach - slant - tail < 0
                 || center + reach + slant + tail >= height)
             return ScoreNoteEvent.ACCIDENTAL_FROM_KEY;
+        boolean[] staffRows = crossesStaff ? new boolean[reach * 2 + 1] : null;
+        if (staffRows != null) {
+            int x = Math.round(glyph.centerX);
+            for (int index = 0; index < staffRows.length; index++)
+                staffRows[index] =
+                        FlagRootStaffRule.matches(
+                                source, width, height, center - reach + index, x, gap, 165);
+        }
         int detected = ScoreNoteEvent.ACCIDENTAL_FROM_KEY;
         for (int y = center - margin; y <= center + margin; y++) {
             int[] stems = new int[4];
@@ -21730,7 +21877,9 @@ final class OmrScoreInterpreter {
                                 stems[3],
                                 center - reach,
                                 center - margin,
-                                rise);
+                                rise,
+                                staffRows,
+                                center - reach);
                 int[] second =
                         stackedAccidentalRisingBand(
                                 gray,
@@ -21740,7 +21889,9 @@ final class OmrScoreInterpreter {
                                 stems[3],
                                 center + margin,
                                 center + reach,
-                                rise);
+                                rise,
+                                staffRows,
+                                center - reach);
                 if (first == null || second == null) continue;
                 int leftShift = Math.round(-rise * .1f * (xLeft - midpoint));
                 int rightShift = Math.round(-rise * .1f * (xRight - midpoint));
@@ -21766,6 +21917,13 @@ final class OmrScoreInterpreter {
                 else continue;
                 if (detected != ScoreNoteEvent.ACCIDENTAL_FROM_KEY && detected != next)
                     return ScoreNoteEvent.ACCIDENTAL_FROM_KEY;
+                if (strips != null
+                        && strips[ownerIndex] == null
+                        && next == ScoreNoteEvent.ACCIDENTAL_SHARP)
+                    strips[ownerIndex] =
+                            new SourceLocalAccidental.SharpStrips(
+                                    stems[0], stems[3], rise, first[0], first[1], second[0],
+                                    second[1]);
                 detected = next;
             }
         }
@@ -21780,12 +21938,14 @@ final class OmrScoreInterpreter {
             int right,
             int first,
             int last,
-            int rise) {
+            int rise,
+            boolean[] staffRows,
+            int staffOrigin) {
         int start = -1;
         int[] band = null;
         float midpoint = (left + right) * .5f;
         for (int y = first; y <= last + 1; y++) {
-            boolean bridge = y <= last;
+            boolean bridge = y <= last && (staffRows == null || !staffRows[y - staffOrigin]);
             if (bridge)
                 for (int x = left; x <= right; x++) {
                     int row = Math.round(y - rise * .1f * (x - midpoint));
@@ -21821,6 +21981,8 @@ final class OmrScoreInterpreter {
         int index = y * width + x;
         return (gray[index] & 255) <= 165 && (source[index] & 255) <= 165;
     }
+
+
 
     private static boolean pairedCompactChordSharps(
             byte[] gray,
