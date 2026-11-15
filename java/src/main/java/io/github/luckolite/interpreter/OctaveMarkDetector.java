@@ -636,6 +636,7 @@ final class OctaveMarkDetector {
         int[] starts = new int[128];
         int[] ends = new int[128];
         int size;
+        private static final long INK_BIAS = 0x0101010101010101L * (165 - 128);
 
         void first(byte[] gray, java.util.BitSet visited, int offset, int width, int origin) {
             int rowEnd = origin - origin % width + width;
@@ -647,15 +648,33 @@ final class OctaveMarkDetector {
             for (int at = from; at <= to; at++) {
                 if ((gray[offset + at] & 255) >= 165 || visited.get(at)) continue;
                 int first = at;
+                if (first - rowStart >= Long.BYTES && (gray[offset + first - 1] & 255) < 165
+                        && darkInkWord(gray, offset + first - Long.BYTES)) {
+                    int floor = Math.max(rowStart, visited.previousSetBit(first - 1) + 1);
+                    while (first - floor >= Long.BYTES && darkInkWord(gray, offset + first - Long.BYTES))
+                        first -= Long.BYTES;
+                }
                 while (first > rowStart && (gray[offset + first - 1] & 255) < 165
                         && !visited.get(first - 1)) first--;
                 at = enqueue(gray, visited, offset, first, at, rowEnd);
             }
         }
 
+        private static boolean darkInkWord(byte[] gray, int offset) {
+            long tone = (long) PAPER_WORDS.get(gray, offset);
+            return (((tone | PAPER_HIGH_BITS) - INK_BIAS) & tone & PAPER_HIGH_BITS) == 0;
+        }
+
         private int enqueue(byte[] gray, java.util.BitSet visited, int offset,
                 int first, int seed, int rowEnd) {
             int last = seed;
+            if (rowEnd - last > Long.BYTES && (gray[offset + last + 1] & 255) < 165
+                    && darkInkWord(gray, offset + last + 1)) {
+                int seen = visited.nextSetBit(last + 1);
+                int ceiling = seen < 0 ? rowEnd : Math.min(rowEnd, seen);
+                while (ceiling - last > Long.BYTES && darkInkWord(gray, offset + last + 1))
+                    last += Long.BYTES;
+            }
             while (last + 1 < rowEnd && (gray[offset + last + 1] & 255) < 165
                     && !visited.get(last + 1)) last++;
             visited.set(first, last + 1);

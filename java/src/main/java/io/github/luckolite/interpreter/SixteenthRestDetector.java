@@ -3110,6 +3110,26 @@ final class SixteenthRestDetector {
                 null);
     }
 
+    private static int counterRowInk(
+            byte[] gray, int start, int end, FaintQuarterRestInk.Budget quarterBudget) {
+        int count = 0;
+        if (quarterBudget != null
+                && !(start >= 0 && end >= start && end <= gray.length
+                        && quarterBudget.tryPrepayLocal(1L + end - start))) {
+            // Keep the original charge sequence for linked or insufficient budgets.
+            FaintQuarterRestInk.charge(quarterBudget, 1, 0);
+            for (int at = start; at < end; at++) {
+                FaintQuarterRestInk.charge(quarterBudget, 1, 0);
+                if ((gray[at] & 255) < 170) count++;
+            }
+            return count;
+        }
+        for (int at = start; at < end; at++) {
+            if ((gray[at] & 255) < 170) count++;
+        }
+        return count;
+    }
+
     private static void inspectOwnedModeCounter(
             byte[] gray,
             byte[] ownershipGray,
@@ -3171,22 +3191,15 @@ final class SixteenthRestDetector {
                         : null);
         {
             if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
-            for (int y = top; y <= bottom; y++) {
+            int rowWidth = right - left + 1;
+            for (int y = top, at = top * width + left; y <= bottom; y++, at += width) {
                 if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
-                if (!line[y - top]) {
-                    {
-                        if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
-                        for (int x = left; x <= right; x++) {
-                            if (quarterBudget != null)
-                                FaintQuarterRestInk.charge(quarterBudget, 1, 0);
-                            if ((gray[y * width + x] & 255) < 170) ink[y - top]++;
-                        }
-                    }
-
-                    if (ink[y - top] > 0) {
-                        minY = Math.min(minY, y);
-                        maxY = y;
-                    }
+                if (line[y - top]) continue;
+                int count = counterRowInk(gray, at, at + rowWidth, quarterBudget);
+                ink[y - top] = count;
+                if (count > 0) {
+                    minY = Math.min(minY, y);
+                    maxY = y;
                 }
             }
         }
@@ -4448,29 +4461,26 @@ final class SixteenthRestDetector {
                 || staffBottom - staffTop < 16) return false;
         int top = Math.round(staffTop), bottom = Math.round(staffBottom);
         if (top < 0 || bottom >= height) return false;
-        {
+        float minDark = (bottom - top + 1) * .94f;
+        int maxBlank = Math.max(1, Math.round((staffBottom - staffTop) * .03f));
+        if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
+        for (int x = left; x <= right; x++) {
             if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
-            for (int x = left; x <= right; x++) {
+            int dark = 0, blank = 0;
+            boolean gapTooLong = false;
+            if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
+            for (int y = top, at = top * width + x; y <= bottom; y++, at += width) {
                 if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
-
-                int dark = 0, blank = 0, longest = 0;
-                {
-                    if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
-                    for (int y = top; y <= bottom; y++) {
-                        if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
-                        if ((gray[y * width + x] & 255) < 170) {
-                            dark++;
-                            blank = 0;
-                        } else longest = Math.max(longest, ++blank);
-                    }
+                if ((gray[at] & 255) < 170) {
+                    dark++;
+                    blank = 0;
+                } else if (++blank > maxBlank) {
+                    gapTooLong = true;
+                    if (quarterBudget == null) break;
                 }
-
-                if (dark >= (bottom - top + 1) * .94f
-                        && longest <= Math.max(1, Math.round((staffBottom - staffTop) * .03f)))
-                    return true;
             }
+            if (!gapTooLong && dark >= minDark) return true;
         }
-
         return false;
     }
 

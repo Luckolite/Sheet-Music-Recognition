@@ -33,6 +33,8 @@ final class PrintedEndingBrackets {
             Pattern.compile("\\d{1,3}\\.?\\s*(?:,\\s*\\d{1,3}\\.?\\s*)*");
     private static final Pattern INTEGER = Pattern.compile("\\d+");
 
+    private record Selector(PlayingTechniqueDetector.Word word, List<Integer> passes) {}
+
     private PrintedEndingBrackets() {}
 
     static List<Mark> detect(
@@ -50,6 +52,12 @@ final class PrintedEndingBrackets {
                 || measures == null
                 || words == null
                 || words.isEmpty()) return List.of();
+        var selectors = new ArrayList<Selector>();
+        for (var word : words) {
+            var parsed = passes(word.text());
+            if (!parsed.isEmpty()) selectors.add(new Selector(word, parsed));
+        }
+        if (selectors.isEmpty()) return List.of();
         var result = new ArrayList<Mark>();
         boolean[] seen = new boolean[0];
         int[] runs = new int[256];
@@ -156,9 +164,8 @@ final class PrintedEndingBrackets {
                     PlayingTechniqueDetector.Word matched = null;
                     List<Integer> passes = null;
                     boolean ambiguous = false;
-                    for (var word : words) {
-                        var parsed = passes(word.text());
-                        if (parsed.isEmpty()) continue;
+                    for (var selector : selectors) {
+                        var word = selector.word();
                         float l = word.left() * width,
                                 r = word.right() * width,
                                 t = word.top() * height,
@@ -218,7 +225,7 @@ final class PrintedEndingBrackets {
                             break;
                         }
                         matched = word;
-                        passes = parsed;
+                        passes = selector.passes();
                     }
                     if (matched == null || ambiguous) continue;
                     int start =
@@ -248,7 +255,10 @@ final class PrintedEndingBrackets {
     }
 
     static List<Integer> passes(String text) {
-        if (text == null || !SELECTOR.matcher(text.trim()).matches()) return List.of();
+        if (text == null) return List.of();
+        text = text.trim();
+        if (text.isEmpty() || text.charAt(0) < '0' || text.charAt(0) > '9'
+                || !SELECTOR.matcher(text).matches()) return List.of();
         var values = new ArrayList<Integer>();
         var matcher = INTEGER.matcher(text);
         while (matcher.find()) {

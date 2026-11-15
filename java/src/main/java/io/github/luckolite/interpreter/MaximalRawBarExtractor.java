@@ -571,21 +571,23 @@ final class MaximalRawBarExtractor {
         // be omitted from the logical work total.
         long work = 0;
         if (cells > workBudget / 2) return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), 0);
-        // Runs are separated by at least one light row.
+        // Runs are separated by at least one light row. The scratch reserve bounds the
+        // span to less than 65536 rows, so endpoints can store offsets from spanTop.
         int runCapacity = (spanHeight + 1) / 2;
-        int[][] runTops = new int[laneWidth][runCapacity];
-        int[][] runBottoms = new int[laneWidth][runCapacity];
+        int runSlots = laneWidth * runCapacity;
+        char[] runTops = new char[runSlots];
+        char[] runBottoms = new char[runSlots];
         int[] runCounts = new int[laneWidth];
-        int[][] staffSplitRuns = joined ? new int[laneWidth][runCapacity * 2] : null;
+        char[] staffSplitRuns = joined ? new char[2 * runSlots] : null;
         int[] staffSplitCounts = joined ? new int[laneWidth] : null;
         int[] activeColumns = new int[laneWidth];
         int activeCount = 0;
         for (int x = lane.left; x <= lane.right; x++) {
             int column = x - lane.left;
-            int[] columnTops = runTops[column], columnBottoms = runBottoms[column];
+            int runBase = column * runCapacity;
             int runCount = 0;
             boolean inRun = false;
-            int[] split = joined ? staffSplitRuns[column] : null;
+            int splitBase = 2 * runBase;
             int splitCount = 0, splitStart = -1;
             int pixel = spanTop * width + x;
             for (int y = spanTop; y <= spanBottom; y++, pixel += width) {
@@ -599,38 +601,38 @@ final class MaximalRawBarExtractor {
                         if (work >= workBudget)
                             return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), work);
                         work++;
-                        columnTops[runCount] = y;
+                        runTops[runBase + runCount] = (char) (y - spanTop);
                         inRun = true;
                     }
                 } else if (inRun) {
-                    columnBottoms[runCount++] = y - 1;
+                    runBottoms[runBase + runCount++] = (char) (y - 1 - spanTop);
                     inRun = false;
                 }
                 // Keep complete nonstaff intervals alongside the untouched raw runs.
-                if (split != null) {
+                if (joined) {
                     if (rawInk && !staffInk) {
                         if (splitStart < 0) splitStart = y;
                     } else if (splitStart >= 0) {
-                        split[splitCount++] = splitStart;
-                        split[splitCount++] = y - 1;
+                        staffSplitRuns[splitBase + splitCount++] = (char) (splitStart - spanTop);
+                        staffSplitRuns[splitBase + splitCount++] = (char) (y - 1 - spanTop);
                         splitStart = -1;
                     }
                 }
             }
-            if (inRun) columnBottoms[runCount++] = spanBottom;
+            if (inRun) runBottoms[runBase + runCount++] = (char) (spanHeight - 1);
             runCounts[column] = runCount;
             if (runCount != 0) activeColumns[activeCount++] = column;
             // Retain the established logical work charge for the former reverse scan.
             if (spanHeight > workBudget - work)
                 return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), workBudget);
             work += spanHeight;
-            if (split != null) {
+            if (joined) {
                 if (spanHeight > workBudget - work)
                     return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), workBudget);
                 work += spanHeight;
                 if (splitStart >= 0) {
-                    split[splitCount++] = splitStart;
-                    split[splitCount++] = spanBottom;
+                    staffSplitRuns[splitBase + splitCount++] = (char) (splitStart - spanTop);
+                    staffSplitRuns[splitBase + splitCount++] = (char) (spanHeight - 1);
                 }
                 staffSplitCounts[column] = splitCount;
             }
@@ -696,18 +698,19 @@ final class MaximalRawBarExtractor {
                         continue;
                     }
                     // A centered raw cross-section is one contiguous body, not a sum of nearby ink.
-                    int[] columnTops = runTops[at], columnBottoms = runBottoms[at];
+                    int runBase = at * runCapacity;
                     // Rounded rows are nondecreasing as the intercept advances.
                     int lo = firstRun[at], firstRow = y - radius, lastRow = y + radius;
-                    while (lo < runCount && columnTops[lo] < firstRow) lo++;
+                    int firstOffset = firstRow - spanTop, lastOffset = lastRow - spanTop;
+                    while (lo < runCount && runTops[runBase + lo] < firstOffset) lo++;
                     // Later intercepts cannot bring a finished column back into range.
                     if (lo == runCount) continue;
                     remainingColumns[nextCount++] = at;
                     firstRun[at] = lo;
                     int best = 0, bestTop = -1, bestBottom = -1, bestDistance = Integer.MAX_VALUE;
                     boolean tie = false;
-                    for (int k = lo; k < runCount && columnTops[k] <= lastRow; k++) {
-                        int t = columnTops[k], b = columnBottoms[k];
+                    for (int k = lo; k < runCount && runTops[runBase + k] <= lastOffset; k++) {
+                        int t = spanTop + runTops[runBase + k], b = spanTop + runBottoms[runBase + k];
                         int charge = b <= lastRow ? 2 : 1;
                         if (charge > workBudget - work)
                             return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), workBudget);
@@ -723,17 +726,18 @@ final class MaximalRawBarExtractor {
                                     selectedBottom = -1,
                                     selectedDistance = Integer.MAX_VALUE;
                             boolean splitTie = false;
-                            int[] segments = staffSplitRuns[at];
+                            int splitBase = 2 * runBase;
                             int splitEnd = staffSplitCounts[at];
                             int splitWork = splitEnd / 2;
                             if (splitWork > workBudget - work)
                                 return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), workBudget);
                             work += splitWork;
                             int segment = firstSplit[at];
-                            while (segment < splitEnd && segments[segment] < firstRow) segment += 2;
+                            while (segment < splitEnd && staffSplitRuns[splitBase + segment] < firstOffset) segment += 2;
                             firstSplit[at] = segment;
                             for (; segment < splitEnd; segment += 2) {
-                                int st = segments[segment], sb = segments[segment + 1];
+                                int st = spanTop + staffSplitRuns[splitBase + segment];
+                                int sb = spanTop + staffSplitRuns[splitBase + segment + 1];
                                 // Split intervals are ordered and disjoint.
                                 if (sb > lastRow) break;
                                 int sn = sb - st + 1;
