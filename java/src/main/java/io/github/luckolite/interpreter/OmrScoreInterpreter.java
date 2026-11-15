@@ -2121,16 +2121,9 @@ final class OmrScoreInterpreter {
                     && head.maxY - head.minY + 1 <= localGap * .9f) {
                 int[] ownedFlagStem = attachedRawStem(gray, width, height, head, localGap);
                 if (ownedFlagStem != null
-                        && hasCurvedFlag(
-                                labels,
-                                gray,
-                                width,
-                                height,
-                                head,
-                                localGap,
-                                ownedFlagStem[0],
-                                ownedFlagStem[1],
-                                ownedFlagStem[2] < 0)) {
+                        && ownsFlagBesideSustainedHead(
+                                labels, gray, width, height, head, localGap, hollowSlope,
+                                unbeamedDuration, ownedFlagStem)) {
                     unbeamedDuration = 0;
                 }
             }
@@ -2152,16 +2145,9 @@ final class OmrScoreInterpreter {
                 if (ownedFlagStem != null
                         && soleFlagDirection != null
                         && java.util.Arrays.equals(ownedFlagStem, soleFlagDirection)
-                        && hasCurvedFlag(
-                                labels,
-                                gray,
-                                width,
-                                height,
-                                head,
-                                localGap,
-                                ownedFlagStem[0],
-                                ownedFlagStem[1],
-                                ownedFlagStem[2] < 0)) {
+                        && ownsFlagBesideSustainedHead(
+                                labels, gray, width, height, head, localGap, hollowSlope,
+                                unbeamedDuration, ownedFlagStem)) {
                     unbeamedDuration = 0;
                 }
             }
@@ -33809,6 +33795,60 @@ final class OmrScoreInterpreter {
         return stem != null
                 && hasCurvedFlag(
                         labels, gray, width, height, head, cueGap, stem[0], stem[1], stem[2] < 0);
+    }
+
+    /** Detached print beside a proven hollow head cannot supply the shaft's flag. */
+    private static boolean ownsFlagBesideSustainedHead(
+            byte[] labels, byte[] gray, int width, int height, Component head, float gap,
+            float slope, float writtenValue, int[] shaft) {
+        if (!hasCurvedFlag(labels, gray, width, height, head, gap, shaft[0], shaft[1], shaft[2] < 0))
+            return false;
+        return writtenValue != ScoreNoteEvent.DURATION_HALF
+                || shaft[2] != 1
+                || !sideInkSeparatedFromDownstem(gray, width, height, shaft[0], shaft[1], gap)
+                || !ClosedWrittenHeadPocket.proved(
+                        gray, width, height, head.minX, head.minY, head.maxX, head.maxY,
+                        head.centerX, head.centerY, gap, slope);
+    }
+
+    private static boolean sideInkSeparatedFromDownstem(
+            byte[] gray, int width, int height, int shaftX, int end, float gap) {
+        if (!Float.isFinite(gap) || gap < 8 || gap > 32) return false;
+        int left = shaftX + Math.max(2, Math.round(gap * .20f));
+        int right = shaftX + Math.round(gap * .54f);
+        int outside = shaftX + Math.round(gap * 1.5f);
+        int top = end - Math.round(gap * 2.3f);
+        if (left < 0 || right >= outside || outside >= width || top < 0 || end >= height)
+            return false;
+        int threshold = BeamInkThreshold.at(gray, width, height, shaftX, top, end, gap);
+        int paper = Math.min(225, threshold + 35);
+        boolean[] clear = new boolean[right - left + 1];
+        java.util.Arrays.fill(clear, true);
+        int maskedRows = 0;
+        int sideRows = 0;
+        for (int y = top; y <= end; y++) {
+            if (rawRuleBeyondFlag(gray, width, y, shaftX, gap, Math.min(235, paper + 25))) {
+                if (end - y < gap * 1.6f || ++maskedRows > Math.round(gap * .34f)) return false;
+                continue;
+            }
+            int row = y * width;
+            for (int x = left; x <= right; x++)
+                clear[x - left] &= (gray[row + x] & 255) >= paper;
+            for (int x = right + 1; x <= outside; x++) {
+                if ((gray[row + x] & 255) <= threshold) {
+                    sideRows++;
+                    break;
+                }
+            }
+        }
+        if (sideRows < Math.round(gap * .62f)) return false;
+        int needed = Math.max(2, Math.round(gap * .13f));
+        int run = 0;
+        for (boolean column : clear) {
+            run = column ? run + 1 : 0;
+            if (run >= needed) return true;
+        }
+        return false;
     }
 
     /** A single flag is a narrow curved hook, not a horizontal beam-width run. */

@@ -374,21 +374,28 @@ final class OctaveMarkDetector {
                 || OctaveBracketEnd.direction(gray, width, height, end, top, bottom, gap) != 0)
             return null;
 
-        boolean inline = false;
-        ScoreNoteEvent first = null, second = null;
+        ScoreNoteEvent inline = null, first = null, second = null;
+        float inlineX = Float.NEGATIVE_INFINITY;
         float firstX = Float.POSITIVE_INFINITY, secondX = Float.POSITIVE_INFINITY;
+        float ordinaryLeft = left - gap * 1.35f;
+        boolean extraPrecedingHead = false;
         for (var note : notes) {
             if (note.kind() != ScoreNoteEvent.Kind.PITCHED
                     || note.staffCount() != 1
                     || note.visualSize() != ScoreNoteEvent.VisualSize.FULL
                     || (note.articulations() & NoteOrnament.GRACE) != 0) continue;
             float xx = x(note, measures, width), y = note.pageY() * height;
-            if (xx < left - gap * 1.35f || xx > right + gap * 4) continue;
-            if (onStaff(note, preceding, staffs, measures, height) && y > top - gap * 3)
-                return null;
+            if (xx < left - gap * 1.60f || xx > right + gap * 4) continue;
+            if (onStaff(note, preceding, staffs, measures, height) && y > top - gap * 3) {
+                if (xx >= ordinaryLeft) return null;
+                extraPrecedingHead = true;
+            }
             if (!onStaff(note, next, staffs, measures, height)) continue;
-            if (xx < left - gap * .65f && y >= top && y <= bottom && note.staffStep() >= 12)
-                inline = true;
+            if (xx < left - gap * .65f && xx > inlineX
+                    && y >= top && y <= bottom && note.staffStep() >= 12) {
+                inline = note;
+                inlineX = xx;
+            }
             if (xx < left || xx >= secondX) continue;
             if (xx < firstX) {
                 second = first;
@@ -400,12 +407,23 @@ final class OctaveMarkDetector {
                 secondX = xx;
             }
         }
-        if (!inline
+        if (inline == null
                 || first == null
                 || second == null
                 || firstX > right + gap * .55f
-                || secondX - firstX > gap * 2.85f
                 || first.measureIndex() != second.measureIndex()) return null;
+        float separation = secondX - firstX;
+        if (inlineX < ordinaryLeft || separation > gap * 2.85f) {
+            // The next pitch's sharp can push the first two columns farther apart.
+            // Prove that glyph in the space between the two owners.
+            if (extraPrecedingHead
+                    || inline.measureIndex() != first.measureIndex()
+                    || separation > gap * 3.55f
+                    || second.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_SHARP
+                    || !OmrScoreInterpreter.printedSharpBeforeDyad(
+                            gray, width, height, Math.round(secondX - gap * 2.25f), secondX,
+                            second.pageY() * height, gap)) return null;
+        }
         float a = first.pageY() * height - bottom, c = second.pageY() * height - bottom;
         return a >= gap * 1.4f && a <= gap * 4 && c >= gap * 1.4f && c <= gap * 4 ? next : null;
     }

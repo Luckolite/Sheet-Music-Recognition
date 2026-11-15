@@ -19,7 +19,8 @@ final class MeterDoubleRuleCrop {
         int end=Math.min(crop.right()-Math.round(1.3f*gap),
                 Math.min(crop.left()+Math.round(gap*1.28f),Math.round(ownerLeft+gap*.3f)));
         if (end<=crop.left()) return crop;
-        int maxWidth=Math.max(2,Math.round(gap*.34f));
+        int maxSingleWidth = Math.max(2, Math.round(gap * .34f));
+        int maxPairedWidth = Math.max(2, Math.round(gap * .43f));
         Stroke first=null,second=null;
         for (int x=crop.left();x<end;) {
             if (!spansStaff(gray,width,height,x,crop.firstLine(),gap)) {
@@ -29,7 +30,7 @@ final class MeterDoubleRuleCrop {
             int left=x;
             do { x++; }
             while (x<end && spansStaff(gray,width,height,x,crop.firstLine(),gap));
-            if (x>=end || x-left<2 || x-left>maxWidth) return crop;
+            if (x>=end || x-left<2 || x-left>maxPairedWidth) return crop;
             var stroke=new Stroke(left,x);
             if(first==null) first=stroke;
             else if(second==null) second=stroke;
@@ -39,12 +40,17 @@ final class MeterDoubleRuleCrop {
         int boundary;
         if (second == null) {
             float distance = ownerLeft - first.right;
-            if (distance < gap * .24f || distance > gap * .76f) return crop;
+            if (first.right - first.left > maxSingleWidth
+                    || distance < gap * .24f || distance > gap * .76f) return crop;
             boundary = first.right;
         } else {
             if (second.left - first.right < 2
                     || second.left - first.right > gap * .43f
                     || second.right - first.left > gap * .93f) return crop;
+            if ((first.right - first.left > maxSingleWidth
+                            || second.right - second.left > maxSingleWidth)
+                    && (extendsBeyondStaff(gray, width, height, crop, first)
+                            || extendsBeyondStaff(gray, width, height, crop, second))) return crop;
             boundary = second.right;
         }
         if (boundary + 2 >= crop.right()) return crop;
@@ -55,6 +61,14 @@ final class MeterDoubleRuleCrop {
             return crop;
         return new MeterChangeDetector.Crop(
                 boundary, crop.top(), crop.right(), crop.bottom(), crop.firstLine(), gap);
+    }
+
+    private static boolean extendsBeyondStaff(
+            byte[] gray, int width, int height, MeterChangeDetector.Crop crop, Stroke stroke) {
+        int middle = (stroke.left + stroke.right) / 2;
+        return DottedDyadMeasureSeparator.continuesBeyondStaff(
+                gray, width, height, middle, crop.firstLine(),
+                Math.round(crop.firstLine() + 4 * crop.gap()), crop.gap());
     }
 
     private static boolean spansStaff(byte[] gray,int width,int height,int x,int top,float gap) {

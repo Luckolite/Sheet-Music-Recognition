@@ -32,6 +32,29 @@ public final class MeterPrefixRuleCropTest {
         assertSame(METER, trim(page));
     }
 
+    @Test
+    public void bothThickStrokesMustBelongToTheSameStaffBoundedRule() {
+        var page = new byte[WIDTH * HEIGHT];
+        Arrays.fill(page, (byte) 255);
+        paint(page, 34, 22, 39, 86, 0);
+        paint(page, 42, 22, 47, 86, 0);
+        paint(page, 50, 29, 62, 46, 0);
+        paint(page, 51, 57, 63, 81, 0);
+        assertEquals(48, trim(page).left());
+
+        var unpaired = page.clone();
+        paint(unpaired, 42, 22, 47, 86, 255);
+        assertSame(METER, trim(unpaired));
+
+        var beyondStaff = page.clone();
+        paint(beyondStaff, 42, 86, 47, 102, 0);
+        assertSame(METER, trim(beyondStaff));
+
+        var noSeparator = page.clone();
+        paint(noSeparator, 48, 37, 49, 62, 0);
+        assertSame(METER, trim(noSeparator));
+    }
+
     private static MeterChangeDetector.Crop trim(byte[] page) {
         return MeterDoubleRuleCrop.trim(METER, page, WIDTH, HEIGHT, 45);
     }
