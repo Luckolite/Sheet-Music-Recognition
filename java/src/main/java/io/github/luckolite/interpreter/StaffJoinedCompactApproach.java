@@ -113,9 +113,13 @@ final class StaffJoinedCompactApproach {
             boolean verified = true;
             for (int y = first; y <= last; y++) {
                 int origin = y * w + right;
-                int a = background(raw, origin, firstSample, lastSample, -1, histogram),
-                        z = background(raw, origin, firstSample, lastSample, 1, histogram);
-                if (a < 0 || z < 0 || Math.abs(a - z) > Math.max(12, Math.max(a, z) * .08f)) {
+                int a = background(raw, origin, firstSample, lastSample, -1, histogram);
+                if (a < 0) {
+                    verified = false;
+                    break;
+                }
+                int z = background(raw, origin, firstSample, lastSample, 1, histogram);
+                if (z < 0 || Math.abs(a - z) > Math.max(12, Math.max(a, z) * .08f)) {
                     verified = false;
                     break;
                 }
@@ -246,14 +250,16 @@ final class StaffJoinedCompactApproach {
         int n = last - first + 1;
         int pixel = origin + direction * first;
         byte firstTone = raw[pixel];
+        // A prefix covering the stability quorum also fixes the median.
+        int quorum = Math.max(n / 2 + 1, (int) Math.ceil(n * .8f));
         int prefix = 1;
         pixel += direction;
-        while (prefix < n && raw[pixel] == firstTone) {
+        while (prefix < quorum && raw[pixel] == firstTone) {
             prefix++;
             pixel += direction;
         }
         int low = firstTone & 255, high = low;
-        if (prefix == n) return low;
+        if (prefix == quorum) return low;
         Arrays.fill(histogram, 0);
         histogram[low] = prefix;
         for (int i = prefix; i < n; i++, pixel += direction) {

@@ -8,23 +8,25 @@ final class FlagRootStaffRule {
             byte[] gray, int width, int height, int y, int stemX, float gap, int threshold) {
         if (gray == null || gap < 4) return false;
         int radius = Math.max(1, (int) Math.floor(gap * .08f));
-        for (int direction : new int[] {-1, 1}) {
-            int samples = 0, ink = 0;
-            for (int dx = Math.round(gap * 2); dx <= Math.round(gap * 4); dx++) {
-                int x = stemX + direction * dx;
-                if (x < 0 || x >= width) continue;
-                samples++;
-                boolean dark = false;
-                for (int row = Math.max(0, y - radius);
-                        row <= Math.min(height - 1, y + radius);
-                        row++)
-                    if ((gray[row * width + x] & 255) <= threshold) {
-                        dark = true;
-                        break;
-                    }
-                if (dark) ink++;
+        int near = Math.round(gap * 2), far = Math.round(gap * 4);
+        int firstRow = Math.max(0, y - radius), lastRow = Math.min(height - 1, y + radius);
+        int minimumSamples = Math.max(6, Math.round(gap));
+        for (int direction = -1; direction <= 1; direction += 2) {
+            long start = Math.max(0, direction < 0 ? (long) stemX - far : (long) stemX + near);
+            long end = Math.min(width - 1L, direction < 0 ? (long) stemX - near : (long) stemX + far);
+            if (end - start + 1 < minimumSamples) return false;
+            float required = (end - start + 1) * .85f;
+            int hits = 0;
+            for (int x = (int) start; x <= (int) end; x++) {
+                for (int row = firstRow, pixel = firstRow * width + x;
+                        row <= lastRow; row++, pixel += width) {
+                    if ((gray[pixel] & 255) > threshold) continue;
+                    hits++;
+                    break;
+                }
+                if (hits >= required) break;
+                if (hits + ((int) end - x) < required) return false;
             }
-            if (samples < Math.max(6, Math.round(gap)) || ink < samples * .85f) return false;
         }
         return true;
     }

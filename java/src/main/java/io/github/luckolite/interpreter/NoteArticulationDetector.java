@@ -1524,30 +1524,17 @@ final class NoteArticulationDetector {
         // Shorter horizontal support is sufficient only with two parallel rules.
         if (!shortRuleInk(gray, width, height, x, y, gap)) return false;
         int neighbors = 0;
-        for (int offset : new int[] {-2, -1, 1, 2})
-            if (shortRuleInk(gray, width, height, x, Math.round(y + offset * gap), gap))
-                neighbors++;
-        return neighbors >= 2;
+        for (int offset = -2; offset <= 2; offset++) {
+            if (offset != 0 && shortRuleInk(gray, width, height, x, Math.round(y + offset * gap), gap)
+                    && ++neighbors == 2) return true;
+        }
+        return false;
     }
 
     private static boolean shortRuleInk(
             byte[] gray, int width, int height, int x, int y, float gap) {
         int near = Math.max(3, Math.round(gap * .8f)), far = Math.round(gap * 2f);
-        for (int direction : new int[] {-1, 1}) {
-            int hits = 0, samples = 0;
-            for (int d = near; d <= far; d++) {
-                int xx = x + direction * d;
-                if (xx < 0 || xx >= width) return false;
-                samples++;
-                for (int yy = Math.max(0, y - 1); yy <= Math.min(height - 1, y + 1); yy++)
-                    if ((gray[yy * width + xx] & 255) < 155) {
-                        hits++;
-                        break;
-                    }
-            }
-            if (samples == 0 || hits < samples * .85f) return false;
-        }
-        return true;
+        return bilateralRuleInk(gray, width, height, x, y, near, far, 155, .85f);
     }
 
     static int[] detect(byte[] labels, byte[] gray, int width, int height, List<Anchor> notes) {
@@ -5416,6 +5403,11 @@ final class NoteArticulationDetector {
             int threshold,
             float coverage) {
         int near = Math.max(3, Math.round(gap * 1.5f)), far = Math.round(gap * 4f);
+        return bilateralRuleInk(gray, width, height, x, y, near, far, threshold, coverage);
+    }
+
+    private static boolean bilateralRuleInk(byte[] gray, int width, int height, int x, int y,
+            int near, int far, int threshold, float coverage) {
         int samples = far - near + 1;
         if (samples <= 0 || x - far < 0 || x + far >= width) return false;
         int firstRow = Math.max(0, y - 1) * width;
@@ -5430,6 +5422,7 @@ final class NoteArticulationDetector {
                         hits++;
                         break;
                     }
+                if (hits >= requiredHits) break;
                 if (hits + (far - d) < requiredHits) return false;
             }
         }
@@ -5991,7 +5984,19 @@ final class NoteArticulationDetector {
         java.util.Arrays.fill(seen, false);
         List<Glyph> result = new ArrayList<>();
         float maxWidth = width * .025f, maxHeight = height * .018f;
+        boolean packedTones = threshold >= 128 && threshold <= 255;
+        long bias = SeedToneWords.BYTE_ONES * (threshold - 128L);
         for (int p = 0; p < gray.length; p++) {
+            if (packedTones && (p & (Long.BYTES - 1)) == 0
+                    && p <= gray.length - Long.BYTES && (gray[p] & 255) >= threshold) {
+                long word = (long) SeedToneWords.GRAY.get(gray, p);
+                long bright = ((word | SeedToneWords.HIGH_BITS) - bias)
+                        & word & SeedToneWords.HIGH_BITS;
+                if (bright == SeedToneWords.HIGH_BITS) {
+                    p += Long.BYTES - 1;
+                    continue;
+                }
+            }
             if (seen[p] || (gray[p] & 255) >= threshold) continue;
             int start = 0, end = 1;
             queue[0] = p;
@@ -6028,6 +6033,13 @@ final class NoteArticulationDetector {
             }
         }
         return result;
+    }
+
+    private static final class SeedToneWords {
+        static final java.lang.invoke.VarHandle GRAY = java.lang.invoke.MethodHandles.byteArrayViewVarHandle(
+                long[].class, java.nio.ByteOrder.nativeOrder());
+        static final long BYTE_ONES = 0x0101010101010101L;
+        static final long HIGH_BITS = 0x8080808080808080L;
     }
 
     private static boolean wedge(Glyph g, int width, boolean above) {

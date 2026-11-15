@@ -27,13 +27,28 @@ final class CommonTimeMeter {
         int middle = Math.round(firstLine + 2 * gap);
         int radius = Math.max(1, Math.round(gap * .12f));
         int[] columns = new int[width];
-        for (int x = 0; x < width; x++)
-            for (int y = Math.round(middle - 1.65f * gap);
-                    y <= Math.round(middle + 1.65f * gap);
-                    y++) {
-                if (!rule(y, firstLine, gap, radius) && ink(gray, width, height, x, y, slope))
-                    columns[x]++;
+        int[] shifts = null;
+        if (slope != 0) {
+            shifts = new int[width];
+            for (int x = 0; x < width; x++) shifts[x] = Math.round(slope * (x - width * .5f));
+        }
+        int firstRow = Math.round(middle - 1.65f * gap), lastRow = Math.round(middle + 1.65f * gap);
+        if (shifts == null) {
+            for (int y = Math.max(0, firstRow); y <= Math.min(height - 1, lastRow); y++) {
+                if (rule(y, firstLine, gap, radius)) continue;
+                for (int x = 0, at = y * width; x < width; x++, at++)
+                    if ((gray[at] & 255) < 155) columns[x]++;
             }
+        } else {
+            for (int y = firstRow; y <= lastRow; y++) {
+                if (rule(y, firstLine, gap, radius)) continue;
+                for (int x = 0; x < width; x++) {
+                    int yy = y + shifts[x];
+                    if (yy >= 0 && yy < height && (gray[yy * width + x] & 255) < 155)
+                        columns[x]++;
+                }
+            }
+        }
         int maxBlank = Math.max(1, Math.round(gap * .20f));
         for (int x = 0; x < width; x++) {
             if (columns[x] < 2) continue;
@@ -47,7 +62,7 @@ final class CommonTimeMeter {
             int span = last - left + 1;
             if (span < gap * .9f
                     || span > gap * 2.7f
-                    || !precedingClef(labels, width, height, left, firstLine, gap, slope)) continue;
+                    || !precedingClef(labels, width, height, left, firstLine, gap, shifts)) continue;
             int meter = read(gray, width, height, left, last, firstLine, gap, slope);
             if (meter == 0) continue;
             int localTop = firstLine + Math.round(slope * ((left + last) * .5f - width * .5f));
@@ -74,7 +89,7 @@ final class CommonTimeMeter {
         int limit = Math.min(width - 1, header + Math.round(gap * 4));
         int glyph = -1, meter = 0;
         for (int left = start; left < limit; left++) {
-            if (!precedingClef(labels, width, height, left, top, gap, 0)) continue;
+            if (!precedingClef(labels, width, height, left, top, gap, null)) continue;
             int min = left + Math.round(gap * .9f);
             int max = Math.min(limit, left + Math.round(gap * 2.5f));
             for (int right = min; right <= max; right++) {
@@ -378,17 +393,21 @@ final class CommonTimeMeter {
             int firstLine) {
         int[] supported = new int[2], total = new int[2];
         int radius = Math.max(1, Math.round(gap * .12f));
+        int channelEnd = cut - Math.max(1, Math.round(gap * .10f));
         for (int y = Math.round(mid - gap * .7f); y <= Math.round(mid + gap * .7f); y++) {
             if (rule(y, firstLine, gap, radius)) continue;
             int half = y < mid ? 0 : 1;
             total[half]++;
             if (!ink(gray, width, height, cut, y, slope)) continue;
-            boolean bowl = false, channel = false;
-            for (int x = left; x < cut - Math.max(1, Math.round(gap * .10f)); x++) {
-                if (ink(gray, width, height, x, y, slope)) bowl = true;
-                else if (bowl) channel = true;
+            boolean bowl = false;
+            for (int x = left; x < channelEnd; x++) {
+                if (ink(gray, width, height, x, y, slope)) {
+                    bowl = true;
+                } else if (bowl) {
+                    supported[half]++;
+                    break;
+                }
             }
-            if (channel) supported[half]++;
         }
         return total[0] > 0
                 && total[1] > 0
@@ -397,24 +416,27 @@ final class CommonTimeMeter {
     }
 
     private static boolean precedingClef(
-            byte[] labels, int width, int height, int left, int firstLine, float gap, float slope) {
+            byte[] labels, int width, int height, int left, int firstLine, float gap, int[] shifts) {
         int rowCount = 0, pixels = 0;
+        float neededRows = gap * 3.2f, neededPixels = gap * gap;
         int lo = Math.max(0, Math.round(left - gap * 13));
         int hi = Math.max(0, Math.round(left - gap * .45f));
         for (int y = Math.round(firstLine - gap); y <= Math.round(firstLine + gap * 5); y++) {
             boolean row = false;
             for (int x = lo; x < hi; x++) {
-                int yy = y + Math.round(slope * (x - width * .5f));
+                int yy = y + (shifts == null ? 0 : shifts[x]);
                 if (yy >= 0
                         && yy < height
                         && labels[yy * width + x] == OmrMeasurePostProcessor.CLEF_OR_KEY) {
                     row = true;
-                    pixels++;
+                    if (pixels < neededPixels) pixels++;
+                    if (pixels >= neededPixels) break;
                 }
             }
             if (row) rowCount++;
+            if (rowCount >= neededRows && pixels >= neededPixels) return true;
         }
-        return rowCount >= gap * 3.2f && pixels >= gap * gap;
+        return rowCount >= neededRows && pixels >= neededPixels;
     }
 
     /** A circular upper terminal may enter the central window while a lower channel stays open. */
@@ -432,11 +454,13 @@ final class CommonTimeMeter {
         int x0 = Math.round(left + (right - left + 1) * .72f),
                 needed = Math.max(2, (int) Math.ceil(gap * .12f));
         int clear = 0;
+        float maxDark = (right - x0 + 1) * .16f;
         for (int y = Math.round(mid - gap * .30f); y <= Math.round(mid + gap * .30f); y++) {
             if (rule(y, firstLine, gap, radius)) continue;
             int dark = 0;
-            for (int x = x0; x <= right; x++) if (ink(gray, width, height, x, y, slope)) dark++;
-            if (dark <= (right - x0 + 1) * .16f) {
+            for (int x = x0; x <= right; x++)
+                if (ink(gray, width, height, x, y, slope) && ++dark > maxDark) break;
+            if (dark <= maxDark) {
                 if (++clear >= needed) return true;
             } else clear = 0;
         }
