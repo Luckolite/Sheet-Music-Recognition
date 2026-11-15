@@ -1,0 +1,192 @@
+// Copyright 2026 Luckolite
+// SPDX-License-Identifier: Apache-2.0
+package io.github.luckolite.interpreter;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
+
+import org.junit.Test;
+
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Method;
+import java.util.Arrays;
+import java.util.List;
+
+public final class BeamedStaccatoOwnershipTest {
+    private static final int WIDTH = 240, HEIGHT = 220;
+    private static final float GAP = 16f;
+    private static final Class<?> OWNER = OmrScoreInterpreter.class;
+
+    @Test
+    public void aWideRoundMarkBelongsToTheNextHigherHead() throws Exception {
+        var shape = component();
+        var left = head(shape, 100, 150);
+        var right = head(shape, 134, 134);
+        var count =
+                newMethod(
+                        "countAugmentationDots",
+                        List.class,
+                        shape.getDeclaringClass(),
+                        float.class,
+                        byte[].class,
+                        int.class,
+                        int.class,
+                        boolean.class,
+                        List.class,
+                        List.class);
+        var page = beams();
+        dot(page, 100, 174);
+        dot(page, 134, 159);
+        assertEquals(0, dotCount(count, page, left, right));
+
+        var isolated = page.clone();
+        ink(isolated, 96, 170, 104, 178, 255);
+        assertEquals(1, dotCount(count, isolated, left, right));
+
+        ink(page, 130, 155, 138, 163, 255);
+        dot(page, 119, 151);
+        assertEquals(1, dotCount(count, page, left, right));
+    }
+
+    @Test
+    public void closeDyadsRequireACorroboratingStaccatoOnTheSameBeams() throws Exception {
+        var shape = component();
+        var left = head(shape, 100, 150);
+        var neighbors =
+                List.of(
+                        left,
+                        head(shape, 100, 134),
+                        head(shape, 130, 134),
+                        head(shape, 130, 118),
+                        head(shape, 160, 142),
+                        head(shape, 160, 126));
+        var count =
+                newMethod(
+                        "countAugmentationDots",
+                        List.class,
+                        shape.getDeclaringClass(),
+                        float.class,
+                        byte[].class,
+                        int.class,
+                        int.class,
+                        boolean.class,
+                        List.class,
+                        List.class);
+        var page = new byte[WIDTH * HEIGHT];
+        Arrays.fill(page, (byte) 255);
+        ink(page, 110, 74, 111, 150, 0);
+        ink(page, 140, 74, 141, 134, 0);
+        ink(page, 170, 74, 171, 142, 0);
+        ink(page, 110, 74, 171, 83, 0);
+        ink(page, 110, 86, 171, 95, 0);
+        dot(page, 130, 151);
+        dot(page, 160, 159);
+        assertEquals(0, dotCount(count, page, left, neighbors));
+
+        var noCorroboration = page.clone();
+        ink(noCorroboration, 156, 154, 165, 164, 255);
+        assertEquals(1, dotCount(count, noCorroboration, left, neighbors));
+
+        var severed = page.clone();
+        ink(severed, 150, 84, 153, 96, 255);
+        assertEquals(1, dotCount(count, severed, left, neighbors));
+
+        ink(page, 126, 146, 135, 156, 255);
+        dot(page, 119, 151);
+        assertEquals(1, dotCount(count, page, left, neighbors));
+    }
+
+    @Test
+    public void detachedMarkDoesNotOwnAThirdRail() throws Exception {
+        var shape = component();
+        var left = head(shape, 100, 150);
+        var right = head(shape, 134, 134);
+        var proof =
+                newMethod(
+                        "detachedMarkAboveDoubleBeam",
+                        byte[].class,
+                        int.class,
+                        int.class,
+                        shape.getDeclaringClass(),
+                        List.class,
+                        float.class);
+        var page = beams();
+        ink(page, 133, 57, 145, 72, 0);
+        assertTrue(closedDoubleBeam(proof, page, left, right));
+
+        var noAnnotation = page.clone();
+        ink(noAnnotation, 131, 54, 147, 72, 255);
+        assertFalse(closedDoubleBeam(proof, noAnnotation, left, right));
+
+        ink(page, 110, 100, 144, 108, 0);
+        assertFalse(closedDoubleBeam(proof, page, left, right));
+    }
+
+    private static int dotCount(Method count, byte[] page, Object left, Object right)
+            throws Exception {
+        return dotCount(count, page, left, List.of(left, right));
+    }
+
+    private static int dotCount(Method count, byte[] page, Object left, List<?> neighbors)
+            throws Exception {
+        return (int)
+                count.invoke(
+                        null, List.of(), left, GAP, page, WIDTH, HEIGHT, false, List.of(),
+                        neighbors);
+    }
+
+    private static boolean closedDoubleBeam(Method proof, byte[] page, Object left, Object right)
+            throws Exception {
+        return (boolean) proof.invoke(null, page, WIDTH, HEIGHT, right, List.of(left, right), GAP);
+    }
+
+    private static Constructor<?> component() throws Exception {
+        var shape = Class.forName(OWNER.getName() + "$Component");
+        var result =
+                shape.getDeclaredConstructor(
+                        int.class,
+                        int.class,
+                        int.class,
+                        int.class,
+                        int.class,
+                        float.class,
+                        float.class);
+        result.setAccessible(true);
+        return result;
+    }
+
+    private static Object head(Constructor<?> shape, int x, int y) throws Exception {
+        return shape.newInstance(306, x - 10, x + 11, y - 8, y + 8, (float) x, (float) y);
+    }
+
+    private static Method newMethod(String name, Class<?>... args) throws Exception {
+        var method = OWNER.getDeclaredMethod(name, args);
+        method.setAccessible(true);
+        return method;
+    }
+
+    private static byte[] beams() {
+        var page = new byte[WIDTH * HEIGHT];
+        Arrays.fill(page, (byte) 255);
+        ink(page, 110, 74, 111, 150, 0);
+        ink(page, 144, 74, 145, 134, 0);
+        ink(page, 110, 74, 145, 83, 0);
+        ink(page, 110, 86, 145, 95, 0);
+        return page;
+    }
+
+    private static void dot(byte[] page, int x, int y) {
+        for (int dy = -3; dy <= 3; dy++) {
+            for (int dx = -3; dx <= 3; dx++) {
+                if (dx * dx + dy * dy <= 12) page[(y + dy) * WIDTH + x + dx] = 0;
+            }
+        }
+    }
+
+    private static void ink(byte[] page, int left, int top, int right, int bottom, int shade) {
+        for (int y = top; y <= bottom; y++) {
+            Arrays.fill(page, y * WIDTH + left, y * WIDTH + right + 1, (byte) shade);
+        }
+    }
+}

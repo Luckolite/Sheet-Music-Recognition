@@ -298,6 +298,7 @@ public final class SheetInterpreter {
         measures =
                 VerifiedOpeningMeterSlot.recover(
                         measures, labels, gray, annotationGray, width, height);
+        measures = ClosedSixteenthPairBeforeHalf.recover(measures, labels, gray, width, height);
         var tripleRuns =
                 MidstaffSixteenthTripleBars.recover(
                         measures, labels, gray, annotationGray, width, height);
@@ -754,6 +755,9 @@ public final class SheetInterpreter {
         finalInterpretation =
                 ClosedDottedSixteenths.applyClosedOctaveFragments(
                         finalInterpretation, inheritedMeter, gray, width, height, physicalPage);
+        finalInterpretation =
+                ClosedSixteenthPairBeforeHalf.captureBareHalf(
+                        finalInterpretation, gray, annotationGray, width, height);
         finalInterpretation =
                 ClosedDottedSixteenths.applyReversedOctaveHook(
                         finalInterpretation, inheritedMeter, labels, gray, width, height);

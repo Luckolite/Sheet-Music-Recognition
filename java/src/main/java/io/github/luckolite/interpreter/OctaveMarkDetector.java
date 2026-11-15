@@ -1570,11 +1570,50 @@ final class OctaveMarkDetector {
             line.add(dot);
         }
         var last = line.get(line.size() - 1);
-        if (line.size() < 27 || fused * 8 > line.size() || last.right - first.left < gap * 21)
-            return null;
         float edge = last.right + gap * .55f;
+        if (last.right - first.left < gap * 21)
+            return fused == 0
+                            && bareEightShape(gray, width, numeral, gap)
+                            && compactDottedRibbonHasClosedEnd(gray, width, height, line, gap)
+                    ? new DottedRibbon(edge, line)
+                    : null;
+        if (line.size() < 27 || fused * 8 > line.size()) return null;
         if (hookDirection(gray, width, height, edge, last.top, last.bottom, gap) <= 0) return null;
         return new DottedRibbon(edge, line);
+    }
+
+    /** A short octave line needs a regular rail and a single complete, downward turn. */
+    private static boolean compactDottedRibbonHasClosedEnd(
+            byte[] gray,
+            int width,
+            int height,
+            List<RawNumeralComponents.Component> dots,
+            float gap) {
+        var first = dots.get(0);
+        var last = dots.get(dots.size() - 1);
+        if (dots.size() < 24 || last.right - first.left < gap * 12) return false;
+        var prior = first;
+        for (var dot : dots) {
+            if (dot.right - dot.left + 1 > gap * .62f
+                    || dot.bottom - dot.top + 1 > gap * .43f
+                    || Math.abs(dotY(dot) - dotY(first)) > gap * .36f
+                    || (dot != first && dot.left - prior.right - 1 > gap * .32f)) return false;
+            prior = dot;
+        }
+        int terminal = -1, columns = 0;
+        for (int x = last.left; x <= last.right; x++) {
+            boolean down = false;
+            for (int y = last.top; y <= last.bottom; y++) {
+                if (!endsHorizontalDashes(gray, width, x, y, gap)) continue;
+                if (hasDottedHook(gray, width, height, x, y, -1, gap)) return false;
+                down |= hasDottedHook(gray, width, height, x, y, 1, gap);
+            }
+            if (!down) continue;
+            if (terminal >= 0 && x != terminal + 1) return false;
+            terminal = x;
+            columns++;
+        }
+        return columns >= 2;
     }
 
     private static List<RawNumeralComponents.Component> wideDottedComponents(

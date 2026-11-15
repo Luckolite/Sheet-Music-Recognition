@@ -1846,6 +1846,17 @@ final class OmrScoreInterpreter {
                             physicalStaff,
                             staffs,
                             heads)
+                    && !upperLedgerSpaceOnSingleRail(
+                            labels,
+                            gray,
+                            annotationGray,
+                            width,
+                            height,
+                            head,
+                            physicalStaff,
+                            staff,
+                            staffs,
+                            heads)
                     && !(recoveredShadedChordHeads.contains(head)
                             && ShadedChordHeadRecovery.hasLedgerRails(
                                     gray,
@@ -1903,6 +1914,12 @@ final class OmrScoreInterpreter {
                                     heads,
                                     staff.count);
             int initialBeamCount = beamCount;
+            if (!unpitched
+                    && staff.count == 1
+                    && beamCount == 3
+                    && !backwardHookOwners.contains(head)
+                    && detachedMarkAboveDoubleBeam(gray, width, height, head, heads, localGap))
+                beamCount = 2;
             if (recoveredSingleBeamHeads.contains(head)) beamCount = Math.max(beamCount, 1);
             boolean transportedBeamConsulted = !unpitched && beamCount < 2;
             int beforeTransportedBeam = beamCount;
@@ -2324,6 +2341,10 @@ final class OmrScoreInterpreter {
                                         gray, width, (Component) writtenChoice.glyph, accidentalGap)
                                 && completeRawSharpFromSeed(
                                         gray, width, height, localAccidentals, head, accidentalGap))
+                    writtenAccidental = ScoreNoteEvent.ACCIDENTAL_SHARP;
+                if (writtenAccidental == ScoreNoteEvent.ACCIDENTAL_FROM_KEY
+                        && pairedCompactChordSharps(
+                                gray, width, height, localAccidentals, head, heads, accidentalGap))
                     writtenAccidental = ScoreNoteEvent.ACCIDENTAL_SHARP;
                 if (writtenAccidental == ScoreNoteEvent.ACCIDENTAL_FROM_KEY
                         && rawFlatFromBowl(
@@ -10634,6 +10655,91 @@ final class OmrScoreInterpreter {
         return List.copyOf(result);
     }
 
+    /** Recovers two closely printed third dyads joined only in the coarse head mask. */
+    private static List<Component> splitCompactJoinedThirds(
+            byte[] labels, byte[] gray, int width, int height, Component head, Staff staff) {
+        float gap = staff.gap;
+        int shaftTop = head.minY - Math.round(gap * 1.78f);
+        if (shaftTop < 0) return List.of();
+        var shafts = new ArrayList<Integer>(2);
+        for (int x = head.minX; x <= head.maxX; x++) {
+            if (!darkColumn(gray, width, x, shaftTop, head.minY - 1, .89f)) continue;
+            int first = x;
+            while (x < head.maxX && darkColumn(gray, width, x + 1, shaftTop, head.minY - 1, .89f))
+                x++;
+            int thickness = x - first + 1;
+            if (thickness < 2 || thickness > gap * .28f) return List.of();
+            shafts.add((first + x) / 2);
+        }
+        if (shafts.size() != 2) return List.of();
+        int a = shafts.get(0), b = shafts.get(1);
+        if (b - a < gap * 1.38f || b - a > gap * 1.77f) return List.of();
+        // The upward shafts stand to the right of both filled bodies.
+        int cut = (a + b) / 2 - Math.round(gap * .57f);
+        if (cut <= head.minX || cut >= head.maxX) return List.of();
+        var left =
+                provedFilledChordPieces(
+                        labels,
+                        gray,
+                        width,
+                        height,
+                        horizontalHeadSlice(labels, width, head, head.minX, cut),
+                        staff);
+        var right =
+                provedFilledChordPieces(
+                        labels,
+                        gray,
+                        width,
+                        height,
+                        horizontalHeadSlice(labels, width, head, cut + 1, head.maxX),
+                        staff);
+        if (!sharesCompactUpShaft(gray, width, height, left, a, gap)
+                || !sharesCompactUpShaft(gray, width, height, right, b, gap)) return List.of();
+        var result = new ArrayList<Component>(4);
+        result.addAll(left);
+        result.addAll(right);
+        return List.copyOf(result);
+    }
+
+    private static boolean sharesCompactUpShaft(
+            byte[] gray, int width, int height, List<Component> notes, int column, float gap) {
+        if (notes.size() != 2) return false;
+        var upper = notes.get(0);
+        var lower = notes.get(1);
+        if (lower.centerY - upper.centerY < gap * .8f
+                || lower.centerY - upper.centerY > gap * 1.2f
+                || Math.abs(lower.centerX - upper.centerX) > gap * .17f
+                || column - lower.centerX < gap * .45f
+                || column - lower.centerX > gap * .82f) return false;
+        var shafts =
+                PrintedBeamShafts.at(
+                        gray,
+                        width,
+                        height,
+                        upper.centerX,
+                        upper.centerY,
+                        gap,
+                        new PrintedBeamShafts.Budget(50_000));
+        return shafts.size() == 1
+                && shafts.get(0).direction() == -1
+                && column >= shafts.get(0).left()
+                && column <= shafts.get(0).right()
+                && darkColumn(
+                        gray,
+                        width,
+                        column,
+                        Math.round(upper.centerY),
+                        Math.round(lower.centerY - gap * .16f),
+                        .92f);
+    }
+
+    private static boolean darkColumn(
+            byte[] gray, int width, int x, int top, int bottom, float coverage) {
+        int ink = 0;
+        for (int y = top; y <= bottom; y++) if ((gray[y * width + x] & 255) < 170) ink++;
+        return ink >= (bottom - top + 1) * coverage;
+    }
+
     /**
      * A wide mask may bridge two close chord attacks. Separate only two independently printed
      * shafts whose pieces each contain proved ovals.
@@ -10643,6 +10749,8 @@ final class OmrScoreInterpreter {
         if (gray == null || staff == null) return List.of();
         float gap = staff.gap;
         int w = head.maxX - head.minX + 1, h = head.maxY - head.minY + 1;
+        if (w >= gap * 2.6f && w < gap * 3.2f && h >= gap * 2.2f && h <= gap * 3.05f)
+            return splitCompactJoinedThirds(labels, gray, width, height, head, staff);
         if (w < gap * 3.2f || w > gap * 7 || h < gap * 1.6f || h > gap * 4.4f) return List.of();
         for (int direction : new int[] {-1, 1}) {
             List<Integer> shafts = new ArrayList<>();
@@ -13766,6 +13874,125 @@ final class OmrScoreInterpreter {
                 return false;
         }
         return true;
+    }
+
+    /** A filled space head can touch two short ledger rules without a head-wide horizontal run. */
+    private static boolean upperLedgerSpaceOnSingleRail(
+            byte[] labels,
+            byte[] gray,
+            byte[] raw,
+            int width,
+            int height,
+            Component head,
+            Staff physical,
+            Staff owner,
+            List<Staff> staffs,
+            List<Component> heads) {
+        if (raw == null || owner.count != 1) return false;
+        float gap = physical.pitchGap;
+        if (gap < 12
+                || gap > 26
+                || Math.abs(physical.pitchBottom - owner.pitchBottom) > gap
+                || !filledBeamEndpointCore(gray, width, height, head, gap)
+                || !filledBeamEndpointCore(raw, width, height, head, gap)
+                || competingPrintedCore(labels, gray, width, height, head, owner, staffs))
+            return false;
+        float position = (physical.pitchBottom - head.centerY) / (gap * .5f);
+        int step = Math.round(position);
+        if (step < 13 || step > 17 || step % 2 == 0 || Math.abs(position - step) > .49f)
+            return false;
+        var budget = new PrintedBeamShafts.Budget(200_000);
+        var first = downShaft(gray, width, height, head, gap, budget);
+        if (first == null
+                || Math.abs(first.left() - head.minX) > gap * .25f
+                || first.endY() < physical.top + gap * 1.8f
+                || first.endY() > physical.bottom + gap * .7f) return false;
+        for (int ledger = 10; ledger < step; ledger += 2) {
+            float row = physical.pitchBottom - ledger * gap * .5f;
+            boolean touchesBody = ledger == step - 1;
+            if (!shortUpperSpaceLedger(
+                            gray, width, height, head, first.left(), row, gap, touchesBody)
+                    || !shortUpperSpaceLedger(
+                            raw, width, height, head, first.left(), row, gap, touchesBody))
+                return false;
+        }
+        Component second = null, third = null;
+        for (var peer : heads) {
+            float dx = peer.centerX - head.centerX;
+            if (dx < gap * 1.4f
+                    || dx > gap * 5.2f
+                    || Math.abs(peer.centerY - head.centerY) > gap * 2.9f
+                    || !filledBeamEndpointCore(gray, width, height, peer, gap)
+                    || staffForHead(labels, gray, width, height, staffs, peer) != owner
+                    || !hasHeadLedgerSupport(
+                            labels, gray, width, height, peer, owner, false, staffs)) continue;
+            if (second == null || peer.centerX < second.centerX) {
+                third = second;
+                second = peer;
+            } else if (third == null || peer.centerX < third.centerX) third = peer;
+        }
+        if (third == null
+                || second.centerX - head.centerX > gap * 2.8f
+                || third.centerX - second.centerX < gap * 1.4f
+                || third.centerX - second.centerX > gap * 2.8f) return false;
+        var middle = downShaft(gray, width, height, second, gap, budget);
+        var last = downShaft(gray, width, height, third, gap, budget);
+        return middle != null
+                && last != null
+                && WrappedEighthTriplets.matchesRailBridge(
+                        gray, width, height, first, middle, gap, true)
+                && WrappedEighthTriplets.matchesRailBridge(
+                        gray, width, height, middle, last, gap, true)
+                && WrappedEighthTriplets.matchesRailBridge(
+                        raw, width, height, first, middle, gap, true)
+                && WrappedEighthTriplets.matchesRailBridge(
+                        raw, width, height, middle, last, gap, true);
+    }
+
+    private static PrintedBeamShafts.Shaft downShaft(
+            byte[] gray,
+            int width,
+            int height,
+            Component head,
+            float gap,
+            PrintedBeamShafts.Budget budget) {
+        var shafts =
+                PrintedBeamShafts.at(gray, width, height, head.centerX, head.centerY, gap, budget);
+        return shafts.size() == 1 && shafts.get(0).direction() == 1 ? shafts.get(0) : null;
+    }
+
+    private static boolean shortUpperSpaceLedger(
+            byte[] gray,
+            int width,
+            int height,
+            Component head,
+            int shaftX,
+            float expected,
+            float gap,
+            boolean touchesBody) {
+        int left = shaftX + Math.round(gap * .28f);
+        int right = Math.round(head.centerX + gap * .45f);
+        int flank = Math.round(gap * .42f);
+        int radius = Math.round(gap * .20f);
+        int mid = Math.round(expected);
+        if (left < 0
+                || right >= width
+                || right - left + 1 < gap * .70f
+                || mid - radius - flank < 0
+                || mid + radius + flank >= height) return false;
+        for (int y = mid - radius; y <= mid + radius; y++) {
+            if ((gray[y * width + shaftX] & 255) >= 165
+                    || !shortLedgerRule(gray, width, y, head, gap)) continue;
+            int along = 0, clear = 0;
+            for (int x = left; x <= right; x++) {
+                if ((gray[y * width + x] & 255) < 165) along++;
+                if ((gray[(y + flank) * width + x] & 255) >= 210
+                        && (touchesBody || (gray[(y - flank) * width + x] & 255) >= 210)) clear++;
+            }
+            int count = right - left + 1;
+            if (along >= count * .90f && clear >= count * .86f) return true;
+        }
+        return false;
     }
 
     /** A compact downstem chord can have ledgers aligned to its shaft rather than the oval rim. */
@@ -20915,10 +21142,21 @@ final class OmrScoreInterpreter {
                             && Math.abs(other.centerY - pitchCenter) + gap * .12f
                                     < Math.abs(head.centerY - pitchCenter)) otherOwner = true;
                     if (horizontal > gap * 1.35f
-                            && !sharedAccidentalChordShaft(labels, width, height, head, other, gap)
                             && other.centerX > glyph.maxX + gap * .2f
                             && other.centerX < head.minX - gap * .3f
-                            && Math.abs(other.centerY - head.centerY) < gap * 2) otherOwner = true;
+                            && Math.abs(other.centerY - head.centerY) < gap * 2
+                            && (!sharedAccidentalChordShaft(labels, width, height, head, other, gap)
+                                    || accidental == ScoreNoteEvent.ACCIDENTAL_SHARP
+                                            && sharpOwnedByEarlierCompactDyad(
+                                                    gray,
+                                                    width,
+                                                    height,
+                                                    head,
+                                                    other,
+                                                    heads,
+                                                    glyph,
+                                                    pitchCenter,
+                                                    gap))) otherOwner = true;
                 }
                 if (otherOwner) continue;
                 if (horizontal > gap * 1.35f
@@ -20988,6 +21226,171 @@ final class OmrScoreInterpreter {
                 candidates,
                 heads,
                 ambiguous);
+    }
+
+    /** A fused mask can join two chords even though their raw upward shafts are distinct. */
+    private static boolean sharpOwnedByEarlierCompactDyad(
+            byte[] gray,
+            int width,
+            int height,
+            Component head,
+            Component earlier,
+            List<Component> heads,
+            Component sharp,
+            float pitchCenter,
+            float gap) {
+        float spacing = head.centerX - earlier.centerX;
+        float glyphGap = earlier.minX - sharp.maxX;
+        float earlyError = Math.abs(pitchCenter - earlier.centerY);
+        if (gray == null
+                || spacing < gap * 1.38f
+                || spacing > gap * 1.77f
+                || glyphGap < gap * .1f
+                || glyphGap > gap * 1.3f
+                || earlyError > gap * .24f
+                || earlyError + gap * .08f >= Math.abs(pitchCenter - head.centerY)) return false;
+
+        var budget = new PrintedBeamShafts.Budget(60_000);
+        var previous =
+                PrintedBeamShafts.at(
+                        gray, width, height, earlier.centerX, earlier.centerY, gap, budget);
+        if (previous.size() != 1 || previous.get(0).direction() != -1) return false;
+        Component partner = null;
+        for (Component other : heads) {
+            float pitchSpace = head.centerY - other.centerY;
+            if (Math.abs(head.centerX - other.centerX) > gap * .17f
+                    || pitchSpace < gap * .8f
+                    || pitchSpace > gap * 1.2f) continue;
+            if (partner != null) return false;
+            partner = other;
+        }
+        if (partner == null) return false;
+        var current =
+                PrintedBeamShafts.at(
+                        gray, width, height, partner.centerX, partner.centerY, gap, budget);
+        if (current.size() != 1 || current.get(0).direction() != -1) return false;
+        var before = previous.get(0);
+        var after = current.get(0);
+        int column = (after.left() + after.right()) / 2;
+        return after.left() - before.right() >= gap * 1.25f
+                && Math.abs(after.endY() - before.endY()) <= gap * .42f
+                && column - head.centerX >= gap * .46f
+                && column - head.centerX <= gap * .82f
+                && darkColumn(
+                        gray,
+                        width,
+                        column,
+                        Math.round(partner.centerY),
+                        Math.round(head.centerY - gap * .16f),
+                        .92f);
+    }
+
+    /** Separate the two staggered sharps in a shared symbol box. */
+    private static boolean pairedCompactChordSharps(
+            byte[] gray,
+            int width,
+            int height,
+            List<AccidentalCandidate> candidates,
+            Component head,
+            List<Component> heads,
+            float gap) {
+        if (gray == null || gap < 9 || gap > 25) return false;
+        for (AccidentalCandidate candidate : candidates) {
+            var box = candidate.component;
+            if (candidate.label != OmrMeasurePostProcessor.CLEF_OR_KEY
+                    || box.maxX - box.minX < gap * 1.68f
+                    || box.maxX - box.minX > gap * 2.04f
+                    || box.maxY - box.minY < gap * 2.85f
+                    || box.maxY - box.minY > gap * 3.30f
+                    || box.maxX > head.minX
+                    || head.minX - box.maxX > gap * .22f
+                    || Math.abs(box.centerY - head.centerY) > gap * .75f) continue;
+            Component peer = null;
+            for (var other : heads) {
+                float separation = Math.abs(other.centerY - head.centerY);
+                if (Math.abs(other.centerX - head.centerX) > gap * .17f
+                        || separation < gap * .92f
+                        || separation > gap * 1.22f) continue;
+                if (peer != null) return false;
+                peer = other;
+            }
+            if (peer == null) continue;
+            var lower = head.centerY > peer.centerY ? head : peer;
+            var upper = lower == head ? peer : head;
+            int left = box.minX + Math.round(gap * .18f);
+            int divider = (box.minX + box.maxX + 2) / 2;
+            int right = Math.min(box.maxX, Math.round(upper.minX - gap * .12f));
+            int upperTop = Math.round(upper.centerY - gap * 1.37f);
+            int upperBottom = Math.round(upper.centerY + gap * 1.61f);
+            int lowerTop = Math.round(lower.centerY - gap * 1.51f);
+            int lowerBottom = Math.round(lower.centerY + gap * 1.02f);
+            int tipTop = Math.round(lower.centerY + gap * .66f);
+            if (upperTop < 0
+                    || upperBottom >= height
+                    || lowerTop < 0
+                    || lowerBottom >= height
+                    || left >= divider
+                    || divider >= right
+                    || !separateSharpTails(gray, width, left, divider, tipTop, lowerBottom, gap))
+                continue;
+            var budget = new PrintedBeamShafts.Budget(35_000);
+            var a =
+                    PrintedBeamShafts.at(
+                            gray, width, height, upper.centerX, upper.centerY, gap, budget);
+            var b =
+                    PrintedBeamShafts.at(
+                            gray, width, height, lower.centerX, lower.centerY, gap, budget);
+            if (a.size() != 1
+                    || b.size() != 1
+                    || a.get(0).direction() != -1
+                    || b.get(0).direction() != -1
+                    || Math.max(a.get(0).left(), b.get(0).left())
+                            > Math.min(a.get(0).right(), b.get(0).right())
+                    || Math.abs(a.get(0).endY() - b.get(0).endY()) > gap * .18f) continue;
+            // The lower crossbars touch the preceding stem. Verify their two free tails
+            // before allowing that connected crop. The upper sign must pass the full proof.
+            if (rawSharpInBounds(
+                            gray,
+                            width,
+                            height,
+                            upper,
+                            gap,
+                            divider + 1,
+                            right,
+                            upperTop,
+                            upperBottom,
+                            true,
+                            true)
+                    && rawSharpInBounds(
+                            gray,
+                            width,
+                            height,
+                            lower,
+                            gap,
+                            left,
+                            divider,
+                            lowerTop,
+                            lowerBottom,
+                            false)) return true;
+        }
+        return false;
+    }
+
+    private static boolean separateSharpTails(
+            byte[] gray, int width, int left, int right, int top, int bottom, float gap) {
+        int previousEnd = -1;
+        int stems = 0;
+        for (int x = left; x <= right; x++) {
+            if (!darkColumn(gray, width, x, top, bottom, .84f)) continue;
+            int start = x;
+            while (x < right && darkColumn(gray, width, x + 1, top, bottom, .84f)) x++;
+            if (x - start + 1 < 2 || x - start + 1 > gap * .29f) return false;
+            if (++stems == 2
+                    && (start - previousEnd < gap * .17f || start - previousEnd > gap * .46f))
+                return false;
+            previousEnd = x;
+        }
+        return stems == 2;
     }
 
     /** Keep the complete natural's source when a staff fragment extends its right edge. */
@@ -23325,15 +23728,24 @@ final class OmrScoreInterpreter {
         if (aligned.size() == 1)
             return !hollowHead
                             && gray != null
-                            && adjacentDescendingStaccato(
-                                    gray, width, height, head, first, neighboringHeads, gap)
+                            && (adjacentDescendingStaccato(
+                                            gray, width, height, head, first, neighboringHeads, gap)
+                                    || adjacentAscendingStaccato(
+                                            gray,
+                                            width,
+                                            height,
+                                            head,
+                                            first,
+                                            neighboringHeads,
+                                            gap))
                     ? 0
                     : 1;
         Component second = aligned.get(1);
         float spacing = second.centerX - first.centerX;
-        boolean doubleDot = spacing >= gap * .18f
-                && spacing <= gap * 1.45f
-                && Math.abs(second.centerY - first.centerY) <= gap * .40f;
+        boolean doubleDot =
+                spacing >= gap * .18f
+                        && spacing <= gap * 1.45f
+                        && Math.abs(second.centerY - first.centerY) <= gap * .40f;
         if (doubleDot
                 && !hollowHead
                 && gray != null
@@ -23345,6 +23757,118 @@ final class OmrScoreInterpreter {
                                 gray, width, height, head, first, second, neighboringHeads, gap)))
             return 1;
         return doubleDot ? 2 : 1;
+    }
+
+    /** A wide dot beneath the following higher head belongs to its up-stem beamed attack. */
+    private static boolean adjacentAscendingStaccato(
+            byte[] gray,
+            int width,
+            int height,
+            Component head,
+            Component dot,
+            List<Component> nearby,
+            float gap) {
+        float advance = dot.centerX - head.centerX;
+        if (gap < 8
+                || advance < gap * 1.70f
+                || advance > gap * 2.30f
+                || head.maxX - head.minX + 1 < gap) return false;
+        Component next = null;
+        for (Component candidate : nearby) {
+            float ascent = head.centerY - candidate.centerY;
+            float below = dot.centerY - candidate.centerY;
+            if (ascent < gap * .85f
+                    || ascent > gap * 1.17f
+                    || below < gap * .92f
+                    || below > gap * 1.68f
+                    || Math.abs(candidate.centerX - dot.centerX) > gap * .13f
+                    || dot.minY - candidate.maxY < gap * .30f
+                    || candidate.maxX - candidate.minX + 1 < gap) continue;
+            if (next != null) return false;
+            next = candidate;
+        }
+        if (next == null) return false;
+        float below = (dot.centerY - next.centerY) / gap;
+        if (!isolatedLowerStaccato(gray, width, height, next, gap, below - .12f, below + .12f))
+            return false;
+        boolean matchingMark =
+                isolatedLowerStaccato(
+                        gray,
+                        width,
+                        height,
+                        head,
+                        gap,
+                        Math.max(.89f, below - .40f),
+                        Math.min(1.81f, below + .40f));
+        int[] a = attachedRawStem(gray, width, height, head, gap, 0);
+        int[] b = attachedRawStem(gray, width, height, next, gap, 0);
+        if (a == null || b == null || a[2] != -1 || b[2] != -1) return false;
+        if (advance >= gap * 1.92f
+                && matchingMark
+                && twoSharedBeamRails(gray, width, height, a, b, gap, 1.86f, 1)) return true;
+
+        if (advance > gap * 2.13f
+                || below > 1.28f
+                || !hasAscendingStaccatoDyad(gray, width, height, head, a, nearby, gap)
+                || !hasAscendingStaccatoDyad(gray, width, height, next, b, nearby, gap)
+                || !twoSharedBeamRails(gray, width, height, a, b, gap, 1.65f, 1)) return false;
+        if (matchingMark
+                || isolatedLowerStaccato(
+                        gray,
+                        width,
+                        height,
+                        head,
+                        gap,
+                        Math.max(.91f, below - .24f),
+                        Math.min(1.33f, below + .24f),
+                        .66)) return true;
+        for (var following : nearby) {
+            float spacing = following.centerX - next.centerX;
+            if (spacing < gap * 1.70f
+                    || spacing > gap * 2.25f
+                    || Math.abs(following.centerY - next.centerY) > gap * .70f
+                    || !isolatedLowerStaccato(
+                            gray,
+                            width,
+                            height,
+                            following,
+                            gap,
+                            Math.max(.91f, below - .24f),
+                            Math.min(1.33f, below + .24f),
+                            .66)) continue;
+            int[] c = attachedRawStem(gray, width, height, following, gap, 0);
+            if (c != null
+                    && c[2] == -1
+                    && hasAscendingStaccatoDyad(gray, width, height, following, c, nearby, gap)
+                    && twoSharedBeamRails(gray, width, height, b, c, gap, 1.65f, 1)) return true;
+        }
+        return false;
+    }
+
+    private static boolean hasAscendingStaccatoDyad(
+            byte[] gray,
+            int width,
+            int height,
+            Component lower,
+            int[] shaft,
+            List<Component> nearby,
+            float gap) {
+        Component upper = null;
+        for (var partner : nearby) {
+            float separation = lower.centerY - partner.centerY;
+            if (Math.abs(lower.centerX - partner.centerX) > gap * .16f
+                    || separation < gap * .88f
+                    || separation > gap * 1.15f
+                    || partner.maxX - partner.minX + 1 < gap) continue;
+            if (upper != null) return false;
+            upper = partner;
+        }
+        if (upper == null) return false;
+        int[] peerShaft = attachedRawStem(gray, width, height, upper, gap, 0);
+        return peerShaft != null
+                && peerShaft[2] == -1
+                && Math.abs(peerShaft[0] - shaft[0]) <= 1
+                && Math.abs(peerShaft[1] - shaft[1]) <= gap * .16f;
     }
 
     private static boolean adjacentDescendingStaccato(
@@ -23531,6 +24055,78 @@ final class OmrScoreInterpreter {
         return false;
     }
 
+    /** A freestanding mark above two closed rails can extend only the permissive shaft trace. */
+    private static boolean detachedMarkAboveDoubleBeam(
+            byte[] gray, int width, int height, Component head, List<Component> heads, float gap) {
+        if (gray == null || gap < 10 || gap > 24 || head.maxX - head.minX + 1 < gap) return false;
+        int[] bridged = attachedRawStem(gray, width, height, head, gap);
+        int[] stem = attachedRawStem(gray, width, height, head, gap, 0);
+        if (stem == null
+                || bridged == null
+                || stem[2] != -1
+                || bridged[2] != -1
+                || Math.abs(stem[0] - bridged[0]) > gap * .19f
+                || stem[1] - bridged[1] < gap * .85f
+                || stem[1] - bridged[1] > gap * 1.45f
+                || head.centerY - stem[1] < gap * 3) return false;
+        int left = Math.round(head.centerX - gap * 1.17f);
+        int right = Math.round(head.centerX + gap * 1.17f);
+        int top = Math.round(bridged[1] - gap * .57f);
+        int bottom = stem[1] - 1;
+        if (left < 0 || right >= width || top < 0 || bottom >= height || top >= bottom)
+            return false;
+        var field =
+                RawNumeralComponents.capture(
+                        gray, width, height, left, top, right, bottom, () -> {}, () -> {});
+        RawNumeralComponents.Component detached = null;
+        for (var part : field.components()) {
+            if (part.size() < gap * gap * .12f) continue;
+            if (detached != null
+                    || part.left <= left
+                    || part.right >= right
+                    || part.top <= top
+                    || part.bottom >= bottom
+                    || part.left > bridged[0] - 2
+                    || part.right < bridged[0]
+                    || part.right - part.left + 1 < gap * .62f
+                    || part.right - part.left + 1 > gap * 1.15f
+                    || part.bottom - part.top + 1 < gap * .87f
+                    || part.bottom - part.top + 1 > gap * 1.35f) return false;
+            detached = part;
+        }
+        if (detached == null) return false;
+
+        Component prior = null;
+        for (var candidate : heads) {
+            float distance = head.centerX - candidate.centerX;
+            if (distance < gap * 1.8f
+                    || distance > gap * 2.56f
+                    || Math.abs(head.centerY - candidate.centerY) > gap * 1.2f
+                    || candidate.maxX - candidate.minX + 1 < gap) continue;
+            if (prior != null) return false;
+            prior = candidate;
+        }
+        if (prior == null) return false;
+        int[] previous = attachedRawStem(gray, width, height, prior, gap, 0);
+        return previous != null
+                && previous[2] == -1
+                && twoSharedBeamRails(gray, width, height, previous, stem, gap, 1.86f, 1)
+                && whiteBeyondUpStemBeamEnd(gray, width, height, stem, gap)
+                && !OwnedTertiaryBeamlets.ownsThirdRailAtUpStemEnd(
+                        gray, width, height, stem, previous, gap);
+    }
+
+    private static boolean whiteBeyondUpStemBeamEnd(
+            byte[] gray, int width, int height, int[] stem, float gap) {
+        int left = stem[0] + Math.round(gap * .28f);
+        int right = stem[0] + Math.round(gap * .83f);
+        int top = stem[1] + Math.round(gap * .2f);
+        int bottom = stem[1] + Math.round(gap * 1.28f);
+        return right < width
+                && bottom < height
+                && grayInk(gray, width, left, right, top, bottom, 140) <= gap * .18f;
+    }
+
     private static boolean twoSharedBeamRails(
             byte[] gray, int width, int height, int[] a, int[] b, float gap) {
         return twoSharedBeamRails(gray, width, height, a, b, gap, 2);
@@ -23538,6 +24134,18 @@ final class OmrScoreInterpreter {
 
     private static boolean twoSharedBeamRails(
             byte[] gray, int width, int height, int[] a, int[] b, float gap, float minimumSpan) {
+        return twoSharedBeamRails(gray, width, height, a, b, gap, minimumSpan, -1);
+    }
+
+    private static boolean twoSharedBeamRails(
+            byte[] gray,
+            int width,
+            int height,
+            int[] a,
+            int[] b,
+            float gap,
+            float minimumSpan,
+            int depthDirection) {
         int margin = Math.round(gap * .4f), span = b[0] - a[0];
         if (span < gap * minimumSpan
                 || Math.abs(a[1] - b[1]) > span * .22f
@@ -23548,7 +24156,8 @@ final class OmrScoreInterpreter {
             int radius = Math.round(gap * .12f);
             for (int x = a[0] + margin; x <= b[0] - margin; x++) {
                 float projectedTip = a[1] + (b[1] - a[1]) * (x - a[0]) / (float) span;
-                int center = Math.round(projectedTip - depth * gap);
+                int center = Math.round(projectedTip + depthDirection * depth * gap);
+                if (center - radius < 0 || center + radius >= height) return false;
                 if (grayInk(gray, width, x, x, center - radius, center + radius, 120) < 2 * radius)
                     rail = false;
             }
@@ -23557,13 +24166,29 @@ final class OmrScoreInterpreter {
         return true;
     }
 
-
     private static boolean isolatedLowerStaccato(
             byte[] gray, int width, int height, Component head, float gap) {
+        return isolatedLowerStaccato(gray, width, height, head, gap, .92f, 1.20f);
+    }
+
+    private static boolean isolatedLowerStaccato(
+            byte[] gray, int width, int height, Component head, float gap, float near, float far) {
+        return isolatedLowerStaccato(gray, width, height, head, gap, near, far, .78);
+    }
+
+    private static boolean isolatedLowerStaccato(
+            byte[] gray,
+            int width,
+            int height,
+            Component head,
+            float gap,
+            float near,
+            float far,
+            double coreFill) {
         int left = Math.round(head.centerX - gap * .14f);
         int right = Math.round(head.centerX + gap * .18f);
-        int top = Math.round(head.centerY + gap * .92f);
-        int bottom = Math.round(head.centerY + gap * 1.20f);
+        int top = Math.round(head.centerY + gap * near);
+        int bottom = Math.round(head.centerY + gap * far);
         int core = Math.max(1, Math.round(gap * .095f));
         int ring = Math.max(core + 2, Math.round(gap * .33f));
         if (left < ring || top < ring || right + ring >= width || bottom + ring >= height)
@@ -23571,7 +24196,7 @@ final class OmrScoreInterpreter {
         for (int y = top; y <= bottom; y++) {
             for (int x = left; x <= right; x++) {
                 if (grayInk(gray, width, x - core, x + core, y - core, y + core, 105)
-                        < Math.ceil((2 * core + 1) * (2 * core + 1) * .78)) continue;
+                        < Math.ceil((2 * core + 1) * (2 * core + 1) * coreFill)) continue;
                 if (grayInk(gray, width, x - ring, x + ring, y - ring, y - ring, 155) != 0
                         || grayInk(gray, width, x - ring, x + ring, y + ring, y + ring, 155) != 0
                         || grayInk(gray, width, x - ring, x - ring, y - ring, y + ring, 155) != 0

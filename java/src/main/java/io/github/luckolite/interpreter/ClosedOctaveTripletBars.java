@@ -40,12 +40,30 @@ final class ClosedOctaveTripletBars {
                     || meter.denominator() != 4
                     || hasRest.get(m)
                     || owners.size() != 24
-                    || measures.get(m).cadenceQuarterBeats() != 0
-                    || !ownsBar(notes, owners, measures, m, gray, width, height)) continue;
+                    || measures.get(m).cadenceQuarterBeats() != 0) continue;
+            if (ownsBar(notes, owners, measures, m, gray, width, height)) {
+                if (result == null) result = new ArrayList<>(notes);
+                for (int owner : owners) {
+                    var note = notes.get(owner);
+                    if (note.tupletDivisor() != 3) result.set(owner, note.withTupletRatio(3, 2));
+                }
+                continue;
+            }
+            var order =
+                    owners.stream()
+                            .sorted(
+                                    Comparator.comparingDouble(
+                                            i -> notes.get(i).positionInMeasure()))
+                            .toList();
+            var directions =
+                    directionsForClosedRails(notes, order, measures.get(m), gray, width, height);
+            if (directions == null) continue;
             if (result == null) result = new ArrayList<>(notes);
-            for (int owner : owners) {
-                var note = notes.get(owner);
-                if (note.tupletDivisor() != 3) result.set(owner, note.withTupletRatio(3, 2));
+            for (int i = 0; i < order.size(); i++) {
+                var note = notes.get(order.get(i));
+                if (note.beamCount() != 1) note = ClosingTripletRhythm.singleBeam(note);
+                if (note.stemDirection() == 0) note = note.withStemDirection(directions[i / 2]);
+                result.set(order.get(i), note.withTupletRatio(3, 2));
             }
         }
         return result == null ? notes : List.copyOf(result);
@@ -171,6 +189,181 @@ final class ClosedOctaveTripletBars {
                                         gray, width, height, bar, previous));
     }
 
+    private record Dyad(
+            ScoreNoteEvent upper,
+            ScoreNoteEvent lower,
+            float upperX,
+            float upperY,
+            float lowerX,
+            float lowerY) {
+        float center() {
+            return (upperX + lowerX) * .5f;
+        }
+    }
+
+    private static int[] directionsForClosedRails(
+            List<ScoreNoteEvent> notes,
+            List<Integer> order,
+            MeasureRegion bar,
+            byte[] gray,
+            int w,
+            int h) {
+        float left = bar.left() * w, span = (bar.right() - bar.left()) * w;
+        float gap = (bar.bottom() - bar.top()) * h / 8.2f;
+        if (!Float.isFinite(left + span + gap)
+                || gap < 10
+                || gap > 25
+                || span < gap * 30
+                || span > gap * 40) return null;
+        var heads = order.stream().map(notes::get).toList();
+        int seeds = seededDyads(heads);
+        if (seeds != 0 && !oneSeededTriplet(seeds)) return null;
+        if (!WrappedMeasureBoundaries.confirmsClosed(
+                gray,
+                w,
+                h,
+                bar,
+                octaveCenter(heads, 0, left, span),
+                octaveCenter(heads, 22, left, span))) return null;
+        var pairs = new Dyad[12];
+        var shafts = new PrintedBeamShafts.Shaft[12];
+        var incomplete = new PrintedBeamShafts.Shaft[12];
+        var budget = new PrintedBeamShafts.Budget(280_000);
+        int clef = heads.get(0).clefBottomDiatonic();
+        if (clef == ScoreNoteEvent.CLEF_UNKNOWN) return null;
+        for (int i = 0; i < pairs.length; i++) {
+            var a = heads.get(i * 2);
+            var b = heads.get(i * 2 + 1);
+            var upper = a.pageY() < b.pageY() ? a : b;
+            var lower = upper == a ? b : a;
+            float x0 = left + span * upper.positionInMeasure(), y0 = upper.pageY() * h;
+            float x1 = left + span * lower.positionInMeasure(), y1 = lower.pageY() * h;
+            if (!rhythmCandidate(upper, clef)
+                    || !rhythmCandidate(lower, clef)
+                    || upper.staffStep() - lower.staffStep() != 7
+                    || upper.tupletDivisor() != lower.tupletDivisor()
+                    || Math.abs(x0 - x1) > gap * .18f
+                    || y1 - y0 < gap * 3.15f
+                    || y1 - y0 > gap * 3.9f) return null;
+            var p = new Dyad(upper, lower, x0, y0, x1, y1);
+            pairs[i] = p;
+            if (i > 0) {
+                float dx = p.center() - pairs[i - 1].center();
+                if (dx < gap * 1.7f || dx > gap * 4.1f) return null;
+            }
+            var u = PrintedBeamShafts.at(gray, w, h, x0, y0, gap, budget);
+            var v = PrintedBeamShafts.at(gray, w, h, x1, y1, gap, budget);
+            if (budget.refused() || u.size() > 1 || v.size() > 1 || u.isEmpty() && v.isEmpty())
+                return null;
+            if (u.size() == 1 && v.size() == 1) {
+                var first = u.get(0);
+                var second = v.get(0);
+                if (first.direction() != second.direction()
+                        || Math.max(first.left(), second.left())
+                                > Math.min(first.right(), second.right())
+                        || Math.abs(first.endY() - second.endY()) > gap * .15f) return null;
+                shafts[i] = first.direction() == 1 ? second : first;
+            } else {
+                if (i % 3 != 1) return null;
+                incomplete[i] = u.isEmpty() ? v.get(0) : u.get(0);
+            }
+        }
+        var directions = new int[12];
+        for (int i = 0; i < pairs.length; i++) {
+            var p = pairs[i];
+            if (shafts[i] == null) {
+                if (shafts[i - 1] == null || shafts[i + 1] == null) return null;
+                shafts[i] =
+                        middleShaft(
+                                gray, w, h, p, incomplete[i], shafts[i - 1], shafts[i + 1], gap);
+                if (shafts[i] == null) return null;
+            }
+            var stem = shafts[i];
+            directions[i] = -stem.direction();
+            if (p.upper.stemDirection() != 0 && p.upper.stemDirection() != directions[i]
+                    || p.lower.stemDirection() != 0 && p.lower.stemDirection() != directions[i]
+                    || i % 3 != 0 && directions[i - 1] != directions[i]) return null;
+            if (i > 0
+                    && !WrappedEighthTriplets.matchesRailBridge(
+                            gray, w, h, shafts[i - 1], stem, gap, i % 3 != 0)) return null;
+            float next = i + 1 < pairs.length ? pairs[i + 1].center() : left + span + gap * .5f;
+            if (competingDot(gray, w, h, p.upperX, p.upperY, next, gap, true)
+                    || competingDot(gray, w, h, p.lowerX, p.lowerY, next, gap, true)) return null;
+        }
+        return directions;
+    }
+
+    private static PrintedBeamShafts.Shaft middleShaft(
+            byte[] gray,
+            int w,
+            int h,
+            Dyad pair,
+            PrintedBeamShafts.Shaft shortStroke,
+            PrintedBeamShafts.Shaft prior,
+            PrintedBeamShafts.Shaft next,
+            float gap) {
+        int direction = prior.direction();
+        if (direction != next.direction() || direction != shortStroke.direction()) return null;
+        float a = (prior.left() + prior.right()) * .5f, b = (next.left() + next.right()) * .5f;
+        if (b <= a) return null;
+        float beamSide = direction == 1 ? pair.lowerY : pair.upperY;
+        float back = direction == 1 ? pair.upperY : pair.lowerY;
+        var columns = new ArrayList<PrintedBeamShafts.Column>();
+        for (int x = shortStroke.left(); x <= shortStroke.right(); x++) {
+            float delta0 = (pair.upperX - x) * direction, delta1 = (pair.lowerX - x) * direction;
+            if (delta0 < gap * .4f
+                    || delta1 < gap * .4f
+                    || delta0 > gap * .84f
+                    || delta1 > gap * .84f) continue;
+            int expected =
+                    Math.round(prior.endY() + (next.endY() - prior.endY()) * (x - a) / (b - a));
+            if ((expected - shortStroke.endY()) * direction < gap * .4f
+                    || (expected - shortStroke.endY()) * direction > gap * 1.9f) continue;
+            int start = Math.round(back + direction * gap * .2f);
+            int limit = expected + direction * Math.round(gap * .34f);
+            if (Math.min(start, limit) < 0 || Math.max(start, limit) >= h) continue;
+            int run = 0, gaps = 0, end = start;
+            boolean valid = true;
+            for (int y = start; (limit - y) * direction >= 0; y += direction) {
+                if ((gray[y * w + x] & 255) >= 165) {
+                    if (++run > Math.round(gap * .36f)) break;
+                    continue;
+                }
+                if (run > 0) {
+                    if (++gaps != 1 || (y - beamSide) * direction < gap * .7f) {
+                        valid = false;
+                        break;
+                    }
+                    run = 0;
+                }
+                end = y;
+            }
+            if (valid && gaps == 1 && Math.abs(end - expected) <= gap * .27f)
+                columns.add(new PrintedBeamShafts.Column(x, end));
+        }
+        if (columns.size() < 2
+                || columns.get(columns.size() - 1).x() - columns.get(0).x() != columns.size() - 1)
+            return null;
+        int end =
+                columns.stream()
+                        .mapToInt(PrintedBeamShafts.Column::endY)
+                        .reduce((x, y) -> direction == 1 ? Math.max(x, y) : Math.min(x, y))
+                        .orElseThrow();
+        return new PrintedBeamShafts.Shaft(
+                columns.get(0).x(),
+                columns.get(columns.size() - 1).x(),
+                shortStroke.startY(),
+                end,
+                direction,
+                columns);
+    }
+
+    private static boolean rhythmCandidate(ScoreNoteEvent note, int clef) {
+        return ordinaryFields(note, clef)
+                && note.beamCount() <= 2
+                && note.unbeamedDurationBeats() == (note.beamCount() == 0 ? 1 : 0);
+    }
+
     private static float octaveCenter(
             List<ScoreNoteEvent> owners, int first, float left, float span) {
         return ((left + span * owners.get(first).positionInMeasure())
@@ -272,13 +465,17 @@ final class ClosedOctaveTripletBars {
     }
 
     private static boolean ordinary(ScoreNoteEvent note, int clef) {
+        return note.stemDirection() == -1
+                && note.beamCount() == 1
+                && note.unbeamedDurationBeats() == 0
+                && ordinaryFields(note, clef);
+    }
+
+    private static boolean ordinaryFields(ScoreNoteEvent note, int clef) {
         return note.kind() == ScoreNoteEvent.Kind.PITCHED
                 && note.staffCount() == 1
                 && note.staffIndex() == 0
                 && note.visualSize() == ScoreNoteEvent.VisualSize.FULL
-                && note.stemDirection() == -1
-                && note.beamCount() == 1
-                && note.unbeamedDurationBeats() == 0
                 && note.augmentationDots() == 0
                 && !note.crossStaffBeam()
                 && note.leadingRestBeats() == 0

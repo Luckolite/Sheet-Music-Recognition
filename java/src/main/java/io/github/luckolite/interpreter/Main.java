@@ -156,6 +156,13 @@ public final class Main {
                 width,
                 height,
                 beats);
+        ClosedEarlyTripleDyads.apply(
+                score,
+                initialMeter,
+                decoderGray == null ? gray : decoderGray,
+                width,
+                height,
+                beats);
         IsolatedDottedHalfCadence.apply(score, labels, decoderGray == null ? gray : decoderGray,
                 width, height, beats, cadences);
         int[] keys = measureKeys(beats.length, initialKey, score.keyChanges());

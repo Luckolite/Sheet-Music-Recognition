@@ -335,7 +335,7 @@ final class ClosingTripletRhythm {
         return false;
     }
 
-    private static ScoreNoteEvent singleBeam(ScoreNoteEvent n) {
+    static ScoreNoteEvent singleBeam(ScoreNoteEvent n) {
         return new ScoreNoteEvent(
                 n.measureIndex(), n.positionInMeasure(), n.staffStep(), n.staffIndex(), n.staffCount(),
                 n.pageY(), n.tiedFromPrevious(), n.augmentationDots(), 1, n.writtenAccidental(), 0,

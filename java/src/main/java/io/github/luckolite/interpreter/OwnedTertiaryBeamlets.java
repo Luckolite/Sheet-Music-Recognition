@@ -760,6 +760,21 @@ final class OwnedTertiaryBeamlets {
         return Math.round(own.tip+(x-own.x)*slope)-own.direction*depth;
     }
 
+    static boolean ownsThirdRailAtUpStemEnd(
+            byte[] gray, int width, int height, int[] stem, int[] previous, float gap) {
+        var own = new Axis(stem[0], stem[1], -1);
+        if (hook(gray, width, height, own, gap, -1) || hook(gray, width, height, own, gap, 1))
+            return true;
+        int margin = Math.round(gap * .33f);
+        float slope = (stem[1] - previous[1]) / (float) (stem[0] - previous[0]);
+        for (int depth = Math.round(gap * 1.62f); depth <= Math.round(gap * 2.18f); depth++) {
+            if (rail(
+                    gray, width, height, own, slope, previous[0] + margin, stem[0] - margin, depth))
+                return true;
+        }
+        return false;
+    }
+
     private static boolean hook(byte[] gray,int w,int h,Axis own,float gap,int side) {
         int edge=Math.round(gap*.8f),near=Math.round(gap*.27f),radius=Math.round(gap*.36f);
         for (int d=Math.round(gap*1.65f); d<=Math.round(gap*2.24f); d++) {

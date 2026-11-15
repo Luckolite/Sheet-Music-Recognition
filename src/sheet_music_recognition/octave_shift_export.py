@@ -60,6 +60,7 @@ def apply(root, owned, measure_pages=None):
     for part in root.findall('part'):
         notes = list(part.findall('.//note'))
         parents = {child: parent for parent in part.iter() for child in parent}
+        measure_order = {bar: index for index, bar in enumerate(part.findall('measure'))}
         last = {n.findtext('voice', '1'): n for n in notes}
         active, used = {}, set()
         numbers = {}
@@ -86,11 +87,17 @@ def apply(root, owned, measure_pages=None):
             old = active.get(voice)
             if old is not None and (old[0] != shift or old[1] != staff):
                 previous = old[3]
-                previous_page = source_page(parents[previous])
-                current_page = source_page(parents[note])
-                # Voice slots can be reused after a page that contains no events in this voice.
-                disconnected = (previous_page is not None and current_page is not None
-                                and current_page > previous_page + 1)
+                prior_bar, next_bar = parents[previous], parents[note]
+                previous_page = source_page(prior_bar)
+                current_page = source_page(next_bar)
+                # A reused voice can omit measures across a page turn. Its stop
+                # belongs to the last owned note, before the unoccupied measures.
+                disconnected = (
+                    previous_page is not None and current_page is not None
+                    and current_page > previous_page
+                    and (current_page > previous_page + 1
+                         or measure_order[next_bar] > measure_order[prior_bar] + 1)
+                )
                 direction(previous if disconnected else note, old, True, after=disconnected)
                 used.remove(old[2])
                 del active[voice]

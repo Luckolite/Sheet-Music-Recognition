@@ -85,6 +85,25 @@ public class ClosedOctaveTripletBarsTest {
         assertSame(notes, infer(4));
     }
 
+    @Test
+    public void provesFourUnseededTripletsWithMixedShaftDirections() {
+        fill(68, 215, 26, 199, 255);
+        for (int row = 80; row <= 144; row += 16) fill(68, 215, row, row + 1, 0);
+        for (int i = 0; i < notes.size(); i++) notes.set(i, notes.get(i).withTupletRatio(1, 1));
+        for (int slot = 0; slot < 3; slot++) {
+            int x = 90 + slot * 48, upper = 64 + slot * 8, lower = upper + 56;
+            fill(x - 7, x + 10, upper - 4, upper + 3, 0);
+            fill(x - 7, x + 10, lower - 4, lower + 3, 0);
+            fill(x + 9, x + 11, 34, lower, 0);
+            notes.set(slot * 2, notes.get(slot * 2).withStemDirection(1));
+            notes.set(slot * 2 + 1, notes.get(slot * 2 + 1).withStemDirection(1));
+        }
+        fill(100, 197, 29, 35, 0);
+        assertEquals(notes.stream().map(n -> n.withTupletRatio(3, 2)).toList(), infer(4));
+        fill(116, 133, 29, 35, 255);
+        assertSame(notes, infer(4));
+    }
+
     private List<ScoreNoteEvent> infer(int numerator) {
         return ClosedOctaveTripletBars.apply(
                 notes,
