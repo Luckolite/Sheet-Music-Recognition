@@ -359,9 +359,57 @@ final class OwnedTertiaryBeamlets {
             float peerY,
             float gap,
             boolean terminal) {
-        float reach = terminal ? 3.65f : 3.4f;
-        if (gap < 10 || gap > 27 || ownerY + gap * 2.35f > y || ownerY + gap * reach < y)
-            return false;
+        return ownsBackwardHookAlias(
+                gray,
+                w,
+                h,
+                x,
+                y,
+                ownerX,
+                ownerY,
+                peerX,
+                peerY,
+                gap,
+                2.35f,
+                terminal ? 3.65f : 3.4f,
+                .48f,
+                terminal ? .72f : .66f);
+    }
+
+    static boolean ownsCompactBackwardHookAlias(
+            byte[] gray,
+            int w,
+            int h,
+            float x,
+            float y,
+            float ownerX,
+            float ownerY,
+            float peerX,
+            float peerY,
+            float gap) {
+        return ownsBackwardHookAlias(
+                gray, w, h, x, y, ownerX, ownerY, peerX, peerY, gap, 2.23f, 3.4f, .39f, .82f);
+    }
+
+    private static boolean ownsBackwardHookAlias(
+            byte[] gray,
+            int w,
+            int h,
+            float x,
+            float y,
+            float ownerX,
+            float ownerY,
+            float peerX,
+            float peerY,
+            float gap,
+            float minimumDepth,
+            float maximumDepth,
+            float minAdvance,
+            float maxThickness) {
+        if (gap < 10
+                || gap > 27
+                || ownerY + gap * minimumDepth > y
+                || ownerY + gap * maximumDepth < y) return false;
         var budget = new PrintedBeamShafts.Budget(150_000);
         var own = PrintedBeamShafts.at(gray, w, h, ownerX, ownerY, gap, budget);
         var peer = PrintedBeamShafts.at(gray, w, h, peerX, peerY, gap, budget);
@@ -378,12 +426,11 @@ final class OwnedTertiaryBeamlets {
         for (var column : shaft.columns()) {
             if (column.x() < reversed.left()
                     || column.x() > reversed.right()
-                    || column.x() - x < gap * .48f
+                    || column.x() - x < gap * minAdvance
                     || column.x() - x > gap * .85f
                     || column.endY() - y < gap * 1.43f
                     || column.endY() - y > gap * 1.97f) continue;
-            if (!isThinAttachedBand(gray, w, h, x, y, column.x(), gap, terminal ? .72f : .66f))
-                continue;
+            if (!isThinAttachedBand(gray, w, h, x, y, column.x(), gap, maxThickness)) continue;
             var owner = new Axis(column.x(), column.endY(), 1);
             if (proveSide(gray, w, h, List.of(owner), downwardAxes(previous), gap, -1)) return true;
         }
@@ -407,6 +454,97 @@ final class OwnedTertiaryBeamlets {
                         gap,
                         -1,
                         true);
+    }
+
+    /** Repairs a bounded third hook when staff ink obscures the seam between the two rails. */
+    static boolean provesBackwardHookOnJoinedRails(
+            byte[] gray,
+            int width,
+            int height,
+            float x,
+            float y,
+            float peerX,
+            float peerY,
+            float gap) {
+        if (provesBackwardHook(gray, width, height, x, y, peerX, peerY, gap)) return true;
+        var budget = new PrintedBeamShafts.Budget(100_000);
+        var owners = PrintedBeamShafts.at(gray, width, height, x, y, gap, budget);
+        var peers = PrintedBeamShafts.at(gray, width, height, peerX, peerY, gap, budget);
+        if (owners.size() != 1 || peers.size() != 1 || budget.refused()) return false;
+        for (var owner : downwardAxes(owners.get(0))) {
+            if (!hook(gray, width, height, owner, gap, -1)) continue;
+            for (var peer : downwardAxes(peers.get(0))) {
+                int distance = owner.x - peer.x;
+                if (distance < gap * 1.7f || distance > gap * 4.2f) continue;
+                float slope = (owner.tip - peer.tip) / (float) distance;
+                if (Math.abs(slope) > .4f) continue;
+                int margin = Math.max(2, Math.round(gap * .28f));
+                if (rail(
+                                gray,
+                                width,
+                                height,
+                                owner,
+                                slope,
+                                peer.x + margin,
+                                owner.x - margin,
+                                Math.round(gap * .29f))
+                        && rail(
+                                gray,
+                                width,
+                                height,
+                                owner,
+                                slope,
+                                peer.x + margin,
+                                owner.x - margin,
+                                Math.round(gap * 1.02f))) return true;
+            }
+        }
+        return false;
+    }
+
+    /** A narrow, bounded third hook can touch the adjacent rail in tightly engraved runs. */
+    static boolean provesJoinedBackwardHook(
+            byte[] gray, int w, int h, float x, float y, float peerX, float peerY, float gap) {
+        var budget = new PrintedBeamShafts.Budget(100_000);
+        var own = PrintedBeamShafts.at(gray, w, h, x, y, gap, budget);
+        var peer = PrintedBeamShafts.at(gray, w, h, peerX, peerY, gap, budget);
+        if (own.size() != 1 || peer.size() != 1 || budget.refused()) return false;
+        for (var a : downwardAxes(own.get(0)))
+            for (var b : downwardAxes(peer.get(0))) {
+                int span = a.x - b.x;
+                if (span < gap * 1.7f || span > gap * 4.2f) continue;
+                float slope = (a.tip - b.tip) / (float) span;
+                if (Math.abs(slope) <= .22f
+                        && doubleRails(gray, w, h, a, b, slope, gap, false)
+                        && boundedJoinedHook(gray, w, h, a, gap)) return true;
+            }
+        return false;
+    }
+
+    private static boolean boundedJoinedHook(byte[] gray, int w, int h, Axis owner, float gap) {
+        int near = Math.round(gap * .28f), limit = Math.round(gap * .97f);
+        for (int depth = Math.round(gap * 1.72f); depth <= Math.round(gap * 2.08f); depth++) {
+            int shaftRow = owner.tip - depth;
+            int dark = 0, clearance = 0;
+            boolean connected = true;
+            for (int dx = 1; dx < near; dx++)
+                if (vertical(gray, w, h, owner, owner.x - dx, depth, 2) < 5) {
+                    connected = false;
+                    break;
+                }
+            if (!connected) continue;
+            for (int dx = near; dx <= limit; dx++) {
+                int x = owner.x - dx;
+                if (vertical(gray, w, h, owner, x, depth, 2) < 5) break;
+                dark++;
+                if (!ink(gray, w, h, x, shaftRow - Math.round(gap * .24f))
+                        && !ink(gray, w, h, x, shaftRow - Math.round(gap * .31f))) clearance++;
+            }
+            if (dark < Math.round(gap * .43f) || clearance * 2 < dark) continue;
+            int beyond = owner.x - near - dark - Math.round(gap * .20f);
+            if (vertical(gray, w, h, owner, beyond, depth, 2) <= 1) return true;
+        }
+        return false;
     }
 
     private static List<Axis> downwardAxes(PrintedBeamShafts.Shaft shaft) {

@@ -65,9 +65,32 @@ final class BeamedFlatBarline {
             rules =
                     PrintedDirectionStaff.printedRules(
                             gray, width, height, column - gap * 2.05f, hint, gap);
-        if (rules == null) return false;
-        int bottom = Math.round(rules[0]), top = Math.round(rules[0] - 4 * rules[1]);
-        return owns(labels, gray, width, height, column, top, bottom, rules[1]);
+        if (rules != null
+                && owns(
+                        labels,
+                        gray,
+                        width,
+                        height,
+                        column,
+                        Math.round(rules[0] - 4 * rules[1]),
+                        Math.round(rules[0]),
+                        rules[1])) return true;
+        // Ledger-supported chords can cover the nearest five-rule windows.
+        if (rules == null) {
+            float sample = column + gap * 6f;
+            if (sample < right.right() * width - gap)
+                rules = PrintedDirectionStaff.printedRules(gray, width, height, sample, hint, gap);
+        }
+        return rules != null
+                && ownsDownstemPair(
+                        labels,
+                        gray,
+                        width,
+                        height,
+                        column,
+                        Math.round(rules[0] - 4 * rules[1]),
+                        Math.round(rules[0]),
+                        rules[1]);
     }
 
     private static boolean hasAccidentalSpine(
@@ -113,6 +136,45 @@ final class BeamedFlatBarline {
                 && flatAt(gray, width, height, column, rightHead.upper(), gap);
     }
 
+    private static boolean ownsDownstemPair(
+            byte[] labels,
+            byte[] gray,
+            int width,
+            int height,
+            int column,
+            int topRule,
+            int bottomRule,
+            float gap) {
+        int top = topRule - Math.round(gap * 4), bottom = bottomRule + Math.round(gap * .6f);
+        int reach = Math.round(gap * 4.2f);
+        if (column - reach < 0
+                || column + reach >= width
+                || top < 0
+                || bottom >= height
+                || !hasAccidentalSpine(labels, width, height, column, topRule, bottomRule, gap)
+                || solidDivider(gray, width, column, topRule, gap)) return false;
+        var prior = nearestDyad(labels, width, column, top, bottom, gap, -1, 3.85f);
+        var next = nearestDyad(labels, width, column, top, bottom, gap, 1, 3.85f);
+        if (prior == null || next == null) return false;
+        var left = sharedDownstem(gray, width, height, prior, gap);
+        var right = sharedDownstem(gray, width, height, next, gap);
+        return left != null
+                && right != null
+                && continuesAcross(gray, width, height, column, left, right, gap, -1);
+    }
+
+    private static PairedTremoloInk.Stem sharedDownstem(
+            byte[] gray, int width, int height, Dyad chord, float gap) {
+        var lower = PairedTremoloInk.stem(gray, width, height, chord.x(), chord.lower(), gap, -1);
+        var upper = PairedTremoloInk.stem(gray, width, height, chord.x(), chord.upper(), gap, -1);
+        return lower != null
+                        && upper != null
+                        && Math.abs(lower.x() - upper.x()) <= gap * .15f
+                        && Math.abs(lower.endY() - upper.endY()) <= gap * .14f
+                ? lower
+                : null;
+    }
+
     private static boolean solidDivider(byte[] gray, int width, int column, int top, float gap) {
         int radius = Math.max(1, Math.round(gap * .18f));
         for (int x = column - radius; x <= column + radius; x++) {
@@ -133,6 +195,18 @@ final class BeamedFlatBarline {
 
     private static Dyad nearestDyad(
             byte[] labels, int width, int column, int top, int bottom, float gap, int side) {
+        return nearestDyad(labels, width, column, top, bottom, gap, side, 3.25f);
+    }
+
+    private static Dyad nearestDyad(
+            byte[] labels,
+            int width,
+            int column,
+            int top,
+            int bottom,
+            float gap,
+            int side,
+            float maximumSpan) {
         int first = -1, last = -1, upper = bottom, lower = top;
         for (int distance = Math.round(gap * .65f);
                 distance <= Math.round(gap * 4.2f);
@@ -158,7 +232,7 @@ final class BeamedFlatBarline {
         if (span < gap * .54f
                 || span > gap * 1.65f
                 || vertical < gap * 1.65f
-                || vertical > gap * 3.25f) return null;
+                || vertical > gap * maximumSpan) return null;
         return new Dyad((first + last) * .5f, upper + gap * .55f, lower - gap * .55f);
     }
 
@@ -170,6 +244,18 @@ final class BeamedFlatBarline {
             PairedTremoloInk.Stem left,
             PairedTremoloInk.Stem right,
             float gap) {
+        return continuesAcross(gray, width, height, column, left, right, gap, 1);
+    }
+
+    private static boolean continuesAcross(
+            byte[] gray,
+            int width,
+            int height,
+            int column,
+            PairedTremoloInk.Stem left,
+            PairedTremoloInk.Stem right,
+            float gap,
+            int direction) {
         int inset = Math.round(gap * .28f);
         int start = left.x() + inset, end = right.x() - inset;
         if (column - start < gap * .52f || end - column < gap * .52f) return false;
@@ -182,19 +268,30 @@ final class BeamedFlatBarline {
                     spacing++) {
                 int first = 0, second = 0, seam = 0;
                 for (int x = start; x <= end; x++) {
-                    int axis = Math.round(left.endY() + (x - left.x()) * slope) + primary;
-                    if (axis - radius < 0 || axis + spacing + radius >= height) return false;
+                    int axis =
+                            Math.round(left.endY() + (x - left.x()) * slope) + direction * primary;
+                    int companion = axis + direction * spacing;
+                    if (Math.min(axis, companion) - radius < 0
+                            || Math.max(axis, companion) + radius >= height) return false;
                     boolean outer = rail(gray, width, x, axis, radius);
-                    boolean inner = rail(gray, width, x, axis + spacing, radius);
+                    boolean inner = rail(gray, width, x, companion, radius);
                     if (x == column && (!outer || !inner)) break;
                     if (outer) first++;
                     if (inner) second++;
-                    if ((gray[(axis + spacing / 2) * width + x] & 255) >= 185) seam++;
+                    if ((gray[(axis + direction * (spacing / 2)) * width + x] & 255) >= 185) seam++;
                 }
                 if (first >= samples * .94f && second >= samples * .94f && seam >= samples * .28f)
                     return true;
             }
         return false;
+    }
+
+    static boolean closedDownstemPair(
+            byte[] gray, int width, int height, int[] first, int[] last, float gap) {
+        if (first[2] != 1 || last[2] != 1 || last[0] <= first[0]) return false;
+        var left = new PairedTremoloInk.Stem(first[0], 0, first[1]);
+        var right = new PairedTremoloInk.Stem(last[0], 0, last[1]);
+        return continuesAcross(gray, width, height, (first[0] + last[0]) / 2, left, right, gap, -1);
     }
 
     private static boolean rail(byte[] gray, int width, int x, int y, int radius) {

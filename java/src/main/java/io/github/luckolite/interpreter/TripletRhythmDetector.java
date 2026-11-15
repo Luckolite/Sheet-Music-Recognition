@@ -1055,7 +1055,24 @@ final class TripletRhythmDetector {
                     }
                 }
                 if (first.beamCount() > 0
-                        && !bracket
+                        && (!bracket
+                                || first.staffCount() == 1
+                                        && first.beamCount() == 2
+                                        && first.stemDirection() == -1
+                                        && a.indices().size() == 1
+                                        && b.indices().size() == 1
+                                        && c.indices().size() == 1
+                                        && staffRuleBracket(
+                                                gray,
+                                                width,
+                                                height,
+                                                region,
+                                                numeral,
+                                                x1,
+                                                x2,
+                                                x3,
+                                                gap,
+                                                printedStaffs))
                         && (SeparateBeamGroups.between(
                                         gray,
                                         width,
@@ -4745,6 +4762,69 @@ final class TripletRhythmDetector {
     private static boolean hasLobePocket(byte[] gray, int width, int left, int y, int w) {
         return lobePocket(gray, y * width + left, Math.round(w * .25f), w - 1,
                 Math.max(2, Math.round(w * .22f)), w * .55f) == 2;
+    }
+
+    private static boolean staffRuleBracket(
+            byte[] gray,
+            int width,
+            int height,
+            MeasureRegion region,
+            Glyph numeral,
+            float first,
+            float middle,
+            float last,
+            float gap,
+            PrintedStaffs printedStaffs) {
+        // A digit centered on a head can borrow two segments of the same printed staff as
+        // bracket arms. Keep actual arms that remain after accounting for the five staff rules.
+        float center = (numeral.left() + numeral.right()) * .5f;
+        if (gap < 10 || gap > 26 || Math.abs(center - middle) > .35f * gap) return false;
+        float floor = region.bottom() * height - 2.1f * gap;
+        if (numeral.bottom() < floor - .45f * gap || numeral.top() > floor + .25f * gap)
+            return false;
+        int left = Math.round(first - 1.35f * gap), right = Math.round(last + 1.35f * gap);
+        if (left < region.left() * width || right > region.right() * width) return false;
+        int[] rules = null;
+        for (var staff : printedStaffs.detect(gray, width, height)) {
+            if (Math.abs(staff.bottom() - floor) > .45f * gap
+                    || Math.abs(staff.gap() - gap) > .22f * gap) continue;
+            if (rules != null) return false;
+            rules = staff.rows();
+        }
+        if (rules == null) return false;
+        int top = Math.max(0, numeral.top() - Math.round(gap * .25f));
+        int bottom = Math.min(height - 1, numeral.bottom() + Math.round(gap * .25f));
+        return staffRuleArm(gray, width, rules, left, numeral.left() - 2, top, bottom, gap)
+                && staffRuleArm(gray, width, rules, numeral.right() + 2, right, top, bottom, gap);
+    }
+
+    private static boolean staffRuleArm(
+            byte[] gray,
+            int width,
+            int[] rules,
+            int left,
+            int right,
+            int top,
+            int bottom,
+            float gap) {
+        int columns = 1 + right - left;
+        if (columns < 2 * gap) return false;
+        int staffColumns = 0, independentColumns = 0;
+        for (int x = left; x <= right; x++) {
+            boolean ruled = false, independent = false;
+            for (int y = top; y <= bottom; y++) {
+                if (!dark(gray, width, x, y)) continue;
+                boolean onRule = false;
+                for (int row : rules) {
+                    if (Math.abs(row - y) <= .18f * gap) onRule = true;
+                }
+                if (onRule) ruled = true;
+                else independent = true;
+            }
+            if (ruled) staffColumns++;
+            if (independent) independentColumns++;
+        }
+        return staffColumns >= .90f * columns && independentColumns <= .22f * columns;
     }
 
     private static boolean bracketArm(

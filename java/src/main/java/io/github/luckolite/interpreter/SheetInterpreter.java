@@ -713,6 +713,9 @@ public final class SheetInterpreter {
                 finalInterpretation, annotationGray, width, height);
         finalInterpretation = OwnedTertiaryBeamlets.applyMonophonic(
                 finalInterpretation, gray, width, height);
+        finalInterpretation =
+                ClosedDottedSixteenths.applyClosedMonophonicHooks(
+                        finalInterpretation, inheritedMeter, gray, width, height);
         if (physicalPage >= 0)
             finalInterpretation =
                     PrintedBeamSource.apply(
@@ -734,6 +737,9 @@ public final class SheetInterpreter {
                 TerminalDottedCadenceHooks.apply(finalInterpretation, null, gray, width, height);
         finalInterpretation = ClosedSixteenthDyads.apply(finalInterpretation, gray, width, height);
         finalInterpretation = ClosedDottedSixteenths.apply(finalInterpretation, gray, width, height);
+        finalInterpretation =
+                ClosedDottedThirds.apply(
+                        finalInterpretation, inheritedMeter, labels, gray, width, height);
         finalInterpretation =
                 ClosedDottedSixteenths.applyClosedOctaveFragments(
                         finalInterpretation, inheritedMeter, gray, width, height, physicalPage);

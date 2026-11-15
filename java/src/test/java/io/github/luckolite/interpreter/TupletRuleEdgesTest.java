@@ -76,6 +76,62 @@ public class TupletRuleEdgesTest {
         return w.pixels()[(y - w.top()) * w.width() + x - w.left()] & 255;
     }
 
+    private static boolean staffRuleBracket(byte[] gray) throws Exception {
+        Class<?> glyph = Class.forName(TripletRhythmDetector.class.getName() + "$Glyph");
+        var glyphConstructor =
+                glyph.getDeclaredConstructor(int.class, int.class, int.class, int.class);
+        glyphConstructor.setAccessible(true);
+        Class<?> staffs = Class.forName(TripletRhythmDetector.class.getName() + "$PrintedStaffs");
+        var staffConstructor = staffs.getDeclaredConstructor();
+        staffConstructor.setAccessible(true);
+        var proof =
+                TripletRhythmDetector.class.getDeclaredMethod(
+                        "staffRuleBracket",
+                        byte[].class,
+                        int.class,
+                        int.class,
+                        MeasureRegion.class,
+                        glyph,
+                        float.class,
+                        float.class,
+                        float.class,
+                        float.class,
+                        staffs);
+        proof.setAccessible(true);
+        return (boolean)
+                proof.invoke(
+                        null,
+                        gray,
+                        W,
+                        H,
+                        new MeasureRegion(0, 1, .3f, (166 + 2.1f * 16) / H),
+                        glyphConstructor.newInstance(119, 145, 130, 166),
+                        98f,
+                        124.5f,
+                        161f,
+                        16f,
+                        staffConstructor.newInstance());
+    }
+
+    @Test
+    public void fivePhysicalStaffRulesCanExplainBothApparentBracketArms() throws Exception {
+        var staff = image(false, 100);
+        for (int row = 102; row <= 166; row += 16) box(staff, 5, row, W - 6, row, 100);
+        assertTrue(staffRuleBracket(staff));
+
+        var realBracket = staff.clone();
+        box(realBracket, 91, 157, 113, 158, 100);
+        box(realBracket, 138, 157, 165, 158, 100);
+        box(realBracket, 91, 153, 92, 157, 100);
+        box(realBracket, 164, 153, 165, 157, 100);
+        assertFalse(staffRuleBracket(realBracket));
+
+        var twoUnownedRules = image(false, 100);
+        box(twoUnownedRules, 5, 150, W - 6, 150, 100);
+        box(twoUnownedRules, 5, 166, W - 6, 166, 100);
+        assertFalse(staffRuleBracket(twoUnownedRules));
+    }
+
     @Test
     public void adjacentRuleEdgesCannotRetainTheFullCrossbar() {
         var g = image(false, 100);

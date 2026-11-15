@@ -54,8 +54,9 @@ def plan(notes):
     return result
 
 
-def apply(root, owned):
+def apply(root, owned, measure_pages=None):
     import xml.etree.ElementTree as ET
+    source_page = (measure_pages or {}).get
     for part in root.findall('part'):
         notes = list(part.findall('.//note'))
         parents = {child: parent for parent in part.iter() for child in parent}
@@ -68,7 +69,7 @@ def apply(root, owned):
         if len(numbers) > 16:
             raise ValueError('Too many octave direction voices')
         def direction(note, entry, stop, after=False):
-            shift, staff, number = entry
+            shift, staff, number, _ = entry
             d = ET.Element('direction', placement='above' if shift > 0 else 'below')
             t = ET.SubElement(d, 'direction-type')
             ET.SubElement(t, 'octave-shift', type='stop' if stop else 'down' if shift > 0 else 'up', size=str(7*abs(shift)+1), number=str(number))
@@ -84,11 +85,22 @@ def apply(root, owned):
                 raise ValueError('Invalid retained octave shift')
             old = active.get(voice)
             if old is not None and (old[0] != shift or old[1] != staff):
-                direction(note, old, True); used.remove(old[2]); del active[voice]
-            if shift and voice not in active:
+                previous = old[3]
+                previous_page = source_page(parents[previous])
+                current_page = source_page(parents[note])
+                # Voice slots can be reused after a page that contains no events in this voice.
+                disconnected = (previous_page is not None and current_page is not None
+                                and current_page > previous_page + 1)
+                direction(previous if disconnected else note, old, True, after=disconnected)
+                used.remove(old[2])
+                del active[voice]
+            if shift:
+                continuing = voice in active
                 number = numbers[voice]
-                active[voice] = shift, staff, number
-                direction(note, active[voice], False); used.add(number)
+                active[voice] = shift, staff, number, note
+                if not continuing:
+                    direction(note, active[voice], False)
+                    used.add(number)
             if last[voice] is note and voice in active:
                 old = active.pop(voice)
                 direction(note, old, True, after=True); used.remove(old[2])

@@ -480,6 +480,7 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
     printed_beams = []
     continuations = set()
     octave_owned = {}
+    octave_measure_pages = {}
     offset = 0
     current_meter, current_key = meter, key_fifths
     for page_index, page in enumerate(document['pages']):
@@ -531,6 +532,7 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
                 change = meters[index]
                 current_meter = (change['numerator'], change['denominator'])
             bar = dict(start=offset+local_start, length=length, meter=current_meter, key=current_key,
+                       sourcePageIndex=page_index,
                        resetTempo=index == 0 and page_index in tempo_restarts,
                        tempos=[dict(c, _sourceTempoOnset=source_tempo_clock.onset(page, c))
                                for c in tempos_by_measure.get(index, ())])
@@ -1026,6 +1028,7 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
         present = []
         for index, bar in enumerate(bars):
             measure = element(part, 'measure', number=first_number+index)
+            octave_measure_pages[measure] = bar['sourcePageIndex']
             attributes = element(measure, 'attributes')
             element(attributes, 'divisions', DIVISIONS)
             element(element(attributes, 'key'), 'fifths', bar['key'])
@@ -1179,7 +1182,7 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
                 element(element(measure, 'barline', location='right'), 'bar-style', bar['rightBarline'])
     beam_export.write(printed_beams, rendered_beam_columns)
     from .octave_shift_export import apply as octave_apply
-    octave_apply(root, octave_owned)
+    octave_apply(root, octave_owned, octave_measure_pages)
     first_score = document['pages'][0].get('score', {})
     known_meter = 'initialMeter' in document or any(
         c.get('measureIndex') == 0 for c in first_score.get('meterChanges', []))

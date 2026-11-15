@@ -47,9 +47,25 @@ final class PrintedDottedTripletBar {
                 meter=score.meterChanges().get(nextMeter++);
             final int index=barIndex;
             var heads=perBar.get(barIndex);
-            if (meter==null || meter.numerator()!=6 || meter.denominator()!=4 || heads.size()!=20
-                    || score.rests().stream().anyMatch(r -> r.measureIndex()==index)
-                    || heads.stream().anyMatch(h -> !ordinary(h.note))) continue;
+            if (meter == null || meter.denominator() != 4) continue;
+            boolean mixed = meter.numerator() == 4 && heads.size() == 16;
+            if (mixed || meter.numerator() == 6 && heads.size() == 20) {
+                if (score.rests().stream().anyMatch(r -> r.measureIndex() == index)) continue;
+            } else continue;
+            if (mixed) {
+                var kept = qualifiedMixedRun(raster, score.measures().get(barIndex), heads);
+                if (kept == null) continue;
+                for (var head : heads) remove[head.owner] = true;
+                for (int slot = 0; slot < kept.size(); slot++) {
+                    var head = kept.get(slot);
+                    remove[head.owner] = false;
+                    if (slot < 6)
+                        rewrite[head.owner] = withTriplet(head.note, slot % 3 == 0 ? 1 : 0);
+                }
+                changed = true;
+                continue;
+            }
+            if (heads.stream().anyMatch(h -> !ordinary(h.note))) continue;
             heads.sort(Comparator.comparingDouble(Head::x));
             var retained=qualified(raster,score.measures().get(barIndex),heads);
             if (retained==null) continue;
@@ -73,12 +89,24 @@ final class PrintedDottedTripletBar {
     }
 
     private static boolean ordinary(ScoreNoteEvent n) {
-        return n.kind()==ScoreNoteEvent.Kind.PITCHED && n.staffIndex()==0 && n.staffCount()==1
-                && n.visualSize()==ScoreNoteEvent.VisualSize.FULL && n.harmonicSemitones()==0
-                && n.openStringTouch()==null && !n.crossStaffBeam() && n.tupletDivisor()==1
-                && n.leadingRestBeats()==0 && n.followingRestBeats()==0 && !n.tiedFromPrevious()
-                && n.boundaryTies()==0 && (n.articulations()&NoteOrnament.GRACE)==0
-                && Math.abs(n.stemDirection())==1 && n.clefBottomDiatonic()!=ScoreNoteEvent.CLEF_UNKNOWN;
+        return ordinaryRhythm(n) && Math.abs(n.stemDirection()) == 1;
+    }
+
+    private static boolean ordinaryRhythm(ScoreNoteEvent n) {
+        return n.kind() == ScoreNoteEvent.Kind.PITCHED
+                && n.staffIndex() == 0
+                && n.staffCount() == 1
+                && n.visualSize() == ScoreNoteEvent.VisualSize.FULL
+                && n.harmonicSemitones() == 0
+                && n.openStringTouch() == null
+                && !n.crossStaffBeam()
+                && n.tupletDivisor() == 1
+                && n.leadingRestBeats() == 0
+                && n.followingRestBeats() == 0
+                && !n.tiedFromPrevious()
+                && n.boundaryTies() == 0
+                && (n.articulations() & NoteOrnament.GRACE) == 0
+                && n.clefBottomDiatonic() != ScoreNoteEvent.CLEF_UNKNOWN;
     }
 
     private static List<Head> qualified(Raster p, MeasureRegion bar, List<Head> candidates) {
@@ -116,6 +144,190 @@ final class PrintedDottedTripletBar {
             }
         }
         return result;
+    }
+
+    /** Two separated dotted triplets followed by four dotted-sixteenth and hook pairs. */
+    private static List<Head> qualifiedMixedRun(
+            Raster raster, MeasureRegion bar, List<Head> heads) {
+        if (bar.cadenceQuarterBeats() != 0
+                || heads.stream()
+                        .anyMatch(
+                                h ->
+                                        !ordinaryRhythm(h.note)
+                                                || h.note.unbeamedDurationBeats() != 0))
+            return null;
+        var opposite = heads.stream().filter(h -> h.note.stemDirection() == 1).toList();
+        var stemless = heads.stream().filter(h -> h.note.stemDirection() == 0).toList();
+        if (opposite.size() != 1 || stemless.size() != 1) return null;
+        var safe =
+                heads.stream()
+                        .filter(h -> h.note.stemDirection() == -1)
+                        .sorted(Comparator.comparingDouble(Head::x))
+                        .toList();
+        if (safe.size() != 14) return null;
+        float left = bar.left() * raster.width, right = bar.right() * raster.width;
+        float gap = (bar.bottom() - bar.top()) * raster.height / 8.2f;
+        if (gap < 10
+                || gap > 27
+                || right - left < gap * 32
+                || right - left > gap * 45
+                || safe.get(0).x - left < gap * 1.2f
+                || safe.get(0).x - left > gap * 3.2f
+                || right - safe.get(13).x < gap * .85f
+                || right - safe.get(13).x > gap * 2.4f) return null;
+        var samples = new ArrayList<float[]>();
+        for (int i = 0; i <= 12; i++) {
+            float x = left + (right - left) * i / 12;
+            var staff =
+                    PrintedDirectionStaff.printedRules(
+                            raster.ink,
+                            raster.width,
+                            raster.height,
+                            x,
+                            bar.bottom() * raster.height - 2.1f * gap,
+                            gap);
+            if (staff != null) samples.add(new float[] {x, staff[0], staff[1]});
+        }
+        if (samples.size() < 7) return null;
+        var track = StaffPitchTrack.fromVerifiedSamples(samples);
+        if (!barline(raster, right, track.at(right))) return null;
+        int clef = safe.get(0).note.clefBottomDiatonic();
+        for (int i = 0; i < safe.size(); i++) {
+            var h = safe.get(i);
+            int index = i < 6 ? i % 3 : (i - 6) % 2;
+            int beams = i < 6 ? (index == 1 ? 2 : 1) : (index == 0 ? 2 : 3);
+            if (h.note.beamCount() != beams
+                    || h.note.clefBottomDiatonic() != clef
+                    || h.note.augmentationDots() != (index == 0 ? 1 : 0)) return null;
+            float end = i + 1 < safe.size() ? safe.get(i + 1).x : right;
+            if (i + 1 < safe.size() && (end - h.x < gap * 1.55f || end - h.x > gap * 4.45f))
+                return null;
+            if (i < 6 && detachedDot(raster, h, end, gap) != (index == 0)) return null;
+            if (i >= 6 && index == 0 && !dot(raster, h, safe.get(i + 1), gap)) return null;
+        }
+        for (int i = 0; i < 6; i++) {
+            var a = safe.get(i);
+            var b = safe.get(i + 1);
+            if (i % 3 == 2) {
+                if (!SeparateBeamGroups.between(
+                        raster.ink, raster.width, raster.height, a.x, a.y, b.x, b.y, gap))
+                    return null;
+            } else if (!PrintedTupletBeamOwner.connectedAwayFromRules(
+                    raster.ink, raster.width, raster.height, a.x, a.y, b.x, b.y, gap, -1, track))
+                return null;
+        }
+        boolean oppositeAlias = false;
+        for (int i : new int[] {1, 4}) {
+            var a = safe.get(i);
+            var b = safe.get(i + 1);
+            if (opposite.get(0).x <= a.x || opposite.get(0).x >= b.x) continue;
+            var beam = bridge(raster, track, a, b, gap);
+            oppositeAlias = beam != null && reversedBeamTip(raster, opposite.get(0), b, beam);
+        }
+        if (!oppositeAlias) return null;
+
+        boolean ribbonAlias = false;
+        var lower = stemless.get(0);
+        if (lower.note.beamCount() != 3
+                || lower.note.augmentationDots() != 0
+                || lower.note.articulations() != 0
+                || PrintedStemDirection.detect(
+                                raster.ink, raster.width, raster.height, lower.x, lower.y, gap)
+                        != 0) return null;
+        for (int i = 6; i < safe.size(); i += 2) {
+            var a = safe.get(i);
+            var b = safe.get(i + 1);
+            if (!OwnedTertiaryBeamlets.provesBackwardHook(
+                    raster.ink, raster.width, raster.height, b.x, b.y, a.x, a.y, gap)) return null;
+            if (Math.abs(lower.x - a.x) < gap * .3f
+                    && lower.y - a.y > gap * 3.5f
+                    && ClosedDottedSixteenths.ownsDottedPairAlias(
+                            raster.ink,
+                            raster.width,
+                            raster.height,
+                            track,
+                            gap,
+                            a.x,
+                            a.y,
+                            b.x,
+                            b.y,
+                            lower.x,
+                            lower.y)) ribbonAlias = true;
+        }
+        if (!ribbonAlias) return null;
+
+        var trial = new ArrayList<ScoreNoteEvent>();
+        for (int i = 0; i < safe.size(); i++) {
+            var n = safe.get(i).note;
+            trial.add(i < 6 ? withTriplet(n, i % 3 == 0 ? 1 : 0) : n);
+        }
+        for (int i = 0; i < trial.size(); i++) {
+            var place = ScoreNoteTiming.writtenPlacement(trial.get(i), trial, 4f).orElse(null);
+            float start, duration;
+            if (i < 6) {
+                int slot = i % 3;
+                start = i / 3 + (slot == 0 ? 0 : slot == 1 ? .5f : 2f / 3f);
+                duration = slot == 0 ? .5f : slot == 1 ? 1f / 6f : 1f / 3f;
+            } else {
+                int slot = i - 6;
+                start = 2 + slot / 2 * .5f + (slot % 2 == 0 ? 0 : .375f);
+                duration = slot % 2 == 0 ? .375f : .125f;
+            }
+            if (place == null
+                    || Math.abs(place.onsetBeats() - start) > .0001f
+                    || Math.abs(place.durationBeats() - duration) > .0001f) return null;
+        }
+        return safe;
+    }
+
+    private static boolean detachedDot(Raster raster, Head head, float next, float gap) {
+        var dot =
+                WrappedTripletDotInk.uniqueCore(
+                        raster.ink, raster.width, raster.height, head.x, head.y, next, gap);
+        if (dot == null) return false;
+        int half = Math.round(gap * .21f);
+        for (int x = Math.round(head.x + gap * .65f); x <= dot.x() - half; x++) {
+            boolean clear = true;
+            for (int y = dot.y() - half; y <= dot.y() + half; y++) {
+                if (raster.dark(x, y)) {
+                    clear = false;
+                    break;
+                }
+            }
+            if (clear) return true;
+        }
+        return false;
+    }
+
+    /** The reversed apparent shaft retraces the actual last note's lower beam end. */
+    private static boolean reversedBeamTip(Raster raster, Head guest, Head owner, Bridge beam) {
+        float gap = beam.gap;
+        if (guest.note.beamCount() != 2
+                || guest.note.augmentationDots() != 0
+                || guest.note.articulations() != 0
+                || beam.b.x - guest.x < gap * .35f
+                || beam.b.x - guest.x > gap * .85f
+                || guest.y - owner.y < gap * 3.5f
+                || guest.y - owner.y > gap * 6
+                || Math.abs(guest.y - beam.center(guest.x)) > gap * .26f) return false;
+        var budget = new PrintedBeamShafts.Budget(100_000);
+        var falseShaft =
+                PrintedBeamShafts.at(
+                        raster.ink, raster.width, raster.height, guest.x, guest.y, gap, budget);
+        var realShaft =
+                PrintedBeamShafts.at(
+                        raster.ink, raster.width, raster.height, owner.x, owner.y, gap, budget);
+        if (budget.refused() || falseShaft.size() != 1 || realShaft.size() != 1) return false;
+        var a = falseShaft.get(0);
+        var b = realShaft.get(0);
+        return a.direction() == -1
+                && b.direction() == 1
+                && a.left() <= beam.b.x
+                && a.right() >= beam.b.x
+                && b.left() <= beam.b.x
+                && b.right() >= beam.b.x
+                && Math.abs(a.startY() - b.endY()) < gap * .6f
+                && Math.abs(a.endY() - b.startY()) < gap * .6f;
     }
 
     private static boolean barline(Raster p, float edge, float[] rails) {

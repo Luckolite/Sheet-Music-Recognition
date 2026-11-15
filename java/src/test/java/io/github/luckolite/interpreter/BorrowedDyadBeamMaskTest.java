@@ -51,6 +51,78 @@ public class BorrowedDyadBeamMaskTest {
         assertFalse(owned());
     }
 
+    @Test
+    public void widthAcrossAShaftRequiresBothSurroundingBeamRails() throws Exception {
+        widenMask();
+        assertTrue(ownedWide());
+
+        // The two flanking white seams are part of the ownership proof.
+        for (int x = LEFT + 4; x <= MIDDLE - 15; x++) column(x, tip(x) - 12, tip(x) - 7, 0);
+        assertFalse(ownedWide());
+    }
+
+    @Test
+    public void aWideMaskCannotBorrowAnInterruptedShaft() throws Exception {
+        widenMask();
+        assertTrue(ownedWide());
+        for (int x = MIDDLE - 1; x <= MIDDLE + 3; x++) column(x, 134, 152, 255);
+        assertFalse(ownedWide());
+    }
+
+    private void widenMask() {
+        for (int x = MIDDLE - 15; x <= MIDDLE + 15; x++)
+            for (int depth = 7; depth <= 13; depth++)
+                labels[(tip(x) - depth) * WIDTH + x] = OmrMeasurePostProcessor.NOTEHEAD;
+    }
+
+    private boolean ownedWide() throws Exception {
+        var interpreter = OmrScoreInterpreter.class;
+        var component = Class.forName(interpreter.getName() + "$Component");
+        Method components =
+                interpreter.getDeclaredMethod(
+                        "findComponents", byte[].class, int.class, int.class, byte.class);
+        components.setAccessible(true);
+        var heads =
+                (List<?>)
+                        components.invoke(
+                                null, labels, WIDTH, HEIGHT, OmrMeasurePostProcessor.NOTEHEAD);
+        Class<?> staff = Class.forName(interpreter.getName() + "$Staff");
+        var staffConstructor = staff.getDeclaredConstructor(float.class, float.class, float.class);
+        staffConstructor.setAccessible(true);
+        Method owns =
+                interpreter.getDeclaredMethod(
+                        "wideMergedBeamShaftHeads",
+                        byte[].class,
+                        byte[].class,
+                        int.class,
+                        int.class,
+                        List.class,
+                        List.class,
+                        java.util.Set.class);
+        owns.setAccessible(true);
+        var owners = new java.util.HashSet<>();
+        var aliases =
+                (List<?>)
+                        owns.invoke(
+                                null,
+                                labels,
+                                gray,
+                                WIDTH,
+                                HEIGHT,
+                                heads,
+                                List.of(staffConstructor.newInstance(116f, 180f, GAP)),
+                                owners);
+        if (aliases.isEmpty()) {
+            assertTrue(owners.isEmpty());
+            return false;
+        }
+        assertTrue(owners.size() == 2);
+        var centerY = component.getDeclaredMethod("centerY");
+        centerY.setAccessible(true);
+        assertTrue(aliases.size() == 1 && (float) centerY.invoke(aliases.get(0)) > 150);
+        return true;
+    }
+
     private boolean owned() throws Exception {
         var interpreter = OmrScoreInterpreter.class;
         var component = Class.forName(interpreter.getName() + "$Component");
