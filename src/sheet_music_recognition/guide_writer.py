@@ -84,7 +84,7 @@ def encode(score, guide_version=GUIDE_VERSION):
         if not isinstance(row, dict):
             raise ValueError("Invalid guide measure")
         cadence = row.get("cadenceQuarterBeats", 0)
-        if type(cadence) is not int or cadence not in (0, 1, 2):
+        if type(cadence) is not int or not 0 <= cadence <= 3:
             raise ValueError("Invalid printed cadence duration")
         if guide_version < 302 and cadence:
             raise ValueError("Printed cadences require guide302")

@@ -57,6 +57,18 @@ final class PrintedCadenceDurations {
             float duration = chord.get(0).unbeamedDurationBeats();
             var measure = score.measures().get(i);
             var next = i + 1 < count ? score.measures().get(i + 1) : null;
+            if (i > 0 && next != null && chord.size() == 11
+                    && !rests[i - 1] && !rests[i + 1]
+                    && commonTimeOnBothSides(score, i)
+                    && fullSixteenthNeighbor(notes.get(i - 1))
+                    && fullSixteenthNeighbor(notes.get(i + 1))
+                    && closedThreeBeatRun(gray, width, height, score.measures().get(i - 1),
+                            measure, next, chord, staffs)) {
+                regions.set(i, new MeasureRegion(measure.left(), measure.right(),
+                        measure.top(), measure.bottom(), 3));
+                changed = true;
+                continue;
+            }
             boolean isolatedBeamAlias =
                     duration == 0
                             && next != null
@@ -260,15 +272,128 @@ final class PrintedCadenceDurations {
     }
 
     static boolean[] apply(ScorePageInterpretation score, float[] beats) {
-        var shortened = new boolean[beats.length];
+        var simultaneous = new boolean[beats.length];
         for (int i = 0; i < beats.length; i++) {
             int duration = score.measures().get(i).cadenceQuarterBeats();
             if (duration > 0 && duration < beats[i]) {
                 beats[i] = duration;
-                shortened[i] = true;
+                // The closed three-beat run retains its sequential clock.
+                simultaneous[i] = duration < 3;
             }
         }
-        return shortened;
+        return simultaneous;
+    }
+
+    private static boolean commonTimeOnBothSides(ScorePageInterpretation score, int bar) {
+        ScoreMeterChange active = null;
+        for (var change : score.meterChanges()) {
+            if (change.measureIndex() > bar + 1) break;
+            if (change.measureIndex() >= bar - 1) return false;
+            active = change;
+        }
+        return active != null && active.numerator() == 4 && active.denominator() == 4;
+    }
+
+    private static boolean fullSixteenthNeighbor(List<ScoreNoteEvent> notes) {
+        // One missed head in an independent neighboring 4/4 bar does not authorize
+        // changing that bar's clock.
+        return (notes.size() == 15 || notes.size() == 16)
+                && notes.stream().allMatch(note -> closedBeamMember(note, 2));
+    }
+
+    private static boolean closedBeamMember(ScoreNoteEvent note, int rails) {
+        return note.kind() == ScoreNoteEvent.Kind.PITCHED
+                && note.staffCount() == 1 && note.staffIndex() == 0
+                && note.visualSize() == ScoreNoteEvent.VisualSize.FULL
+                && note.stemDirection() == -1 && note.beamCount() == rails
+                && note.unbeamedDurationBeats() == 0 && note.augmentationDots() == 0
+                && note.tupletDivisor() == 1 && note.tupletNormalNotes() == 1
+                && !note.crossStaffBeam() && !note.tiedFromPrevious() && note.boundaryTies() == 0
+                && note.leadingRestBeats() == 0 && note.followingRestBeats() == 0
+                && (note.articulations() & NoteOrnament.GRACE) == 0;
+    }
+
+    /** Two closed quarters and two sixteenths joined to a final eighth at a system end. */
+    static boolean closedThreeBeatRun(byte[] gray, int width, int height,
+            MeasureRegion previous, MeasureRegion bar, MeasureRegion next,
+            List<ScoreNoteEvent> notes, List<PlayingTechniqueDetector.Staff> staffs) {
+        if (notes.size() != 11 || bar.cadenceQuarterBeats() != 0
+                || previous.cadenceQuarterBeats() != 0 || next.cadenceQuarterBeats() != 0
+                || next.top() <= bar.bottom() || next.left() >= previous.left()) return false;
+        float left = bar.left() * width, right = bar.right() * width;
+        var ordered = notes.stream().sorted(
+                java.util.Comparator.comparingDouble(ScoreNoteEvent::positionInMeasure)).toList();
+        for (int i = 0; i < ordered.size(); i++)
+            if (!closedBeamMember(ordered.get(i), i == 10 ? 1 : 2)) return false;
+        for (var fitted : staffs) {
+            float gap = fitted.gap();
+            if (fitted.count() != 1 || fitted.index() != 0 || gap < 10 || gap > 26
+                    || fitted.top() < bar.top() * height || fitted.bottom() > bar.bottom() * height
+                    || Math.abs(previous.top() - bar.top()) * height > gap * .35f
+                    || Math.abs(previous.bottom() - bar.bottom()) * height > gap * .35f
+                    || left < previous.right() * width || left - previous.right() * width > gap * 1.5f
+                    || right - left < gap * 23 || right - left > gap * 35) continue;
+            var rules = PrintedDirectionStaff.printedRules(
+                    gray, width, height, (left + right) * .5f, fitted.bottom(), gap);
+            if (rules == null) continue;
+            gap = rules[1];
+            float top = rules[0] - gap * 4;
+            if (top < 0 || rules[0] >= height) continue;
+            var staff = new PlayingTechniqueDetector.Staff(top, rules[0], gap, 0, 1);
+            int opening = boundaryColumn(gray, width, staff,
+                    (previous.right() * width + left) * .5f, true, false);
+            int closing = boundaryColumn(gray, width, staff, right + gap * .3f, true, false);
+            if (opening < 0 || closing <= opening) continue;
+            if (threeBeatBeamRun(gray, width, height, staff, ordered, left, right, opening, closing))
+                return true;
+        }
+        return false;
+    }
+
+    private static boolean threeBeatBeamRun(byte[] gray, int width, int height,
+            PlayingTechniqueDetector.Staff staff, List<ScoreNoteEvent> notes,
+            float left, float right, int opening, int closing) {
+        float gap = staff.gap(), previousX = opening;
+        var budget = new PrintedBeamShafts.Budget(160_000);
+        PrintedBeamShafts.Shaft previous = null;
+        for (int i = 0; i < notes.size(); i++) {
+            var note = notes.get(i);
+            float x = left + note.positionInMeasure() * (right - left);
+            if (x - previousX < gap * 1.55f || x - previousX > gap * 3.45f) return false;
+            var axes = PrintedBeamShafts.at(gray, width, height, x, note.pageY() * height, gap, budget);
+            if (axes.size() != 1 || axes.get(0).direction() != 1) return false;
+            var current = axes.get(0);
+            if (previous == null) {
+                if (!quietStaffPocket(gray, width, staff, opening + gap * .55f,
+                        current.left() - gap * .30f)) return false;
+            } else {
+                int rails = i == 4 || i == 8 ? 0 : i == 10 ? 1 : 2;
+                if (!WrappedEighthTriplets.matchesBeamRails(
+                        gray, width, height, previous, current, gap, rails)) return false;
+                if (rails == 0 && !quietStaffPocket(gray, width, staff, previousX + gap * .35f,
+                        current.left() - gap * .30f)) return false;
+            }
+            previous = current;
+            previousX = x;
+        }
+        return closing - previousX >= gap * 1.65f && closing - previousX <= gap * 3.45f
+                && quietStaffPocket(gray, width, staff, previousX + gap * .8f, closing - gap * .55f);
+    }
+
+    private static boolean quietStaffPocket(byte[] gray, int width,
+            PlayingTechniqueDetector.Staff staff, float left, float right) {
+        int first = Math.round(left), last = Math.round(right);
+        float gap = staff.gap();
+        if (first < 0 || last >= width || last - first < gap * .5f) return false;
+        for (int x = first; x <= last; x++) {
+            int dark = 0;
+            for (int y = Math.round(staff.top()); y <= Math.round(staff.bottom()); y++) {
+                float phase = (y - staff.top()) / gap;
+                if (Math.abs(phase - Math.round(phase)) > .21f
+                        && (gray[y * width + x] & 255) < 155 && ++dark == 2) return false;
+            }
+        }
+        return true;
     }
 
     private static boolean hasBeamOwner(ScorePageInterpretation score, ScoreNoteEvent note) {

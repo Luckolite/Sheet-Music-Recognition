@@ -927,6 +927,12 @@ final class WrappedEighthTriplets {
                 : bestRibbon(gray, width, height, first, last, gap).coverage() <= .46f;
     }
 
+    static boolean matchesBeamRails(byte[] gray, int width, int height,
+            PrintedBeamShafts.Shaft left, PrintedBeamShafts.Shaft right, float gap, int rails) {
+        return rails == 0 ? matchesRailBridge(gray, width, height, left, right, gap, false)
+                : matchesRailCount(gray, width, height, left, right, gap, rails == 2);
+    }
+
     private static boolean singleRail(byte[] gray, int width, int height,
             PrintedBeamShafts.Shaft a, PrintedBeamShafts.Shaft b, float gap) {
         return matchesRailCount(gray, width, height, a, b, gap, false);

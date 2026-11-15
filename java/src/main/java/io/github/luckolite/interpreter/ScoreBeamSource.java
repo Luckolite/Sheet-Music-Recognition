@@ -33,6 +33,9 @@ public record ScoreBeamSource(
 
     public enum Direction { FORWARD, BACKWARD }
 
+    /** Engraved numeral presence for a confirmed primary-beam triplet. */
+    public enum TupletMark { NUMBERED, UNNUMBERED }
+
     public record Hook(int columnIndex, int level, Direction direction) {
         public Hook {
             Objects.requireNonNull(direction);
@@ -41,7 +44,12 @@ public record ScoreBeamSource(
         }
     }
 
-    public record Group(String id, List<Column> columns, List<Integer> bridges, List<Hook> hooks) {
+    public record Group(String id, List<Column> columns, List<Integer> bridges,
+            List<Hook> hooks, TupletMark tupletMark) {
+        public Group(String id, List<Column> columns, List<Integer> bridges, List<Hook> hooks) {
+            this(id, columns, bridges, hooks, null);
+        }
+
         public Group {
             Objects.requireNonNull(id);
             columns = List.copyOf(columns);
@@ -51,6 +59,8 @@ public record ScoreBeamSource(
                     || columns.size() > MAX_COLUMNS || bridges.size() != columns.size() - 1
                     || hooks.size() > (long) columns.size() * 8)
                 throw new IllegalArgumentException("Invalid printed beam group");
+            if (tupletMark != null && (columns.size() != 3 || !bridges.equals(List.of(1, 1))))
+                throw new IllegalArgumentException("Invalid engraved triplet group");
             int page = columns.get(0).members().get(0).pageIndex();
             for (Column column : columns)
                 if (column.members().get(0).pageIndex() != page)
@@ -173,7 +183,7 @@ public record ScoreBeamSource(
         java.util.function.Function<Column, Column> column = c -> new Column(c.members.stream().map(map).toList());
         List<Group> relocated = groups.stream().map(g -> new Group("beam-page:" + pageIndex + ":"
                         + g.columns.stream().flatMap(c -> c.members.stream()).mapToInt(Anchor::noteIndex).min().orElseThrow(),
-                g.columns.stream().map(column).toList(), g.bridges, g.hooks)).toList();
+                g.columns.stream().map(column).toList(), g.bridges, g.hooks, g.tupletMark)).toList();
         return new ScoreBeamSource(relocated, detachedColumns.stream().map(column).toList(),
                 noteOrigins.stream().map(o -> o.map(map)).toList());
     }

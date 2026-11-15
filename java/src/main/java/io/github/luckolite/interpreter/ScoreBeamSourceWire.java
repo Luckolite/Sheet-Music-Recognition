@@ -35,6 +35,8 @@ public final class ScoreBeamSourceWire {
         ByteArrayOutputStream bytes=new ByteArrayOutputStream();DataOutputStream out=new DataOutputStream(bytes);
         out.writeInt(s.groups().size());
         for(var g:s.groups()) {
+            if (g.tupletMark() != null)
+                throw new IOException("Guide beam frame cannot preserve engraved tuplet marks");
             ByteBuffer b=StandardCharsets.UTF_8.newEncoder().onMalformedInput(CodingErrorAction.REPORT).encode(java.nio.CharBuffer.wrap(g.id()));
             byte[] id=new byte[b.remaining()];b.get(id);if(id.length>1024)throw new IOException("Beam ID too long");
             out.writeInt(id.length);out.write(id);out.writeInt(g.columns().size());for(var c:g.columns()){column(out,c);if(bytes.size()>MAX_BYTES)throw new IOException("Beam frame too large");}

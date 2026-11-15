@@ -6,6 +6,7 @@ import struct
 MAX = 1_000_000
 MAX_BYTES = 32 * 1024 * 1024
 DIRECTIONS = ('FORWARD', 'BACKWARD')
+_TUPLET_MARKS = ('NUMBERED', 'UNNUMBERED')
 _JAVA_SPACES = frozenset(range(9,14)) | frozenset(range(28,33)) | {0x1680,0x2028,0x2029,0x205f,0x3000} | frozenset(range(0x2000,0x2007)) | frozenset(range(0x2008,0x200b))
 
 
@@ -62,7 +63,8 @@ def checked(source, note_count):
             used.add(key)
         return page
     for g in groups:
-        _keys(g, ('id', 'columns', 'bridges', 'hooks'))
+        fields = ('id', 'columns', 'bridges', 'hooks')
+        _keys(g, fields + ('tupletMark',) if isinstance(g, dict) and 'tupletMark' in g else fields)
         name = g['id']
         if (type(name) is not str or all(ord(ch) in _JAVA_SPACES for ch in name) or len(name.encode('utf-16-be'))//2 > 256
                 or len(name.encode('utf-8')) > 1024 or name in ids):
@@ -70,6 +72,9 @@ def checked(source, note_count):
         ids.add(name); columns = _list(g['columns']); bridges = _list(g['bridges']); hooks = _list(g['hooks'],MAX*8)
         if len(columns) < 2 or len(bridges) != len(columns)-1 or len(hooks) > len(columns)*8:
             raise ValueError('Invalid beam group dimensions')
+        if 'tupletMark' in g and (g['tupletMark'] not in _TUPLET_MARKS
+                                  or len(columns) != 3 or bridges != [1, 1]):
+            raise ValueError('Invalid engraved triplet group')
         total += len(columns)
         if total > MAX: raise ValueError('Too many beam columns')
         if len({column(c) for c in columns}) != 1:
@@ -109,6 +114,8 @@ def encode_source(source, note_count):
         for a in c['members']: anchor(a)
     put('i',len(source['groups']))
     for g in source['groups']:
+        if 'tupletMark' in g:
+            raise ValueError('Guide beam frame cannot preserve engraved tuplet marks')
         raw=g['id'].encode('utf-8');put('i',len(raw));out.write(raw)
         put('i',len(g['columns']))
         for c in g['columns']: column(c)

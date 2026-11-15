@@ -87,15 +87,17 @@ class Guide301OpenStringTouchTests(unittest.TestCase):
 
 class Guide302CadenceTests(unittest.TestCase):
     def test_cadence_capacity_follows_measure_geometry(self):
-        s = score()
-        s["measures"][0]["cadenceQuarterBeats"] = 2
-        raw = wire.encode(s, 302)
-        self.assertEqual(2, raw[24])
-        with self.assertRaisesRegex(ValueError, "guide302"):
-            wire.encode(s, 301)
+        for duration in (2, 3):
+            with self.subTest(duration=duration):
+                s = score()
+                s["measures"][0]["cadenceQuarterBeats"] = duration
+                raw = wire.encode(s, 302)
+                self.assertEqual(duration, raw[24])
+                with self.assertRaisesRegex(ValueError, "guide302"):
+                    wire.encode(s, 301)
 
     def test_bad_cadence_capacity_is_refused(self):
-        for value in (True, -1, 3, 1.5):
+        for value in (True, -1, 4, 1.5):
             with self.subTest(value=value):
                 s = score()
                 s["measures"][0]["cadenceQuarterBeats"] = value

@@ -677,6 +677,9 @@ public final class Main {
                 if (value instanceof ScoreNoteEvent note
                         && note.kind() == ScoreNoteEvent.Kind.PITCHED
                         && c.getName().equals("kind")) continue;
+                if (value instanceof ScoreBeamSource.Group group
+                        && group.tupletMark() == null
+                        && c.getName().equals("tupletMark")) continue;
                 items.add(json(c.getName()) + ":" + json(c.getAccessor().invoke(value)));
             }
             return "{" + String.join(",", items) + "}";

@@ -23,6 +23,8 @@ final class SystemQuarterCadence {
                     && Math.abs(regions.get(i + 1).top() * height - top) > gap * 5;
             var split = lastInRow ? prove(region, labels, gray, width, height) : List.<MeasureRegion>of();
             if (lastInRow && split.isEmpty()) split=proveQuarterAfterThirds(region,labels,gray,width,height);
+            if (lastInRow && split.isEmpty())
+                split = proveQuarterAfterHarmonicTriplets(region, labels, gray, width, height);
             if (split.isEmpty()) result.add(region);
             else {
                 result.addAll(split);
@@ -185,6 +187,127 @@ final class SystemQuarterCadence {
                             region.top(),region.bottom()),
                        new MeasureRegion((cut+padding)/(float)width,region.right(),
                             region.top(),region.bottom(),1));
+    }
+
+    /** A separate quarter harmonic can follow four fully beamed three-note groups. */
+    static List<MeasureRegion> proveQuarterAfterHarmonicTriplets(
+            MeasureRegion region, byte[] labels, byte[] gray, int width, int height) {
+        if (region.cadenceQuarterBeats() != 0 || labels == null || gray == null
+                || labels.length != gray.length || gray.length != (long) width * height)
+            return List.of();
+        float left = region.left() * width, right = region.right() * width;
+        float top = region.top() * height, bottom = region.bottom() * height;
+        float gap = (bottom - top) / 8.2f;
+        if (gap < 10 || gap > 25 || right - left < gap * 26 || right - left > gap * 33
+                || right + gap >= width) return List.of();
+        var rails = PrintedDirectionStaff.printedRules(
+                gray, width, height, right - gap * 2.5f, bottom - gap * 2.1f, gap);
+        if (rails == null) return List.of();
+        var staff = new PlayingTechniqueDetector.Staff(rails[0] - 4 * rails[1], rails[0], rails[1], 0, 1);
+        int closingRule = PrintedCadenceDurations.boundaryColumn(gray, width, staff, right, false, true);
+        if (closingRule < 0) return List.of();
+        int start = Math.max(0, Math.round(right - gap * 7));
+        int end = Math.min(width - 1, Math.round(right - gap * 4));
+        int first = -1, last = -1;
+        int staffTop = Math.round(staff.top()), staffBottom = Math.round(staff.bottom());
+        for (int x = start; x <= end; x++) {
+            if (!crossesSpaces(gray, width, staff, x)
+                    || ClosedHeadBarlineGuard.attached(
+                            gray, width, height, x, staffTop, staffBottom, staff.gap())
+                    || DottedDyadMeasureSeparator.continuesBeyondStaff(
+                            gray, width, height, x, staffTop, staffBottom, staff.gap())) continue;
+            if (last >= 0 && x != last + 1) return List.of();
+            if (first < 0) first = x;
+            last = x;
+        }
+        if (first < 0 || last - first + 1 < 2 || last - first + 1 > gap * .35f)
+            return List.of();
+        int cut = (first + last) / 2;
+
+        var single = List.of(region);
+        var source = OmrScoreInterpreter.analyze(labels, gray, width, height, single);
+        if (!source.rests().isEmpty() || source.notes().size() < 13 || source.notes().size() > 23)
+            return List.of();
+        var owners = OmrScoreInterpreter.techniqueStaffs(labels, gray, width, height, single);
+        var notes = ArtificialHarmonics.apply(labels, gray, width, height, single, source.notes(), owners);
+        var outlined = new ArrayList<ScoreNoteEvent>();
+        int unresolved = 0;
+        for (var note : notes) {
+            float x = left + note.positionInMeasure() * (right - left);
+            if (note.kind() != ScoreNoteEvent.Kind.PITCHED || note.staffCount() != 1
+                    || note.staffIndex() != 0 || note.crossStaffBeam()
+                    || note.tiedFromPrevious() || note.boundaryTies() != 0
+                    || note.leadingRestBeats() != 0 || note.followingRestBeats() != 0
+                    || (note.articulations() & NoteOrnament.GRACE) != 0) return List.of();
+            if (note.stemDirection() != 0) outlined.add(note);
+            else if (x >= cut - gap || ++unresolved > 1) return List.of();
+        }
+        if (outlined.size() != 13) return List.of();
+        outlined.sort(Comparator.comparingDouble(ScoreNoteEvent::positionInMeasure));
+        var budget = new PrintedBeamShafts.Budget(500_000);
+        var shafts = new ArrayList<PrintedBeamShafts.Shaft>(13);
+        int harmonicNotes = 0;
+        for (int i = 0; i < outlined.size(); i++) {
+            var note = outlined.get(i);
+            float x = left + note.positionInMeasure() * (right - left), y = note.pageY() * height;
+            if (!(x >= 0 && x < width && y >= 0 && y < height)) return List.of();
+            if (i == 12) {
+                if (x - cut < gap * 1.7f || x - cut > gap * 3.2f
+                        || note.beamCount() != 0 || note.unbeamedDurationBeats() != 1
+                        || note.octaveShift() != 2 || note.augmentationDots() != 0
+                        || note.tupletDivisor() != 1
+                        || !ArtificialHarmonics.joinedQuarterStem(gray, width, height, x, y, gap, note.stemDirection())
+                        || !PrintedCadenceDurations.emptyOutsideChord(
+                                gray, width, staff, cut, closingRule, x - gap * .35f, x, false)) return List.of();
+            } else {
+                if (x >= cut - gap || note.beamCount() < 1 || note.beamCount() > 2
+                        || note.unbeamedDurationBeats() != 0) return List.of();
+                if (note.octaveShift() == 2) harmonicNotes++;
+                if (i % 3 == 2) {
+                    if (harmonicNotes < 2) return List.of();
+                    harmonicNotes = 0;
+                }
+            }
+            var shaftsAtHead = PrintedBeamShafts.at(gray, width, height, x, y, gap, budget);
+            if (shaftsAtHead.size() != 1
+                    || shaftsAtHead.get(0).direction() != -note.stemDirection()) return List.of();
+            var shaft = shaftsAtHead.get(0);
+            if (i > 0) {
+                var previous = shafts.get(i - 1);
+                boolean joined = directHarmonicRail(gray, width, height, previous, shaft, gap);
+                if (joined != (i % 3 != 0)) return List.of();
+            }
+            shafts.add(shaft);
+        }
+        int margin = Math.max(2, Math.round(gap * .5f));
+        return List.of(new MeasureRegion(region.left(), (cut - margin) / (float) width,
+                            region.top(), region.bottom()),
+                       new MeasureRegion((cut + margin) / (float) width, region.right(),
+                            region.top(), region.bottom(), 1));
+    }
+
+    static boolean directHarmonicRail(
+            byte[] gray, int width, int height, PrintedBeamShafts.Shaft a,
+            PrintedBeamShafts.Shaft b, float gap) {
+        if (a.direction() != b.direction()) return false;
+        int from = (a.left() + a.right()) / 2, to = (b.left() + b.right()) / 2;
+        int span = to - from;
+        if (span < gap || span > gap * 5) return false;
+        int margin = Math.max(2, Math.round(gap * .18f));
+        int total = span - margin * 2 + 1;
+        for (int inset = Math.round(gap * .19f); inset <= Math.round(gap * .42f); inset++) {
+            int supported = 0;
+            for (int x = from + margin; x <= to - margin; x++) {
+                int y = Math.round(a.endY() + (b.endY() - a.endY()) * (x - from) / (float) span)
+                        - a.direction() * inset;
+                if (y < 1 || y >= height - 1) return false;
+                if ((gray[(y - 1) * width + x] & 255) < 155
+                        && (gray[y * width + x] & 255) < 155
+                        && (gray[(y + 1) * width + x] & 255) < 155) supported++;
+            }
+            if (supported >= total * .9f) return true;
+        }
+        return false;
     }
 
     private static boolean wideGapBetweenThirdBeams(byte[] gray,int width,int height,

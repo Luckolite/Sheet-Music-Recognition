@@ -620,9 +620,10 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
         source_notes = score.get('notes', [])
         beam = score.get('beamSource')
         if beam:
-            groups = beam_export.bind(checked_beams(beam, len(source_notes)), page['events'])
+            beam = checked_beams(beam, len(source_notes))
+            groups = beam_export.bind(beam, page['events'])
             first_event = len(events)
-            for identities, bridges, hooks in groups:
+            for group, (identities, bridges, hooks) in zip(beam['groups'], groups, strict=True):
                 columns = [tuple(first_event + index for index in col) for col in identities]
                 printed_beams.append((columns, bridges, hooks))
                 if len(columns) != 3 or bridges != [1, 1] or not all(columns):
@@ -638,7 +639,8 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
                         break
                     levels.append(beams.pop())
                 if levels in ([1, 2, 1], [1, 1, 1]):
-                    printed_triplets.append((columns, levels, first_bar, len(page['measureBeats'])))
+                    printed_triplets.append((columns, levels, first_bar, len(page['measureBeats']),
+                                             group.get('tupletMark')))
         first_event = len(events)
         written = grace_export.plan(page, ticks)
         paired_tremolos = tremolo_export.retained(page)
@@ -1031,7 +1033,7 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
         by_source = {n['sourceIdentity']: n for n in notes}
         mixed_edges = {}
         mixed_bars = set()
-        for columns, levels, first_bar, page_bar_count in printed_triplets:
+        for columns, levels, first_bar, page_bar_count, tuplet_mark in printed_triplets:
             if any(owner not in by_source for column in columns for owner in column):
                 continue
             members = [[by_source[owner] for owner in column] for column in columns]
@@ -1054,7 +1056,7 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
                        for n in col):
                     break
                 if edge:
-                    edges[key[0], cursor, end] = edge
+                    edges[key[0], cursor, end] = edge, tuplet_mark
                 cursor = end
             else:
                 if cursor <= bar['start'] + bar['length']:
@@ -1204,13 +1206,21 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
                                 if owner in printed_string_attacks:
                                     raise ValueError('A printed string mark has two written attacks')
                                 printed_string_attacks[owner] = emitted, mark
-                            edge = (pair_edges.get((fragment_start, fragment_end))
-                                    or mixed_edges.get((voice, fragment_start, fragment_end)))
+                            edge = pair_edges.get((fragment_start, fragment_end))
+                            tuplet_mark = None
+                            if edge is None:
+                                edge, tuplet_mark = mixed_edges.get(
+                                    (voice, fragment_start, fragment_end), (None, None))
                             if ci == 0 and edge is not None:
                                 notations = emitted.find('notations')
                                 if notations is None:
                                     notations = element(emitted, 'notations')
-                                element(notations, 'tuplet', type=edge, number=1)
+                                tuplet = element(notations, 'tuplet', type=edge, number=1)
+                                if edge == 'start' and tuplet_mark == 'NUMBERED':
+                                    tuplet.set('show-number', 'actual')
+                                elif edge == 'start' and tuplet_mark == 'UNNUMBERED':
+                                    tuplet.set('show-number', 'none')
+                                    tuplet.set('bracket', 'no')
                             octave_owned[emitted] = 0 if event_kind(n) == 'UNPITCHED' else n.get('octaveShift', 0)
                             if fragment_start == n['start'] and n['sourceIdentity'] in requested_slur_owners:
                                 slur_attacks[n['sourceIdentity']] = emitted

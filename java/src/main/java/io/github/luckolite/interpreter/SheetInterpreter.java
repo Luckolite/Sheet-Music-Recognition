@@ -729,6 +729,15 @@ public final class SheetInterpreter {
         finalInterpretation =
                 ClosedDottedSixteenths.applyClosedTailDyadHooks(
                         finalInterpretation, inheritedMeter, gray, width, height);
+        var harmonicTriplets =
+                ClosedHarmonicTriplets.capture(
+                        finalInterpretation.notes(), finalInterpretation.rests(),
+                        finalInterpretation.measures(), finalInterpretation.meterChanges(),
+                        inheritedMeter, annotationGray, width, height);
+        if (harmonicTriplets.notes() != finalInterpretation.notes())
+            finalInterpretation = finalInterpretation.withNotes(
+                    harmonicTriplets.notes(),
+                    java.util.stream.IntStream.range(0, harmonicTriplets.notes().size()).boxed().toList());
         if (physicalPage >= 0)
             finalInterpretation =
                     PrintedBeamSource.apply(
@@ -740,6 +749,7 @@ public final class SheetInterpreter {
                             staffs,
                             physicalPage,
                             phrasePending);
+        finalInterpretation = harmonicTriplets.projectBeams(finalInterpretation, physicalPage);
         finalInterpretation = mixedBeamTransition.projectBeams(finalInterpretation, physicalPage);
         finalInterpretation =
                 WrappedEighthTriplets.closeFlatMarkedTripletBars(
