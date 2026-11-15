@@ -74,8 +74,14 @@ final class ClosedOctaveTripletBars {
                 || span > gap * 40) return false;
         int clef = owners.get(0).clefBottomDiatonic();
         if (clef == ScoreNoteEvent.CLEF_UNKNOWN) return false;
-        float first = 0, previous = 0, upperX = 0, upperY = 0, lowerX = 0, lowerY = 0;
-        int seeds = 0;
+        int seeds = seededDyads(owners);
+        if (Integer.bitCount(seeds) != 3) return false;
+        float first = octaveCenter(owners, 0, left, span);
+        float last = octaveCenter(owners, 22, left, span);
+        boolean closed =
+                WrappedMeasureBoundaries.confirmsClosed(gray, width, height, bar, first, last);
+        boolean interior = closed && oneSeededTriplet(seeds);
+        float previous = 0, upperX = 0, upperY = 0, lowerX = 0, lowerY = 0;
         boolean startsSystem = false;
         var budget = new PrintedBeamShafts.Budget(280_000);
         PrintedBeamShafts.Shaft prior = null;
@@ -88,18 +94,34 @@ final class ClosedOctaveTripletBars {
                     || !ordinary(lower, clef)
                     || upper.staffStep() - lower.staffStep() != 7
                     || upper.tupletDivisor() != lower.tupletDivisor()) return false;
-            if (upper.tupletDivisor() == 3) seeds++;
             float x0 = left + span * upper.positionInMeasure(), y0 = height * upper.pageY();
             float x1 = left + span * lower.positionInMeasure(), y1 = height * lower.pageY();
-            if (Math.abs(x0 - x1) > gap * .18f || y1 - y0 < gap * 3.15f || y1 - y0 > gap * 3.9f)
-                return false;
+            float offset = Math.abs(x0 - x1);
+            if (offset > gap * (interior ? .21f : .18f)
+                    || y1 - y0 < gap * 3.15f
+                    || y1 - y0 > gap * 3.9f) return false;
             float x = (x0 + x1) * .5f;
-            if (i == 0) first = x;
-            else if (x - previous < gap * 1.75f
-                    || x - previous > gap * 4.1f
-                    || competingDot(gray, width, height, upperX, upperY, x, gap, startsSystem)
-                    || competingDot(gray, width, height, lowerX, lowerY, x, gap, startsSystem))
-                return false;
+            if (i != 0
+                    && (x - previous < gap * 1.75f
+                            || x - previous > gap * 4.1f
+                            || competingDot(
+                                    gray,
+                                    width,
+                                    height,
+                                    upperX,
+                                    upperY,
+                                    x,
+                                    gap,
+                                    startsSystem || interior)
+                            || competingDot(
+                                    gray,
+                                    width,
+                                    height,
+                                    lowerX,
+                                    lowerY,
+                                    x,
+                                    gap,
+                                    startsSystem || interior))) return false;
             var u = PrintedBeamShafts.at(gray, width, height, x0, y0, gap, budget);
             var v = PrintedBeamShafts.at(gray, width, height, x1, y1, gap, budget);
             if (v.isEmpty() && startsSystem && !budget.refused()) {
@@ -121,8 +143,10 @@ final class ClosedOctaveTripletBars {
                             && Math.min(high.right(), low.right())
                                     >= Math.max(high.left(), low.left())
                             && Math.abs(high.endY() - low.endY()) <= gap * .15f;
+            // A larger centroid offset still requires both owners to resolve the same shaft.
+            if (offset > gap * .18f && !shared) return false;
             if (!shared
-                    && (!startsSystem
+                    && (!(startsSystem || interior)
                             || high != null && high.direction() != 1
                             || !continuesUpperShaft(gray, width, height, x0, y0, low, gap)))
                 return false;
@@ -137,14 +161,34 @@ final class ClosedOctaveTripletBars {
             previous = x;
         }
         float next = left + span + gap * .5f;
-        return seeds == 3
-                && !competingDot(gray, width, height, upperX, upperY, next, gap, startsSystem)
-                && !competingDot(gray, width, height, lowerX, lowerY, next, gap, startsSystem)
-                && (WrappedMeasureBoundaries.confirmsClosed(
-                                gray, width, height, bar, first, previous)
+        return !competingDot(
+                        gray, width, height, upperX, upperY, next, gap, startsSystem || interior)
+                && !competingDot(
+                        gray, width, height, lowerX, lowerY, next, gap, startsSystem || interior)
+                && (closed
                         || startsSystem
                                 && WrappedMeasureBoundaries.confirmsInitialStaffBarClosingEdge(
                                         gray, width, height, bar, previous));
+    }
+
+    private static float octaveCenter(
+            List<ScoreNoteEvent> owners, int first, float left, float span) {
+        return ((left + span * owners.get(first).positionInMeasure())
+                        + (left + span * owners.get(first + 1).positionInMeasure()))
+                * .5f;
+    }
+
+    private static int seededDyads(List<ScoreNoteEvent> owners) {
+        int seeds = 0;
+        for (int i = 0; i < owners.size(); i += 2) {
+            if (owners.get(i).tupletDivisor() == 3) seeds |= 1 << (i / 2);
+        }
+        return seeds;
+    }
+
+    private static boolean oneSeededTriplet(int seeds) {
+        int first = Integer.numberOfTrailingZeros(seeds);
+        return first % 3 == 0 && seeds == (0b111 << first);
     }
 
     private static boolean competingDot(
@@ -155,10 +199,10 @@ final class ClosedOctaveTripletBars {
             float headY,
             float nextX,
             float gap,
-            boolean startsSystem) {
+            boolean allowLinkedMarks) {
         var dot = WrappedTripletDotInk.uniqueCore(gray, width, height, headX, headY, nextX, gap);
         return dot != null
-                && (!startsSystem
+                && (!allowLinkedMarks
                         || !WrappedEighthTriplets.headConnectedLedger(
                                         gray, width, height, headX, headY, dot, gap, .40f)
                                 && !OctaveMarkDetector.dotBelongsToDashOrigin(

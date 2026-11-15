@@ -129,7 +129,18 @@ final class ClosedDottedSixteenths {
             var row = bars.get(i).stream().sorted(Comparator.comparingDouble(Head::x)).toList();
             if (row.get(0).x - left > gap * 2.2f || right - row.get(15).x > gap * 2.7f) continue;
             var head = missingSingleHook(row, gap);
-            if (head == null) continue;
+            if (head == null) {
+                if (provesFourClosedDottedGroups(ink, region, row, gap)) {
+                    for (int slot = 0; slot < row.size(); slot++) {
+                        var owner = row.get(slot);
+                        boolean dotted = slot % 2 == 0;
+                        if (owner.note.beamCount() != (dotted ? 2 : 3)
+                                || owner.note.augmentationDots() != (dotted ? 1 : 0))
+                            corrected.set(owner.index, rhythm(owner.note, dotted));
+                    }
+                }
+                continue;
+            }
             int slot = row.indexOf(head);
             var prior = row.get(slot - 1);
             var terminal = row.get(15);
@@ -150,6 +161,80 @@ final class ClosedDottedSixteenths {
                 : score.withNotes(
                         corrected,
                         java.util.stream.IntStream.range(0, notes.size()).boxed().toList());
+    }
+
+    private static boolean provesFourClosedDottedGroups(
+            Ink ink, MeasureRegion region, List<Head> row, float gap) {
+        int existingHooks = 0;
+        int clef = row.get(0).note.clefBottomDiatonic();
+        for (int i = 0; i < row.size(); i++) {
+            var owner = row.get(i);
+            boolean dotted = i % 2 == 0;
+            if (!regular(owner.note)
+                    || owner.note.stemDirection() != -1
+                    || owner.note.clefBottomDiatonic() != clef
+                    || owner.note.beamCount() < 2
+                    || dotted && owner.note.beamCount() != 2
+                    || i > 0
+                            && (owner.x - row.get(i - 1).x < gap * 1.6f
+                                    || owner.x - row.get(i - 1).x > gap * 4.2f)) return false;
+            if (!dotted && owner.note.beamCount() == 3) existingHooks++;
+        }
+        if (existingHooks < 4) return false;
+
+        float left = region.left() * ink.w, right = region.right() * ink.w;
+        var track = readOctaveStaff(ink, left, right, region.bottom() * ink.h - 2.1f * gap, gap);
+        if (track == null || !barline(ink, right, track.at(right))) return false;
+
+        List<Shaft> priorShafts = List.of();
+        for (int i = 0; i < row.size(); i++) {
+            var owner = row.get(i);
+            var currentShafts = shafts(ink, owner, gap);
+            if (currentShafts.isEmpty()) return false;
+            if (i % 2 == 0) {
+                var core =
+                        WrappedTripletDotInk.uniqueCore(
+                                ink.pixels, ink.w, ink.h, owner.x, owner.y, row.get(i + 1).x, gap);
+                if (core == null || core.x() - owner.x < gap * .95f) return false;
+                if (i > 0
+                        && gapBetween(
+                                        ink,
+                                        row.get(i - 1),
+                                        owner,
+                                        priorShafts,
+                                        currentShafts,
+                                        gap,
+                                        track)
+                                != (i % 4 == 0)) return false;
+            } else {
+                var before = row.get(i - 1);
+                float next = i + 1 < row.size() ? row.get(i + 1).x : right;
+                if (owner.note.augmentationDots() != 0 && dot(ink, owner, next, gap)) return false;
+                if (!ownedLink(ink, priorShafts, currentShafts, i - 1, gap, track, null, true)) {
+                    if (owner.note.beamCount() != 3) return false;
+                    if (!OwnedTertiaryBeamlets.provesJoinedBackwardHook(
+                                    ink.pixels,
+                                    ink.w,
+                                    ink.h,
+                                    owner.x,
+                                    owner.y,
+                                    before.x,
+                                    before.y,
+                                    gap)
+                            && !OwnedTertiaryBeamlets.provesBackwardHookOnJoinedRails(
+                                    ink.pixels,
+                                    ink.w,
+                                    ink.h,
+                                    owner.x,
+                                    owner.y,
+                                    before.x,
+                                    before.y,
+                                    gap)) return false;
+                }
+            }
+            priorShafts = currentShafts;
+        }
+        return true;
     }
 
     private static Head missingSingleHook(List<Head> row, float gap) {

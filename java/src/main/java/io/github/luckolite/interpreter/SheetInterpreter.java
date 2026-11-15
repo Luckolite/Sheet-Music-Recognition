@@ -290,6 +290,11 @@ public final class SheetInterpreter {
         measures =
                 PrintedMeasureRhythmGuard.reconcile(
                         rawMeasures, measures, labels, gray, width, height, rejectedAnchorTops);
+        var recoveredCadence =
+                OverlappingQuarterCadence.recover(
+                        rawMeasures, measures, labels, gray, width, height);
+        measures = recoveredCadence.measures();
+        labels = recoveredCadence.labels();
         measures =
                 VerifiedOpeningMeterSlot.recover(
                         measures, labels, gray, annotationGray, width, height);

@@ -72,6 +72,19 @@ public class ClosedOctaveTripletBarsTest {
         assertSame(notes, infer(4));
     }
 
+    @Test
+    public void admitsShiftedCentroidOnlyWithSharedShaftAndCompleteSeedGroup() {
+        int slot = 9;
+        notes.set(2 * slot, note(90 + slot * 48 - 3, 64, 10, 1));
+        assertEquals(notes.stream().map(n -> n.withTupletRatio(3, 2)).toList(), infer(4));
+
+        for (int owner = 12; owner < 20; owner++) {
+            boolean seeded = owner >= 14;
+            notes.set(owner, notes.get(owner).withTupletRatio(seeded ? 3 : 1, seeded ? 2 : 1));
+        }
+        assertSame(notes, infer(4));
+    }
+
     private List<ScoreNoteEvent> infer(int numerator) {
         return ClosedOctaveTripletBars.apply(
                 notes,
