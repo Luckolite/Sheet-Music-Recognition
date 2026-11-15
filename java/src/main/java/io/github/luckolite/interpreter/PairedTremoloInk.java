@@ -1861,6 +1861,8 @@ final class PairedTremoloInk {
         if (!valid(gray, w, h, gap) || left == null || right == null) return List.of();
         int distance = right.x - left.x;
         if (distance < 1.4 * gap || distance > 5 * gap) return List.of();
+        int x0 = firstColumn, x1 = lastColumn;
+        if (x0 < left.x || x1 > right.x || x0 > x1) return List.of();
         int direction = left.endY > left.headY ? 1 : -1;
         for (Stem stem : List.of(left, right)) {
             if ((stem.endY - stem.headY) * direction < 2.5 * gap
@@ -1877,8 +1879,6 @@ final class PairedTremoloInk {
                         && --misses < 0) return List.of();
             }
         }
-        int x0 = firstColumn, x1 = lastColumn;
-        if (x0 < left.x || x1 > right.x || x0 > x1) return List.of();
         double center = (x0 + x1) * .5;
         int first = Math.max(1, rounded(Math.min(left.endY, right.endY) - .4 * gap));
         int last =
@@ -1900,7 +1900,9 @@ final class PairedTremoloInk {
                                             + .7 * gap));
             last = Math.min(h - 2, rounded(Math.max(left.endY, right.endY) + .4 * gap));
         }
+        if (first > last) return List.of();
         List<Mark> marks = new ArrayList<>();
+        List<Band> bands = new ArrayList<>();
         int span = x1 - x0 + 1;
         int requiredInk = requiredWindowInk(span);
         int[] flankColumns = {rounded(left.x + .18 * gap), rounded(right.x - .18 * gap)};
@@ -1913,7 +1915,7 @@ final class PairedTremoloInk {
                 double slope = sign * tick * .05;
                 for (int column = 0; column < span; column++)
                     projectedOffsets[column] = slope * (x0 + column - center);
-                List<Band> bands = new ArrayList<>();
+                bands.clear();
                 int runStart = -1;
                 for (int y = first; y <= last + 1; y++) {
                     int ink = 0;
@@ -1933,9 +1935,9 @@ final class PairedTremoloInk {
                     }
                 }
                 for (int i = 0; i + 2 < bands.size(); i++) {
-                    List<Band> three = bands.subList(i, i + 3);
-                    double d1 = three.get(1).center - three.get(0).center,
-                            d2 = three.get(2).center - three.get(1).center;
+                    Band firstBand = bands.get(i), middleBand = bands.get(i + 1), lastBand = bands.get(i + 2);
+                    double d1 = middleBand.center - firstBand.center,
+                            d2 = lastBand.center - middleBand.center;
                     if (d1 < .5 * gap
                             || d1 > 1.1 * gap
                             || d2 < .5 * gap
@@ -1948,7 +1950,8 @@ final class PairedTremoloInk {
                             bounded = false;
                             break;
                         }
-                        for (Band band : three) {
+                        for (int b = i; b < i + 3; b++) {
+                            Band band = bands.get(b);
                             int yy = rounded(band.center + slope * (x - center)), run = 0;
                             double maxRun = finiteHull ? Math.min(band.thickness, .20 * gap) : .20 * gap;
                             for (int y = Math.max(0, yy - flankRadius), end = Math.min(h - 1, yy + flankRadius);
@@ -1972,7 +1975,8 @@ final class PairedTremoloInk {
                             }
                         }
                     }
-                    if (bounded) marks.add(new Mark(x0, x1, slope, three));
+                    if (bounded)
+                        marks.add(new Mark(x0, x1, slope, List.of(firstBand, middleBand, lastBand)));
                 }
             }
         return List.copyOf(marks);

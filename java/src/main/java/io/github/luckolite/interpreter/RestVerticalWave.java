@@ -39,9 +39,9 @@ final class RestVerticalWave {
                 left - gap >= 0 && right + gap < width && ruleLeft >= 0 && ruleRight < width;
         int blankLimit = Math.max(1, Math.round(gap * .3f));
         float excursion = Math.max(1.5f, gap * .12f);
-        // Keep the budgeted traversal and its charges intact.
-        boolean unmeteredRaster =
-                quarterBudget == null && width > 0 && height > 0 && (long) width * height == gray.length;
+        boolean completeRaster = width > 0 && height > 0 && (long) width * height == gray.length;
+        boolean unmeteredRaster = quarterBudget == null && completeRaster;
+        long rowWork = 1L + 2L * (right - (long) left + 1);
         float latestStart = top + gap * .3f;
         float earliestEnd = bottom - gap * .3f;
         float minimumLength = gap * 3.7f;
@@ -59,7 +59,10 @@ final class RestVerticalWave {
                                 && dark(gray, width, ruleLeft, y, quarterBudget)
                                 && dark(gray, width, ruleRight, y, quarterBudget);
                 if (rule) continue;
-                if (unmeteredRaster) {
+                // The original loop charges for every pixel even after finding both edges.
+                // Group those charges only when the local budget can pay the entire row.
+                if (unmeteredRaster || (quarterBudget != null && completeRaster && left <= right
+                        && quarterBudget.tryPrepayLocal(rowWork))) {
                     int row = y * width;
                     int firstInk = left;
                     while (firstInk <= right && (gray[row + firstInk] & 255) >= 150) firstInk++;

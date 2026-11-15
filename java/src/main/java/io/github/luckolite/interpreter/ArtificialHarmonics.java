@@ -595,12 +595,14 @@ final class ArtificialHarmonics {
         int horizontal = Math.round(gap * .4f), vertical = Math.round(gap * .25f);
         int total = 16;
         int allowedMisses = total - (int) Math.ceil(total * (crowded ? .9f : .94f));
-        for (int dx = -horizontal; dx <= horizontal; dx++)
-            for (int dy = -vertical; dy <= vertical; dy++)
+        for (int dx = -horizontal; dx <= horizontal; dx++) {
+            float cx = x + dx;
+            for (int dy = -vertical; dy <= vertical; dy++) {
+                float cy = y + dy;
                 candidate:
                 for (float size : DiamondSizes.VALUES) {
-                    float cx = x + dx, cy = y + dy, r = gap * size;
-                    int hit = 0, misses = 0, symbolHits = 0;
+                    float r = gap * size;
+                    int misses = 0, symbolHits = 0;
                     for (int side = 0; side < 4; side++)
                         for (int i = 1; i <= 4; i++) {
                             float t = i / 5f, px = (1 - t) * r, py = t * r;
@@ -613,18 +615,11 @@ final class ArtificialHarmonics {
                             }
                             if (side == 3) py = -py;
                             int xx = Math.round(cx + px), yy = Math.round(cy + py);
-                            if (dark(g, w, h, xx, yy)
-                                    || dark(g, w, h, xx - 1, yy)
-                                    || dark(g, w, h, xx + 1, yy)) {
-                                hit++;
-                                if (labels != null
-                                        && (symbol(labels, w, h, xx, yy)
-                                                || symbol(labels, w, h, xx - 1, yy)
-                                                || symbol(labels, w, h, xx + 1, yy))) symbolHits++;
-                            } else if (++misses > allowedMisses) {
-                                continue candidate;
-                            }
+                            int support = diamondSideSupport(g, labels, w, h, xx, yy);
+                            if (support == 0 && ++misses > allowedMisses) continue candidate;
+                            if (support == 2) symbolHits++;
                         }
+                    int hit = total - misses;
                     // Model support belongs to the four diamond sides, not neighboring staff/stem
                     // ink.
                     if (labels != null && symbolHits < Math.max(8, (hit + 1) / 2)) continue;
@@ -675,7 +670,36 @@ final class ArtificialHarmonics {
                             return true;
                     } else if (outside == 4) return true;
                 }
+            }
+        }
         return false;
+    }
+
+    /** Returns no ink, raw ink, or raw ink with semantic support in the three-pixel probe. */
+    private static int diamondSideSupport(
+            byte[] gray, byte[] labels, int width, int height, int x, int y) {
+        if (y < 0 || y >= height) return 0;
+        int row = y * width;
+        byte symbol = OmrMeasurePostProcessor.SYMBOL;
+        if (x > 0 && x < width - 1) {
+            int at = row + x;
+            if ((gray[at] & 255) >= 165
+                    && (gray[at - 1] & 255) >= 165
+                    && (gray[at + 1] & 255) >= 165) return 0;
+            return labels != null
+                            && (labels[at] == symbol || labels[at - 1] == symbol || labels[at + 1] == symbol)
+                    ? 2 : 1;
+        }
+        int from = Math.max(0, x - 1), to = Math.min(width - 1, x + 1);
+        for (int column = from; column <= to; column++) {
+            if ((gray[row + column] & 255) >= 165) continue;
+            if (labels != null) {
+                for (int labelColumn = from; labelColumn <= to; labelColumn++)
+                    if (labels[row + labelColumn] == symbol) return 2;
+            }
+            return 1;
+        }
+        return 0;
     }
 
     /** Re-read a hollow diamond between two continuous staff rules. */
@@ -1058,14 +1082,6 @@ final class ArtificialHarmonics {
                         && Math.abs(top + sumY / (float) tail - cy) <= verticalTolerance) return true;
             }
         return false;
-    }
-
-    private static boolean symbol(byte[] labels, int w, int h, int x, int y) {
-        return x >= 0
-                && x < w
-                && y >= 0
-                && y < h
-                && labels[y * w + x] == OmrMeasurePostProcessor.SYMBOL;
     }
 
     private static boolean dark(byte[] g, int w, int h, int x, int y) {

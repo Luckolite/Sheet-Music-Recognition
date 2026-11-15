@@ -16,12 +16,13 @@ final class StaffPitchTrack {
 
     /** Contrast depends on the physical pixel and flank, independent of deskew. */
     private static final class RuleProjection {
-        private static final int MAX_CELLS = 16384;
+        private static final int INITIAL_CACHE_CELLS = 16384;
+        private static final int RETRY_CACHE_CELLS = 131072;
         char[] prefix, storage;
         int readyFrom = Integer.MAX_VALUE, readyTo = -1;
         int[] strength, semanticShifts;
         float[] fitScratch;
-        int firstRow, left, stride, excludedFrom, excludedTo;
+        int firstRow, left, stride, excludedFrom, excludedTo, cells;
         boolean prepared;
 
         void reset() {
@@ -39,9 +40,14 @@ final class StaffPitchTrack {
             excludedFrom = Math.max(left, excludedLeft) - left + 1;
             excludedTo = Math.min(right, excludedRight) - left + 1;
             int rows = last - first + 1;
-            long cells = (long) rows * stride;
-            if (rows <= 0 || stride < 2 || cells > MAX_CELLS) return;
-            if (storage == null || storage.length < cells) storage = new char[(int) cells];
+            long size = (long) rows * stride;
+            cells = rows > 0 && stride >= 2 && size <= RETRY_CACHE_CELLS ? (int) size : 0;
+            if (cells <= INITIAL_CACHE_CELLS) enableCache();
+        }
+
+        void enableCache() {
+            if (cells == 0 || prefix != null) return;
+            if (storage == null || storage.length < cells) storage = new char[cells];
             prefix = storage;
         }
 
@@ -49,6 +55,30 @@ final class StaffPitchTrack {
                 int from, int to, int flankOffset, int threshold, int[] strength) {
             if (start > end) return;
             int first = start + shift - firstRow, last = end + shift - firstRow;
+            ensureRows(gray, width, first, last, flankOffset, threshold);
+            int base = first * stride;
+            int fromIndex = base + from - left, toIndex = base + to - left + 1;
+            for (int row = start - top, lastRow = end - top; row <= lastRow;
+                    row++, fromIndex += stride, toIndex += stride) {
+                strength[row] += prefix[toIndex] - prefix[fromIndex];
+            }
+        }
+
+        void projectHorizontal(byte[] gray, int width, int start, int end, int top,
+                int flankOffset, int threshold, int[] strength) {
+            int first = start - firstRow, last = end - firstRow;
+            ensureRows(gray, width, first, last, flankOffset, threshold);
+            // Each side starts at zero, so its end already holds the full count.
+            int leftEnd = excludedFrom <= excludedTo ? excludedFrom - 1 : 0;
+            int rightEnd = stride - 1;
+            for (int row = start - top, base = first * stride; row <= end - top;
+                    row++, base += stride) {
+                strength[row] = prefix[base + leftEnd] + prefix[base + rightEnd];
+            }
+        }
+
+        private void ensureRows(byte[] gray, int width, int first, int last, int flankOffset,
+                int threshold) {
             if (first < readyFrom || last > readyTo) {
                 if (readyTo < 0) {
                     populate(gray, width, first, last, flankOffset, threshold);
@@ -58,12 +88,6 @@ final class StaffPitchTrack {
                 }
                 readyFrom = Math.min(readyFrom, first);
                 readyTo = Math.max(readyTo, last);
-            }
-            int base = first * stride;
-            int fromIndex = base + from - left, toIndex = base + to - left + 1;
-            for (int row = start - top, lastRow = end - top; row <= lastRow;
-                    row++, fromIndex += stride, toIndex += stride) {
-                strength[row] += prefix[toIndex] - prefix[fromIndex];
             }
         }
 
@@ -1044,40 +1068,48 @@ final class StaffPitchTrack {
                     (int) Math.min(height - 1 - flank, (long) lastScanY + padding),
                     excludedLeft, excludedRight);
         }
+        // Keep the first large horizontal scan direct. A tilted retry can reuse its cache
+        // across the remaining slopes.
+        if (projection != null && slope != 0) projection.enableCache();
         boolean cached = projection != null && projection.prefix != null;
-        for (int xx = left; xx <= right; ) {
-            if (xx >= excludedLeft && xx <= excludedRight) {
-                if (excludedRight >= right) break;
-                xx = excludedRight + 1;
-            }
-            int columnShift = Math.round((xx - x) * slope);
-            int runEnd = xx;
-            // Deskewed columns with the same shift can read contiguous raster rows.
-            int spanEnd = xx < excludedLeft ? Math.min(right, excludedLeft - 1) : right;
-            if (slope == 0) runEnd = spanEnd;
-            else while (runEnd < spanEnd
-                    && Math.round((runEnd + 1 - x) * slope) == columnShift) runEnd++;
-            int start = Math.max(firstScanY, flank - columnShift);
-            int end = Math.min(lastScanY, height - 1 - flank - columnShift);
-            if (cached) {
-                projection.accumulate(gray, width, start, end, columnShift, top,
-                        xx, runEnd, flankOffset, inkThreshold, strength);
-                xx = runEnd + 1;
-                continue;
-            }
-            int offset = (start + columnShift) * width + xx;
-            int runWidth = runEnd - xx + 1;
-            for (int y = start; y <= end; y++, offset += width) {
-                int supported = 0;
-                for (int at = offset, limit = offset + runWidth; at < limit; at++) {
-                    int ink = gray[at] & 255;
-                    if (ink <= inkThreshold
-                            && (gray[at - flankOffset] & 255) >= ink + 12
-                            && (gray[at + flankOffset] & 255) >= ink + 12) supported++;
+        if (cached && slope == 0) {
+            projection.projectHorizontal(gray, width, firstScanY, lastScanY, top, flankOffset,
+                    inkThreshold, strength);
+        } else {
+            for (int xx = left; xx <= right; ) {
+                if (xx >= excludedLeft && xx <= excludedRight) {
+                    if (excludedRight >= right) break;
+                    xx = excludedRight + 1;
                 }
-                strength[y - top] += supported;
+                int columnShift = Math.round((xx - x) * slope);
+                int runEnd = xx;
+                // Deskewed columns with the same shift can read contiguous raster rows.
+                int spanEnd = xx < excludedLeft ? Math.min(right, excludedLeft - 1) : right;
+                if (slope == 0) runEnd = spanEnd;
+                else while (runEnd < spanEnd
+                        && Math.round((runEnd + 1 - x) * slope) == columnShift) runEnd++;
+                int start = Math.max(firstScanY, flank - columnShift);
+                int end = Math.min(lastScanY, height - 1 - flank - columnShift);
+                if (cached) {
+                    projection.accumulate(gray, width, start, end, columnShift, top,
+                            xx, runEnd, flankOffset, inkThreshold, strength);
+                    xx = runEnd + 1;
+                    continue;
+                }
+                int offset = (start + columnShift) * width + xx;
+                int runWidth = runEnd - xx + 1;
+                for (int y = start; y <= end; y++, offset += width) {
+                    int supported = 0;
+                    for (int at = offset, limit = offset + runWidth; at < limit; at++) {
+                        int ink = gray[at] & 255;
+                        if (ink <= inkThreshold
+                                && (gray[at - flankOffset] & 255) >= ink + 12
+                                && (gray[at + flankOffset] & 255) >= ink + 12) supported++;
+                    }
+                    strength[y - top] += supported;
+                }
+                xx = runEnd + 1;
             }
-            xx = runEnd + 1;
         }
         int
                 minimum =
@@ -1087,7 +1119,7 @@ final class StaffPitchTrack {
                 band = Math.max(2, Math.round(gap * .25f));
         // Reject beam-only peaks before selecting a five-line group, so a stronger beam
         // cannot hide a valid staff group through overlap suppression.
-        float requiredSupport = Math.max(4, samples * (bilateral ? .45f : .2f));
+        int requiredSupport = (int) Math.ceil(Math.max(4, samples * (bilateral ? .45f : .2f)));
         int possibleRows = 0;
         for (int value : strength) if (value >= minimum) possibleRows++;
         if (possibleRows < 5) return null;
@@ -1105,20 +1137,26 @@ final class StaffPitchTrack {
         }
         for (int row = 0; row < strength.length; row++) {
             if (strength[row] < minimum) continue;
-            int supported = 0, center = top + row;
+            int supported = 0, misses = samples - requiredSupport, center = top + row;
+            columns:
             for (int xx = left; xx <= right && supported < requiredSupport; xx++) {
                 if (xx >= excludedLeft && xx <= excludedRight) {
                     if (excludedRight >= right) break;
                     xx = excludedRight + 1;
                 }
                 int shifted = center + (shifts == null ? 0 : shifts[xx - left]);
+                if (shifted >= 0 && shifted < height && labels[shifted * width + xx] == 4) {
+                    supported++;
+                    continue;
+                }
                 int start = Math.max(0, shifted - band);
                 int end = Math.min(height - 1, shifted + band);
                 for (int yy = start, at = start * width + xx; yy <= end; yy++, at += width) {
                     if (labels[at] != 4) continue;
                     supported++;
-                    break;
+                    continue columns;
                 }
+                if (--misses < 0) break;
             }
             if (supported < requiredSupport) {
                 if (--possibleRows < 5) return null;
@@ -1288,7 +1326,8 @@ final class StaffPitchTrack {
                     if (labelColumns + remaining < requiredLabels
                             || ((!occluded || covered > 0)
                                     && inkColumns + remaining < requiredInk)) return false;
-                    boolean ink = false, label = false;
+                    // Once a quorum is met, only the remaining kind of evidence matters.
+                    boolean ink = inkColumns >= requiredInk, label = labelColumns >= requiredLabels;
                     int center = Math.round(lineCenter + (xx - x) * slope);
                     int start = Math.max(flank, center - band);
                     int end = Math.min(lastFlankRow, center + band);
@@ -1300,7 +1339,7 @@ final class StaffPitchTrack {
                                     && (gray[pixel - flankOffset] & 255) >= value + 12
                                     && (gray[pixel + flankOffset] & 255) >= value + 12;
                         }
-                        if (labels[pixel] == 4) label = true;
+                        if (!label && labels[pixel] == 4) label = true;
                         if (ink && label) break;
                     }
                     if (ink) inkColumns++;
@@ -1311,15 +1350,16 @@ final class StaffPitchTrack {
                 if (inkColumns >= requiredInk) continue;
                 // Thick ink is only a fallback for one occluded staff side.
                 if (!occluded || ++covered > 1) return false;
-                int thickColumns = 0;
+                int thickColumns = 0, thickOffset = thick * width;
                 for (int xx = first; xx <= last && thickColumns < requiredThick; xx++) {
                     int center = Math.round(lineCenter + (xx - x) * slope);
-                    for (int yy = Math.max(thick, center - band);
-                            yy <= Math.min(height - 1 - thick, center + band);
-                            yy++) {
-                        if ((gray[yy * width + xx] & 255) < 140
-                                && ((gray[(yy - thick) * width + xx] & 255) < 140
-                                        || (gray[(yy + thick) * width + xx] & 255) < 140)) {
+                    int start = Math.max(thick, center - band);
+                    int end = Math.min(height - 1 - thick, center + band);
+                    for (int yy = start, pixel = start * width + xx;
+                            yy <= end; yy++, pixel += width) {
+                        if ((gray[pixel] & 255) < 140
+                                && ((gray[pixel - thickOffset] & 255) < 140
+                                        || (gray[pixel + thickOffset] & 255) < 140)) {
                             thickColumns++;
                             break;
                         }

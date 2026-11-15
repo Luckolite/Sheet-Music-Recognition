@@ -225,6 +225,9 @@ final class CompactQuarterRestContour {
         if (gray == null || width < 1 || gray.length % width != 0 || staffLines == null)
             return false;
         int height = gray.length / width, surround = Math.max(3, Math.round(gap));
+        int firstRow = Math.max(0, minY), lastRow = Math.min(height - 1, maxY);
+        int paperLeft = Math.max(0, left - surround), paperRight = Math.min(width - 1, right + surround);
+        int paperWidth = paperLeft <= paperRight ? paperRight - paperLeft + 1 : 0;
         int[] tones =
                 (quarterBudget == null
                                 || quarterBudget.allocate(
@@ -235,21 +238,25 @@ final class CompactQuarterRestContour {
         int count = 0;
         {
             if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
-            for (int y = Math.max(0, minY); y <= Math.min(height - 1, maxY); y++) {
+            for (int y = firstRow, row = firstRow * width; y <= lastRow; y++, row += width) {
                 if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
 
                 if (y - lineTop < 0 || y - lineTop >= staffLines.length || staffLines[y - lineTop])
                     continue;
                 {
-                    if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
-                    for (int x = Math.max(0, left - surround);
-                            x <= Math.min(width - 1, right + surround);
-                            x++) {
-                        if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
-
-                        tones[gray[y * width + x] & 255]++;
-                        count++;
+                    int first = row + paperLeft, end = first + paperWidth;
+                    // Every pixel in this span is visited. Keep individual charges for
+                    // parent budgets and for a local refusal at the original pixel.
+                    if (quarterBudget == null || quarterBudget.tryPrepayLocal(1L + paperWidth)) {
+                        for (int at = first; at < end; at++) tones[gray[at] & 255]++;
+                    } else {
+                        FaintQuarterRestInk.charge(quarterBudget, 1, 0);
+                        for (int at = first; at < end; at++) {
+                            FaintQuarterRestInk.charge(quarterBudget, 1, 0);
+                            tones[gray[at] & 255]++;
+                        }
                     }
+                    count += paperWidth;
                 }
             }
         }
@@ -265,9 +272,10 @@ final class CompactQuarterRestContour {
         }
 
         int threshold = Math.min(170, Math.max(0, paper - 45)), supported = 0, rows = 0;
+        int inkLeft = Math.max(0, left), inkRight = Math.min(width - 1, right);
         {
             if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
-            for (int y = Math.max(0, minY); y <= Math.min(height - 1, maxY); y++) {
+            for (int y = firstRow, row = firstRow * width; y <= lastRow; y++, row += width) {
                 if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
 
                 if (y - lineTop < 0 || y - lineTop >= staffLines.length || staffLines[y - lineTop])
@@ -276,9 +284,9 @@ final class CompactQuarterRestContour {
                 boolean dark = false;
                 {
                     if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
-                    for (int x = Math.max(0, left); x <= Math.min(width - 1, right); x++) {
+                    for (int x = inkLeft, at = row + inkLeft; x <= inkRight; x++, at++) {
                         if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
-                        if ((gray[y * width + x] & 255) <= threshold) {
+                        if ((gray[at] & 255) <= threshold) {
                             dark = true;
                             break;
                         }

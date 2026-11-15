@@ -237,19 +237,20 @@ final class RestPaperTone {
         int first = gray[firstRow + left] & 255;
         int middle = firstRow + (rows / 2) * width + left + tileWidth / 2;
         int last = endRow - width + right - 1;
-        if (first < 255 && (gray[middle] & 255) == first && (gray[last] & 255) == first
-                && isUniformTile(gray, width, firstRow, endRow, left, right))
-            return first >= 96 ? first : 255;
+        if (first < 255 && (gray[middle] & 255) == first && (gray[last] & 255) == first) {
+            int mixedRow = firstMixedRow(gray, width, firstRow, endRow, left, right);
+            if (mixedRow == endRow) return first >= 96 ? first : 255;
+            // Uniform rows before the mismatch contribute no brighter or darker samples.
+            if (first >= 188 && matchesSampledRank(
+                    gray, width, mixedRow, endRow, left, right, first, upperRank, count))
+                return first;
+        }
         if (first == 255 && gray[middle] == -1 && gray[last] == -1
                 && hasWhiteRank(gray, width, firstRow, endRow, left, right, upperRank))
             return 255;
         if (first < 96 && (gray[middle] & 255) < 96 && (gray[last] & 255) < 96
                 && hasDarkRank(gray, width, firstRow, endRow, left, right,
                         count - upperRank + 1, count)) return 255;
-        if (first >= 188 && first < 255 && (gray[middle] & 255) == first
-                && (gray[last] & 255) == first
-                && matchesSampledRank(gray, width, firstRow, endRow, left, right, first, upperRank, count))
-            return first;
         // A bright tile still contributes its exact tone to neighbouring shaded tiles.
         java.util.Arrays.fill(histogram, 0);
         if (tileWidth == width) {
@@ -293,18 +294,20 @@ final class RestPaperTone {
         return true;
     }
 
-    private static boolean isUniformTile(
+    private static int firstMixedRow(
             byte[] gray, int width, int firstRow, int endRow, int left, int right) {
         int start = firstRow + left, end = firstRow + right;
         byte tone = gray[start];
         for (int x = start + 1; x < end; x++)
-            if (gray[x] != tone) return false;
-        if (left == 0 && right == width)
-            return java.util.Arrays.mismatch(gray, start, endRow - width, gray, end, endRow) < 0;
+            if (gray[x] != tone) return firstRow;
+        if (left == 0 && right == width) {
+            int mismatch = java.util.Arrays.mismatch(gray, start, endRow - width, gray, end, endRow);
+            return mismatch < 0 ? endRow : end + mismatch - mismatch % width;
+        }
         for (int row = firstRow + width; row < endRow; row += width)
             if (java.util.Arrays.mismatch(gray, start, end, gray, row + left, row + right) >= 0)
-                return false;
-        return true;
+                return row;
+        return endRow;
     }
 
     private static boolean hasWhiteRank(
@@ -314,9 +317,16 @@ final class RestPaperTone {
         for (int row = firstRow; row < endRow; row += width) {
             int hits = 0;
             int pixel = row + left, end = row + right;
-            for (int wordEnd = pixel + wordWidth; pixel < wordEnd; pixel += Long.BYTES) {
-                long word = (long) GRAY_WORDS.get(gray, pixel);
-                hits += Long.BYTES - Long.bitCount(((word | HIGH_BITS) - WHITE_BIAS) & word & HIGH_BITS);
+            int wordEnd = pixel + wordWidth;
+            for (; pixel < wordEnd - Long.BYTES; pixel += 2 * Long.BYTES) {
+                long first = (long) GRAY_WORDS.get(gray, pixel);
+                long second = (long) GRAY_WORDS.get(gray, pixel + Long.BYTES);
+                if ((first & second) != -1L)
+                    hits += nonWhiteBytes(first) + nonWhiteBytes(second);
+            }
+            if (pixel < wordEnd) {
+                hits += nonWhiteBytes((long) GRAY_WORDS.get(gray, pixel));
+                pixel += Long.BYTES;
             }
             for (; pixel < end; pixel++)
                 hits += ((gray[pixel] & 255) - 255) >>> 31;
@@ -327,6 +337,10 @@ final class RestPaperTone {
             if (white * 2 < tileWidth) return false;
         }
         return false;
+    }
+
+    private static int nonWhiteBytes(long word) {
+        return Long.BYTES - Long.bitCount(((word | HIGH_BITS) - WHITE_BIAS) & word & HIGH_BITS);
     }
 
     private static boolean hasDarkRank(
