@@ -1433,7 +1433,9 @@ final class NoteArticulationDetector {
             byte[] labels,
             byte[] gray,
             int width,
-            int height) {
+            int height,
+            boolean[] seen,
+            GlyphFloodScratch scratch) {
         float gap = note.gap;
         if (!Float.isFinite(gap) || gap < 6 || gap > 64) return false;
         int left = Math.max(0, Math.round(note.x - gap * 1.6f)),
@@ -1442,11 +1444,13 @@ final class NoteArticulationDetector {
                 bottom = Math.min(height - 1, Math.round(note.y + gap * 5.8f));
         int w = right - left + 1, h = bottom - top + 1;
         if (w <= 0 || h <= 0) return false;
-        boolean[] rules = new boolean[h], seen = new boolean[w * h];
-        int[] queue = new int[w * h];
+        boolean[] rules = new boolean[h];
+        int cropSize = w * h;
+        Arrays.fill(seen, 0, cropSize, false);
+        int[] queue = scratch.reserve(cropSize);
         for (int y = top; y <= bottom; y++)
             rules[y - top] = recoveryStaffRule(gray, width, height, Math.round(note.x), y, gap);
-        for (int seed = 0; seed < seen.length; seed++) {
+        for (int seed = 0; seed < cropSize; seed++) {
             int sx = seed % w, sy = seed / w;
             if (seen[seed] || rules[sy] || (gray[(top + sy) * width + left + sx] & 255) >= 155)
                 continue;
@@ -1643,6 +1647,11 @@ final class NoteArticulationDetector {
 
         int[] grow(int size) {
             queue = Arrays.copyOf(queue, size + Math.min(size, limit - size));
+            return queue;
+        }
+
+        int[] reserve(int size) {
+            if (queue.length < size) queue = new int[size];
             return queue;
         }
     }
@@ -2308,13 +2317,13 @@ final class NoteArticulationDetector {
                                             labels,
                                             gray,
                                             width,
-                                            height))
+                                            height, seen, scratch))
                                 for (int j = 0; j < notes.size(); j++)
                                     if (notes.get(j).staff == note.staff
                                             && Math.abs(notes.get(j).x - note.x) < note.gap * .45f)
                                         result[j] |= NoteArticulation.ACCENT;
                             if ((result[i] & NoteArticulation.MARCATO) == 0
-                                    && ruleJoinedMarcato(note, labels, gray, width, height))
+                                    && ruleJoinedMarcato(note, labels, gray, width, height, seen, scratch))
                                 for (int j = 0; j < notes.size(); j++)
                                     if (notes.get(j).staff == note.staff
                                             && Math.abs(notes.get(j).x - note.x) < note.gap * .45f)
@@ -2327,7 +2336,7 @@ final class NoteArticulationDetector {
                                             gray,
                                             labels,
                                             width,
-                                            height))
+                                            height, seen, scratch))
                                 for (int j = 0; j < notes.size(); j++)
                                     if (notes.get(j).staff == note.staff
                                             && Math.abs(notes.get(j).x - note.x) < note.gap * .45f)
@@ -2740,7 +2749,9 @@ final class NoteArticulationDetector {
             byte[] gray,
             byte[] labels,
             int width,
-            int height) {
+            int height,
+            boolean[] seen,
+            GlyphFloodScratch scratch) {
         float gap = note.gap;
         if (!Float.isFinite(gap)
                 || gap < 6
@@ -2774,8 +2785,9 @@ final class NoteArticulationDetector {
             int firstRow = direction < 0 ? 0 : firstRule + 1;
             int endRow = direction < 0 ? lastRule : h;
             if (endRow <= firstRow) continue;
-            boolean[] seen = new boolean[w * h];
-            int[] queue = new int[w * h];
+            int cropSize = w * h;
+            Arrays.fill(seen, 0, cropSize, false);
+            int[] queue = scratch.reserve(cropSize);
             for (int origin = firstRow * w; origin < endRow * w; origin++) {
                 int oy = origin / w;
                 int tipRow = oy - direction;
@@ -2858,7 +2870,8 @@ final class NoteArticulationDetector {
 
     /** Recover an upward angular mark joined to independently long, thin staff rules. */
     private static boolean ruleJoinedMarcato(
-            Anchor note, byte[] labels, byte[] gray, int width, int height) {
+            Anchor note, byte[] labels, byte[] gray, int width, int height,
+            boolean[] seenBuffer, GlyphFloodScratch scratch) {
         float gap = note.gap;
         if (!Float.isFinite(gap)
                 || !Float.isFinite(note.x)
@@ -2926,8 +2939,9 @@ final class NoteArticulationDetector {
             }
             if ((gray[rasterRow + ox] & 255) >= 155 || (seen != null && seen[origin])) continue;
             if (seen == null) {
-                seen = new boolean[cropSize];
-                queue = new int[Math.min(64, cropSize)];
+                seen = seenBuffer;
+                Arrays.fill(seen, 0, cropSize, false);
+                queue = scratch.queue;
             }
             seen[origin] = true;
             int size = 1, take = 0;
@@ -2958,7 +2972,7 @@ final class NoteArticulationDetector {
                         if (seen[next]) continue;
                         seen[next] = true;
                         if ((gray[raster] & 255) >= 155) continue;
-                        if (size == queue.length) queue = growMarcatoQueue(queue, seen.length);
+                        if (size == queue.length) queue = scratch.grow(size);
                         queue[size++] = next;
                     }
                 }
@@ -2994,7 +3008,7 @@ final class NoteArticulationDetector {
                         joined = true;
                         if (!seen[next]) {
                             seen[next] = true;
-                            if (size == queue.length) queue = growMarcatoQueue(queue, seen.length);
+                            if (size == queue.length) queue = scratch.grow(size);
                             queue[size++] = next;
                         }
                     }
@@ -3074,10 +3088,6 @@ final class NoteArticulationDetector {
                 return true;
         }
         return false;
-    }
-
-    private static int[] growMarcatoQueue(int[] queue, int limit) {
-        return java.util.Arrays.copyOf(queue, queue.length + Math.min(queue.length, limit - queue.length));
     }
 
     /** Recover a round dot fused into an upright letter above a crowded chord. */

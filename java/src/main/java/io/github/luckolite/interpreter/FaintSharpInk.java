@@ -4,6 +4,10 @@ package io.github.luckolite.interpreter;
 
 /** Local-background evidence for existing sharp-shape verification, never a classifier alone. */
 final class FaintSharpInk {
+    private static final int MAX_REUSED_ROWS = 128;
+    private static final ThreadLocal<long[]> ROW_PAIRS =
+            ThreadLocal.withInitial(() -> new long[MAX_REUSED_ROWS]);
+
     static byte[] crop(
             byte[] gray,
             int width,
@@ -58,13 +62,16 @@ final class FaintSharpInk {
         int allowedBright = outside - (int) Math.ceil(outside * .8);
         int probeStride = probe * width;
         byte[] mask = new byte[w * h];
-        long[] pairs = w <= Long.SIZE && h >= 5 ? new long[h] : null;
+        long[] pairs = null;
+        if (w <= Long.SIZE && h >= 5)
+            pairs = h <= MAX_REUSED_ROWS ? ROW_PAIRS.get() : new long[h];
         long previous = 0;
         for (int y = top, row = top * width, dest = 0;
                 y <= bottom; y++, row += width, dest += w) {
             int firstInk = row + left, end = row + right;
             while (firstInk <= end && !ink(gray, width, firstInk, side)) firstInk++;
             if (firstInk > end) {
+                if (pairs != null) pairs[y - top] = 0;
                 previous = 0;
                 continue;
             }

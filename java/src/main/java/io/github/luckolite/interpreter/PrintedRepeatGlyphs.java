@@ -20,6 +20,17 @@ final class PrintedRepeatGlyphs {
         }
     }
 
+    private static final class DotScratch {
+        boolean[] seen;
+        int[] queue;
+    }
+
+    private static final java.lang.invoke.VarHandle PIXEL_WORDS =
+            java.lang.invoke.MethodHandles.byteArrayViewVarHandle(
+                    long[].class, java.nio.ByteOrder.nativeOrder());
+    private static final long HIGH_BITS = 0x8080808080808080L;
+    private static final long DOT_BIAS = 0x0101010101010101L * (140 - 128);
+
     private PrintedRepeatGlyphs() {}
 
     /** Raw repeat proof used before semantic notehead fragments can veto its rails. */
@@ -36,7 +47,7 @@ final class PrintedRepeatGlyphs {
         int top = Math.max(0, Math.round(staffTop - gap)),
                 bottom = Math.min(height - 1, Math.round(staffBottom + gap));
         if (bottom <= top) return result;
-        var found = dots(gray, width, top, bottom, gap);
+        var found = dots(gray, width, top, bottom, gap, new DotScratch());
         var neighbors = new DotNeighbors(found, gap);
         for (var a : found)
             for (int index = neighbors.first(a); index >= 0; index = neighbors.next()) {
@@ -73,13 +84,14 @@ final class PrintedRepeatGlyphs {
                 || staffs == null
                 || measures == null) return List.of();
         var result = new ArrayList<Mark>();
+        var scratch = new DotScratch();
         for (var staff : staffs) {
             float gap = staff.gap();
             if (!Float.isFinite(gap) || gap < 5 || gap > Math.min(width, height) / 8f) continue;
             int top = Math.max(0, Math.round(staff.top() - gap));
             int bottom = Math.min(height - 1, Math.round(staff.bottom() + gap));
             if (bottom <= top) continue;
-            var dots = dots(gray, width, top, bottom, gap);
+            var dots = dots(gray, width, top, bottom, gap, scratch);
             var neighbors = new DotNeighbors(dots, gap);
             for (var a : dots)
                 for (int index = neighbors.first(a); index >= 0; index = neighbors.next()) {
@@ -277,13 +289,27 @@ final class PrintedRepeatGlyphs {
         return result;
     }
 
-    private static List<Dot> dots(byte[] gray, int width, int top, int bottom, float gap) {
+    private static List<Dot> dots(
+            byte[] gray, int width, int top, int bottom, float gap, DotScratch scratch) {
         int rows = bottom - top + 1, offset = top * width;
-        boolean[] seen = new boolean[width * rows];
-        int[] queue = new int[Math.min(256, seen.length)];
+        int bandSize = width * rows;
+        if (scratch.seen == null || scratch.seen.length < bandSize)
+            scratch.seen = new boolean[bandSize];
+        else Arrays.fill(scratch.seen, 0, bandSize, false);
+        if (scratch.queue == null) scratch.queue = new int[Math.min(256, bandSize)];
+        boolean[] seen = scratch.seen;
+        int[] queue = scratch.queue;
         var result = new ArrayList<Dot>();
-        for (int seed = 0; seed < seen.length; seed++) {
-            if (seen[seed] || (gray[offset + seed] & 255) >= 140) continue;
+        for (int seed = 0; seed < bandSize; seed++) {
+            if ((gray[offset + seed] & 255) >= 140) {
+                if (seed <= bandSize - Long.BYTES) {
+                    long tones = (long) PIXEL_WORDS.get(gray, offset + seed);
+                    if ((((tones | HIGH_BITS) - DOT_BIAS) & tones & HIGH_BITS) == HIGH_BITS)
+                        seed += Long.BYTES - 1;
+                }
+                continue;
+            }
+            if (seen[seed]) continue;
             int take = 0, queued = 1, size = 0, left = width, right = -1;
             int first = seed / width, last = first;
             long sx = 0, sy = 0;
@@ -314,7 +340,8 @@ final class PrintedRepeatGlyphs {
                         if (seen[next] || (gray[offset + next] & 255) >= 140) continue;
                         seen[next] = true;
                         if (queued == queue.length)
-                            queue = Arrays.copyOf(queue, queued + Math.min(queued, seen.length - queued));
+                            scratch.queue = queue =
+                                    Arrays.copyOf(queue, queued + Math.min(queued, bandSize - queued));
                         queue[queued++] = next;
                         while (next < end && !seen[next + 1]
                                 && (gray[offset + next + 1] & 255) < 140) next++;

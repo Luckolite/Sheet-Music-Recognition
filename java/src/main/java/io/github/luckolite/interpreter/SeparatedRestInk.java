@@ -76,6 +76,7 @@ final class SeparatedRestInk {
     static final class Scratch {
         private boolean[] visited = new boolean[0];
         private int[] queue = new int[0];
+        private int[] crossingRows;
 
         private void reset(int size) {
             if (visited.length < size) {
@@ -176,8 +177,11 @@ final class SeparatedRestInk {
                     while (firstMasked < rows && !line[lineOffset + firstMasked])
                         firstMasked++;
                     if (firstMasked < rows) {
-                        crossingRows = new int[rows * 2];
+                        if (scratch.crossingRows == null || scratch.crossingRows.length < rows * 2)
+                            scratch.crossingRows = new int[rows * 2];
+                        crossingRows = scratch.crossingRows;
                         // Only the nearest visible row can be reached in each direction.
+                        // Rebuild every visible entry before traversing the crop.
                         int previous = -1;
                         for (int row = 0; row < rows; row++) {
                             if (line[lineOffset + row]) continue;

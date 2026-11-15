@@ -8,13 +8,43 @@ import java.util.List;
 
 /** Propose predominantly faded glyphs; ordinary dark candidates keep their existing bounds. */
 final class FaintDynamicGlyphComponents {
+    private static final java.lang.invoke.VarHandle PIXELS =
+            java.lang.invoke.MethodHandles.byteArrayViewVarHandle(
+                    long[].class, java.nio.ByteOrder.LITTLE_ENDIAN);
+    private static final long HIGH_BITS = 0x8080808080808080L;
+    private static final long BYTE_ONES = 0x0101010101010101L;
+
+    private static long atLeast(long tones, long bias) {
+        return ((tones | HIGH_BITS) - bias) & tones & HIGH_BITS;
+    }
+
     record Bounds(int left, int top, int right, int bottom, int pixels) {}
 
     static List<Bounds> find(byte[] gray, int width, int height, boolean[] seen, int[] queue) {
         var result = new ArrayList<Bounds>();
+        if (!hasFadedTone(gray)) {
+            // With no tone between the dark and broad gates, every component is dark.
+            for (int p = 0; p < gray.length; p++) seen[p] = (gray[p] & 255) < 145;
+            Arrays.fill(seen, gray.length, seen.length, false);
+            return result;
+        }
         boolean hasFaintInk = findAt(gray, width, height, seen, queue, 205, .2f, result);
         if (hasFaintInk) findAt(gray, width, height, seen, queue, 185, .65f, result);
         return result;
+    }
+
+    private static boolean hasFadedTone(byte[] gray) {
+        int p = 0;
+        for (; p <= gray.length - Long.BYTES; p += Long.BYTES) {
+            long tones = (long) PIXELS.get(gray, p);
+            if ((atLeast(tones, BYTE_ONES * (145 - 128))
+                    & ~atLeast(tones, BYTE_ONES * (205 - 128))) != 0) return true;
+        }
+        for (; p < gray.length; p++) {
+            int tone = gray[p] & 255;
+            if (tone >= 145 && tone < 205) return true;
+        }
+        return false;
     }
 
     private static boolean findAt(
@@ -30,8 +60,19 @@ final class FaintDynamicGlyphComponents {
         boolean hasFaintInk = false;
         boolean narrow = threshold == 185;
         int broadCount = result.size(), firstBroad = 0, firstNarrow = broadCount;
+        long bias = BYTE_ONES * (threshold - 128);
         for (int p = 0; p < gray.length; p++) {
-            if ((gray[p] & 255) >= threshold || seen[p]) continue;
+            if ((gray[p] & 255) >= threshold) {
+                if (p > gray.length - Long.BYTES) continue;
+                long light = atLeast((long) PIXELS.get(gray, p), bias);
+                int skip = Long.numberOfTrailingZeros(HIGH_BITS ^ light) / Byte.SIZE;
+                p += skip;
+                if (skip == Long.BYTES) {
+                    p--;
+                    continue;
+                }
+            }
+            if (seen[p]) continue;
             int read = 0, queued = 1, count = 0, dark = 0;
             queue[0] = p;
             seen[p] = true;
