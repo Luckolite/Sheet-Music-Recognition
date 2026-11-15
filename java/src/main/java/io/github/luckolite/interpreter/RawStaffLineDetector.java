@@ -806,23 +806,23 @@ final class RawStaffLineDetector {
 
                 int rowStrength = strength[row];
                 if (rowStrength < minimumStrength) continue;
-                boolean maximum = true, prominent = false;
-                {
-                    if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
-                    for (int check = Math.max(0, row - 2);
-                            check <= Math.min(strength.length - 1, row + 2);
-                            check++) {
-                        if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
-
-                        if (strength[check] > rowStrength) {
-                            maximum = false;
-                            if (quarterBudget == null) break;
-                        }
-                        if (strength[check] < rowStrength) prominent = true;
+                int first = Math.max(0, row - 2), last = Math.min(strength.length - 1, row + 2);
+                boolean peak;
+                if (quarterBudget == null || quarterBudget.tryPrepayLocal(2L + last - first)) {
+                    peak = prominentPeak(strength, row, first, last, rowStrength);
+                } else {
+                    boolean maximum = true, prominent = false;
+                    FaintQuarterRestInk.charge(quarterBudget, 1, 0);
+                    for (int check = first; check <= last; check++) {
+                        FaintQuarterRestInk.charge(quarterBudget, 1, 0);
+                        int neighbor = strength[check];
+                        if (neighbor > rowStrength) maximum = false;
+                        if (neighbor < rowStrength) prominent = true;
                     }
+                    peak = maximum && prominent;
                 }
 
-                if (maximum && prominent) {
+                if (peak) {
                     if (quarterBudget == null) mergePeak(raw, row, strength, null);
                     else FaintQuarterRestInk.add(
                             quarterBudget, raw, FaintQuarterRestInk.boxInt(quarterBudget, row));
@@ -849,12 +849,32 @@ final class RawStaffLineDetector {
         return merged;
     }
 
+    private static boolean prominentPeak(int[] strength, int row, int first, int last,
+            int rowStrength) {
+        if (row - first == 2 && last - row == 2) {
+            int before = strength[first], previous = strength[row - 1];
+            int next = strength[row + 1], after = strength[last];
+            int maximum = Math.max(Math.max(before, previous), Math.max(next, after));
+            return maximum <= rowStrength
+                    && (before < rowStrength || previous < rowStrength
+                            || next < rowStrength || after < rowStrength);
+        }
+        boolean prominent = false;
+        for (int check = first; check <= last; check++) {
+            int neighbor = strength[check];
+            if (neighbor > rowStrength) return false;
+            if (neighbor < rowStrength) prominent = true;
+        }
+        return prominent;
+    }
+
     private static void mergePeak(
             List<Integer> peaks, int row, int[] strength, FaintQuarterRestInk.Budget budget) {
         int last = peaks.size() - 1;
-        if (last < 0 || row - peaks.get(last) > 3) {
+        int previous = last < 0 ? -1 : peaks.get(last);
+        if (last < 0 || row - previous > 3) {
             FaintQuarterRestInk.add(budget, peaks, FaintQuarterRestInk.boxInt(budget, row));
-        } else if (strength[row] > strength[peaks.get(last)]) {
+        } else if (strength[row] > strength[previous]) {
             FaintQuarterRestInk.set(budget, peaks, last, FaintQuarterRestInk.boxInt(budget, row));
         }
     }
@@ -946,13 +966,15 @@ final class RawStaffLineDetector {
                                         rangeStarts[line - 1] = cursor;
                                         start = Math.max(start, cursor);
                                     }
+                                    boolean prepaid = quarterBudget == null
+                                            || quarterBudget.tryPrepayLocal(Math.max(0, last - start));
                                     for (int index = start; index < last; index++) {
-                                        if (quarterBudget != null)
+                                        if (!prepaid)
                                             FaintQuarterRestInk.charge(quarterBudget, 1, 0);
 
                                         int row = peakRows == null ? peaks.get(index) : peakRows[index];
                                         float distance = Math.abs(row - expected);
-                                        if (quarterBudget == null && row > expected
+                                        if (prepaid && row > expected
                                                 && (distance > tolerance || distance > bestDistance))
                                             break;
                                         if (distance > tolerance) continue;
@@ -965,7 +987,7 @@ final class RawStaffLineDetector {
                                             bestRow = row;
                                             bestDistance = distance;
                                             // Below the float precision boundary, distinct rows cannot tie at zero.
-                                            if (quarterBudget == null && distance == 0f
+                                            if (prepaid && distance == 0f
                                                     && row < (1 << 24) - 1) break;
                                         }
                                     }

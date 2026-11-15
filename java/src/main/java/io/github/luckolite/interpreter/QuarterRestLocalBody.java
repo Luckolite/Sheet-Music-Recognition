@@ -2,12 +2,20 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.github.luckolite.interpreter;
 
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.VarHandle;
+import java.nio.ByteOrder;
 import java.util.ArrayList;
 import java.util.List;
 
 /** Complete isolated rest bodies with a nearby five-rule phase proved on both flanks. */
 final class QuarterRestLocalBody {
     record Body(int left, int right, int top, int bottom, SixteenthRestDetector.Staff staff) {}
+
+    private static final VarHandle GRAY_WORDS =
+            MethodHandles.byteArrayViewVarHandle(long[].class, ByteOrder.nativeOrder());
+    private static final long HIGH_BITS = 0x8080808080808080L;
+    private static final long BRIGHT_CUTOFF = 0x0101010101010101L * (226 - 128);
 
     private QuarterRestLocalBody() {}
 
@@ -191,23 +199,38 @@ final class QuarterRestLocalBody {
                                         32L * 1 + 8L * (Math.max(0L, (long) (last - first))))
                         ? new int[last - first]
                         : null);
-        {
-            if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
-            for (int y = first; y < last; y++) {
-                if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
-                {
-                    if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
-                    for (int x = left; x < right; x++) {
-                        if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
-
-                        int ink = gray[y * width + x] & 255;
-                        if (ink <= 225
-                                && (gray[(y - flank) * width + x] & 255) >= ink + 12
-                                && (gray[(y + flank) * width + x] & 255) >= ink + 12)
-                            strength[y - first]++;
-                    }
+        if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
+        int flankOffset = flank * width;
+        int columns = right - left;
+        for (int y = first, row = first * width; y < last; y++, row += width) {
+            if (quarterBudget != null) {
+                FaintQuarterRestInk.charge(quarterBudget, 1, 0);
+                FaintQuarterRestInk.charge(quarterBudget, 1, 0);
+            }
+            int start = row + left, end = row + right;
+            boolean prepaid = quarterBudget == null
+                    || (columns >= 0 && gray != null && start - (long) flankOffset >= 0
+                            && end + (long) flankOffset <= gray.length
+                            && quarterBudget.tryPrepayLocal(columns));
+            int count = 0;
+            if (prepaid) {
+                int pixel = start;
+                for (int lastWord = end - Long.BYTES; pixel <= lastWord; pixel += Long.BYTES) {
+                    long tones = (long) GRAY_WORDS.get(gray, pixel);
+                    long bright = ((tones | HIGH_BITS) - BRIGHT_CUTOFF) & tones & HIGH_BITS;
+                    if (bright == HIGH_BITS) continue;
+                    for (int at = pixel; at < pixel + Long.BYTES; at++)
+                        if (contrastedRule(gray, at, flankOffset)) count++;
+                }
+                for (; pixel < end; pixel++)
+                    if (contrastedRule(gray, pixel, flankOffset)) count++;
+            } else {
+                for (int pixel = start; pixel < end; pixel++) {
+                    FaintQuarterRestInk.charge(quarterBudget, 1, 0);
+                    if (contrastedRule(gray, pixel, flankOffset)) count++;
                 }
             }
+            strength[y - first] = count;
         }
 
         int[] found = null;
@@ -254,4 +277,11 @@ final class QuarterRestLocalBody {
 
         return found;
     }
+    private static boolean contrastedRule(byte[] gray, int pixel, int flankOffset) {
+        int ink = gray[pixel] & 255;
+        return ink <= 225
+                && (gray[pixel - flankOffset] & 255) >= ink + 12
+                && (gray[pixel + flankOffset] & 255) >= ink + 12;
+    }
+
 }

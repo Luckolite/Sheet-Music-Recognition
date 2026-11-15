@@ -5725,22 +5725,27 @@ final class SixteenthRestDetector {
                             y++) {
                         if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
 
+                        int row = y * width;
                         boolean both;
-                        if (budgeted) {
+                        // A successful local reservation pays both original setup and pixel costs.
+                        boolean prepaid = budgeted && row + left - margin >= 0
+                                && row + (long) right + margin < gray.length
+                                && right >= 0 && left <= width
+                                && quarterBudget.tryPrepayLocal(2L * (margin + 1L));
+                        if (budgeted && !prepaid) {
                             int ln = 0, rn = 0;
                             FaintQuarterRestInk.charge(quarterBudget, 1, 0);
                             for (int x = left - margin; x < left; x++) {
                                 FaintQuarterRestInk.charge(quarterBudget, 1, 0);
-                                if ((gray[y * width + x] & 255) < 170) ln++;
+                                if ((gray[row + x] & 255) < 170) ln++;
                             }
                             FaintQuarterRestInk.charge(quarterBudget, 1, 0);
                             for (int x = right + 1; x <= right + margin; x++) {
                                 FaintQuarterRestInk.charge(quarterBudget, 1, 0);
-                                if ((gray[y * width + x] & 255) < 170) rn++;
+                                if ((gray[row + x] & 255) < 170) rn++;
                             }
                             both = ln >= minimumFlankInk && rn >= minimumFlankInk;
                         } else {
-                            int row = y * width;
                             both = quarterRuleFlank(gray, row + left - margin, margin, minimumFlankInk)
                                     && quarterRuleFlank(gray, row + right + 1, margin, minimumFlankInk);
                         }
@@ -5818,35 +5823,37 @@ final class SixteenthRestDetector {
 
                         int ln = 0, rn = 0;
                         boolean bodyInk = false;
-                        {
-                            if (quarterBudget != null)
-                                FaintQuarterRestInk.charge(quarterBudget, 1, 0);
-                            for (int x = 0; x < cw; x++) {
-                                if (quarterBudget != null)
-                                    FaintQuarterRestInk.charge(quarterBudget, 1, 0);
-
-                                int value = gray[(y + top) * width + left - margin + x] & 255;
-                                core[y * cw + x] = (byte) (value < threshold ? value : 255);
-                                if (value < threshold) {
-                                    if (x < margin) ln++;
-                                    if (x >= cw - margin) rn++;
-                                    else if (!budgeted && x >= margin) bodyInk = true;
-                                }
+                        if (budgeted) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
+                        int start = (y + top) * width + left - margin;
+                        int target = y * cw;
+                        boolean prepaid = !budgeted || (start >= 0 && cw >= 0
+                                && start + (long) cw <= gray.length
+                                && target >= 0 && target + (long) cw <= core.length
+                                && quarterBudget.tryPrepayLocal(cw));
+                        for (int x = 0, source = start, pixel = target; x < cw;
+                                x++, source++, pixel++) {
+                            if (!prepaid) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
+                            int value = gray[source] & 255;
+                            core[pixel] = (byte) (value < threshold ? value : 255);
+                            if (value < threshold) {
+                                if (x < margin) ln++;
+                                if (x >= cw - margin) rn++;
+                                else if (x >= margin) bodyInk = true;
                             }
                         }
 
                         coreRules[y] = ln >= minimumFlankInk && rn >= minimumFlankInk;
                         if (!coreRules[y] && y + top >= minY && y + top <= maxY) {
                             if (budgeted) {
+                                // The threshold pass already measured the body. Preserve the
+                                // original debits, including incremental parent and refusal paths.
                                 FaintQuarterRestInk.charge(quarterBudget, 1, 0);
-                                for (int x = margin; x < cw - margin; x++) {
-                                    FaintQuarterRestInk.charge(quarterBudget, 1, 0);
-                                    if ((core[y * cw + x] & 255) < 170) {
-                                        lo = Math.min(lo, y);
-                                        hi = Math.max(hi, y);
-                                    }
-                                }
-                            } else if (bodyInk) {
+                                int columns = Math.max(0, cw - 2 * margin);
+                                if (!quarterBudget.tryPrepayLocal(columns))
+                                    for (int x = 0; x < columns; x++)
+                                        FaintQuarterRestInk.charge(quarterBudget, 1, 0);
+                            }
+                            if (bodyInk) {
                                 lo = Math.min(lo, y);
                                 hi = Math.max(hi, y);
                             }
