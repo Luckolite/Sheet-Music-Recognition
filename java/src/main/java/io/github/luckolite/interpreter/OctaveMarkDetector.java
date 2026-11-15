@@ -469,10 +469,12 @@ final class OctaveMarkDetector {
                     if (dashRight < 0) continue;
                     int hookDirection =
                             hookDirection(gray, width, height, dashRight, box.top, box.bottom, gap);
+                    boolean openEnded =
+                            !below && hookDirection == 0 && dashRight - box.right >= gap * 44;
                     if (!closedEight
-                            && (hookDirection <= 0
-                                    || attached == null && !brokenEightShape(gray, width, box, gap)))
-                        continue;
+                            && ((hookDirection <= 0 && !openEnded)
+                                    || attached == null
+                                            && !brokenEightShape(gray, width, box, gap))) continue;
                     // A bare numeral has no va/vb suffix. Use only the nearest stave;
                     // do not apply the same inter-system mark to both adjacent rows.
                     PlayingTechniqueDetector.Staff nearest = null;
@@ -1605,10 +1607,32 @@ final class OctaveMarkDetector {
                 if (direction != 0 && candidate != direction) return 0;
                 direction = candidate;
             }
-        if (direction != 0 || dashRight < 0) return direction;
+        if (dashRight < 0) return direction;
+        if (direction <= 0 && displacedDownwardDottedHook(gray, width, height, end, y1, y2, gap))
+            return 1;
+        if (direction != 0) return direction;
         int dotted = dottedHookDirection(gray, width, height, end, y1, y2, gap);
         if (dotted != 0) return dotted;
         return joinedDashHookDirection(gray, width, height, end, y1, y2, gap);
+    }
+
+    /** A dotted octave line can turn just to the right of the last horizontal dash. */
+    private static boolean displacedDownwardDottedHook(
+            byte[] gray, int width, int height, int end, int top, int bottom, float gap) {
+        int limit = end + Math.round(gap * .48f);
+        if (end < 4 || limit + 1 >= width || gap < 10 || gap > 32) return false;
+        for (int y = top; y <= bottom; y++) {
+            if (!endsHorizontalDashes(gray, width, end, y, gap)
+                    || (gray[y * width + end + 1] & 255) < 165) continue;
+            for (int x = end + 2; x < limit; x++) {
+                if ((gray[y * width + x] & 255) < 165 || (gray[y * width + x + 1] & 255) < 165)
+                    continue;
+                if (hasDottedHook(gray, width, height, x, y, 1, gap)
+                        && hasDottedHook(gray, width, height, x + 1, y, 1, gap)
+                        && !hasDottedHook(gray, width, height, x, y, -1, gap)) return true;
+            }
+        }
+        return false;
     }
 
     private static int joinedDashHookDirection(

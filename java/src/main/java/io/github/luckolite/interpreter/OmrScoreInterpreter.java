@@ -1826,7 +1826,18 @@ final class OmrScoreInterpreter {
                             head,
                             physicalStaff,
                             roundedLedgerGraces.contains(head),
-                            staffs, heads)
+                            staffs,
+                            heads)
+                    && !filledBeamedDyadLedger(
+                            labels,
+                            gray,
+                            annotationGray,
+                            width,
+                            height,
+                            head,
+                            physicalStaff,
+                            staffs,
+                            heads)
                     && !(recoveredShadedChordHeads.contains(head)
                             && ShadedChordHeadRecovery.hasLedgerRails(
                                     gray,
@@ -2265,7 +2276,8 @@ final class OmrScoreInterpreter {
                                 head,
                                 accidentalGap,
                                 heads,
-                                gray);
+                                gray,
+                                accidentalFragments);
                 writtenAccidentalChoices.put(head, writtenChoice);
                 writtenAccidental = writtenChoice.accidental();
                 if (writtenAccidental == ScoreNoteEvent.ACCIDENTAL_NATURAL
@@ -2513,7 +2525,8 @@ final class OmrScoreInterpreter {
                                 partValue.withCallerState(partDuration, partBeams, partFacts));
                         printedValueAdmissions.put(part, partFacts);
                         writtenAccidentalChoices.put(part, chooseWrittenAccidental(labels, width,
-                                height, localAccidentals, part, accidentalGap, heads, gray));
+                                height, localAccidentals, part, accidentalGap, heads, gray,
+                                accidentalFragments));
                     }
                     detected.add(new DetectedNote(separate, part, staff.gap));
                 }
@@ -13741,6 +13754,102 @@ final class OmrScoreInterpreter {
         return true;
     }
 
+    /** A compact downstem chord can have ledgers aligned to its shaft rather than the oval rim. */
+    private static boolean filledBeamedDyadLedger(
+            byte[] labels,
+            byte[] gray,
+            byte[] raw,
+            int width,
+            int height,
+            Component head,
+            Staff staff,
+            List<Staff> staffs,
+            List<Component> heads) {
+        float gap = staff.pitchGap;
+        float depth = (staff.top - head.centerY) / gap;
+        if (raw == null
+                || gap < 10
+                || gap > 28
+                || depth < 1.8f
+                || depth > 5.8f
+                || !filledBeamEndpointCore(gray, width, height, head, gap)
+                || competingPrintedCore(labels, gray, width, height, head, staff, staffs))
+            return false;
+        int[] stem = attachedRawStem(gray, width, height, head, gap, 2, 170);
+        if (stem == null || stem[2] != 1 || stem[1] < staff.top + gap) return false;
+        Component sameShaft = null;
+        for (var peer : heads) {
+            float dy = Math.abs(head.centerY - peer.centerY);
+            if (Math.abs(head.centerX - peer.centerX) > gap * .15f
+                    || dy < gap * .78f
+                    || dy > gap * 1.22f
+                    || !filledBeamEndpointCore(gray, width, height, peer, gap)) continue;
+            int[] other = attachedRawStem(gray, width, height, peer, gap, 2, 170);
+            if (other == null
+                    || other[2] != 1
+                    || Math.abs(other[0] - stem[0]) > 2
+                    || Math.abs(other[1] - stem[1]) > 2) continue;
+            if (sameShaft != null) return false;
+            sameShaft = peer;
+        }
+        if (sameShaft == null) return false;
+        float ledgerCenter = (head.centerX + sameShaft.centerX) * .5f;
+        int ledgerCount = 0;
+        for (int step = 1; step < depth - .38f; step++) {
+            float y = staff.top - gap * step;
+            if (y >= sameShaft.minY - gap * .16f && y <= sameShaft.maxY + gap * .16f) continue;
+            if (!finiteStemsideLedger(gray, width, height, ledgerCenter, stem[0], y, gap)
+                    || !finiteStemsideLedger(raw, width, height, ledgerCenter, stem[0], y, gap))
+                return false;
+            ledgerCount++;
+        }
+        if (ledgerCount == 0) return false;
+        for (var peer : heads) {
+            float dx = Math.abs(peer.centerX - head.centerX);
+            if (dx < gap * 1.8f
+                    || dx > gap * 3.15f
+                    || Math.abs(peer.centerY - head.centerY) > gap * 2.2f
+                    || !filledBeamEndpointCore(gray, width, height, peer, gap)) continue;
+            int[] other = attachedRawStem(gray, width, height, peer, gap, 2, 170);
+            if (other == null || other[2] != 1 || other[1] < staff.top + gap) continue;
+            int[] left = stem[0] < other[0] ? stem : other;
+            int[] right = left == stem ? other : stem;
+            if (LinkedFilledThirds.joined(gray, width, gap, left, right)
+                    && LinkedFilledThirds.joined(raw, width, gap, left, right)) return true;
+        }
+        return false;
+    }
+
+    private static boolean finiteStemsideLedger(
+            byte[] plane, int width, int height, float centerX, int stem, float y, float gap) {
+        int cx = Math.round(centerX);
+        int limit = Math.round(gap * 1.8f);
+        int tolerance = Math.max(2, Math.round(gap * .20f));
+        int first = Math.max(2, Math.round(y) - tolerance);
+        int last = Math.min(height - 3, Math.round(y) + tolerance);
+        if (cx - limit < 1 || cx + limit >= width - 1) return false;
+        for (int row = first; row <= last; row++) {
+            if ((plane[row * width + cx] & 255) >= 165) continue;
+            int left = cx, right = cx;
+            while (left > cx - limit && (plane[row * width + left - 1] & 255) < 165) left--;
+            while (right < cx + limit && (plane[row * width + right + 1] & 255) < 165) right++;
+            int span = right - left + 1;
+            if (left == cx - limit
+                    || right == cx + limit
+                    || left > stem + gap * .3f
+                    || right - cx < gap * .50f
+                    || span < gap * 1.35f
+                    || span > gap * 3.25f) continue;
+            int inspected = 0, thin = 0;
+            for (int x = Math.max(stem + Math.round(gap * .35f), left); x <= right; x++) {
+                inspected++;
+                if (ShadedLedgerRule.thin(plane, width, height, x, row, gap)) thin++;
+            }
+            if (inspected >= gap * .85f && thin >= inspected * .75f) return true;
+        }
+        return false;
+    }
+
     /** A downstem can cross the short left edge of several independently printed ledgers. */
     private static boolean shaftCrossedUpperLedgerRules(
             byte[] gray, int width, int height, Component head, Staff staff) {
@@ -20581,6 +20690,20 @@ final class OmrScoreInterpreter {
             float gap,
             List<Component> heads,
             byte[] gray) {
+        return chooseWrittenAccidental(labels, width, height, candidates, head, gap, heads,
+                gray, Map.of());
+    }
+
+    private static WrittenAccidentalChoice chooseWrittenAccidental(
+            byte[] labels,
+            int width,
+            int height,
+            List<AccidentalCandidate> candidates,
+            Component head,
+            float gap,
+            List<Component> heads,
+            byte[] gray,
+            Map<Object, List<Object>> accidentalFragments) {
         AccidentalCandidate best = null;
         int bestAccidental = ScoreNoteEvent.ACCIDENTAL_FROM_KEY;
         float bestDistance = Float.MAX_VALUE;
@@ -20710,8 +20833,27 @@ final class OmrScoreInterpreter {
                 bestDistance = horizontal;
                 ambiguous = false;
             } else if (horizontal == bestDistance && candidate != best) {
-                ambiguous = true;
+                if (accidental != ScoreNoteEvent.ACCIDENTAL_SHARP
+                        || bestAccidental != accidental
+                        || !sameSharpSource(best, candidate, accidentalFragments)) {
+                    ambiguous = true;
+                } else if (best.label == 0) {
+                    best = candidate;
+                }
             }
+        }
+        if (!ambiguous && bestAccidental == ScoreNoteEvent.ACCIDENTAL_NATURAL) {
+            best =
+                    originalNaturalBeforeStaffFragment(
+                            labels,
+                            gray,
+                            width,
+                            height,
+                            candidates,
+                            head,
+                            gap,
+                            best,
+                            accidentalFragments.get(best.component));
         }
         return new WrittenAccidentalChoice(
                 best == null ? ScoreNoteEvent.ACCIDENTAL_FROM_KEY : bestAccidental,
@@ -20720,6 +20862,80 @@ final class OmrScoreInterpreter {
                 candidates,
                 heads,
                 ambiguous);
+    }
+
+    /** Keep the complete natural's source when a staff fragment extends its right edge. */
+    private static AccidentalCandidate originalNaturalBeforeStaffFragment(
+            byte[] labels,
+            byte[] gray,
+            int width,
+            int height,
+            List<AccidentalCandidate> candidates,
+            Component head,
+            float gap,
+            AccidentalCandidate joined,
+            List<Object> parents) {
+        if (gray == null
+                || joined.label != 0
+                || parents == null
+                || parents.size() != 2
+                || joined.component.maxX < head.minX) return joined;
+        var left = (Component) parents.get(0);
+        var right = (Component) parents.get(1);
+        if (left.minX > right.minX) {
+            var swap = left;
+            left = right;
+            right = swap;
+        }
+        if (right.minX <= left.maxX
+                || right.maxX != joined.component.maxX
+                || right.minY < left.minY
+                || right.maxY > left.maxY
+                || right.maxY - right.minY + 1 > gap * .20f
+                || right.area * 16 > left.area
+                || left.maxX >= head.minX
+                || head.minX - left.maxX > gap * .65f
+                || Math.abs(left.centerY - head.centerY) > gap * .35f
+                || !staffRuleBetweenFragments(labels, gray, width, left, right)) return joined;
+        for (var original : candidates) {
+            if (original.component == left
+                    && original.label == OmrMeasurePostProcessor.CLEF_OR_KEY
+                    && isNaturalGlyph(labels, width, height, original, gap)
+                    && rawNaturalAtSeed(gray, width, height, left, head, gap)) return original;
+        }
+        return joined;
+    }
+
+    private static boolean staffRuleBetweenFragments(
+            byte[] labels, byte[] gray, int width, Component left, Component right) {
+        int bridge = right.minX - left.maxX - 1;
+        if (bridge < 2) return false;
+        for (int y = right.minY; y <= right.maxY; y++) {
+            int staff = 0, dark = 0;
+            for (int x = left.maxX + 1; x < right.minX; x++) {
+                int index = y * width + x;
+                if (labels[index] == OmrMeasurePostProcessor.STAFF) staff++;
+                if ((gray[index] & 255) < 225) dark++;
+            }
+            if (dark == bridge && staff * 2 >= bridge) return true;
+        }
+        return false;
+    }
+
+    /** A raw join with unchanged bounds can retain the original sharp's source owner. */
+    private static boolean sameSharpSource(
+            AccidentalCandidate first, AccidentalCandidate second,
+            Map<Object, List<Object>> accidentalFragments) {
+        var joined = first.label == 0 ? first : second;
+        var original = joined == first ? second : first;
+        if (joined.label != 0 || original.label != OmrMeasurePostProcessor.CLEF_OR_KEY) return false;
+        var joinedBounds = joined.component;
+        var originalBounds = original.component;
+        if (joinedBounds.minX != originalBounds.minX || joinedBounds.maxX != originalBounds.maxX
+                || joinedBounds.minY != originalBounds.minY || joinedBounds.maxY != originalBounds.maxY)
+            return false;
+        var fragments = accidentalFragments.get(joinedBounds);
+        return fragments != null && fragments.stream().anyMatch(piece -> piece == originalBounds);
     }
 
     /**

@@ -94,4 +94,27 @@ public class OctaveEndHookTest {
             for (int x = 369; x <= 373; x++) gray[y * W + x] = (byte) 255;
         assertEquals(incoming, (float) detect.invoke(null, gray, W, H, incoming, 55f, 55f, 16f), 0);
     }
+
+    @Test
+    public void dottedTurnJustPastTheLastDashPointsTowardTheStaff() throws Exception {
+        var gray = page();
+        dash(gray, 120, 366, 55);
+        for (int top : new int[] {59, 67, 75, 84})
+            for (int y = top; y < top + 5; y++)
+                for (int x = 366; x <= 368; x++) gray[y * W + x] = 0;
+        var hook =
+                OctaveMarkDetector.class.getDeclaredMethod(
+                        "displacedDownwardDottedHook",
+                        byte[].class,
+                        int.class,
+                        int.class,
+                        int.class,
+                        int.class,
+                        int.class,
+                        float.class);
+        hook.setAccessible(true);
+        assertTrue((boolean) hook.invoke(null, gray, W, H, 364, 53, 60, 16f));
+        for (int y = 67; y < 83; y++) for (int x = 366; x <= 368; x++) gray[y * W + x] = (byte) 255;
+        assertFalse((boolean) hook.invoke(null, gray, W, H, 364, 53, 60, 16f));
+    }
 }

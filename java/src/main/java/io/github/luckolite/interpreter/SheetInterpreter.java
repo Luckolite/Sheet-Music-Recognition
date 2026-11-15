@@ -290,10 +290,16 @@ public final class SheetInterpreter {
         measures =
                 PrintedMeasureRhythmGuard.reconcile(
                         rawMeasures, measures, labels, gray, width, height, rejectedAnchorTops);
+        measures =
+                VerifiedOpeningMeterSlot.recover(
+                        measures, labels, gray, annotationGray, width, height);
         var tripleRuns =
                 MidstaffSixteenthTripleBars.recover(
                         measures, labels, gray, annotationGray, width, height);
         measures = tripleRuns.measures();
+        measures =
+                HalfDyadBeforeSixteenthBar.recoverDotted(
+                        measures, labels, gray, annotationGray, width, height);
         recognizedRests.reindexed(measures);
         var numberingAnchors =
                 rejectedAnchorTops.isEmpty()

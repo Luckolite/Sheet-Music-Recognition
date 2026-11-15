@@ -3,6 +3,7 @@
 package io.github.luckolite.interpreter;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
@@ -138,6 +139,49 @@ public class ClosedDottedOctavesTest {
                         input.withBeamSource(occupied), meter, image(), WIDTH, HEIGHT, 7);
         assertTrue(prior.beamSource().groups().isEmpty());
         assertEquals(occupied.detachedColumns(), prior.beamSource().detachedColumns());
+    }
+
+    @Test
+    public void aFusedOpeningBridgeStillRequiresEveryIndependentHookAndAReversedOwner() {
+        var paper = image();
+        int firstShaft = FIRST - 10;
+        int secondShaft = FIRST + SPACING - 10;
+        paint(paper, firstShaft, secondShaft, 335, 342, (byte) 0);
+        var attacks = new ArrayList<ClosedOctaveBeamSource.Attack>();
+        for (int i = 0; i < 12; i++) {
+            int x = FIRST + i * SPACING;
+            int upper = UPPER + (i == 1 ? 12 : 0);
+            attacks.add(
+                    new ClosedOctaveBeamSource.Attack(
+                            2 * i, 2 * i + 1, x, upper, x, upper + LOWER - UPPER));
+        }
+        var fragment = new ClosedOctaveBeamSource.Fragment(secondShaft - 13, 338);
+        assertTrue("fused but attached", provesTripleClock(paper, attacks, fragment));
+
+        var missing = paper.clone();
+        paint(missing, secondShaft - 13, secondShaft - 3, 311, 325, (byte) 255);
+        assertFalse("printed hook is required", provesTripleClock(missing, attacks, fragment));
+
+        var cut = paper.clone();
+        paint(cut, secondShaft, secondShaft + 2, 248, 267, (byte) 255);
+        assertFalse(
+                "the reverse shaft must have a genuine octave owner",
+                provesTripleClock(cut, attacks, fragment));
+
+        int nextShaft = secondShaft + SPACING;
+        var secondFused = paper.clone();
+        paint(secondFused, secondShaft, nextShaft, 335, 342, (byte) 0);
+        assertFalse(
+                "the adjacent pair of rails must remain separated",
+                provesTripleClock(secondFused, attacks, fragment));
+    }
+
+    private static boolean provesTripleClock(
+            byte[] paper,
+            List<ClosedOctaveBeamSource.Attack> attacks,
+            ClosedOctaveBeamSource.Fragment fragment) {
+        return ClosedOctaveBeamSource.provesTripleClock(
+                paper, WIDTH, HEIGHT, 16, attacks, fragment);
     }
 
     private static ScorePageInterpretation decodeRibbon(

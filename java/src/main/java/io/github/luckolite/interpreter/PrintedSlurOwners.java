@@ -101,6 +101,7 @@ final class PrintedSlurOwners {
         AMBIGUOUS_START,
         AMBIGUOUS_END,
         DIFFERENT_LANES,
+        BEAM_RAIL,
         VOICE_UNRESOLVED,
         REVERSED_CLOCK,
         SAME_OWNER,
@@ -292,6 +293,9 @@ final class PrintedSlurOwners {
         if (end.isEmpty()) return new Binding(Status.NO_END_OWNER, Optional.empty());
         if (ambiguous(start)) return new Binding(Status.AMBIGUOUS_START, Optional.empty());
         if (ambiguous(end)) return new Binding(Status.AMBIGUOUS_END, Optional.empty());
+        if ((start.get(0).wideChord() || end.get(0).wideChord())
+                && followsParallelBeam(bow, gray, width, height, gap))
+            return new Binding(Status.BEAM_RAIL, Optional.empty());
         Location a = start.get(0).head(), b = end.get(0).head();
         if (start.get(0).wideChord()
                 && !hasFacingEndpoint(bow.end(), b, bow.above(), heads, gray, width, height, track))
@@ -472,6 +476,62 @@ final class PrintedSlurOwners {
         return List.of(new Candidate(outer, values.get(0).distance(), wideChord));
     }
 
+    /** A chord shaft can lead a projected contour to the edge of a pair of beams. */
+    static boolean followsParallelBeam(
+            PrintedSlurContours.Bow bow, byte[] gray, int width, int height, float gap) {
+        int margin = Math.max(2, Math.round(gap * .37f));
+        int left = bow.start().x() + margin, right = bow.end().x() - margin;
+        int minimumRun = Math.round(gap * 1.9f);
+        if (right - left < minimumRun) return false;
+        int railDepth = Math.max(4, Math.round(gap * .30f));
+        int neighborDepth = Math.max(3, Math.round(gap * .24f));
+        int maxDepth = Math.round(gap);
+        int maxGap = Math.round(gap * .75f);
+        int verticalMargin = maxDepth + maxGap + neighborDepth + 2;
+        int coverage = 0, run = 0, longest = 0, last = -2;
+        for (var point : bow.points()) {
+            int x = point.x(), center = Math.round(point.y());
+            if (x < left
+                    || x > right
+                    || x < 0
+                    || x >= width
+                    || center < verticalMargin
+                    || center >= height - verticalMargin) continue;
+            if ((gray[center * width + x] & 255) >= 165) {
+                if ((gray[(center - 1) * width + x] & 255) < 165) center--;
+                else if ((gray[(center + 1) * width + x] & 255) < 165) center++;
+                else continue;
+            }
+            int top = offsetOfLight(gray, width, x, center, -1, maxDepth);
+            int bottom = offsetOfLight(gray, width, x, center, 1, maxDepth);
+            if (top + bottom - 1 < railDepth || top + bottom - 1 > maxDepth) continue;
+            if (!separatedRail(gray, width, x, center - top, -1, maxGap, neighborDepth)
+                    && !separatedRail(gray, width, x, center + bottom, 1, maxGap, neighborDepth))
+                continue;
+            coverage++;
+            run = x == last + 1 ? run + 1 : 1;
+            longest = Math.max(longest, run);
+            last = x;
+        }
+        return longest >= minimumRun && coverage >= (right - left + 1) * .65f;
+    }
+
+    private static int offsetOfLight(
+            byte[] gray, int width, int x, int y, int direction, int limit) {
+        int offset = 1;
+        while (offset <= limit && (gray[(y + direction * offset) * width + x] & 255) < 165)
+            offset++;
+        return offset;
+    }
+
+    private static boolean separatedRail(
+            byte[] gray, int width, int x, int y, int direction, int maxGap, int depth) {
+        int space = 0;
+        while (space < maxGap && (gray[(y + direction * space) * width + x] & 255) >= 165) space++;
+        if (space < 2 || space >= maxGap) return false;
+        return offsetOfLight(gray, width, x, y + direction * space, direction, depth) >= depth;
+    }
+
     private static boolean hasFacingEndpoint(
             PrintedSlurContours.Point cap, Location head, boolean above,
             List<? extends Location> heads, byte[] gray, int width, int height,
@@ -489,7 +549,72 @@ final class PrintedSlurOwners {
         Location high = a.y() < b.y() ? a : b;
         Location low = high == a ? b : a;
         return stemReaches(gray, width, height, high, low, gap, -1)
-                || stemReaches(gray, width, height, low, high, gap, 1);
+                || stemReaches(gray, width, height, low, high, gap, 1)
+                || continuousChordShaft(gray, width, height, high, low, gap);
+    }
+
+    /** The middle of a long shared chord shaft can be proved separately from its beam tip. */
+    private static boolean continuousChordShaft(
+            byte[] gray, int width, int height, Location high, Location low, float gap) {
+        if (gap < 9
+                || gap > 30
+                || low.y() - high.y() < gap * 2.5f
+                || Math.abs(high.x() - low.x()) > gap * .18f
+                || high.staffCount() != 1) {
+            return false;
+        }
+        int center = Math.round((high.x() + low.x()) * .5f);
+        for (int side = -1; side <= 1; side += 2) {
+            int first = Math.round(side < 0 ? high.y() : high.y() - gap * .75f);
+            int last = Math.round(side < 0 ? low.y() + gap * .75f : low.y());
+            if (first < 1 || last >= height - 1) continue;
+            for (int distance = Math.round(gap * .42f); distance <= gap * .71f; distance++) {
+                int column = center + side * distance;
+                int partner = column + side;
+                if (column <= 1
+                        || partner <= 1
+                        || column >= width - 2
+                        || partner >= width - 2
+                        || !shaftTouchesBody(gray, width, height, high, column, gap)
+                        || !shaftTouchesBody(gray, width, height, low, column, gap)) {
+                    continue;
+                }
+                int count = 0;
+                int run = 0;
+                int longest = 0;
+                for (int y = first; y <= last; y++) {
+                    if ((gray[y * width + column] & 255) < 155
+                            && (gray[y * width + partner] & 255) < 165) {
+                        count++;
+                        run = 0;
+                    } else {
+                        longest = Math.max(longest, ++run);
+                    }
+                }
+                if (count >= (last - first + 1) * .9f && longest <= Math.max(1, gap * .14f)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static boolean shaftTouchesBody(
+            byte[] gray, int width, int height, Location head, int column, float gap) {
+        int center = Math.round(head.x());
+        if (center < 0 || center >= width) return false;
+        int x0 = Math.min(center, column);
+        int x1 = Math.max(center, column);
+        int y = Math.round(head.y());
+        int margin = Math.max(1, Math.round(gap * .18f));
+        for (int row = Math.max(0, y - margin); row <= Math.min(height - 1, y + margin); row++) {
+            int ink = 0;
+            for (int x = x0; x <= x1; x++) {
+                if ((gray[row * width + x] & 255) < 165) ink++;
+            }
+            if (ink >= (x1 - x0 + 1) * .9f) return true;
+        }
+        return false;
     }
 
     private static boolean stemReaches(

@@ -20,7 +20,7 @@ final class ClosedOctaveBeamSource {
             float lowerX,
             float lowerY) {}
 
-    private record Axis(int x, int tip) {}
+    private record Axis(int x, int tip, int left, int right) {}
 
     private record Rails(Axis left, Axis right, int leadingY, int trailingY, int separation) {
         int primary(int x) {
@@ -48,25 +48,74 @@ final class ClosedOctaveBeamSource {
             int height,
             float gap,
             List<Attack> attacks) {
-        if (page < 0
-                || attacks.size() != 16
-                || gap < 10
-                || gap > 27
-                || gray == null
-                || gray.length != (long) width * height) return source;
+        if (page < 0 || attacks.size() != 16) return source;
+        return provesRibbons(gray, width, height, gap, attacks, null)
+                ? project(source, page, attacks)
+                : source;
+    }
 
+    record Fragment(float x, float y) {}
+
+    static boolean provesTripleClock(
+            byte[] gray,
+            int width,
+            int height,
+            float gap,
+            List<Attack> attacks,
+            Fragment fragment) {
+        return fragment != null
+                && attacks.size() == 12
+                && provesRibbons(gray, width, height, gap, attacks, fragment);
+    }
+
+    private static boolean provesRibbons(
+            byte[] gray,
+            int width,
+            int height,
+            float gap,
+            List<Attack> attacks,
+            Fragment fragment) {
+        if (gap < 10 || gap > 27 || gray == null || gray.length != (long) width * height)
+            return false;
         var ink = new Ink(gray, width, height);
         var budget = new PrintedBeamShafts.Budget(160_000);
         var axes = new ArrayList<Axis>(attacks.size());
         for (var attack : attacks) {
             var axis = sharedAxis(ink, attack, gap, budget);
-            if (axis == null) return source;
+            if (axis == null) return false;
             axes.add(axis);
         }
-        if (budget.refused()) return source;
+        if (fragment != null
+                && !sharesReverseShaft(ink, attacks.get(1), axes, fragment, gap, budget))
+            return false;
+        if (budget.refused()) return false;
         for (int i = 0; i < axes.size(); i += 4)
-            if (!closedRibbon(ink, axes.subList(i, i + 4), gap)) return source;
-        return project(source, page, attacks);
+            if (!closedRibbon(ink, axes.subList(i, i + 4), gap, i == 0 ? fragment : null))
+                return false;
+        return true;
+    }
+
+    private static boolean sharesReverseShaft(
+            Ink ink,
+            Attack attack,
+            List<Axis> axes,
+            Fragment fragment,
+            float gap,
+            PrintedBeamShafts.Budget budget) {
+        var first = axes.get(0);
+        var second = axes.get(1);
+        if (fragment.x < first.x + .7f * gap
+                || fragment.x > second.x - .58f * gap
+                || fragment.y - attack.lowerY < 2 * gap) return false;
+        var shafts =
+                PrintedBeamShafts.at(
+                        ink.gray, ink.width, ink.height, fragment.x, fragment.y, gap, budget);
+        if (shafts.size() != 1) return false;
+        var shaft = shafts.get(0);
+        return shaft.direction() == -1
+                && shaft.left() >= second.left
+                && shaft.right() <= second.right
+                && shaft.endY() <= attack.lowerY - gap * .65f;
     }
 
     private static Axis sharedAxis(
@@ -93,11 +142,15 @@ final class ClosedOctaveBeamSource {
             if (inkRows >= .90f * (last - first + 1)) owned = true;
         }
         return owned
-                ? new Axis(Math.round((lower.left() + lower.right()) * .5f), lower.endY())
+                ? new Axis(
+                        Math.round((lower.left() + lower.right()) * .5f),
+                        lower.endY(),
+                        lower.left(),
+                        lower.right())
                 : null;
     }
 
-    private static boolean closedRibbon(Ink ink, List<Axis> axes, float gap) {
+    private static boolean closedRibbon(Ink ink, List<Axis> axes, float gap, Fragment fragment) {
         int radius = Math.max(1, Math.round(.12f * gap));
         var first = axes.get(0);
         var last = axes.get(3);
@@ -115,7 +168,9 @@ final class ClosedOctaveBeamSource {
                         separation <= Math.round(.92f * gap);
                         separation++) {
                     var rails = new Rails(first, last, a, b, separation);
-                    if (coversBridges(ink, rails, axes, radius, margin)
+                    if ((fragment == null
+                                    || fragmentInsideFusedRails(ink, rails, fragment, gap, radius))
+                            && coversBridges(ink, rails, axes, radius, margin, fragment != null)
                             && shortBackwardHook(ink, rails, axes.get(1).x, gap, radius)
                             && shortBackwardHook(ink, rails, axes.get(3).x, gap, radius))
                         return true;
@@ -125,7 +180,7 @@ final class ClosedOctaveBeamSource {
     }
 
     private static boolean coversBridges(
-            Ink ink, Rails rail, List<Axis> axes, int radius, int margin) {
+            Ink ink, Rails rail, List<Axis> axes, int radius, int margin, boolean allowFirstFused) {
         for (int i = 1; i < axes.size(); i++) {
             int start = axes.get(i - 1).x + margin, end = axes.get(i).x - margin;
             int both = 0, separated = 0;
@@ -137,7 +192,24 @@ final class ClosedOctaveBeamSource {
                 if (!ink.core(x, primary - rail.separation / 2, radius)) separated++;
             }
             int samples = end - start + 1;
-            if (both < .94f * samples || separated < .35f * samples) return false;
+            if (both < .94f * samples || (!allowFirstFused || i > 1) && separated < .35f * samples)
+                return false;
+        }
+        return true;
+    }
+
+    private static boolean fragmentInsideFusedRails(
+            Ink ink, Rails rails, Fragment fragment, float gap, int radius) {
+        int width = Math.round(.32f * gap);
+        int x = Math.round(fragment.x);
+        int dy = Math.round(.22f * gap);
+        for (int col = x - width; col <= x + width; col++) {
+            int lower = rails.primary(col);
+            int upper = lower - rails.separation;
+            int center = Math.round(fragment.y);
+            if (center < upper - dy || center > lower + dy) return false;
+            if (!ink.core(col, center, radius)
+                    || !ink.core(col, lower - rails.separation / 2, radius)) return false;
         }
         return true;
     }

@@ -88,4 +88,72 @@ public class PrintedVoiceMeasureCutTest {
         for (int y = 80; y <= 144; y++) g[y * W + Math.round(340 + .06f * (y - 112))] = 25;
         assertEquals(.68f, cut(g), .003f);
     }
+
+    private static final int WIDTH = 720;
+    private static final int HEIGHT = 270;
+    private static final int TOP = 101;
+    private static final int BOTTOM = 165;
+    private static final int CUT = 394;
+
+    @Test
+    public void onlyAnIndependentlyUnownedRuleSurvivesACompetingPrintedShaft() {
+        byte[] gray = new byte[WIDTH * HEIGHT];
+        Arrays.fill(gray, (byte) 255);
+        for (int y = TOP; y <= BOTTOM; y += 16) paint(gray, 55, 650, y, y, (byte) 0);
+        paint(gray, CUT, CUT + 2, TOP, BOTTOM, (byte) 0);
+        drawShaft(gray, 300);
+        drawShaft(gray, 490);
+
+        var region = new MeasureRegion(55f / WIDTH, 650f / WIDTH, 67f / HEIGHT, 198f / HEIGHT);
+        var notes = new ArrayList<ScoreNoteEvent>();
+        for (int x : new int[] {150, 300, 345, 447, 490, 534}) {
+            notes.add(
+                    new ScoreNoteEvent(
+                            0,
+                            (x - 55f) / 595,
+                            x == 300 || x == 490 ? 8 : 2,
+                            0,
+                            1,
+                            (x == 300 || x == 490 ? 98f : 150f) / HEIGHT,
+                            false,
+                            0,
+                            0,
+                            ScoreNoteEvent.ACCIDENTAL_FROM_KEY,
+                            x == 300 ? 2 : 1,
+                            1,
+                            0,
+                            0,
+                            ScoreNoteEvent.CLEF_TREBLE,
+                            false,
+                            0,
+                            false,
+                            0,
+                            0,
+                            1,
+                            -1,
+                            ScoreNoteEvent.Kind.PITCHED));
+        }
+        var cut = PrintedVoiceMeasureCut.resolve(region, notes, 0, gray, WIDTH, HEIGHT);
+        assertNotNull(cut);
+        assertEquals(CUT + 1f, cut * WIDTH, 1);
+        byte[] rival = gray.clone();
+        paint(rival, 375, 377, TOP, BOTTOM, (byte) 0);
+        assertNull(PrintedVoiceMeasureCut.resolve(region, notes, 0, rival, WIDTH, HEIGHT));
+        paint(gray, CUT, CUT + 2, TOP + 1, BOTTOM - 1, (byte) 255);
+        assertNull(PrintedVoiceMeasureCut.resolve(region, notes, 0, gray, WIDTH, HEIGHT));
+    }
+
+    private static void drawShaft(byte[] gray, int head) {
+        paint(gray, head - 11, head - 10, 98, 165, (byte) 0);
+        paint(gray, head - 11, head - 2, 98, 101, (byte) 0);
+        for (int y = 92; y <= 104; y++)
+            for (int x = head - 8; x <= head + 9; x++)
+                if (Math.pow((x - head) / 8d, 2) + Math.pow((y - 98) / 5d, 2) <= 1)
+                    gray[y * WIDTH + x] = 0;
+    }
+
+    private static void paint(byte[] gray, int left, int right, int top, int bottom, byte ink) {
+        for (int y = top; y <= bottom; y++)
+            Arrays.fill(gray, y * WIDTH + left, y * WIDTH + right + 1, ink);
+    }
 }

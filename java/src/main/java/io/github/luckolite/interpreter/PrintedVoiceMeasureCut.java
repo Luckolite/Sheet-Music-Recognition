@@ -184,8 +184,41 @@ final class PrintedVoiceMeasureCut {
             if (proved) hits.add(x);
     }
 
+        if (physicalOnly
+                && !hits.isEmpty()
+                && hits.get(hits.size() - 1) - hits.get(0) > gap * .65f) {
+            var budget = new PrintedBeamShafts.Budget(120_000);
+            hits.removeIf(x -> ownedShaft(x, voice, gray, w, h, left, span, gap, budget));
+            if (budget.refused()) return null;
+        }
         if (hits.isEmpty() || hits.get(hits.size() - 1) - hits.get(0) > gap * .65f) return null;
         return hits.get(hits.size() / 2) / (float) w;
+    }
+
+    private static boolean ownedShaft(
+            int column,
+            List<ScoreNoteEvent> notes,
+            byte[] gray,
+            int width,
+            int height,
+            int left,
+            float span,
+            float gap,
+            PrintedBeamShafts.Budget budget) {
+        for (var n : notes) {
+            float x = left + n.positionInMeasure() * span;
+            if (Math.abs(x - column) > gap * 1.3f
+                    || n.kind() != ScoreNoteEvent.Kind.PITCHED
+                    || n.stemDirection() == 0) continue;
+            var shafts =
+                    PrintedBeamShafts.at(gray, width, height, x, n.pageY() * height, gap, budget);
+            if (shafts.size() != 1) continue;
+            var stem = shafts.get(0);
+            if (stem.direction() == -n.stemDirection()
+                    && stem.left() <= column
+                    && column <= stem.right()) return true;
+        }
+        return false;
     }
 
     private record PaleFrame(
