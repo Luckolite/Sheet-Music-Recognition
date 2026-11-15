@@ -449,6 +449,44 @@ final class OwnedTertiaryBeamlets {
         return false;
     }
 
+    /** The hook sits below the lower head but borrows the shaft up to the upper head. */
+    static boolean ownsReversedOctaveHook(
+            byte[] gray,
+            int w,
+            int h,
+            float x,
+            float y,
+            float lowerX,
+            float lowerY,
+            float upperX,
+            float upperY,
+            float peerX,
+            float peerY,
+            float gap,
+            PrintedBeamShafts.Budget budget) {
+        float depth = (y - lowerY) / gap, advance = (lowerX - x) / gap;
+        if (depth < 2.21f || depth > 2.61f || advance < .81f || advance > 1.32f) return false;
+        var aliases = PrintedBeamShafts.at(gray, w, h, x, y, gap, budget);
+        if (aliases.size() != 1) return false;
+        var reverse = aliases.get(0);
+        if (reverse.direction() != -1 || Math.abs(reverse.endY() - upperY) > gap * .23f)
+            return false;
+        var common = sharedDownwardAxes(gray, w, h, lowerX, lowerY, upperX, upperY, gap, budget);
+        for (var axis : common) {
+            if (axis.x < reverse.left()
+                    || axis.x > reverse.right()
+                    || axis.x - x < gap * .39f
+                    || axis.x - x > gap * .85f
+                    || axis.tip - y < gap * 1.43f
+                    || axis.tip - y > gap * 1.97f
+                    || !isThinAttachedBand(gray, w, h, x, y, axis.x, gap, .82f)) continue;
+            return !budget.refused()
+                    && provesBackwardHookOnJoinedRails(
+                            gray, w, h, lowerX, lowerY, peerX, peerY, gap);
+        }
+        return false;
+    }
+
     static boolean provesBackwardHook(
             byte[] gray, int w, int h, float x, float y, float peerX, float peerY, float gap) {
         var budget = new PrintedBeamShafts.Budget(100_000);
@@ -521,8 +559,47 @@ final class OwnedTertiaryBeamlets {
         var own = PrintedBeamShafts.at(gray, w, h, x, y, gap, budget);
         var peer = PrintedBeamShafts.at(gray, w, h, peerX, peerY, gap, budget);
         if (own.size() != 1 || peer.size() != 1 || budget.refused()) return false;
-        for (var a : downwardAxes(own.get(0)))
-            for (var b : downwardAxes(peer.get(0))) {
+        return joinedBackwardHook(
+                gray, w, h, downwardAxes(own.get(0)), downwardAxes(peer.get(0)), gap);
+    }
+
+    static boolean provesJoinedClosingDyadHook(
+            byte[] gray,
+            int width,
+            int height,
+            float lowerX,
+            float lowerY,
+            float upperX,
+            float upperY,
+            float peerUpperX,
+            float peerUpperY,
+            float peerLowerX,
+            float peerLowerY,
+            float gap,
+            PrintedBeamShafts.Budget budget) {
+        var own =
+                sharedDownwardAxes(
+                        gray, width, height, lowerX, lowerY, upperX, upperY, gap, budget);
+        var peer =
+                sharedDownwardAxes(
+                        gray,
+                        width,
+                        height,
+                        peerUpperX,
+                        peerUpperY,
+                        peerLowerX,
+                        peerLowerY,
+                        gap,
+                        budget);
+        return !budget.refused()
+                && joinedBackwardHook(gray, width, height, own, peer, gap)
+                && !proveSide(gray, width, height, peer, own, gap, 1);
+    }
+
+    private static boolean joinedBackwardHook(
+            byte[] gray, int w, int h, List<Axis> owner, List<Axis> peer, float gap) {
+        for (var a : owner)
+            for (var b : peer) {
                 int span = a.x - b.x;
                 if (span < gap * 1.7f || span > gap * 4.2f) continue;
                 float slope = (a.tip - b.tip) / (float) span;

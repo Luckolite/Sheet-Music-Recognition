@@ -237,6 +237,138 @@ final class ClosedDottedSixteenths {
         return true;
     }
 
+    static ScorePageInterpretation applyClosedTailDyadHooks(
+            ScorePageInterpretation score, ScoreMeterChange inherited, byte[] gray, int w, int h) {
+        if (gray == null || gray.length != (long) w * h || w < 256 || h < 128) return score;
+        var bars = groupedHeads(score, w, h);
+        var ink = new Ink(gray, w, h);
+        var meter = inherited;
+        int nextMeter = 0;
+        List<ScoreNoteEvent> revised = null;
+        for (int i = 0; i < bars.size(); i++) {
+            while (nextMeter < score.meterChanges().size()
+                    && score.meterChanges().get(nextMeter).measureIndex() <= i)
+                meter = score.meterChanges().get(nextMeter++);
+            if (meter == null
+                    || meter.numerator() != 4
+                    || meter.denominator() != 4
+                    || bars.get(i).size() < 8) continue;
+            final int index = i;
+            if (score.rests().stream().anyMatch(rest -> rest.measureIndex() == index)
+                    || score.multiRestGroups().stream()
+                            .anyMatch(
+                                    g ->
+                                            g.firstMeasureIndex() <= index
+                                                    && g.firstMeasureIndex() + g.measureCount()
+                                                            > index)) continue;
+            var row = bars.get(i).stream().sorted(Comparator.comparingDouble(Head::x)).toList();
+            var tail = closedTailHook(row, score.measures().get(i), ink);
+            if (tail == null) continue;
+            if (revised == null) revised = new ArrayList<>(score.notes());
+            revised.set(tail.upper.index, rhythm(tail.upper.note, false));
+            revised.set(tail.lower.index, rhythm(tail.lower.note, false));
+        }
+        return revised == null
+                ? score
+                : score.withNotes(
+                        revised,
+                        java.util.stream.IntStream.range(0, score.notes().size()).boxed().toList());
+    }
+
+    private static Dyad closedTailHook(List<Head> row, MeasureRegion bar, Ink ink) {
+        float gap = (bar.bottom() - bar.top()) * ink.h / 8.2f;
+        float right = bar.right() * ink.w;
+        if (bar.cadenceQuarterBeats() != 0
+                || gap < 10
+                || gap > 27
+                || row.stream()
+                        .anyMatch(head -> !regular(head.note) || head.note.stemDirection() != -1))
+            return null;
+        int first = row.size() - 8;
+        if (first > 0 && row.get(first).x - row.get(first - 1).x < gap * 1.45f) return null;
+        var dyads = new ArrayList<Dyad>(4);
+        for (int slot = 0; slot < 4; slot++) {
+            var a = row.get(first + 2 * slot);
+            var b = row.get(first + 2 * slot + 1);
+            var upper = a.y < b.y ? a : b;
+            var lower = upper == a ? b : a;
+            int interval = upper.note.staffStep() - lower.note.staffStep();
+            int beams = slot == 1 ? 3 : 2;
+            boolean dotted = slot % 2 == 0;
+            float next = slot < 3 ? row.get(first + 2 * slot + 2).x : right;
+            if ((interval != 7 && interval != 9)
+                    || b.x - a.x > gap * .23f
+                    || Math.abs((lower.y - upper.y) / gap - interval * .5f) > .30f
+                    || upper.note.clefBottomDiatonic() != lower.note.clefBottomDiatonic()
+                    || upper.note.octaveShift() != lower.note.octaveShift()
+                    || upper.note.beamCount() != beams
+                    || lower.note.beamCount() != beams
+                    || upper.note.augmentationDots() != (dotted ? 1 : 0)
+                    || lower.note.augmentationDots() != (dotted ? 1 : 0)
+                    || (slot < 3 && (next - b.x < gap * 1.45f || next - b.x > gap * 4.2f)))
+                return null;
+            if (dotted && !dot(ink, upper, next, gap) && !dot(ink, lower, next, gap)) return null;
+            if (!dotted
+                    && (!dotAgreement(ink, upper, next, gap, false)
+                            || !dotAgreement(ink, lower, next, gap, false))) return null;
+            dyads.add(new Dyad(upper, lower));
+        }
+        var terminal = dyads.get(3);
+        var peer = dyads.get(2);
+        if (right - terminal.lower.x < gap * .65f
+                || right - terminal.lower.x > gap * 2.75f
+                || !hasClosingRule(ink.pixels, ink.w, ink.h, bar)) return null;
+        var budget = new PrintedBeamShafts.Budget(160_000);
+        if (!joinedTailHook(ink, dyads.get(1), dyads.get(0), gap, budget)
+                || !joinedTailHook(ink, terminal, peer, gap, budget)) return null;
+        var before = row.stream().map(Head::note).toList();
+        var trial = new ArrayList<>(before);
+        trial.set(first + 6, rhythm(before.get(first + 6), false));
+        trial.set(first + 7, rhythm(before.get(first + 7), false));
+        return closesSameTailClock(before, trial, first) ? terminal : null;
+    }
+
+    private static boolean joinedTailHook(
+            Ink ink, Dyad owner, Dyad peer, float gap, PrintedBeamShafts.Budget budget) {
+        return OwnedTertiaryBeamlets.provesJoinedClosingDyadHook(
+                ink.pixels,
+                ink.w,
+                ink.h,
+                owner.lower.x,
+                owner.lower.y,
+                owner.upper.x,
+                owner.upper.y,
+                peer.upper.x,
+                peer.upper.y,
+                peer.lower.x,
+                peer.lower.y,
+                gap,
+                budget);
+    }
+
+    private static boolean closesSameTailClock(
+            List<ScoreNoteEvent> before, List<ScoreNoteEvent> trial, int first) {
+        for (int i = 0; i < before.size(); i++) {
+            var old = ScoreNoteTiming.writtenPlacement(before.get(i), before, 4f).orElse(null);
+            var now = ScoreNoteTiming.writtenPlacement(trial.get(i), trial, 4f).orElse(null);
+            if (old == null || now == null) return false;
+            if (i < first + 6) {
+                if (!old.equals(now) || now.onsetBeats() + now.durationBeats() > 3.875)
+                    return false;
+            }
+            if (i < first) continue;
+            int slot = (i - first) / 2;
+            boolean dotted = slot % 2 == 0;
+            double start = 3 + slot / 2 * .5 + (dotted ? 0 : .375);
+            double value = dotted ? .375 : .125;
+            if (old.onsetBeats() != start
+                    || now.onsetBeats() != start
+                    || now.durationBeats() != value
+                    || old.durationBeats() != (slot == 3 ? .25 : value)) return false;
+        }
+        return true;
+    }
+
     private static Head missingSingleHook(List<Head> row, float gap) {
         Head found = null;
         for (int i = 0; i < row.size(); i++) {
@@ -273,6 +405,215 @@ final class ClosedDottedSixteenths {
             int h,
             int physicalPage) {
         return applyClosedOctaves(score, inherited, gray, w, h, true, physicalPage);
+    }
+
+    static ScorePageInterpretation applyReversedOctaveHook(
+            ScorePageInterpretation score,
+            ScoreMeterChange inherited,
+            byte[] labels,
+            byte[] gray,
+            int w,
+            int h) {
+        if (gray == null
+                || labels == null
+                || gray.length != (long) w * h
+                || labels.length != gray.length
+                || w < 256
+                || h < 128) return score;
+        var bars = groupedHeads(score, w, h);
+        var ink = new Ink(gray, w, h);
+        var meter = inherited;
+        int nextMeter = 0;
+        ScoreNoteEvent[] revised = null;
+        boolean[] suppressed = null;
+        for (int i = 0; i < bars.size(); i++) {
+            while (nextMeter < score.meterChanges().size()
+                    && score.meterChanges().get(nextMeter).measureIndex() <= i)
+                meter = score.meterChanges().get(nextMeter++);
+            final int index = i;
+            if (meter == null
+                    || meter.numerator() != 4
+                    || meter.denominator() != 4
+                    || bars.get(i).size() != 33
+                    || score.rests().stream().anyMatch(rest -> rest.measureIndex() == index))
+                continue;
+            var region = score.measures().get(i);
+            var row = bars.get(i);
+            var aliases = row.stream().filter(head -> head.note.stemDirection() == 1).toList();
+            if (aliases.size() != 1) continue;
+            var alias = aliases.get(0);
+            var terminal = reversedOctaveHook(row, alias, region, labels, ink);
+            if (terminal == null) continue;
+            if (revised == null) {
+                revised = new ScoreNoteEvent[score.notes().size()];
+                suppressed = new boolean[revised.length];
+            }
+            suppressed[alias.index] = true;
+            revised[terminal.upper.index] = rhythm(terminal.upper.note, false);
+            revised[terminal.lower.index] = rhythm(terminal.lower.note, false);
+        }
+        if (revised == null) return score;
+        var retained = new ArrayList<ScoreNoteEvent>();
+        var origins = new ArrayList<Integer>();
+        for (int i = 0; i < revised.length; i++) {
+            if (suppressed[i]) continue;
+            origins.add(i);
+            retained.add(revised[i] == null ? score.notes().get(i) : revised[i]);
+        }
+        return score.withNotes(retained, origins);
+    }
+
+    private static Dyad reversedOctaveHook(
+            List<Head> row, Head alias, MeasureRegion bar, byte[] labels, Ink ink) {
+        float gap = (bar.bottom() - bar.top()) * ink.h / 8.2f;
+        float left = bar.left() * ink.w, right = bar.right() * ink.w;
+        if (bar.cadenceQuarterBeats() != 0
+                || gap < 10
+                || gap > 27
+                || right - left < gap * 32
+                || right - left > gap * 49
+                || !regular(alias.note, 0)
+                || alias.note.beamCount() != 1
+                || alias.note.articulations() != 0
+                || alias.note.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_FROM_KEY
+                || !compactHookMask(labels, ink, alias, gap)) return null;
+        var sorted =
+                row.stream()
+                        .filter(h -> h != alias)
+                        .sorted(Comparator.comparingDouble(Head::x))
+                        .toList();
+        var dyads = new ArrayList<Dyad>(16);
+        for (int j = 0; j < sorted.size(); j += 2) {
+            var a = sorted.get(j);
+            var b = sorted.get(j + 1);
+            var top = a.y < b.y ? a : b;
+            var low = top == a ? b : a;
+            boolean dotted = j % 4 == 0;
+            if (!octaveClockOwner(top.note, dotted, true)
+                    || !octaveClockOwner(low.note, dotted, true)
+                    || top.note.stemDirection() != -1
+                    || low.note.stemDirection() != -1
+                    || top.note.beamCount() < 2
+                    || low.note.beamCount() < 2
+                    || top.note.clefBottomDiatonic() != low.note.clefBottomDiatonic()
+                    || top.note.octaveShift() != low.note.octaveShift()
+                    || top.note.staffStep() - low.note.staffStep() != 7
+                    || b.x - a.x > gap * .24f
+                    || low.y - top.y < gap * 3.18f
+                    || low.y - top.y > gap * 3.8f) return null;
+            if (!dyads.isEmpty()) {
+                float advance = low.x - dyads.get(dyads.size() - 1).lower.x;
+                if (advance < gap * 1.45f || advance > gap * 4.15f) return null;
+            }
+            dyads.add(new Dyad(top, low));
+        }
+        var terminal = dyads.get(15);
+        var peer = dyads.get(14);
+        if (terminal.upper.note.beamCount() != 2
+                || terminal.lower.note.beamCount() != 2
+                || right - terminal.lower.x < gap * .7f
+                || right - terminal.lower.x > gap * 2.75f
+                || !hasClosingRule(ink.pixels, ink.w, ink.h, bar)
+                || dot(ink, terminal.upper, right, gap)
+                || dot(ink, terminal.lower, right, gap)
+                || !dot(ink, peer.upper, terminal.upper.x, gap)
+                        && !dot(ink, peer.lower, terminal.upper.x, gap)) return null;
+        var budget = new PrintedBeamShafts.Budget(240_000);
+        boolean owned = false;
+        for (int j = 1; j < dyads.size(); j += 2) {
+            var following = dyads.get(j);
+            var preceding = dyads.get(j - 1);
+            if (preceding.lower.x < alias.x
+                    && alias.x < following.lower.x
+                    && OwnedTertiaryBeamlets.ownsReversedOctaveHook(
+                            ink.pixels,
+                            ink.w,
+                            ink.h,
+                            alias.x,
+                            alias.y,
+                            following.lower.x,
+                            following.lower.y,
+                            following.upper.x,
+                            following.upper.y,
+                            preceding.lower.x,
+                            preceding.lower.y,
+                            gap,
+                            budget)) owned = true;
+        }
+        if (!owned
+                || commonShafts(ink, terminal, gap, budget).isEmpty()
+                || commonShafts(ink, peer, gap, budget).isEmpty()
+                || budget.refused()
+                || !OwnedTertiaryBeamlets.provesBackwardHookOnJoinedRails(
+                        ink.pixels,
+                        ink.w,
+                        ink.h,
+                        terminal.lower.x,
+                        terminal.lower.y,
+                        peer.lower.x,
+                        peer.lower.y,
+                        gap)
+                || !OwnedTertiaryBeamlets.provesBackwardHookOnJoinedRails(
+                        ink.pixels,
+                        ink.w,
+                        ink.h,
+                        terminal.upper.x,
+                        terminal.upper.y,
+                        peer.upper.x,
+                        peer.upper.y,
+                        gap)) return null;
+        var trial = new ArrayList<>(sorted.stream().map(Head::note).toList());
+        for (int j = 30; j < 32; j++) trial.set(j, rhythm(trial.get(j), false));
+        return fillsDottedClock(trial, 4) ? terminal : null;
+    }
+
+    private static boolean compactHookMask(byte[] labels, Ink ink, Head owner, float gap) {
+        int x = Math.round(owner.x), y = Math.round(owner.y), reach = Math.round(gap * .86f);
+        if (x < reach
+                || y < reach
+                || x + reach >= ink.w
+                || y + reach >= ink.h
+                || labels[y * ink.w + x] != OmrMeasurePostProcessor.NOTEHEAD) return false;
+        int side = reach * 2 + 1, firstX = x - reach, firstY = y - reach;
+        int[] queue = new int[side * side];
+        boolean[] seen = new boolean[queue.length];
+        int center = reach * side + reach;
+        queue[0] = center;
+        seen[center] = true;
+        int total = 1, dark = 0, xmin = x, xmax = x, ymin = y, ymax = y;
+        long sumX = 0, sumY = 0;
+        var neighbors = new int[] {-1, 1, -side, side};
+        for (int cursor = 0; cursor < total; cursor++) {
+            int k = queue[cursor], dx = k % side, dy = k / side;
+            if (dx == 0 || dy == 0 || dx == side - 1 || dy == side - 1) return false;
+            int px = firstX + dx, py = firstY + dy;
+            xmin = Math.min(xmin, px);
+            xmax = Math.max(xmax, px);
+            ymin = Math.min(ymin, py);
+            ymax = Math.max(ymax, py);
+            sumX += px;
+            sumY += py;
+            if (ink.dark(px, py)) dark++;
+            for (int offset : neighbors) {
+                int n = k + offset;
+                if (!seen[n]
+                        && labels[(firstY + n / side) * ink.w + firstX + n % side]
+                                == OmrMeasurePostProcessor.NOTEHEAD) {
+                    seen[n] = true;
+                    queue[total++] = n;
+                }
+            }
+        }
+        int span = xmax - xmin + 1, height = ymax - ymin + 1;
+        return total >= gap * gap * .28f
+                && total <= gap * gap * .50f
+                && span >= gap * .74f
+                && span <= gap * 1.05f
+                && height >= gap * .45f
+                && height <= gap * .81f
+                && dark >= total * .95f
+                && Math.abs(sumX / (float) total - owner.x) <= .25f
+                && Math.abs(sumY / (float) total - owner.y) <= .25f;
     }
 
     private static ScorePageInterpretation applyClosedOctaves(

@@ -344,6 +344,9 @@ final class OctaveMarkDetector {
 
     private record InkBox(int left, int top, int right, int bottom, int area) {}
 
+    private record BareOctaveMark(
+            PlayingTechniqueDetector.Word word, boolean twoCounters, float end, float gap) {}
+
     /** Confirmed printed direction text cannot also be a sounding notehead. */
     static boolean containsPrintedMark(
             List<PlayingTechniqueDetector.Word> printedMarks,
@@ -390,6 +393,7 @@ final class OctaveMarkDetector {
         var visited = new java.util.BitSet();
         var flood = new WordInkRuns();
         var holeScan = new HoleScanScratch();
+        var closedMarks = new ArrayList<BareOctaveMark>();
         for (var staff : staffs)
             for (boolean below : StaffSides.VALUES) {
                 float gap = staff.gap();
@@ -465,9 +469,24 @@ final class OctaveMarkDetector {
                     var attached = !below && !closedEight && isComponent
                             ? verticallyAttachedEight(gray, width, box, gap) : null;
                     if (attached != null) box = attached;
-                    if (!closedEight && attached == null
-                            && (below || !canRepairEight(gray, width, box, gap)))
-                        continue;
+                    boolean brokenCounter =
+                            !below
+                                    && !closedEight
+                                    && attached == null
+                                    && canRepairEight(gray, width, box, gap);
+                    var faint =
+                            !below
+                                            && !closedEight
+                                            && attached == null
+                                            && isComponent
+                                            && !brokenCounter
+                                    ? faintCounterEight(gray, width, box, gap)
+                                    : null;
+                    if (faint != null) {
+                        box = faint;
+                        closedEight = true;
+                    }
+                    if (!closedEight && attached == null && !brokenCounter) continue;
                     float dashRight =
                             dashEnd(
                                     gray,
@@ -496,7 +515,7 @@ final class OctaveMarkDetector {
                             hookDirection = 1;
                         }
                     }
-                    if (dashRight < 0) continue;
+                    if (dashRight < 0 || faint != null && hookDirection <= 0) continue;
                     boolean openEnded =
                             !below && hookDirection == 0 && dashRight - box.right >= gap * 44;
                     if (!closedEight
@@ -529,13 +548,16 @@ final class OctaveMarkDetector {
                     // An attached fragment needs either a suffix or a proved upward end hook
                     // before it can establish a lower octave for the preceding staff.
                     if (below && !isComponent && hookDirection >= 0) continue;
-                    words.add(
+                    var word =
                             new PlayingTechniqueDetector.Word(
                                     below ? "8vb" : "8va",
                                     box.left / (float) width,
                                     box.top / (float) height,
                                     (box.right + 1) / (float) width,
-                                    (box.bottom + 1) / (float) height));
+                                    (box.bottom + 1) / (float) height);
+                    words.add(word);
+                    if (!below && hookDirection > 0)
+                        closedMarks.add(new BareOctaveMark(word, closedEight, dashRight, gap));
                 }
                 var members = new ArrayList<InkBox>();
                 for (int i = 0; i < boxes.size(); i++) {
@@ -652,6 +674,22 @@ final class OctaveMarkDetector {
                                     (b + 1) / (float) height));
                 }
             }
+        // A repaired outline can borrow the nearby complete numeral's dash chain.
+        for (var mark : closedMarks) {
+            if (mark.twoCounters) continue;
+            var word = mark.word;
+            for (var other : closedMarks) {
+                if (!other.twoCounters || Math.abs(other.end - mark.end) > mark.gap * .22f)
+                    continue;
+                float separation = (other.word.left() - word.right()) * width;
+                if (separation > 0
+                        && separation <= mark.gap
+                        && Math.abs((other.word.top() - word.top()) * height) <= mark.gap * .8f) {
+                    words.remove(word);
+                    break;
+                }
+            }
+        }
         // A proved suffix determines the direction. Do not also interpret its
         // numeral as a bare lower-octave mark for the preceding staff.
         if (words.size() < 2) return words;
@@ -1019,7 +1057,7 @@ final class OctaveMarkDetector {
     /** Trim a thin vertical attachment from a two-counter numeral above the staff. */
     private static InkBox verticallyAttachedEight(byte[] gray, int width, InkBox box, float gap) {
         int w = box.right - box.left + 1, h = box.bottom - box.top + 1;
-        if (h < gap * 2.3f || w < gap * .8f || w > gap * 1.65f) return null;
+        if (h < gap * 2.3f || w < gap * .8f || w > gap * 1.9f) return null;
         for (int y = box.top + Math.round(gap * 1.35f); y <= box.top + Math.round(gap * 1.85f); y++) {
             if (box.bottom - y < gap * .65f) break;
             int narrow = 0;
@@ -1034,6 +1072,46 @@ final class OctaveMarkDetector {
             if (bareEightShape(gray, width, cap, gap)) return cap;
         }
         return null;
+    }
+
+    /** Both printed counters can be completed by pale ink at the edge of the numeral. */
+    private static InkBox faintCounterEight(byte[] gray, int width, InkBox box, float gap) {
+        int w = box.right - box.left + 1, h = box.bottom - box.top + 1;
+        if (w < gap * 1.0f || w > gap * 1.55f || h < gap * 1.43f || h > gap * 1.85f) return null;
+        var contained = faintCounterEight(gray, width, box, gap, box.left, h);
+        if (contained != null) return contained;
+        return faintCounterEight(
+                gray, width, box, gap, Math.max(0, box.left - Math.round(gap * .20f)), h);
+    }
+
+    private static InkBox faintCounterEight(
+            byte[] gray, int width, InkBox box, float gap, int left, int h) {
+        int capWidth = box.right - left + 1;
+        byte[] cap = new byte[capWidth * h];
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < capWidth; x++)
+                cap[y * capWidth + x] =
+                        (byte) ((gray[(box.top + y) * width + left + x] & 255) < 245 ? 0 : 255);
+        var components =
+                RawNumeralComponents.capture(
+                        cap, capWidth, h, 0, 0, capWidth - 1, h - 1, 164, () -> {}, () -> {});
+        InkBox accepted = null;
+        for (var component : components.components()) {
+            if (component.size() < box.area || component.top != 0 || component.bottom < h - 2)
+                continue;
+            int inkWidth = component.right - component.left + 1;
+            if (inkWidth > gap * 1.62f) continue;
+            if (OctaveClefDigit.holes(cap, capWidth, component.left, 0, inkWidth, h) != 2) continue;
+            if (accepted != null) return null;
+            accepted =
+                    new InkBox(
+                            left + component.left,
+                            box.top,
+                            left + component.right,
+                            box.bottom,
+                            component.size());
+        }
+        return accepted;
     }
 
     private static boolean canRepairEight(byte[] gray, int width, InkBox box, float gap) {
@@ -1915,6 +1993,33 @@ final class OctaveMarkDetector {
             }
         }
         return false;
+    }
+
+    /** The apparent augmentation mark belongs to a downward dotted bracket end. */
+    static int hookedOctaveDashBesideHead(
+            byte[] gray, int width, int height, float right, float headX, float headY, float gap) {
+        int reach = Math.round(gap * .40f);
+        int left = Math.round(right) - reach, end = Math.round(right) + reach;
+        int top = Math.round(headY - gap * 2.3f), bottom = Math.round(headY - gap * 1.2f);
+        if (left < 3 || end >= width || top < 0 || headY + gap >= height) return -1;
+        int first = -1, last = -1;
+        for (int x = left; x <= end; x++) {
+            if (x - headX < gap * 1.5f || x - headX > gap * 2.35f) continue;
+            for (int y = top; y <= bottom; y++) {
+                if (!endsHorizontalDashes(gray, width, x, y, gap)
+                        || !hasJoinedDashHook(gray, width, height, x, y, 1, gap)
+                        || hasJoinedDashHook(gray, width, height, x, y, -1, gap)) continue;
+                boolean lastDash = false;
+                for (int yy = Math.round(headY - gap * .22f);
+                        yy <= Math.round(headY + gap * .12f);
+                        yy++) if ((gray[yy * width + x] & 255) < 165) lastDash = true;
+                if (!lastDash) continue;
+                if (first < 0) first = x;
+                last = x;
+                break;
+            }
+        }
+        return first >= 0 && last - first <= gap * .32f ? (first + last) / 2 : -1;
     }
 
     private static int joinedDashHookDirection(

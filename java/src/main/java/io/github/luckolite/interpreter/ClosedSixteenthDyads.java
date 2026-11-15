@@ -65,6 +65,7 @@ final class ClosedSixteenthDyads {
                 continue;
             }
             var pair=prove(ink,regions.get(m),bars.get(m));
+            if (pair == null) pair = terminalOctaveHookDot(ink, regions.get(m), bars.get(m));
             if (pair==null) continue;
             result.set(pair.top.owner,withoutDot(pair.top.note));
             result.set(pair.bottom.owner,withoutDot(pair.bottom.note));
@@ -397,6 +398,66 @@ final class ClosedSixteenthDyads {
         }
         if (compensatingInk(ink,bindings,pairs,dots,gap,track)) return null;
         return pairs.get(dots);
+    }
+
+    private static Dyad terminalOctaveHookDot(Ink ink, MeasureRegion region, List<Head> source) {
+        var heads = source.stream().sorted(Comparator.comparingDouble(Head::x)).toList();
+        float gap = (region.bottom() - region.top()) * ink.height / 8.2f;
+        if (gap < 10 || gap > 26) return null;
+        int clef = heads.get(0).note.clefBottomDiatonic();
+        for (int i = 0; i < heads.size(); i++) {
+            var note = heads.get(i).note;
+            if (!ordinary(note, clef)
+                    || note.beamCount() != 2
+                    || note.unbeamedDurationBeats() != 0
+                    || note.augmentationDots() != (i >= 30 ? 1 : 0)) return null;
+        }
+
+        var last = new ClosedFourDyadBeam.Head[4];
+        Dyad finalPair = null;
+        for (int slot = 0; slot < 16; slot++) {
+            var a = heads.get(slot * 2);
+            var b = heads.get(slot * 2 + 1);
+            if (b.x - a.x > gap * .20f || Math.abs(a.note.staffStep() - b.note.staffStep()) != 7)
+                return null;
+            if (slot >= 12) {
+                var pair = a.y < b.y ? new Dyad(a, b) : new Dyad(b, a);
+                last[slot - 12] =
+                        new ClosedFourDyadBeam.Head((a.x + b.x) * .5f, pair.top.y, pair.bottom.y);
+                finalPair = pair;
+            }
+        }
+        var pair = finalPair;
+        float edge = region.right() * ink.width;
+        float hint = region.bottom() * ink.height - gap * 2.1f;
+        if (edge - pair.top.x < gap * 1.2f || edge - pair.top.x > gap * 2.55f) return null;
+        var staff = localRules(ink, pair.top.x, hint, gap);
+        if (staff == null
+                || !barline(ink, edge, staff)
+                || !ClosedFourDyadBeam.provesOctaves(
+                        ink.raw, ink.width, ink.height, last, staff[1], staff[0], 1, false))
+            return null;
+        int column =
+                OctaveMarkDetector.hookedOctaveDashBesideHead(
+                        ink.raw, ink.width, ink.height, edge, pair.top.x, pair.top.y, staff[1]);
+        if (column < 0
+                || detachedDotBeforeHook(ink, pair.top, column, staff)
+                || detachedDotBeforeHook(ink, pair.bottom, column, staff)) return null;
+        return pair;
+    }
+
+    private static boolean detachedDotBeforeHook(Ink ink, Head head, int hook, float[] rules) {
+        float gap = rules[1];
+        int left = Math.round(head.x + gap * .84f), right = Math.round(hook - gap * .39f);
+        if (right - left < gap * .54f) return true;
+        int top = Math.round(head.y - gap * .65f), bottom = Math.round(head.y + gap * .67f);
+        int found = 0;
+        for (int y = top; y <= bottom; y++) {
+            float level = (rules[0] - y) / gap;
+            if (Math.abs(level - Math.round(level)) < .19f) continue;
+            for (int x = left; x <= right; x++) if (ink.dark(x, y)) found++;
+        }
+        return found >= Math.max(3, Math.round(gap * gap * .025f));
     }
 
     private static boolean ordinary(ScoreNoteEvent n,int clef) {

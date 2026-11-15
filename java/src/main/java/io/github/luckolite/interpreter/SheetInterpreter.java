@@ -724,6 +724,9 @@ public final class SheetInterpreter {
         finalInterpretation =
                 ClosedDottedSixteenths.applyClosedMonophonicHooks(
                         finalInterpretation, inheritedMeter, gray, width, height);
+        finalInterpretation =
+                ClosedDottedSixteenths.applyClosedTailDyadHooks(
+                        finalInterpretation, inheritedMeter, gray, width, height);
         if (physicalPage >= 0)
             finalInterpretation =
                     PrintedBeamSource.apply(
@@ -751,6 +754,9 @@ public final class SheetInterpreter {
         finalInterpretation =
                 ClosedDottedSixteenths.applyClosedOctaveFragments(
                         finalInterpretation, inheritedMeter, gray, width, height, physicalPage);
+        finalInterpretation =
+                ClosedDottedSixteenths.applyReversedOctaveHook(
+                        finalInterpretation, inheritedMeter, labels, gray, width, height);
         finalInterpretation =
                 finalInterpretation.withClockContextSource(
                         ScoreClockContextCapture.capture(
