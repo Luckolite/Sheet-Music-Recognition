@@ -6324,18 +6324,40 @@ final class OmrScoreInterpreter {
         int minShift = Math.round(gap * 1.75f), maxShift = Math.round(gap * 2.15f);
         int lastRow = Math.min(height - 1, bottom + maxShift);
         if (lastRow < top || bottom < top || right < left) return false;
-        boolean[] excluded = new boolean[lastRow - top + 1];
+        int rowSpan = lastRow - top + 1;
+        boolean packStaffRows = rowSpan <= Long.SIZE && minShift >= 0 && maxShift < Long.SIZE;
+        boolean[] excluded = packStaffRows ? null : new boolean[rowSpan];
+        long included = 0, shiftedIncluded = 0;
         for (int y = top; y <= lastRow; y++) {
             float phase = (y - staffTop) / gap;
-            excluded[y - top] = Math.abs(phase - Math.round(phase)) * gap < margin;
+            boolean rule = Math.abs(phase - Math.round(phase)) * gap < margin;
+            if (packStaffRows) {
+                if (rule) continue;
+                included |= 1L << (y - top);
+                if (y <= lowerLimit) shiftedIncluded |= 1L << (y - top);
+            } else {
+                excluded[y - top] = rule;
+            }
         }
+        int packedLeft = Math.max(0, left - xReach);
+        int packedRight = Math.min(width - 1, right + xReach);
+        int packedWidth = packedRight - packedLeft + 1;
+        boolean packInkRows = packedWidth <= Long.SIZE;
+        long[] rowInk = null;
         int[] candidateRows = new int[bottom - top + 1];
+        float minimumInk = gap * gap * .45f;
         for (int dy = minShift; dy <= maxShift; dy++) {
             int rowCount = 0;
-            for (int y = top; y <= bottom; y++) {
-                int yy = y + dy;
-                if (yy < 0 || yy >= height || yy > lowerLimit) continue;
-                if (!excluded[y - top] && !excluded[yy - top]) candidateRows[rowCount++] = y;
+            if (packStaffRows) {
+                long source = -1L >>> (Long.SIZE - 1 - (bottom - top));
+                for (long rows = source & included & (shiftedIncluded >>> dy); rows != 0; rows &= rows - 1)
+                    candidateRows[rowCount++] = top + Long.numberOfTrailingZeros(rows);
+            } else {
+                for (int y = top; y <= bottom; y++) {
+                    int yy = y + dy;
+                    if (yy < 0 || yy >= height || yy > lowerLimit) continue;
+                    if (!excluded[y - top] && !excluded[yy - top]) candidateRows[rowCount++] = y;
+                }
             }
             // No horizontal displacement can restore missing vertical support.
             if (rowCount == 0 || candidateRows[rowCount - 1] - candidateRows[0] <= gap * 1.2f)
@@ -6349,26 +6371,59 @@ final class OmrScoreInterpreter {
                         minY = height,
                         maxY = -1;
                 int firstX = Math.max(left, -dx), lastX = Math.min(right, width - 1 - dx);
-                if ((long) rowCount * (lastX - firstX + 1) <= gap * gap * .45f) continue;
-                for (int i = 0; i < rowCount; i++) {
-                    int y = candidateRows[i];
-                    int row = y * width, shifted = (y + dy) * width + dx;
-                    for (int x = firstX; x <= lastX; x++) {
-                        boolean a = (gray[row + x] & 255) < 155,
-                                b = (gray[shifted + x] & 255) < 155;
-                        if (a) {
-                            inkA++;
-                            minX = Math.min(minX, x);
-                            maxX = Math.max(maxX, x);
-                            minY = Math.min(minY, y);
-                            maxY = Math.max(maxY, y);
+                if ((long) rowCount * (lastX - firstX + 1) <= minimumInk) continue;
+                if (packInkRows) {
+                    if (rowInk == null) {
+                        rowInk = new long[lastRow - top + 1];
+                        for (int y = top, at = top * width + packedLeft; y <= lastRow; y++, at += width) {
+                            long ink = 0;
+                            for (int x = 0; x < packedWidth; x++)
+                                if ((gray[at + x] & 255) < 155) ink |= 1L << x;
+                            rowInk[y - top] = ink;
                         }
-                        if (b) inkB++;
-                        if (a && b) intersection++;
+                    }
+                    // Align the shifted row with the source columns before comparing the masks.
+                    int firstBit = firstX - packedLeft, lastBit = lastX - packedLeft;
+                    long columns = (-1L << firstBit) & (-1L >>> (Long.SIZE - 1 - lastBit));
+                    for (int i = 0; i < rowCount; i++) {
+                        int y = candidateRows[i];
+                        long a = rowInk[y - top] & columns;
+                        long shifted = rowInk[y + dy - top];
+                        long b = (dx >= 0 ? shifted >>> dx : shifted << -dx) & columns;
+                        inkA += Long.bitCount(a);
+                        inkB += Long.bitCount(b);
+                        intersection += Long.bitCount(a & b);
+                        if (a != 0) {
+                            minX = Math.min(minX, packedLeft + Long.numberOfTrailingZeros(a));
+                            maxX = Math.max(maxX, packedLeft + Long.SIZE - 1 - Long.numberOfLeadingZeros(a));
+                            minY = Math.min(minY, y);
+                            maxY = y;
+                        }
+                    }
+                } else {
+                    for (int i = 0; i < rowCount; i++) {
+                        int y = candidateRows[i];
+                        int row = y * width, shifted = (y + dy) * width + dx;
+                        int beforeRow = inkA;
+                        for (int x = firstX; x <= lastX; x++) {
+                            boolean a = (gray[row + x] & 255) < 155,
+                                    b = (gray[shifted + x] & 255) < 155;
+                            if (a) {
+                                inkA++;
+                                minX = Math.min(minX, x);
+                                maxX = Math.max(maxX, x);
+                            }
+                            if (b) inkB++;
+                            if (a && b) intersection++;
+                        }
+                        if (inkA != beforeRow) {
+                            minY = Math.min(minY, y);
+                            maxY = y;
+                        }
                     }
                 }
-                if (inkA > gap * gap * .45f
-                        && inkB > gap * gap * .45f
+                if (inkA > minimumInk
+                        && inkB > minimumInk
                         && maxX - minX > gap * .75f
                         && maxY - minY > gap * 1.2f
                         && intersection > (inkA + inkB - intersection) * .72f) return true;
