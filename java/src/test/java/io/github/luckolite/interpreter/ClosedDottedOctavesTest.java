@@ -176,6 +176,59 @@ public class ClosedDottedOctavesTest {
                 provesTripleClock(secondFused, attacks, fragment));
     }
 
+    @Test
+    public void closingDyadRibbonRequiresItsOwnAnchorsAndPrintedGap() {
+        var attacks = new ArrayList<ClosedOctaveBeamSource.Attack>();
+        for (int i = 11; i < 16; i++) {
+            int x = FIRST + i * SPACING;
+            attacks.add(new ClosedOctaveBeamSource.Attack(2 * i, 2 * i + 1, x, UPPER, x, LOWER));
+        }
+        var previous = attacks.get(0);
+        var ending = attacks.subList(1, 5);
+        var start = ScoreBeamSource.empty(32);
+        var page = image();
+        var proved =
+                ClosedOctaveBeamSource.captureClosingDottedDyads(
+                        start, 7, page, WIDTH, HEIGHT, 16, previous, ending);
+        assertEquals(1, proved.groups().size());
+        var beam = proved.resolve().groups().get(0);
+        assertEquals(List.of(3, 3, 3), beam.source().bridges());
+        assertEquals(
+                List.of(
+                        new ScoreBeamSource.Hook(1, 3, ScoreBeamSource.Direction.BACKWARD),
+                        new ScoreBeamSource.Hook(3, 3, ScoreBeamSource.Direction.BACKWARD)),
+                beam.engravingHooks());
+        assertEquals(List.of(30, 31), beam.columns().get(beam.columns().size() - 1).owners());
+
+        int shaft = FIRST + 15 * SPACING - 9;
+        var missing = page.clone();
+        paint(missing, shaft - 13, shaft - 2, 312, 325, (byte) 255);
+        assertSame(
+                start,
+                ClosedOctaveBeamSource.captureClosingDottedDyads(
+                        start, 7, missing, WIDTH, HEIGHT, 16, previous, ending));
+
+        var continuous = page.clone();
+        paint(continuous, FIRST + 11 * SPACING - 10, FIRST + 12 * SPACING - 8, 342, 349, (byte) 0);
+        assertSame(
+                start,
+                ClosedOctaveBeamSource.captureClosingDottedDyads(
+                        start, 7, continuous, WIDTH, HEIGHT, 16, previous, ending));
+
+        var reserved =
+                ScoreBeamSource.capture(
+                        7,
+                        32,
+                        List.of(),
+                        List.of(
+                                new ScoreBeamSource.Column(
+                                        List.of(new ScoreBeamSource.Anchor(7, 31)))));
+        assertSame(
+                reserved,
+                ClosedOctaveBeamSource.captureClosingDottedDyads(
+                        reserved, 7, page, WIDTH, HEIGHT, 16, previous, ending));
+    }
+
     private static boolean provesTripleClock(
             byte[] paper,
             List<ClosedOctaveBeamSource.Attack> attacks,

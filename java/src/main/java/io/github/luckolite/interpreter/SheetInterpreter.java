@@ -742,6 +742,9 @@ public final class SheetInterpreter {
                             phrasePending);
         finalInterpretation = mixedBeamTransition.projectBeams(finalInterpretation, physicalPage);
         finalInterpretation =
+                WrappedEighthTriplets.closeFlatMarkedTripletBars(
+                        finalInterpretation, labels, gray, width, height);
+        finalInterpretation =
                 PrintedPassOmission.apply(
                         finalInterpretation, words, staffs, gray, width, height, physicalPage);
         finalInterpretation =
@@ -764,6 +767,9 @@ public final class SheetInterpreter {
                         finalInterpretation, inheritedMeter, labels, gray, width, height);
         finalInterpretation =
                 ClosedDoubleHarmonicQuarters.apply(finalInterpretation, gray, width, height);
+        finalInterpretation =
+                DottedDyadMeasureSeparator.restorePrintedHooks(
+                        finalInterpretation, gray, width, height, physicalPage);
         finalInterpretation =
                 finalInterpretation.withClockContextSource(
                         ScoreClockContextCapture.capture(

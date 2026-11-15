@@ -139,15 +139,21 @@ public class ClosedEighthTripletBarsTest {
 
     @Test
     public void sixTripletsFillOpeningBarWithOwnedMeterAndNoLeftDivider() throws Exception {
-        checkOpeningTriplets(false);
+        checkOpeningTriplets(false, false);
     }
 
     @Test
     public void terminalTripletHeadNeedsItsBeamAndIndependentClosingRule() throws Exception {
-        checkOpeningTriplets(true);
+        checkOpeningTriplets(true, false);
     }
 
-    private static void checkOpeningTriplets(boolean missingBeamLabel) throws Exception {
+    @Test
+    public void sixTripletsFillTheFirstBarOfALaterStaffWithItsOwnMeter() throws Exception {
+        checkOpeningTriplets(false, true);
+    }
+
+    private static void checkOpeningTriplets(boolean missingBeamLabel, boolean laterStaff)
+            throws Exception {
         int width = 840, height = 260;
         int left = 100, right = missingBeamLabel ? 734 : 754;
         int firstLine = 96, lastLine = 160;
@@ -181,14 +187,42 @@ public class ClosedEighthTripletBarsTest {
             ink(paper, width, shaft - 1, shaft + 1, Math.min(tip, y), Math.max(tip, y), 0);
             if (slot % 3 == 0) ink(paper, width, shaft, shaft + 65, tip - 3, tip + 3, 0);
             boolean quarterAlias = missingBeamLabel && slot == 17;
-            score.add(new ScoreNoteEvent(0, (x - left) / (float) (right - left), (160 - y) / 8,
-                    0, 1, y / (float) height, false, 0, quarterAlias ? 0 : 1, 2,
-                    quarterAlias ? ScoreNoteEvent.DURATION_QUARTER : 0, 1, 0, 0, 30, false,
-                    0, false, 0, 0, 1, stem, ScoreNoteEvent.Kind.PITCHED,
-                    ScoreNoteEvent.VisualSize.FULL, 0, null));
+            score.add(
+                    new ScoreNoteEvent(
+                            laterStaff ? 1 : 0,
+                            (x - left) / (float) (right - left),
+                            (160 - y) / 8,
+                            0,
+                            1,
+                            y / (float) height,
+                            false,
+                            0,
+                            quarterAlias ? 0 : 1,
+                            2,
+                            quarterAlias ? ScoreNoteEvent.DURATION_QUARTER : 0,
+                            1,
+                            0,
+                            0,
+                            30,
+                            false,
+                            0,
+                            false,
+                            0,
+                            0,
+                            1,
+                            stem,
+                            ScoreNoteEvent.Kind.PITCHED,
+                            ScoreNoteEvent.VisualSize.FULL,
+                            0,
+                            null));
         }
-        var bars = List.of(opening, following);
-        var meters = List.of(new ScoreMeterChange(0, 6, 4));
+        var precedingStaff =
+                new MeasureRegion(left / (float) width, right / (float) width, .03f, .15f);
+        var bars =
+                laterStaff
+                        ? List.of(precedingStaff, opening, following)
+                        : List.of(opening, following);
+        var meters = List.of(new ScoreMeterChange(laterStaff ? 1 : 0, 6, 4));
         assertEquals(score.stream()
                         .map(note -> (note.beamCount() == 0
                                 ? ClosingTripletRhythm.singleBeam(note) : note).withTupletRatio(3, 2))

@@ -246,12 +246,6 @@ final class PrintedSlurPageCapture {
             if (raw.limitReached())
                 return new Result(ScoreSlurSource.empty(noteCount), statuses, true);
             for (var bow : raw.bows()) {
-                if (admitJoins) {
-                    if (pieces.size() == 4096) {
-                        pieces.clear();
-                        admitJoins = false;
-                    } else pieces.add(new PrintedSystemSlurJoins.Observed(frame, bow));
-                }
                 String id =
                         raw.jointBows().contains(bow)
                                 ? "printed-page-" + physicalPage + "-joint-arc-" + jointOrdinal++
@@ -274,17 +268,28 @@ final class PrintedSlurPageCapture {
                                                                 + physicalPage
                                                                 + "-arc-"
                                                                 + ordinal++;
+                var bound =
+                        PrintedSlurOwners.bind(
+                                id,
+                                physicalPage,
+                                bow,
+                                frame.heads(),
+                                gray,
+                                width,
+                                height,
+                                frame.track());
+                if (beam != null
+                        && bound.span().isPresent()
+                        && beam.ownsLedger(
+                                bow, bound.span().orElseThrow(), frame.heads(), frame.track()))
+                    continue;
+                if (admitJoins) {
+                    if (pieces.size() == 4096) {
+                        pieces.clear();
+                        admitJoins = false;
+                    } else pieces.add(new PrintedSystemSlurJoins.Observed(frame, bow));
+                }
                 if (geometryOnly) {
-                    var bound =
-                            PrintedSlurOwners.bind(
-                                    id,
-                                    physicalPage,
-                                    bow,
-                                    frame.heads(),
-                                    gray,
-                                    width,
-                                    height,
-                                    frame.track());
                     if (beam != null
                             && bound.span().isPresent()
                             && beam.owns(
@@ -304,18 +309,12 @@ final class PrintedSlurPageCapture {
                     continue;
                 }
                 var owned =
-                        PrintedSlurOwners.resolve(
-                                id,
-                                physicalPage,
-                                bow,
+                        PrintedSlurOwners.resolveBinding(
+                                bound,
                                 frame.heads().stream()
                                         .map(h -> (PrintedSlurOwners.Head) h)
                                         .toList(),
-                                retainedTies,
-                                gray,
-                                width,
-                                height,
-                                frame.track());
+                                retainedTies);
                 if (beam != null
                         && owned.span().isPresent()
                         && beam.owns(bow, owned.span().orElseThrow(), frame.heads(), frame.track()))
@@ -335,16 +334,7 @@ final class PrintedSlurPageCapture {
                         || owned.status() == PrintedSlurOwners.Status.SAME_PITCH_UNRESOLVED
                         || owned.status() == PrintedSlurOwners.Status.TIE_PITCH_CONFLICT
                         || owned.status() == PrintedSlurOwners.Status.REVERSED_CLOCK) {
-                    PrintedSlurOwners.bind(
-                                    id,
-                                    physicalPage,
-                                    bow,
-                                    frame.heads(),
-                                    gray,
-                                    width,
-                                    height,
-                                    frame.track())
-                            .span()
+                    bound.span()
                             .filter(
                                     span ->
                                             beam == null

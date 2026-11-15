@@ -54,6 +54,56 @@ final class ClosedOctaveBeamSource {
                 : source;
     }
 
+    /** A bounded four-column dotted group reaching a proved closing measure edge. */
+    static ScoreBeamSource captureClosingDottedDyads(
+            ScoreBeamSource source,
+            int page,
+            byte[] gray,
+            int width,
+            int height,
+            float gap,
+            Attack before,
+            List<Attack> ending) {
+        if (page < 0
+                || ending.size() != 4
+                || !provesRibbons(gray, width, height, gap, ending, null)) return source;
+        var budget = new PrintedBeamShafts.Budget(80_000);
+        var first = ending.get(0);
+        var preceding =
+                PrintedBeamShafts.at(
+                        gray, width, height, before.lowerX, before.lowerY, gap, budget);
+        var beginning =
+                PrintedBeamShafts.at(gray, width, height, first.lowerX, first.lowerY, gap, budget);
+        if (budget.refused() || preceding.size() != 1 || beginning.size() != 1) return source;
+        var a = preceding.get(0);
+        var b = beginning.get(0);
+        if (a.direction() != 1
+                || b.direction() != 1
+                || b.left() - a.right() < 1.3f * gap
+                || b.left() - a.right() > 3.8f * gap
+                || !WrappedEighthTriplets.matchesRailBridge(gray, width, height, a, b, gap, false))
+            return source;
+        return project(source, page, ending);
+    }
+
+    static ScoreBeamSource captureOpeningStaffCrossingDyads(
+            ScoreBeamSource source,
+            int page,
+            byte[] gray,
+            int width,
+            int height,
+            float gap,
+            float staffTop,
+            float staffGap,
+            List<Attack> ending,
+            float followingX) {
+        return page >= 0
+                        && OwnedTertiaryBeamlets.provesOpeningStaffCrossingRibbon(
+                                gray, width, height, gap, staffTop, staffGap, ending, followingX)
+                ? project(source, page, ending)
+                : source;
+    }
+
     record Fragment(float x, float y) {}
 
     static boolean provesTripleClock(

@@ -96,6 +96,25 @@ final class WrappedTripletDotInk {
         return false;
     }
 
+    static boolean singleFlatOwns(
+            byte[] gray, int width, int height, Center core, float noteX, float noteY, float gap) {
+        float before = noteX - core.x(), below = core.y() - noteY;
+        if (before < gap * 1.4f || before > gap * 1.95f || below < gap * .45f || below > gap * .78f)
+            return false;
+        int left = core.x() - Math.round(gap * .49f);
+        int right = core.x() + Math.round(gap * .45f);
+        int top = core.y() - Math.round(gap * 1.96f);
+        int bottom = core.y() + Math.round(gap * .49f);
+        if (!PrintedFlatGlyph.matches(gray, width, height, left, top, right, bottom, gap))
+            return false;
+        int spineTop = core.y() - Math.round(gap * 1.75f);
+        for (int spine = left; spine <= core.x(); spine++)
+            if (flatSpine(gray, width, spine, spineTop, core.y())
+                    && count(gray, width, spine, core.x(), core.y(), core.y(), 155)
+                            == core.x() - spine + 1) return true;
+        return false;
+    }
+
     private static boolean flatSpine(byte[] gray, int width, int x, int top, int bottom) {
         return count(gray, width, x, x + 1, top, bottom, 155) >= 2 * (bottom - top + 1) * .96f;
     }
