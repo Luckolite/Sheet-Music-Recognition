@@ -2311,6 +2311,13 @@ final class OmrScoreInterpreter {
                                 heads,
                                 gray,
                                 accidentalFragments);
+                if (writtenChoice.accidental() == ScoreNoteEvent.ACCIDENTAL_SHARP
+                        && !writtenChoice.ambiguous()
+                        && writtenChoice.glyph() instanceof Component glyph
+                        && printedNaturalOnUpperLedger(
+                                gray, width, height, glyph, head, accidentalGap, localBottom)) {
+                    writtenChoice = writtenChoice.withAccidental(ScoreNoteEvent.ACCIDENTAL_NATURAL);
+                }
                 writtenAccidentalChoices.put(head, writtenChoice);
                 writtenAccidental = writtenChoice.accidental();
                 if (writtenAccidental == ScoreNoteEvent.ACCIDENTAL_NATURAL
@@ -7949,6 +7956,22 @@ final class OmrScoreInterpreter {
                     right = Math.min(right, firstHead - staff.gap * .28f);
                 if (right <= left) continue;
 
+                if (headerAccidentals != null && firstInRow && prior != null
+                        && prior >= 5 && prior <= 7 && clef != null && completeHeaderTreble(clef, staff)
+                        && firstHead - boundary >= staff.gap && firstHead - boundary <= staff.gap * 3) {
+                    // Sample the uncovered staff between the repeated signature and its first head.
+                    var rules = PrintedDirectionStaff.printedRules(
+                            gray, width, height, (boundary + firstHead) * .5f, staff.bottom, staff.gap);
+                    if (rules != null && Math.abs(rules[0] - staff.bottom) <= staff.gap * .26f
+                            && Math.abs(rules[1] - staff.gap) <= staff.gap * .08f) {
+                        var printedStaff = new Staff(rules[0] - 4 * rules[1], rules[0], rules[1]);
+                        var printedHeader = printedHeaderSymbols(gray, width, height, left, right, printedStaff);
+                        retainRepeatedSharpHeaderOwners(
+                                headerAccidentals, candidates, printedHeader, clef, printedStaff,
+                                prior, boundary, firstHead);
+                    }
+                }
+
                 java.util.Set<AccidentalCandidate> corroboratedSharps =
                         orderedRawHeaderSharps(
                                 labels,
@@ -9358,6 +9381,79 @@ final class OmrScoreInterpreter {
     }
 
     /** Seed an otherwise empty raw header only with the first treble signature sharp. */
+    /**
+     * A repeated signature may preserve its source owners even when one interior
+     * sharp cannot be extracted. Its surviving ordered ink must predate the first attack.
+     */
+    private static void retainRepeatedSharpHeaderOwners(
+            List<Component> headers,
+            List<AccidentalCandidate> candidates,
+            List<SignatureGlyph> raw,
+            Component clef,
+            Staff staff,
+            int priorFifths,
+            float boundary,
+            float firstHead) {
+        if (clef == null || priorFifths < 5 || priorFifths > 7
+                || raw.size() < priorFifths - 1 || raw.size() > priorFifths
+                || !Float.isFinite(firstHead)) return;
+        var run = raw.stream().sorted(Comparator.comparingDouble(SignatureGlyph::x)).toList();
+        if (!firstPrintedHeaderSharp(run.get(0), clef, staff)) return;
+        float gap = staff.gap;
+        if (run.stream().anyMatch(glyph -> glyph.accidental != ScoreNoteEvent.ACCIDENTAL_SHARP
+                || glyph.printedBody == null || glyph.printedBody.minX <= clef.maxX
+                || glyph.printedBody.maxX > Math.min(boundary, firstHead - gap * 1.4f))) return;
+        if (run.size() == priorFifths) {
+            if (!orderedPrintedSharpSubset(run, staff, priorFifths)) return;
+        } else {
+            int matchedOmission = -1;
+            for (int omitted = 1; omitted < priorFifths - 1; omitted++) {
+                if (!orderedPrintedSharpSubset(run, staff, omitted)) continue;
+                if (matchedOmission >= 0) return;
+                matchedOmission = omitted;
+            }
+            if (matchedOmission < 0) return;
+        }
+
+        // Both neighboring printed sharps bind each interior owner to the signature.
+        for (int i = 1; i < run.size() - 1; i++) {
+            var glyph = run.get(i);
+            var body = glyph.printedBody;
+            for (var candidate : candidates) {
+                var part = candidate.component;
+                if (Math.abs(part.centerX - glyph.x) > gap * .22f
+                        || part.minX < body.minX - gap * .15f
+                        || part.maxX > body.maxX + gap * .15f
+                        || part.minY < body.minY - gap * .46f
+                        || part.maxY > body.maxY + gap * .46f) continue;
+                int overlap = Math.min(part.maxY, body.maxY) - Math.max(part.minY, body.minY) + 1;
+                if (overlap >= (part.maxY - part.minY + 1) * .77f) headers.add(part);
+            }
+        }
+    }
+
+    private static final int[] TREBLE_SHARP_STEPS = {0, -3, 1, -2, -5, -1, -4};
+
+    private static boolean orderedPrintedSharpSubset(List<SignatureGlyph> run, Staff staff, int omitted) {
+        int previous = -1;
+        float previousX = 0;
+        for (int i = 0; i < run.size(); i++) {
+            var glyph = run.get(i);
+            int index = i < omitted ? i : i + 1;
+            var frame = headerPrintedFrame(staff, glyph.x);
+            float expected = frame.top - TREBLE_SHARP_STEPS[index] * frame.gap * .5f;
+            if (!Float.isFinite(glyph.pitchY) || Math.abs(glyph.pitchY - expected) > frame.gap * .37f)
+                return false;
+            if (i > 0) {
+                float advance = (glyph.x - previousX) / (index - previous);
+                if (advance < frame.gap * .8f || advance > frame.gap * 1.42f) return false;
+            }
+            previous = index;
+            previousX = glyph.x;
+        }
+        return true;
+    }
+
     private static void corroboratePrintedSharpHeader(
             List<SignatureGlyph> glyphs,
             List<SignatureGlyph> rawHeader,
@@ -9392,14 +9488,13 @@ final class OmrScoreInterpreter {
     }
 
     private static boolean orderedPrintedSharpPitches(List<SignatureGlyph> run, Staff staff) {
-        int[] steps = {0, -3, 1, -2, -5, -1, -4};
-        if (run.size() < 2 || run.size() > steps.length) return false;
+        if (run.size() < 2 || run.size() > TREBLE_SHARP_STEPS.length) return false;
         for (int i = 0; i < run.size(); i++) {
             var glyph = run.get(i);
             if (glyph.printedBody == null || !Float.isFinite(glyph.pitchY)) return false;
             Staff frame = headerPrintedFrame(staff, glyph.x);
             int step = Math.round((frame.top - glyph.pitchY) * 2 / frame.gap);
-            if (Math.floorMod(step, 7) != Math.floorMod(steps[i], 7)) return false;
+            if (Math.floorMod(step, 7) != Math.floorMod(TREBLE_SHARP_STEPS[i], 7)) return false;
             if (i > 0
                     && (glyph.x - run.get(i - 1).x < frame.gap * .65f
                             || glyph.x - run.get(i - 1).x > frame.gap * 2.2f)) return false;
@@ -20942,15 +21037,19 @@ final class OmrScoreInterpreter {
                 int accidental,
                 Object glyph,
                 Object head,
-                List<?> glyphAlternatives,
-                List<?> headAlternatives,
+                int glyphAlternatives,
+                int headAlternatives,
                 boolean ambiguous) {
             this.accidental = accidental;
             this.glyph = glyph;
             this.head = head;
-            this.glyphAlternatives = glyphAlternatives.size();
-            this.headAlternatives = headAlternatives == null ? 0 : headAlternatives.size();
+            this.glyphAlternatives = glyphAlternatives;
+            this.headAlternatives = headAlternatives;
             this.ambiguous = ambiguous;
+        }
+
+        private WrittenAccidentalChoice withAccidental(int value) {
+            return new WrittenAccidentalChoice(value, glyph, head, glyphAlternatives, headAlternatives, ambiguous);
         }
 
         int accidental() {
@@ -21263,9 +21362,49 @@ final class OmrScoreInterpreter {
                 best == null ? ScoreNoteEvent.ACCIDENTAL_FROM_KEY : bestAccidental,
                 best == null ? null : best.component,
                 head,
-                candidates,
-                heads,
+                candidates.size(),
+                heads == null ? 0 : heads.size(),
                 ambiguous);
+    }
+
+    /** A narrow upper-ledger natural can share a semantic island with the entering slur. */
+    private static boolean printedNaturalOnUpperLedger(
+            byte[] gray, int width, int height, Component glyph, Component head,
+            float gap, float staffBottom) {
+        float firstLine = staffBottom - 4 * gap;
+        int span = glyph.maxX - glyph.minX + 1;
+        int depth = glyph.maxY - glyph.minY + 1;
+        float advance = head.minX - glyph.maxX;
+        if (gray == null || !Float.isFinite(firstLine) || gap < 9 || gap > 27
+                || firstLine - head.centerY < gap * 1.30f
+                || span < gap * .76f || span > gap * 1.12f
+                || depth < gap * 2.56f || depth > gap * 3.24f
+                || glyph.area < span * depth * .45f
+                || advance < gap * .25f || advance > gap * .98f
+                || Math.abs(glyph.centerY - head.centerY) > gap * .23f) return false;
+
+        if (provesOwnedLedgerNatural(gray, width, height, glyph, head, gap, firstLine)) return true;
+        for (int side : new int[] {1, -1}) {
+            var lines = PrintedDirectionStaff.printedRules(
+                    gray, width, height, head.centerX + side * gap * .6f, staffBottom, gap);
+            if (lines == null || Math.abs(lines[0] - staffBottom) > gap * .25f
+                    || Math.abs(lines[1] - gap) > gap * .07f) continue;
+            float printedGap = Math.round(lines[1]);
+            if (provesOwnedLedgerNatural(
+                    gray, width, height, glyph, head, printedGap, lines[0] - 4 * printedGap)) return true;
+        }
+        return false;
+    }
+
+    private static boolean provesOwnedLedgerNatural(
+            byte[] gray, int width, int height, Component glyph, Component head, float gap, float firstLine) {
+        var component = new AccidentalCandidate(glyph, OmrMeasurePostProcessor.SYMBOL);
+        if (Float.isFinite(printedSignatureSharp(gray, width, height, component, gap, true))) return false;
+        for (int dx = -1; dx <= 1; dx++)
+            for (int dy = -2; dy <= 2; dy++)
+                if (provesNaturalMeterInk(gray, width, height, glyph.minX + dx, glyph.maxX + dx,
+                        head.centerY + dy, gap, Math.round(firstLine))) return true;
+        return false;
     }
 
     /** A fused mask can join two chords even though their raw upward shafts are distinct. */

@@ -72,11 +72,16 @@ final class PrintedQuarterDyadAccidentals {
         if (a.positionInMeasure() < .25f || a.positionInMeasure() > .68f) return false;
         for (var fitted : staffs) {
             float gap = fitted.gap();
+            boolean wide = span > gap * (inline ? 6.25f : 8.5f);
+            boolean separated = !inline
+                    && a.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_NATURAL
+                    && b.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_FLAT
+                    && by - ay >= gap * 2.1f && by - ay <= gap * 3.25f;
             if (gap < 6
                     || gap > 32
                     || fitted.index() != 0
                     || fitted.count() != 1
-                    || span > gap * (inline ? 6.25f : 8.5f)
+                    || wide && (!separated || span > gap * 9.5f)
                     || twoFlats && span < gap * (inline ? 4.5f : 5.5f)
                     || inline && Math.abs(measure.top() - next.top()) * height > gap * .5f
                     || Math.abs(ax - bx) > gap * .30f
@@ -103,7 +108,8 @@ final class PrintedQuarterDyadAccidentals {
             if (opening < 0 || closing < 0 || ax - opening < 2.5f * gap
                     || closing - ax < 2.5f * gap) continue;
             if (ownedPair(
-                    labels, gray, width, height, staff, opening, closing, ax, ay, bx, by, twoFlats))
+                    labels, gray, width, height, staff, opening, closing, ax, ay, bx, by,
+                    twoFlats, separated, wide))
                 return true;
         }
         return false;
@@ -121,7 +127,9 @@ final class PrintedQuarterDyadAccidentals {
             float ay,
             float bx,
             float by,
-            boolean twoFlats) {
+            boolean twoFlats,
+            boolean separated,
+            boolean wide) {
         float gap = staff.gap();
         int left = Math.max(opening + Math.round(gap * .48f), Math.round(Math.min(ax, bx) - gap * 3.15f));
         int right = Math.round(Math.max(ax, bx) - gap * .7f);
@@ -138,6 +146,11 @@ final class PrintedQuarterDyadAccidentals {
                     semantic[y * w + x] = 0;
             }
         }
+        if (separated && separatedPair(
+                gray, width, staff, opening, closing, ax, ay, bx, by, left, top, semantic, w, h))
+            return true;
+        if (wide) return false;
+
         List<Ink> first =
                 twoFlats
                         ? flats(semantic, w, h, ax - left, ay - top, gap)
@@ -162,6 +175,37 @@ final class PrintedQuarterDyadAccidentals {
             }
         }
         return false;
+    }
+
+    /** The projected boxes can overlap while each printed sign retains its own connected ink. */
+    private static boolean separatedPair(
+            byte[] gray, int width, PlayingTechniqueDetector.Staff staff, int opening, int closing,
+            float ax, float ay, float bx, float by, int left, int top, byte[] semantic, int w, int h) {
+        if (semantic.length > 16_384) return false;
+        float gap = staff.gap();
+        var ink = RawNumeralComponents.capture(semantic, w, h, 0, 0, w - 1, h - 1, () -> {}, () -> {});
+        var cores = ink.components().stream()
+                .filter(core -> core.size() >= gap * gap * .35f)
+                .sorted(java.util.Comparator.comparingInt(core -> core.top))
+                .toList();
+        if (cores.size() != 2) return false;
+        var natural = cores.get(0);
+        var flat = cores.get(1);
+        if (flat.left >= natural.left || flat.right - natural.left < gap * .24f
+                || natural.bottom - flat.top < gap * .6f) return false;
+        byte[] naturalInk = new byte[semantic.length];
+        byte[] flatInk = new byte[semantic.length];
+        Arrays.fill(naturalInk, (byte) 255);
+        Arrays.fill(flatInk, (byte) 255);
+        for (int i = 0; i < natural.size(); i++) naturalInk[natural.pixel(i)] = 0;
+        for (int i = 0; i < flat.size(); i++) flatInk[flat.pixel(i)] = 0;
+        if (naturals(naturalInk, w, h, ax - left, ay - top, gap, Math.round(staff.top()) - top).isEmpty()
+                || flats(flatInk, w, h, bx - left, by - top, gap).isEmpty()) return false;
+        for (int i = 0; i < flat.size(); i++) naturalInk[flat.pixel(i)] = 0;
+        return emptyExceptOwned(
+                gray, width, staff, opening, closing, ax, bx, left, top, naturalInk, w,
+                new Ink(natural.left, natural.right, natural.top, natural.bottom),
+                new Ink(flat.left, flat.right, flat.top, flat.bottom));
     }
 
     private static List<Ink> naturals(
