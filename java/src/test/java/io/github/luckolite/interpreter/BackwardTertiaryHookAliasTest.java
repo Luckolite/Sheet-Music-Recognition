@@ -14,18 +14,7 @@ public final class BackwardTertiaryHookAliasTest {
 
     @Test
     public void requiresAnAttachedTertiaryHookWithoutItsOwnNotehead() {
-        byte[] raw = new byte[WIDTH * HEIGHT];
-        Arrays.fill(raw, (byte) 255);
-        oval(raw, 100, 83);
-        oval(raw, 146, 75);
-        rectangle(raw, 88, 83, 90, 150, 0);
-        rectangle(raw, 136, 75, 138, 145, 0);
-        for (int x = 88; x <= 138; x++) {
-            int tip = 145 + Math.round((136 - x) * .1f);
-            rectangle(raw, x, tip - 8, x, tip, 0);
-            rectangle(raw, x, tip - 20, x, tip - 14, 0);
-        }
-        rectangle(raw, 120, 114, 138, 122, 0);
+        var raw = printHook(75, 114, 122);
 
         var filledHead = raw.clone();
         oval(filledHead, 126, 118);
@@ -37,6 +26,61 @@ public final class BackwardTertiaryHookAliasTest {
         assertFalse(owns(filledHead));
         assertFalse(owns(detached));
         assertFalse(owns(twoRails));
+    }
+
+    @Test
+    public void faintSeamStillSeparatesTheTwoRailsThatOwnTheHook() {
+        var raw = printHook(75, 114, 122);
+        for (int x = 91; x <= 134; x++) {
+            int tip = 145 + Math.round((136 - x) * .1f);
+            rectangle(raw, x, tip - 13, x, tip - 9, 66);
+        }
+        assertTrue(provesHook(raw));
+        var solid = raw.clone();
+        for (int x = 91; x <= 134; x++) {
+            int tip = 145 + Math.round((136 - x) * .1f);
+            rectangle(solid, x, tip - 13, x, tip - 9, 0);
+        }
+        assertFalse(provesHook(solid));
+        var missing = raw.clone();
+        rectangle(missing, 119, 113, 134, 122, 255);
+        assertFalse(provesHook(missing));
+    }
+
+    @Test
+    public void deeperTerminalHookHasNoIndependentFilledHead() {
+        var raw = printHook(62, 113, 123);
+        assertFalse(
+                OwnedTertiaryBeamlets.ownsBackwardHookAlias(
+                        raw, WIDTH, HEIGHT, 126, 118, 146, 62, 100, 83, 16));
+        assertTrue(terminalAlias(raw));
+        oval(raw, 126, 118);
+        assertFalse(terminalAlias(raw));
+    }
+
+    private static boolean provesHook(byte[] raw) {
+        return OwnedTertiaryBeamlets.provesBackwardHook(raw, WIDTH, HEIGHT, 146, 75, 100, 83, 16);
+    }
+
+    private static boolean terminalAlias(byte[] raw) {
+        return OwnedTertiaryBeamlets.ownsTerminalBackwardHookAlias(
+                raw, WIDTH, HEIGHT, 126, 118, 146, 62, 100, 83, 16);
+    }
+
+    private static byte[] printHook(int ownerY, int hookTop, int hookBottom) {
+        byte[] raw = new byte[WIDTH * HEIGHT];
+        Arrays.fill(raw, (byte) 255);
+        oval(raw, 100, 83);
+        oval(raw, 146, ownerY);
+        rectangle(raw, 88, 83, 90, 150, 0);
+        rectangle(raw, 136, ownerY, 138, 145, 0);
+        for (int x = 88; x <= 138; x++) {
+            int tip = 145 + Math.round((136 - x) * .1f);
+            rectangle(raw, x, tip - 8, x, tip, 0);
+            rectangle(raw, x, tip - 20, x, tip - 14, 0);
+        }
+        rectangle(raw, 120, hookTop, 138, hookBottom, 0);
+        return raw;
     }
 
     private static boolean owns(byte[] raw) {

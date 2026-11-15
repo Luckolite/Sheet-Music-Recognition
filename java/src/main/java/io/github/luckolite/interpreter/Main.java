@@ -116,8 +116,18 @@ public final class Main {
                 throw new IOException("Decoder raster length differs from source");
             decoderGray = Files.readAllBytes(decoderRaster);
         }
-        var decoded = SheetInterpreter.analyzeWithPrintedSources(
-                labels, gray, width, height, annotations, null, physicalPage, decoderGray, preparedTabs);
+        var decoded =
+                SheetInterpreter.analyzeWithPrintedSources(
+                        labels,
+                        gray,
+                        width,
+                        height,
+                        annotations,
+                        null,
+                        physicalPage,
+                        decoderGray,
+                        preparedTabs,
+                        initialMeter);
         var score = ScoreTiePitchGuard.withInitialKeyContext(decoded.score(), initialKey);
         score = ScoreTupletMeterContext.apply(score, initialMeter);
         score =

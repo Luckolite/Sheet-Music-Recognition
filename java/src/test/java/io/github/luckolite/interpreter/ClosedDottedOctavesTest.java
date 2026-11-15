@@ -66,6 +66,31 @@ public class ClosedDottedOctavesTest {
         assertSame(score, decode(score, missing, 4));
     }
 
+    @Test
+    public void absorbedRailFragmentRequiresSharedQuarterShaftAndDottedOwnersDoubleRail() {
+        var score = score(true);
+        var repaired = decodeRibbon(score, image());
+        assertEquals(32, repaired.notes().size());
+        for (int i = 0; i < repaired.notes().size(); i++) {
+            var note = repaired.notes().get(i);
+            assertEquals(i / 2 % 2 == 0 ? 2 : 3, note.beamCount());
+            assertEquals(0, note.unbeamedDurationBeats(), 0);
+        }
+        var seam = image();
+        paint(seam, FIRST + 4 * SPACING + 4, FIRST + 4 * SPACING + 20, 326, 352, (byte) 255);
+        assertSame(score, decodeRibbon(score, seam));
+        var cut = image();
+        int shaft = FIRST + 5 * SPACING;
+        paint(cut, shaft - 12, shaft - 6, 249, 263, (byte) 255);
+        assertSame(score, decodeRibbon(score, cut));
+    }
+
+    private static ScorePageInterpretation decodeRibbon(
+            ScorePageInterpretation score, byte[] gray) {
+        return ClosedDottedSixteenths.applyClosedOctaveFragments(
+                score, new ScoreMeterChange(0, 4, 4), gray, WIDTH, HEIGHT);
+    }
+
     private static ScorePageInterpretation decode(
             ScorePageInterpretation score, byte[] gray, int meter) {
         return ClosedDottedSixteenths.applyClosedOctaves(
@@ -73,15 +98,24 @@ public class ClosedDottedOctavesTest {
     }
 
     private static ScorePageInterpretation score() {
+        return score(false);
+    }
+
+    private static ScorePageInterpretation score(boolean ribbonAlias) {
         var notes = new ArrayList<ScoreNoteEvent>();
         for (int i = 0; i < 16; i++) {
             int beam = i % 2 == 0 ? 2 : 3;
             int dots = 3 - beam;
-            if (i == 0) beam = 3;
-            if (i == 0 || i == 4) dots = 2;
-            if (i == 5) beam = 2;
+            if (!ribbonAlias) {
+                if (i == 0) beam = 3;
+                if (i == 0 || i == 4) dots = 2;
+                if (i == 5) beam = 2;
+            } else if (i == 4) {
+                beam = 1;
+            }
             int top = UPPER + (i == 1 ? 12 : 0);
             for (int y : new int[] {top, top + LOWER - UPPER}) {
+                boolean quarter = ribbonAlias && i == 5 && y != top;
                 notes.add(
                         new ScoreNoteEvent(
                                 1,
@@ -92,9 +126,9 @@ public class ClosedDottedOctavesTest {
                                 y / (float) HEIGHT,
                                 false,
                                 dots,
-                                beam,
+                                quarter ? 0 : beam,
                                 ScoreNoteEvent.ACCIDENTAL_FROM_KEY,
-                                0,
+                                quarter ? 1 : 0,
                                 1,
                                 0,
                                 0,
@@ -111,6 +145,37 @@ public class ClosedDottedOctavesTest {
                                 0,
                                 null));
             }
+        }
+        if (ribbonAlias) {
+            int fragment = FIRST + 4 * SPACING + 13;
+            notes.add(
+                    new ScoreNoteEvent(
+                            1,
+                            (fragment - LEFT) / (float) (RIGHT - LEFT),
+                            0,
+                            0,
+                            1,
+                            344f / HEIGHT,
+                            false,
+                            0,
+                            3,
+                            ScoreNoteEvent.ACCIDENTAL_FROM_KEY,
+                            0,
+                            1,
+                            0,
+                            0,
+                            ScoreNoteEvent.CLEF_TREBLE,
+                            false,
+                            0,
+                            false,
+                            0,
+                            0,
+                            1,
+                            0,
+                            ScoreNoteEvent.Kind.PITCHED,
+                            ScoreNoteEvent.VisualSize.FULL,
+                            0,
+                            null));
         }
         return new ScorePageInterpretation(
                 List.of(
