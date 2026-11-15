@@ -35,6 +35,18 @@ final class WrappedEighthTriplets {
             byte[] gray,
             int width,
             int height) {
+        return closeQuarterBeatBars(notes, rests, regions, meters, gray, width, height, null);
+    }
+
+    static List<ScoreNoteEvent> closeQuarterBeatBars(
+            List<ScoreNoteEvent> notes,
+            List<ScoreRestEvent> rests,
+            List<MeasureRegion> regions,
+            List<ScoreMeterChange> meters,
+            byte[] gray,
+            int width,
+            int height,
+            byte[] labels) {
         if (meters.isEmpty() || notes.isEmpty()) return notes;
         var bars = new ArrayList<List<Integer>>(regions.size());
         for (int i = 0; i < regions.size(); i++) bars.add(new ArrayList<>());
@@ -58,9 +70,17 @@ final class WrappedEighthTriplets {
                 continue;
             var bar = regions.get(m);
             var proof = singleRailGroups(gray, width, height, bar, notes, owners, true);
-            if (proof == null
-                    || !WrappedMeasureBoundaries.confirmsClosedTripletBar(
-                            gray, width, height, bar, proof.x()[0], proof.x()[owners.size() - 1]))
+            if (proof == null) continue;
+            float firstHead = proof.x()[0], lastHead = proof.x()[owners.size() - 1];
+            boolean closed = WrappedMeasureBoundaries.confirmsClosedTripletBar(
+                    gray, width, height, bar, firstHead, lastHead);
+            if (!closed && !(m == 0 && meter.numerator() == 6 && labels != null
+                    && labels.length == gray.length
+                    && WrappedMeasureBoundaries.confirmsOpeningTripletBar(
+                            gray, width, height, regions, firstHead, lastHead)
+                    && MeterFontMatcher.standaloneReadings(
+                            labels, gray, width, height, List.of(bar),
+                            owners.stream().map(notes::get).toList()).equals(List.of(meter))))
                 continue;
             if (result == notes) result = new ArrayList<>(notes);
             for (int i : owners) {

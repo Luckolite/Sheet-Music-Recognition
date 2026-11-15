@@ -211,4 +211,21 @@ public class OrderedSharpHeaderConflictTest {
         assertEquals(
                 List.of(new ScoreKeyChange(0, 1)), new Page(210, true, true, true).keys(false));
     }
+
+    @Test
+    public void repeatedSharpHeaderRequiresTheCompleteOrderedSourceInk() {
+        var complete = new Page(124, true, true, false);
+        assertEquals(56, OmrScoreInterpreter.inheritedSharpHeaderStart(
+                complete.gray, complete.labels, W, H, 10, 120, 164, 16, 2));
+        assertEquals(-1, OmrScoreInterpreter.inheritedSharpHeaderStart(
+                complete.gray, complete.labels, W, H, 10, 120, 164, 16, 3));
+        var displaced = new Page(112, true, true, false);
+        assertEquals(-1, OmrScoreInterpreter.inheritedSharpHeaderStart(
+                displaced.gray, displaced.labels, W, H, 10, 120, 164, 16, 2));
+        for (int y = 101; y <= 147; y++)
+            if (Math.floorMod(y - 100, 16) != 0)
+                Arrays.fill(complete.gray, y * W + 93, y * W + 110, (byte) 255);
+        assertEquals(-1, OmrScoreInterpreter.inheritedSharpHeaderStart(
+                complete.gray, complete.labels, W, H, 10, 120, 164, 16, 2));
+    }
 }

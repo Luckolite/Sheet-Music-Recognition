@@ -9869,15 +9869,62 @@ final class OmrScoreInterpreter {
 
     /** Returns the start of an exact repeated flat signature after a complete raw treble clef. */
     static int inheritedFlatHeaderStart(
-            byte[] gray,
-            byte[] labels,
-            int width,
-            int height,
-            int staffStart,
-            int signatureEnd,
-            float bottom,
-            float gap,
-            int expectedFlats) {
+            byte[] gray, byte[] labels, int width, int height, int staffStart,
+            int signatureEnd, float bottom, float gap, int expectedFlats) {
+        var clef = inheritedHeaderTreble(
+                gray, labels, width, height, staffStart, signatureEnd, bottom, gap);
+        if (clef == null || clef.maxX + 1 >= signatureEnd) return -1;
+        int start = clef.maxX + 1;
+        var staff = new Staff(bottom - gap * 4, bottom, gap);
+        return countHeaderFlatSpines(
+                        labels, gray, width, height, start, signatureEnd, staff, false, true)
+                        == expectedFlats
+                ? start
+                : -1;
+    }
+
+    static int inheritedSharpHeaderStart(
+            byte[] gray, byte[] labels, int width, int height, int staffStart,
+            int signatureEnd, float bottom, float gap, int expectedSharps) {
+        if (expectedSharps < 2 || expectedSharps > 7) return -1;
+        var clef = inheritedHeaderTreble(
+                gray, labels, width, height, staffStart, signatureEnd, bottom, gap);
+        if (clef == null || clef.maxX + 1 >= signatureEnd) return -1;
+        int start = clef.maxX + 1;
+        var staff = new Staff(bottom - gap * 4, bottom, gap);
+        int top = Math.round(bottom - gap * 6.5f), end = Math.round(bottom + gap * 2.5f);
+        int columns = signatureEnd - start + 1, rows = end - top + 1;
+        byte[] mask = new byte[columns * rows];
+        byte key = OmrMeasurePostProcessor.CLEF_OR_KEY;
+        for (int y = 0; y < rows; y++)
+            for (int x = 0; x < columns; x++) {
+                int pixel = (top + y) * width + start + x;
+                if (labels[pixel] == key && (gray[pixel] & 255) <= 210)
+                    mask[y * columns + x] = key;
+            }
+        var sharps = new ArrayList<SignatureGlyph>();
+        for (var body : findComponents(mask, columns, rows, key)) {
+            if (body.area < gap * gap * .10f) continue;
+            var symbol = new Component(body.area, body.minX + start, body.maxX + start,
+                    body.minY + top, body.maxY + top, body.centerX + start, body.centerY + top);
+            var candidate = new AccidentalCandidate(symbol, key);
+            if (!isSharpGlyph(labels, width, height, candidate, gap)) return -1;
+            float center = sharpPitchCenter(mask, columns, rows, new AccidentalCandidate(body, key), gap);
+            if (!Float.isFinite(center)) return -1;
+            sharps.add(new SignatureGlyph(symbol.centerX, ScoreNoteEvent.ACCIDENTAL_SHARP,
+                    top + center, symbol));
+        }
+        sharps.sort(Comparator.comparingDouble(SignatureGlyph::x));
+        if (sharps.size() != expectedSharps
+                || sharps.stream().anyMatch(glyph -> glyph.accidental != ScoreNoteEvent.ACCIDENTAL_SHARP)
+                || !firstPrintedHeaderSharp(sharps.get(0), clef, staff)
+                || !orderedPrintedSharpPitches(sharps, staff)) return -1;
+        return start;
+    }
+
+    private static Component inheritedHeaderTreble(
+            byte[] gray, byte[] labels, int width, int height, int staffStart,
+            int signatureEnd, float bottom, float gap) {
         int right = Math.min(signatureEnd, Math.round(staffStart + gap * 4.25f));
         int top = Math.round(bottom - gap * 6.5f), end = Math.round(bottom + gap * 2.5f);
         if (staffStart < 0
@@ -9886,7 +9933,7 @@ final class OmrScoreInterpreter {
                 || signatureEnd >= width
                 || top < 0
                 || end >= height
-                || end <= top) return -1;
+                || end <= top) return null;
         int cropWidth = right - staffStart + 1, cropHeight = end - top + 1;
         byte[] crop = new byte[cropWidth * cropHeight];
         byte target = OmrMeasurePostProcessor.CLEF_OR_KEY;
@@ -9898,7 +9945,7 @@ final class OmrScoreInterpreter {
             }
         }
         var staff = new Staff(bottom - gap * 4, bottom, gap);
-        int start = -1;
+        Component owner = null;
         for (var body : findComponents(crop, cropWidth, cropHeight, target)) {
             if (body.minX > gap * 1.75f || body.maxX == cropWidth - 1) continue;
             var clef =
@@ -9911,24 +9958,10 @@ final class OmrScoreInterpreter {
                             body.centerX + staffStart,
                             body.centerY + top);
             if (!completeHeaderTreble(clef, staff)) continue;
-            if (start >= 0) return -1;
-            start = clef.maxX + 1;
+            if (owner != null) return null;
+            owner = clef;
         }
-        return start >= 0
-                        && start < signatureEnd
-                        && countHeaderFlatSpines(
-                                        labels,
-                                        gray,
-                                        width,
-                                        height,
-                                        start,
-                                        signatureEnd,
-                                        staff,
-                                        false,
-                                        true)
-                                == expectedFlats
-                ? start
-                : -1;
+        return owner;
     }
 
     private static int countHeaderFlatSpines(

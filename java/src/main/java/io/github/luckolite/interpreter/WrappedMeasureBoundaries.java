@@ -102,7 +102,11 @@ final class WrappedMeasureBoundaries {
                                         start.left,
                                         secondFirstHeadX,
                                         gap,
-                                        inheritedKey));
+                                        inheritedKey)
+                        || singleBeamGroups
+                                && inheritedSharpHeader(
+                                        gray, labels, width, height, startTrack,
+                                        start.left, secondFirstHeadX, gap, inheritedKey));
     }
 
     static boolean confirmsClosed(
@@ -235,6 +239,40 @@ final class WrappedMeasureBoundaries {
             if (staffRules(gray, width, height, staff, x) == 5
                     && staffRules(gray, width, height, staff, Math.round(x - gap * .65f)) == 0)
                 return true;
+        return false;
+    }
+
+    /** A printed header and an incoming staff edge can close the first bar's left side. */
+    static boolean confirmsOpeningTripletBar(
+            byte[] gray, int width, int height, List<MeasureRegion> regions,
+            float firstHead, float lastHead) {
+        if (regions.size() < 2) return false;
+        var opening = box(regions.get(0), width, height);
+        var following = box(regions.get(1), width, height);
+        if (opening == null || following == null) return false;
+        var staff = track(gray, width, height, opening);
+        if (staff == null) return false;
+        float gap = staff.at(firstHead)[1];
+        float inset = firstHead - opening.left;
+        if (inset < gap * 2.5f || inset > gap * 7
+                || !sameRow(opening, following, gap)
+                || !boundaryPocket(opening.right, following.left, gap)) return false;
+
+        // The notes must follow a clear ruled gap after the header.
+        float afterHeader = firstHead - gap * 1.65f;
+        float beforeHead = firstHead - gap * .7f;
+        if (staffRules(gray, width, height, staff, Math.round(afterHeader)) != 5
+                || staffRules(gray, width, height, staff, Math.round(beforeHead)) != 5
+                || !clearOfVerticalInk(gray, width, height, staff, afterHeader, beforeHead)
+                || !confirmsInitialStaffBarClosingEdge(gray, width, height, regions.get(0), lastHead))
+            return false;
+
+        int margin = Math.max(2, Math.round(gap * .65f));
+        int limit = Math.max(margin, Math.round(opening.left - gap * 10));
+        for (int x = Math.round(opening.left - gap); x >= limit; x--) {
+            if (staffRules(gray, width, height, staff, x) == 5
+                    && staffRules(gray, width, height, staff, x - margin) == 0) return true;
+        }
         return false;
     }
 
@@ -428,6 +466,58 @@ final class WrappedMeasureBoundaries {
                             height,
                             staff,
                             flats + gap * .25f,
+                            firstHead - gap * .85f,
+                            gap);
+        }
+        return false;
+    }
+
+    private static boolean inheritedSharpHeader(
+            byte[] gray,
+            byte[] labels,
+            int width,
+            int height,
+            StaffPitchTrack staff,
+            float cropLeft,
+            float firstHead,
+            float gap,
+            int inheritedKey) {
+        if (labels == null
+                || labels.length != gray.length
+                || inheritedKey < 2
+                || inheritedKey > 7) return false;
+        int paperRight = Math.round(firstHead - gap * .95f);
+        int paperLeft = paperRight;
+        while (paperLeft > cropLeft - gap
+                && staffRules(gray, width, height, staff, paperLeft) == 5
+                && verticalCoverage(gray, width, height, staff, paperLeft) <= .35f) paperLeft--;
+        if (paperRight - paperLeft < gap * 1.5f || paperLeft <= cropLeft - gap) return false;
+
+        // Locate the incoming staff edge before the partial signature in the decoder box.
+        int limit = Math.max(0, Math.round(cropLeft - gap * 12));
+        int margin = Math.max(2, Math.round(gap * .65f));
+        for (int x = Math.round(cropLeft - gap * 1.25f); x >= limit + margin; x--) {
+            if (staffRules(gray, width, height, staff, x) != 5
+                    || staffRules(gray, width, height, staff, x - margin) != 0) continue;
+            var frame = staff.at(x);
+            int signature =
+                    OmrScoreInterpreter.inheritedSharpHeaderStart(
+                            gray,
+                            labels,
+                            width,
+                            height,
+                            x,
+                            paperLeft,
+                            frame[0],
+                            frame[1],
+                            inheritedKey);
+            return signature >= 0
+                    && !hasBoundary(
+                            gray,
+                            width,
+                            height,
+                            staff,
+                            signature + gap * .25f,
                             firstHead - gap * .85f,
                             gap);
         }

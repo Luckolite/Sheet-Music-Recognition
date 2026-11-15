@@ -137,6 +137,55 @@ public class ClosedEighthTripletBarsTest {
             Arrays.fill(image, y * width + x0, y * width + x1 + 1, (byte) value);
     }
 
+    @Test
+    public void sixTripletsFillOpeningBarWithOwnedMeterAndNoLeftDivider() throws Exception {
+        int width = 840, height = 260;
+        int left = 100, right = 754, firstLine = 96, lastLine = 160;
+        byte[] paper = new byte[width * height], labels = new byte[paper.length];
+        Arrays.fill(paper, (byte) 255);
+        var meter = new RasterMeterReadingsTest.Page(16);
+        meter.digit(6, 0);
+        meter.digit(4, 1);
+        for (int y = firstLine; y <= lastLine; y++) {
+            System.arraycopy(meter.gray, y * meter.w + 120, paper, y * width + 120, 45);
+            System.arraycopy(meter.labels, y * meter.w + 120, labels, y * width + 120, 45);
+        }
+        for (int y = firstLine; y <= lastLine; y += 16) {
+            ink(paper, width, 20, 815, y, y + 1, 0);
+            Arrays.fill(labels, y * width + 20, y * width + 816, OmrMeasurePostProcessor.STAFF);
+        }
+        ink(paper, width, right - 1, right + 1, firstLine, lastLine, 0);
+        var opening = new MeasureRegion(left / (float) width, right / (float) width,
+                62f / height, 193f / height);
+        var following = new MeasureRegion(770f / width, 815f / width, 62f / height, 193f / height);
+        var score = new ArrayList<ScoreNoteEvent>();
+        for (int slot = 0; slot < 18; slot++) {
+            int x = 180 + slot * 32, stem = slot / 3 % 2 == 0 ? 1 : -1;
+            int y = stem > 0 ? 128 + 8 * (slot % 3) : 128 - 8 * (slot % 3);
+            int tip = stem > 0 ? 76 : 178;
+            int shaft = x + stem * 9;
+            ink(paper, width, x - 5, x + 5, y - 4, y + 4, 0);
+            ink(paper, width, shaft - 1, shaft + 1, Math.min(tip, y), Math.max(tip, y), 0);
+            if (slot % 3 == 0) ink(paper, width, shaft, shaft + 65, tip - 3, tip + 3, 0);
+            score.add(new ScoreNoteEvent(0, (x - left) / (float) (right - left), (160 - y) / 8,
+                    0, 1, y / (float) height, false, 0, 1, 2, 0, 1, 0, 0, 30, false,
+                    0, false, 0, 0, 1, stem, ScoreNoteEvent.Kind.PITCHED,
+                    ScoreNoteEvent.VisualSize.FULL, 0, null));
+        }
+        var bars = List.of(opening, following);
+        var meters = List.of(new ScoreMeterChange(0, 6, 4));
+        assertEquals(score.stream().map(note -> note.withTupletRatio(3, 2)).toList(),
+                WrappedEighthTriplets.closeQuarterBeatBars(
+                        score, List.of(), bars, meters, paper, width, height, labels));
+        for (int y = firstLine; y <= lastLine; y++) {
+            if ((y - firstLine) % 16 < 2) continue;
+            ink(paper, width, 120, 164, y, y, 255);
+            Arrays.fill(labels, y * width + 120, y * width + 165, (byte) 0);
+        }
+        assertSame(score, WrappedEighthTriplets.closeQuarterBeatBars(
+                score, List.of(), bars, meters, paper, width, height, labels));
+    }
+
     private List<ScoreNoteEvent> infer(int numerator) {
         return WrappedEighthTriplets.closeQuarterBeatBars(
                 notes,

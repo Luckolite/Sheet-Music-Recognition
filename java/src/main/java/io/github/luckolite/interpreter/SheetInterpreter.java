@@ -554,7 +554,8 @@ public final class SheetInterpreter {
                         finalScore.meterChanges(),
                         gray,
                         width,
-                        height);
+                        height,
+                        labels);
         closedTriplets =
                 ClosedOctaveTripletBars.apply(
                         closedTriplets,
