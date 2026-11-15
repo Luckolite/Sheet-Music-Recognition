@@ -85,6 +85,61 @@ public class ClosedDottedOctavesTest {
         assertSame(score, decodeRibbon(score, cut));
     }
 
+    @Test
+    public void ribbonBeamSourceRequiresEveryHookAndRemapsTheRetainedHeads() {
+        var input = score(true);
+        var meter = new ScoreMeterChange(0, 4, 4);
+        var result =
+                ClosedDottedSixteenths.applyClosedOctaveFragments(
+                        input, meter, image(), WIDTH, HEIGHT, 7);
+        assertEquals(32, result.notes().size());
+        assertEquals(4, result.beamSource().groups().size());
+        for (var group : result.beamSource().resolve().groups()) {
+            assertEquals(List.of(3, 3, 3), group.source().bridges());
+            assertEquals(
+                    List.of(
+                            new ScoreBeamSource.Hook(1, 3, ScoreBeamSource.Direction.BACKWARD),
+                            new ScoreBeamSource.Hook(3, 3, ScoreBeamSource.Direction.BACKWARD)),
+                    group.engravingHooks());
+            for (var c : group.columns()) {
+                assertEquals(2, c.owners().size());
+                assertTrue(c.usable());
+            }
+        }
+
+        var withoutHook = image();
+        int shaft = FIRST + 15 * SPACING - 9;
+        paint(withoutHook, shaft - 13, shaft - 2, 312, 325, (byte) 255);
+        var repaired =
+                ClosedDottedSixteenths.applyClosedOctaveFragments(
+                        input, meter, withoutHook, WIDTH, HEIGHT, 7);
+        assertEquals(result.notes(), repaired.notes());
+        assertTrue(repaired.beamSource().groups().isEmpty());
+
+        var continuous = image();
+        int groupStart = FIRST + 12 * SPACING;
+        paint(continuous, groupStart - 10, shaft + 1, 314, 323, (byte) 0);
+        var competing =
+                ClosedDottedSixteenths.applyClosedOctaveFragments(
+                        input, meter, continuous, WIDTH, HEIGHT, 7);
+        assertEquals(result.notes(), competing.notes());
+        assertTrue(competing.beamSource().groups().isEmpty());
+
+        var occupied =
+                ScoreBeamSource.capture(
+                        7,
+                        input.notes().size(),
+                        List.of(),
+                        List.of(
+                                new ScoreBeamSource.Column(
+                                        List.of(new ScoreBeamSource.Anchor(7, 0)))));
+        var prior =
+                ClosedDottedSixteenths.applyClosedOctaveFragments(
+                        input.withBeamSource(occupied), meter, image(), WIDTH, HEIGHT, 7);
+        assertTrue(prior.beamSource().groups().isEmpty());
+        assertEquals(occupied.detachedColumns(), prior.beamSource().detachedColumns());
+    }
+
     private static ScorePageInterpretation decodeRibbon(
             ScorePageInterpretation score, byte[] gray) {
         return ClosedDottedSixteenths.applyClosedOctaveFragments(

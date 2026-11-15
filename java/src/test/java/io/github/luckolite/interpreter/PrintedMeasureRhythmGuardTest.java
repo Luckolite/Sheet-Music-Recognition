@@ -87,6 +87,64 @@ public class PrintedMeasureRhythmGuardTest {
     }
 
     @Test
+    public void unsupportedOcrRowCannotBorrowInkFromEitherAdjacentStaff() {
+        var upper = new MeasureRegion(.1f, .9f, .16f, .34f);
+        var lower = new MeasureRegion(.1f, .9f, .46f, .64f);
+        var generated = new MeasureRegion(.1f, .9f, .31f, .52f);
+        var detected = List.of(upper, lower);
+        var proposed = List.of(upper, generated, lower);
+        byte[] gray = paper();
+        byte[] labels = new byte[gray.length];
+        for (int top : new int[] {170, 397})
+            for (int line = 0; line < 5; line++) {
+                int y = (top + line * 12) * 1000;
+                for (int weight = 0; weight < 2; weight++) {
+                    Arrays.fill(gray, y + weight * 1000 + 100, y + weight * 1000 + 900, (byte) 0);
+                    Arrays.fill(
+                            labels,
+                            y + weight * 1000 + 100,
+                            y + weight * 1000 + 900,
+                            OmrMeasurePostProcessor.STAFF);
+                }
+            }
+        for (int guide : new int[] {290, 316})
+            Arrays.fill(gray, guide * 1000 + 100, guide * 1000 + 900, (byte) 0);
+        var rejectedAnchorTops = new HashSet<Float>();
+        assertEquals(
+                detected,
+                PrintedMeasureRhythmGuard.rejectUnprintedRows(
+                        detected, proposed, labels, gray, 1000, 800, rejectedAnchorTops));
+        assertEquals(Set.of(generated.top()), rejectedAnchorTops);
+    }
+
+    @Test
+    public void recoveredPrintedStaffMayOverlapNeighboringMeasurePadding() {
+        var upper = new MeasureRegion(.1f, .9f, .13f, .31f);
+        var lower = new MeasureRegion(.1f, .9f, .49f, .67f);
+        var generated = new MeasureRegion(.1f, .9f, .29f, .51f);
+        var detected = List.of(upper, lower);
+        var proposed = List.of(upper, generated, lower);
+        byte[] gray = paper();
+        for (int top : new int[] {145, 294, 417})
+            for (int line = 0; line < 5; line++) {
+                int y = (top + line * 12) * 1000;
+                Arrays.fill(gray, y + 100, y + 900, (byte) 0);
+            }
+        var rejectedAnchorTops = new HashSet<Float>();
+        assertEquals(
+                proposed,
+                PrintedMeasureRhythmGuard.rejectUnprintedRows(
+                        detected,
+                        proposed,
+                        new byte[gray.length],
+                        gray,
+                        1000,
+                        800,
+                        rejectedAnchorTops));
+        assertTrue(rejectedAnchorTops.isEmpty());
+    }
+
+    @Test
     public void printedStaffSurvivesEvenIfItsSemanticLabelsAreMissing() {
         var extra = new MeasureRegion(.1f, .9f, .75f, .95f);
         var proposed = new ArrayList<>(raw);
