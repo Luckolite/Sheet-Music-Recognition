@@ -65,26 +65,43 @@ final class WrappedEighthTriplets {
                     || meter.numerator() != 4 && meter.numerator() != 6
                     || withRests.get(m)
                     || owners.size() != 3 * meter.numerator()
-                    || owners.stream().map(notes::get).anyMatch(n -> n.beamCount() != 1)
                     || owners.stream().map(notes::get).allMatch(n -> n.tupletDivisor() == 3))
                 continue;
             var bar = regions.get(m);
-            var proof = singleRailGroups(gray, width, height, bar, notes, owners, true);
+            boolean canUseOpening = m == 0 && meter.numerator() == 6 && labels != null
+                    && labels.length == gray.length;
+            List<ScoreNoteEvent> proofNotes = notes;
+            boolean recoverEndpoint = owners.stream().anyMatch(i -> notes.get(i).beamCount() != 1);
+            if (recoverEndpoint) {
+                if (!canUseOpening) continue;
+                int lastOwner = owners.stream()
+                        .max(Comparator.comparingDouble(i -> notes.get(i).positionInMeasure()))
+                        .orElseThrow();
+                var last = notes.get(lastOwner);
+                if (last.beamCount() != 0
+                        || last.unbeamedDurationBeats() != ScoreNoteEvent.DURATION_QUARTER
+                        || last.tupletDivisor() != 1
+                        || last.stemDirection() != -1
+                        || owners.stream().anyMatch(i -> i != lastOwner && notes.get(i).beamCount() != 1))
+                    continue;
+                proofNotes = new ArrayList<>(notes);
+                proofNotes.set(lastOwner, ClosingTripletRhythm.singleBeam(last));
+            }
+            var proof = singleRailGroups(gray, width, height, bar, proofNotes, owners, true);
             if (proof == null) continue;
             float firstHead = proof.x()[0], lastHead = proof.x()[owners.size() - 1];
             boolean closed = WrappedMeasureBoundaries.confirmsClosedTripletBar(
                     gray, width, height, bar, firstHead, lastHead);
-            if (!closed && !(m == 0 && meter.numerator() == 6 && labels != null
-                    && labels.length == gray.length
+            if ((recoverEndpoint || !closed) && !(canUseOpening
                     && WrappedMeasureBoundaries.confirmsOpeningTripletBar(
-                            gray, width, height, regions, firstHead, lastHead)
+                            gray, width, height, regions, firstHead, lastHead, recoverEndpoint)
                     && MeterFontMatcher.standaloneReadings(
                             labels, gray, width, height, List.of(bar),
                             owners.stream().map(notes::get).toList()).equals(List.of(meter))))
                 continue;
             if (result == notes) result = new ArrayList<>(notes);
             for (int i : owners) {
-                var n = notes.get(i);
+                var n = proofNotes.get(i);
                 if (n.tupletDivisor() != 3) result.set(i, n.withTupletRatio(3, 2));
             }
         }

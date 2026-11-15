@@ -24093,6 +24093,10 @@ final class OmrScoreInterpreter {
         int[] a = attachedRawStem(gray, width, height, head, gap, 0);
         int[] b = attachedRawStem(gray, width, height, next, gap, 0);
         if (a == null || b == null || a[2] != -1 || b[2] != -1) return false;
+        if (ownsPrintedPortato(gray, width, height, head, gap, 1, null)
+                && ownsPrintedPortato(gray, width, height, next, gap, 1, dot)
+                && sharesOneUpwardBeam(gray, width, height, head, next, gap))
+            return true;
         if (nextMark
                 && advance >= gap * 1.92f
                 && matchingMark
@@ -24298,11 +24302,18 @@ final class OmrScoreInterpreter {
                 && grayInk(gray, width, left, right, top, bottom, 180) == 0;
     }
 
-    /** Two disconnected printed components, a round dot immediately under a horizontal dash. */
+    /** Two disconnected printed components, a round dot and the more distant tenuto dash. */
     private static boolean ownsPrintedPortato(
             byte[] gray, int width, int height, Component head, float gap) {
+        return ownsPrintedPortato(gray, width, height, head, gap, -1, null);
+    }
+
+    private static boolean ownsPrintedPortato(
+            byte[] gray, int width, int height, Component head, float gap,
+            int side, Component selectedDot) {
         int x0 = Math.round(head.centerX - gap * .96f), x1 = Math.round(head.centerX + gap * .96f);
-        int y0 = Math.round(head.centerY - gap * 2.20f), y1 = Math.round(head.centerY - gap * .70f);
+        int y0 = Math.round(head.centerY + gap * (side < 0 ? -2.20f : .70f));
+        int y1 = Math.round(head.centerY + gap * (side < 0 ? -.70f : 2.36f));
         if (gray == null || x0 < 0 || x1 >= width || y0 < 0 || y1 >= height) return false;
         RawNumeralComponents.Component dot = null, dash = null;
         var source =
@@ -24313,7 +24324,7 @@ final class OmrScoreInterpreter {
                 continue;
             int w = item.right - item.left + 1, h = item.bottom - item.top + 1;
             float midX = (item.left + item.right) * .5f, midY = (item.top + item.bottom) * .5f;
-            float distance = (head.centerY - midY) / gap;
+            float distance = side * (midY - head.centerY) / gap;
             if (distance >= .93f
                     && distance <= 1.22f
                     && Math.abs(midX - head.centerX) <= gap * .17f
@@ -24327,7 +24338,7 @@ final class OmrScoreInterpreter {
                 dot = item;
             }
             if (distance >= 1.60f
-                    && distance <= 2.02f
+                    && distance <= (side < 0 ? 2.02f : 2.17f)
                     && Math.abs(midX - head.centerX) <= gap * .25f
                     && w >= gap * .86f
                     && w <= gap * 1.48f
@@ -24339,8 +24350,23 @@ final class OmrScoreInterpreter {
             }
         }
         if (dot == null || dash == null) return false;
-        int clearance = dot.top - dash.bottom;
-        return clearance >= gap * .27f && clearance <= gap * .65f;
+        if (selectedDot != null
+                && (Math.abs((dot.left + dot.right) * .5f - selectedDot.centerX) > gap * .16f
+                        || Math.abs((dot.top + dot.bottom) * .5f - selectedDot.centerY) > gap * .16f))
+            return false;
+        int clearance = side < 0 ? dot.top - dash.bottom : dash.top - dot.bottom;
+        return clearance >= gap * .27f && clearance <= gap * (side < 0 ? .65f : .80f);
+    }
+
+    private static boolean sharesOneUpwardBeam(
+            byte[] gray, int width, int height, Component left, Component right, float gap) {
+        var budget = new PrintedBeamShafts.Budget(160_000);
+        var a = PrintedBeamShafts.at(gray, width, height, left.centerX, left.centerY, gap, budget);
+        var b = PrintedBeamShafts.at(gray, width, height, right.centerX, right.centerY, gap, budget);
+        return a.size() == 1 && b.size() == 1
+                && a.get(0).direction() == -1 && b.get(0).direction() == -1
+                && WrappedEighthTriplets.matchesRailBridge(
+                        gray, width, height, a.get(0), b.get(0), gap, true);
     }
 
     private static boolean adjacentDescendingStaccato(

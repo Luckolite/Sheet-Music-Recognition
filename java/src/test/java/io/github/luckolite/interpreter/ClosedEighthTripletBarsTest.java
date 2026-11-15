@@ -139,8 +139,19 @@ public class ClosedEighthTripletBarsTest {
 
     @Test
     public void sixTripletsFillOpeningBarWithOwnedMeterAndNoLeftDivider() throws Exception {
+        checkOpeningTriplets(false);
+    }
+
+    @Test
+    public void terminalTripletHeadNeedsItsBeamAndIndependentClosingRule() throws Exception {
+        checkOpeningTriplets(true);
+    }
+
+    private static void checkOpeningTriplets(boolean missingBeamLabel) throws Exception {
         int width = 840, height = 260;
-        int left = 100, right = 754, firstLine = 96, lastLine = 160;
+        int left = 100, right = missingBeamLabel ? 734 : 754;
+        int firstLine = 96, lastLine = 160;
+        int closingRule = missingBeamLabel ? 741 : right;
         byte[] paper = new byte[width * height], labels = new byte[paper.length];
         Arrays.fill(paper, (byte) 255);
         var meter = new RasterMeterReadingsTest.Page(16);
@@ -154,10 +165,12 @@ public class ClosedEighthTripletBarsTest {
             ink(paper, width, 20, 815, y, y + 1, 0);
             Arrays.fill(labels, y * width + 20, y * width + 816, OmrMeasurePostProcessor.STAFF);
         }
-        ink(paper, width, right - 1, right + 1, firstLine, lastLine, 0);
+        ink(paper, width, closingRule - 1, closingRule + 1, firstLine, lastLine, 0);
         var opening = new MeasureRegion(left / (float) width, right / (float) width,
                 62f / height, 193f / height);
-        var following = new MeasureRegion(770f / width, 815f / width, 62f / height, 193f / height);
+        int nextLeft = missingBeamLabel ? 750 : 770;
+        var following = new MeasureRegion(nextLeft / (float) width, 815f / width,
+                62f / height, 193f / height);
         var score = new ArrayList<ScoreNoteEvent>();
         for (int slot = 0; slot < 18; slot++) {
             int x = 180 + slot * 32, stem = slot / 3 % 2 == 0 ? 1 : -1;
@@ -167,16 +180,31 @@ public class ClosedEighthTripletBarsTest {
             ink(paper, width, x - 5, x + 5, y - 4, y + 4, 0);
             ink(paper, width, shaft - 1, shaft + 1, Math.min(tip, y), Math.max(tip, y), 0);
             if (slot % 3 == 0) ink(paper, width, shaft, shaft + 65, tip - 3, tip + 3, 0);
+            boolean quarterAlias = missingBeamLabel && slot == 17;
             score.add(new ScoreNoteEvent(0, (x - left) / (float) (right - left), (160 - y) / 8,
-                    0, 1, y / (float) height, false, 0, 1, 2, 0, 1, 0, 0, 30, false,
+                    0, 1, y / (float) height, false, 0, quarterAlias ? 0 : 1, 2,
+                    quarterAlias ? ScoreNoteEvent.DURATION_QUARTER : 0, 1, 0, 0, 30, false,
                     0, false, 0, 0, 1, stem, ScoreNoteEvent.Kind.PITCHED,
                     ScoreNoteEvent.VisualSize.FULL, 0, null));
         }
         var bars = List.of(opening, following);
         var meters = List.of(new ScoreMeterChange(0, 6, 4));
-        assertEquals(score.stream().map(note -> note.withTupletRatio(3, 2)).toList(),
+        assertEquals(score.stream()
+                        .map(note -> (note.beamCount() == 0
+                                ? ClosingTripletRhythm.singleBeam(note) : note).withTupletRatio(3, 2))
+                        .toList(),
                 WrappedEighthTriplets.closeQuarterBeatBars(
                         score, List.of(), bars, meters, paper, width, height, labels));
+        if (missingBeamLabel) {
+            byte[] detached = paper.clone();
+            ink(detached, width, 693, 705, 173, 184, 255);
+            assertSame(score, WrappedEighthTriplets.closeQuarterBeatBars(
+                    score, List.of(), bars, meters, detached, width, height, labels));
+            byte[] open = paper.clone();
+            ink(open, width, closingRule - 1, closingRule + 1, firstLine, lastLine, 255);
+            assertSame(score, WrappedEighthTriplets.closeQuarterBeatBars(
+                    score, List.of(), bars, meters, open, width, height, labels));
+        }
         for (int y = firstLine; y <= lastLine; y++) {
             if ((y - firstLine) % 16 < 2) continue;
             ink(paper, width, 120, 164, y, y, 255);

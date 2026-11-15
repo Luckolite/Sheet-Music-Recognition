@@ -181,6 +181,47 @@ public final class BeamedStaccatoOwnershipTest {
         assertFalse(closedDoubleBeam(proof, page, left, right));
     }
 
+    @Test
+    public void theFollowingPortatoNeedsBothDashesAndTheSharedSingleBeam() throws Exception {
+        var shape = component();
+        var left = head(shape, 100, 150);
+        var right = head(shape, 132, 134);
+        var count = newMethod(
+                "countAugmentationDots", List.class, shape.getDeclaringClass(),
+                float.class, byte[].class, int.class, int.class, boolean.class, List.class, List.class);
+        var page = new byte[WIDTH * HEIGHT];
+        Arrays.fill(page, (byte) 255);
+        for (int cx : new int[] {100, 132}) {
+            int cy = cx == 100 ? 150 : 134;
+            for (int dy = -5; dy <= 5; dy++)
+                for (int dx = -9; dx <= 9; dx++)
+                    if (dx * dx / 81d + dy * dy / 25d <= 1)
+                        page[(cy + dy) * WIDTH + cx + dx] = 0;
+        }
+        ink(page, 108, 90, 109, 150, 0);
+        ink(page, 140, 80, 141, 134, 0);
+        for (int x = 108; x <= 141; x++) {
+            int y = 90 - Math.round((x - 108) * .3f);
+            ink(page, x, y, x, y + 6, 0);
+        }
+        dot(page, 100, 168);
+        dot(page, 132, 152);
+        ink(page, 91, 181, 109, 184, 0);
+        ink(page, 123, 165, 141, 168, 0);
+        assertEquals(0, dotCount(count, page, left, right));
+
+        var missingDash = page.clone();
+        ink(missingDash, 123, 165, 141, 168, 255);
+        assertEquals(1, dotCount(count, missingDash, left, right));
+
+        var brokenBeam = page.clone();
+        ink(brokenBeam, 120, 78, 126, 101, 255);
+        assertEquals(1, dotCount(count, brokenBeam, left, right));
+
+        dot(page, 119, 151);
+        assertEquals(1, dotCount(count, page, left, right));
+    }
+
     private static int dotCount(Method count, byte[] page, Object left, Object right)
             throws Exception {
         return dotCount(count, page, left, List.of(left, right));

@@ -176,6 +176,9 @@ public final class Main {
                         beats,
                         labels,
                         keys);
+        wrapped = WrappedSixteenthMeasure.capture(
+                wrapped, initialMeter, decoderGray == null ? gray : decoderGray,
+                width, height, beats, labels, keys);
         score = wrapped.score();
         var tiedCadence = TiedQuarterCadence.capture(score, initialMeter,
                 decoderGray == null ? gray : decoderGray, width, height, beats);

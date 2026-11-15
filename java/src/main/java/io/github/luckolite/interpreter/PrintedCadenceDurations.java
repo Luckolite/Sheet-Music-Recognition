@@ -34,16 +34,22 @@ final class PrintedCadenceDurations {
         for (var rest : score.rests()) rests[rest.measureIndex()] = true;
         var meter = new boolean[count];
         var repeatedTripleMeter = new boolean[count];
+        var tripleMeter = new boolean[count];
+        var interruptedTriple = new boolean[count];
         boolean triple = false;
         for (var change : score.meterChanges()) {
             if (change.measureIndex() >= meter.length) continue;
             boolean nextTriple = change.numerator() == 3 && change.denominator() == 4;
             meter[change.measureIndex()] = true;
+            tripleMeter[change.measureIndex()] = nextTriple;
+            interruptedTriple[change.measureIndex()] = triple
+                    && change.numerator() == 4 && change.denominator() == 4;
             repeatedTripleMeter[change.measureIndex()] = triple && nextTriple;
             triple = nextTriple;
         }
         var regions = new ArrayList<>(score.measures());
         boolean changed = false;
+        var falseMeters = new java.util.HashSet<Integer>();
         for (int i = 0; i < count; i++) {
             var chord = notes.get(i);
             if (rests[i] || chord.isEmpty()) continue;
@@ -52,7 +58,11 @@ final class PrintedCadenceDurations {
             if (!chord.stream().allMatch(note -> exactCadenceNote(note, duration))) continue;
             var measure = score.measures().get(i);
             var next = i + 1 < count ? score.measures().get(i + 1) : null;
-            if (!proved(
+            boolean accidentalMeterAlias = duration == 1 && next != null
+                    && interruptedTriple[i] && tripleMeter[i + 1]
+                    && PrintedQuarterDyadAccidentals.provesSeparatedTerminalFlats(
+                            labels, gray, width, height, measure, next, chord, staffs);
+            if (!accidentalMeterAlias && !proved(
                             gray,
                             width,
                             height,
@@ -79,13 +89,16 @@ final class PrintedCadenceDurations {
                             && PrintedQuarterDyadAccidentals.provesBeforeTripleRepeat(
                                     labels, gray, width, height, measure, next, chord, staffs)))
                 continue;
+            if (accidentalMeterAlias) falseMeters.add(i);
             regions.set(i, new MeasureRegion(measure.left(), measure.right(), measure.top(),
                     measure.bottom(), (int) duration));
             changed = true;
         }
         if (!changed) return score;
+        var meterChanges = falseMeters.isEmpty() ? score.meterChanges() : score.meterChanges().stream()
+                .filter(change -> !falseMeters.contains(change.measureIndex())).toList();
         return new ScorePageInterpretation(regions, score.notes(), score.firstMeasureNumber(),
-                score.keyChanges(), score.tempoChanges(), score.meterChanges(), score.rests(),
+                score.keyChanges(), score.tempoChanges(), meterChanges, score.rests(),
                 score.techniqueChanges(), score.dynamicChanges(), score.playbackDirections(),
                 score.expressiveEvents(), score.slurSource(), score.openingPickup(), score.tremoloSource(),
                 score.multiRestGroups(), score.beamSource(), score.clockContextSource());

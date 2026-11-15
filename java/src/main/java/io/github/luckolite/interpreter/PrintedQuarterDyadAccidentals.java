@@ -13,7 +13,7 @@ final class PrintedQuarterDyadAccidentals {
     static boolean proves(byte[] labels, byte[] gray, int width, int height,
             MeasureRegion measure, MeasureRegion next, List<ScoreNoteEvent> chord,
             List<PlayingTechniqueDetector.Staff> staffs) {
-        return proves(labels, gray, width, height, measure, next, chord, staffs, false);
+        return proves(labels, gray, width, height, measure, next, chord, staffs, false, false);
     }
 
     static boolean provesBeforeTripleRepeat(
@@ -25,7 +25,13 @@ final class PrintedQuarterDyadAccidentals {
             MeasureRegion next,
             List<ScoreNoteEvent> chord,
             List<PlayingTechniqueDetector.Staff> staffs) {
-        return proves(labels, gray, width, height, measure, next, chord, staffs, true);
+        return proves(labels, gray, width, height, measure, next, chord, staffs, true, false);
+    }
+
+    static boolean provesSeparatedTerminalFlats(byte[] labels, byte[] gray, int width, int height,
+            MeasureRegion measure, MeasureRegion next, List<ScoreNoteEvent> chord,
+            List<PlayingTechniqueDetector.Staff> staffs) {
+        return proves(labels, gray, width, height, measure, next, chord, staffs, false, true);
     }
 
     private static boolean proves(
@@ -37,7 +43,7 @@ final class PrintedQuarterDyadAccidentals {
             MeasureRegion next,
             List<ScoreNoteEvent> chord,
             List<PlayingTechniqueDetector.Staff> staffs,
-            boolean inline) {
+            boolean inline, boolean onlySeparatedFlats) {
         if (gray == null
                 || labels == null
                 || gray.length != (long) width * height
@@ -58,6 +64,12 @@ final class PrintedQuarterDyadAccidentals {
         boolean twoFlats =
                 a.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_FLAT
                         && b.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_FLAT;
+        if (onlySeparatedFlats && !twoFlats) return false;
+        if (twoFlats && a.pageY() > b.pageY()) {
+            var upper = b;
+            b = a;
+            a = upper;
+        }
         if (inline && (!twoFlats || Math.abs(a.staffStep() - b.staffStep()) != 7)) return false;
         if (!twoFlats
                 && (a.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_NATURAL
@@ -74,14 +86,15 @@ final class PrintedQuarterDyadAccidentals {
             float gap = fitted.gap();
             boolean wide = span > gap * (inline ? 6.25f : 8.5f);
             boolean separated = !inline
-                    && a.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_NATURAL
-                    && b.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_FLAT
+                    && (twoFlats || a.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_NATURAL
+                            && b.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_FLAT)
                     && by - ay >= gap * 2.1f && by - ay <= gap * 3.25f;
             if (gap < 6
                     || gap > 32
                     || fitted.index() != 0
                     || fitted.count() != 1
-                    || wide && (!separated || span > gap * 9.5f)
+                    || onlySeparatedFlats && !separated
+                    || wide && (twoFlats || !separated || span > gap * 9.5f)
                     || twoFlats && span < gap * (inline ? 4.5f : 5.5f)
                     || inline && Math.abs(measure.top() - next.top()) * height > gap * .5f
                     || Math.abs(ax - bx) > gap * .30f
@@ -109,7 +122,7 @@ final class PrintedQuarterDyadAccidentals {
                     || closing - ax < 2.5f * gap) continue;
             if (ownedPair(
                     labels, gray, width, height, staff, opening, closing, ax, ay, bx, by,
-                    twoFlats, separated, wide))
+                    twoFlats, separated, wide || onlySeparatedFlats))
                 return true;
         }
         return false;
@@ -147,7 +160,7 @@ final class PrintedQuarterDyadAccidentals {
             }
         }
         if (separated && separatedPair(
-                gray, width, staff, opening, closing, ax, ay, bx, by, left, top, semantic, w, h))
+                gray, width, staff, opening, closing, ax, ay, bx, by, left, top, semantic, w, h, twoFlats))
             return true;
         if (wide) return false;
 
@@ -170,7 +183,7 @@ final class PrintedQuarterDyadAccidentals {
                 int xOverlap = Math.min(a.right, b.right) - Math.max(a.left, b.left);
                 if (yOverlap > gap * .6f && xOverlap > gap * .24f) continue;
                 if (emptyExceptOwned(
-                        gray, width, staff, opening, closing, ax, bx, left, top, semantic, w, a, b))
+                        gray, width, staff, opening, closing, ax, bx, left, top, semantic, w, a, b, 1))
                     return true;
             }
         }
@@ -180,7 +193,8 @@ final class PrintedQuarterDyadAccidentals {
     /** The projected boxes can overlap while each printed sign retains its own connected ink. */
     private static boolean separatedPair(
             byte[] gray, int width, PlayingTechniqueDetector.Staff staff, int opening, int closing,
-            float ax, float ay, float bx, float by, int left, int top, byte[] semantic, int w, int h) {
+            float ax, float ay, float bx, float by, int left, int top, byte[] semantic, int w, int h,
+            boolean twoFlats) {
         if (semantic.length > 16_384) return false;
         float gap = staff.gap();
         var ink = RawNumeralComponents.capture(semantic, w, h, 0, 0, w - 1, h - 1, () -> {}, () -> {});
@@ -192,20 +206,21 @@ final class PrintedQuarterDyadAccidentals {
         var natural = cores.get(0);
         var flat = cores.get(1);
         if (flat.left >= natural.left || flat.right - natural.left < gap * .24f
-                || natural.bottom - flat.top < gap * .6f) return false;
+                || !twoFlats && natural.bottom - flat.top < gap * .6f) return false;
         byte[] naturalInk = new byte[semantic.length];
         byte[] flatInk = new byte[semantic.length];
         Arrays.fill(naturalInk, (byte) 255);
         Arrays.fill(flatInk, (byte) 255);
         for (int i = 0; i < natural.size(); i++) naturalInk[natural.pixel(i)] = 0;
         for (int i = 0; i < flat.size(); i++) flatInk[flat.pixel(i)] = 0;
-        if (naturals(naturalInk, w, h, ax - left, ay - top, gap, Math.round(staff.top()) - top).isEmpty()
-                || flats(flatInk, w, h, bx - left, by - top, gap).isEmpty()) return false;
+        var upper = twoFlats ? flats(naturalInk, w, h, ax - left, ay - top, gap)
+                : naturals(naturalInk, w, h, ax - left, ay - top, gap, Math.round(staff.top()) - top);
+        if (upper.isEmpty() || flats(flatInk, w, h, bx - left, by - top, gap).isEmpty()) return false;
         for (int i = 0; i < flat.size(); i++) naturalInk[flat.pixel(i)] = 0;
         return emptyExceptOwned(
                 gray, width, staff, opening, closing, ax, bx, left, top, naturalInk, w,
                 new Ink(natural.left, natural.right, natural.top, natural.bottom),
-                new Ink(flat.left, flat.right, flat.top, flat.bottom));
+                new Ink(flat.left, flat.right, flat.top, flat.bottom), twoFlats ? 2 : 1);
     }
 
     private static List<Ink> naturals(
@@ -295,7 +310,7 @@ final class PrintedQuarterDyadAccidentals {
             byte[] semantic,
             int w,
             Ink first,
-            Ink second) {
+            Ink second, int fringe) {
         float gap = staff.gap();
         for (int x = Math.round(opening + gap * .62f); x <= Math.round(closing - gap * .48f); x++) {
             if (x >= Math.min(ax, bx) - gap * .93f && x <= Math.max(ax, bx) + gap * 1.18f) continue;
@@ -304,8 +319,8 @@ final class PrintedQuarterDyadAccidentals {
                 float row = (y - staff.top()) / gap;
                 if (Math.abs(row - Math.round(row)) < .18f || (gray[y * width + x] & 255) >= 155)
                     continue;
-                if (first.owns(semantic, w, x - left, y - top)
-                        || second.owns(semantic, w, x - left, y - top)) continue;
+                if (first.owns(semantic, w, x - left, y - top, fringe)
+                        || second.owns(semantic, w, x - left, y - top, fringe)) continue;
                 unexplained++;
             }
             if (unexplained >= Math.max(4, Math.round(gap * .42f))) return false;
@@ -314,10 +329,10 @@ final class PrintedQuarterDyadAccidentals {
     }
 
     private record Ink(int left, int right, int top, int bottom) {
-        boolean owns(byte[] plane, int width, int x, int y) {
-            if (x < left - 1 || x > right + 1 || y < top || y > bottom
+        boolean owns(byte[] plane, int width, int x, int y, int fringe) {
+            if (x < left - fringe || x > right + fringe || y < top || y > bottom
                     || y < 0 || y >= plane.length / width) return false;
-            for (int col = Math.max(left, x - 1); col <= Math.min(right, x + 1); col++)
+            for (int col = Math.max(left, x - fringe); col <= Math.min(right, x + fringe); col++)
                 if (plane[y * width + col] == 0) return true;
             return false;
         }
