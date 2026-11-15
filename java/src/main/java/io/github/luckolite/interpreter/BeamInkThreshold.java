@@ -55,8 +55,12 @@ final class BeamInkThreshold {
             int pixel = start;
             for (int end = start + wordWidth; pixel < end; pixel += Long.BYTES) {
                 long tones = (long) GRAY_WORDS.get(gray, pixel);
-                bright += brightPixels(tones);
-                dark += darkPixels(tones);
+                if (tones == -1L) {
+                    bright += Long.BYTES;
+                } else {
+                    bright += brightPixels(tones);
+                    dark += darkPixels(tones);
+                }
             }
             for (int end = start + rowWidth; pixel < end; pixel++) {
                 int tone = gray[pixel] & 255;
@@ -89,8 +93,10 @@ final class BeamInkThreshold {
             while (brightNeeded <= unscanned) {
                 int bright = 0;
                 int pixel = start;
-                for (int end = start + wordWidth; pixel < end; pixel += Long.BYTES)
-                    bright += brightPixels((long) GRAY_WORDS.get(gray, pixel));
+                for (int end = start + wordWidth; pixel < end; pixel += Long.BYTES) {
+                    long tones = (long) GRAY_WORDS.get(gray, pixel);
+                    bright += tones == -1L ? Long.BYTES : brightPixels(tones);
+                }
                 for (int end = start + rowWidth; pixel < end; pixel++)
                     bright += (196 - (gray[pixel] & 255)) >>> 31;
                 brightNeeded -= bright;

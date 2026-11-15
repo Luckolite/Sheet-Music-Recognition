@@ -129,9 +129,11 @@ final class StaffJoinedCompactApproach {
                 }
         }
         boolean[] ink = new boolean[area];
-        for (int y = t; y <= b; y++)
-            for (int x = l; x <= r; x++)
-                ink[(y - t) * sw + x - l] = (raw[y * w + x] & 255) < threshold[y - t];
+        for (int y = 0, base = t * w + l; y < sh; y++, base += w) {
+            int cutoff = threshold[y];
+            for (int x = 0, at = y * sw; x < sw; x++, at++)
+                ink[at] = (raw[base + x] & 255) < cutoff;
+        }
         var accepted = new ArrayList<Certificate>();
         int[] queue = null;
         for (int seed = 0; seed < area; seed++) {
@@ -142,11 +144,13 @@ final class StaffJoinedCompactApproach {
             ink[seed] = false;
             int x0 = w, x1 = 0, y0 = h, y1 = 0;
             double sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0;
-            boolean clipped = false;
+            boolean clipped = false, contact = false;
             while (cursor < n) {
-                int p = queue[cursor++], xx = p % sw, yy = p / sw, x = l + xx, y = t + yy;
+                int p = queue[cursor++], yy = p / sw, xx = p - yy * sw;
+                int x = l + xx, y = t + yy;
                 clipped |= xx == 0 || xx == sw - 1 || yy == 0 || yy == sh - 1;
                 if (!clipped) {
+                    contact |= rule[yy];
                     x0 = Math.min(x0, x);
                     x1 = Math.max(x1, x);
                     y0 = Math.min(y0, y);
@@ -157,11 +161,9 @@ final class StaffJoinedCompactApproach {
                     syy += (double) y * y;
                     sxy += (double) x * y;
                 }
-                for (int dy = -1; dy <= 1; dy++)
-                    for (int dx = -1; dx <= 1; dx++) {
-                        int nx = xx + dx, ny = yy + dy;
-                        if (nx < 0 || nx >= sw || ny < 0 || ny >= sh) continue;
-                        int q = ny * sw + nx;
+                int from = Math.max(0, xx - 1), to = Math.min(sw - 1, xx + 1);
+                for (int ny = Math.max(0, yy - 1); ny <= Math.min(sh - 1, yy + 1); ny++) {
+                    for (int q = ny * sw + from, end = ny * sw + to; q <= end; q++) {
                         if (ink[q]) {
                             ink[q] = false;
                             if (n == queue.length)
@@ -169,6 +171,7 @@ final class StaffJoinedCompactApproach {
                             queue[n++] = q;
                         }
                     }
+                }
             }
             if (clipped
                     || n < 12
@@ -177,8 +180,6 @@ final class StaffJoinedCompactApproach {
                     || x1 - x0 > gap * .65f
                     || y1 - y0 < 5
                     || y1 - y0 > gap * 1.2f) continue;
-            boolean contact = false;
-            for (int i = 0; i < n && !contact; i++) contact = rule[queue[i] / sw];
             if (!contact) continue;
             // An unclipped flood already owns every neighboring pixel below its row threshold.
             if (!budget.take(
@@ -241,10 +242,21 @@ final class StaffJoinedCompactApproach {
 
     private static int background(
             byte[] raw, int origin, int first, int last, int direction, int[] histogram) {
-        Arrays.fill(histogram, 0);
+        if (first > last) return 255;
         int n = last - first + 1;
-        int low = 255, high = 0;
-        for (int d = first, pixel = origin + direction * first; d <= last; d++, pixel += direction) {
+        int pixel = origin + direction * first;
+        byte firstTone = raw[pixel];
+        int prefix = 1;
+        pixel += direction;
+        while (prefix < n && raw[pixel] == firstTone) {
+            prefix++;
+            pixel += direction;
+        }
+        int low = firstTone & 255, high = low;
+        if (prefix == n) return low;
+        Arrays.fill(histogram, 0);
+        histogram[low] = prefix;
+        for (int i = prefix; i < n; i++, pixel += direction) {
             int tone = raw[pixel] & 255;
             histogram[tone]++;
             low = Math.min(low, tone);

@@ -144,8 +144,11 @@ final class SeparatedRestInk {
         int rasterBase = firstVisible * width + left;
         List<Body> result = null;
         int segmentEnd = rows - 1;
+        boolean masked = false;
         for (int row = 1, previous = 0; row < rows; row++) {
-            if (!line[lineOffset + row]) {
+            if (line[lineOffset + row]) {
+                masked = true;
+            } else {
                 if (row - previous > maximumStep) {
                     segmentEnd = previous;
                     break;
@@ -166,17 +169,15 @@ final class SeparatedRestInk {
                 continue;
             }
             int rasterRow = rasterBase + seedRow * width;
-            for (int sx = 0, seed = seedRow * span; sx < span; sx++, seed++) {
+            int firstX = visited == null ? firstDarkColumn(gray, rasterRow, span) : 0;
+            for (int sx = firstX, seed = seedRow * span + firstX; sx < span; sx++, seed++) {
                 if ((visited != null && visited[seed]) || (gray[rasterRow + sx] & 255) >= 170)
                     continue;
                 if (visited == null) {
                     scratch.reset(size);
                     visited = scratch.visited;
                     queue = scratch.queue;
-                    int firstMasked = 0;
-                    while (firstMasked < rows && !line[lineOffset + firstMasked])
-                        firstMasked++;
-                    if (firstMasked < rows) {
+                    if (masked) {
                         if (scratch.crossingRows == null || scratch.crossingRows.length < rows * 2)
                             scratch.crossingRows = new int[rows * 2];
                         crossingRows = scratch.crossingRows;
@@ -244,4 +245,25 @@ final class SeparatedRestInk {
         }
         return result == null ? List.of() : List.copyOf(result);
     }
+    private static int firstDarkColumn(byte[] gray, int row, int span) {
+        int x = 0;
+        if (span >= 16) {
+            for (int end = span - Long.BYTES; x <= end; x += Long.BYTES) {
+                long word = (long) SeedInkWords.GRAY.get(gray, row + x);
+                long bright = ((word | SeedInkWords.HIGH_BITS) - SeedInkWords.CUTOFF)
+                        & word & SeedInkWords.HIGH_BITS;
+                if (bright != SeedInkWords.HIGH_BITS) break;
+            }
+        }
+        while (x < span && (gray[row + x] & 255) >= 170) x++;
+        return x;
+    }
+
+    private static final class SeedInkWords {
+        static final java.lang.invoke.VarHandle GRAY = java.lang.invoke.MethodHandles.byteArrayViewVarHandle(
+                long[].class, java.nio.ByteOrder.nativeOrder());
+        static final long HIGH_BITS = 0x8080808080808080L;
+        static final long CUTOFF = 0x0101010101010101L * (170 - 128);
+    }
+
 }

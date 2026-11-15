@@ -181,7 +181,7 @@ final class FaintQuarterRestInk {
     /** Bound to one actual raw array and one unchanged proposed physical phase. */
     static final class Scan {
         private final byte[] raw;
-        private final int width, height, radius;
+        private final int width, height, radius, verticalProbeOffset;
         private final float top, bottom, gap;
         private final boolean[] rules;
         private final Budget budget;
@@ -204,6 +204,7 @@ final class FaintQuarterRestInk {
             this.rules = rules;
             this.budget = budget;
             radius = Math.max(3, Math.round(gap * .6f));
+            verticalProbeOffset = radius * width;
         }
 
         boolean[] rawRuleRows(Budget expected) {
@@ -213,19 +214,19 @@ final class FaintQuarterRestInk {
         }
 
         private boolean foreground(int x, int y) {
-            int value = raw[y * width + x] & 255;
+            int pixel = y * width + x;
+            int value = raw[pixel] & 255;
             if (value < 170) return true;
             if (value >= 230
                     || x < radius
                     || x + radius >= width
                     || y < radius
                     || y + radius >= height) return false;
-            int brighter = 0;
-            if ((raw[y * width + x - radius] & 255) >= value + 20) brighter++;
-            if ((raw[y * width + x + radius] & 255) >= value + 20) brighter++;
-            if ((raw[(y - radius) * width + x] & 255) >= value + 20) brighter++;
-            if ((raw[(y + radius) * width + x] & 255) >= value + 20) brighter++;
-            return brighter >= 2;
+            int target = value + 20;
+            int brighter = (raw[pixel - radius] & 255) >= target ? 1 : 0;
+            if ((raw[pixel + radius] & 255) >= target && ++brighter == 2) return true;
+            if ((raw[pixel - verticalProbeOffset] & 255) >= target && ++brighter == 2) return true;
+            return brighter == 1 && (raw[pixel + verticalProbeOffset] & 255) >= target;
         }
 
         /** Copies metadata from the actual dark column producer; never a semantic owner. */
@@ -308,76 +309,69 @@ final class FaintQuarterRestInk {
                 if (runs > 1) lo[y - first] = -2;
             }
             if (!hasSupport) return null;
-            for (int y = first; y <= last; y++) {
-                if (!rules[y]) continue;
-                int before = y - 1, after = y + 1;
-                while (before >= first && rules[before]) before--;
+            for (int y = first; y <= last; ) {
+                if (!rules[y]) {
+                    y++;
+                    continue;
+                }
+                int bandStart = y, before = y - 1, after = y + 1;
                 while (after <= last && rules[after]) after++;
+                y = after;
                 if (before < first || after > last) continue;
-                int a = before - first, c = after - first;
+                int a = before - first, c = after - first, distance = after - before;
                 if (lo[a] < 0
                         || lo[c] < 0
                         || Math.max(Math.abs(lo[a] - lo[c]), Math.abs(hi[a] - hi[c]))
-                                > after - before + gap * .2f) continue;
-                double fraction = (double) (y - before) / (after - before);
-                int start = (int) Math.floor(lo[a] * (1 - fraction) + lo[c] * fraction) - 1;
-                int end = (int) Math.ceil(hi[a] * (1 - fraction) + hi[c] * fraction) + 1;
-                for (int x = Math.max(left, start); x <= Math.min(right, end); x++) {
-                    // A ruled crossing can use existing raw ink, never a painted white gap.
-                    if ((raw[y * width + x] & 255) < 230) support[(y - first) * w + x - left] = 1;
-                }
-            }
-            // Every admitted rule-band fragment must connect both unique approach spans.
-            for (int y = first; y <= last; y++)
-                if (rules[y]) {
-                    int end = y;
-                    while (end < last && rules[end + 1]) end++;
-                    int before = y - 1, after = end + 1;
-                    if (before >= first && after <= last) {
-                        boolean any = false;
-                        for (int row = y; row <= end; row++)
-                            for (int x = 0; x < w; x++) any |= support[(row - first) * w + x] != 0;
-                        if (any) {
-                            if (crossing == null) {
-                                crossing = new byte[(int) area];
-                                queue = new int[(int) area];
-                            }
-                            else Arrays.fill(crossing, (byte) 0);
-                            for (int direction = 0; direction < 2; direction++) {
-                                int edge = direction == 0 ? before : after, from = 0, to = 0;
-                                byte bit = (byte) (1 << direction);
-                                for (int x = 0; x < w; x++) {
-                                    int at = (edge - first) * w + x;
-                                    if (support[at] != 0) {
-                                        crossing[at] |= bit;
-                                        queue[to++] = at;
-                                    }
-                                }
-                                while (from < to) {
-                                    int at = queue[from++], cx = at % w, cy = at / w + first;
-                                    for (int yy = Math.max(before, cy - 1);
-                                            yy <= Math.min(after, cy + 1);
-                                            yy++)
-                                        for (int xx = Math.max(0, cx - 1);
-                                                xx <= Math.min(w - 1, cx + 1);
-                                                xx++) {
-                                            int next = (yy - first) * w + xx;
-                                            if (support[next] != 0 && (crossing[next] & bit) == 0) {
-                                                crossing[next] |= bit;
-                                                queue[to++] = next;
-                                            }
-                                        }
-                                }
-                            }
-                            for (int row = y; row <= end; row++)
-                                for (int x = 0; x < w; x++) {
-                                    int at = (row - first) * w + x;
-                                    if (support[at] != 0 && crossing[at] != 3) return null;
-                                }
+                                > distance + gap * .2f) continue;
+                boolean any = false;
+                for (int row = bandStart; row < after; row++) {
+                    double fraction = (double) (row - before) / distance;
+                    int start = (int) Math.floor(lo[a] * (1 - fraction) + lo[c] * fraction) - 1;
+                    int end = (int) Math.ceil(hi[a] * (1 - fraction) + hi[c] * fraction) + 1;
+                    int rowStart = (row - first) * w - left;
+                    for (int x = Math.max(left, start), at = row * width + x;
+                            x <= Math.min(right, end); x++, at++) {
+                        // Retain existing raw ink through the ruled crossing.
+                        if ((raw[at] & 255) < 230) {
+                            support[rowStart + x] = 1;
+                            any = true;
                         }
                     }
-                    y = end;
                 }
+                if (!any) continue;
+                // Every admitted rule-band fragment must connect both unique approach spans.
+                if (crossing == null) {
+                    crossing = new byte[(int) area];
+                    queue = new int[(int) area];
+                } else {
+                    Arrays.fill(crossing, (byte) 0);
+                }
+                for (int direction = 0; direction < 2; direction++) {
+                    int edge = direction == 0 ? a : c, from = 0, to = 0;
+                    byte bit = (byte) (1 << direction);
+                    for (int at = edge * w, end = at + w; at < end; at++) {
+                        if (support[at] != 0) {
+                            crossing[at] |= bit;
+                            queue[to++] = at;
+                        }
+                    }
+                    while (from < to) {
+                        int at = queue[from++], row = at / w, column = at - row * w;
+                        int leftColumn = Math.max(0, column - 1), rightColumn = Math.min(w - 1, column + 1);
+                        for (int yy = Math.max(a, row - 1); yy <= Math.min(c, row + 1); yy++) {
+                            for (int next = yy * w + leftColumn, end = yy * w + rightColumn;
+                                    next <= end; next++) {
+                                if (support[next] != 0 && (crossing[next] & bit) == 0) {
+                                    crossing[next] |= bit;
+                                    queue[to++] = next;
+                                }
+                            }
+                        }
+                    }
+                }
+                for (int at = (bandStart - first) * w, end = c * w; at < end; at++)
+                    if (support[at] != 0 && crossing[at] != 3) return null;
+            }
             int total = 0, start = -1;
             for (int at = 0; at < support.length; at++) {
                 if (support[at] != 0) {

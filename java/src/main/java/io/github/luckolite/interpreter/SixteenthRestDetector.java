@@ -3124,10 +3124,27 @@ final class SixteenthRestDetector {
             }
             return count;
         }
-        for (int at = start; at < end; at++) {
+        int at = start;
+        if (end - at >= 16 && at >= 0 && end <= gray.length) {
+            for (int wordEnd = end - Long.BYTES; at <= wordEnd; at += Long.BYTES) {
+                long word = (long) CounterInkWords.PIXELS.get(gray, at);
+                // Guard the high bit of every byte so subtraction cannot borrow between bytes.
+                long bright = ((word | CounterInkWords.HIGH_BITS) - CounterInkWords.CUTOFF)
+                        & word & CounterInkWords.HIGH_BITS;
+                count += Long.BYTES - Long.bitCount(bright);
+            }
+        }
+        for (; at < end; at++) {
             if ((gray[at] & 255) < 170) count++;
         }
         return count;
+    }
+
+    private static final class CounterInkWords {
+        static final java.lang.invoke.VarHandle PIXELS = java.lang.invoke.MethodHandles.byteArrayViewVarHandle(
+                long[].class, java.nio.ByteOrder.nativeOrder());
+        static final long HIGH_BITS = 0x8080808080808080L;
+        static final long CUTOFF = 0x0101010101010101L * (170 - 128);
     }
 
     private static void inspectOwnedModeCounter(
@@ -5983,11 +6000,14 @@ final class SixteenthRestDetector {
                     int n = 0;
                     double sum = 0;
                     {
-                        if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
                         int row = y * width + left;
+                        long rowWidth = (long) right - left + 1;
+                        boolean prepaid = quarterBudget == null || (row >= 0 && rowWidth >= 0
+                                && row + rowWidth <= gray.length
+                                && quarterBudget.tryPrepayLocal(1 + rowWidth));
+                        if (!prepaid) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
                         for (int x = left; x <= right; x++, row++) {
-                            if (quarterBudget != null)
-                                FaintQuarterRestInk.charge(quarterBudget, 1, 0);
+                            if (!prepaid) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
                             if ((gray[row] & 255) < 170) {
                                 if (n == 0) leftEdges[y - minY] = x - left;
                                 rightEdges[y - minY] = x - left;
@@ -6015,15 +6035,21 @@ final class SixteenthRestDetector {
                 if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
                 if (!Double.isFinite(centers[i])) {
                     int a = i - 1, b = i + 1;
-                    if (quarterBudget == null) {
-                        if (a < 0) return false;
+                    boolean prepaid = false;
+                    if (quarterBudget == null && a < 0) return false;
+                    if (quarterBudget == null || (a >= 0 && Double.isFinite(centers[a])
+                            && quarterBudget.canPrepayLocal(2L + h - b))) {
                         if (nextObserved <= i) {
                             nextObserved = b;
                             while (nextObserved < h && !Double.isFinite(centers[nextObserved]))
                                 nextObserved++;
                         }
-                        b = nextObserved;
-                    } else {
+                        // The old lookahead charges once per skipped row and once per search.
+                        prepaid = quarterBudget == null
+                                || quarterBudget.tryPrepayLocal(2L + nextObserved - b);
+                        if (prepaid) b = nextObserved;
+                    }
+                    if (quarterBudget != null && !prepaid) {
                         FaintQuarterRestInk.charge(quarterBudget, 1, 0);
                         while (a >= 0 && !Double.isFinite(centers[a])) {
                             FaintQuarterRestInk.charge(quarterBudget, 1, 0);
