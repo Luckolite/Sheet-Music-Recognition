@@ -53,18 +53,51 @@ final class WrappedTripletMeasure {
                 continue;
             var lead = half(gray, width, height, regions.get(i), notes, byMeasure.get(i));
             var tail = half(gray, width, height, regions.get(i+1), notes, byMeasure.get(i+1));
-            boolean undotted = false;
+            boolean undotted = false, recoveredShafts = false;
             if (lead == null || tail == null) {
-                if (beats[i-1] != 6 || beats[i+2] != 6 || byMeasure.get(i+2).size() != 18
-                        || !qualifiedPrecedingEighths(notes, byMeasure.get(i-1))) continue;
+                int followingCount = byMeasure.get(i + 2).size();
+                if (beats[i - 1] != 6
+                        || beats[i + 2] != 6
+                        || followingCount < 18
+                        || followingCount > 19
+                        || !qualifiedPrecedingEighths(notes, byMeasure.get(i - 1))) continue;
                 lead = WrappedEighthTriplets.half(gray, width, height, regions.get(i), notes, byMeasure.get(i));
                 tail = WrappedEighthTriplets.half(gray, width, height, regions.get(i+1), notes, byMeasure.get(i+1));
                 undotted = true;
+                if (lead == null || tail == null) {
+                    lead =
+                            WrappedShaftContinuation.half(
+                                    gray,
+                                    width,
+                                    height,
+                                    regions.get(i),
+                                    notes,
+                                    byMeasure.get(i),
+                                    true);
+                    tail =
+                            WrappedShaftContinuation.half(
+                                    gray,
+                                    width,
+                                    height,
+                                    regions.get(i + 1),
+                                    notes,
+                                    byMeasure.get(i + 1),
+                                    false);
+                    recoveredShafts = true;
+                } else if (followingCount != 18) continue;
             }
             if (lead == null || tail == null) continue;
             int clef = notes.get(lead.owners().get(0)).clefBottomDiatonic();
-            if (clef != notes.get(tail.owners().get(0)).clefBottomDiatonic()) continue;
-            int headerKey = undotted && clef == ScoreNoteEvent.CLEF_TREBLE ? keys[i] : 0;
+            int nextClef = notes.get(tail.owners().get(0)).clefBottomDiatonic();
+            boolean inferredOpeningClef =
+                    recoveredShafts
+                            && clef == ScoreNoteEvent.CLEF_UNKNOWN
+                            && nextClef == ScoreNoteEvent.CLEF_TREBLE;
+            if (clef != nextClef && !inferredOpeningClef) continue;
+            int headerKey =
+                    undotted && (clef == ScoreNoteEvent.CLEF_TREBLE || inferredOpeningClef)
+                            ? keys[i]
+                            : 0;
             if (!WrappedMeasureBoundaries.confirms(
                     gray,
                     width,
@@ -76,6 +109,10 @@ final class WrappedTripletMeasure {
                     undotted,
                     labels,
                     headerKey)) continue;
+            if (recoveredShafts && notes.get(lead.owners().get(0)).beamCount() == 0) {
+                int firstOwner = lead.owners().get(0);
+                notes.set(firstOwner, ClosingTripletRhythm.singleBeam(notes.get(firstOwner)));
+            }
             assign(lead, notes, written, undotted);
             assign(tail, notes, written, undotted);
             beats[i] = 3;

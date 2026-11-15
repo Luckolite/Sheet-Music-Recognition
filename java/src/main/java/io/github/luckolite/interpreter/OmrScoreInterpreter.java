@@ -669,7 +669,7 @@ final class OmrScoreInterpreter {
                         clefKeyMembers);
         symbolMembers.seal(new ExactComponentMembers.Budget(2L * labels.length + 4096, 4096));
         clefKeyMembers.seal(new ExactComponentMembers.Budget(2L * labels.length + 4096, 4096));
-        var splitSharpProofs = new ArrayList<SourceLocalAccidental.SplitSharp>();
+        var splitAccidentalProofs = new ArrayList<SourceLocalAccidental.SplitAccidental>();
         var originalAccidentalGlyphs = new ArrayList<Object>();
         originalAccidentalGlyphs.addAll(symbolComponents);
         originalAccidentalGlyphs.addAll(clefOrKeyComponents);
@@ -1059,6 +1059,9 @@ final class OmrScoreInterpreter {
                 reducedPairBorrowedShaftHeads(
                         gray, width, height, heads, staffs, recoveredBeamCapGraces));
         rejectedBeamHeads.addAll(ownedSlopedBeamFragments(labels, gray, width, height, heads, staffs));
+        rejectedBeamHeads.addAll(
+                leadingSingleRailCapMasks(
+                        labels, gray, annotationGray, width, height, heads, staffs, measures));
         rejectedBeamHeads.addAll(filledBeamBandHeads(gray, width, height, heads, staffs));
         rejectedBeamHeads.addAll(terminalBeamShaftEndHeads(
                 labels, gray, annotationGray, width, height, heads, staffs, measures));
@@ -2381,12 +2384,31 @@ final class OmrScoreInterpreter {
                                     head,
                                     heads,
                                     accidentalGap,
-                                    staff.top);
+                                    staff.top,
+                                    false,
+                                    splitAccidentalProofs);
                     if (stacked != ScoreNoteEvent.ACCIDENTAL_FROM_KEY) {
                         writtenAccidental = stacked;
                         typedStackedAccidental = true;
                     }
                 }
+                // An earlier detector can already have selected the right pitch.
+                // Confirm the separate printed signs without changing that selection.
+                if (!typedStackedAccidental
+                        && (writtenAccidental == ScoreNoteEvent.ACCIDENTAL_SHARP
+                                || writtenAccidental == ScoreNoteEvent.ACCIDENTAL_NATURAL))
+                    stackedAccidentalForWideDyad(
+                            gray,
+                            annotationGray,
+                            width,
+                            height,
+                            clefOrKeyComponents,
+                            head,
+                            heads,
+                            accidentalGap,
+                            staff.top,
+                            false,
+                            splitAccidentalProofs);
                 if (!typedStackedAccidental
                         && (writtenAccidental == ScoreNoteEvent.ACCIDENTAL_FROM_KEY
                                 || writtenAccidental == ScoreNoteEvent.ACCIDENTAL_FLAT
@@ -2402,7 +2424,7 @@ final class OmrScoreInterpreter {
                                         accidentalGap,
                                         staff.top,
                                         true,
-                                        splitSharpProofs)
+                                        splitAccidentalProofs)
                                 == ScoreNoteEvent.ACCIDENTAL_SHARP) {
                     writtenAccidental = ScoreNoteEvent.ACCIDENTAL_SHARP;
                     typedStackedAccidental = true;
@@ -3583,7 +3605,7 @@ final class OmrScoreInterpreter {
                                                         height,
                                                         rawNaturalGaps,
                                                         writtenAccidentalChoices),
-                                                splitSharpProofs)));
+                                                splitAccidentalProofs)));
         var page =
                 new ScorePageInterpretation(
                         measures,
@@ -19918,6 +19940,18 @@ final class OmrScoreInterpreter {
         return false;
     }
 
+    static boolean printedSharpBeforeDyad(
+            byte[] gray, int width, int height, int seam, float x, float y, float gap) {
+        int left = seam - Math.round(gap * .3f);
+        int right = Math.min(seam + Math.round(gap * 1.3f), Math.round(x - gap * .72f));
+        int top = Math.round(y - gap * 1.55f), bottom = Math.round(y + gap * 1.8f);
+        if (left < 0 || right <= left || right >= width || top < 0 || bottom >= height)
+            return false;
+        var upperHead = accidentalReferenceHead(x, y, gap);
+        return rawSharpInBounds(
+                gray, width, height, upperHead, gap, left, right, top, bottom, true, true);
+    }
+
     private static boolean rawSharpInBounds(
             byte[] gray,
             int width,
@@ -21630,7 +21664,7 @@ final class OmrScoreInterpreter {
     }
 
     /** Separate the two staggered sharps in a shared symbol box. */
-    /** A co-column glyph above the staff can hold a separate accidental for each dyad head. */
+    /** Classifies the separate signs in a shared accidental component. */
     private static int stackedAccidentalForWideDyad(
             byte[] gray,
             byte[] source,
@@ -21681,7 +21715,7 @@ final class OmrScoreInterpreter {
             float gap,
             float staffTop,
             boolean crossesStaff,
-            List<SourceLocalAccidental.SplitSharp> splitProofs) {
+            List<SourceLocalAccidental.SplitAccidental> splitProofs) {
         if (gray == null
                 || source == null
                 || width <= 0
@@ -21753,7 +21787,7 @@ final class OmrScoreInterpreter {
                                     Math.round(glyph.centerX),
                                     gap,
                                     165))) continue;
-            var strips = splitProofs == null ? null : new SourceLocalAccidental.SharpStrips[2];
+            var strips = splitProofs == null ? null : new SourceLocalAccidental.AccidentalStrips[2];
             int upper =
                     stackedAccidentalCrossbars(
                             gray, source, width, height, glyph, top, gap, crossesStaff, strips, 0);
@@ -21780,9 +21814,9 @@ final class OmrScoreInterpreter {
                 if (strips != null
                         && strips[0] != null
                         && strips[1] != null
-                        && soleStackedSharpGlyph(glyphs, glyph, gap))
+                        && soleStackedAccidentalGlyph(glyphs, glyph, gap))
                     splitProofs.add(
-                            new SourceLocalAccidental.SplitSharp(
+                            new SourceLocalAccidental.SplitAccidental(
                                     glyph,
                                     first ? head : peer,
                                     first ? peer : head,
@@ -21794,7 +21828,7 @@ final class OmrScoreInterpreter {
         return ScoreNoteEvent.ACCIDENTAL_FROM_KEY;
     }
 
-    private static boolean soleStackedSharpGlyph(
+    private static boolean soleStackedAccidentalGlyph(
             List<Component> glyphs, Component selected, float gap) {
         for (var other : glyphs) {
             if (other == selected) continue;
@@ -21825,7 +21859,7 @@ final class OmrScoreInterpreter {
             float headY,
             float gap,
             boolean crossesStaff,
-            SourceLocalAccidental.SharpStrips[] strips,
+            SourceLocalAccidental.AccidentalStrips[] strips,
             int ownerIndex) {
         int center = Math.round(headY);
         int reach = Math.round(gap * .88f);
@@ -21917,12 +21951,10 @@ final class OmrScoreInterpreter {
                 else continue;
                 if (detected != ScoreNoteEvent.ACCIDENTAL_FROM_KEY && detected != next)
                     return ScoreNoteEvent.ACCIDENTAL_FROM_KEY;
-                if (strips != null
-                        && strips[ownerIndex] == null
-                        && next == ScoreNoteEvent.ACCIDENTAL_SHARP)
+                if (strips != null && strips[ownerIndex] == null)
                     strips[ownerIndex] =
-                            new SourceLocalAccidental.SharpStrips(
-                                    stems[0], stems[3], rise, first[0], first[1], second[0],
+                            new SourceLocalAccidental.AccidentalStrips(
+                                    next, stems[0], stems[3], rise, first[0], first[1], second[0],
                                     second[1]);
                 detected = next;
             }
@@ -27165,6 +27197,117 @@ final class OmrScoreInterpreter {
                 || Math.abs(a[0] - b[0]) > 2 || Math.abs(a[1] - b[1]) > 2
                 || a[1] - lower.centerY < gap * 2.6f) return null;
         return a;
+    }
+
+    /** An upstroke at a system-end opening can lend its upper rail cap to a false mask. */
+    private static List<Component> leadingSingleRailCapMasks(
+            byte[] labels,
+            byte[] gray,
+            byte[] source,
+            int width,
+            int height,
+            List<Component> heads,
+            List<Staff> staffs,
+            List<MeasureRegion> measures) {
+        if (gray == null || source == null) return List.of();
+        var rejected = new ArrayList<Component>();
+        for (var mask : heads) {
+            var staff = nearestHeadStaff(staffs, mask.centerY);
+            if (staff == null || staff.count != 1) continue;
+            float gap = staff.gap;
+            int across = mask.maxX - mask.minX + 1, depth = mask.maxY - mask.minY + 1;
+            if (gap < 10
+                    || across < gap * .68f
+                    || across > gap * .91f
+                    || depth < gap * .54f
+                    || depth > gap * .78f
+                    || mask.area < gap * gap * .36f
+                    || mask.area > gap * gap * .52f
+                    || filledBeamEndpointCore(source, width, height, mask, gap)) continue;
+            int bar =
+                    containingMeasureForStaff(
+                            measures, mask.centerX / width, mask.centerY / height, staff, height);
+            if (bar < 1
+                    || bar + 2 >= measures.size()
+                    || measures.get(bar).bottom() >= measures.get(bar + 1).top()
+                    || measures.get(bar).top() >= measures.get(bar - 1).bottom()) continue;
+            int[] reverse = attachedRawStem(gray, width, height, mask, gap, 2, 170);
+            if (reverse == null
+                    || reverse[2] != 1
+                    || reverse[0] < mask.minX
+                    || reverse[0] > mask.minX + gap * .20f
+                    || reverse[1] - mask.centerY < gap * 3.45f
+                    || reverse[1] - mask.centerY > gap * 4.2f
+                    || !java.util.Arrays.equals(
+                            reverse, attachedRawStem(source, width, height, mask, gap, 2, 170)))
+                continue;
+            var owners = new ArrayList<Component>(3);
+            for (var head : heads) {
+                if (head == mask
+                        || head.centerX < reverse[0] - gap
+                        || head.centerX > reverse[0] + gap * 5.6f
+                        || head.centerY < mask.centerY + gap * 1.25f
+                        || head.centerY > mask.centerY + gap * 4.5f
+                        || nearestHeadStaff(staffs, head.centerY) != staff
+                        || !filledBeamEndpointCore(source, width, height, head, gap)) continue;
+                owners.add(head);
+                if (owners.size() > 3) break;
+            }
+            if (owners.size() != 3) continue;
+            owners.sort(java.util.Comparator.comparingDouble(head -> head.centerX));
+            var first = owners.get(0);
+            if (reverse[0] - first.centerX < gap * .46f
+                    || reverse[0] - first.centerX > gap * .72f
+                    || Math.abs(reverse[1] - first.centerY) > gap * .25f
+                    || first.centerX - measures.get(bar).left() * width < gap * .7f
+                    || first.centerX - measures.get(bar).left() * width > gap * 1.4f) continue;
+            float[] x = new float[3], y = new float[3];
+            var shafts = new PrintedBeamShafts.Shaft[3];
+            var budget = new PrintedBeamShafts.Budget(300_000);
+            boolean spaced = true;
+            for (int j = 0; j < 3; j++) {
+                var owner = owners.get(j);
+                x[j] = owner.centerX;
+                y[j] = owner.centerY;
+                if (j > 0
+                        && (x[j] - x[j - 1] < gap * 2.2f
+                                || x[j] - x[j - 1] > gap * 3.2f
+                                || y[j - 1] - y[j] < gap * .8f
+                                || y[j - 1] - y[j] > gap * 1.75f)) {
+                    spaced = false;
+                    break;
+                }
+                var evidence = PrintedBeamShafts.at(gray, width, height, x[j], y[j], gap, budget);
+                if (evidence.size() == 1 && evidence.get(0).direction() == -1)
+                    shafts[j] = evidence.get(0);
+            }
+            if (!spaced || shafts[0] != null || shafts[1] == null || shafts[2] == null) continue;
+            var group =
+                    WrappedShaftContinuation.recoverGroup(
+                            gray, width, height, gap, x, y, -1, shafts);
+            var raw =
+                    WrappedShaftContinuation.recoverGroup(
+                            source, width, height, gap, x, y, -1, shafts);
+            if (group == null || raw == null || group.revised() != 0 || raw.revised() != 0)
+                continue;
+            var start = group.shafts()[0];
+            int capX = (start.left() + start.right()) / 2;
+            int nextX = (shafts[1].left() + shafts[1].right()) / 2;
+            if (Math.abs(capX - reverse[0]) > 1 || nextX <= capX) continue;
+            float slope = (shafts[1].endY() - start.endY()) / (float) (nextX - capX);
+            int[] pixels = completeHeadMembers(labels, width, height, mask);
+            if (pixels == null) continue;
+            boolean inside = true;
+            for (int pixel : pixels) {
+                float position = pixel / width - start.endY() - slope * (pixel % width - capX);
+                if (position < 0 || position > gap * .84f || (source[pixel] & 255) >= 185) {
+                    inside = false;
+                    break;
+                }
+            }
+            if (inside) rejected.add(mask);
+        }
+        return rejected;
     }
 
     /** Small beam masks may trace back up the very shaft that owns the beam. */

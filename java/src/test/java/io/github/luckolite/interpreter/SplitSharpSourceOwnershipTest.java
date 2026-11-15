@@ -18,10 +18,10 @@ public class SplitSharpSourceOwnershipTest {
     private static final int WIDTH = 120, HEIGHT = 112;
     private static final byte HEAD = OmrMeasurePostProcessor.NOTEHEAD;
     private static final byte ACCIDENTAL = OmrMeasurePostProcessor.CLEF_OR_KEY;
-    private static final SourceLocalAccidental.SharpStrips UPPER =
-            new SourceLocalAccidental.SharpStrips(40, 52, 3, 25, 27, 37, 39);
-    private static final SourceLocalAccidental.SharpStrips LOWER =
-            new SourceLocalAccidental.SharpStrips(40, 52, 3, 68, 70, 80, 82);
+    private static final SourceLocalAccidental.AccidentalStrips UPPER =
+            new SourceLocalAccidental.AccidentalStrips(1, 40, 52, 3, 25, 27, 37, 39);
+    private static final SourceLocalAccidental.AccidentalStrips LOWER =
+            new SourceLocalAccidental.AccidentalStrips(1, 40, 52, 3, 68, 70, 80, 82);
 
     @Test
     public void separatelyOwnedStripsEmitOneSharpPerRetainedHead() throws Exception {
@@ -64,11 +64,27 @@ public class SplitSharpSourceOwnershipTest {
     @Test
     public void conflictingRepeatedWitnessesRefuseBothExtraMarks() throws Exception {
         var fixture = new Fixture(false, false);
-        var narrowed = new SourceLocalAccidental.SharpStrips(40, 52, 3, 25, 27, 37, 38);
+        var narrowed = new SourceLocalAccidental.AccidentalStrips(1, 40, 52, 3, 25, 27, 37, 38);
         var source =
                 fixture.capture(
                         List.of(fixture.split(UPPER, LOWER), fixture.split(narrowed, LOWER)));
         assertTrue(source.printedMarks(fixture.notes, fixture.notes).isEmpty());
+    }
+
+    @Test
+    public void retainsTheNaturalTypeWhenTheOtherHeadOwnsASharp() throws Exception {
+        var fixture = new Fixture(false, false, ScoreNoteEvent.ACCIDENTAL_NATURAL);
+        var ink =
+                new SourceLocalAccidental.AccidentalStrips(
+                        ScoreNoteEvent.ACCIDENTAL_NATURAL, 40, 52, 3, 68, 70, 80, 82);
+        var source = fixture.capture(UPPER, ink);
+        assertEquals(
+                List.of(
+                        new SourceLocalAccidental.PrintedMark(0, 1),
+                        new SourceLocalAccidental.PrintedMark(1, 0)),
+                source.printedMarks(fixture.notes, fixture.notes));
+        assertTrue(
+                fixture.capture(UPPER, LOWER).printedMarks(fixture.notes, fixture.notes).isEmpty());
     }
 
     private static final class Fixture {
@@ -80,6 +96,10 @@ public class SplitSharpSourceOwnershipTest {
                 new IdentityHashMap<>();
 
         Fixture(boolean stripRemoved, boolean borrowed) throws Exception {
+            this(stripRemoved, borrowed, ScoreNoteEvent.ACCIDENTAL_SHARP);
+        }
+
+        Fixture(boolean stripRemoved, boolean borrowed, int lowerKind) throws Exception {
             Arrays.fill(gray, (byte) 255);
             square(62, 33, HEAD);
             square(62, 76, HEAD);
@@ -100,7 +120,11 @@ public class SplitSharpSourceOwnershipTest {
             components(OmrMeasurePostProcessor.SYMBOL, symbols);
             assertEquals(3, headMembers.size());
             assertEquals(1, glyphs.size());
-            notes = List.of(note(33, 1), note(76, 1), note(96, ScoreNoteEvent.ACCIDENTAL_FROM_KEY));
+            notes =
+                    List.of(
+                            note(33, 1),
+                            note(76, lowerKind),
+                            note(96, ScoreNoteEvent.ACCIDENTAL_FROM_KEY));
             for (int index = 0; index < headMembers.size(); index++)
                 pickerChoice(index, borrowed && index == 2 ? glyphs.get(0) : null, false);
         }
@@ -122,18 +146,20 @@ public class SplitSharpSourceOwnershipTest {
                             ScoreNoteEvent.ACCIDENTAL_FROM_KEY, glyph, head, 0, 0, ambiguous));
         }
 
-        SourceLocalAccidental.SplitSharp split(
-                SourceLocalAccidental.SharpStrips upper, SourceLocalAccidental.SharpStrips lower) {
-            return new SourceLocalAccidental.SplitSharp(
+        SourceLocalAccidental.SplitAccidental split(
+                SourceLocalAccidental.AccidentalStrips upper,
+                SourceLocalAccidental.AccidentalStrips lower) {
+            return new SourceLocalAccidental.SplitAccidental(
                     glyphs.get(0), headMembers.get(0), headMembers.get(1), upper, lower);
         }
 
         SourceLocalAccidental capture(
-                SourceLocalAccidental.SharpStrips upper, SourceLocalAccidental.SharpStrips lower) {
+                SourceLocalAccidental.AccidentalStrips upper,
+                SourceLocalAccidental.AccidentalStrips lower) {
             return capture(List.of(split(upper, lower)));
         }
 
-        SourceLocalAccidental capture(List<SourceLocalAccidental.SplitSharp> proofs) {
+        SourceLocalAccidental capture(List<SourceLocalAccidental.SplitAccidental> proofs) {
             return SourceLocalAccidental.capture(
                     symbols,
                     clefs,

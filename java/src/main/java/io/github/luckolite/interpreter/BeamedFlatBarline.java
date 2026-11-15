@@ -5,7 +5,7 @@ package io.github.luckolite.interpreter;
 import java.util.ArrayList;
 import java.util.List;
 
-/** A flat's shaft can borrow beam and staff ink to resemble a divider. */
+/** Recognizes accidentals mistaken for dividers between continuously beamed chords. */
 final class BeamedFlatBarline {
     private BeamedFlatBarline() {}
 
@@ -66,15 +66,25 @@ final class BeamedFlatBarline {
                     PrintedDirectionStaff.printedRules(
                             gray, width, height, column - gap * 2.05f, hint, gap);
         if (rules != null
-                && owns(
-                        labels,
-                        gray,
-                        width,
-                        height,
-                        column,
-                        Math.round(rules[0] - 4 * rules[1]),
-                        Math.round(rules[0]),
-                        rules[1])) return true;
+                && (owns(
+                                labels,
+                                gray,
+                                width,
+                                height,
+                                column,
+                                Math.round(rules[0] - 4 * rules[1]),
+                                Math.round(rules[0]),
+                                rules[1])
+                        || ownsUpstemSharp(labels, gray, width, height, column, rules)))
+            return true;
+        if (rules == null && column + gap * 4.8f < right.right() * width - gap) {
+            var sharpRules =
+                    PrintedDirectionStaff.printedRules(
+                            gray, width, height, column + gap * 4.8f, hint, gap);
+            if (sharpRules != null
+                    && ownsUpstemSharp(labels, gray, width, height, column, sharpRules))
+                return true;
+        }
         // Ledger-supported chords can cover the nearest five-rule windows.
         if (rules == null) {
             float sample = column + gap * 6f;
@@ -134,6 +144,35 @@ final class BeamedFlatBarline {
                 && right != null
                 && continuesAcross(gray, width, height, column, left, right, gap)
                 && flatAt(gray, width, height, column, rightHead.upper(), gap);
+    }
+
+    private static boolean ownsUpstemSharp(
+            byte[] labels, byte[] gray, int width, int height, int column, float[] rules) {
+        float gap = rules[1];
+        int topRule = Math.round(rules[0] - 4 * gap), bottomRule = Math.round(rules[0]);
+        int top = topRule - Math.round(gap), bottom = bottomRule + Math.round(gap * 1.2f);
+        int reach = Math.round(gap * 4.2f);
+        if (gap < 8
+                || gap > 32
+                || column - reach < 0
+                || column + reach >= width
+                || top < 0
+                || bottom >= height
+                || !hasAccidentalSpine(labels, width, height, column, topRule, bottomRule, gap)
+                || solidDivider(gray, width, column, topRule, gap)) return false;
+        var leftHead = nearestDyad(labels, width, column, top, bottom, gap, -1);
+        var rightHead = nearestDyad(labels, width, column, top, bottom, gap, 1);
+        if (leftHead == null || rightHead == null) return false;
+        var left =
+                PairedTremoloInk.stem(gray, width, height, leftHead.x(), leftHead.lower(), gap, 1);
+        var right =
+                PairedTremoloInk.stem(
+                        gray, width, height, rightHead.x(), rightHead.lower(), gap, 1);
+        return left != null
+                && right != null
+                && continuesAcross(gray, width, height, column, left, right, gap)
+                && OmrScoreInterpreter.printedSharpBeforeDyad(
+                        gray, width, height, column, rightHead.x(), rightHead.upper(), gap);
     }
 
     private static boolean ownsDownstemPair(

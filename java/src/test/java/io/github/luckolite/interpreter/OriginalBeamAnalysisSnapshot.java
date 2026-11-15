@@ -58,8 +58,11 @@ final class OriginalBeamAnalysisSnapshot {
                     // Preserve the original snapshot shape for absent accidental provenance.
                     if (value instanceof SourceLocalAccidental
                             && (f.getName().equals("joinedNaturalOwners")
-                                    || f.getName().equals("splitSharpOwners"))
-                            && field instanceof Set<?> owners && owners.isEmpty()) continue;
+                                            && field instanceof Set<?> naturals
+                                            && naturals.isEmpty()
+                                    || f.getName().equals("splitAccidentalOwners")
+                                            && field instanceof Map<?, ?> splitOwners
+                                            && splitOwners.isEmpty())) continue;
                     sorted.put(f.getName(), field);
                 }
         return fields(sorted);
