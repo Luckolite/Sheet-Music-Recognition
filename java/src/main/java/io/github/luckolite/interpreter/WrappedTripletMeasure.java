@@ -61,8 +61,24 @@ final class WrappedTripletMeasure {
                         || followingCount < 18
                         || followingCount > 19
                         || !qualifiedPrecedingEighths(notes, byMeasure.get(i - 1))) continue;
-                lead = WrappedEighthTriplets.half(gray, width, height, regions.get(i), notes, byMeasure.get(i));
-                tail = WrappedEighthTriplets.half(gray, width, height, regions.get(i+1), notes, byMeasure.get(i+1));
+                lead =
+                        WrappedEighthTriplets.half(
+                                gray,
+                                width,
+                                height,
+                                regions.get(i),
+                                notes,
+                                byMeasure.get(i),
+                                labels);
+                tail =
+                        WrappedEighthTriplets.half(
+                                gray,
+                                width,
+                                height,
+                                regions.get(i + 1),
+                                notes,
+                                byMeasure.get(i + 1),
+                                labels);
                 undotted = true;
                 if (lead == null || tail == null) {
                     lead =
@@ -84,7 +100,14 @@ final class WrappedTripletMeasure {
                                     byMeasure.get(i + 1),
                                     false);
                     recoveredShafts = true;
-                } else if (followingCount != 18) continue;
+                } else if (followingCount == 19
+                        && !WrappedEighthTriplets.followingRailAlias(
+                                gray,
+                                width,
+                                height,
+                                regions.get(i + 2),
+                                notes,
+                                byMeasure.get(i + 2))) continue;
             }
             if (lead == null || tail == null) continue;
             int clef = notes.get(lead.owners().get(0)).clefBottomDiatonic();
@@ -115,6 +138,20 @@ final class WrappedTripletMeasure {
             }
             assign(lead, notes, written, undotted);
             assign(tail, notes, written, undotted);
+            if (undotted
+                    && recoveredShafts
+                    && beats[i - 1] == 6
+                    && score.rests().stream().noneMatch(r -> r.measureIndex() == first - 1)
+                    && score.meterChanges().stream().noneMatch(m -> m.measureIndex() == first)) {
+                var predecessor =
+                        WrappedShaftContinuation.closedPredecessor(
+                                gray, width, height, regions, i - 1, notes, byMeasure.get(i - 1));
+                if (predecessor != null) {
+                    int clipped = predecessor.owners().get(1);
+                    notes.set(clipped, notes.get(clipped).withStemDirection(1));
+                    assign(predecessor, notes, written, true);
+                }
+            }
             beats[i] = 3;
             beats[i+1] = 3;
             continuations.add(i+1);
@@ -204,7 +241,7 @@ final class WrappedTripletMeasure {
         double[] onset = undotted ? new double[] {0, 1.0/3, 2.0/3} : new double[] {0, .5, 2.0/3};
         double[] duration = undotted
                 ? new double[] {1.0/3, 1.0/3, 1.0/3} : new double[] {.5, 1.0/6, 1.0/3};
-        for (int i = 0; i < 9; i++) {
+        for (int i = 0; i < half.owners().size(); i++) {
             int index = half.owners().get(i);
             var n = notes.get(index);
             var replacement = new ScoreNoteEvent(

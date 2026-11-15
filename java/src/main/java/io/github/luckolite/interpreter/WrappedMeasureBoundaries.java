@@ -488,7 +488,16 @@ final class WrappedMeasureBoundaries {
         while (paperLeft > cropLeft
                 && staffRules(gray, width, height, staff, paperLeft) == 5
                 && verticalCoverage(gray, width, height, staff, paperLeft) <= .35f) paperLeft--;
-        if (paperRight - paperLeft < gap * blankGaps || paperLeft <= cropLeft) return false;
+        if (paperRight - paperLeft < gap * blankGaps || paperLeft <= cropLeft) {
+            // A faint rail may drop out in an otherwise clear interval after the key.
+            // The independently authenticated clef and full flat signature below remain required.
+            paperLeft = paperRight;
+            int floor = Math.round(cropLeft - gap * .45f);
+            while (paperLeft > floor
+                    && staffRules(gray, width, height, staff, paperLeft) >= 4
+                    && verticalCoverage(gray, width, height, staff, paperLeft) <= .23f) paperLeft--;
+            if (paperRight - paperLeft < gap * blankGaps) return false;
+        }
 
         // Locate the incoming staff edge before the partial signature in the decoder box.
         int limit = Math.max(0, Math.round(cropLeft - gap * 10));

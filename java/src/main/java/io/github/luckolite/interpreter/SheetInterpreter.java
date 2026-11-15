@@ -771,6 +771,9 @@ public final class SheetInterpreter {
                 DottedDyadMeasureSeparator.restorePrintedHooks(
                         finalInterpretation, gray, width, height, physicalPage);
         finalInterpretation =
+                DottedOpeningBeamHooks.apply(
+                        finalInterpretation, gray, annotationGray, width, height);
+        finalInterpretation =
                 finalInterpretation.withClockContextSource(
                         ScoreClockContextCapture.capture(
                                 labels,

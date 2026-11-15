@@ -93,6 +93,114 @@ final class WrappedShaftContinuation {
         return new WrappedTripletMeasure.Half(owners, x);
     }
 
+    /** The complete, separately barred six-triplet run immediately before a verified wrap. */
+    static WrappedTripletMeasure.Half closedPredecessor(
+            byte[] gray,
+            int width,
+            int height,
+            List<MeasureRegion> regions,
+            int index,
+            List<ScoreNoteEvent> notes,
+            List<Integer> candidates) {
+        if (index < 1
+                || index + 1 >= regions.size()
+                || candidates.size() != 18
+                || gray == null
+                || gray.length != (long) width * height) return null;
+        var bar = regions.get(index);
+        var before = regions.get(index - 1);
+        var after = regions.get(index + 1);
+        float gap = (bar.bottom() - bar.top()) * height / 8.2f;
+        float left = bar.left() * width, right = bar.right() * width;
+        float leftPocket = (bar.left() - before.right()) * width;
+        float rightPocket = (after.left() - bar.right()) * width;
+        if (gap < 10
+                || gap > 30
+                || bar.cadenceQuarterBeats() != 0
+                || Math.abs(bar.top() - before.top()) * height > gap * .35f
+                || Math.abs(bar.top() - after.top()) * height > gap * .35f
+                || leftPocket < gap * .4f
+                || leftPocket > gap * 1.6f
+                || rightPocket < gap * .4f
+                || rightPocket > gap * 1.6f) return null;
+        var owners =
+                candidates.stream()
+                        .sorted(
+                                java.util.Comparator.comparingDouble(
+                                        i -> notes.get(i).positionInMeasure()))
+                        .toList();
+        float[] x = new float[18], y = new float[18];
+        var shafts = new PrintedBeamShafts.Shaft[18];
+        var budget = new PrintedBeamShafts.Budget(900_000);
+        int clef = notes.get(owners.get(0)).clefBottomDiatonic(), extraRails = 0;
+        for (int i = 0; i < x.length; i++) {
+            var note = notes.get(owners.get(i));
+            if (note.kind() != ScoreNoteEvent.Kind.PITCHED
+                    || note.visualSize() != ScoreNoteEvent.VisualSize.FULL
+                    || note.staffCount() != 1
+                    || note.staffIndex() != 0
+                    || note.clefBottomDiatonic() != clef
+                    || note.crossStaffBeam()
+                    || note.augmentationDots() != 0
+                    || note.tiedFromPrevious()
+                    || note.boundaryTies() != 0
+                    || note.leadingRestBeats() != 0
+                    || note.followingRestBeats() != 0
+                    || note.unbeamedDurationBeats() != 0
+                    || (note.articulations() & NoteOrnament.GRACE) != 0
+                    || note.tupletDivisor() != 1
+                    || note.beamCount() < 1
+                    || note.beamCount() > 2
+                    || note.beamCount() == 2 && (i >= 3 || ++extraRails > 1)
+                    || Math.abs(note.stemDirection()) != 1 && (i != 1 || note.stemDirection() != 0))
+                return null;
+            x[i] = left + (right - left) * note.positionInMeasure();
+            y[i] = note.pageY() * height;
+            if (i > 0
+                    && (x[i] - x[i - 1] < gap * 1.65f
+                            || x[i] - x[i - 1] > gap * 3.4f
+                            || WrappedTripletDotInk.uniqueCore(
+                                            gray, width, height, x[i - 1], y[i - 1], x[i], gap)
+                                    != null)) return null;
+            var raw = PrintedBeamShafts.at(gray, width, height, x[i], y[i], gap, budget);
+            if (raw.size() > 1
+                    || raw.size() == 1 && raw.get(0).direction() != -note.stemDirection())
+                return null;
+            if (raw.size() == 1) shafts[i] = raw.get(0);
+        }
+        var closed =
+                new MeasureRegion(
+                        (bar.left() + before.right()) * .5f,
+                        (bar.right() + after.left()) * .5f,
+                        bar.top(),
+                        bar.bottom());
+        if (!WrappedMeasureBoundaries.confirmsClosedTripletBar(
+                gray, width, height, closed, x[0], x[17])) return null;
+        for (int i = 0; i < x.length; i += 3) {
+            int direction = -notes.get(owners.get(i)).stemDirection();
+            int middle = notes.get(owners.get(i + 1)).stemDirection();
+            if ((i != 0 || middle != 0) && middle != -direction
+                    || notes.get(owners.get(i + 2)).stemDirection() != -direction) return null;
+            var group =
+                    recoverGroup(
+                            gray,
+                            width,
+                            height,
+                            gap,
+                            java.util.Arrays.copyOfRange(x, i, i + 3),
+                            java.util.Arrays.copyOfRange(y, i, i + 3),
+                            direction,
+                            java.util.Arrays.copyOfRange(shafts, i, i + 3));
+            if (group == null || i == 0 && (direction != -1 || group.revised() != 1)) return null;
+            System.arraycopy(group.shafts(), 0, shafts, i, 3);
+        }
+        for (int i = 2; i + 1 < x.length; i += 3)
+            if (shafts[i].direction() == shafts[i + 1].direction()
+                    && !WrappedEighthTriplets.matchesRailBridge(
+                            gray, width, height, shafts[i], shafts[i + 1], gap, false)) return null;
+        return new WrappedTripletMeasure.Half(owners, x);
+    }
+
     static Packed recoverGroup(
             byte[] gray,
             int width,

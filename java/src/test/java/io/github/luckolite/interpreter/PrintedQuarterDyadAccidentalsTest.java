@@ -62,6 +62,93 @@ public class PrintedQuarterDyadAccidentalsTest {
         assertFalse(closed(missingRule));
     }
 
+    @Test
+    public void singleNaturalAuthenticatesTheWideClosedCadence() {
+        var source = naturalCadence(false);
+        assertTrue(provesNaturalCadence(source, false));
+
+        var unauthorized = naturalCadence(false);
+        paint(unauthorized.labels(), 143, 167, 54, 145, 0);
+        assertFalse(provesNaturalCadence(unauthorized, false));
+
+        var openSystem = naturalCadence(false);
+        removeDoubleBarline(openSystem);
+        assertFalse(provesNaturalCadence(openSystem, false));
+    }
+
+    @Test
+    public void lowerNaturalAndRawFlatSpineAuthenticateEvenAtPageEnd() {
+        var source = naturalCadence(true);
+        assertTrue(provesNaturalCadence(source, true));
+
+        var missingSpine = naturalCadence(true);
+        paint(missingSpine.gray(), 151, 157, 87, 112, 255);
+        for (int y = 80; y <= 144; y += 16) paint(missingSpine.gray(), 151, 157, y, y + 1, 0);
+        assertFalse(provesNaturalCadence(missingSpine, true));
+    }
+
+    private static boolean provesNaturalCadence(Page image, boolean lowerNatural) {
+        var bar =
+                new MeasureRegion(
+                        LEFT / (float) WIDTH, RIGHT / (float) WIDTH, 45f / HEIGHT, 165f / HEIGHT);
+        var next =
+                lowerNatural
+                        ? null
+                        : new MeasureRegion(
+                                50f / WIDTH, 325f / WIDTH, 175f / HEIGHT, 247f / HEIGHT);
+        var upper =
+                note(
+                        182,
+                        lowerNatural ? 120 : 80,
+                        lowerNatural ? 3 : 8,
+                        lowerNatural
+                                ? ScoreNoteEvent.ACCIDENTAL_FLAT
+                                : ScoreNoteEvent.ACCIDENTAL_NATURAL);
+        var lower =
+                note(
+                        183,
+                        lowerNatural ? 160 : 96,
+                        lowerNatural ? -2 : 6,
+                        lowerNatural
+                                ? ScoreNoteEvent.ACCIDENTAL_NATURAL
+                                : ScoreNoteEvent.ACCIDENTAL_FROM_KEY);
+        return PrintedQuarterDyadAccidentals.proves(
+                image.labels(),
+                image.gray(),
+                WIDTH,
+                HEIGHT,
+                bar,
+                next,
+                List.of(upper, lower),
+                List.of(new PlayingTechniqueDetector.Staff(80, 144, 16, 0, 1)));
+    }
+
+    private static Page naturalCadence(boolean lowerNatural) {
+        var image = twoSigns();
+        paint(image.gray(), 141, 168, 47, 192, 255);
+        paint(image.labels(), 141, 168, 47, 192, 0);
+        for (int y = 80; y <= 144; y += 16) paint(image.gray(), 141, 168, y, y + 1, 0);
+        int shift = lowerNatural ? 80 : 0;
+        mark(image, 149, 152, 54 + shift, 93 + shift);
+        mark(image, 160, 163, 67 + shift, 105 + shift);
+        mark(image, 149, 163, 67 + shift, 73 + shift);
+        mark(image, 149, 163, 84 + shift, 90 + shift);
+        if (lowerNatural) {
+            paint(image.gray(), 153, 156, 92, 112, 0);
+            mark(image, 153, 156, 113, 128);
+            mark(image, 153, 166, 112, 118);
+            mark(image, 153, 164, 119, 122);
+            mark(image, 153, 160, 123, 126);
+            paint(image.labels(), 153, 156, 112, 112, 0);
+        }
+        return image;
+    }
+
+    private static void removeDoubleBarline(Page image) {
+        paint(image.gray(), 274, 284, 78, 145, 255);
+        for (int y = 80; y <= 144; y += 16) paint(image.gray(), 274, 284, y, y + 1, 0);
+    }
+
     private static boolean closed(Page image) {
         var region =
                 new MeasureRegion(

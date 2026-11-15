@@ -23,8 +23,98 @@ final class WrappedEighthTriplets {
 
     static WrappedTripletMeasure.Half half(byte[] gray, int width, int height, MeasureRegion bar,
             List<ScoreNoteEvent> notes, List<Integer> candidates) {
+        return half(gray, width, height, bar, notes, candidates, null);
+    }
+
+    static WrappedTripletMeasure.Half half(
+            byte[] gray,
+            int width,
+            int height,
+            MeasureRegion bar,
+            List<ScoreNoteEvent> notes,
+            List<Integer> candidates,
+            byte[] labels) {
         if (candidates.size() != 9) return null;
-        return singleRailGroups(gray, width, height, bar, notes, candidates, false);
+        return singleRailGroups(gray, width, height, bar, notes, candidates, false, false, labels);
+    }
+
+    /** Verify a reverse-facing mask on a genuine triplet's single rail in the following bar. */
+    static boolean followingRailAlias(
+            byte[] gray,
+            int width,
+            int height,
+            MeasureRegion bar,
+            List<ScoreNoteEvent> notes,
+            List<Integer> candidates) {
+        if (candidates.size() != 19) return false;
+        var ordered =
+                candidates.stream()
+                        .map(notes::get)
+                        .sorted(Comparator.comparingDouble(ScoreNoteEvent::positionInMeasure))
+                        .toList();
+        float gap = (bar.bottom() - bar.top()) * height / 8.2f;
+        if (!Float.isFinite(gap) || gap < 10 || gap > 30) return false;
+        float left = width * bar.left(), span = width * (bar.right() - bar.left());
+        int aliases = 0;
+        var budget = new PrintedBeamShafts.Budget(250_000);
+        for (int i = 2; i + 1 < ordered.size(); i++) {
+            // The two flanks belong to the same group after dropping this mask from the count.
+            if (i % 3 != 2) continue;
+            var a = ordered.get(i - 2);
+            var b = ordered.get(i - 1);
+            var mask = ordered.get(i);
+            var c = ordered.get(i + 1);
+            if (a.stemDirection() != 1
+                    || b.stemDirection() != 1
+                    || c.stemDirection() != 1
+                    || mask.stemDirection() != -1
+                    || a.kind() != ScoreNoteEvent.Kind.PITCHED
+                    || b.kind() != ScoreNoteEvent.Kind.PITCHED
+                    || mask.kind() != ScoreNoteEvent.Kind.PITCHED
+                    || c.kind() != ScoreNoteEvent.Kind.PITCHED
+                    || a.beamCount() != 1
+                    || b.beamCount() != 1
+                    || c.beamCount() != 1
+                    || mask.beamCount() != 1
+                    || mask.augmentationDots() != 0
+                    || mask.tiedFromPrevious()
+                    || mask.boundaryTies() != 0
+                    || mask.staffCount() != 1) continue;
+
+            float ax = left + span * a.positionInMeasure(),
+                    bx = left + span * b.positionInMeasure();
+            float mx = left + span * mask.positionInMeasure(),
+                    cx = left + span * c.positionInMeasure();
+            float ay = a.pageY() * height, by = b.pageY() * height, my = mask.pageY() * height;
+            float cy = c.pageY() * height;
+            if (bx - ax < gap * 1.55f
+                    || bx - ax > gap * 3.25f
+                    || cx - bx < gap * 1.55f
+                    || cx - bx > gap * 3.25f
+                    || mx - bx < gap * .68f
+                    || mx - bx > gap * 1.15f
+                    || cx - mx < gap * 1.25f
+                    || cx - mx > gap * 2.15f
+                    || !(my + gap * 1.6f < cy && cy + gap * .60f < by && by + gap * .60f < ay))
+                continue;
+            var first = PrintedBeamShafts.at(gray, width, height, ax, ay, gap, budget);
+            var last = PrintedBeamShafts.at(gray, width, height, cx, cy, gap, budget);
+            if (first.size() != 1
+                    || last.size() != 1
+                    || first.get(0).direction() != -1
+                    || last.get(0).direction() != -1
+                    || !matchesRailBridge(
+                            gray, width, height, first.get(0), last.get(0), gap, true)) continue;
+            var ribbon = bestRibbon(gray, width, height, first.get(0), last.get(0), gap);
+            float start = (first.get(0).left() + first.get(0).right()) * .5f;
+            float end = (last.get(0).left() + last.get(0).right()) * .5f;
+            if (start >= mx || mx >= end) continue;
+            float railY =
+                    ribbon.leftY()
+                            + (ribbon.rightY() - ribbon.leftY()) * (mx - start) / (end - start);
+            if (Math.abs(railY - my) <= gap * .40f && ++aliases > 1) return false;
+        }
+        return aliases == 1;
     }
 
     /** Printed groups of three eighths fill a physically closed bar with a quarter-note beat. */
@@ -249,6 +339,21 @@ final class WrappedEighthTriplets {
             List<Integer> candidates,
             boolean closedBar,
             boolean allowSingleFlat) {
+        return singleRailGroups(
+                gray, width, height, bar, notes, candidates, closedBar, allowSingleFlat, null);
+    }
+
+    private static WrappedTripletMeasure.Half singleRailGroups(
+            byte[] gray,
+            int width,
+            int height,
+            MeasureRegion bar,
+            List<ScoreNoteEvent> notes,
+            List<Integer> candidates,
+            boolean closedBar,
+            boolean allowSingleFlat,
+            byte[] labels) {
+        boolean wrapped = !closedBar && labels != null && labels.length == gray.length;
         var owners = candidates.stream()
                 .sorted(Comparator.comparingDouble(i -> notes.get(i).positionInMeasure())).toList();
         float[] x = new float[owners.size()], y = new float[owners.size()];
@@ -262,18 +367,41 @@ final class WrappedEighthTriplets {
         PrintedBeamShaftPixels.Frame contrast = null;
         for (int i = 0; i < owners.size(); i++) {
             var n = notes.get(owners.get(i));
-            if (n.kind() != ScoreNoteEvent.Kind.PITCHED || n.staffIndex() != 0 || n.staffCount() != 1
-                    || n.visualSize() != ScoreNoteEvent.VisualSize.FULL || n.beamCount() < 1 || n.beamCount() > 2
-                    || n.augmentationDots() != 0 || n.unbeamedDurationBeats() != 0 || n.crossStaffBeam()
-                    || n.leadingRestBeats() != 0 || n.followingRestBeats() != 0 || n.tiedFromPrevious()
-                    || n.boundaryTies() != 0 || (n.articulations() & NoteOrnament.GRACE) != 0
-                    || clef == ScoreNoteEvent.CLEF_UNKNOWN || n.clefBottomDiatonic() != clef
+            if (n.kind() != ScoreNoteEvent.Kind.PITCHED
+                    || n.staffIndex() != 0
+                    || n.staffCount() != 1
+                    || n.visualSize() != ScoreNoteEvent.VisualSize.FULL
+                    || n.beamCount() < 1
+                    || n.beamCount() > 2
+                    || n.unbeamedDurationBeats() != 0
+                    || n.crossStaffBeam()
+                    || n.leadingRestBeats() != 0
+                    || n.followingRestBeats() != 0
+                    || n.tiedFromPrevious()
+                    || n.boundaryTies() != 0
+                    || (n.articulations() & NoteOrnament.GRACE) != 0
+                    || clef == ScoreNoteEvent.CLEF_UNKNOWN
+                    || n.clefBottomDiatonic() != clef
                     || !(n.tupletDivisor() == 1
                             || n.tupletDivisor() == 3 && n.tupletNormalNotes() == 2)
                     || Math.abs(n.stemDirection()) != 1) return null;
             if (n.beamCount() == 2 && ++reportedExtraRail > 1) return null;
             x[i] = left + (right - left) * n.positionInMeasure();
             y[i] = n.pageY() * height;
+            if (n.augmentationDots() != 0
+                    && !(wrapped
+                            && n.augmentationDots() == 1
+                            && i + 1 < owners.size()
+                            && fingeringThreeOwnsDot(
+                                    gray,
+                                    width,
+                                    height,
+                                    left,
+                                    right,
+                                    x[i],
+                                    y[i],
+                                    notes.get(owners.get(i + 1)),
+                                    gap))) return null;
             if (i > 0) {
                 float space = x[i] - x[i - 1];
                 if (space < gap * 1.65f) return null;
@@ -311,8 +439,41 @@ final class WrappedEighthTriplets {
                 shafts.add(null);
                 continue;
             }
+            if (wrapped && source.size() == 2 && i + 1 < owners.size()) {
+                var next = notes.get(owners.get(i + 1));
+                var unintended =
+                        source.stream()
+                                .filter(shaft -> shaft.direction() == n.stemDirection())
+                                .findFirst();
+                if (unintended.isPresent()
+                        && next.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_SHARP) {
+                    var rival = unintended.get();
+                    float nextX = left + (right - left) * next.positionInMeasure();
+                    float nextY = next.pageY() * height;
+                    if (rival.left() > x[i] + gap * .55f
+                            && rival.right() < nextX - gap * .85f
+                            && OmrScoreInterpreter.printedSharpBeforeDyad(
+                                    gray, width, height, rival.left(), nextX, nextY, gap)) {
+                        source = source.stream().filter(shaft -> shaft != rival).toList();
+                    }
+                }
+            }
             if (source.size() != 1 || source.get(0).direction() != -n.stemDirection()) return null;
             shafts.add(source.get(0));
+        }
+        if (wrapped) {
+            for (int middle = 1; middle < x.length; middle += 3) {
+                var earlier = shafts.get(middle - 1);
+                var axis = shafts.get(middle);
+                var later = shafts.get(middle + 1);
+                if (earlier.direction() != axis.direction()
+                        || later.direction() != axis.direction()
+                        || singleRail(gray, width, height, earlier, axis, gap)
+                                && singleRail(gray, width, height, axis, later, gap)) continue;
+                var adjusted =
+                        trimExtendedMiddleShaft(gray, width, height, earlier, axis, later, gap);
+                if (adjusted != null) shafts.set(middle, adjusted);
+            }
         }
         if (x.length == 18) {
             for (int middle = 1; middle < x.length; middle += 3) {
@@ -336,6 +497,15 @@ final class WrappedEighthTriplets {
             var dot =
                     WrappedTripletDotInk.uniqueCore(gray, width, height, x[i], y[i], x[i + 1], gap);
             if (dot != null
+                    && !(wrapped
+                            && highLedgerOwnsDot(
+                                    gray, labels, width, height, bar, x[i], y[i], dot, gap))
+                    && !(wrapped
+                            && notes.get(owners.get(i + 1)).writtenAccidental()
+                                    == ScoreNoteEvent.ACCIDENTAL_SHARP
+                            && sharpOwnsDot(
+                                    gray, labels, width, height, x[i], y[i], dot, x[i + 1],
+                                    y[i + 1], gap))
                     && (x.length != 18
                             || !headConnectedLedger(gray, width, height, x[i], y[i], dot, gap))
                     && !(x.length == 12
@@ -380,6 +550,139 @@ final class WrappedEighthTriplets {
             if (!same || !singleRail(gray, width, height, a, b, gap)) return null;
         }
         return !allowSingleFlat || flatOwnsDot ? new WrappedTripletMeasure.Half(owners, x) : null;
+    }
+
+    /** Keep a proved beam endpoint when the scanner continues into adjacent vertical ink. */
+    static PrintedBeamShafts.Shaft trimExtendedMiddleShaft(
+            byte[] gray,
+            int width,
+            int height,
+            PrintedBeamShafts.Shaft a,
+            PrintedBeamShafts.Shaft middle,
+            PrintedBeamShafts.Shaft c,
+            float gap) {
+        int x0 = (a.left() + a.right()) / 2;
+        int x = (middle.left() + middle.right()) / 2;
+        int x1 = (c.left() + c.right()) / 2;
+        if (x0 >= x || x >= x1 || !singleRail(gray, width, height, a, c, gap)) return null;
+        int end = Math.round(a.endY() + (c.endY() - a.endY()) * (x - x0) / (float) (x1 - x0));
+        int direction = middle.direction();
+        float overrun = (middle.endY() - end) * direction;
+        if (overrun < gap * .72f || overrun > gap * 1.55f) return null;
+        int inner = end - direction * Math.round(gap * .45f);
+        if (inner < 0 || inner >= height || end < 0 || end >= height) return null;
+        for (int y = inner; (end - y) * direction >= 0; y += direction) {
+            boolean occupied = false;
+            for (int col = middle.left(); col <= middle.right(); col++)
+                occupied |= (gray[y * width + col] & 255) < 165;
+            if (!occupied) return null;
+        }
+        var shortened =
+                new PrintedBeamShafts.Shaft(
+                        middle.left(),
+                        middle.right(),
+                        middle.startY(),
+                        end,
+                        direction,
+                        middle.columns());
+        return singleRail(gray, width, height, a, shortened, gap)
+                        && singleRail(gray, width, height, shortened, c, gap)
+                ? shortened
+                : null;
+    }
+
+    /** The core lies on the next pitch's printed sharp or on the current head's ledger tip. */
+    private static boolean sharpOwnsDot(
+            byte[] gray,
+            byte[] labels,
+            int width,
+            int height,
+            float headX,
+            float headY,
+            WrappedTripletDotInk.Center core,
+            float nextX,
+            float nextY,
+            float gap) {
+        if (nextX - core.x() < gap * 1.35f
+                || nextX - core.x() > gap * 2.15f
+                || core.y() - nextY < gap * .80f
+                || core.y() - nextY > gap * 1.55f
+                || !OmrScoreInterpreter.printedSharpBeforeDyad(
+                        gray, width, height, core.x(), nextX, nextY, gap)) return false;
+        int label = labels[core.y() * width + core.x()] & 255;
+        if (label == OmrMeasurePostProcessor.CLEF_OR_KEY) return true;
+        if (label != OmrMeasurePostProcessor.SYMBOL || Math.abs(headY - core.y()) > gap * .24f)
+            return false;
+        int left = Math.round(headX + gap * .46f);
+        for (int y = core.y() - 1; y <= core.y() + 1; y++) {
+            boolean linked = true;
+            for (int x = left; x <= core.x(); x++) linked &= (gray[y * width + x] & 255) < 155;
+            if (linked) return true;
+        }
+        return false;
+    }
+
+    /** A clipped lower lobe can be part of a completely printed fingering above the next note. */
+    static boolean fingeringThreeOwnsDot(
+            byte[] gray,
+            int width,
+            int height,
+            float left,
+            float right,
+            float headX,
+            float headY,
+            ScoreNoteEvent next,
+            float gap) {
+        if (next.stemDirection() != -1 || next.visualSize() != ScoreNoteEvent.VisualSize.FULL)
+            return false;
+        float nextX = left + (right - left) * next.positionInMeasure();
+        float nextY = next.pageY() * height;
+        if (nextX - headX < gap * 1.65f
+                || nextX - headX > gap * 2.45f
+                || nextY - headY < gap * 1.05f
+                || nextY - headY > gap * 1.75f
+                || WrappedTripletDotInk.uniqueCore(gray, width, height, headX, headY, nextX, gap)
+                        != null) return false;
+        int l = Math.round(nextX - gap * .84f), r = Math.round(nextX + gap * .84f);
+        int t = Math.round(nextY - gap * 2.65f), b = Math.round(nextY - gap * .66f);
+        if (l < 0 || r >= width || t < 0 || b >= height) return false;
+        var shape =
+                RawNumeralComponents.capture(
+                        gray, width, height, l, t, r, b, 139, () -> {}, () -> {});
+        int owners = 0;
+        for (var ink : shape.components()) {
+            float x = (ink.left + ink.right) * .5f;
+            float y = (ink.top + ink.bottom) * .5f;
+            if (ink.left <= l
+                    || ink.right >= r
+                    || ink.top <= t
+                    || ink.bottom >= b
+                    || Math.abs(x - nextX) > gap * .35f
+                    || Math.abs(y - headY) > gap * .39f
+                    || ink.bottom - ink.top + 1 < gap * .7f
+                    || ink.bottom - ink.top + 1 > gap * 1.5f
+                    || !TripletRhythmDetector.isIsolatedThree(ink, width)) continue;
+            owners++;
+        }
+        return owners == 1;
+    }
+
+    /** A short, head-connected ledger tip is part of the printed pitch. */
+    private static boolean highLedgerOwnsDot(
+            byte[] gray,
+            byte[] labels,
+            int width,
+            int height,
+            MeasureRegion bar,
+            float headX,
+            float headY,
+            WrappedTripletDotInk.Center core,
+            float gap) {
+        float staffTop = bar.bottom() * height - gap * 6.1f;
+        return headY < staffTop - gap * .8f
+                && labels[core.y() * width + core.x()] == OmrMeasurePostProcessor.SYMBOL
+                && Math.abs(headY - core.y()) <= gap * .25f
+                && headConnectedLedger(gray, width, height, headX, headY, core, gap, .48f);
     }
 
     private static boolean pairedFlatAfter(
