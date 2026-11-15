@@ -77,4 +77,17 @@ public class OctaveSystemOwnershipTest {
         assertEquals(-1, notes.get(0).octaveShift());
         assertEquals(0, notes.get(1).octaveShift());
     }
+
+    @Test
+    public void measuredLedgerPitchKeepsAHighHeadWithItsOwnSystem() {
+        var regions =
+                List.of(new MeasureRegion(0, 1, .25f, .5f), new MeasureRegion(0, 1, .7f, .9f));
+        var bound = new ScoreNoteEvent(1, .4f, 18, 0, 1, 190f / H, false, 0, 0, 2, 1);
+        var unresolved = new ScoreNoteEvent(1, .5f, 6, 0, 1, 190f / H, false, 0, 0, 2, 1);
+        var notes =
+                OctaveMarkDetector.apply(
+                        List.of(), STAFFS, regions, List.of(bound, unresolved), page(-12), W, H);
+        assertEquals(0, notes.get(0).octaveShift());
+        assertEquals(-1, notes.get(1).octaveShift());
+    }
 }

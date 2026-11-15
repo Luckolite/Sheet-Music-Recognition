@@ -97,7 +97,7 @@ public final class SheetInterpreter {
 
     static AnalyzedPage analyzeWithPrintedSources(byte[] labels, byte[] gray, int width, int height,
             Annotations annotations, MusicalOcr ocr, int physicalPage, byte[] decoderGray,
-            TablatureDecoder.Prepared preparedTabs) {
+            TablatureDecoder.Prepared preparedTabs, ScoreMeterChange inheritedMeter) {
         var score = analyze(labels, gray, width, height, annotations, ocr, physicalPage,
                 decoderGray, preparedTabs);
         return new AnalyzedPage(score, score.notes(), SourceLocalAccidental.unavailable());
