@@ -41,6 +41,50 @@ public class ClosedEighthAndDottedPairsTest {
         assertSame(score, apply(score, noBar));
     }
 
+    @Test
+    public void restoresAnUpStemTerminalHookInAMixedStemMeasure() {
+        var original = fixture();
+        var notes = new ArrayList<>(original.notes());
+        var gray = page();
+        int start = FIRST + 7 * SPACING;
+        int finish = FIRST + 13 * SPACING;
+        int upHead = 2 * (STAFF_BOTTOM - 32) - HEAD;
+        paint(gray, start - 23, finish + 12, 0, H - 1, (byte) 255);
+        for (int line = STAFF_BOTTOM - 64; line <= STAFF_BOTTOM; line += 16)
+            paint(gray, start - 23, finish + 12, line, line, (byte) 0);
+        paint(gray, start + 8, finish + 10, 179, 186, (byte) 0);
+        paint(gray, start + 8, finish + 10, 193, 200, (byte) 0);
+        for (int i = 7; i < 14; i++) {
+            int x = FIRST + i * SPACING;
+            int slot = i % 7;
+            boolean dotted = slot % 2 == 1;
+            int beams = slot == 0 ? 1 : dotted || i == 13 ? 2 : 3;
+            notes.set(i, note(x, upHead, -2, dotted ? 1 : 0, beams, 1));
+            paint(gray, x + 8, x + 10, 179, upHead, (byte) 0);
+            paint(gray, x - 8, x + 9, upHead - 5, upHead + 5, (byte) 0);
+            if (dotted) {
+                for (int dy = -3; dy <= 3; dy++)
+                    for (int dx = -3; dx <= 3; dx++)
+                        if (dx * dx + dy * dy <= 10) gray[(upHead - 4 + dy) * W + x + 20 + dx] = 0;
+            } else if (slot != 0) {
+                paint(gray, x - 3, x + 10, 205, 214, (byte) 0);
+            }
+        }
+        var score =
+                original.withNotes(
+                        notes, java.util.stream.IntStream.range(0, notes.size()).boxed().toList());
+        var fixed = apply(score, gray);
+        assertEquals(3, fixed.notes().get(13).beamCount());
+        var terminal =
+                ScoreNoteTiming.writtenPlacement(fixed.notes().get(13), fixed.notes(), 4)
+                        .orElseThrow();
+        assertEquals(3.875, terminal.onsetBeats(), 0);
+        assertEquals(.125, terminal.durationBeats(), 0);
+
+        paint(gray, finish - 3, finish + 7, 205, 214, (byte) 255);
+        assertSame(score, apply(score, gray));
+    }
+
     private static ScorePageInterpretation apply(ScorePageInterpretation score, byte[] gray) {
         return ClosedDottedSixteenths.apply(score, gray, W, H);
     }

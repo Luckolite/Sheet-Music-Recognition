@@ -50,14 +50,55 @@ public class ClosedFourDyadBeamTest {
         assertFalse(proves(gray, -1));
     }
 
+    @Test
+    public void independentlyMeasuredSingleStaffCrossingCanOccludeOneSeam() {
+        var gray = image(1);
+        int middle = (OUTER + INNER) / 2;
+        paint(gray, 1, 110, 120, middle - 3, middle + 3, (byte) 0);
+        assertTrue(
+                ClosedFourDyadBeam.provesOctaves(gray, WIDTH, HEIGHT, heads(1), GAP, y(1, middle)));
+        assertFalse(
+                ClosedFourDyadBeam.provesOctaves(
+                        gray, WIDTH, HEIGHT, heads(1), GAP, y(1, middle + 5)));
+    }
+
+    @Test
+    public void twoOccludedBridgesDoNotQualifyAsOneStaffCrossing() {
+        var gray = image(1);
+        int middle = (OUTER + INNER) / 2;
+        paint(gray, 1, 78, 88, middle - 3, middle + 3, (byte) 0);
+        paint(gray, 1, 110, 120, middle - 3, middle + 3, (byte) 0);
+        assertFalse(
+                ClosedFourDyadBeam.provesOctaves(gray, WIDTH, HEIGHT, heads(1), GAP, y(1, middle)));
+    }
+
+    @Test
+    public void innerRailCanCrossVerifiedStaffForOnlyAShortRun() {
+        var gray = image(1);
+        paint(gray, 1, 173, 175, INNER - 2, INNER + 2, (byte) 0);
+        assertFalse(
+                ClosedFourDyadBeam.provesOctaves(gray, WIDTH, HEIGHT, heads(1), GAP, y(1, INNER)));
+        assertTrue(
+                ClosedFourDyadBeam.provesOctaves(
+                        gray, WIDTH, HEIGHT, heads(1), GAP, y(1, INNER), 1, true));
+        paint(gray, 1, 176, 194, INNER - 2, INNER + 2, (byte) 0);
+        assertFalse(
+                ClosedFourDyadBeam.provesOctaves(
+                        gray, WIDTH, HEIGHT, heads(1), GAP, y(1, INNER), 1, true));
+    }
+
     private static boolean proves(byte[] gray, int direction) {
+        return ClosedFourDyadBeam.proves(gray, WIDTH, HEIGHT, heads(direction), GAP, direction);
+    }
+
+    private static ClosedFourDyadBeam.Head[] heads(int direction) {
         var heads = new ClosedFourDyadBeam.Head[4];
         for(int i = 0; i < heads.length; i++) {
             int a = y(direction, UPPER), b = y(direction, LOWER);
             int center = direction < 0 ? CENTERS[i] : CENTERS[heads.length - i - 1];
             heads[i] = new ClosedFourDyadBeam.Head(x(direction, center), Math.min(a,b), Math.max(a,b));
         }
-        return ClosedFourDyadBeam.proves(gray, WIDTH, HEIGHT, heads, GAP, direction);
+        return heads;
     }
 
     private static byte[] image(int direction) {

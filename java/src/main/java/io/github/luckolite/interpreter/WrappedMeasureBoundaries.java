@@ -111,6 +111,29 @@ final class WrappedMeasureBoundaries {
         if (bar == null) return false;
         var staff = track(gray, width, height, bar);
         if (staff == null) return false;
+        return confirmsClosed(gray, width, height, bar, firstHead, lastHead, staff);
+    }
+
+    static boolean confirmsClosedWithVerifiedStaff(
+            byte[] gray,
+            int width,
+            int height,
+            MeasureRegion region,
+            float firstHead,
+            float lastHead,
+            StaffPitchTrack staff) {
+        var bar = box(region, width, height);
+        return bar != null && confirmsClosed(gray, width, height, bar, firstHead, lastHead, staff);
+    }
+
+    private static boolean confirmsClosed(
+            byte[] gray,
+            int width,
+            int height,
+            Box bar,
+            float firstHead,
+            float lastHead,
+            StaffPitchTrack staff) {
         float gap = staff.at(firstHead)[1];
         if (firstHead - bar.left < gap * .88f || bar.right - lastHead < gap * 1.2f) return false;
         return unownedClosedEdge(gray, width, height, staff, bar.left, firstHead, true, gap)

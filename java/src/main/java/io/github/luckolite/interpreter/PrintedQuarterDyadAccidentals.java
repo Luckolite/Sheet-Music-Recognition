@@ -13,9 +13,39 @@ final class PrintedQuarterDyadAccidentals {
     static boolean proves(byte[] labels, byte[] gray, int width, int height,
             MeasureRegion measure, MeasureRegion next, List<ScoreNoteEvent> chord,
             List<PlayingTechniqueDetector.Staff> staffs) {
-        if (gray == null || labels == null || gray.length != (long) width * height
-                || labels.length != gray.length || chord.size() != 2 || next == null
-                || next.top() <= measure.bottom() || measure.cadenceQuarterBeats() != 0) return false;
+        return proves(labels, gray, width, height, measure, next, chord, staffs, false);
+    }
+
+    static boolean provesBeforeTripleRepeat(
+            byte[] labels,
+            byte[] gray,
+            int width,
+            int height,
+            MeasureRegion measure,
+            MeasureRegion next,
+            List<ScoreNoteEvent> chord,
+            List<PlayingTechniqueDetector.Staff> staffs) {
+        return proves(labels, gray, width, height, measure, next, chord, staffs, true);
+    }
+
+    private static boolean proves(
+            byte[] labels,
+            byte[] gray,
+            int width,
+            int height,
+            MeasureRegion measure,
+            MeasureRegion next,
+            List<ScoreNoteEvent> chord,
+            List<PlayingTechniqueDetector.Staff> staffs,
+            boolean inline) {
+        if (gray == null
+                || labels == null
+                || gray.length != (long) width * height
+                || labels.length != gray.length
+                || chord.size() != 2
+                || next == null
+                || (next.top() <= measure.bottom()) != inline
+                || measure.cadenceQuarterBeats() != 0) return false;
         var a = chord.get(0);
         var b = chord.get(1);
         if (a.unbeamedDurationBeats() != 1 || b.unbeamedDurationBeats() != 1
@@ -28,6 +58,7 @@ final class PrintedQuarterDyadAccidentals {
         boolean twoFlats =
                 a.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_FLAT
                         && b.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_FLAT;
+        if (inline && (!twoFlats || Math.abs(a.staffStep() - b.staffStep()) != 7)) return false;
         if (!twoFlats
                 && (a.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_NATURAL
                         || b.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_FLAT
@@ -45,8 +76,9 @@ final class PrintedQuarterDyadAccidentals {
                     || gap > 32
                     || fitted.index() != 0
                     || fitted.count() != 1
-                    || span > gap * 8.5f
-                    || twoFlats && span < gap * 5.5f
+                    || span > gap * (inline ? 6.25f : 8.5f)
+                    || twoFlats && span < gap * (inline ? 4.5f : 5.5f)
+                    || inline && Math.abs(measure.top() - next.top()) * height > gap * .5f
                     || Math.abs(ax - bx) > gap * .30f
                     || Math.abs(ay - by) < gap * .7f
                     || fitted.top() < measure.top() * height - gap
@@ -60,10 +92,14 @@ final class PrintedQuarterDyadAccidentals {
             var staff = new PlayingTechniqueDetector.Staff(top, rules[0], gap, 0, 1);
             int opening = PrintedCadenceDurations.boundaryColumn(
                     gray, width, staff, left - gap * .5f, true, false);
-            int closing = PrintedCadenceDurations.boundaryColumn(
-                    gray, width, staff, right, false, false);
-            if (closing < 0) closing = PrintedCadenceDurations.boundaryColumn(
-                    gray, width, staff, right + gap * .35f, false, false);
+            float rightRule = inline ? (right + next.left() * width) * .5f : right;
+            int closing =
+                    PrintedCadenceDurations.boundaryColumn(
+                            gray, width, staff, rightRule, false, false);
+            if (closing < 0 && !inline)
+                closing =
+                        PrintedCadenceDurations.boundaryColumn(
+                                gray, width, staff, right + gap * .35f, false, false);
             if (opening < 0 || closing < 0 || ax - opening < 2.5f * gap
                     || closing - ax < 2.5f * gap) continue;
             if (ownedPair(

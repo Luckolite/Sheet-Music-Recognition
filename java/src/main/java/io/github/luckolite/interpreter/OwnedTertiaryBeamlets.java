@@ -136,6 +136,18 @@ final class OwnedTertiaryBeamlets {
         return List.copyOf(result);
     }
 
+    static boolean provesMonophonicBackwardHook(
+            byte[] gray, int width, int height, Head owner, Head preceding, float gap) {
+        if (owner.note().stemDirection() == 0
+                || preceding.note().stemDirection() != owner.note().stemDirection()) return false;
+        var budget = new PrintedBeamShafts.Budget(100_000);
+        var own = monoAxes(gray, width, height, owner, gap, budget);
+        var peer = monoAxes(gray, width, height, preceding, gap, budget);
+        return !budget.refused()
+                && proveSide(gray, width, height, own, peer, gap, -1)
+                && !proveSide(gray, width, height, peer, own, gap, 1);
+    }
+
     private static boolean plain(Head head, int beams, int dots, int stem) {
         var n = head.note();
         return n.kind() == ScoreNoteEvent.Kind.PITCHED && n.staffCount() == 1

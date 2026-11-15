@@ -322,6 +322,9 @@ public final class SheetInterpreter {
                         score, measures, labels, gray, width, height, recognizedRests);
         var noteOwners = MeterNumeralWholeNoteAlias.remove(
                 score.notes(), measures, labels, gray, annotationGray, width, height);
+        noteOwners =
+                InlineTripleMeterNoteAlias.remove(
+                        noteOwners, measures, labels, gray, annotationGray, width, height);
         noteOwners = tripleRuns.retain(noteOwners, labels, gray, annotationGray, width, height);
         var rhythm =
                 TripletRhythmDetector.withRests(

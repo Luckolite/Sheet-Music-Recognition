@@ -1012,7 +1012,7 @@ final class ClosedDottedSixteenths {
             return false;
         var owners = row.stream().sorted(Comparator.comparingDouble(Head::x)).toList();
         if (owners.get(0).x - left < gap * 1.35f
-                || owners.get(0).x - left > gap * 4.1f
+                || owners.get(0).x - left > gap * 4.1f + 1f
                 || right - owners.get(13).x < gap * .85f
                 || right - owners.get(13).x > gap * 2.3f) return false;
         var track = readOctaveStaff(ink, left, right, bar.bottom() * ink.h - 2.1f * gap, gap);
@@ -1024,7 +1024,7 @@ final class ClosedDottedSixteenths {
             int slot = i % 7;
             var note = head.note;
             boolean dotted = slot % 2 == 1;
-            if (note.stemDirection() != -1
+            if (note.stemDirection() == 0
                     || note.clefBottomDiatonic() != owners.get(0).note.clefBottomDiatonic()
                     || i + 1 < owners.size()
                             && (next - head.x < gap * 1.5f || next - head.x > gap * 4.2f)
@@ -1039,12 +1039,31 @@ final class ClosedDottedSixteenths {
                 trial.add(note);
                 continue;
             }
-            if (note.beamCount() < 2) return false;
+            var prior = owners.get(i - 1);
+            if (note.beamCount() < 2 || prior.note.stemDirection() != note.stemDirection())
+                return false;
             if (note.beamCount() != 3 || note.augmentationDots() != 0) {
-                var prior = owners.get(i - 1);
-                if (!OwnedTertiaryBeamlets.provesBackwardHookOnJoinedRails(
-                        ink.pixels, ink.w, ink.h, head.x, head.y, prior.x, prior.y, gap))
-                    return false;
+                boolean backwardHook =
+                        note.stemDirection() == -1
+                                ? OwnedTertiaryBeamlets.provesBackwardHookOnJoinedRails(
+                                        ink.pixels,
+                                        ink.w,
+                                        ink.h,
+                                        head.x,
+                                        head.y,
+                                        prior.x,
+                                        prior.y,
+                                        gap)
+                                : OwnedTertiaryBeamlets.provesMonophonicBackwardHook(
+                                        ink.pixels,
+                                        ink.w,
+                                        ink.h,
+                                        new OwnedTertiaryBeamlets.Head(
+                                                head.index, head.note, head.x, head.y, gap),
+                                        new OwnedTertiaryBeamlets.Head(
+                                                prior.index, prior.note, prior.x, prior.y, gap),
+                                        gap);
+                if (!backwardHook) return false;
             }
             trial.add(rhythm(note, false));
         }

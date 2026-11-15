@@ -149,6 +149,13 @@ public final class Main {
             if (Double.isFinite(closing)) beats[beats.length - 1] = (float) closing;
         }
         boolean[] cadences = PrintedCadenceDurations.apply(score, beats);
+        ClosedBeamedHalfBar.apply(
+                score,
+                initialMeter,
+                decoderGray == null ? gray : decoderGray,
+                width,
+                height,
+                beats);
         IsolatedDottedHalfCadence.apply(score, labels, decoderGray == null ? gray : decoderGray,
                 width, height, beats, cadences);
         int[] keys = measureKeys(beats.length, initialKey, score.keyChanges());

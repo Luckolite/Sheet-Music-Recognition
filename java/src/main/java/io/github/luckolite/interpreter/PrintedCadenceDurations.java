@@ -33,8 +33,14 @@ final class PrintedCadenceDurations {
         var rests = new boolean[count];
         for (var rest : score.rests()) rests[rest.measureIndex()] = true;
         var meter = new boolean[count];
+        var repeatedTripleMeter = new boolean[count];
+        boolean triple = false;
         for (var change : score.meterChanges()) {
-            if (change.measureIndex() < meter.length) meter[change.measureIndex()] = true;
+            if (change.measureIndex() >= meter.length) continue;
+            boolean nextTriple = change.numerator() == 3 && change.denominator() == 4;
+            meter[change.measureIndex()] = true;
+            repeatedTripleMeter[change.measureIndex()] = triple && nextTriple;
+            triple = nextTriple;
         }
         var regions = new ArrayList<>(score.measures());
         boolean changed = false;
@@ -46,12 +52,33 @@ final class PrintedCadenceDurations {
             if (!chord.stream().allMatch(note -> exactCadenceNote(note, duration))) continue;
             var measure = score.measures().get(i);
             var next = i + 1 < count ? score.measures().get(i + 1) : null;
-            if (!proved(gray, width, height, measure, next, staffs, chord,
-                    next != null && meter[i + 1])
+            if (!proved(
+                            gray,
+                            width,
+                            height,
+                            measure,
+                            next,
+                            staffs,
+                            chord,
+                            next != null && meter[i + 1])
                     && !compactTerminalQuarter(gray, width, height, measure, next, chord)
                     && !expandedTerminalDyad(gray, width, height, measure, next, chord)
                     && !PrintedQuarterDyadAccidentals.proves(
-                            labels, gray, width, height, measure, next, chord, staffs)) continue;
+                            labels, gray, width, height, measure, next, chord, staffs)
+                    && !(duration == 1
+                            && i > 0
+                            && next != null
+                            && repeatedTripleMeter[i + 1]
+                            && notes.get(i - 1).size() == 24
+                            && notes.get(i - 1).stream()
+                                    .allMatch(
+                                            n ->
+                                                    n.beamCount() == 2
+                                                            && n.augmentationDots() == 0
+                                                            && n.tupletDivisor() == 1)
+                            && PrintedQuarterDyadAccidentals.provesBeforeTripleRepeat(
+                                    labels, gray, width, height, measure, next, chord, staffs)))
+                continue;
             regions.set(i, new MeasureRegion(measure.left(), measure.right(), measure.top(),
                     measure.bottom(), (int) duration));
             changed = true;
@@ -333,9 +360,14 @@ final class PrintedCadenceDurations {
             return false;
         float left = measure.left() * width, right = measure.right() * width;
         float gap = (measure.bottom() - measure.top()) * height / 8.2f;
-        if (gap < 6 || gap > 32 || right - left > gap * 11.25f
+        boolean strictWideQuarter = duration == 1 && right - left > gap * 11.25f;
+        if (gap < 6
+                || gap > 32
+                || right - left > gap * (strictWideQuarter ? 12.25f : 11.25f)
                 || right - left <= gap * (duration == 1 ? 10.25f : 8f)
                 || next != null && Math.abs(next.top() - measure.top()) * height < gap)
+            return false;
+        if (strictWideQuarter && (!ordinaryWideQuarter(lower) || !ordinaryWideQuarter(upper)))
             return false;
         float a = lower.positionInMeasure(), b = upper.positionInMeasure();
         double first = left + Math.min(a, b) * (right - left);
@@ -348,13 +380,48 @@ final class PrintedCadenceDurations {
         if (leftRails == null) return false;
         var leftStaff = new PlayingTechniqueDetector.Staff(
                 leftRails[0] - 4 * leftRails[1], leftRails[0], leftRails[1], 0, 1);
-        if (boundaryColumn(gray, width, leftStaff, left - leftStaff.gap() * .53f,
-                true, false) < 0) return false;
+        int opening =
+                boundaryColumn(gray, width, leftStaff, left - leftStaff.gap() * .53f, true, false);
+        if (opening < 0) return false;
+        if (strictWideQuarter
+                && (ClosedHeadBarlineGuard.attached(
+                                gray,
+                                width,
+                                height,
+                                opening,
+                                Math.round(leftStaff.top()),
+                                Math.round(leftStaff.bottom()),
+                                leftStaff.gap())
+                        || DottedDyadMeasureSeparator.continuesBeyondStaff(
+                                gray,
+                                width,
+                                height,
+                                opening,
+                                Math.round(leftStaff.top()),
+                                Math.round(leftStaff.bottom()),
+                                leftStaff.gap()))) return false;
         var rightRails = PrintedDirectionStaff.printedRules(
                 gray, width, height, right - gap * 2.5f, hint, gap);
         if (rightRails == null) return false;
         var rightStaff = new PlayingTechniqueDetector.Staff(
                 rightRails[0] - 4 * rightRails[1], rightRails[0], rightRails[1], 0, 1);
+        // Extra width requires an ordinary dyad between an independent opening rule
+        // and two full closing strokes on the same uninterrupted five rails.
+        if (strictWideQuarter)
+            return Math.abs(leftStaff.bottom() - rightStaff.bottom()) <= gap * .28f
+                    && Math.abs(leftStaff.gap() - rightStaff.gap()) <= gap * .10f
+                    && completeCadence(
+                            gray,
+                            width,
+                            rightStaff,
+                            left,
+                            right,
+                            first,
+                            last,
+                            right,
+                            false,
+                            false,
+                            false);
         boolean hasAccidental = lower.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_FROM_KEY
                 || upper.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_FROM_KEY;
         if (completeCadence(gray, width, rightStaff, left, right, first, last,
@@ -362,6 +429,15 @@ final class PrintedCadenceDurations {
         float outer = right + gap * .35f;
         return completeCadence(gray, width, rightStaff, left, outer, first, last,
                 outer, false, true, hasAccidental);
+    }
+
+    private static boolean ordinaryWideQuarter(ScoreNoteEvent note) {
+        return note.visualSize() == ScoreNoteEvent.VisualSize.FULL
+                && note.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_FROM_KEY
+                && note.harmonicSemitones() == 0
+                && note.openStringTouch() == null
+                && note.octaveShift() == 0
+                && !note.compactOpening();
     }
 
     private static boolean completeCadence(

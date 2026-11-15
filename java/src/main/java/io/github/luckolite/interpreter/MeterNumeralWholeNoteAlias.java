@@ -82,8 +82,13 @@ final class MeterNumeralWholeNoteAlias {
                 reading.bottomScore(), Set.of(), Set.of()).isBlank();
     }
 
-    private static boolean connectedToNoteheadLabels(byte[] labels, byte[] gray, int width,
-            MeterChangeDetector.Crop crop, float x, float y) {
+    static boolean connectedToNoteheadLabels(
+            byte[] labels,
+            byte[] gray,
+            int width,
+            MeterChangeDetector.Crop crop,
+            float x,
+            float y) {
         int radiusX = Math.round(crop.gap() * .5f), radiusY = Math.round(crop.gap() * .4f);
         int ink = 0;
         for (int yy = Math.max(crop.top(), Math.round(y) - radiusY);

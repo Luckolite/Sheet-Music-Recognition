@@ -44,16 +44,24 @@ final class OctaveMarkDetector {
                             word.left() * width
                                     + Math.max(
                                             gap * 2, (word.bottom() - word.top()) * height * 3.5f));
-            dashEnd(
-                    gray,
-                    width,
-                    height,
-                    textRight,
-                    word.top() * height,
-                    word.bottom() * height,
-                    gap,
-                    3,
-                    result);
+            float right =
+                    dashEnd(
+                            gray,
+                            width,
+                            height,
+                            textRight,
+                            word.top() * height,
+                            word.bottom() * height,
+                            gap,
+                            3,
+                            result);
+            if (shift == 1) {
+                var ribbon = provedPrintedRibbon(gray, width, height, word, gap, right);
+                if (ribbon != null)
+                    for (var dot : ribbon.dots)
+                        for (int pixel = 0; pixel < dot.size(); pixel++)
+                            result.set(dot.pixel(pixel));
+            }
         }
         return result;
     }
@@ -167,6 +175,10 @@ final class OctaveMarkDetector {
                             word.top() * height,
                             word.bottom() * height,
                             gap);
+            if (shift == 1 && printed.contains(sourceWord)) {
+                var ribbon = provedPrintedRibbon(gray, width, height, word, gap, right);
+                if (ribbon != null) right = ribbon.right;
+            }
             if (shift > 0 && right >= 0)
                 right =
                         extendOverDottedHook(
@@ -466,9 +478,25 @@ final class OctaveMarkDetector {
                                     box.bottom,
                                     gap,
                                     6);
-                    if (dashRight < 0) continue;
                     int hookDirection =
-                            hookDirection(gray, width, height, dashRight, box.top, box.bottom, gap);
+                            dashRight < 0
+                                    ? 0
+                                    : hookDirection(
+                                            gray,
+                                            width,
+                                            height,
+                                            dashRight,
+                                            box.top,
+                                            box.bottom,
+                                            gap);
+                    if (closedEight && !below && hookDirection <= 0) {
+                        var ribbon = completeDottedRibbon(gray, width, height, box, gap);
+                        if (ribbon != null) {
+                            dashRight = ribbon.right;
+                            hookDirection = 1;
+                        }
+                    }
+                    if (dashRight < 0) continue;
                     boolean openEnded =
                             !below && hookDirection == 0 && dashRight - box.right >= gap * 44;
                     if (!closedEight
@@ -1386,6 +1414,260 @@ final class OctaveMarkDetector {
     }
 
     /** Find a horizontal chain of short printed dashes, stopping at its actual end. */
+    private record DottedRibbon(float right, List<RawNumeralComponents.Component> dots) {}
+
+    private static DottedRibbon provedPrintedRibbon(
+            byte[] gray,
+            int width,
+            int height,
+            PlayingTechniqueDetector.Word word,
+            float gap,
+            float ordinaryRight) {
+        var box =
+                new InkBox(
+                        Math.round(word.left() * width),
+                        Math.round(word.top() * height),
+                        Math.round(word.right() * width) - 1,
+                        Math.round(word.bottom() * height) - 1,
+                        0);
+        if (!bareEightShape(gray, width, box, gap)
+                || ordinaryRight >= 0
+                        && hookDirection(
+                                        gray,
+                                        width,
+                                        height,
+                                        ordinaryRight,
+                                        box.top,
+                                        box.bottom,
+                                        gap)
+                                > 0) return null;
+        return completeDottedRibbon(gray, width, height, box, gap);
+    }
+
+    private static DottedRibbon completeDottedRibbon(
+            byte[] gray, int width, int height, InkBox box, float gap) {
+        var crossed = dottedRibbonAcrossSlur(gray, width, height, box, gap);
+        if (crossed != null) return crossed;
+        return longClosedDottedRibbon(gray, width, height, box, gap);
+    }
+
+    /** Dense printed dots may touch in the row scanner. Follow their full ink components. */
+    private static DottedRibbon longClosedDottedRibbon(
+            byte[] gray, int width, int height, InkBox numeral, float gap) {
+        if (gap < 10 || gap > 24) return null;
+        int left = numeral.right + 1;
+        int top = Math.round(numeral.top - .35f * gap);
+        int bottom = Math.round(numeral.top + 1.04f * gap);
+        int right = Math.min(width - 1, left + Math.round(gap * 78));
+        int leadRight = Math.min(right, left + Math.round(gap * 3.5f));
+        if (top < 0 || bottom >= height || leadRight <= left) return null;
+        var lead =
+                RawNumeralComponents.capture(
+                        gray, width, height, left, top, leadRight, bottom, 164, () -> {}, () -> {});
+        var earlyDots = dottedComponents(lead, gap, .74f);
+        var first =
+                earlyDots.stream()
+                        .filter(
+                                dot ->
+                                        dot.left - left <= gap * .48f
+                                                && dotY(dot) >= numeral.top + gap * .10f
+                                                && dotY(dot) <= numeral.top + gap * .72f)
+                        .findFirst()
+                        .orElse(null);
+        if (first == null || earlyDots.size() < 4) return null;
+
+        var line = new ArrayList<RawNumeralComponents.Component>();
+        line.add(first);
+        int fused = 0;
+        float center = dotY(first);
+        for (var dot : wideDottedComponents(gray, width, height, left, top, right, bottom, gap)) {
+            float y = dotY(dot);
+            var prior = line.get(line.size() - 1);
+            int space = dot.left - prior.right - 1;
+            if (space < 1
+                    || Math.abs(y - center) > gap * .76f
+                    || Math.abs(y - dotY(prior)) > gap * .22f) continue;
+            if (space > gap * .47f) break;
+            if (dot.right - dot.left + 1 > gap * .74f) fused++;
+            line.add(dot);
+        }
+        var last = line.get(line.size() - 1);
+        if (line.size() < 27 || fused * 8 > line.size() || last.right - first.left < gap * 21)
+            return null;
+        float edge = last.right + gap * .55f;
+        if (hookDirection(gray, width, height, edge, last.top, last.bottom, gap) <= 0) return null;
+        return new DottedRibbon(edge, line);
+    }
+
+    private static List<RawNumeralComponents.Component> wideDottedComponents(
+            byte[] gray,
+            int width,
+            int height,
+            int left,
+            int top,
+            int right,
+            int bottom,
+            float gap) {
+        var dots = new java.util.HashMap<InkBox, RawNumeralComponents.Component>();
+        int band = 16384 / (bottom - top + 1), overlap = Math.round(gap * 2.4f);
+        for (int start = left; start < right; start += band - overlap) {
+            int end = Math.min(start + band - 1, right);
+            var frame =
+                    RawNumeralComponents.capture(
+                            gray, width, height, start, top, end, bottom, 164, () -> {}, () -> {});
+            for (var dot : dottedComponents(frame, gap, 1.78f))
+                dots.putIfAbsent(
+                        new InkBox(dot.left, dot.top, dot.right, dot.bottom, dot.size()), dot);
+            if (end == right) break;
+        }
+        return dots.values().stream()
+                .sorted(
+                        Comparator.comparingInt((RawNumeralComponents.Component d) -> d.left)
+                                .thenComparingInt(d -> d.top))
+                .toList();
+    }
+
+    /** A descending slur may merge several dots while leaving both halves and the end hook intact. */
+    private static DottedRibbon dottedRibbonAcrossSlur(
+            byte[] gray, int width, int height, InkBox numeral, float gap) {
+        if (gap < 10 || gap > 24) return null;
+        int left = numeral.right + 1, top = Math.round(numeral.top - .86f * gap);
+        int right = Math.min(width - 1, left + Math.round(gap * 10));
+        int bottom = Math.round(numeral.top + 1.63f * gap);
+        if (left >= right || top < 0 || bottom >= height) return null;
+        var around =
+                RawNumeralComponents.capture(
+                        gray, width, height, left, top, right, bottom, 164, () -> {}, () -> {});
+        var prefix = new ArrayList<RawNumeralComponents.Component>();
+        for (var dot : dottedComponents(around, gap, .70f)) {
+            float y = dotY(dot);
+            if (prefix.isEmpty()) {
+                if (dot.left - left > gap * .42f) return null;
+                if (y < numeral.top + gap * .13f || y > numeral.top + gap * .62f) continue;
+            } else {
+                var prior = prefix.get(prefix.size() - 1);
+                float advance = dotX(dot) - dotX(prior);
+                if (Math.abs(dotY(prior) - y) > gap * .24f || advance < gap * .38f) continue;
+                if (advance > gap * .80f) {
+                    if (prefix.size() < 3 || advance > gap * 3.25f) return null;
+                    return crossesSlur(around, prefix, dot, width, gap)
+                            ? finishCrossedRibbon(gray, width, height, prefix, dot, gap)
+                            : null;
+                }
+            }
+            prefix.add(dot);
+        }
+        return null;
+    }
+
+    private static boolean crossesSlur(
+            RawNumeralComponents ink,
+            List<RawNumeralComponents.Component> prefix,
+            RawNumeralComponents.Component resume,
+            int width,
+            float gap) {
+        float priorX = dotX(prefix.get(prefix.size() - 1)), nextX = dotX(resume);
+        int center =
+                Math.round(
+                        (float)
+                                prefix.stream()
+                                        .mapToDouble(OctaveMarkDetector::dotY)
+                                        .average()
+                                        .orElseThrow());
+        int top = center - Math.round(gap * .51f), bottom = center + Math.round(gap * .52f);
+        for (var component : ink.components()) {
+            if (component.top > top || component.bottom < bottom) continue;
+            int topCount = 0, bottomCount = 0, topX = 0, bottomX = 0;
+            for (int i = 0; i < component.size(); i++) {
+                int pixel = component.pixel(i), row = pixel / width;
+                if (row == top) {
+                    topCount++;
+                    topX += pixel % width;
+                } else if (row == bottom) {
+                    bottomCount++;
+                    bottomX += pixel % width;
+                }
+            }
+            if (topCount == 0
+                    || bottomCount == 0
+                    || topCount > gap * .92f
+                    || bottomCount > gap * .92f) continue;
+            float upper = topX / (float) topCount, lower = bottomX / (float) bottomCount;
+            if (upper >= priorX - gap * 1.5f
+                    && lower <= nextX + gap * .68f
+                    && lower - upper >= gap * .68f
+                    && lower - upper <= gap * 3.05f) return true;
+        }
+        return false;
+    }
+
+    private static DottedRibbon finishCrossedRibbon(
+            byte[] gray,
+            int width,
+            int height,
+            List<RawNumeralComponents.Component> prefix,
+            RawNumeralComponents.Component resume,
+            float gap) {
+        float y = dotY(resume);
+        int left = resume.left - 1,
+                top = Math.round(y - .59f * gap),
+                right = Math.min(width - 1, resume.left + Math.round(gap * 15)),
+                bottom = Math.round(y + .58f * gap);
+        if (left < 0 || left >= right || top < 0 || bottom >= height) return null;
+        var ink =
+                RawNumeralComponents.capture(
+                        gray, width, height, left, top, right, bottom, 164, () -> {}, () -> {});
+        var tail = new ArrayList<RawNumeralComponents.Component>();
+        for (var dot : dottedComponents(ink, gap, 1.08f)) {
+            if (Math.abs(dotY(dot) - y) > gap * .55f) continue;
+            if (tail.isEmpty()) {
+                if (dot.left != resume.left || dot.right != resume.right) return null;
+            } else {
+                var preceding = tail.get(tail.size() - 1);
+                int space = dot.left - preceding.right - 1;
+                if (Math.abs(dotY(dot) - dotY(preceding)) > gap * .23f || space < gap * .06f)
+                    continue;
+                if (space > gap * .44f) break;
+            }
+            tail.add(dot);
+        }
+        if (tail.size() < 9) return null;
+        var last = tail.get(tail.size() - 1);
+        float edge = last.right + gap * .55f;
+        if (hookDirection(gray, width, height, edge, last.top, last.bottom, gap) <= 0) return null;
+        var dots = new ArrayList<>(prefix);
+        dots.addAll(tail);
+        return new DottedRibbon(edge, dots);
+    }
+
+    private static List<RawNumeralComponents.Component> dottedComponents(
+            RawNumeralComponents field, float gap, float maxWidth) {
+        return field.components().stream()
+                .filter(
+                        dot -> {
+                            int w = dot.right - dot.left + 1, h = dot.bottom - dot.top + 1;
+                            return dot.left > field.left
+                                    && dot.top > field.top
+                                    && dot.right < field.right
+                                    && dot.bottom < field.bottom
+                                    && w >= gap * .16f
+                                    && w <= gap * maxWidth
+                                    && h >= gap * .13f
+                                    && h <= gap * .50f
+                                    && dot.size() >= w * h * .46f;
+                        })
+                .sorted(Comparator.comparingInt(dot -> dot.left))
+                .toList();
+    }
+
+    private static float dotX(RawNumeralComponents.Component dot) {
+        return (dot.left + dot.right) * .5f;
+    }
+
+    private static float dotY(RawNumeralComponents.Component dot) {
+        return (dot.top + dot.bottom) * .5f;
+    }
+
     private static float dashEnd(
             byte[] gray, int width, int height, float start, float top, float bottom, float gap) {
         return dashEnd(gray, width, height, start, top, bottom, gap, 3);
