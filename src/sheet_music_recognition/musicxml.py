@@ -2,7 +2,7 @@ from . import straight_slide, slide_numbering
 # Copyright 2026 Luckolite
 # SPDX-License-Identifier: Apache-2.0
 """MusicXML 4.0 concert-pitch export of the decoded performance (not source engraving)."""
-from bisect import bisect_right
+from bisect import bisect_left, bisect_right
 from collections import defaultdict
 from functools import lru_cache
 from itertools import accumulate
@@ -160,6 +160,56 @@ def duration_parts(duration, events=()):
         parts.append(value)
         remaining -= value
     return tuple(parts)
+
+
+def _retain_printed_beam_voices(beams, groups, bar_starts, bar_ends):
+    # Greedy assignment may switch voices after an independent sustain releases.
+    # A whole printed run may stay in one of its current voices if that voice is free.
+    if not beams:
+        return
+    chords = sorted(groups.items())
+    starts = [key[0] for key, _ in chords]
+    running_ends = list(accumulate((key[1] for key, _ in chords), max))
+    owners = {frozenset(n['sourceIdentity'] for n in chord): i
+              for i, (_, chord) in enumerate(chords)}
+    for columns, bridges, _ in beams:
+        if len(columns) < 2 or not all(mask & 1 for mask in bridges):
+            continue
+        members = [owners.get(frozenset(column)) for column in columns]
+        if any(i is None for i in members) or len(set(members)) != len(columns):
+            continue
+        run = [chords[i] for i in members]
+        start, end = run[0][0][0], run[-1][0][1]
+        bar = bisect_right(bar_starts, start) - 1
+        voices = list(dict.fromkeys(chord[0]['voice'] for _, chord in run))
+        if (len(voices) == 1 or bar < 0 or end > bar_ends[bar]
+                or any(left[0][1] != right[0][0] for left, right in zip(run, run[1:]))):
+            continue
+        states = (n for _, chord in run for n in chord)
+        if any(n.get('durationFallback') or n.get('retainedTremolo')
+               or n.get('retainedVisualSize') == 'CUE'
+               or n.get('tie_start') or n.get('tie_stop') for n in states):
+            continue
+        for (attack, release, _), chord in run:
+            for note in chord:
+                probe = ET.Element('note')
+                note_type(probe, release - attack, note)
+                if probe.findtext('type') not in ('eighth', '16th', '32nd', '64th',
+                                                  '128th', '256th', '512th', '1024th'):
+                    break
+            else:
+                continue
+            break
+        else:
+            members = set(members)
+            reserved = {chords[i][1][0]['voice']
+                        for i in range(bisect_right(running_ends, start), bisect_left(starts, end))
+                        if i not in members and chords[i][0][1] > start}
+            voice = next((v for v in voices if v not in reserved), None)
+            if voice is not None:
+                for _, chord in run:
+                    for note in chord:
+                        note['voice'] = voice
 
 
 def metric_pulse(value):
@@ -972,6 +1022,7 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
                 voice_ends[voice] = end
             for n in chord:
                 n['voice'] = voice + 1
+        _retain_printed_beam_voices(printed_beams, groups, bar_starts, bar_ends)
         by_source = {n['sourceIdentity']: n for n in notes}
         mixed_edges = {}
         mixed_bars = set()

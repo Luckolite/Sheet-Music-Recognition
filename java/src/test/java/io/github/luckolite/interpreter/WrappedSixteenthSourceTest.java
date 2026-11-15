@@ -3,6 +3,7 @@
 package io.github.luckolite.interpreter;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import java.util.Arrays;
@@ -26,6 +27,18 @@ public class WrappedSixteenthSourceTest {
         for (int i = 0; i < CENTERS.length; i++) {
             assertEquals(CENTERS[i], slots.get(i).x(), 1.5f);
         }
+    }
+
+    @Test
+    public void oneClosedGroupCanProveFourDyadColumnsInAThreeBeatRow() {
+        var fixture = page();
+        var columns = new ClosedFourDyadBeam.Head[4];
+        for (int i = 0; i < columns.length; i++)
+            columns[i] = new ClosedFourDyadBeam.Head(CENTERS[i], 90, 106);
+        assertTrue(WrappedSixteenthSource.provesGroup(fixture.gray(), WIDTH, HEIGHT, columns, GAP));
+
+        paint(fixture.gray(), 126, 141, 150, 159, 255);
+        assertFalse(WrappedSixteenthSource.provesGroup(fixture.gray(), WIDTH, HEIGHT, columns, GAP));
     }
 
     @Test

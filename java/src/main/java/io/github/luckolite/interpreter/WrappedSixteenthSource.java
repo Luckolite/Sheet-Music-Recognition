@@ -113,6 +113,13 @@ final class WrappedSixteenthSource {
         return labels[at] == OmrMeasurePostProcessor.NOTEHEAD && (gray[at] & 255) < 168;
     }
 
+    static boolean provesGroup(
+            byte[] gray, int width, int height, ClosedFourDyadBeam.Head[] heads, float gap) {
+        var slots = new ArrayList<Slot>(heads.length);
+        for (var head : heads) slots.add(new Slot(head.x(), head.top(), head.bottom()));
+        return group(gray, width, height, slots, gap) != null;
+    }
+
     private static Beam group(byte[] gray, int width, int height, List<Slot> slots, float gap) {
         Beam found = null;
         var budget = new PrintedBeamShafts.Budget(100_000);

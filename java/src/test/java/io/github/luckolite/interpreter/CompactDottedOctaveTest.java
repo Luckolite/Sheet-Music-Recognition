@@ -44,6 +44,68 @@ public final class CompactDottedOctaveTest {
         assertEquals(List.of(0, 0, 0, 0), shifts(reversed, 70, 110, 225, 260));
     }
 
+    @Test
+    public void closedEightStartsAtTheFollowingIndependentBeam() {
+        assertEquals(List.of(0, 0, 1, 1, 0), shiftsAtBeamBeginning(beamedEight(false)));
+    }
+
+    @Test
+    public void closedEightDoesNotAdvanceWithoutBothIndependentBeams() {
+        assertEquals(List.of(0, 1, 1, 1, 0), shiftsAtBeamBeginning(beamedEight(true)));
+    }
+
+    private static byte[] beamedEight(boolean missingLeadingBeam) {
+        var page = engravedLine();
+        shaftAndHead(page, 58, 115, 174);
+        shaftAndHead(page, 92, 98, 158);
+        shaftAndHead(page, 124, 131, 190);
+        shaftAndHead(page, 157, 115, 175);
+        if (!missingLeadingBeam) beam(page, 48, 174, 82, 158);
+        beam(page, 114, 190, 147, 175);
+        return page;
+    }
+
+    private static List<Integer> shiftsAtBeamBeginning(byte[] page) {
+        return OctaveMarkDetector.apply(
+                        List.of(),
+                        STAFFS,
+                        List.of(new MeasureRegion(0, 1, 0, 1)),
+                        List.of(
+                                downNote(58, 115),
+                                downNote(92, 98),
+                                downNote(124, 131),
+                                downNote(157, 115),
+                                downNote(419, 152)),
+                        page,
+                        WIDTH,
+                        HEIGHT)
+                .stream()
+                .map(ScoreNoteEvent::octaveShift)
+                .toList();
+    }
+
+    private static ScoreNoteEvent downNote(int x, int y) {
+        return new ScoreNoteEvent(
+                        0, x / (float) WIDTH, Math.round((183 - y) / 8f), 0, 1,
+                        y / (float) HEIGHT, false, 0, 1, 2, 0, 1)
+                .withStemDirection(-1);
+    }
+
+    private static void shaftAndHead(byte[] page, int x, int y, int stemEnd) {
+        for (int row = -5; row <= 5; row++) {
+            int radius = Math.round(10 * (float) Math.sqrt(1 - row * row / 36f));
+            ink(page, x - radius, y + row, x + radius, y + row, 0);
+        }
+        ink(page, x - 10, y, x - 8, stemEnd, 0);
+    }
+
+    private static void beam(byte[] page, int left, int top, int right, int end) {
+        for (int x = left; x <= right; x++) {
+            int y = Math.round(top + (end - top) * ((x - left) / (float) (right - left)));
+            ink(page, x, y - 3, x, y + 2, 0);
+        }
+    }
+
     private static List<Integer> shifts(byte[] page) {
         return shifts(page, 70, 110, 353, 419);
     }

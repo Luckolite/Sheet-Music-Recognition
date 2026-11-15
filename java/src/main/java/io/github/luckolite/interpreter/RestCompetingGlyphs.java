@@ -32,8 +32,10 @@ final class RestCompetingGlyphs {
             if (rest.durationBeats() == 1
                     && naturalOwnsQuarterAlias(
                             rest, notes, measures.get(bar), gray, source, width, height)) continue;
-            if (rest.durationBeats() == .125 && accidentalsOwn(
-                    rest, notes, measures.get(bar), labels, gray, source, width, height)) continue;
+            if (rest.durationBeats() == .125
+                    && (accidentalsOwn(rest, notes, measures.get(bar), labels, gray, source, width, height)
+                            || lowerNaturalOwns(rest, notes, measures.get(bar), gray, source, width, height)))
+                continue;
             kept.add(rest);
         }
         return kept.size() == rests.size() ? rests : List.copyOf(kept);
@@ -179,6 +181,75 @@ final class RestCompetingGlyphs {
                 return false;
         }
         return true;
+    }
+
+    private static boolean lowerNaturalOwns(
+            ScoreRestEvent rest, List<ScoreNoteEvent> notes, MeasureRegion region,
+            byte[] gray, byte[] source, int width, int height) {
+        float gap = (region.bottom() - region.top()) * height / 8.2f;
+        float size = rest.pageHeight() * height;
+        if (gap < 10 || gap > 27 || size < gap * 3.4f || size > gap * 4.1f) return false;
+
+        float rx = x(region, rest.positionInMeasure(), width);
+        var nearby = new ArrayList<ScoreNoteEvent>();
+        float left = Float.NEGATIVE_INFINITY;
+        float right = Float.POSITIVE_INFINITY;
+        for (var note : notes) {
+            if (note.measureIndex() != rest.measureIndex()) continue;
+            float at = x(region, note.positionInMeasure(), width);
+            if (Math.abs(rx - at) > gap * 3.55f) continue;
+            if (at < rx) left = Math.max(at, left);
+            else right = Math.min(at, right);
+            nearby.add(note);
+        }
+        if (rx - left < gap * 1.4f || rx - left > gap * 3.3f
+                || right - rx < gap * 1.4f || right - rx > gap * 2.15f) return false;
+        var before = dyadNear(nearby, region, width, left, gap);
+        var after = dyadNear(nearby, region, width, right, gap);
+        if (before.size() != 2 || after.size() != 2) return false;
+        float lowerY = after.get(1).pageY() * height;
+        float separation = lowerY - after.get(0).pageY() * height;
+        if (separation < gap * 1.75f || separation > gap * 3.25f
+                || Math.abs(rest.pageY() * height - (lowerY - gap * .5f)) > gap * .20f) return false;
+        if (!ownedLowerNatural(gray, width, height, region, rx, lowerY, gap)
+                || !ownedLowerNatural(source, width, height, region, rx, lowerY, gap)) return false;
+        // Both columns must be attached to the same printed beams across the glyph.
+        boolean up = joinedByBeams(before, after, region, gray, width, height, gap, 1)
+                && joinedByBeams(before, after, region, source, width, height, gap, 1);
+        boolean down = joinedByBeams(before, after, region, gray, width, height, gap, -1)
+                && joinedByBeams(before, after, region, source, width, height, gap, -1);
+        return up != down;
+    }
+
+    private static List<ScoreNoteEvent> dyadNear(
+            List<ScoreNoteEvent> notes, MeasureRegion region, int width, float x, float gap) {
+        var heads = notes.stream().filter(n -> Math.abs(x(region, n.positionInMeasure(), width) - x) <= gap * .25f)
+                .sorted(Comparator.comparingDouble(ScoreNoteEvent::pageY)).toList();
+        if (heads.stream().anyMatch(n -> n.kind() != ScoreNoteEvent.Kind.PITCHED
+                || n.staffCount() != 1 || n.staffIndex() != 0 || n.beamCount() != 2
+                || n.augmentationDots() != 0 || n.tupletDivisor() != 1 || n.crossStaffBeam()
+                || n.visualSize() != ScoreNoteEvent.VisualSize.FULL
+                || (n.articulations() & NoteOrnament.GRACE) != 0)) return List.of();
+        return heads;
+    }
+
+    private static boolean ownedLowerNatural(
+            byte[] gray, int width, int height, MeasureRegion region, float x, float noteY, float gap) {
+        float hint = region.bottom() * height - 2.1f * gap;
+        int step = Math.max(2, Math.round(gap * .25f));
+        for (int radius = 0; radius <= gap * 7.5f; radius += step) {
+            for (int sign : radius == 0 ? new int[] {1} : new int[] {1, -1}) {
+                int axis = Math.round(x) + sign * radius;
+                if (axis < region.left() * width || axis > region.right() * width) continue;
+                var rails = DottedDyadMeasureSeparator.localRails(gray, width, height, axis, hint, gap);
+                if (rails == null) continue;
+                float g = rails[1];
+                var staff = new PlayingTechniqueDetector.Staff(rails[0] - 4 * g, rails[0], g, 0, 1);
+                return ClosedLateTripleDyads.provesLowerNatural(gray, width, height, x, noteY + .12f * g, staff)
+                        || ClosedLateTripleDyads.provesLowerNatural(gray, width, height, x - .12f * g, noteY, staff);
+            }
+        }
+        return false;
     }
 
     private static boolean naturalPair(byte[] labels,byte[] gray,int width,int height,

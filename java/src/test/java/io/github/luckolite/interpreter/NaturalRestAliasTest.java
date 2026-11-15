@@ -59,7 +59,50 @@ public class NaturalRestAliasTest {
         assertEquals(List.of(alias), filter(gray));
     }
 
+    @Test
+    public void lowerNaturalInConnectedDyadsVetoesShortRestAlias() {
+        byte[] printed = new byte[W * H];
+        Arrays.fill(printed, (byte) 255);
+        for (int y = 88; y <= 152; y += G) stroke(printed, EDGE, y, END, y, 1, 0);
+        var dyads = List.of(dyadHead(220, 106), dyadHead(220, 146),
+                dyadHead(281, 103), dyadHead(281, 143));
+        for (int[] column : new int[][] {{220, 106, 146}, {281, 103, 143}}) {
+            for (int y : new int[] {column[1], column[2]})
+                stroke(printed, column[0] - 6, y - 3, column[0] + 4, y + 1, 3, 0);
+            stroke(printed, column[0] - 7, column[1], column[0] - 7, 190, 3, 0);
+        }
+        stroke(printed, 213, 179, 274, 179, 4, 0);
+        stroke(printed, 213, 188, 274, 188, 4, 0);
+        stroke(printed, 246, 120, 246, 151, 3, 0);
+        stroke(printed, 258, 128, 258, 166, 3, 0);
+        stroke(printed, 246, 130, 258, 130, 3, 0);
+        stroke(printed, 246, 148, 258, 148, 3, 0);
+        var shortAlias = new ScoreRestEvent(0, place(255), 135f / H, 57f / H, 0, 1, .125f);
+        assertEquals(List.of(), filterDyads(shortAlias, dyads, printed, printed));
+
+        byte[] erasedNatural = printed.clone();
+        stroke(erasedNatural, 244, 119, 244, 168, 20, 255);
+        assertEquals(List.of(shortAlias), filterDyads(shortAlias, dyads, printed, erasedNatural));
+        byte[] severedBeam = printed.clone();
+        stroke(severedBeam, 264, 174, 264, 194, 9, 255);
+        assertEquals(List.of(shortAlias), filterDyads(shortAlias, dyads, printed, severedBeam));
+    }
+
+    private List<ScoreRestEvent> filterDyads(ScoreRestEvent rest, List<ScoreNoteEvent> dyads,
+            byte[] printed, byte[] source) {
+        return RestCompetingGlyphs.remove(
+                List.of(rest), dyads, regions, new byte[printed.length], printed, source, W, H);
+    }
+
+    private static ScoreNoteEvent dyadHead(int x, int y) {
+        return beamed(x, y, ScoreNoteEvent.ACCIDENTAL_FROM_KEY, 2);
+    }
+
     private static ScoreNoteEvent eighth(int x, int y, int accidental) {
+        return beamed(x, y, accidental, 1);
+    }
+
+    private static ScoreNoteEvent beamed(int x, int y, int accidental, int beams) {
         return new ScoreNoteEvent(
                 0,
                 place(x),
@@ -69,7 +112,7 @@ public class NaturalRestAliasTest {
                 y / (float) H,
                 false,
                 0,
-                1,
+                beams,
                 accidental,
                 0,
                 1,

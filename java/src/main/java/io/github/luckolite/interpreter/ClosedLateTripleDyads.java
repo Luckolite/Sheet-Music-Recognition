@@ -374,6 +374,11 @@ final class ClosedLateTripleDyads {
         return -1;
     }
 
+    static boolean provesLowerNatural(
+            byte[] gray, int width, int height, float x, float y, PlayingTechniqueDetector.Staff staff) {
+        return lowerNatural(new Ink(gray, width, height), x, y, staff);
+    }
+
     private static boolean lowerNatural(Ink ink, float x, float y, PlayingTechniqueDetector.Staff staff) {
         float gap = staff.gap();
         for (int l = Math.round(x - gap * .61f); l <= x - gap * .34f; l++) {

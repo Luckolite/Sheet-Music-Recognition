@@ -36,6 +36,7 @@ final class PrintedMeasureRhythmGuard {
         fitted = preservePrintedBoundaries(raw, fitted, labels, gray, width, height);
         fitted = preserveShiftedBoundary(raw, fitted, gray, width, height);
         fitted = rejectUnprintedRows(raw, fitted, labels, gray, width, height, rejectedAnchorTops);
+        fitted = restoreThreeBeatRows(raw, fitted, labels, gray, width, height);
         fitted = preserveFinalRestRow(raw, fitted, labels, gray, width, height);
         if (gray != null && !fitted.isEmpty()) {
             int last = fitted.size() - 1;
@@ -529,9 +530,122 @@ final class PrintedMeasureRhythmGuard {
                         height * Math.min(a.pageY(), b.pageY()), height * Math.max(a.pageY(), b.pageY()));
             }
             if (ClosedFourDyadBeam.provesOctaves(gray, width, height, columns, gap, frame.bottom(), -direction, true)
-                    || ClosedFourDyadBeam.provesWithAccidentalSpacing(gray, width, height, columns, gap, -direction)) supported++;
+                    || ClosedFourDyadBeam.provesWithAccidentalSpacing(gray, width, height, columns, gap, -direction)
+                    || WrappedSixteenthSource.provesGroup(gray, width, height, columns, gap)) supported++;
         }
         return supported >= 2;
+    }
+
+    /** A raw system can miss both true rules around two complete 3-beat dyad runs. */
+    private static List<MeasureRegion> restoreThreeBeatRows(
+            List<MeasureRegion> raw, List<MeasureRegion> fitted, byte[] labels,
+            byte[] gray, int width, int height) {
+        if (gray == null || labels == null || gray.length != (long) width * height
+                || labels.length != gray.length) return fitted;
+        List<MeasureRegion> result = null;
+        for (var row : raw) {
+            float gap = (row.bottom() - row.top()) * height / 8.2f;
+            float left = row.left() * width, end = row.right() * width;
+            if (gap < 8 || gap > 24 || end - left < gap * 50
+                    || raw.stream().anyMatch(next -> sameRow(row, next) && next.left() > row.left()))
+                continue;
+            var proposed = fragments(row, fitted);
+            if (proposed.size() != 3) continue;
+            float firstCut = (proposed.get(0).right() + proposed.get(1).left()) * .5f;
+            float secondCut = (proposed.get(1).right() + proposed.get(2).left()) * .5f;
+            if (printedBarline(row, firstCut, gray, width, height, true)
+                    || printedBarline(row, secondCut, gray, width, height, true)) continue;
+            var candidate = separateThreeBeatRow(row, labels, gray, width, height, gap,
+                    Math.round(firstCut * width), Math.round(secondCut * width));
+            if (candidate.isEmpty()) continue;
+            if (result == null) result = new ArrayList<>(fitted);
+            int at = result.indexOf(proposed.get(0));
+            result.removeAll(proposed);
+            result.addAll(at, candidate);
+        }
+        return result == null ? fitted : List.copyOf(result);
+    }
+
+    private static List<MeasureRegion> separateThreeBeatRow(
+            MeasureRegion row, byte[] labels, byte[] gray, int width, int height, float gap,
+            int firstCountCut, int secondCountCut) {
+        float left = row.left() * width, right = row.right() * width;
+        float bottom = row.bottom() * height - gap * 2.1f;
+        float[] rails = null;
+        for (float inset : new float[]{1f, 2.5f, 3f, 5f}) {
+            rails = DottedDyadMeasureSeparator.localRails(gray, width, height,
+                    Math.round(right - inset * gap), bottom, gap);
+            if (rails != null) break;
+        }
+        if (rails == null) return List.of();
+        var staff = new PlayingTechniqueDetector.Staff(rails[0] - rails[1] * 4, rails[0], rails[1], 0, 1);
+        gap = staff.gap();
+        if (visibleCountCut(gray, width, staff, firstCountCut)
+                || visibleCountCut(gray, width, staff, secondCountCut)) return List.of();
+        int closing = PrintedCadenceDurations.boundaryColumn(
+                gray, width, staff, right + gap * .25f, false, false);
+        if (closing < 0) return List.of();
+        int last = uniquePrintedCut(gray, width, height, staff, right - 8 * gap, right - 3 * gap);
+        if (last < 0) return List.of();
+        float middle = (left + last) * .5f;
+        int first = uniquePrintedCut(gray, width, height, staff,
+                middle - (last - left) * .13f, middle + (last - left) * .13f);
+        if (first < 0) return List.of();
+        int pad = Math.round(gap * .45f);
+        var parts = List.of(
+                new MeasureRegion(row.left(), (first - pad) / (float) width, row.top(), row.bottom()),
+                new MeasureRegion((first + pad) / (float) width, (last - pad) / (float) width,
+                        row.top(), row.bottom()),
+                new MeasureRegion((last + pad) / (float) width, row.right(), row.top(), row.bottom(), 1));
+        var analysis = OmrScoreInterpreter.analyze(labels, gray, width, height, parts);
+        if (!analysis.rests().isEmpty()
+                || !closedThreeBeatRun(analysis.notes(), 0, parts.get(0), gray, width, height, staff)
+                || !closedThreeBeatRun(analysis.notes(), 1, parts.get(1), gray, width, height, staff))
+            return List.of();
+        var chord = analysis.notes().stream().filter(n -> n.measureIndex() == 2).toList();
+        if (chord.size() != 2) return List.of();
+        var a = chord.get(0);
+        var b = chord.get(1);
+        return chord.stream().allMatch(n -> n.kind() == ScoreNoteEvent.Kind.PITCHED
+                        && n.staffCount() == 1 && n.beamCount() == 0 && n.unbeamedDurationBeats() == 1
+                        && n.augmentationDots() == 0 && n.tupletDivisor() == 1
+                        && !n.tiedFromPrevious() && n.boundaryTies() == 0
+                        && n.leadingRestBeats() == 0 && n.followingRestBeats() == 0
+                        && (n.articulations() & NoteOrnament.GRACE) == 0)
+                && a.stemDirection() != 0 && a.stemDirection() == b.stemDirection()
+                && a.staffStep() != b.staffStep()
+                && Math.abs(a.positionInMeasure() - b.positionInMeasure()) * (right - last) < gap * .25f
+                ? parts : List.of();
+    }
+
+    private static boolean visibleCountCut(byte[] gray, int width,
+            PlayingTechniqueDetector.Staff staff, int cut) {
+        int top = Math.round(staff.top()), bottom = Math.round(staff.bottom());
+        int radius = Math.max(2, Math.round(staff.gap() * .25f));
+        for (int x = Math.max(1, cut - radius); x <= Math.min(width - 2, cut + radius); x++) {
+            int ink = 0;
+            for (int y = top; y <= bottom; y++)
+                if ((gray[y * width + x] & 255) < 155) ink++;
+            if (ink >= (bottom - top + 1) * .9f
+                    && DottedDyadMeasureSeparator.fullInk(gray, width, x, top, staff.gap())) return true;
+        }
+        return false;
+    }
+
+    private static int uniquePrintedCut(byte[] gray, int width, int height,
+            PlayingTechniqueDetector.Staff staff, float left, float right) {
+        int first = -1, last = -1, top = Math.round(staff.top()), bottom = Math.round(staff.bottom());
+        float gap = staff.gap();
+        for (int x = Math.max(1, Math.round(left)); x <= Math.min(width - 2, Math.round(right)); x++) {
+            if (!DottedDyadMeasureSeparator.fullInk(gray, width, x, top, gap)
+                    || ClosedHeadBarlineGuard.attached(gray, width, height, x, top, bottom, gap)
+                    || DottedDyadMeasureSeparator.continuesBeyondStaff(
+                            gray, width, height, x, top, bottom, gap)) continue;
+            if (last >= 0 && x != last + 1) return -1;
+            if (first < 0) first = x;
+            last = x;
+        }
+        return first < 0 || last == first || last - first > gap * .6f ? -1 : (first + last) / 2;
     }
 
     private static boolean sameLiteralRests(

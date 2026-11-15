@@ -187,6 +187,8 @@ final class OctaveMarkDetector {
             if (shift == 1 && printed.contains(sourceWord)) {
                 var ribbon = provedPrintedRibbon(gray, width, height, word, gap, right);
                 if (ribbon != null) right = ribbon.right;
+                if (right >= 0)
+                    left = closedBeamStart(gray, width, height, word, owner, staffs, measures, notes, left, right);
             }
             if (shift > 0 && right >= 0)
                 right =
@@ -261,6 +263,78 @@ final class OctaveMarkDetector {
         }
         carryIsolatedTies(notes, result, carry, explicit);
         return List.copyOf(result);
+    }
+
+    private record BeamStartHead(ScoreNoteEvent note, float x) {}
+
+    /**
+     * A closed bare eight between two independent beams can start over the next beam.
+     * The normal text margin otherwise reaches the preceding group's final ledger head.
+     */
+    private static float closedBeamStart(
+            byte[] gray,
+            int width,
+            int height,
+            PlayingTechniqueDetector.Word word,
+            PlayingTechniqueDetector.Staff owner,
+            List<PlayingTechniqueDetector.Staff> staffs,
+            List<MeasureRegion> measures,
+            List<ScoreNoteEvent> notes,
+            float left,
+            float right) {
+        float gap = owner.gap(), wordLeft = word.left() * width, wordRight = word.right() * width;
+        float top = word.top() * height, bottom = word.bottom() * height;
+        if (gap < 10 || gap > 28 || wordRight - wordLeft > 1.7f * gap) return left;
+        var nearby = new ArrayList<BeamStartHead>();
+        for (var note : notes) {
+            if (note.kind() != ScoreNoteEvent.Kind.PITCHED
+                    || note.staffIndex() != owner.index()
+                    || note.staffCount() != owner.count()
+                    || note.measureIndex() < 0
+                    || note.measureIndex() >= measures.size()) continue;
+            float headX = x(note, measures, width);
+            if (headX >= wordLeft - 4 * gap
+                    && headX <= wordRight + 3.5f * gap
+                    && onStaff(note, owner, staffs, measures, height))
+                nearby.add(new BeamStartHead(note, headX));
+        }
+        nearby.sort(Comparator.comparingDouble(BeamStartHead::x));
+        for (int i = 1; i + 2 < nearby.size(); i++) {
+            var a = nearby.get(i - 1);
+            var b = nearby.get(i);
+            var c = nearby.get(i + 1);
+            var d = nearby.get(i + 2);
+            if (b.x < left || b.x > wordLeft - .42f * gap) continue;
+            if (b.x - a.x < 1.12f * gap || d.x - c.x < 1.12f * gap
+                    || Math.abs(c.x - wordRight) > .32f * gap
+                    || wordLeft + wordRight - b.x - c.x < .18f * gap
+                    || c.note.pageY() * height - b.note.pageY() * height < 1.25f * gap
+                    || d.x >= right
+                    || a.note.measureIndex() != b.note.measureIndex()
+                    || b.note.measureIndex() != c.note.measureIndex()
+                    || c.note.measureIndex() != d.note.measureIndex()) return left;
+            var numeral = new InkBox(Math.round(wordLeft), Math.round(top),
+                    Math.round(wordRight) - 1, Math.round(bottom) - 1, 0);
+            if (!bareEightShape(gray, width, numeral, gap)
+                    || hookDirection(gray, width, height, right, top, bottom, gap) <= 0) return left;
+            var shafts = new ArrayList<PrintedBeamShafts.Shaft>(4);
+            var budget = new PrintedBeamShafts.Budget(180_000);
+            for (var head : List.of(a, b, c, d)) {
+                var note = head.note;
+                if (note.beamCount() != 1 || note.stemDirection() != -1 || note.crossStaffBeam())
+                    return left;
+                var measured = PrintedBeamShafts.at(gray, width, height, head.x,
+                        note.pageY() * height, gap, budget);
+                if (measured.size() != 1 || measured.get(0).direction() != 1) return left;
+                shafts.add(measured.get(0));
+            }
+            if (WrappedEighthTriplets.matchesRailBridge(gray, width, height, shafts.get(0), shafts.get(1), gap, true)
+                    && WrappedEighthTriplets.matchesRailBridge(gray, width, height, shafts.get(1), shafts.get(2), gap, false)
+                    && WrappedEighthTriplets.matchesRailBridge(gray, width, height, shafts.get(2), shafts.get(3), gap, true))
+                return (b.x + c.x) * .5f;
+            return left;
+        }
+        return left;
     }
 
     /** An unhooked bare eight can sit inline with the next staff's upper ledger attack. */
@@ -1751,9 +1825,11 @@ final class OctaveMarkDetector {
                 if (Math.abs(dotY(prior) - y) > gap * .24f || advance < gap * .38f) continue;
                 if (advance > gap * .80f) {
                     if (prefix.size() < 3 || advance > gap * 3.25f) return null;
-                    return crossesSlur(around, prefix, dot, width, gap)
-                            ? finishCrossedRibbon(gray, width, height, prefix, dot, gap)
-                            : null;
+                    if (crossesSlur(around, prefix, dot, width, gap, false))
+                        return finishCrossedRibbon(gray, width, height, prefix, dot, gap, 9);
+                    if (prefix.size() >= 6 && crossesSlur(around, prefix, dot, width, gap, true))
+                        return finishCrossedRibbon(gray, width, height, prefix, dot, gap, 8);
+                    return null;
                 }
             }
             prefix.add(dot);
@@ -1766,7 +1842,8 @@ final class OctaveMarkDetector {
             List<RawNumeralComponents.Component> prefix,
             RawNumeralComponents.Component resume,
             int width,
-            float gap) {
+            float gap,
+            boolean slurEndsAfterCrossing) {
         float priorX = dotX(prefix.get(prefix.size() - 1)), nextX = dotX(resume);
         int center =
                 Math.round(
@@ -1775,15 +1852,22 @@ final class OctaveMarkDetector {
                                         .mapToDouble(OctaveMarkDetector::dotY)
                                         .average()
                                         .orElseThrow());
-        int top = center - Math.round(gap * .51f), bottom = center + Math.round(gap * .52f);
+        int top = center - Math.round(gap * .51f);
+        int bottom = center + Math.round(gap * (slurEndsAfterCrossing ? .23f : .52f));
         for (var component : ink.components()) {
             if (component.top > top || component.bottom < bottom) continue;
-            int topCount = 0, bottomCount = 0, topX = 0, bottomX = 0;
+            if (slurEndsAfterCrossing
+                    && (component.bottom < center + gap * .28f
+                            || component.bottom > center + gap * .45f
+                            || component.right > nextX - gap * .22f)) continue;
+            int topCount = 0, middleCount = 0, bottomCount = 0, topX = 0, bottomX = 0;
             for (int i = 0; i < component.size(); i++) {
                 int pixel = component.pixel(i), row = pixel / width;
                 if (row == top) {
                     topCount++;
                     topX += pixel % width;
+                } else if (row == center) {
+                    middleCount++;
                 } else if (row == bottom) {
                     bottomCount++;
                     bottomX += pixel % width;
@@ -1793,6 +1877,11 @@ final class OctaveMarkDetector {
                     || bottomCount == 0
                     || topCount > gap * .92f
                     || bottomCount > gap * .92f) continue;
+            // An ending slur must join a broad run of dots and taper below the rail.
+            if (slurEndsAfterCrossing
+                    && (middleCount < gap * .9f
+                            || middleCount > gap * 2.1f
+                            || bottomCount > topCount * .75f)) continue;
             float upper = topX / (float) topCount, lower = bottomX / (float) bottomCount;
             if (upper >= priorX - gap * 1.5f
                     && lower <= nextX + gap * .68f
@@ -1808,7 +1897,8 @@ final class OctaveMarkDetector {
             int height,
             List<RawNumeralComponents.Component> prefix,
             RawNumeralComponents.Component resume,
-            float gap) {
+            float gap,
+            int minimumTailDots) {
         float y = dotY(resume);
         int left = resume.left - 1,
                 top = Math.round(y - .59f * gap),
@@ -1832,7 +1922,7 @@ final class OctaveMarkDetector {
             }
             tail.add(dot);
         }
-        if (tail.size() < 9) return null;
+        if (tail.size() < minimumTailDots) return null;
         var last = tail.get(tail.size() - 1);
         float edge = last.right + gap * .55f;
         if (hookDirection(gray, width, height, edge, last.top, last.bottom, gap) <= 0) return null;
