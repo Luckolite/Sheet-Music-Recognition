@@ -167,13 +167,23 @@ final class OctaveMarkDetector {
                             word.top() * height,
                             word.bottom() * height,
                             gap);
+            if (shift > 0 && right >= 0)
+                right =
+                        extendOverDottedHook(
+                                gray,
+                                width,
+                                height,
+                                right,
+                                word.top() * height,
+                                word.bottom() * height,
+                                gap);
             boolean isolated = right < 0;
             if (isolated) {
                 // An isolated octave direction applies to the nearest attack or chord only.
                 float first = Float.POSITIVE_INFINITY;
                 for (var note : notes)
                     if (note.kind() == ScoreNoteEvent.Kind.PITCHED
-                            && onStaff(note, owner, staffs, height)) {
+                            && onStaff(note, owner, staffs, measures, height)) {
                         float x = x(note, measures, width);
                         if (x >= left && x <= textRight + gap * 1.5f) first = Math.min(first, x);
                     }
@@ -218,7 +228,7 @@ final class OctaveMarkDetector {
             float x = x(note, measures, width);
             Span selected = null;
             for (var span : spans)
-                if (onStaff(note, span.staff, staffs, height)
+                if (onStaff(note, span.staff, staffs, measures, height)
                         && x >= span.left
                         && x <= span.right) {
                     if (selected == null || span.left > selected.left) selected = span;
@@ -1215,6 +1225,7 @@ final class OctaveMarkDetector {
             ScoreNoteEvent note,
             PlayingTechniqueDetector.Staff staff,
             List<PlayingTechniqueDetector.Staff> staffs,
+            List<MeasureRegion> measures,
             int height) {
         PlayingTechniqueDetector.Staff nearest = null;
         float best = Float.POSITIVE_INFINITY;
@@ -1229,7 +1240,38 @@ final class OctaveMarkDetector {
                     nearest = candidate;
                 }
             }
+        if (nearest != null && note.staffCount() == 1 && Math.abs(note.staffStep()) > 8) {
+            var measure = measures.get(note.measureIndex());
+            float top = measure.top() * height, bottom = measure.bottom() * height;
+            if (nearest.bottom() < top || nearest.top() > bottom) {
+                var ledgerOwner = ledgerStaff(note, staffs, height, top, bottom);
+                if (ledgerOwner != null) nearest = ledgerOwner;
+            }
+        }
         return staff.equals(nearest);
+    }
+
+    private static PlayingTechniqueDetector.Staff ledgerStaff(
+            ScoreNoteEvent note,
+            List<PlayingTechniqueDetector.Staff> staffs,
+            int height,
+            float top,
+            float bottom) {
+        PlayingTechniqueDetector.Staff owner = null;
+        float y = note.pageY() * height;
+        for (var candidate : staffs) {
+            float gap = candidate.gap();
+            if (candidate.count() != 1
+                    || candidate.index() != note.staffIndex()
+                    || candidate.top() < top
+                    || candidate.bottom() > bottom
+                    || Math.abs(y + note.staffStep() * gap * .5f - candidate.bottom()) > gap * .65f
+                    || y < candidate.top() - 7 * gap
+                    || y > candidate.bottom() + 7 * gap) continue;
+            if (owner != null) return null;
+            owner = candidate;
+        }
+        return owner;
     }
 
     private static PlayingTechniqueDetector.Staff owner(
@@ -1604,6 +1646,72 @@ final class OctaveMarkDetector {
             }
         }
         return direction;
+    }
+
+    /** Some printed octave lines turn down in a separate, aligned column of three dots. */
+    private static float extendOverDottedHook(
+            byte[] gray, int width, int height, float right, float top, float bottom, float gap) {
+        if (gap < 10 || gap > 32) return right;
+        int end = Math.round(right - gap * .55f);
+        int left = end + 2, far = end + Math.round(gap * .97f);
+        int topRow = Math.round(top - gap * .15f), bottomRow = Math.round(bottom + gap * .4f);
+        if (end < 4 || far >= width || topRow < 0 || bottomRow >= height) return right;
+        int anchor = -1, support = 0;
+        for (int y = topRow; y <= bottomRow; y++) {
+            if (endsHorizontalDashes(gray, width, end, y, gap)
+                    && (gray[y * width + end + 1] & 255) >= 165) {
+                if (anchor < 0) anchor = y;
+                if (y != anchor + support) return right;
+                support++;
+            }
+        }
+        if (support < 2 || support > gap * .4f) return right;
+        float chainY = anchor + (support - 1) * .5f;
+        int firstRow = anchor - Math.round(gap * .2f);
+        int foot = anchor + Math.round(gap * 2.12f);
+        if (firstRow < 0 || foot >= height) return right;
+
+        var frame =
+                RawNumeralComponents.capture(
+                        gray, width, height, left, firstRow, far, foot, 164, () -> {}, () -> {});
+        var dots = frame.components();
+        if (dots.size() != 4) return right;
+        var corner = dots.get(0);
+        float centerX = (corner.left + corner.right) * .5f;
+        float priorY = (corner.top + corner.bottom) * .5f;
+        int cornerWidth = corner.right - corner.left + 1,
+                cornerHeight = corner.bottom - corner.top + 1;
+        if (centerX - end < gap * .22f
+                || centerX - end > gap * .68f
+                || Math.abs(priorY - chainY) > gap * .15f
+                || cornerWidth < gap * .18f
+                || cornerWidth > gap * .42f
+                || cornerHeight < gap * .13f
+                || cornerHeight > gap * .32f
+                || corner.left <= left
+                || corner.right >= far
+                || corner.top <= firstRow) return right;
+        int rightmost = corner.right;
+        for (int i = 1; i < dots.size(); i++) {
+            var dot = dots.get(i);
+            int diameterX = dot.right - dot.left + 1, diameterY = dot.bottom - dot.top + 1;
+            float x = (dot.left + dot.right) * .5f, y = (dot.top + dot.bottom) * .5f;
+            if (diameterX < gap * .17f
+                    || diameterX > gap * .39f
+                    || diameterY < gap * .21f
+                    || diameterY > gap * .44f
+                    || dot.size() < diameterX * diameterY * .60f
+                    || dot.left <= left
+                    || dot.right >= far
+                    || dot.top <= firstRow
+                    || dot.bottom >= foot
+                    || Math.abs(x - centerX) > gap * .14f
+                    || y - priorY < gap * (i == 1 ? .27f : .41f)
+                    || y - priorY > gap * .68f) return right;
+            priorY = y;
+            rightmost = Math.max(rightmost, dot.right);
+        }
+        return Math.max(right, rightmost + gap * .24f);
     }
 
     private static boolean endsHorizontalDashes(byte[] gray, int width, int x, int y, float gap) {

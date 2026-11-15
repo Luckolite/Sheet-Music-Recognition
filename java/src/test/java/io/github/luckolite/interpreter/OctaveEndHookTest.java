@@ -68,4 +68,30 @@ public class OctaveEndHookTest {
         assertTrue(ink.get(55 * W + 360));
         assertFalse(ink.get(66 * W + 366));
     }
+
+    @Test
+    public void detachedPrintedDottedCornerRequiresAllThreeDownwardDots() throws Exception {
+        var gray = page();
+        dash(gray, 120, 366, 55);
+        for (int y : new int[] {55, 61, 70, 79})
+            for (int row = y; row <= y + (y == 55 ? 2 : 5); row++)
+                for (int x = 369; x <= 373; x++) gray[row * W + x] = 0;
+        var detect =
+                OctaveMarkDetector.class.getDeclaredMethod(
+                        "extendOverDottedHook",
+                        byte[].class,
+                        int.class,
+                        int.class,
+                        float.class,
+                        float.class,
+                        float.class,
+                        float.class);
+        detect.setAccessible(true);
+        float incoming = 364 + 16 * .55f;
+        float result = (float) detect.invoke(null, gray, W, H, incoming, 55f, 55f, 16f);
+        assertTrue(result >= 375f && result < 379f);
+        for (int y = 70; y <= 75; y++)
+            for (int x = 369; x <= 373; x++) gray[y * W + x] = (byte) 255;
+        assertEquals(incoming, (float) detect.invoke(null, gray, W, H, incoming, 55f, 55f, 16f), 0);
+    }
 }
