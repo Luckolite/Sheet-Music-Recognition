@@ -4,9 +4,8 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Package version to publish
+        description: Latest GitHub release version plus a fourth numeric component
         required: true
-        default: '0.2.1'
   release:
     types: [published]
 
@@ -37,14 +36,26 @@ jobs:
         env:
           REQUESTED_VERSION: ${{ inputs.version }}
           RELEASE_TAG: ${{ github.event.release.tag_name }}
+          GH_TOKEN: ${{ github.token }}
         run: |
+          if [[ -n "$REQUESTED_VERSION" ]]; then
+            RELEASE_TAG=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)
+            export RELEASE_TAG
+          fi
           python - <<'PY'
-          import os, tomllib
+          import os, re, tomllib
+
           with open('pyproject.toml', 'rb') as stream:
               project = tomllib.load(stream)['project']
-          assert project['name'] == 'score-reader'
-          expected = os.environ['REQUESTED_VERSION'] or os.environ['RELEASE_TAG'].removeprefix('v')
-          assert project['version'] == expected, 'Release and package versions differ'
+
+          base = os.environ['RELEASE_TAG'].removeprefix('v')
+          requested = os.environ['REQUESTED_VERSION']
+          if not re.fullmatch(r'(?:0|[1-9][0-9]*)(?:\.(?:0|[1-9][0-9]*)){2}', base):
+              raise SystemExit(f'Expected a three-part GitHub release version, found {base!r}')
+          if requested and not re.fullmatch(re.escape(base) + r'\.[1-9][0-9]*', requested):
+              raise SystemExit(f'Manual package releases must use {base}.N with N starting at 1')
+          if project['name'] != 'score-reader' or project['version'] != (requested or base):
+              raise SystemExit('Package metadata must match the score-reader publication version')
           PY
       - run: python scripts/build_java.py
       - run: python scripts/verify_package.py
