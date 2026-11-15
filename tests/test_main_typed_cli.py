@@ -93,14 +93,14 @@ public final class SheetInterpreter {
     }
 
     record AnalyzedPage(ScorePageInterpretation score, List<ScoreNoteEvent> originalNotes,
-            SourceLocalAccidental accidentalSource) {}
+            SourceLocalAccidental accidentalSource, List<MeasureRegion> accidentalMeasures) {}
 
     static AnalyzedPage analyzeWithPrintedSources(byte[] labels, byte[] gray, int width, int height,
             Annotations annotations, MusicalOcr ocr, int physicalPage, byte[] decoderGray,
             TablatureDecoder.Prepared preparedTabs, ScoreMeterChange inheritedMeter) {
         var score = analyze(labels, gray, width, height, annotations, ocr, physicalPage,
                 decoderGray, preparedTabs);
-        return new AnalyzedPage(score, score.notes(), SourceLocalAccidental.unavailable());
+        return new AnalyzedPage(score, score.notes(), SourceLocalAccidental.unavailable(), score.measures());
     }
 
 }
