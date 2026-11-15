@@ -75,12 +75,22 @@ final class ClosedDottedSixteenths {
 
     static ScorePageInterpretation applyClosedOctaves(
             ScorePageInterpretation score, ScoreMeterChange inherited, byte[] gray, int w, int h) {
-        return applyClosedOctaves(score, inherited, gray, w, h, false);
+        return applyClosedOctaves(score, inherited, gray, w, h, false, -1);
     }
 
     static ScorePageInterpretation applyClosedOctaveFragments(
             ScorePageInterpretation score, ScoreMeterChange inherited, byte[] gray, int w, int h) {
-        return applyClosedOctaves(score, inherited, gray, w, h, true);
+        return applyClosedOctaveFragments(score, inherited, gray, w, h, -1);
+    }
+
+    static ScorePageInterpretation applyClosedOctaveFragments(
+            ScorePageInterpretation score,
+            ScoreMeterChange inherited,
+            byte[] gray,
+            int w,
+            int h,
+            int physicalPage) {
+        return applyClosedOctaves(score, inherited, gray, w, h, true, physicalPage);
     }
 
     private static ScorePageInterpretation applyClosedOctaves(
@@ -89,7 +99,8 @@ final class ClosedDottedSixteenths {
             byte[] gray,
             int w,
             int h,
-            boolean inspectFragments) {
+            boolean inspectFragments,
+            int physicalPage) {
         if (gray == null || gray.length != (long) w * h || w < 256 || h < 128) return score;
         var bars = groupedHeads(score, w, h);
         var notes = score.notes();
@@ -98,6 +109,7 @@ final class ClosedDottedSixteenths {
         var ink = new Ink(gray, w, h);
         var regions = score.measures();
         var meter = inherited;
+        var beams = score.beamSource();
         int nextMeter = 0;
         for (int i = 1; i + 1 < bars.size(); i++) {
             while (nextMeter < score.meterChanges().size()
@@ -145,7 +157,28 @@ final class ClosedDottedSixteenths {
                 trial.add(rhythm(dyads.get(j).lower.note, j % 2 == 0));
             }
             if (!fillsCommonTime(trial)) continue;
-            if (fragment != null) suppressed[fragment.index] = true;
+            if (fragment != null) {
+                suppressed[fragment.index] = true;
+                if (physicalPage >= 0) {
+                    var attacks =
+                            dyads.stream()
+                                    .map(
+                                            dyad ->
+                                                    new ClosedOctaveBeamSource.Attack(
+                                                            dyad.upper.index,
+                                                            dyad.lower.index,
+                                                            dyad.upper.x,
+                                                            dyad.upper.y,
+                                                            dyad.lower.x,
+                                                            dyad.lower.y))
+                                    .toList();
+                    var barRegion = regions.get(i);
+                    float gap = (barRegion.bottom() - barRegion.top()) * h / 8.2f;
+                    beams =
+                            ClosedOctaveBeamSource.capture(
+                                    beams, physicalPage, gray, w, h, gap, attacks);
+                }
+            }
             for (int j = 0; j < dyads.size(); j++) {
                 revised.set(dyads.get(j).upper.index, trial.get(j * 2));
                 revised.set(dyads.get(j).lower.index, trial.get(j * 2 + 1));
@@ -159,7 +192,9 @@ final class ClosedDottedSixteenths {
             retained.add(revised.get(i));
         }
         if (retained.equals(notes)) return score;
-        var result = score.withNotes(retained, owners);
+        var result =
+                (beams == score.beamSource() ? score : score.withBeamSource(beams))
+                        .withNotes(retained, owners);
         return inspectFragments
                 ? result
                 : result.withClockContextSource(score.clockContextSource());

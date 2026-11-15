@@ -286,15 +286,23 @@ public final class SheetInterpreter {
         measures =
                 MeasureNumberReconciler.reconcile(measures, numbers, rests, labels, gray, width, height);
         recognizedRests.expanded(rawMeasures, measures);
+        var rejectedAnchorTops = new HashSet<Float>();
         measures =
                 PrintedMeasureRhythmGuard.reconcile(
-                        rawMeasures, measures, labels, gray, width, height);
+                        rawMeasures, measures, labels, gray, width, height, rejectedAnchorTops);
         var tripleRuns =
                 MidstaffSixteenthTripleBars.recover(
                         measures, labels, gray, annotationGray, width, height);
         measures = tripleRuns.measures();
         recognizedRests.reindexed(measures);
-        int firstMeasureNumber = MeasureNumberReconciler.firstMeasureNumber(measures, numbers);
+        var numberingAnchors =
+                rejectedAnchorTops.isEmpty()
+                        ? numbers
+                        : numbers.stream()
+                                .filter(n -> !rejectedAnchorTops.contains(n.top()))
+                                .toList();
+        int firstMeasureNumber =
+                MeasureNumberReconciler.firstMeasureNumber(measures, numberingAnchors);
         if (firstMeasureNumber == 0 && ocr != null)
             firstMeasureNumber =
                     ocr.firstSystemMeasureNumber(labels, annotationGray, width, height, measures);
@@ -722,7 +730,7 @@ public final class SheetInterpreter {
         finalInterpretation = ClosedDottedSixteenths.apply(finalInterpretation, gray, width, height);
         finalInterpretation =
                 ClosedDottedSixteenths.applyClosedOctaveFragments(
-                        finalInterpretation, inheritedMeter, gray, width, height);
+                        finalInterpretation, inheritedMeter, gray, width, height, physicalPage);
         finalInterpretation =
                 finalInterpretation.withClockContextSource(
                         ScoreClockContextCapture.capture(

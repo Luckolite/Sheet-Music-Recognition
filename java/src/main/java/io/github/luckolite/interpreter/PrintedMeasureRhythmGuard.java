@@ -4,7 +4,9 @@ package io.github.luckolite.interpreter;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /** Rejects an inferred separator contradicted by two complete written voices. */
 final class PrintedMeasureRhythmGuard {
@@ -17,12 +19,23 @@ final class PrintedMeasureRhythmGuard {
             byte[] gray,
             int width,
             int height) {
+        return reconcile(raw, fitted, labels, gray, width, height, new HashSet<>());
+    }
+
+    static List<MeasureRegion> reconcile(
+            List<MeasureRegion> raw,
+            List<MeasureRegion> fitted,
+            byte[] labels,
+            byte[] gray,
+            int width,
+            int height,
+            Set<Float> rejectedAnchorTops) {
         raw = rejectOverlappingRows(raw);
         fitted = rejectOverlappingRows(fitted);
         fitted = preserveCountNeutralRows(raw, fitted, gray, width, height);
         fitted = preservePrintedBoundaries(raw, fitted, labels, gray, width, height);
         fitted = preserveShiftedBoundary(raw, fitted, gray, width, height);
-        fitted = rejectUnprintedRows(raw, fitted, labels, gray, width, height);
+        fitted = rejectUnprintedRows(raw, fitted, labels, gray, width, height, rejectedAnchorTops);
         fitted = preserveFinalRestRow(raw, fitted, labels, gray, width, height);
         if (gray != null && !fitted.isEmpty()) {
             int last = fitted.size() - 1;
@@ -55,6 +68,7 @@ final class PrintedMeasureRhythmGuard {
     private static List<MeasureRegion> appendTerminalQuarter(
             List<MeasureRegion> fitted, byte[] labels, byte[] gray, int width, int height) {
         if (gray == null || fitted.isEmpty()) return fitted;
+        fitted = BeamedFlatBarline.join(fitted, labels, gray, width, height);
         fitted = InlineHalfDyadCadence.recover(fitted, labels, gray, width, height);
         fitted = StraightDyadCadenceBoundaries.recover(fitted, labels, gray, width, height);
         fitted = HalfDyadBeforeSixteenthBar.recover(fitted, labels, gray, width, height);
@@ -699,35 +713,103 @@ final class PrintedMeasureRhythmGuard {
             byte[] gray,
             int width,
             int height) {
+        return rejectUnprintedRows(raw, fitted, labels, gray, width, height, new HashSet<>());
+    }
+
+    static List<MeasureRegion> rejectUnprintedRows(
+            List<MeasureRegion> raw,
+            List<MeasureRegion> fitted,
+            byte[] labels,
+            byte[] gray,
+            int width,
+            int height,
+            Set<Float> rejectedAnchorTops) {
         if (raw.isEmpty()
                 || labels == null
                 || gray == null
                 || labels.length != width * height
                 || gray.length != width * height) return fitted;
         List<MeasureRegion> result = new ArrayList<>();
+        List<RawStaffLineDetector.StaffLines> printedStaffs = null;
         for (var region : fitted) {
-            if (raw.stream()
-                    .anyMatch(r -> r.top() <= region.bottom() && r.bottom() >= region.top())) {
-                result.add(region);
-                continue;
+            float top = region.top(), bottom = region.bottom();
+            float middle = (top + bottom) * .5f;
+            MeasureRegion above = null, below = null;
+            boolean overlaps = false, observedRow = false;
+            for (var observed : raw) {
+                overlaps |= observed.top() <= bottom && observed.bottom() >= top;
+                if (observed.top() <= middle && observed.bottom() >= middle) {
+                    observedRow = true;
+                    break;
+                }
+                if (observed.bottom() < middle
+                        && (above == null || observed.bottom() > above.bottom())) above = observed;
+                if (observed.top() > middle && (below == null || observed.top() < below.top()))
+                    below = observed;
+            }
+            if (overlaps) {
+                if (observedRow || above == null || below == null) {
+                    result.add(region);
+                    continue;
+                }
+                float gapTop = Math.max(top, above.bottom());
+                float gapBottom = Math.min(bottom, below.top());
+                if (2 * (gapBottom - gapTop) < bottom - top) {
+                    result.add(region);
+                    continue;
+                }
+                if (printedStaffs == null)
+                    printedStaffs = RawStaffLineDetector.detect(gray, width, height);
+                if (!ownsPrintedStaff(above, printedStaffs, height)
+                        || !ownsPrintedStaff(below, printedStaffs, height)
+                        || ownsPrintedStaff(region, printedStaffs, height)) {
+                    result.add(region);
+                    continue;
+                }
+                // An OCR row in the gap cannot borrow staff pixels from a neighboring measure.
+                top = gapTop;
+                bottom = gapBottom;
             }
             int left = Math.max(0, Math.round(region.left() * width));
             int right = Math.min(width, Math.round(region.right() * width));
-            int top = Math.max(0, Math.round(region.top() * height));
-            int bottom = Math.min(height, Math.round(region.bottom() * height));
-            int w = right - left, h = bottom - top, staff = 0;
-            if (w <= 0 || h <= 0) continue;
-            byte[] crop = new byte[w * h];
-            for (int y = top; y < bottom; y++)
-                for (int x = left; x < right; x++) {
-                    int at = y * width + x;
-                    if (labels[at] == OmrMeasurePostProcessor.STAFF) staff++;
-                    crop[(y - top) * w + x - left] = gray[at];
-                }
-            if (staff >= w * 2 || !RawStaffLineDetector.detect(crop, w, h).isEmpty())
+            if (hasStaffInk(
+                    labels,
+                    gray,
+                    width,
+                    left,
+                    right,
+                    Math.max(0, Math.round(top * height)),
+                    Math.min(height, Math.round(bottom * height)))) {
                 result.add(region);
+            } else if (overlaps) {
+                // MeasureNumberReconciler places a generated row at the anchor's exact top.
+                rejectedAnchorTops.add(region.top());
+            }
         }
         return List.copyOf(result);
+    }
+
+    private static boolean ownsPrintedStaff(
+            MeasureRegion region, List<RawStaffLineDetector.StaffLines> staffs, int height) {
+        for (var staff : staffs) {
+            float middle = (staff.top() + staff.bottom()) * .5f;
+            if (middle >= region.top() * height && middle <= region.bottom() * height) return true;
+        }
+        return false;
+    }
+
+    private static boolean hasStaffInk(
+            byte[] labels, byte[] gray, int width, int left, int right, int top, int bottom) {
+        int w = right - left, h = bottom - top, staff = 0;
+        if (w <= 0 || h <= 0) return false;
+        byte[] crop = new byte[w * h];
+        for (int y = top; y < bottom; y++)
+            for (int x = left; x < right; x++) {
+                int at = y * width + x;
+                if (labels[at] == OmrMeasurePostProcessor.STAFF) staff++;
+                crop[(y - top) * w + x - left] = gray[at];
+            }
+        return staff >= w * 2 || !RawStaffLineDetector.detect(crop, w, h).isEmpty();
     }
 
     /** OCR counts cannot erase separators visibly spanning the original measure row. */
