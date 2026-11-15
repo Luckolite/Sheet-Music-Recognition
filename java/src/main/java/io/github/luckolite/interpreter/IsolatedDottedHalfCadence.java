@@ -48,13 +48,18 @@ final class IsolatedDottedHalfCadence {
             MeasureRegion current, MeasureRegion next, ScoreNoteEvent note, List<PlayingTechniqueDetector.Staff> staffs) {
         float left = current.left() * width, right = current.right() * width;
         float span = right - left, position = note.positionInMeasure();
-        if (position < .25f || position > .70f || next.top() <= current.bottom()) return false;
+        if (position < .12f || position > .70f || next.top() <= current.bottom()) return false;
         float center = left + span * position;
         for (var fitted : staffs) {
             float gap = fitted.gap();
             if (fitted.index() != 0 || fitted.count() != 1 || gap < 6 || span > gap * 8
                     || fitted.top() < current.top() * height - gap
                     || fitted.bottom() > current.bottom() * height + gap) continue;
+            if (position < .25f) {
+                if (provedTightFrame(gray, width, height, previous, current, note, fitted, left, right, center))
+                    return true;
+                continue;
+            }
             var rules = PrintedDirectionStaff.printedRules(
                     gray, width, height, (left + right) * .5f, fitted.bottom(), gap);
             boolean terminalFrame = rules == null;
@@ -88,6 +93,16 @@ final class IsolatedDottedHalfCadence {
                     gray, width, staff, left - gap * .5f, true, false);
             int closing = PrintedCadenceDurations.boundaryColumn(
                     gray, width, staff, right + gap * .45f, false, false);
+            LegacyTripletDotInk.Core printedDot = null;
+            if (closing < 0) {
+                // The fitted region can already end on the outer edge of the printed double.
+                closing = PrintedCadenceDurations.boundaryColumn(
+                        gray, width, staff, right, false, false);
+                if (closing < 0) continue;
+                printedDot = LegacyTripletDotInk.uniqueDotCore(gray, width, height, center,
+                        note.pageY() * height, Math.min(closing, center + gap * 3), gap);
+                if (printedDot == null) continue;
+            }
             // A barline column is its first ink pixel, and the preceding fitted box is
             // inset. Allow a small left-side tolerance only in the proved terminal frame.
             float openingClearance = headCenteredFrame ? 1.7f : terminalFrame ? 1.85f : 2;
@@ -101,10 +116,51 @@ final class IsolatedDottedHalfCadence {
                     && !LegacyTripletDotInk.singleDotCore(
                             gray, width, height, center, note.pageY() * height, closing, gap))
                 continue;
-            return PrintedCadenceDurations.emptyOutsideChord(gray, width, staff,
-                    Math.max(left, opening + gap * .65f), closing + gap * .45f,
-                    center, center, note.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_FROM_KEY);
+            float insideLeft = Math.max(left, opening + gap * .65f);
+            float insideRight = closing + gap * .45f;
+            boolean accidental = note.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_FROM_KEY;
+            if (PrintedCadenceDurations.emptyOutsideChord(gray, width, staff, insideLeft,
+                    insideRight, center, center, accidental, printedDot)) return true;
+            if (printedDot != null) return false;
+            // A round dot can account for a tall column even when the closing rule was found directly.
+            printedDot = LegacyTripletDotInk.uniqueDotCore(gray, width, height, center,
+                    note.pageY() * height, Math.min(closing, center + gap * 3), gap);
+            return printedDot != null
+                    && PrintedCadenceDurations.emptyOutsideChord(gray, width, staff, insideLeft,
+                            insideRight, center, center, accidental, printedDot);
         }
         return false;
+    }
+
+    /** An inset boundary can leave only a few staff spaces around the printed cadence. */
+    private static boolean provedTightFrame(byte[] gray, int width, int height,
+            MeasureRegion previous, MeasureRegion current, ScoreNoteEvent note,
+            PlayingTechniqueDetector.Staff fitted, float left, float right, float center) {
+        float gap = fitted.gap();
+        float separation = (current.left() - previous.right()) * width;
+        if (right - left > gap * 4
+                || separation < 0 || separation > gap * 1.5f
+                || Math.abs(previous.top() - current.top()) * height > gap * .5f
+                || Math.abs(previous.bottom() - current.bottom()) * height > gap * .5f) return false;
+        float railQuery = right - gap * 1.5f;
+        if (railQuery - gap * .85f <= center || railQuery + gap * .85f >= right) return false;
+        var rules = DottedDyadMeasureSeparator.localRails(
+                gray, width, height, Math.round(railQuery), fitted.bottom(), gap);
+        if (rules == null || rules[1] < 6) return false;
+        gap = rules[1];
+        float top = rules[0] - 4 * gap;
+        if (top < 0 || rules[0] >= height) return false;
+        var staff = new PlayingTechniqueDetector.Staff(top, rules[0], gap, 0, 1);
+        int opening = PrintedCadenceDurations.boundaryColumn(
+                gray, width, staff, left - gap * .5f, true, false);
+        int closing = PrintedCadenceDurations.boundaryColumn(
+                gray, width, staff, right + gap * .45f, false, false);
+        if (opening < 0 || closing < 0 || center - opening < gap * 1.1f
+                || closing - center < gap * 2.25f) return false;
+        if (WrappedTripletDotInk.dottedHalfCore(
+                gray, width, height, center, note.pageY() * height, closing, gap) == null) return false;
+        return PrintedCadenceDurations.emptyOutsideChord(gray, width, staff,
+                Math.max(left, opening + gap * .65f), closing + gap * .45f,
+                center, center, note.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_FROM_KEY);
     }
 }

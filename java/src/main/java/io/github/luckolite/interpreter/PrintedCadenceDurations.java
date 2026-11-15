@@ -757,14 +757,23 @@ final class PrintedCadenceDurations {
     static boolean emptyOutsideChord(
             byte[] gray, int width, PlayingTechniqueDetector.Staff staff,
             float left, float right, double first, double last, boolean hasAccidental) {
+        return emptyOutsideChord(gray, width, staff, left, right, first, last, hasAccidental, null);
+    }
+
+    static boolean emptyOutsideChord(
+            byte[] gray, int width, PlayingTechniqueDetector.Staff staff,
+            float left, float right, double first, double last, boolean hasAccidental,
+            LegacyTripletDotInk.Core printedDot) {
         float gap = staff.gap();
         for (int x = Math.max(0, Math.round(left + gap * .75f));
                 x < Math.min(width, Math.round(right - gap * .75f)); x++) {
             double accidentalReach = hasAccidental ? 1.5 : 1.2;
             if (x >= first - gap * accidentalReach && x <= last + gap * 1.2) continue;
             int ink = 0;
-            for (int y = Math.round(staff.top()); y <= Math.round(staff.bottom()); y++)
+            for (int y = Math.round(staff.top()); y <= Math.round(staff.bottom()); y++) {
+                if (printedDot != null && printedDot.contains(x, y)) continue;
                 if (betweenRules(y, staff) && (gray[y * width + x] & 255) < 155) ink++;
+            }
             if (ink >= gap * .55f) return false;
         }
         return true;

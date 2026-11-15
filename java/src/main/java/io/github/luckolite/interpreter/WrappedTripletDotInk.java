@@ -10,10 +10,20 @@ final class WrappedTripletDotInk {
 
     static Center uniqueCore(byte[] gray, int width, int height,
             float headX, float headY, float nextX, float gap) {
+        return uniqueCore(gray, width, height, headX, headY, nextX, gap, 1.44f);
+    }
+
+    static Center dottedHalfCore(byte[] gray, int width, int height,
+            float headX, float headY, float closingX, float gap) {
+        return uniqueCore(gray, width, height, headX, headY, closingX, gap, 1.65f);
+    }
+
+    private static Center uniqueCore(byte[] gray, int width, int height,
+            float headX, float headY, float nextX, float gap, float horizontalReach) {
         if (gray == null || gray.length != (long) width * height
                 || !Float.isFinite(headX + headY + nextX + gap) || gap < 10 || gap > 30) return null;
         int left = Math.round(headX + gap * .87f);
-        int right = Math.min(Math.round(headX + gap * 1.44f), Math.round(nextX - gap * .58f));
+        int right = Math.min(Math.round(headX + gap * horizontalReach), Math.round(nextX - gap * .58f));
         int top = Math.round(headY - gap * .70f);
         int bottom = Math.round(headY + gap * .30f);
         int reach = Math.round(gap * .68f);

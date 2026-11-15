@@ -38,6 +38,31 @@ final class WrappedEighthTriplets {
         return singleRailGroups(gray, width, height, bar, notes, candidates, false, false, labels);
     }
 
+    /** A closed six-triplet bar can precede a proved wrap even when a natural enters a dot window. */
+    static WrappedTripletMeasure.Half closedNaturalPredecessor(
+            byte[] gray, int width, int height, List<MeasureRegion> regions, int measure,
+            List<ScoreNoteEvent> notes, List<Integer> candidates, byte[] labels) {
+        if (labels == null || gray == null || labels.length != gray.length || measure < 1
+                || measure + 1 >= regions.size() || candidates.size() != 18) return null;
+        var bar = regions.get(measure);
+        var before = regions.get(measure - 1);
+        var after = regions.get(measure + 1);
+        float gap = (bar.bottom() - bar.top()) * height / 8.2f;
+        float leftPocket = (bar.left() - before.right()) * width;
+        float rightPocket = (after.left() - bar.right()) * width;
+        if (gap < 10 || gap > 30
+                || Math.abs(bar.top() - before.top()) * height > gap * .35f
+                || Math.abs(bar.top() - after.top()) * height > gap * .35f
+                || leftPocket < gap * .4f || leftPocket > gap * 1.6f
+                || rightPocket < gap * .4f || rightPocket > gap * 1.6f) return null;
+        var proof = singleRailGroups(gray, width, height, bar, notes, candidates, false, false, labels);
+        if (proof == null) return null;
+        var boundaries = new MeasureRegion((bar.left() + before.right()) * .5f,
+                (bar.right() + after.left()) * .5f, bar.top(), bar.bottom());
+        return WrappedMeasureBoundaries.confirmsClosedTripletBar(
+                gray, width, height, boundaries, proof.x()[0], proof.x()[17]) ? proof : null;
+    }
+
     /** Verify a reverse-facing mask on a genuine triplet's single rail in the following bar. */
     static boolean followingRailAlias(
             byte[] gray,
@@ -353,7 +378,9 @@ final class WrappedEighthTriplets {
             boolean closedBar,
             boolean allowSingleFlat,
             byte[] labels) {
-        boolean wrapped = !closedBar && labels != null && labels.length == gray.length;
+        boolean labeled = !closedBar && labels != null && labels.length == gray.length;
+        boolean closedNaturalPredecessor = labeled && candidates.size() == 18;
+        boolean wrapped = labeled && !closedNaturalPredecessor;
         var owners = candidates.stream()
                 .sorted(Comparator.comparingDouble(i -> notes.get(i).positionInMeasure())).toList();
         float[] x = new float[owners.size()], y = new float[owners.size()];
@@ -493,9 +520,14 @@ final class WrappedEighthTriplets {
             }
         }
         boolean flatOwnsDot = false;
+        boolean naturalOwnsDot = false;
         for (int i = 0; i + 1 < x.length; i++) {
             var dot =
                     WrappedTripletDotInk.uniqueCore(gray, width, height, x[i], y[i], x[i + 1], gap);
+            boolean ownedNatural = labeled && dot != null
+                    && notes.get(owners.get(i + 1)).writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_NATURAL
+                    && naturalOwnsDot(gray, labels, width, height, dot, x[i + 1], y[i + 1], gap);
+            naturalOwnsDot |= ownedNatural;
             if (dot != null
                     && !(wrapped
                             && highLedgerOwnsDot(
@@ -506,10 +538,7 @@ final class WrappedEighthTriplets {
                             && sharpOwnsDot(
                                     gray, labels, width, height, x[i], y[i], dot, x[i + 1],
                                     y[i + 1], gap))
-                    && !(wrapped
-                            && notes.get(owners.get(i + 1)).writtenAccidental()
-                                    == ScoreNoteEvent.ACCIDENTAL_NATURAL
-                            && naturalOwnsDot(gray, labels, width, height, dot, x[i + 1], y[i + 1], gap))
+                    && !ownedNatural
                     && (x.length != 18
                             || !headConnectedLedger(gray, width, height, x[i], y[i], dot, gap))
                     && !(x.length == 12
@@ -546,14 +575,15 @@ final class WrappedEighthTriplets {
                             && (!closedBar
                                     || x.length != 12
                                     || !staffRuleOnlyCut(
-                                            gray, width, height, bar, a, b, gap, ribbon)))
+                                            gray, width, height, bar, a, b, gap, ribbon, false)))
                         return null;
                 }
                 continue;
             }
             if (!same || !singleRail(gray, width, height, a, b, gap)) return null;
         }
-        return !allowSingleFlat || flatOwnsDot ? new WrappedTripletMeasure.Half(owners, x) : null;
+        return (!allowSingleFlat || flatOwnsDot) && (!closedNaturalPredecessor || naturalOwnsDot)
+                ? new WrappedTripletMeasure.Half(owners, x) : null;
     }
 
     /** Keep a proved beam endpoint when the scanner continues into adjacent vertical ink. */
@@ -1055,6 +1085,14 @@ final class WrappedEighthTriplets {
         return new WrappedTripletMeasure.Half(owners, x);
     }
 
+    static boolean cutBetweenRecoveredGroups(
+            byte[] gray, int width, int height, MeasureRegion bar,
+            PrintedBeamShafts.Shaft left, PrintedBeamShafts.Shaft right, float gap) {
+        var ribbon = bestRibbon(gray, width, height, left, right, gap);
+        return ribbon.coverage() <= .46f
+                || staffRuleOnlyCut(gray, width, height, bar, left, right, gap, ribbon, true);
+    }
+
     /** A staff crossing can imitate part of a beam without joining the two shafts. */
     private static boolean staffRuleOnlyCut(
             byte[] gray,
@@ -1064,7 +1102,8 @@ final class WrappedEighthTriplets {
             PrintedBeamShafts.Shaft left,
             PrintedBeamShafts.Shaft right,
             float gap,
-            Ribbon ribbon) {
+            Ribbon ribbon,
+            boolean recoveredShaft) {
         if (ribbon.coverage() >= .75f) return false;
         int a = (left.left() + left.right()) / 2, b = (right.left() + right.right()) / 2;
         int inset = Math.round(gap * .45f), first = a + inset, last = b - inset;
@@ -1080,7 +1119,11 @@ final class WrappedEighthTriplets {
         var after = staff.at(b);
         float start = ribbon.leftY() - (before[0] - rule * before[1]);
         float end = ribbon.rightY() - (after[0] - rule * after[1]);
-        if (start * end >= 0 || Math.min(Math.abs(start), Math.abs(end)) < gap * .31f) return false;
+        float near = Math.min(Math.abs(start), Math.abs(end));
+        float far = Math.max(Math.abs(start), Math.abs(end));
+        if (start * end >= 0
+                || (recoveredShaft ? near < gap * .12f || far < gap * .36f : near < gap * .31f))
+            return false;
 
         int[] rows = new int[last - first + 1];
         int isolated = 0, flank = Math.max(3, Math.round(gap * .22f));

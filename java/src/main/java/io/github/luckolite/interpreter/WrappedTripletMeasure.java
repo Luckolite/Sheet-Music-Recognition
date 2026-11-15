@@ -55,12 +55,17 @@ final class WrappedTripletMeasure {
             var tail = half(gray, width, height, regions.get(i+1), notes, byMeasure.get(i+1));
             boolean undotted = false, recoveredShafts = false;
             if (lead == null || tail == null) {
-                int followingCount = byMeasure.get(i + 2).size();
+                var following = byMeasure.get(i + 2);
+                int followingCount = following.size();
+                boolean singleGap =
+                        followingCount == 17
+                                && qualifiedEighthRun(notes, following)
+                                && score.rests().stream().noneMatch(r -> r.measureIndex() == first + 2);
                 if (beats[i - 1] != 6
                         || beats[i + 2] != 6
-                        || followingCount < 18
+                        || followingCount < 18 && !singleGap
                         || followingCount > 19
-                        || !qualifiedPrecedingEighths(notes, byMeasure.get(i - 1))) continue;
+                        || !qualifiedEighthRun(notes, byMeasure.get(i - 1))) continue;
                 lead =
                         WrappedEighthTriplets.half(
                                 gray,
@@ -141,17 +146,19 @@ final class WrappedTripletMeasure {
             assign(lead, notes, written, undotted);
             assign(tail, notes, written, undotted);
             if (undotted
-                    && recoveredShafts
                     && beats[i - 1] == 6
                     && score.rests().stream().noneMatch(r -> r.measureIndex() == first - 1)
                     && score.meterChanges().stream().noneMatch(m -> m.measureIndex() == first)) {
-                var predecessor =
-                        WrappedShaftContinuation.closedPredecessor(
-                                gray, width, height, regions, i - 1, notes, byMeasure.get(i - 1));
+                var predecessor = recoveredShafts ? WrappedShaftContinuation.closedPredecessor(
+                        gray, width, height, regions, i - 1, notes, byMeasure.get(i - 1)) : null;
                 if (predecessor != null) {
                     int clipped = predecessor.owners().get(1);
                     notes.set(clipped, notes.get(clipped).withStemDirection(1));
                     assign(predecessor, notes, written, true);
+                } else {
+                    var preceding = WrappedEighthTriplets.closedNaturalPredecessor(
+                            gray, width, height, regions, i - 1, notes, byMeasure.get(i - 1), labels);
+                    if (preceding != null) assign(preceding, notes, written, true);
                 }
             }
             beats[i] = 3;
@@ -163,10 +170,10 @@ final class WrappedTripletMeasure {
                 .withClockContextSource(score.clockContextSource()), List.copyOf(continuations), written);
     }
 
-    private static boolean qualifiedPrecedingEighths(
+    private static boolean qualifiedEighthRun(
             List<ScoreNoteEvent> notes, List<Integer> owners) {
         if (owners.size() == 18) return true;
-        // A single lost head in the neighboring arpeggio need not obscure the two proved rails.
+        // One missing attack in the context arpeggio may leave a single doubled interval.
         if (owners.size() != 17) return false;
         var positions = new float[17];
         for (int i = 0; i < positions.length; i++) {

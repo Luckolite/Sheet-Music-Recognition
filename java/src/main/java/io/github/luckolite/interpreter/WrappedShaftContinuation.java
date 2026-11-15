@@ -97,8 +97,8 @@ final class WrappedShaftContinuation {
         if (!recovered) return null;
         for (int i : new int[] {2, 5}) {
             if (shafts[i].direction() == shafts[i + 1].direction()
-                    && !WrappedEighthTriplets.matchesRailBridge(
-                            gray, width, height, shafts[i], shafts[i + 1], gap, false)) return null;
+                    && !WrappedEighthTriplets.cutBetweenRecoveredGroups(
+                            gray, width, height, bar, shafts[i], shafts[i + 1], gap)) return null;
         }
         return new WrappedTripletMeasure.Half(owners, x);
     }

@@ -22836,7 +22836,8 @@ final class OmrScoreInterpreter {
                                         leftSpine,
                                         rightSpine,
                                         radius)
-                        || Math.min(rightTop - leftTop, rightBottom - leftBottom) < gap * .45f))
+                        || Math.min(rightTop - leftTop, rightBottom - leftBottom)
+                                        < Math.floor(gap * .45f)))
             return Float.NaN;
         int endpointOffset = Math.max(1, Math.round(glyphHeight * .05f));
         if (rightTop - leftTop < endpointOffset || rightBottom - leftBottom < endpointOffset)
@@ -24519,6 +24520,10 @@ final class OmrScoreInterpreter {
             if (hollowHead || gray == null) return 1;
             if (adjacentDescendingStaccato(gray, width, height, head, first, neighboringHeads, gap)
                     || adjacentAscendingStaccato(
+                            gray, width, height, head, first, neighboringHeads, gap)
+                    || adjacentShortStepStaccatoRun(
+                            gray, width, height, head, first, neighboringHeads, gap)
+                    || followingFingeringTwoOwnsDot(
                             gray, width, height, head, first, neighboringHeads, gap)) return 0;
             var owners =
                     nextOctaveOwnsPortatoDot(
@@ -24952,6 +24957,107 @@ final class OmrScoreInterpreter {
                 && descendingStaccatoAboveHead(gray, width, height, head, gap)
                 && isolatedUpperStaccato(gray, width, height, next, gap, .93f, 1.25f)
                 && twoSharedBeamRails(gray, width, height, a, b, gap, 1.72f);
+    }
+
+    /** Short-step staccatos over three downward, doubly beamed attacks. */
+    private static boolean adjacentShortStepStaccatoRun(
+            byte[] gray, int width, int height, Component head, Component dot,
+            List<Component> nearby, float gap) {
+        float advance = dot.centerX - head.centerX;
+        if (gap < 8 || gap > 26 || advance < gap * 1.76f || advance > gap * 2.20f
+                || head.maxX - head.minX + 1 < gap) return false;
+        Component following = null;
+        for (var next : nearby) {
+            float step = next.centerY - head.centerY;
+            float markHeight = next.centerY - dot.centerY;
+            if (step <= gap * .57f || step > gap * .64f
+                    || markHeight < gap * .94f || markHeight > gap * 1.22f
+                    || Math.abs(next.centerX - dot.centerX) > gap * .13f
+                    || next.minY - dot.maxY < gap * .25f
+                    || next.maxX - next.minX + 1 < gap) continue;
+            if (following != null) return false;
+            following = next;
+        }
+        if (following == null
+                || !isolatedUpperStaccato(gray, width, height, head, gap, .94f, 1.27f)
+                || !isolatedUpperStaccato(gray, width, height, following, gap, .94f, 1.27f))
+            return false;
+        Component third = null;
+        for (var next : nearby) {
+            float spacing = next.centerX - following.centerX;
+            float step = next.centerY - following.centerY;
+            if (spacing < gap * 1.80f || spacing > gap * 2.18f
+                    || step < gap * .35f || step > gap * .62f
+                    || next.maxX - next.minX + 1 < gap) continue;
+            if (third != null) return false;
+            third = next;
+        }
+        if (third == null
+                || !isolatedUpperStaccato(gray, width, height, third, gap, .94f, 1.27f)) return false;
+        int[] a = attachedRawStem(gray, width, height, head, gap);
+        int[] b = attachedRawStem(gray, width, height, following, gap);
+        int[] c = attachedRawStem(gray, width, height, third, gap);
+        return a != null && b != null && c != null && a[2] == 1 && b[2] == 1 && c[2] == 1
+                && twoSharedBeamRails(gray, width, height, a, b, gap, 1.72f)
+                && twoSharedBeamRails(gray, width, height, b, c, gap, 1.72f);
+    }
+
+    /** A detached core belongs to the full fingering numeral above the following attack. */
+    private static boolean followingFingeringTwoOwnsDot(
+            byte[] gray, int width, int height, Component head, Component dot,
+            List<Component> nearby, float gap) {
+        float advance = dot.centerX - head.centerX;
+        if (gap < 10 || gap > 26 || advance < gap * 1.33f || advance > gap * 1.61f
+                || head.maxX - head.minX + 1 < gap) return false;
+        Component following = null;
+        for (var next : nearby) {
+            float descent = next.centerY - head.centerY;
+            float fromDot = next.centerX - dot.centerX;
+            if (descent < gap * 1.20f || descent > gap * 1.58f
+                    || fromDot < gap * .30f || fromDot > gap * .47f
+                    || next.minY - dot.maxY < gap * .85f
+                    || next.maxX - next.minX + 1 < gap) continue;
+            if (following != null) return false;
+            following = next;
+        }
+        if (following == null) return false;
+        int[] a = attachedRawStem(gray, width, height, head, gap);
+        int[] b = attachedRawStem(gray, width, height, following, gap);
+        if (a == null || b == null || a[2] != 1 || b[2] != 1
+                || !twoSharedBeamRails(gray, width, height, a, b, gap, 1.72f)) return false;
+        int l = Math.round(following.centerX - gap * .84f);
+        int r = Math.round(following.centerX + gap * .73f);
+        int t = Math.round(following.centerY - gap * 2.27f);
+        int bottom = Math.round(following.minY - gap * .12f);
+        if (l < 0 || t < 0 || r >= width || bottom >= height || t >= bottom) return false;
+        var captured = RawNumeralComponents.capture(
+                gray, width, height, l, t, r, bottom, 180, () -> {}, () -> {});
+        RawNumeralComponents.Component digit = null;
+        for (var glyph : captured.components()) {
+            float w = glyph.right - glyph.left + 1;
+            float h = glyph.bottom - glyph.top + 1;
+            if (glyph.left <= l || glyph.right >= r || glyph.top <= t || glyph.bottom >= bottom
+                    || w < gap * .63f || w > gap * .96f || h < gap * .89f || h > gap * 1.25f
+                    || following.minY - glyph.bottom < gap * .29f
+                    || Math.abs((glyph.left + glyph.right) * .5f - following.centerX) > gap * .29f
+                    || dot.minX < glyph.left || dot.maxX > glyph.right || dot.minY < glyph.top
+                    || dot.maxY > glyph.bottom || dot.centerX > glyph.left + w * .40f
+                    || dot.centerY > glyph.top + h * .48f) continue;
+            if (digit != null) return false;
+            digit = glyph;
+        }
+        if (digit == null) return false;
+        int constituentInk = 0;
+        for (int i = 0; i < digit.size(); i++) {
+            int pixel = digit.pixel(i);
+            int x = pixel % width, y = pixel / width;
+            if (x >= dot.minX && x <= dot.maxX && y >= dot.minY && y <= dot.maxY
+                    && (gray[pixel] & 255) <= 165) constituentInk++;
+        }
+        if (constituentInk < dot.area * .90f) return false;
+        var reading = JoinedDigitTemplates.inspect(gray, width, height, new java.util.BitSet(),
+                digit.left, digit.top, digit.right, digit.bottom, () -> {});
+        return reading != null && reading.digit() == 2;
     }
 
     private static boolean ascendingStaccatoPair(byte[] gray, int width, int height,

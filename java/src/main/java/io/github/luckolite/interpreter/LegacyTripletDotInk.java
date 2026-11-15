@@ -1,16 +1,27 @@
 package io.github.luckolite.interpreter;
 
 final class LegacyTripletDotInk {
+    record Core(int left, int right, int top, int bottom) {
+        boolean contains(int x, int y) {
+            return x >= left && x <= right && y >= top && y <= bottom;
+        }
+    }
+
     static boolean singleDotCore(byte[] gray, int width, int height,
+            float x, float y, float nextX, float gap) {
+        return uniqueDotCore(gray, width, height, x, y, nextX, gap) != null;
+    }
+
+    static Core uniqueDotCore(byte[] gray, int width, int height,
             float x, float y, float nextX, float gap) {
         int left = Math.round(x + gap * .7f), right = Math.round(nextX - gap * .55f);
         int top = Math.round(y - gap * .85f), bottom = Math.round(y + gap * .65f);
         if (right <= left || bottom <= top || left < 0 || top < 0 || right >= width
-                || bottom >= height || right - left > gap * 2) return false;
+                || bottom >= height || right - left > gap * 2) return null;
         int w = right - left + 1, h = bottom - top + 1;
         boolean[] seen = new boolean[w * h];
         int[] queue = new int[seen.length];
-        int round = 0;
+        Core found = null;
         for (int start = 0; start < seen.length; start++) {
             if (seen[start] || (gray[(top + start / w) * width + left + start % w] & 255) >= 90)
                 continue;
@@ -36,9 +47,12 @@ final class LegacyTripletDotInk {
                     && dotW >= gap * .22f && dotW <= gap * .6f
                     && dotH >= gap * .22f && dotH <= gap * .6f
                     && Math.max(dotW, dotH) <= 1.5f * Math.min(dotW, dotH)
-                    && count >= dotW * dotH * .55f) round++;
+                    && count >= dotW * dotH * .55f) {
+                if (found != null) return null;
+                found = new Core(left + a, left + b, top + c, top + d);
+            }
         }
-        return round == 1;
+        return found;
     }
 
 }

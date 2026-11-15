@@ -3,8 +3,10 @@
 package io.github.luckolite.interpreter;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
 
 import java.util.Arrays;
 import java.util.List;
@@ -35,6 +37,38 @@ public class WrappedShaftContinuationTest {
         var field = new Field();
         field.rail(13);
         assertNull(field.proof());
+    }
+
+    @Test
+    public void staffRuleNearOneBeamEndKeepsRecoveredTripletGroupsSeparate() {
+        int width = 200, height = 240, gap = 16;
+        byte[] gray = new byte[width * height];
+        Arrays.fill(gray, (byte) 255);
+        for (int line = 90; line <= 154; line += 16) {
+            for (int dy = 0; dy < 4; dy++) {
+                Arrays.fill(gray, (line + dy) * width + 10, (line + dy) * width + 190, (byte) 0);
+            }
+        }
+        var bar = new MeasureRegion(15f / width, 180f / width, 56f / height, 187f / height);
+        var left = new PrintedBeamShafts.Shaft(64, 65, 51, 127, 1, List.of());
+        var right = new PrintedBeamShafts.Shaft(99, 100, 80, 145, 1, List.of());
+        for (int y = 51; y <= 127; y++) {
+            gray[y * width + 64] = gray[y * width + 65] = 0;
+        }
+        for (int y = 80; y <= 145; y++) {
+            gray[y * width + 99] = gray[y * width + 100] = 0;
+        }
+        assertFalse(WrappedEighthTriplets.matchesRailBridge(
+                gray, width, height, left, right, gap, false));
+        assertTrue(WrappedEighthTriplets.cutBetweenRecoveredGroups(
+                gray, width, height, bar, left, right, gap));
+
+        for (int x = 65; x <= 100; x++) {
+            int center = Math.round(127 + (x - 65) * 18f / 35);
+            for (int y = center - 2; y <= center + 2; y++) gray[y * width + x] = 0;
+        }
+        assertFalse(WrappedEighthTriplets.cutBetweenRecoveredGroups(
+                gray, width, height, bar, left, right, gap));
     }
 
     private static final class Field {

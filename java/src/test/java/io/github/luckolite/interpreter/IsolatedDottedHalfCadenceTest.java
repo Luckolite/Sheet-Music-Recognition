@@ -74,15 +74,62 @@ public class IsolatedDottedHalfCadenceTest {
         assertFalse(proved(singleRule));
     }
 
+    @Test
+    public void insetTerminalFrameRequiresThePrintedDotAndDoubleRule() throws Exception {
+        var gray = new byte[WIDTH * HEIGHT];
+        Arrays.fill(gray, (byte) 255);
+        var current = new MeasureRegion(233f / WIDTH, 292f / WIDTH, 21f / HEIGHT, 158f / HEIGHT);
+        for (int y : new int[] {55, 72, 89, 106, 122}) {
+            paint(gray, 16, 295, y, y, 0);
+        }
+        paint(gray, 223, 225, 55, 122, 0);
+        paint(gray, 286, 288, 55, 122, 0);
+        paint(gray, 293, 295, 55, 122, 0);
+        for (int x = 231; x <= 253; x++) {
+            for (int y = 114; y <= 130; y++) {
+                double dx = x - 243;
+                double dy = y - 122 + .25 * dx;
+                if (dx * dx / 120 + dy * dy / 42 < 1 && dx * dx / 52 + dy * dy / 16 > 1) {
+                    gray[y * WIDTH + x] = 0;
+                }
+            }
+        }
+        paint(gray, 253, 254, 74, 122, 0);
+        for (int dy = -4; dy <= 4; dy++) {
+            for (int dx = -4; dx <= 4; dx++) {
+                if (dx * dx + dy * dy <= 16) gray[(117 + dy) * WIDTH + 269 + dx] = 0;
+            }
+        }
+        paint(gray, 268, 270, 121, 122, 0);
+        assertTrue(proved(gray, current, 10f / 59, 122, 0));
+
+        var missingDot = gray.clone();
+        paint(missingDot, 265, 273, 113, 121, 255);
+        assertFalse(proved(missingDot, current, 10f / 59, 122, 0));
+
+        var singleRule = gray.clone();
+        paint(singleRule, 293, 295, 55, 122, 255);
+        assertFalse(proved(singleRule, current, 10f / 59, 122, 0));
+
+        var missingStaffRail = gray.clone();
+        paint(missingStaffRail, 249, 282, 89, 89, 255);
+        assertFalse(proved(missingStaffRail, current, 10f / 59, 122, 0));
+    }
+
     private static boolean proved(byte[] gray) throws Exception {
+        return proved(gray, CURRENT, 19f / 69, 106, 2);
+    }
+
+    private static boolean proved(byte[] gray, MeasureRegion current, float position, int y, int step)
+            throws Exception {
         var note =
                 new ScoreNoteEvent(
                         1,
-                        19f / 69,
-                        2,
+                        position,
+                        step,
                         0,
                         1,
-                        106f / HEIGHT,
+                        (float) y / HEIGHT,
                         false,
                         1,
                         0,
@@ -113,7 +160,7 @@ public class IsolatedDottedHalfCadenceTest {
         proof.setAccessible(true);
         return (boolean)
                 proof.invoke(
-                        null, gray, WIDTH, HEIGHT, PREVIOUS, CURRENT, NEXT, note, List.of(STAFF));
+                        null, gray, WIDTH, HEIGHT, PREVIOUS, current, NEXT, note, List.of(STAFF));
     }
 
     private static byte[] source() {
