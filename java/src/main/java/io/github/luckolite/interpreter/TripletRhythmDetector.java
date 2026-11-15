@@ -1108,6 +1108,15 @@ final class TripletRhythmDetector {
                             && middleHead.stemDirection() == stem && lastHead.stemDirection() == stem
                             && Math.abs(numeralX - x2) <= gap * .22f
                             && stem * (middleHead.pageY() * height - numeralY) < -gap;
+                    boolean alignedOnBeamSide =
+                            first.beamCount() == 2
+                                    && middleHead.beamCount() == 2
+                                    && lastHead.beamCount() == 2
+                                    && stem != 0
+                                    && middleHead.stemDirection() == stem
+                                    && lastHead.stemDirection() == stem
+                                    && Math.abs(numeralX - x2) <= gap * .46f
+                                    && stem * (middleHead.pageY() * height - numeralY) > gap * 2.4f;
                     boolean fingering = false;
                     for (int adjacent : new int[] {i - 1, i + 3}) {
                         if (adjacent < 0 || adjacent >= groups.size()) continue;
@@ -1128,17 +1137,55 @@ final class TripletRhythmDetector {
                                 rightY = (adjacent < i ? c.top() : fourth.top()) * height;
                         int side = numeral.top() > y2 ? -1 : 1;
                         if (SeparateBeamGroups.connected(
-                                        gray, width, height, leftX, leftY, rightX, rightY, gap,
-                                        side)
-                                && hasNearbyFour(gray, width, height, numeral, gap)
-                                || centeredOnHead && extra.beamCount() == 2
-                                    && extra.stemDirection() == stem && extra.tupletDivisor() == 1
-                                    && (extra.articulations() & NoteOrnament.GRACE) == 0
-                                    && (SeparateBeamGroups.connected(gray, width, height,
-                                            leftX, leftY, rightX, rightY, gap, -stem)
-                                        || fingerSequence(gray, width, height, numeral, gap, stem,
-                                            x1, a.top() * height, x2, b.top() * height,
-                                            x3, c.top() * height, xx, fourth.top() * height))) {
+                                                gray, width, height, leftX, leftY, rightX, rightY,
+                                                gap, side)
+                                        && hasNearbyFour(gray, width, height, numeral, gap)
+                                || centeredOnHead
+                                        && extra.beamCount() == 2
+                                        && extra.stemDirection() == stem
+                                        && extra.tupletDivisor() == 1
+                                        && (extra.articulations() & NoteOrnament.GRACE) == 0
+                                        && (SeparateBeamGroups.connected(
+                                                        gray, width, height, leftX, leftY, rightX,
+                                                        rightY, gap, -stem)
+                                                || fingerSequence(
+                                                        gray,
+                                                        width,
+                                                        height,
+                                                        numeral,
+                                                        gap,
+                                                        stem,
+                                                        stem,
+                                                        x1,
+                                                        a.top() * height,
+                                                        x2,
+                                                        b.top() * height,
+                                                        x3,
+                                                        c.top() * height,
+                                                        xx,
+                                                        fourth.top() * height))
+                                || alignedOnBeamSide
+                                        && extra.beamCount() == 2
+                                        && extra.augmentationDots() == 0
+                                        && extra.stemDirection() == stem
+                                        && extra.tupletDivisor() == 1
+                                        && (extra.articulations() & NoteOrnament.GRACE) == 0
+                                        && fingerSequence(
+                                                gray,
+                                                width,
+                                                height,
+                                                numeral,
+                                                gap,
+                                                stem,
+                                                -stem,
+                                                x1,
+                                                a.top() * height,
+                                                x2,
+                                                b.top() * height,
+                                                x3,
+                                                c.top() * height,
+                                                xx,
+                                                fourth.top() * height)) {
                             fingering = true;
                             break;
                         }
@@ -4273,9 +4320,22 @@ final class TripletRhythmDetector {
     }
 
     /** Opposite-side digits follow individual heads even when a curved staff crosses the beam. */
-    private static boolean fingerSequence(byte[] gray, int width, int height, Glyph numeral,
-            float gap, int stem, float a, float ay, float b, float by,
-            float c, float cy, float extra, float extraY) {
+    private static boolean fingerSequence(
+            byte[] gray,
+            int width,
+            int height,
+            Glyph numeral,
+            float gap,
+            int stem,
+            int digitSide,
+            float a,
+            float ay,
+            float b,
+            float by,
+            float c,
+            float cy,
+            float extra,
+            float extraY) {
         float[] xs = extra < a ? new float[] {extra, a, b, c} : new float[] {a, b, c, extra};
         float[] ys = extra < a ? new float[] {extraY, ay, by, cy} : new float[] {ay, by, cy, extraY};
         int glyphHeight = numeral.bottom() - numeral.top() + 1;
@@ -4295,12 +4355,17 @@ final class TripletRhythmDetector {
                 int cw = component.right - component.left + 1, ch = component.bottom - component.top + 1;
                 float x = (component.left + component.right) * .5f;
                 float y = (component.top + component.bottom) * .5f;
-                if (component.left <= left || component.right >= right || component.top <= top
-                        || component.bottom >= bottom || Math.abs(x - xs[i]) > gap * .40f
+                if (component.left <= left
+                        || component.right >= right
+                        || component.top <= top
+                        || component.bottom >= bottom
+                        || Math.abs(x - xs[i]) > gap * .40f
                         || Math.abs(component.bottom - numeral.bottom()) > gap * .85f
-                        || (ys[i] - y) * stem >= -gap
-                        || ch < glyphHeight * .75f || ch > glyphHeight * 1.25f
-                        || cw < ch * .28f || cw > ch * .9f) continue;
+                        || (ys[i] - y) * digitSide >= -gap
+                        || ch < glyphHeight * .75f
+                        || ch > glyphHeight * 1.25f
+                        || cw < ch * .28f
+                        || cw > ch * .9f) continue;
                 if (looksLikeTwo(gray, width, component.size(), component.left, component.right,
                                 component.top, component.bottom)
                         || fingerOne(gray, width, component)) {

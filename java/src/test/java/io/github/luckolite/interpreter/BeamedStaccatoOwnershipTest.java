@@ -98,6 +98,64 @@ public final class BeamedStaccatoOwnershipTest {
     }
 
     @Test
+    public void portatoAfterABeamBreakHasItsOwnOctaveDyad() throws Exception {
+        var shape = component();
+        var previous = head(shape, 100, 102);
+        var next = head(shape, 130, 110);
+        var nextLower = head(shape, 130, 166);
+        var neighbors =
+                List.of(
+                        head(shape, 70, 110),
+                        head(shape, 70, 166),
+                        previous,
+                        head(shape, 100, 158),
+                        next,
+                        nextLower,
+                        head(shape, 160, 102),
+                        head(shape, 160, 158));
+        var rounded = shape.newInstance(24, 128, 132, 90, 94, 130f, 92f);
+        var owns =
+                newMethod(
+                        "nextOctaveOwnsPortatoDot",
+                        byte[].class,
+                        int.class,
+                        int.class,
+                        shape.getDeclaringClass(),
+                        shape.getDeclaringClass(),
+                        List.class,
+                        float.class);
+
+        var page = new byte[WIDTH * HEIGHT];
+        Arrays.fill(page, (byte) 255);
+        for (int i = 0; i < 4; i++) {
+            int x = 70 + 30 * i;
+            int y = i == 0 || i == 2 ? 110 : 102;
+            ink(page, x - 11, y, x - 10, 208, 0);
+            dot(page, x, y - 18);
+            ink(page, x - 9, y - 30, x + 9, y - 27, 0);
+        }
+        for (int x : new int[] {59, 119}) {
+            ink(page, x, 189, x + 31, 197, 0);
+            ink(page, x, 200, x + 31, 208, 0);
+        }
+        assertEquals(
+                List.of(next, nextLower),
+                owns.invoke(null, page, WIDTH, HEIGHT, previous, rounded, neighbors, GAP));
+
+        var noNextDash = page.clone();
+        ink(noNextDash, 117, 77, 143, 85, 255);
+        assertEquals(
+                List.of(),
+                owns.invoke(null, noNextDash, WIDTH, HEIGHT, previous, rounded, neighbors, GAP));
+
+        var cutRightBeam = page.clone();
+        ink(cutRightBeam, 132, 187, 137, 198, 255);
+        assertEquals(
+                List.of(),
+                owns.invoke(null, cutRightBeam, WIDTH, HEIGHT, previous, rounded, neighbors, GAP));
+    }
+
+    @Test
     public void detachedMarkDoesNotOwnAThirdRail() throws Exception {
         var shape = component();
         var left = head(shape, 100, 150);

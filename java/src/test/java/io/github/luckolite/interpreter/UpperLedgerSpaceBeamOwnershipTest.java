@@ -16,40 +16,64 @@ public class UpperLedgerSpaceBeamOwnershipTest {
     private static final float TOP = 126;
     private static final float BOTTOM = 190;
     private static final int[] XS = {53, 85, 117};
-    private static final int[] YS = {86, 62, 46};
+    private static final int[] LEADING = {86, 62, 46};
+    private static final int[] MIDDLE = {86, 70, 46};
+    private static final int[] APEX = {30, 46, 62};
 
     @Test
     public void shortLedgerSpaceUsesItsOwnShaftAndTwoLinkedHeads() throws Exception {
-        var ink = ink();
-        assertTrue(admitted(ink, ink));
+        var ink = ink(LEADING, 0);
+        assertTrue(admitted(ink, ink, LEADING, 0));
     }
 
     @Test
     public void sourceRailAndTwoInnerLedgerLinesAreRequired() throws Exception {
-        var ink = ink();
+        var ink = ink(LEADING, 0);
         var noBridge = ink.clone();
         paint(noBridge, 56, 151, 67, 166, (byte) 255);
-        assertFalse(admitted(ink, noBridge));
+        assertFalse(admitted(ink, noBridge, LEADING, 0));
         var noInnerRule = ink.clone();
         paint(noInnerRule, 48, 107, 66, 112, (byte) 255);
-        assertFalse(admitted(ink, noInnerRule));
+        assertFalse(admitted(ink, noInnerRule, LEADING, 0));
     }
 
-    private static byte[] ink() {
+    @Test
+    public void middleHeadRequiresBothLinks() throws Exception {
+        var ink = ink(MIDDLE, 1);
+        assertTrue(admitted(ink, ink, MIDDLE, 1));
+        var noLeft = ink.clone();
+        paint(noLeft, 56, 151, 67, 166, (byte) 255);
+        assertFalse(admitted(ink, noLeft, MIDDLE, 1));
+        var noRight = ink.clone();
+        paint(noRight, 91, 151, 102, 166, (byte) 255);
+        assertFalse(admitted(ink, noRight, MIDDLE, 1));
+    }
+
+    @Test
+    public void apexRequiresItsPrintedCrossingLedger() throws Exception {
+        var ink = ink(APEX, 0);
+        assertTrue(admitted(ink, ink, APEX, 0));
+        var noWings = ink.clone();
+        paint(noWings, 36, 27, 42, 33, (byte) 255);
+        paint(noWings, 64, 27, 70, 33, (byte) 255);
+        assertFalse(admitted(ink, noWings, APEX, 0));
+    }
+
+    private static byte[] ink(int[] heights, int owner) {
         byte[] gray = new byte[WIDTH * HEIGHT];
         Arrays.fill(gray, (byte) 255);
         for (int i = 0; i < XS.length; i++) {
-            int x = XS[i], y = YS[i];
+            int x = XS[i], y = heights[i];
             for (int row = y - 9; row <= y + 9; row++) {
                 double normalized = (row - y) / 9.4;
                 int reach = (int) Math.floor(10.8 * Math.sqrt(1 - normalized * normalized));
                 paint(gray, x - reach, row, x + reach, row, (byte) 0);
             }
             paint(gray, x - 10, y, x - 8, 159, (byte) 0);
-            // The space head touches its upper short ledger and has a second line below.
-            int start = i == 0 ? 94 : y;
-            for (int rule = start; rule < TOP; rule += 16) {
-                int half = i == 0 ? 11 : 14;
+            int step = Math.round((BOTTOM - y) / (GAP * .5f));
+            boolean space = (step & 1) == 1;
+            for (int rule = space ? y + 8 : y; rule < TOP; rule += 16) {
+                int half = space && i == owner ? 11 : 14;
                 paint(gray, x - half, rule - 1, x + half, rule + 1, (byte) 0);
             }
         }
@@ -62,7 +86,8 @@ public class UpperLedgerSpaceBeamOwnershipTest {
             Arrays.fill(gray, y * WIDTH + left, y * WIDTH + right + 1, value);
     }
 
-    private static boolean admitted(byte[] gray, byte[] raw) throws Exception {
+    private static boolean admitted(byte[] gray, byte[] raw, int[] heights, int ownerIndex)
+            throws Exception {
         var outer = OmrScoreInterpreter.class;
         var component = Class.forName(outer.getName() + "$Component");
         var staff = Class.forName(outer.getName() + "$Staff");
@@ -76,39 +101,23 @@ public class UpperLedgerSpaceBeamOwnershipTest {
                         float.class,
                         float.class);
         componentShape.setAccessible(true);
-        var lead =
-                componentShape.newInstance(
-                        310,
-                        XS[0] - 10,
-                        XS[0] + 10,
-                        YS[0] - 9,
-                        YS[0] + 9,
-                        (float) XS[0],
-                        (float) YS[0]);
-        var second =
-                componentShape.newInstance(
-                        310,
-                        XS[1] - 10,
-                        XS[1] + 10,
-                        YS[1] - 9,
-                        YS[1] + 9,
-                        (float) XS[1],
-                        (float) YS[1]);
-        var third =
-                componentShape.newInstance(
-                        310,
-                        XS[2] - 10,
-                        XS[2] + 10,
-                        YS[2] - 9,
-                        YS[2] + 9,
-                        (float) XS[2],
-                        (float) YS[2]);
+        var heads = new Object[XS.length];
+        for (int i = 0; i < heads.length; i++)
+            heads[i] =
+                    componentShape.newInstance(
+                            310,
+                            XS[i] - 10,
+                            XS[i] + 10,
+                            heights[i] - 9,
+                            heights[i] + 9,
+                            (float) XS[i],
+                            (float) heights[i]);
         var staffShape = staff.getDeclaredConstructor(float.class, float.class, float.class);
         staffShape.setAccessible(true);
         var owner = staffShape.newInstance(TOP, BOTTOM, GAP);
         var probe =
                 outer.getDeclaredMethod(
-                        "upperLedgerSpaceOnSingleRail",
+                        "upperLedgerHeadOnSingleRail",
                         byte[].class,
                         byte[].class,
                         byte[].class,
@@ -128,10 +137,10 @@ public class UpperLedgerSpaceBeamOwnershipTest {
                         raw,
                         WIDTH,
                         HEIGHT,
-                        lead,
+                        heads[ownerIndex],
                         owner,
                         owner,
                         List.of(owner),
-                        List.of(lead, second, third));
+                        List.of(heads));
     }
 }

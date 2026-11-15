@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.github.luckolite.interpreter;
 
-/** Detaches a verified complete double rule from an otherwise unread meter crop. */
+/** Detaches verified boundary ink from an otherwise unread meter crop. */
 final class MeterDoubleRuleCrop {
     private MeterDoubleRuleCrop() {}
 
@@ -35,18 +35,26 @@ final class MeterDoubleRuleCrop {
             else if(second==null) second=stroke;
             else return crop;
         }
-        if (second==null || first.left-crop.left()>gap*.42f
-                || second.left-first.right<2 || second.left-first.right>gap*.43f
-                || second.right-first.left>gap*.93f
-                || second.right+2>=crop.right()) return crop;
-        // A separating paper column rules out trimming the initial stroke of a numeral.
-        int boundary=second.right;
-        if (!paperBetweenRules(gray,width,height,boundary,crop.firstLine(),gap)) boundary++;
-        if (!paperBetweenRules(gray,width,height,boundary,crop.firstLine(),gap)
-                || !paperBetweenRules(gray,width,height,boundary+1,crop.firstLine(),gap))
+        if (first == null || first.left - crop.left() > gap * .42f) return crop;
+        int boundary;
+        if (second == null) {
+            float distance = ownerLeft - first.right;
+            if (distance < gap * .24f || distance > gap * .76f) return crop;
+            boundary = first.right;
+        } else {
+            if (second.left - first.right < 2
+                    || second.left - first.right > gap * .43f
+                    || second.right - first.left > gap * .93f) return crop;
+            boundary = second.right;
+        }
+        if (boundary + 2 >= crop.right()) return crop;
+        // Separating paper columns rule out trimming the initial stroke of a numeral.
+        if (!paperBetweenRules(gray, width, height, boundary, crop.firstLine(), gap)) boundary++;
+        if (!paperBetweenRules(gray, width, height, boundary, crop.firstLine(), gap)
+                || !paperBetweenRules(gray, width, height, boundary + 1, crop.firstLine(), gap))
             return crop;
-        return new MeterChangeDetector.Crop(boundary,crop.top(),crop.right(),crop.bottom(),
-                crop.firstLine(),gap);
+        return new MeterChangeDetector.Crop(
+                boundary, crop.top(), crop.right(), crop.bottom(), crop.firstLine(), gap);
     }
 
     private static boolean spansStaff(byte[] gray,int width,int height,int x,int top,float gap) {

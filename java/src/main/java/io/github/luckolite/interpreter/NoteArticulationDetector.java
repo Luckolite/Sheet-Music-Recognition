@@ -1790,6 +1790,14 @@ final class NoteArticulationDetector {
         if (raw)
             candidates.addAll(
                     closedDotFringes(originalGlyphs, joinedOwners, notes, gray, width, height));
+        if (raw)
+            for (int index = 0; index < notes.size(); index++) {
+                Glyph dot = dotAboveJoinedBottomRule(notes.get(index), notes, gray, width, height);
+                if (dot != null) {
+                    candidates.add(dot);
+                    joinedOwners.put(dot, index);
+                }
+            }
         List<Glyph> printedClaims = new ArrayList<>();
         CompoundClaims compoundClaims = new CompoundClaims(notes.size());
         // A peak-shaped first letter needs word context on its right as well.
@@ -3503,6 +3511,69 @@ final class NoteArticulationDetector {
             }
         }
         return false;
+    }
+
+    /** Recover a compact staccato body whose lower edge touches the printed bottom rule. */
+    private static Glyph dotAboveJoinedBottomRule(
+            Anchor owner, List<Anchor> notes, byte[] gray, int width, int height) {
+        float gap = owner.gap;
+        if (!Float.isFinite(owner.x + owner.y + owner.staffBottom + gap)
+                || gap < 10
+                || gap > 24
+                || owner.staffIndex < 0) return null;
+        float bottom = owner.track == null ? owner.staffBottom : owner.track.at(owner.x)[0];
+        float advance = (bottom - owner.y) / gap;
+        if (!Float.isFinite(advance) || advance < 1.30f || advance > 1.68f) return null;
+
+        int x = Math.round(owner.x);
+        int l = Math.round(owner.x - gap * .57f), r = Math.round(owner.x + gap * .57f);
+        int t = Math.round(owner.y + gap * .68f);
+        int start = Math.round(bottom - gap * .24f), limit = Math.round(bottom + gap * .23f);
+        if (l < 0 || r >= width || t < 0 || start <= t || limit >= height) return null;
+        int firstRule = start;
+        while (firstRule < limit && !occludedStaffRule(gray, width, height, x, firstRule, gap))
+            firstRule++;
+        if (firstRule == limit || firstRule <= t) return null;
+        boolean thinCore = false;
+        for (int y = firstRule; y <= limit && y <= firstRule + 3; y++)
+            thinCore |= thinIndependentRule(gray, width, height, x, y, gap);
+        if (!thinCore) return null;
+
+        var field =
+                RawNumeralComponents.capture(
+                        gray, width, height, l, t, r, firstRule - 1, 155, () -> {}, () -> {});
+        Glyph found = null;
+        for (var part : field.components()) {
+            float centerX = (part.left + part.right) * .5f,
+                    centerY = (part.top + part.bottom) * .5f;
+            if (Math.abs(centerX - owner.x) > gap * .16f
+                    || centerY - owner.y < gap * .92f
+                    || centerY - owner.y > gap * 1.25f
+                    || part.left <= l
+                    || part.right >= r
+                    || part.top <= t
+                    || part.bottom != firstRule - 1) continue;
+            if (found != null) return null;
+            int[] pixels = new int[part.size()];
+            boolean touchesRule = false;
+            for (int k = 0; k < pixels.length; k++) {
+                int ink = part.pixel(k);
+                pixels[k] = ink;
+                touchesRule |= ink / width == firstRule - 1 && (gray[ink + width] & 255) < 155;
+            }
+            if (!touchesRule) continue;
+            Glyph probe =
+                    new Glyph(part.left, part.top, part.right, part.bottom, part.size(), pixels);
+            if (rasterCoreMark(probe, width, gap) == NoteArticulation.STACCATO) found = probe;
+        }
+        if (found == null) return null;
+        for (Anchor n : notes)
+            if (n != owner
+                    && n.staff == owner.staff
+                    && Math.abs(found.x() - n.x) < gap * .35f
+                    && Math.abs(found.y() - n.y) >= gap * .72f
+                    && Math.abs(found.y() - n.y) <= gap * 1.65f) return null;
+        return found;
     }
 
     /** Optional local acquisition; existing candidates and all later role guards retain priority. */

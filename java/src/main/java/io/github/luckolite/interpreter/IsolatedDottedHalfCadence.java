@@ -58,6 +58,7 @@ final class IsolatedDottedHalfCadence {
             var rules = PrintedDirectionStaff.printedRules(
                     gray, width, height, (left + right) * .5f, fitted.bottom(), gap);
             boolean terminalFrame = rules == null;
+            boolean headCenteredFrame = false;
             if (terminalFrame) {
                 // The bilateral sample may run beyond the printed staff at a short close.
                 // Admit the existing one-sided reader only across an adjacent same-staff seam.
@@ -69,6 +70,14 @@ final class IsolatedDottedHalfCadence {
                 rules = TerminalDirectionRails.read(
                         gray, width, height, (left + right) * .5f, fitted.bottom(), gap,
                         previous.left(), current.right());
+                if (rules == null) {
+                    // A left-weighted cadence can have all five rails at its head even
+                    // when the bilateral sample at its midpoint exceeds the staff end.
+                    rules =
+                            PrintedDirectionStaff.printedRules(
+                                    gray, width, height, center, fitted.bottom(), gap);
+                    headCenteredFrame = true;
+                }
             }
             if (rules == null) continue;
             gap = rules[1];
@@ -81,9 +90,13 @@ final class IsolatedDottedHalfCadence {
                     gray, width, staff, right + gap * .45f, false, false);
             // A barline column is its first ink pixel, and the preceding fitted box is
             // inset. Allow a small left-side tolerance only in the proved terminal frame.
-            float openingClearance = terminalFrame ? 1.85f : 2;
+            float openingClearance = headCenteredFrame ? 1.7f : terminalFrame ? 1.85f : 2;
             if (opening < 0 || closing < 0 || center - opening < gap * openingClearance
                     || closing - center < gap * 2) continue;
+            if (headCenteredFrame
+                    && !LegacyTripletDotInk.singleDotCore(
+                            gray, width, height, center, note.pageY() * height, closing, gap))
+                continue;
             return PrintedCadenceDurations.emptyOutsideChord(gray, width, staff,
                     Math.max(left, opening + gap * .65f), closing + gap * .45f,
                     center, center, note.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_FROM_KEY);
