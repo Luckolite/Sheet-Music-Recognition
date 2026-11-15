@@ -179,7 +179,10 @@ public final class Main {
         score = wrapped.score();
         var tiedCadence = TiedQuarterCadence.capture(score, initialMeter,
                 decoderGray == null ? gray : decoderGray, width, height, beats);
-        score = tiedCadence.score();
+        score = ClosedLateTripleDyads.normalize(
+                tiedCadence.score(), initialMeter, decoderGray == null ? gray : decoderGray, width, height);
+        float[] lateDyadOnsets = ClosedLateTripleDyads.place(
+                score, initialMeter, decoderGray == null ? gray : decoderGray, width, height, beats, cadences);
         var harmonicQuarterOnsets =
                 ClosedDoubleHarmonicQuarters.writtenOnsets(
                         score, decoderGray == null ? gray : decoderGray, width, height, beats);
@@ -241,6 +244,8 @@ public final class Main {
                                         : ScoreNoteTiming.beatInMeasure(note, score.notes(), beats[bar]));
                 Integer harmonicOnset = harmonicQuarterOnsets.get(noteIndex);
                 if (harmonicOnset != null) startBeat = starts[bar] + harmonicOnset;
+                if (lateDyadOnsets.length > 0 && Float.isFinite(lateDyadOnsets[noteIndex]))
+                    startBeat = starts[bar] + lateDyadOnsets[noteIndex];
                 if (note.kind() == ScoreNoteEvent.Kind.UNPITCHED
                         && (!Double.isFinite(startBeat)
                                 || startBeat < 0
@@ -292,6 +297,11 @@ public final class Main {
                     events.get(i).put("writtenPlacement", new ScoreNoteTiming.WrittenPlacement(
                             onset, duration, -1, -1, false, 0));
                 }
+            for (int i = 0; i < lateDyadOnsets.length; i++) {
+                if (Float.isFinite(lateDyadOnsets[i]))
+                    events.get(i).put("writtenPlacement", new ScoreNoteTiming.WrittenPlacement(
+                            lateDyadOnsets[i], .25, -1, -1, false, 0));
+            }
         }
         attachNotePerformance(score.notes(), events);
         if (standardViolin) {

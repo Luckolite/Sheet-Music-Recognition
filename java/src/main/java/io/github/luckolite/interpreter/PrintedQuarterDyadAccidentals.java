@@ -168,8 +168,8 @@ final class PrintedQuarterDyadAccidentals {
             byte[] semantic, int w, int h, float x, float y, float gap, int staffTop) {
         var matches = new ArrayList<Ink>();
         int right = Math.min(w - 1, Math.round(x - gap * .87f));
-        for (int a = Math.max(0, Math.round(x - gap * 2.65f)); a < right; a++) {
-            for (int b = Math.max(a + Math.round(gap * .55f), Math.round(x - gap * 1.5f));
+        for (int a = Math.max(0, Math.round(x - gap * 3.05f)); a < right; a++) {
+            for (int b = Math.max(a + Math.round(gap * .55f), Math.round(x - gap * 2.35f));
                     b <= Math.min(right, a + Math.round(gap * 1.06f));
                     b++) {
                 if (OmrScoreInterpreter.provesNaturalMeterInk(
