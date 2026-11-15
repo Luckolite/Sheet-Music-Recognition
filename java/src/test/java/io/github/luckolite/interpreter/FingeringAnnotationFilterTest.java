@@ -278,4 +278,54 @@ public class FingeringAnnotationFilterTest {
         assertSame(wrongGlyph, FingeringAnnotationFilter.apply(
                 words, staff, region, wrongGlyph, image, width, height));
     }
+
+    @Test
+    public void compactCaptionOwnsOnlyItsInitialWithPrintedSixteenthGroups() {
+        int width = 640;
+        int height = 330;
+        float left = 30, right = 580;
+        var image = new byte[width * height];
+        Arrays.fill(image, (byte) 255);
+        var staff = List.of(new PlayingTechniqueDetector.Staff(215, 279, 16, 0, 1));
+        var region = List.of(new MeasureRegion(left / width, right / width, .35f, .90f));
+        for (int y = 215; y <= 279; y += 16)
+            drawInk(image, width, 1, width - 1, y, y + 1, 0);
+        drawInk(image, width, 584, 586, 215, 280, 0);
+        var notes = new ArrayList<ScoreNoteEvent>();
+        for (int slot = 0; slot < 12; slot++) {
+            int x = 73 + slot * 43, y = 205 - slot % 4 * 8;
+            notes.add(captionNote(x, y, 9 + (279 - y) / 8, -1, 2, 0, height, left, right));
+            drawInk(image, width, x - 10, x + 8, y - 5, y + 3, 0);
+            drawInk(image, width, x - 10, x - 7, y, 250, 0);
+            if (slot % 4 == 3) {
+                int xMin = x - 3 * 43 - 10;
+                drawInk(image, width, xMin, x - 7, 228, 236, 0);
+                drawInk(image, width, xMin, x - 7, 236, 237, 205);
+                drawInk(image, width, xMin, x - 7, 237, 250, 0);
+                for (int shaftX = xMin; shaftX < x; shaftX += 43)
+                    drawInk(image, width, shaftX, shaftX + 3, 236, 237, 0);
+            }
+        }
+        var expected = List.copyOf(notes);
+        for (int slot = 8; slot < 11; slot++) notes.set(slot, notes.get(slot).withTupletRatio(3, 2));
+        for (int x : new int[] {75, 107, 124, 143, 164, 182})
+            drawInk(image, width, x, x + 11, 285, 298, 0);
+        var words = List.of(new PlayingTechniqueDetector.Word("1 segue", 61f / width,
+                269f / height, 222f / width, 313f / height));
+        notes.add(captionNote(113, 290, -1, 0, 0, 4, height, left, right));
+        assertEquals(expected, FingeringAnnotationFilter.apply(words, staff, region, notes, image, width, height));
+
+        var erased = image.clone();
+        drawInk(erased, width, 107, 118, 285, 298, 255);
+        assertSame(notes, FingeringAnnotationFilter.apply(words, staff, region, notes, erased, width, height));
+        var attachedStem = image.clone();
+        drawInk(attachedStem, width, 105, 107, 249, 291, 0);
+        assertSame(notes, FingeringAnnotationFilter.apply(words, staff, region, notes, attachedStem, width, height));
+        var beamBreak = image.clone();
+        drawInk(beamBreak, width, 178, 188, 225, 254, 255);
+        assertSame(notes, FingeringAnnotationFilter.apply(words, staff, region, notes, beamBreak, width, height));
+        var incomplete = new ArrayList<>(notes);
+        incomplete.remove(0);
+        assertSame(incomplete, FingeringAnnotationFilter.apply(words, staff, region, incomplete, image, width, height));
+    }
 }

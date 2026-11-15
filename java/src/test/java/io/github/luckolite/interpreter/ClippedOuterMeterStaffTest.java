@@ -79,6 +79,22 @@ public class ClippedOuterMeterStaffTest {
     }
 
     @Test
+    public void continuousFifthRailExtendsShallowCropWithOnlyPrefixProfile() {
+        var g = rails(5);
+        for (int y = 0; y < H; y++) Arrays.fill(g, y * W + 339, (y + 1) * W, (byte) 255);
+        var c = new MeterChangeDetector.Crop(300, 97, 337, 156, 98, 14);
+        var expanded = MeterCropStaff.refine(g, W, H, c);
+        assertEquals(100, expanded.firstLine());
+        assertTrue(expanded.bottom() > 156);
+
+        var severed = g.clone();
+        Arrays.fill(severed, 156 * W + c.left(), 156 * W + c.right(), (byte) 255);
+        assertEquals(c, MeterCropStaff.refine(severed, W, H, c));
+        eraseBody(g, 128, 165);
+        assertEquals(c, MeterCropStaff.refine(g, W, H, c));
+    }
+
+    @Test
     public void excessivePhaseRemainsRejected() {
         var c = new MeterChangeDetector.Crop(300, 110, 340, 180, 113, 14);
         assertEquals(c, MeterCropStaff.refine(rails(5), W, H, c));

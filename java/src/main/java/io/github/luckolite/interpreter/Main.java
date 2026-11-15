@@ -331,6 +331,14 @@ public final class Main {
             var fingerings = PrintedFingeringDigits.capture(
                     gray, width, height, annotations.words(), score, events);
             if (!fingerings.isEmpty()) result.put("printedFingerings", fingerings);
+            if (standardViolin) {
+                byte[] geometry = decoderGray == null ? gray : decoderGray;
+                var romanScore = score;
+                var marks = PrintedRomanStrings.capture(geometry, width, height, annotations.words(),
+                        score, events, () -> OmrScoreInterpreter.techniqueStaffs(
+                                labels, geometry, width, height, romanScore.measures()));
+                if (!marks.isEmpty()) result.put("printedStringMarks", marks);
+            }
         }
         result.put("totalBeats", starts[beats.length]);
         Files.writeString(Path.of(args[1]), json(result) + "\n", StandardCharsets.UTF_8);

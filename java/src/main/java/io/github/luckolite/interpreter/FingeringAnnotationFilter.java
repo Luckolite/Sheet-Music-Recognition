@@ -23,6 +23,9 @@ final class FingeringAnnotationFilter {
     private static final Pattern SHORT_FINGERING_CAPTION =
             Pattern.compile("[1-5](?:\\s+[1-5]){2}\\s+segue[.]?", Pattern.CASE_INSENSITIVE);
 
+    private static final Pattern COMPACT_SEGUE_CAPTION =
+            Pattern.compile("[1-5](?:\\s+[1-5])?\\s+segue[.]?", Pattern.CASE_INSENSITIVE);
+
     private FingeringAnnotationFilter() {}
 
     private record Candidate(
@@ -48,6 +51,7 @@ final class FingeringAnnotationFilter {
         notes = annotatedSingleLines(words, staffs, measures, notes, gray, width, height);
         notes = separatedFingeringCaptions(words, staffs, measures, notes, gray, width, height);
         notes = shortFingeringCaptions(words, staffs, measures, notes, gray, width, height);
+        notes = compactSegueCaptions(words, staffs, measures, notes, gray, width, height);
         notes = overlappingFingeringCaptions(words, staffs, measures, notes, gray, width, height);
         notes =
                 loweredSegueWithSplitFingerings(
@@ -381,6 +385,85 @@ final class FingeringAnnotationFilter {
         return output == null ? notes : output.stream().filter(Objects::nonNull).toList();
     }
 
+    /** An italic initial alongside fingering digits can own a false head below the staff. */
+    private static List<ScoreNoteEvent> compactSegueCaptions(
+            List<PlayingTechniqueDetector.Word> words,
+            List<PlayingTechniqueDetector.Staff> staffs,
+            List<MeasureRegion> measures,
+            List<ScoreNoteEvent> notes,
+            byte[] gray, int width, int height) {
+        List<ScoreNoteEvent> output = null;
+        for (var caption : words) {
+            if (caption.text() == null || !COMPACT_SEGUE_CAPTION.matcher(caption.text().strip()).matches())
+                continue;
+            int digitCount = WHITESPACE.split(caption.text().strip()).length - 1;
+            for (var alias : notes) {
+                if (!captionGlyphHead(alias, false) || alias.staffStep() >= 0
+                        || alias.measureIndex() < 0 || alias.measureIndex() >= measures.size()) continue;
+                boolean beamAlias = alias.beamCount() == 3 && alias.unbeamedDurationBeats() == 0
+                        && alias.staffStep() == -2 && digitCount == 2;
+                boolean wholeAlias = alias.beamCount() == 0 && alias.unbeamedDurationBeats() == 4
+                        && alias.staffStep() == -1 && digitCount == 1;
+                if (!beamAlias && !wholeAlias) continue;
+                var bar = measures.get(alias.measureIndex());
+                float x = (bar.left() + (bar.right() - bar.left()) * alias.positionInMeasure()) * width;
+                float y = alias.pageY() * height;
+                if (x < caption.left() * width || x > caption.right() * width
+                        || y < caption.top() * height || y > caption.bottom() * height) continue;
+                var music = notes.stream().filter(n -> n.measureIndex() == alias.measureIndex() && n != alias)
+                        .sorted(Comparator.comparingDouble(ScoreNoteEvent::positionInMeasure)).toList();
+                if (music.size() != 12 || music.stream().anyMatch(n -> n.stemDirection() != -1)) continue;
+                int firstTriplet = tripletRunStart(music);
+                if (firstTriplet == -2 || beamAlias && firstTriplet >= 0) continue;
+                var corrected = music.stream().map(n -> n.tupletDivisor() == 3
+                        ? n.withTupletRatio(1, 1) : n).toList();
+                for (var staff : staffs) {
+                    float gap = staff.gap(), bottom = staff.bottom();
+                    float left = caption.left() * width, right = caption.right() * width;
+                    if (staff.index() != 0 || staff.count() != 1 || gap < 10 || gap > 25
+                            || staff.top() < bar.top() * height || bottom > bar.bottom() * height
+                            || left < bar.left() * width || right > bar.right() * width + gap * 3.1f
+                            || right - left < gap * 8 || right - left > gap * 12.2f
+                            || caption.top() * height < bottom - gap * .65f
+                            || caption.top() * height > bottom + gap * .82f
+                            || caption.bottom() * height > bottom + gap * 3.4f
+                            || !insideInk(alias, bar, staff, List.of(caption), gray, width, height)
+                            || !ownsCompactSegueInitial(gray, width, height, staff, caption, digitCount, x, y)) continue;
+                    if (!closedCaptionSixteenths(
+                            corrected, bar, staff, gray, width, height, 3.9f, true, .95f,
+                            beamAlias ? 1 : 0, 3.1f, true)) continue;
+                    if (output == null) output = new ArrayList<>(notes);
+                    if (firstTriplet >= 0)
+                        for (int i = firstTriplet; i < firstTriplet + 3; i++)
+                            output.set(notes.indexOf(music.get(i)), corrected.get(i));
+                    output.set(notes.indexOf(alias), null);
+                    break;
+                }
+            }
+        }
+        return output == null ? notes : output.stream().filter(Objects::nonNull).toList();
+    }
+
+    private static boolean ownsCompactSegueInitial(
+            byte[] gray, int width, int height, PlayingTechniqueDetector.Staff staff,
+            PlayingTechniqueDetector.Word caption, int digitCount, float x, float y) {
+        var graph = captionComponents(gray, width, height, staff, caption);
+        if (graph == null) return false;
+        float gap = staff.gap();
+        var glyphs = graph.components().stream().filter(c ->
+                        c.size() >= gap * 3 && c.left > graph.left && c.right < graph.right
+                                && c.top > graph.top && c.bottom < graph.bottom
+                                && c.right - c.left >= gap * .45f && c.right - c.left <= gap * 2.15f
+                                && c.bottom - c.top >= gap * .65f && c.bottom - c.top <= gap * 1.95f)
+                .sorted(Comparator.comparingInt(c -> c.left)).toList();
+        if (glyphs.size() != digitCount + 5) return false;
+        var initial = glyphs.get(digitCount);
+        var lastDigit = glyphs.get(digitCount - 1);
+        return initial.left - lastDigit.right >= gap * .68f
+                && initial.left - lastDigit.right <= gap * 2.3f
+                && ownsTextCenter(initial, x, y, width);
+    }
+
     /** Returns the one contiguous soft 3:2 run, no run, or an incompatible timing pattern. */
     private static int tripletRunStart(List<ScoreNoteEvent> notes) {
         int first = -1, count = 0;
@@ -479,6 +562,12 @@ final class FingeringAnnotationFilter {
     }
 
     private static boolean captionHead(ScoreNoteEvent n, boolean allowTextTie) {
+        return captionGlyphHead(n, allowTextTie)
+                && (n.beamCount() >= 1 && n.beamCount() <= 2 && n.unbeamedDurationBeats() == 0
+                        || n.beamCount() == 0 && n.unbeamedDurationBeats() == 4);
+    }
+
+    private static boolean captionGlyphHead(ScoreNoteEvent n, boolean allowTextTie) {
         return n.kind() == ScoreNoteEvent.Kind.PITCHED
                 && n.staffCount() == 1
                 && n.staffIndex() == 0
@@ -494,9 +583,7 @@ final class FingeringAnnotationFilter {
                 && (allowTextTie || !n.tiedFromPrevious())
                 && n.boundaryTies() == 0
                 && n.leadingRestBeats() == 0
-                && n.followingRestBeats() == 0
-                && (n.beamCount() >= 1 && n.beamCount() <= 2 && n.unbeamedDurationBeats() == 0
-                        || n.beamCount() == 0 && n.unbeamedDurationBeats() == 4);
+                && n.followingRestBeats() == 0;
     }
 
     private static boolean closedCaptionSixteenths(List<ScoreNoteEvent> music, MeasureRegion region,
@@ -513,6 +600,14 @@ final class FingeringAnnotationFilter {
             int height,
             float widestGap,
             boolean fineBeamSeam) {
+        return closedCaptionSixteenths(music, region, staff, gray, width, height, widestGap,
+                fineBeamSeam, 1.65f, 0, 2.6f, false);
+    }
+
+    private static boolean closedCaptionSixteenths(
+            List<ScoreNoteEvent> music, MeasureRegion region, PlayingTechniqueDetector.Staff staff,
+            byte[] gray, int width, int height, float widestGap, boolean fineBeamSeam,
+            float openingGap, int missingInteriorRails, float closingGap, boolean useSourceClose) {
         float gap = staff.gap();
         float left = region.left() * width, right = region.right() * width;
         if (right - left < gap * 26 || right - left > gap * 39) return false;
@@ -529,18 +624,26 @@ final class FingeringAnnotationFilter {
                     || (note.articulations() & NoteOrnament.GRACE) != 0) return false;
             float x = left + note.positionInMeasure() * (right - left);
             float y = note.pageY() * height;
-            if (x - previous < gap * 1.65f || x - previous > gap * widestGap) return false;
+            if (x - previous < gap * (i == 0 ? openingGap : 1.65f)
+                    || x - previous > gap * widestGap) return false;
             previous = x;
             var source = PrintedBeamShafts.at(gray, width, height, x, y, gap, budget);
             if (source.size() != 1 || source.get(0).direction() != 1) return false;
             shafts[i] = source.get(0);
             if (i > 0) {
                 boolean rails = pairedRails(gray, width, height, shafts[i - 1], shafts[i], gap, true, fineBeamSeam);
-                if (rails != (i % 4 != 0)) return false;
+                if (i % 4 == 0) {
+                    if (rails) return false;
+                } else if (!rails) {
+                    if (missingInteriorRails == 0) return false;
+                    missingInteriorRails--;
+                }
             }
         }
-        if (right - previous < gap * .9f || right - previous > gap * 2.6f) return false;
-        return PrintedCadenceDurations.boundaryColumn(gray, width, staff, right, true, false) >= 0
+        int boundary = PrintedCadenceDurations.boundaryColumn(gray, width, staff, right, true, false);
+        if (boundary < 0) return false;
+        float space = (useSourceClose ? boundary : right) - previous;
+        return space >= gap * .9f && space <= gap * closingGap
                 && closedWrittenSixteenths(music);
     }
 

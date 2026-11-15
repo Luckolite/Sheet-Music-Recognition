@@ -16,7 +16,7 @@ import xml.etree.ElementTree as ET
 from .typed_events import event_kind, validate_unpitched, notation_order, display_position
 from .rest_kinds import rest_kind, full_measure_span
 from . import visual_size, cue_caption, bow_export, clef_export, articulation_export, ornament_export, grace_export, spelling_export, tremolo_export
-from . import guitar_export, fingering_export
+from . import guitar_export, fingering_export, printed_string_export
 from .natural_harmonic_notation import owner_index as natural_harmonic_owner_index
 from .fall_off_notation import owner_index as fall_off_owner_index
 from . import parenthesized_note_group
@@ -505,6 +505,8 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
     retained_slur_ties = set()
     requested_slur_owners = {owner for _, a, b in retained_slurs for owner in (a, b)}
     slur_attacks = {}
+    printed_string_attacks = {}
+    printed_string_count = 0
     meter = tuple(document.get('initialMeter', meter))
     key_fifths = document.get('initialKeyFifths', key_fifths)
     bpm = document.get('initialBpm', 120) if bpm is None else bpm
@@ -642,6 +644,8 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
         paired_tremolos = tremolo_export.retained(page)
         printed_accidentals = spelling_export.printed_accidentals(page)
         printed_fingerings = fingering_export.retained(page)
+        printed_strings = printed_string_export.retained(page)
+        printed_string_count += len(printed_strings)
         for note_index, n in enumerate(page['events']):
             if event_kind(n) == 'PITCHED' and (not isinstance(n['midi'], int) or not 0 <= n['midi'] <= 127):
                 raise ValueError('MusicXML note pitch must be a MIDI integer in 0..127')
@@ -663,6 +667,7 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
                                retainedArticulations=articulation_export.retained(page, note_index),
                                retainedBow=bow_export.retained(page, note_index),
                                retainedFingering=printed_fingerings.get(note_index),
+                               retainedPrintedString=printed_strings.get(note_index),
                                retainedVisualSize=visual_size.retained(page, note_index),
                                retainedSpelling=spelling,
                                retainedAccidental=spelling_export.printed_mark(printed_accidentals, note_index, spelling),
@@ -1193,6 +1198,12 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
                                       slide_stop=fragment_start==n['start'] and 'slide_stop' in n,
                                       fragment_end=fragment_end, articulation_flags=articulation_flags[ci],
                                       attack_fragment=fragment_start==n['start'], bow_direction=bow_directions[ci])
+                            mark = n.get('retainedPrintedString')
+                            if fragment_start == n['start'] and mark is not None:
+                                owner = n['sourceIdentity']
+                                if owner in printed_string_attacks:
+                                    raise ValueError('A printed string mark has two written attacks')
+                                printed_string_attacks[owner] = emitted, mark
                             edge = (pair_edges.get((fragment_start, fragment_end))
                                     or mixed_edges.get((voice, fragment_start, fragment_end)))
                             if ci == 0 and edge is not None:
@@ -1246,6 +1257,10 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
                                         exported_slur_parts)
     slur_export.apply(root, retained_slurs, slur_attacks, events)
     slide_numbering.assign(root)
+    if len(printed_string_attacks) != printed_string_count:
+        raise ValueError('A printed string mark has no written attack')
+    for note, mark in printed_string_attacks.values():
+        printed_string_export.write(note, mark)
     ET.indent(root)
     ET.ElementTree(root).write(Path(path), encoding='utf-8', xml_declaration=True)
 
