@@ -27,12 +27,33 @@ public final class CompactDottedOctaveTest {
         assertEquals(List.of(0, 0, 0, 0), shifts(source));
     }
 
+    @Test
+    public void shortEngravedContinuationNeedsBothDownwardDots() {
+        var page = engravedNumeral();
+        for (int x = 126; x <= 238; x += 8) ink(page, x, 65, x + 5, 70, 0);
+        ink(page, 240, 73, 242, 77, 0);
+        ink(page, 240, 81, 242, 85, 0);
+        assertEquals(List.of(0, 1, 1, 0), shifts(page, 70, 110, 225, 260));
+        var singleDot = page.clone();
+        ink(singleDot, 239, 80, 243, 86, 255);
+        assertEquals(List.of(0, 0, 0, 0), shifts(singleDot, 70, 110, 225, 260));
+        var reversed = page.clone();
+        ink(reversed, 239, 72, 243, 86, 255);
+        ink(reversed, 240, 58, 242, 62, 0);
+        ink(reversed, 240, 50, 242, 54, 0);
+        assertEquals(List.of(0, 0, 0, 0), shifts(reversed, 70, 110, 225, 260));
+    }
+
     private static List<Integer> shifts(byte[] page) {
+        return shifts(page, 70, 110, 353, 419);
+    }
+
+    private static List<Integer> shifts(byte[] page, int first, int second, int third, int fourth) {
         return OctaveMarkDetector.apply(
                         List.of(),
                         STAFFS,
                         List.of(new MeasureRegion(0, 1, 0, 1)),
-                        List.of(note(70), note(110), note(353), note(419)),
+                        List.of(note(first), note(second), note(third), note(fourth)),
                         page,
                         WIDTH,
                         HEIGHT)
@@ -46,13 +67,17 @@ public final class CompactDottedOctaveTest {
                 0, x / (float) WIDTH, 2, 0, 1, 152f / HEIGHT, false, 0, 1, 2, 0, 1);
     }
 
-    private static byte[] engravedLine() {
+    private static byte[] engravedNumeral() {
         var page = new byte[WIDTH * HEIGHT];
         Arrays.fill(page, (byte) 255);
         ink(page, 100, 62, 122, 88, 0);
         ink(page, 105, 66, 118, 72, 255);
         ink(page, 105, 77, 118, 84, 255);
+        return page;
+    }
 
+    private static byte[] engravedLine() {
+        var page = engravedNumeral();
         for (int x = 126; x <= 374; x += 8) ink(page, x, 65, x + 5, 70, 0);
         for (int y : new int[] {73, 81, 89}) ink(page, 377, y, 379, y + 4, 0);
         return page;

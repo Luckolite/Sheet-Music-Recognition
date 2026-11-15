@@ -470,8 +470,15 @@ final class ArtificialHarmonics {
         return Math.abs(first.top() - second.top()) * height < gap;
     }
 
-    private static boolean unflaggedQuarterTip(byte[] gray, int width, int height, int shaft,
-            float touchY, float stoppedY, float limit, int direction,
+    static boolean unflaggedQuarterTip(
+            byte[] gray,
+            int width,
+            int height,
+            int shaft,
+            float touchY,
+            float stoppedY,
+            float limit,
+            int direction,
             PlayingTechniqueDetector.Staff staff) {
         float gap = staff.gap();
         int start = direction > 0 ? Math.round(touchY - gap * .65f)

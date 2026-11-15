@@ -23756,6 +23756,10 @@ final class OmrScoreInterpreter {
             // engraving offset). A detached bowing/staccato mark near the next note is not a dot.
             if (Math.abs(dot.centerY - head.centerY) > gap * .65f) continue;
             if (staccatoAtNextHead(dot, head, neighboringHeads, gap)) continue;
+            if (!hollowHead
+                    && gray != null
+                    && leftSideOfFollowingTouchDiamond(
+                            gray, width, height, head, dot, neighboringHeads, gap)) continue;
             if (dotWidth < Math.max(1f, gap * .10f)
                     || dotHeight < Math.max(1f, gap * .10f)
                     || dotWidth > gap * .68f
@@ -23822,6 +23826,55 @@ final class OmrScoreInterpreter {
                                 gray, width, height, head, first, second, neighboringHeads, gap)))
             return 1;
         return doubleDot ? 2 : 1;
+    }
+
+    /** A clipped left vertex of the following harmonic's touch can look like a dot. */
+    private static boolean leftSideOfFollowingTouchDiamond(
+            byte[] gray,
+            int width,
+            int height,
+            Component head,
+            Component dot,
+            List<Component> heads,
+            float gap) {
+        float advance = dot.centerX - head.centerX;
+        if (gap < 9
+                || gap > 25
+                || advance < gap * 1.71f
+                || advance > gap * 2.05f
+                || dot.maxX - dot.minX + 1 < gap * .42f
+                || dot.maxY - dot.minY + 1 < gap * .27f) return false;
+        for (var next : heads) {
+            float column = next.centerX - head.centerX;
+            float fromDot = next.centerX - dot.centerX;
+            float touchY = next.centerY - gap * 1.5f;
+            if (column < gap * 2.30f
+                    || column > gap * 2.79f
+                    || fromDot < gap * .49f
+                    || fromDot > gap * .74f
+                    || Math.abs(dot.centerY - touchY) > gap * .22f
+                    || dot.maxX > next.centerX - gap * .20f) continue;
+            var following = attachedRawStem(gray, width, height, next, gap, 0);
+            if (following == null
+                    || following[2] != -1
+                    || !ArtificialHarmonics.shaftCrossedDiamond(
+                            gray, width, height, next.centerX, touchY, gap, following[0], 1, true))
+                continue;
+            var before = attachedRawStem(gray, width, height, head, gap, 0);
+            if (before != null
+                    && before[2] == -1
+                    && ArtificialHarmonics.shaftCrossedDiamond(
+                            gray,
+                            width,
+                            height,
+                            head.centerX,
+                            head.centerY - gap * 1.5f,
+                            gap,
+                            before[0],
+                            1,
+                            false)) return true;
+        }
+        return false;
     }
 
     /** A wide dot beneath the following higher head belongs to its up-stem beamed attack. */

@@ -159,6 +159,15 @@ final class OctaveMarkDetector {
                 }
             }
             if (owner == null) continue;
+            if (shift == -1 && printed.contains(sourceWord)) {
+                var nextOwner =
+                        openUpperLedgerOwner(
+                                word, owner, staffs, measures, notes, gray, width, height);
+                if (nextOwner != null) {
+                    owner = nextOwner;
+                    shift = 1;
+                }
+            }
             float gap = owner.gap(), left = word.left() * width - gap * .65f;
             float textRight =
                     Math.min(
@@ -252,6 +261,79 @@ final class OctaveMarkDetector {
         }
         carryIsolatedTies(notes, result, carry, explicit);
         return List.copyOf(result);
+    }
+
+    /** An unhooked bare eight can sit inline with the next staff's upper ledger attack. */
+    private static PlayingTechniqueDetector.Staff openUpperLedgerOwner(
+            PlayingTechniqueDetector.Word word,
+            PlayingTechniqueDetector.Staff preceding,
+            List<PlayingTechniqueDetector.Staff> staffs,
+            List<MeasureRegion> measures,
+            List<ScoreNoteEvent> notes,
+            byte[] gray,
+            int width,
+            int height) {
+        var next = owner(word, staffs, 1, height, true, gray, width);
+        if (next == null
+                || next.count() != 1
+                || preceding.count() != 1
+                || Math.abs(next.gap() - preceding.gap()) > next.gap() * .1f) return null;
+        float gap = next.gap(), left = word.left() * width, right = word.right() * width;
+        float top = word.top() * height, bottom = word.bottom() * height;
+        float below = (top - preceding.bottom()) / gap;
+        float above = (next.top() - bottom) / gap;
+        if (below < 3 || above < 3 || above > 6 || Math.abs(below - above) > 1) return null;
+        int l = Math.round(left),
+                r = Math.round(right) - 1,
+                t = Math.round(top),
+                b = Math.round(bottom) - 1;
+        if (l < 0
+                || t < 0
+                || r >= width
+                || b >= height
+                || l >= r
+                || t >= b
+                || !bareEightShape(gray, width, new InkBox(l, t, r, b, 0), gap)) return null;
+        float end = dashEnd(gray, width, height, right, top, bottom, gap);
+        if (end - right < gap * 12
+                || hookDirection(gray, width, height, end, top, bottom, gap) != 0
+                || OctaveBracketEnd.direction(gray, width, height, end, top, bottom, gap) != 0)
+            return null;
+
+        boolean inline = false;
+        ScoreNoteEvent first = null, second = null;
+        float firstX = Float.POSITIVE_INFINITY, secondX = Float.POSITIVE_INFINITY;
+        for (var note : notes) {
+            if (note.kind() != ScoreNoteEvent.Kind.PITCHED
+                    || note.staffCount() != 1
+                    || note.visualSize() != ScoreNoteEvent.VisualSize.FULL
+                    || (note.articulations() & NoteOrnament.GRACE) != 0) continue;
+            float xx = x(note, measures, width), y = note.pageY() * height;
+            if (xx < left - gap * 1.35f || xx > right + gap * 4) continue;
+            if (onStaff(note, preceding, staffs, measures, height) && y > top - gap * 3)
+                return null;
+            if (!onStaff(note, next, staffs, measures, height)) continue;
+            if (xx < left - gap * .65f && y >= top && y <= bottom && note.staffStep() >= 12)
+                inline = true;
+            if (xx < left || xx >= secondX) continue;
+            if (xx < firstX) {
+                second = first;
+                secondX = firstX;
+                first = note;
+                firstX = xx;
+            } else if (xx > firstX + gap) {
+                second = note;
+                secondX = xx;
+            }
+        }
+        if (!inline
+                || first == null
+                || second == null
+                || firstX > right + gap * .55f
+                || secondX - firstX > gap * 2.85f
+                || first.measureIndex() != second.measureIndex()) return null;
+        float a = first.pageY() * height - bottom, c = second.pageY() * height - bottom;
+        return a >= gap * 1.4f && a <= gap * 4 && c >= gap * 1.4f && c <= gap * 4 ? next : null;
     }
 
     private static void carryIsolatedTies(
@@ -1591,7 +1673,9 @@ final class OctaveMarkDetector {
             float gap) {
         var first = dots.get(0);
         var last = dots.get(dots.size() - 1);
-        if (dots.size() < 24 || last.right - first.left < gap * 12) return false;
+        float span = last.right - first.left;
+        if (dots.size() < 12 || span < gap * 6.5f) return false;
+        int turns = dots.size() < 24 || span < gap * 12 ? 2 : 3;
         var prior = first;
         for (var dot : dots) {
             if (dot.right - dot.left + 1 > gap * .62f
@@ -1605,8 +1689,8 @@ final class OctaveMarkDetector {
             boolean down = false;
             for (int y = last.top; y <= last.bottom; y++) {
                 if (!endsHorizontalDashes(gray, width, x, y, gap)) continue;
-                if (hasDottedHook(gray, width, height, x, y, -1, gap)) return false;
-                down |= hasDottedHook(gray, width, height, x, y, 1, gap);
+                if (hasDottedHook(gray, width, height, x, y, -1, gap, turns)) return false;
+                down |= hasDottedHook(gray, width, height, x, y, 1, gap, turns);
             }
             if (!down) continue;
             if (terminal >= 0 && x != terminal + 1) return false;
@@ -2195,6 +2279,11 @@ final class OctaveMarkDetector {
 
     private static boolean hasDottedHook(
             byte[] gray, int width, int height, int x, int y, int step, float gap) {
+        return hasDottedHook(gray, width, height, x, y, step, gap, 3);
+    }
+
+    private static boolean hasDottedHook(
+            byte[] gray, int width, int height, int x, int y, int step, float gap, int count) {
         int maxRun = Math.max(3, Math.round(gap * .45f));
         int minInk = Math.max(2, Math.round(gap * .1f));
         int limit = y + step * Math.round(gap * 2.25f);
@@ -2202,8 +2291,8 @@ final class OctaveMarkDetector {
         int row = y;
         while (row != limit && (gray[row * width + x] & 255) < 165) row += step;
         if (Math.abs(row - y) > maxRun) return false;
-        // Three compact, separated dashes must continue from the horizontal chain's last dash.
-        for (int dash = 0; dash < 3; dash++) {
+        // Separated vertical dots must continue from the last horizontal dot.
+        for (int dash = 0; dash < count; dash++) {
             int start = row;
             while (row != limit && (gray[row * width + x] & 255) >= 165) row += step;
             int space = Math.abs(row - start);

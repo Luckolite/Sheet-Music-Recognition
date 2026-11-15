@@ -90,4 +90,37 @@ public class OctaveSystemOwnershipTest {
         assertEquals(0, notes.get(0).octaveShift());
         assertEquals(-1, notes.get(1).octaveShift());
     }
+
+    @Test
+    public void inlineUpperLedgerAttackOwnsAnOpenRibbon() {
+        assertEquals(List.of(0, 0, 1, 1), openRibbon(0, true));
+    }
+
+    @Test
+    public void openRibbonNeedsItsInlineAttackAndAnUpwardHookKeepsTheLowerOwner() {
+        assertEquals(List.of(-1, 0, 0), openRibbon(0, false));
+        assertEquals(List.of(-1, 0, 0, 0), openRibbon(-12, true));
+    }
+
+    private List<Integer> openRibbon(int hook, boolean inline) {
+        var staffs =
+                List.of(
+                        new PlayingTechniqueDetector.Staff(118, 166, 12, 0, 1),
+                        new PlayingTechniqueDetector.Staff(278, 326, 12, 0, 1));
+        var regions =
+                List.of(
+                        new MeasureRegion(0, 1, 100f / H, 180f / H),
+                        new MeasureRegion(0, 1, 255f / H, 337f / H));
+        var notes = new java.util.ArrayList<ScoreNoteEvent>();
+        notes.add(new ScoreNoteEvent(0, 87f / W, 3, 0, 1, 148f / H, false, 0, 0, 2, 1));
+        if (inline) {
+            notes.add(new ScoreNoteEvent(1, 42f / W, 17, 0, 1, 222f / H, false, 0, 0, 2, 1));
+        }
+        notes.add(new ScoreNoteEvent(1, 64f / W, 10, 0, 1, 266f / H, false, 0, 0, 2, 1));
+        notes.add(new ScoreNoteEvent(1, 91f / W, 11, 0, 1, 260f / H, false, 0, 0, 2, 1));
+        return OctaveMarkDetector.apply(List.of(), staffs, regions, notes, page(hook), W, H)
+                .stream()
+                .map(ScoreNoteEvent::octaveShift)
+                .toList();
+    }
 }

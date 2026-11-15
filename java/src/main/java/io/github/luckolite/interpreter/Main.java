@@ -180,6 +180,9 @@ public final class Main {
         var tiedCadence = TiedQuarterCadence.capture(score, initialMeter,
                 decoderGray == null ? gray : decoderGray, width, height, beats);
         score = tiedCadence.score();
+        var harmonicQuarterOnsets =
+                ClosedDoubleHarmonicQuarters.writtenOnsets(
+                        score, decoderGray == null ? gray : decoderGray, width, height, beats);
         var harmonicPitches = ArtificialHarmonics.resolveThirdPitches(
                 labels, decoderGray == null ? gray : decoderGray, width, height, score, initialKey);
         double[] starts = new double[beats.length + 1];
@@ -236,6 +239,8 @@ public final class Main {
                                 + (wrappedTiming != null ? wrappedTiming.onset()
                                   : tiedCadenceTiming != null ? tiedCadenceTiming.onset() : cadences[bar] ? 0
                                         : ScoreNoteTiming.beatInMeasure(note, score.notes(), beats[bar]));
+                Integer harmonicOnset = harmonicQuarterOnsets.get(noteIndex);
+                if (harmonicOnset != null) startBeat = starts[bar] + harmonicOnset;
                 if (note.kind() == ScoreNoteEvent.Kind.UNPITCHED
                         && (!Double.isFinite(startBeat)
                                 || startBeat < 0

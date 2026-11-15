@@ -762,6 +762,8 @@ public final class SheetInterpreter {
                 ClosedDottedSixteenths.applyReversedOctaveHook(
                         finalInterpretation, inheritedMeter, labels, gray, width, height);
         finalInterpretation =
+                ClosedDoubleHarmonicQuarters.apply(finalInterpretation, gray, width, height);
+        finalInterpretation =
                 finalInterpretation.withClockContextSource(
                         ScoreClockContextCapture.capture(
                                 labels,
