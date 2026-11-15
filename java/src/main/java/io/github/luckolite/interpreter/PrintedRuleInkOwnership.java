@@ -10,6 +10,46 @@ final class PrintedRuleInkOwnership {
 
     private static final float[] NEAR_OFFSETS = {-.9f, -.65f, -.4f, .4f, .65f, .9f};
 
+    /** Shared ledger rules extend well beyond a tremolo and repeat at the staff gap. */
+    static boolean matchesLedgerStack(
+            byte[] gray, int width, int height, int x, float center,
+            float staffTop, float gap, float slope, int threshold) {
+        if (!Float.isFinite(staffTop) || !Float.isFinite(gap) || !Float.isFinite(slope)
+                || gap < 8 || gap > Math.min(width, height) * .25f) return false;
+        float phase = (center - staffTop) / gap;
+        int rule = Math.round(phase);
+        if (rule >= 0 && rule <= 4 || Math.abs(phase - rule) > .18f) return false;
+        int reach = Math.round(gap * 1.6f);
+        int tolerance = Math.round(gap * .12f);
+        if (x - reach < 0 || x + reach >= width || !wideRule(
+                gray, width, height, x, center, slope, threshold, reach, tolerance)) return false;
+        for (int direction : new int[] {-1, 1}) {
+            float adjacent = center + direction * gap;
+            float space = (center + adjacent) * .5f;
+            if (wideRule(gray, width, height, x, adjacent, slope, threshold, reach, tolerance)
+                    && !wideRule(gray, width, height, x, space, slope, threshold, reach, tolerance))
+                return true;
+        }
+        return false;
+    }
+
+    private static boolean wideRule(
+            byte[] gray, int width, int height, int x, float center, float slope,
+            int threshold, int reach, int tolerance) {
+        int left = 0, right = 0;
+        for (int dx = -reach; dx <= reach; dx++) {
+            int y = Math.round(center + slope * dx);
+            if (y - tolerance < 0 || y + tolerance >= height) return false;
+            for (int row = y - tolerance; row <= y + tolerance; row++) {
+                if ((gray[row * width + x + dx] & 255) >= threshold) continue;
+                if (dx < 0) left++;
+                if (dx > 0) right++;
+                break;
+            }
+        }
+        return left >= reach * .85f && right >= reach * .85f;
+    }
+
     static boolean matches(
             byte[] gray,
             int w,

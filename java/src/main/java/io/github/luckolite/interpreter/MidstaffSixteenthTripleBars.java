@@ -159,7 +159,10 @@ final class MidstaffSixteenthTripleBars {
         var trial = OmrScoreInterpreter.analyze(labels, gray, width, height, local, raw);
         var supportedTies = ScoreTiePitchGuard.apply(trial.notes(), trial.keyChanges());
         var aliases = aliases(supportedTies, local, 0, meter, labels, gray, raw, width, height);
-        if (aliases == null || !trial.rests().isEmpty()) return List.of();
+        if (!trial.rests().isEmpty()) return List.of();
+        if (aliases == null)
+            return closedOctaveRuns(local, supportedTies, staff, raw, gray, width, height, inner)
+                    ? List.of(a, b) : List.of();
         var written = new ArrayList<>(supportedTies);
         if (aliases.meter != null) written.remove(aliases.meter);
         if (aliases.flat != null) written.remove(aliases.flat);
@@ -178,6 +181,64 @@ final class MidstaffSixteenthTripleBars {
             }
         }
         return List.of(a, b);
+    }
+
+    private static boolean closedOctaveRuns(List<MeasureRegion> regions, List<ScoreNoteEvent> notes,
+            PlayingTechniqueDetector.Staff staff, byte[] raw, byte[] gray, int width, int height,
+            int separator) {
+        var cadence = sectionNotes(notes, 2, 2);
+        if (cadence.size() != 2 || cadence.get(0).staffStep() == cadence.get(1).staffStep()
+                || cadence.get(0).stemDirection() != cadence.get(1).stemDirection()) return false;
+        for (var note : cadence) {
+            if (!plainHead(note) || note.beamCount() != 0 || note.unbeamedDurationBeats() != 1
+                    || note.tiedFromPrevious() || note.positionInMeasure() < .25f
+                    || note.positionInMeasure() > .65f) return false;
+        }
+        float gap = staff.gap();
+        var end = regions.get(2);
+        double first = Math.min(noteX(cadence.get(0), end, width), noteX(cadence.get(1), end, width));
+        double last = Math.max(noteX(cadence.get(0), end, width), noteX(cadence.get(1), end, width));
+        if (last - first > gap * .25f
+                || !PrintedCadenceDurations.emptyOutsideChord(gray, width, staff, end.left() * width,
+                        end.right() * width - gap * .6f, first, last, false)
+                || !PrintedCadenceDurations.emptyOutsideChord(raw, width, staff, end.left() * width,
+                        end.right() * width - gap * .6f, first, last, false)) return false;
+        for (int bar = 0; bar < 2; bar++) {
+            var ordered = sectionNotes(notes, bar, bar).stream()
+                    .sorted(Comparator.comparingDouble(ScoreNoteEvent::positionInMeasure)).toList();
+            if (ordered.size() != 24) return false;
+            var bounds = regions.get(bar);
+            for (int group = 0; group < 24; group += 8) {
+                var heads = new ClosedFourDyadBeam.Head[4];
+                int direction = ordered.get(group).stemDirection();
+                for (int i = 0; i < heads.length; i++) {
+                    var a = ordered.get(group + 2 * i);
+                    var b = ordered.get(group + 2 * i + 1);
+                    float x1 = noteX(a, bounds, width), x2 = noteX(b, bounds, width);
+                    if (!plainHead(a) || !plainHead(b) || a.beamCount() != 2 || b.beamCount() != 2
+                            || a.unbeamedDurationBeats() != 0 || b.unbeamedDurationBeats() != 0
+                            || a.stemDirection() != direction || b.stemDirection() != direction
+                            || Math.abs(a.staffStep() - b.staffStep()) != 7 || x2 - x1 > gap * .24f)
+                        return false;
+                    heads[i] = new ClosedFourDyadBeam.Head((x1 + x2) * .5f,
+                            Math.min(a.pageY(), b.pageY()) * height, Math.max(a.pageY(), b.pageY()) * height);
+                }
+                int leftRule = bar == 1 && group == 0 ? separator : -1;
+                if (!ClosedFourDyadBeam.provesOctavesAfterRule(
+                            gray, width, height, heads, gap, staff.bottom(), -direction, leftRule)
+                        || !ClosedFourDyadBeam.provesOctavesAfterRule(
+                            raw, width, height, heads, gap, staff.bottom(), -direction, leftRule)) return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean plainHead(ScoreNoteEvent n) {
+        return n.kind() == ScoreNoteEvent.Kind.PITCHED && n.staffCount() == 1 && n.staffIndex() == 0
+                && n.visualSize() == ScoreNoteEvent.VisualSize.FULL && !n.crossStaffBeam()
+                && n.boundaryTies() == 0 && n.leadingRestBeats() == 0 && n.followingRestBeats() == 0
+                && n.tupletDivisor() == 1 && n.augmentationDots() == 0 && n.stemDirection() != 0
+                && (n.articulations() & NoteOrnament.GRACE) == 0;
     }
 
     private static boolean closedRails(

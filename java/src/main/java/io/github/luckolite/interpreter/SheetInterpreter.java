@@ -179,7 +179,8 @@ public final class SheetInterpreter {
     record AnalyzedPage(
             ScorePageInterpretation score,
             List<ScoreNoteEvent> originalNotes,
-            SourceLocalAccidental accidentalSource) {}
+            SourceLocalAccidental accidentalSource,
+            List<MeasureRegion> accidentalMeasures) {}
 
     static AnalyzedPage analyzeWithPrintedSources(
             byte[] labels, byte[] gray, int width, int height, Annotations annotations,
@@ -299,6 +300,12 @@ public final class SheetInterpreter {
                 VerifiedOpeningMeterSlot.recover(
                         measures, labels, gray, annotationGray, width, height);
         measures = ClosedSixteenthPairBeforeHalf.recover(measures, labels, gray, width, height);
+        measures =
+                HalfDyadBeforeSixteenthBar.preserveInlineTriple(
+                        rawMeasures, measures, labels, gray, annotationGray, width, height);
+        measures =
+                BeamedFlatBarline.joinLedgerOctaveFragments(
+                        measures, labels, gray, annotationGray, width, height);
         var tripleRuns =
                 MidstaffSixteenthTripleBars.recover(
                         measures, labels, gray, annotationGray, width, height);
@@ -306,6 +313,11 @@ public final class SheetInterpreter {
         measures =
                 HalfDyadBeforeSixteenthBar.recoverDotted(
                         measures, labels, gray, annotationGray, width, height);
+        var fittedWithOverlaps = measures;
+        measures = PrintedMeasureRhythmGuard.rejectUpperLedgerRows(measures, gray, width, height);
+        final var retainedRegions = measures;
+        var rejectedLedgerRows = retainedRegions == fittedWithOverlaps ? List.<MeasureRegion>of()
+                : fittedWithOverlaps.stream().filter(region -> !retainedRegions.contains(region)).toList();
         recognizedRests.reindexed(measures);
         var numberingAnchors =
                 rejectedAnchorTops.isEmpty()
@@ -321,7 +333,8 @@ public final class SheetInterpreter {
         var clockPartSource =
                 ScorePartProducerSource.capture(
                         sourceAnnotations, tabSourceGray, width, height, measures);
-        var score = OmrScoreInterpreter.analyze(labels, gray, width, height, measures, annotationGray);
+        var score = OmrScoreInterpreter.analyze(
+                labels, gray, width, height, measures, annotationGray, rejectedLedgerRows);
         var clockAnalysis = score;
         score =
                 RecognizedMultiRestProjection.apply(
@@ -787,6 +800,8 @@ public final class SheetInterpreter {
                 ClosedDottedSixteenths.restoreUnclaimedOctaveBeamGroups(
                         finalInterpretation, inheritedMeter, gray, annotationGray, width, height,
                         physicalPage);
+        finalInterpretation = PenultimateHarmonicQuarterAlias.capture(
+                finalInterpretation, labels, annotationGray, gray, width, height);
         finalInterpretation =
                 finalInterpretation.withClockContextSource(
                         ScoreClockContextCapture.capture(
@@ -803,8 +818,12 @@ public final class SheetInterpreter {
                 labels, gray, width, height, finalInterpretation);
         var touches = OpenStringHarmonics.capture(
                 labels, annotationGray, gray, width, height, pitched, words);
+        var cadences = PrintedCadenceDurations.captureWithRejectedLedgerRows(
+                touches, labels, gray, width, height, rejectedLedgerRows, annotationGray);
+        cadences = ClosedLedgerHalfDyad.capture(cadences, annotationGray, width, height);
         return new AnalyzedPage(
-                PrintedCadenceDurations.capture(touches, labels, gray, width, height),
-                clockAnalysis.notes(), clockAnalysis.clockProducerSource().localAccidentals());
+                TerminalMixedHarmonicCadence.capture(
+                        cadences, labels, annotationGray, gray, width, height),
+                clockAnalysis.notes(), clockAnalysis.clockProducerSource().localAccidentals(), measures);
     }
 }

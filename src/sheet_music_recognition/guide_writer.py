@@ -1,9 +1,10 @@
 # Copyright 2026 Luckolite
 # SPDX-License-Identifier: Apache-2.0
-"""Write a desktop score result in the current Android guide-cache wire format.
+"""Write a desktop score result in a supported Android guide-cache wire format.
 
 This is derived cache data. The source PDF and previously saved guides are never
-modified by this module. Keep GUIDE_VERSION aligned with PdfPageRenderCache.
+modified by this module. The default stays at Guide302 for existing callers.
+Pass an explicit format to encode newer retained layout records.
 """
 
 import io
@@ -18,7 +19,7 @@ from . import semantic_wire
 # Recognition revisions 264/265/266/267/268/269/270/271/272/273/274/275 retain the complete framed 263 record layout.
 RECOGNITION_REVISION = 156
 GUIDE_VERSION = 302
-SUPPORTED_GUIDE_VERSIONS = (260, 261, 262, 263, 264, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296, 297, 298, 299, 300, 301, 302)
+SUPPORTED_GUIDE_VERSIONS = tuple(range(260, 308))
 MAX_GUIDE_BYTES = 128 * 1024 * 1024
 
 
@@ -88,6 +89,9 @@ def encode(score, guide_version=GUIDE_VERSION):
             raise ValueError("Invalid printed cadence duration")
         if guide_version < 302 and cadence:
             raise ValueError("Printed cadences require guide302")
+        # Preserve standalone Guide302 output. The app-compatible extension starts at 303.
+        if guide_version == 303 and cadence > 2:
+            raise ValueError("Three-beat printed cadences require guide304")
         normalized_measures.append(dict(row, cadenceQuarterBeats=cadence))
     _records(output, normalized_measures, measure_fields, 10_000)
     _pack(output, "i", _field(score, "firstMeasureNumber"))
@@ -291,7 +295,8 @@ def encode(score, guide_version=GUIDE_VERSION):
         raise ValueError("Legacy guide format cannot preserve printed rest groups")
     from . import beam_source
     if guide_version >= 297:
-        output.write(beam_source.encode_source(score.get("beamSource"), len(notes)))
+        output.write(beam_source.encode_source(
+            score.get("beamSource"), len(notes), engraved_tuplets=guide_version >= 307))
     else:
         beam_source.require_legacy_compatible(score.get("beamSource"), len(notes))
     from . import clock_context
@@ -302,6 +307,50 @@ def encode(score, guide_version=GUIDE_VERSION):
         output.write(clock_context.encode(context, len(notes), len(measures), len(score.get("rests", []))))
     else:
         clock_context.require_legacy_compatible(context, len(notes), len(measures), len(score.get("rests", [])))
+    if guide_version >= 303:
+        from . import measure_continuations
+        output.write(measure_continuations.encode(
+            score.get("printedMeasureContinuations", []), normalized_measures, guide_version))
+        accidentals = score.get("printedAccidentals", [])
+        if not isinstance(accidentals, list) or len(accidentals) > len(notes):
+            raise ValueError("Invalid printed accidental count")
+        if guide_version < 305 and accidentals:
+            raise ValueError("Printed accidentals require guide305")
+        if guide_version >= 305:
+            _pack(output, "i", len(accidentals))
+            prior = -1
+            for row in accidentals:
+                owner = row.get("noteIndex") if isinstance(row, dict) else None
+                accidental = row.get("accidental") if isinstance(row, dict) else None
+                if (type(owner) is not int or not prior < owner < len(notes)
+                        or type(accidental) is not int or accidental not in (-2, -1, 0, 1, 3)
+                        or normalized_notes[owner]["kind"] != 0
+                        or type(notes[owner].get("writtenAccidental")) is not int
+                        or notes[owner]["writtenAccidental"] != accidental):
+                    raise ValueError("Invalid printed accidental ownership")
+                _pack(output, "ib", owner, accidental)
+                prior = owner
+        roman = score.get("pendingRomanStrings", [])
+        if not isinstance(roman, list) or len(roman) > len(notes):
+            raise ValueError("Invalid pending Roman count")
+        if guide_version < 306 and roman:
+            raise ValueError("Pending Roman strings require guide306")
+        if guide_version >= 306:
+            _pack(output, "i", len(roman))
+            prior = -1
+            for row in roman:
+                if not isinstance(row, dict):
+                    raise ValueError("Invalid pending Roman row")
+                owner, number, placement = row.get("noteIndex"), row.get("number"), row.get("placement")
+                if (type(owner) is not int or not prior < owner < len(notes)
+                        or type(number) is not int or not 1 <= number <= 4
+                        or placement not in ("ABOVE", "BELOW")
+                        or normalized_notes[owner]["kind"] != 0
+                        or normalized_notes[owner]["visualSize"] != 0
+                        or notes[owner].get("staffCount") != 1):
+                    raise ValueError("Invalid pending Roman ownership")
+                _pack(output, "iBB", owner, number, int(placement == "BELOW"))
+                prior = owner
     if output.tell() > MAX_GUIDE_BYTES:
         raise ValueError("Guide exceeds cache limit")
     return output.getvalue()

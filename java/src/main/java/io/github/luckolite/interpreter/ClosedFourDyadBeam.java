@@ -45,6 +45,20 @@ final class ClosedFourDyadBeam {
                         allowInnerRailStaffCrossing);
     }
 
+    /** A verified adjacent barline can enter the left beam closure sample. */
+    static boolean provesOctavesAfterRule(byte[] gray, int width, int height, Head[] heads,
+            float gap, float staffBottom, int direction, int leftRule) {
+        return Float.isFinite(staffBottom)
+                && proves(gray, width, height, heads, gap, direction, 4.7f, staffBottom, false, leftRule);
+    }
+
+    private static boolean proves(
+            byte[] gray, int width, int height, Head[] heads, float gap, int direction,
+            float maximumSpacing, float staffBottom, boolean allowInnerRailStaffCrossing) {
+        return proves(gray, width, height, heads, gap, direction, maximumSpacing, staffBottom,
+                allowInnerRailStaffCrossing, -1);
+    }
+
     private static boolean proves(
             byte[] gray,
             int width,
@@ -54,7 +68,8 @@ final class ClosedFourDyadBeam {
             int direction,
             float maximumSpacing,
             float staffBottom,
-            boolean allowInnerRailStaffCrossing) {
+            boolean allowInnerRailStaffCrossing,
+            int leftRule) {
         if (gap < 8 || gap > 32 || direction == 0) return false;
         var budget = new PrintedBeamShafts.Budget(100_000);
         Stem[] stems = new Stem[heads.length];
@@ -82,7 +97,7 @@ final class ClosedFourDyadBeam {
         if (Math.abs(slope) > .4f) return false;
         for (int offset = 1; offset <= Math.round(gap * .30f); offset++) {
             float center = stems[0].topTip - direction * offset;
-            if (!closed(gray, width, height, x0, x1, center, slope, gap, Float.NaN)) continue;
+            if (!closed(gray, width, height, x0, x1, center, slope, gap, Float.NaN, leftRule)) continue;
             for (int sep = Math.round(gap * .45f); sep <= Math.round(gap * 1.05f); sep++) {
                 float inner = center - direction * sep;
                 if (closed(
@@ -96,7 +111,8 @@ final class ClosedFourDyadBeam {
                                 gap,
                                 allowInnerRailStaffCrossing && direction == 1
                                         ? staffBottom
-                                        : Float.NaN)
+                                        : Float.NaN,
+                                leftRule)
                         && separated(
                                 gray,
                                 width,
@@ -236,7 +252,8 @@ final class ClosedFourDyadBeam {
             float center,
             float slope,
             float gap,
-            float staffBottom) {
+            float staffBottom,
+            int leftRule) {
         int radius = Math.max(1, Math.round(gap * .075f));
         int full = 0;
         for (int x = first; x <= last; x++)
@@ -253,6 +270,9 @@ final class ClosedFourDyadBeam {
                 float row = center + slope * (x - first);
                 // An extrapolated inner rail can cross the independently established staff rule.
                 if (!core(gray, width, height, x, row, radius)) continue;
+                if (side < 0 && leftRule >= 0 && first - leftRule >= gap * .6f
+                        && first - leftRule <= gap * 1.5f && Math.abs(x - leftRule) <= gap * .23f)
+                    continue;
                 if (Math.abs(row - staffBottom) <= gap * .17f) staffPixels++;
                 else again++;
             }

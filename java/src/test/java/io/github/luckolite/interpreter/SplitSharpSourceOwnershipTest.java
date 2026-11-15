@@ -31,26 +31,26 @@ public class SplitSharpSourceOwnershipTest {
                 List.of(
                         new SourceLocalAccidental.PrintedMark(0, 1),
                         new SourceLocalAccidental.PrintedMark(1, 1)),
-                source.printedMarks(fixture.notes, fixture.notes));
+                source.printedMarks(fixture.notes, fixture.notes, List.of(new MeasureRegion(0, 1, 0, 1))));
         assertEquals(
                 List.of(new SourceLocalAccidental.PrintedMark(0, 1)),
-                source.printedMarks(fixture.notes, fixture.notes.subList(0, 1)));
+                source.printedMarks(fixture.notes, fixture.notes.subList(0, 1), List.of(new MeasureRegion(0, 1, 0, 1))));
     }
 
     @Test
     public void witnessedStripsMustHaveIndependentExactParentMembership() throws Exception {
         var fixture = new Fixture(true, false);
         assertTrue(
-                fixture.capture(UPPER, LOWER).printedMarks(fixture.notes, fixture.notes).isEmpty());
+                fixture.capture(UPPER, LOWER).printedMarks(fixture.notes, fixture.notes, List.of(new MeasureRegion(0, 1, 0, 1))).isEmpty());
         var intact = new Fixture(false, false);
-        assertTrue(intact.capture(UPPER, UPPER).printedMarks(intact.notes, intact.notes).isEmpty());
+        assertTrue(intact.capture(UPPER, UPPER).printedMarks(intact.notes, intact.notes, List.of(new MeasureRegion(0, 1, 0, 1))).isEmpty());
     }
 
     @Test
     public void aThirdHeadClaimOnTheMergedComponentRefusesBothExtraMarks() throws Exception {
         var fixture = new Fixture(false, true);
         assertTrue(
-                fixture.capture(UPPER, LOWER).printedMarks(fixture.notes, fixture.notes).isEmpty());
+                fixture.capture(UPPER, LOWER).printedMarks(fixture.notes, fixture.notes, List.of(new MeasureRegion(0, 1, 0, 1))).isEmpty());
     }
 
     @Test
@@ -58,7 +58,7 @@ public class SplitSharpSourceOwnershipTest {
         var fixture = new Fixture(false, false);
         fixture.pickerChoice(0, null, true);
         assertTrue(
-                fixture.capture(UPPER, LOWER).printedMarks(fixture.notes, fixture.notes).isEmpty());
+                fixture.capture(UPPER, LOWER).printedMarks(fixture.notes, fixture.notes, List.of(new MeasureRegion(0, 1, 0, 1))).isEmpty());
     }
 
     @Test
@@ -68,7 +68,7 @@ public class SplitSharpSourceOwnershipTest {
         var source =
                 fixture.capture(
                         List.of(fixture.split(UPPER, LOWER), fixture.split(narrowed, LOWER)));
-        assertTrue(source.printedMarks(fixture.notes, fixture.notes).isEmpty());
+        assertTrue(source.printedMarks(fixture.notes, fixture.notes, List.of(new MeasureRegion(0, 1, 0, 1))).isEmpty());
     }
 
     @Test
@@ -82,9 +82,9 @@ public class SplitSharpSourceOwnershipTest {
                 List.of(
                         new SourceLocalAccidental.PrintedMark(0, 1),
                         new SourceLocalAccidental.PrintedMark(1, 0)),
-                source.printedMarks(fixture.notes, fixture.notes));
+                source.printedMarks(fixture.notes, fixture.notes, List.of(new MeasureRegion(0, 1, 0, 1))));
         assertTrue(
-                fixture.capture(UPPER, LOWER).printedMarks(fixture.notes, fixture.notes).isEmpty());
+                fixture.capture(UPPER, LOWER).printedMarks(fixture.notes, fixture.notes, List.of(new MeasureRegion(0, 1, 0, 1))).isEmpty());
     }
 
     private static final class Fixture {

@@ -27,8 +27,16 @@ final class OmrScoreInterpreter {
 
     static List<PlayingTechniqueDetector.Staff> techniqueStaffs(
             byte[] labels, byte[] gray, int width, int height, List<MeasureRegion> measures) {
+        return techniqueStaffs(labels, gray, width, height, measures, List.of());
+    }
+
+    static List<PlayingTechniqueDetector.Staff> techniqueStaffs(
+            byte[] labels, byte[] gray, int width, int height, List<MeasureRegion> measures,
+            List<MeasureRegion> rejectedLedgerRows) {
+        List<Staff> staffs = findStaffs(labels, gray, width, height, measures);
+        removeRejectedLedgerStaffs(staffs, rejectedLedgerRows, measures, height);
         List<PlayingTechniqueDetector.Staff> result = new ArrayList<>();
-        for (Staff staff : findStaffs(labels, gray, width, height, measures))
+        for (Staff staff : staffs)
             result.add(
                     new PlayingTechniqueDetector.Staff(
                             staff.top, staff.bottom, staff.gap, staff.index, staff.count));
@@ -64,6 +72,13 @@ final class OmrScoreInterpreter {
                 new RawCourtesyBudget(64_000_000L, 16L * 1024 * 1024));
     }
 
+    static Analysis analyze(
+            byte[] labels, byte[] gray, int width, int height, List<MeasureRegion> measures,
+            byte[] annotationGray, List<MeasureRegion> rejectedLedgerRows) {
+        return analyze(labels, gray, width, height, measures, annotationGray,
+                new RawCourtesyBudget(64_000_000L, 16L * 1024 * 1024), rejectedLedgerRows);
+    }
+
     private static Analysis analyze(
             byte[] labels, byte[] gray, int width, int height, List<MeasureRegion> measures,
             RawCourtesyBudget rawCourtesy) {
@@ -78,6 +93,12 @@ final class OmrScoreInterpreter {
             List<MeasureRegion> measures,
             byte[] annotationGray,
             RawCourtesyBudget rawCourtesy) {
+        return analyze(labels, gray, width, height, measures, annotationGray, rawCourtesy, List.of());
+    }
+
+    private static Analysis analyze(
+            byte[] labels, byte[] gray, int width, int height, List<MeasureRegion> measures,
+            byte[] annotationGray, RawCourtesyBudget rawCourtesy, List<MeasureRegion> rejectedLedgerRows) {
         if (labels == null
                 || labels.length != width * height
                 || width <= 0
@@ -85,6 +106,7 @@ final class OmrScoreInterpreter {
                 || measures == null
                 || measures.isEmpty()) return new Analysis(List.of(), List.of());
         List<Staff> staffs = findStaffs(labels, gray, width, height, measures);
+        removeRejectedLedgerStaffs(staffs, rejectedLedgerRows, measures, height);
         if (staffs.isEmpty())
             return new Analysis(
                     List.of(),
@@ -1862,6 +1884,9 @@ final class OmrScoreInterpreter {
                             staff,
                             staffs,
                             heads)
+                    && (rejectedLedgerRows.isEmpty()
+                            || !sharedBeamedUpperOctave(
+                                    gray, annotationGray, width, height, head, physicalStaff, staff, heads))
                     && !filledBeamedDyadLedger(
                             labels,
                             gray,
@@ -12300,6 +12325,31 @@ final class OmrScoreInterpreter {
         return staffs;
     }
 
+    private static void removeRejectedLedgerStaffs(
+            List<Staff> staffs, List<MeasureRegion> rejected,
+            List<MeasureRegion> measures, int height) {
+        if (rejected.isEmpty()) return;
+        boolean changed = false;
+        for (int i = staffs.size() - 2; i >= 0; i--) {
+            var upper = staffs.get(i);
+            var lower = staffs.get(i + 1);
+            float gap = upper.gap;
+            float separation = lower.bottom - upper.bottom;
+            if (upper.bottom - lower.top < gap * .7f
+                    || separation < gap * 1.2f || separation > gap * 3.9f) continue;
+            for (var removed : rejected) {
+                if (Math.abs(removed.top() * height - (upper.top - gap * 2.1f)) <= gap * .4f
+                        && Math.abs(removed.bottom() * height - (upper.bottom + gap * 2.1f))
+                                <= gap * .4f) {
+                    staffs.remove(i);
+                    changed = true;
+                    break;
+                }
+            }
+        }
+        if (changed) assignSystemPositions(staffs, measures, height);
+    }
+
     /** A compressed semantic alias can overlap a complete page-scale staff and steal its notes. */
     private static void removeCompressedOverlappingStaffAliases(List<Staff> staffs) {
         float[] gaps = new float[staffs.size()];
@@ -14315,6 +14365,69 @@ final class OmrScoreInterpreter {
         }
         return witnessed >= 2;
     }
+
+    /** A shared octave shaft and both adjacent double beams retain a high note crossed by long ledgers. */
+    private static boolean sharedBeamedUpperOctave(
+            byte[] gray, byte[] raw, int width, int height, Component head,
+            Staff physical, Staff owner, List<Component> heads) {
+        float gap = physical.pitchGap;
+        if (raw == null || owner.count != 1
+                || gap < 12 || gap > 26
+                || Math.abs(physical.pitchBottom - owner.pitchBottom) > gap
+                || !filledBeamEndpointCore(gray, width, height, head, gap)
+                || !filledBeamEndpointCore(raw, width, height, head, gap)
+                || !hasLedgerInk(gray, width, height, head, gap, false)
+                || !hasLedgerInk(raw, width, height, head, gap, false)) return false;
+        float phase = (physical.pitchBottom - head.centerY) / (gap * .5f);
+        int step = Math.round(phase);
+        if (step < 16 || step > 20 || (step & 1) != 0 || Math.abs(phase - step) > .36f) return false;
+        int[] shaft = attachedRawStem(gray, width, height, head, gap, 2, 170);
+        int[] rawShaft = attachedRawStem(raw, width, height, head, gap, 2, 170);
+        if (shaft == null || shaft[2] != 1 || !sameDownwardLedgerShaft(shaft, rawShaft)
+                || Math.abs(shaft[0] - head.minX) > gap * .24f
+                || shaft[1] < physical.top + gap * 1.8f || shaft[1] > physical.bottom + gap * .6f)
+            return false;
+        int ledgers = (step - 8) / 2;
+        if (!highSoloStaffLedgerShaft(gray, width, height, head, physical, shaft, ledgers)
+                || !highSoloStaffLedgerShaft(raw, width, height, head, physical, rawShaft, ledgers))
+            return false;
+
+        Component lower = null, before = null, after = null;
+        for (Component peer : heads) {
+            float dx = peer.centerX - head.centerX, dy = peer.centerY - head.centerY;
+            if (Math.abs(dx) <= gap * .22f && Math.abs(dy - gap * 3.5f) <= gap * .22f
+                    && FilledSparseBeamHead.completeInterior(
+                            gray, width, height, peer.centerX, peer.centerY, gap)
+                    && FilledSparseBeamHead.completeInterior(
+                            raw, width, height, peer.centerX, peer.centerY, gap)
+                    && sameDownwardLedgerShaft(
+                            shaft, attachedRawStem(gray, width, height, peer, gap, 2, 170))
+                    && sameDownwardLedgerShaft(
+                            rawShaft, attachedRawStem(raw, width, height, peer, gap, 2, 170))) {
+                if (lower != null) return false;
+                lower = peer;
+            } else if (Math.abs(dx) >= gap * 1.4f && Math.abs(dx) <= gap * 2.8f
+                    && Math.abs(dy) <= gap * 2.1f) {
+                if (dx < 0 && (before == null || peer.centerX > before.centerX)) before = peer;
+                if (dx > 0 && (after == null || peer.centerX < after.centerX)) after = peer;
+            }
+        }
+        return lower != null && before != null && after != null
+                && doubleBeamOnBothSides(gray, width, height, before, head, after, gap)
+                && doubleBeamOnBothSides(raw, width, height, before, head, after, gap);
+    }
+
+    private static boolean doubleBeamOnBothSides(
+            byte[] plane, int width, int height, Component a, Component b, Component c, float gap) {
+        var budget = new PrintedBeamShafts.Budget(200_000);
+        var left = downShaft(plane, width, height, a, gap, budget);
+        var middle = downShaft(plane, width, height, b, gap, budget);
+        var right = downShaft(plane, width, height, c, gap, budget);
+        return left != null && middle != null && right != null
+                && WrappedEighthTriplets.matchesBeamRails(plane, width, height, left, middle, gap, 2)
+                && WrappedEighthTriplets.matchesBeamRails(plane, width, height, middle, right, gap, 2);
+    }
+
 
     private static boolean sameDownwardLedgerShaft(int[] own, int[] other) {
         return other != null
@@ -26642,6 +26755,10 @@ final class OmrScoreInterpreter {
                     if (!printedRule
                             && leftKey >= 0
                             && rightKey >= 0
+                            && !PrintedRuleInkOwnership.matchesLedgerStack(
+                                    gray, width, height, stem[0], center,
+                                    staffTop + staffSlope * (stem[0] - head.centerX),
+                                    gap, staffSlope, strokeThreshold)
                             && !thinStaffRuleThroughStroke(
                                     gray, width, height, stem[0], center, gap, strokeThreshold)) {
                         // A nearby staff rule can seed this same pair of wings twice.

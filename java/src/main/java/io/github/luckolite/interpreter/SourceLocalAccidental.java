@@ -574,16 +574,27 @@ final class SourceLocalAccidental {
         return clefComponents == 1 && symbolMembers > 0 && clefMembers >= symbolMembers * 4;
     }
 
-    List<PrintedMark> printedMarks(List<ScoreNoteEvent> original, List<ScoreNoteEvent> retained) {
+    List<PrintedMark> printedMarks(List<ScoreNoteEvent> original, List<ScoreNoteEvent> retained,
+            List<MeasureRegion> sourceMeasures) {
         if (issuer != ISSUER || !authenticatedFrame || choices.isEmpty()) return List.of();
-        var representedGlyphs = new BitSet(glyphCount);
-        for (var glyph : glyphs) representedGlyphs.set(glyph.index());
+        var representedGlyphs = new HashMap<Integer, Glyph>();
+        var glyphsByRow = new TreeMap<Integer, List<Glyph>>();
+        for (var glyph : glyphs) {
+            representedGlyphs.put(glyph.index(), glyph);
+            glyphsByRow.computeIfAbsent((int) glyph.stats().centerY(), ignored -> new ArrayList<>())
+                    .add(glyph);
+        }
         var glyphOwners = new HashMap<Integer, Integer>();
         for (var choice : choices)
             if (choice.glyph() >= 0) glyphOwners.merge(choice.glyph(), 1, Integer::sum);
         var originalLocations = new HashMap<NoteLocation, Integer>();
-        for (var note : original)
+        var notesByMeasure = new HashMap<Integer, List<ScoreNoteEvent>>();
+        for (var note : original) {
             originalLocations.merge(new NoteLocation(note), 1, Integer::sum);
+            if (note.kind() == ScoreNoteEvent.Kind.PITCHED)
+                notesByMeasure.computeIfAbsent(note.measureIndex(), ignored -> new ArrayList<>())
+                        .add(note);
+        }
         var retainedIndexes = new HashMap<NoteLocation, Integer>();
         for (int index = 0; index < retained.size(); index++)
             retainedIndexes.merge(new NoteLocation(retained.get(index)), index, (a, b) -> -1);
@@ -592,7 +603,7 @@ final class SourceLocalAccidental {
             boolean originalGlyph =
                     choice.status().equals(SUPPORTED)
                             && glyphOwners.getOrDefault(choice.glyph(), 0) == 1
-                            && representedGlyphs.get(choice.glyph());
+                            && representedGlyphs.containsKey(choice.glyph());
             Integer ownedKind = splitAccidentalOwners.get(choice.note());
             if ((!originalGlyph
                             && !joinedNaturalOwners.contains(choice.note())
@@ -608,11 +619,85 @@ final class SourceLocalAccidental {
             var note = retained.get(index);
             int accidental = ownedKind == null ? choice.accidental() : ownedKind;
             if (note.kind() == ScoreNoteEvent.Kind.PITCHED
-                    && note.writtenAccidental() == accidental)
+                    && note.writtenAccidental() == accidental
+                    && (!originalGlyph || ownedKind != null || joinedNaturalOwners.contains(choice.note())
+                            || !ambiguousVerticalOwner(choice, originalNote, sourceMeasures,
+                                    notesByMeasure, representedGlyphs, glyphsByRow)))
                 marks.add(new PrintedMark(index, accidental));
         }
         marks.sort(Comparator.comparingInt(PrintedMark::noteIndex));
         return List.copyOf(marks);
+    }
+
+    private boolean ambiguousVerticalOwner(
+            Choice choice, ScoreNoteEvent note, List<MeasureRegion> measures,
+            Map<Integer, List<ScoreNoteEvent>> notesByMeasure,
+            Map<Integer, Glyph> originals, NavigableMap<Integer, List<Glyph>> byRow) {
+        int measure = note.measureIndex(), head = choice.head();
+        if (note.staffCount() != 1 || measure < 0 || measure >= measures.size()
+                || head < 0 || head >= headAlternatives.size()) return false;
+        var region = measures.get(measure);
+        float gap = (region.bottom() - region.top()) * height / 7.4f;
+        if (gap < 6 || gap > 36) return false;
+        var source = headAlternatives.get(head);
+        if (source.pixels().isEmpty() || !source.unresolvedParentResidual().isEmpty()) return false;
+        // Split children have their own compact footprint. Only a tall unresolved selected head
+        // can straddle both accidental pitch lanes.
+        int left = width, right = -1, top = height, bottom = -1;
+        for (int pixel : source.pixels()) {
+            left = Math.min(left, pixel % width);
+            right = Math.max(right, pixel % width);
+            top = Math.min(top, pixel / width);
+            bottom = Math.max(bottom, pixel / width);
+        }
+        float span = bottom - top + 1f;
+        float headY = note.pageY() * height;
+        if (span < 1.9f * gap || span > 2.45f * gap
+                || headY - top < .4f * span || headY - top > .6f * span) return false;
+        for (var other : notesByMeasure.getOrDefault(measure, List.of())) {
+            if (other == note) continue;
+            float x = (region.left() + other.positionInMeasure() * (region.right() - region.left()))
+                    * width;
+            float y = other.pageY() * height;
+            if (x >= left && x <= right && y >= top && y <= bottom) return false;
+        }
+        float center = (top + bottom) / 2f;
+        var selected = originals.get(choice.glyph());
+        if (!offsetGlyphLane(selected, left, center, gap)) return false;
+        int minRow = (int) Math.floor(center - .7f * gap);
+        int maxRow = (int) Math.ceil(center + .7f * gap);
+        int localBudget = 256;
+        for (var row : byRow.subMap(minRow, true, maxRow, true).values())
+            for (var glyph : row) {
+                if (--localBudget < 0) return false;
+                if (otherVerticalGlyphLane(selected, glyph, left, center, gap)) return true;
+            }
+        return false;
+    }
+
+    static boolean otherVerticalGlyphLane(Glyph selected, Glyph other, int left, float center, float gap) {
+        if (other.index() == selected.index() || !offsetGlyphLane(other, left, center, gap))
+            return false;
+        var a = selected.stats();
+        var b = other.stats();
+        float dy = Math.abs(a.centerY() - b.centerY());
+        float dx = Math.abs(a.centerX() - b.centerX());
+        return (a.centerY() < center) != (b.centerY() < center)
+                && dy >= .8f * gap && dy <= 1.2f * gap
+                && dx >= .6f * gap && dx <= 1.3f * gap
+                && (a.maxX() < b.minX() || b.maxX() < a.minX());
+    }
+
+    private static boolean offsetGlyphLane(Glyph glyph, int left, float center, float gap) {
+        if (glyph.label() != 3 && glyph.label() != 5) return false;
+        var stats = glyph.stats();
+        float dx = left - stats.maxX(), dy = Math.abs(stats.centerY() - center);
+        float w = stats.maxX() - stats.minX() + 1f, h = stats.maxY() - stats.minY() + 1f;
+        return dx >= 0 && dx <= 1.3f * gap
+                && dy >= .3f * gap && dy <= .7f * gap
+                && w >= .65f * gap && w <= 1.25f * gap
+                && h >= 2.2f * gap && h <= 3.2f * gap
+                && stats.area() >= .65f * gap * gap && stats.area() <= 1.5f * gap * gap;
     }
 
     Role role(

@@ -124,18 +124,163 @@ final class HalfDyadBeforeSixteenthBar {
         return edited.size() == regions.size() ? regions : List.copyOf(edited);
     }
 
-    static boolean qualifiesDotted(
+    /**
+     * An inferred count must not erase a real double rule or the signature printed between a closed
+     * half dyad and the final beamed bar of a system.
+     */
+    static List<MeasureRegion> preserveInlineTriple(
+            List<MeasureRegion> separated,
+            List<MeasureRegion> fitted,
+            byte[] labels,
+            byte[] normal,
+            byte[] raw,
+            int width,
+            int height) {
+        if (width < 1
+                || height < 1
+                || normal == null
+                || labels == null
+                || raw == null
+                || normal.length != (long) width * height
+                || labels.length != normal.length
+                || raw.length != normal.length
+                || separated.size() < 4) return fitted;
+        List<MeterChangeDetector.Crop> candidates = null;
+        ArrayList<MeasureRegion> result = null;
+        for (int i = 1; i + 2 < separated.size(); i++) {
+            var prior = separated.get(i - 1);
+            var half = separated.get(i);
+            var run = separated.get(i + 1);
+            var following = separated.get(i + 2);
+            float gap = (half.bottom() - half.top()) * height / 8.2f;
+            float left = half.left() * width, halfEnd = half.right() * width;
+            float runStart = run.left() * width, right = run.right() * width;
+            if (half.cadenceQuarterBeats() != 0
+                    || run.cadenceQuarterBeats() != 0
+                    || gap < 10
+                    || gap > 27
+                    || halfEnd - left < 3.5f * gap
+                    || halfEnd - left > 7 * gap
+                    || right - runStart < 24 * gap
+                    || right - runStart > 35 * gap
+                    || runStart - halfEnd < 2.4f * gap
+                    || runStart - halfEnd > 4.6f * gap
+                    || !sameStaff(prior, half, gap, height)
+                    || !sameStaff(run, half, gap, height)
+                    || (following.top() - run.bottom()) * height < 3 * gap) continue;
+            var current = result == null ? fitted : result;
+            int merged = -1;
+            for (int j = 0; j < current.size(); j++) {
+                var bar = current.get(j);
+                if (bar.cadenceQuarterBeats() != 0
+                        || !sameStaff(half, bar, gap, height)
+                        || Math.abs((bar.left() - half.left()) * width) > gap * .3f
+                        || Math.abs((bar.right() - run.right()) * width) > gap * .3f) continue;
+                merged = j;
+                break;
+            }
+            if (merged < 0) continue;
+            if (candidates == null)
+                candidates = MeterChangeDetector.candidates(labels, normal, width, height);
+            var meter =
+                    inlineTripleCrop(candidates, prior, half, run, normal, raw, width, height, gap);
+            if (meter == null) continue;
+            var parts = List.of(half, run);
+            var analysis = OmrScoreInterpreter.analyze(labels, normal, width, height, parts, raw);
+            if (!qualifiesStraightTriple(parts, analysis, normal, width, height)
+                    || !qualifiesStraightTriple(parts, analysis, raw, width, height)
+                    || !MeterChangeDetector.precedesNotes(
+                            meter, labels, normal, width, height, 1, parts, analysis.notes())
+                    || !MeterChangeDetector.precedesNotes(
+                            meter, labels, raw, width, height, 1, parts, analysis.notes()))
+                continue;
+            if (result == null) result = new ArrayList<>(fitted);
+            result.set(
+                    merged,
+                    new MeasureRegion(half.left(), half.right(), half.top(), half.bottom(), 2));
+            result.add(merged + 1, run);
+        }
+        return result == null ? fitted : List.copyOf(result);
+    }
+
+    static MeterChangeDetector.Crop inlineTripleCrop(
+            List<MeterChangeDetector.Crop> crops,
+            MeasureRegion prior,
+            MeasureRegion half,
+            MeasureRegion run,
+            byte[] normal,
+            byte[] raw,
+            int width,
+            int height,
+            float gap) {
+        MeterChangeDetector.Crop meter = null;
+        float opening = (prior.right() + half.left()) * width * .5f;
+        if (half.left() * width - opening > gap) return null;
+        for (var crop : crops) {
+            float hint = crop.firstLine() + 4 * crop.gap();
+            if (Math.abs(crop.gap() - gap) > .15f * gap
+                    || crop.top() < half.top() * height
+                    || crop.bottom() > half.bottom() * height
+                    || crop.left() < half.right() * width + gap
+                    || Math.abs(crop.right() - run.left() * width) > .45f * gap
+                    || !triple(normal, width, height, crop)
+                    || !triple(raw, width, height, crop)
+                    || !boundaryAt(normal, width, height, opening, hint, gap)
+                    || !boundaryAt(raw, width, height, opening, hint, gap)) continue;
+            int source = meterDoubleRule(raw, width, height, crop);
+            int corrected = meterDoubleRule(normal, width, height, crop);
+            if (source <= half.right() * width
+                    || source - half.right() * width > gap * 1.1f
+                    || Math.abs(source - corrected) > 1) continue;
+            if (meter != null && !meter.equals(crop)) return null;
+            meter = crop;
+        }
+        return meter;
+    }
+
+    static boolean qualifiesStraightTriple(
             List<MeasureRegion> parts,
-            List<ScoreNoteEvent> source,
-            List<ScoreRestEvent> rests,
-            boolean triple,
+            OmrScoreInterpreter.Analysis analysis,
             byte[] gray,
             int width,
             int height) {
-        if (!rests.isEmpty()) return false;
+        if (!analysis.rests().isEmpty()) return false;
         var cadence = parts.get(0);
         var run = parts.get(1);
-        var head = source.stream().filter(n -> n.measureIndex() == 0).toList();
+        var heads = analysis.notes().stream().filter(n -> n.measureIndex() == 0).toList();
+        if (!isolatedHalfOctave(cadence, heads, gray, width, height)) return false;
+        var notes =
+                analysis.notes().stream()
+                        .filter(n -> n.measureIndex() == 1)
+                        .sorted(Comparator.comparingDouble(ScoreNoteEvent::positionInMeasure))
+                        .toList();
+        if (notes.size() != 24) return false;
+        float span = (run.right() - run.left()) * width;
+        float gap = (run.bottom() - run.top()) * height / 8.2f;
+        for (int slot = 0; slot < notes.size(); slot += 2) {
+            var a = notes.get(slot);
+            var b = notes.get(slot + 1);
+            if (!plainHead(a)
+                    || !plainHead(b)
+                    || a.unbeamedDurationBeats() != 0
+                    || b.unbeamedDurationBeats() != 0
+                    || a.stemDirection() == 0
+                    || a.stemDirection() != b.stemDirection()
+                    || Math.abs(a.staffStep() - b.staffStep()) != 7
+                    || (b.positionInMeasure() - a.positionInMeasure()) * span > .3f * gap
+                    || a.beamCount() != b.beamCount()
+                    || (a.beamCount() != 2 && !(slot == notes.size() - 2 && a.beamCount() == 3)))
+                return false;
+            if (slot < 2) continue;
+            float advance =
+                    (a.positionInMeasure() - notes.get(slot - 2).positionInMeasure()) * span;
+            if (advance < gap || advance > 3.5f * gap) return false;
+        }
+        return true;
+    }
+
+    private static boolean isolatedHalfOctave(
+            MeasureRegion cadence, List<ScoreNoteEvent> head, byte[] gray, int width, int height) {
         float left = cadence.left() * width, right = cadence.right() * width;
         float gap = (cadence.bottom() - cadence.top()) * height / 8.2f;
         if (head.size() != 2
@@ -155,7 +300,7 @@ final class HalfDyadBeforeSixteenthBar {
         var staff =
                 new PlayingTechniqueDetector.Staff(
                         rails[0] - 4 * rails[1], rails[0], rails[1], 0, 1);
-        if (!PrintedCadenceDurations.emptyOutsideChord(
+        return PrintedCadenceDurations.emptyOutsideChord(
                 gray,
                 width,
                 staff,
@@ -163,7 +308,23 @@ final class HalfDyadBeforeSixteenthBar {
                 right,
                 left + Math.min(a, b) * (right - left),
                 left + Math.max(a, b) * (right - left),
-                false)) return false;
+                false);
+    }
+
+    static boolean qualifiesDotted(
+            List<MeasureRegion> parts,
+            List<ScoreNoteEvent> source,
+            List<ScoreRestEvent> rests,
+            boolean triple,
+            byte[] gray,
+            int width,
+            int height) {
+        if (!rests.isEmpty()) return false;
+        var cadence = parts.get(0);
+        var run = parts.get(1);
+        var head = source.stream().filter(n -> n.measureIndex() == 0).toList();
+        if (!isolatedHalfOctave(cadence, head, gray, width, height)) return false;
+        float gap = (cadence.bottom() - cadence.top()) * height / 8.2f;
 
         var notes =
                 source.stream()
@@ -345,14 +506,24 @@ final class HalfDyadBeforeSixteenthBar {
     }
 
     private static boolean head(ScoreNoteEvent note, boolean half) {
-        return note.kind() == ScoreNoteEvent.Kind.PITCHED && note.staffIndex() == 0
-                && note.staffCount() == 1 && note.visualSize() == ScoreNoteEvent.VisualSize.FULL
-                && note.augmentationDots() == 0 && note.tupletDivisor() == 1
-                && !note.crossStaffBeam() && !note.tiedFromPrevious() && note.boundaryTies() == 0
-                && note.leadingRestBeats() == 0 && note.followingRestBeats() == 0
-                && (note.articulations() & NoteOrnament.GRACE) == 0
+        return plainHead(note)
                 && note.beamCount() == (half ? 0 : 2)
                 && note.unbeamedDurationBeats() == (half ? 2 : 0);
+    }
+
+    private static boolean plainHead(ScoreNoteEvent note) {
+        return note.kind() == ScoreNoteEvent.Kind.PITCHED
+                && note.staffIndex() == 0
+                && note.staffCount() == 1
+                && note.visualSize() == ScoreNoteEvent.VisualSize.FULL
+                && note.augmentationDots() == 0
+                && note.tupletDivisor() == 1
+                && !note.crossStaffBeam()
+                && !note.tiedFromPrevious()
+                && note.boundaryTies() == 0
+                && note.leadingRestBeats() == 0
+                && note.followingRestBeats() == 0
+                && (note.articulations() & NoteOrnament.GRACE) == 0;
     }
 
     private static boolean sameStaff(MeasureRegion a, MeasureRegion b, float gap, int height) {

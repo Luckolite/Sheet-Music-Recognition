@@ -44,6 +44,18 @@ public class ClosedFourDyadBeamTest {
         assertFalse(proves(gray, -1));
     }
 
+    @Test
+    public void terminalOctaveNeedsBothRailsFromItsPrecedingOctave() {
+        var group = Arrays.stream(heads(1))
+                .map(h -> new BeamedFlatBarline.Dyad(h.x(), h.top(), h.bottom()))
+                .toArray(BeamedFlatBarline.Dyad[]::new);
+        var gray = image(1);
+        assertTrue(BeamedFlatBarline.terminalShaftWithRails(gray, WIDTH, HEIGHT, group, GAP) != null);
+        paint(gray, 1, 79, 92, INNER - 2, INNER + 2, (byte) 255);
+        assertTrue(BeamedFlatBarline.terminalShaftWithRails(gray, WIDTH, HEIGHT, group, GAP) == null);
+    }
+
+
     @Test public void aBrokenSharedShaftDoesNotQualify() {
         var gray = image(-1);
         paint(gray, -1, 133, 140, 116, 130, (byte) 255);
@@ -85,6 +97,20 @@ public class ClosedFourDyadBeamTest {
         assertFalse(
                 ClosedFourDyadBeam.provesOctaves(
                         gray, WIDTH, HEIGHT, heads(1), GAP, y(1, INNER), 1, true));
+    }
+
+    @Test
+    public void adjacentProvedBarlineMayOccupyOnlyTheLeftClosureSample() {
+        var gray = image(-1);
+        paint(gray, -1, 56, 59, OUTER - 3, INNER + 3, (byte) 0);
+        assertFalse(proves(gray, -1));
+        assertTrue(ClosedFourDyadBeam.provesOctavesAfterRule(
+                gray, WIDTH, HEIGHT, heads(-1), GAP, LOWER, -1, 57));
+        assertFalse(ClosedFourDyadBeam.provesOctavesAfterRule(
+                gray, WIDTH, HEIGHT, heads(-1), GAP, LOWER, -1, 49));
+        paint(gray, -1, 73, 100, INNER - 2, INNER + 2, (byte) 255);
+        assertFalse(ClosedFourDyadBeam.provesOctavesAfterRule(
+                gray, WIDTH, HEIGHT, heads(-1), GAP, LOWER, -1, 57));
     }
 
     private static boolean proves(byte[] gray, int direction) {

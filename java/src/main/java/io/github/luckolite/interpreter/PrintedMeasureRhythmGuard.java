@@ -166,6 +166,11 @@ final class PrintedMeasureRhythmGuard {
             lastRule = x;
         }
         if (firstRule < 0 || lastRule - firstRule > gap) return List.of();
+        if (!quarter) {
+            for (int x = firstRule; x <= lastRule; x++)
+                if (DottedDyadMeasureSeparator.continuesBeyondStaff(gray, width, height, x, top, base, gap))
+                    return List.of();
+        }
         int cut = (firstRule + lastRule) / 2;
         var analysis = OmrScoreInterpreter.analyze(labels, gray, width, height, List.of(region));
         float split = (cut - left) / (float) (right - left);
@@ -920,6 +925,90 @@ final class PrintedMeasureRhythmGuard {
                             return crossedSeparators < 2;
                         })
                 .toList();
+    }
+
+    /** A wide region across several proved lower measures can be built from their ledger lines. */
+    static List<MeasureRegion> rejectUpperLedgerRows(
+            List<MeasureRegion> regions, byte[] gray, int width, int height) {
+        if (gray == null || regions.size() < 4) return regions;
+        List<MeasureRegion> kept = null;
+        for (int i = 0; i < regions.size(); i++) {
+            var proposed = regions.get(i);
+            if (upperLedgerRow(proposed, regions, gray, width, height)) {
+                if (kept == null) kept = new ArrayList<>(regions.subList(0, i));
+            } else if (kept != null) {
+                kept.add(proposed);
+            }
+        }
+        return kept == null ? regions : List.copyOf(kept);
+    }
+
+    private static boolean upperLedgerRow(
+            MeasureRegion proposed, List<MeasureRegion> regions, byte[] gray, int width, int height) {
+        float band = (proposed.bottom() - proposed.top()) * height;
+        float gap = band / 8.2f;
+        float left = proposed.left() * width, right = proposed.right() * width;
+        if (gap < 9 || gap > 30 || right - left < gap * 52 || proposed.cadenceQuarterBeats() != 0)
+            return false;
+
+        var lower = new ArrayList<MeasureRegion>();
+        for (var region : regions) {
+            float separation = (region.top() - proposed.top()) * height;
+            float overlap = (proposed.bottom() - region.top()) * height;
+            if (separation < gap * 1.15f || overlap < band * .52f
+                    || (region.bottom() - proposed.bottom()) * height < gap * 1.6f
+                    || region.left() >= proposed.right() || region.right() <= proposed.left())
+                continue;
+            lower.add(region);
+        }
+        if (lower.size() < 3) return false;
+        lower.sort(Comparator.comparingDouble(MeasureRegion::left));
+
+        float upperBottom = proposed.bottom() * height - gap * 2.1f;
+        int proved = 0;
+        for (int i = 1; i < lower.size(); i++) {
+            var before = lower.get(i - 1);
+            var after = lower.get(i);
+            float a = before.right() * width, b = after.left() * width;
+            float x = (a + b) * .5f;
+            if (b < a || b - a > gap * 1.65f || x - left < gap * 1.6f
+                    || right - x < gap * 1.6f
+                    || Math.abs(before.top() - after.top()) * height > gap * 1.1f) continue;
+            float lowerGap = (before.bottom() - before.top() + after.bottom() - after.top())
+                    * height / 16.4f;
+            float lowerBottom = (before.bottom() + after.bottom()) * height * .5f - lowerGap * 2.1f;
+            if (!lowerDividerWithoutUpperStaff(
+                    gray, width, height, a, b, x, gap, upperBottom, lowerGap, lowerBottom))
+                continue;
+            if (++proved == 2) return true;
+        }
+        return false;
+    }
+
+    private static boolean lowerDividerWithoutUpperStaff(
+            byte[] gray, int width, int height, float left, float right, float divider,
+            float gap, float upperBottom, float lowerGap, float lowerBottom) {
+        // Inside the measure boundary pocket, a separate printed upper staff must have
+        // its own five-rule frame. A stack of detached ledger lines does not have one.
+        for (int offset = -4; offset <= 4; offset++) {
+            float x = divider + offset * gap * .5f;
+            if (PrintedDirectionStaff.printedRules(gray, width, height, x, upperBottom, gap) != null)
+                return false;
+        }
+        for (int offset = -4; offset <= 4; offset++) {
+            float x = divider + offset * lowerGap * .5f;
+            var rails = PrintedDirectionStaff.printedRules(gray, width, height, x, lowerBottom, lowerGap);
+            if (rails == null || Math.abs(rails[0] - lowerBottom) > lowerGap * .5f
+                    || rails[0] - upperBottom < gap * 1.2f
+                    || rails[0] - upperBottom > gap * 3.9f) continue;
+            int bottom = Math.round(rails[0]);
+            int top = Math.round(rails[0] - 4 * rails[1]);
+            if (top < 0 || bottom >= height) continue;
+            for (int col = Math.max(1, Math.round(left)); col <= Math.min(width - 2, Math.round(right)); col++)
+                if (OmrMeasurePostProcessor.verticalRuleAt(gray, width, col, top, bottom, rails[1]))
+                    return true;
+        }
+        return false;
     }
 
     /** Number OCR may propose a missing row, but text in a footer is not a staff. */

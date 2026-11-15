@@ -110,6 +110,11 @@ final class OpenStringHarmonics {
                 && note.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_FROM_KEY;
     }
 
+    static int uniqueSoundingMidi(int touch) {
+        var pitch = sounding(touch);
+        return pitch == null ? -1 : pitch.sounding();
+    }
+
     private static Pitch sounding(int touch) {
         Pitch pitch = null;
         for (int string : VIOLIN_STRINGS) {

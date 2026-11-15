@@ -5,8 +5,9 @@ package io.github.luckolite.interpreter;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
-import java.util.Arrays;
 import org.junit.Test;
+
+import java.util.Arrays;
 
 public final class BeamedFlatBarlineTest {
     private static final int WIDTH = 275, HEIGHT = 300, FIRST_RULE = 130, COLUMN = 124;
@@ -28,6 +29,47 @@ public final class BeamedFlatBarlineTest {
         for (int y = 121; y <= 145; y++)
             Arrays.fill(detached.gray, y * WIDTH + COLUMN - 2, y * WIDTH + COLUMN + 4, (byte) 255);
         assertFalse(detached.alias());
+    }
+
+    @Test
+    public void testsTheActualDividerColumnInsteadOfBorrowingAConnectedShaft() {
+        var plate = new Plate();
+        int shaft = COLUMN + 3, bottom = FIRST_RULE + 4 * (int) GAP;
+        plate.ink(shaft, shaft + 1, FIRST_RULE, bottom + 18, (byte) 0);
+        var staff = new RawStaffLineDetector.StaffLines(new int[] {130, 146, 162, 178, 194}, GAP);
+        assertFalse(BeamedFlatBarline.seamRule(plate.gray, WIDTH, HEIGHT, COLUMN, staff, GAP));
+        assertFalse(BeamedFlatBarline.seamRule(plate.gray, WIDTH, HEIGHT, shaft, staff, GAP));
+
+        var divided = new Plate();
+        divided.ink(COLUMN, COLUMN + 1, FIRST_RULE, bottom, (byte) 0);
+        assertTrue(BeamedFlatBarline.seamRule(divided.gray, WIDTH, HEIGHT, COLUMN, staff, GAP));
+    }
+
+    @Test
+    public void fittingFlatMustOwnIndependentInkBeforeTheNextShaft() {
+        int x = 102;
+        float noteY = 175;
+        var staff = new RawStaffLineDetector.StaffLines(new int[] {130, 146, 162, 178, 194}, GAP);
+        var shaft = new PairedTremoloInk.Stem(125, 175, 229);
+        var plate = new Plate();
+        plate.ink(125, 127, 145, 229, (byte) 0);
+        assertFalse(
+                BeamedFlatBarline.flatBeforeShaft(
+                        plate.gray, WIDTH, HEIGHT, x, shaft, noteY, staff));
+        plate.ink(x, x + 1, 147, 188, (byte) 0);
+        plate.ink(x + 3, x + 13, 166, 168, (byte) 0);
+        plate.ink(x + 7, x + 13, 169, 177, (byte) 0);
+        for (int y = 179; y <= 187; y++) {
+            int end = x + Math.max(1, 10 - (y - 179));
+            plate.ink(end - 1, end, y, y, (byte) 0);
+        }
+        assertTrue(
+                BeamedFlatBarline.flatBeforeShaft(
+                        plate.gray, WIDTH, HEIGHT, x, shaft, noteY, staff));
+        var overlapping = new PairedTremoloInk.Stem(116, 175, 229);
+        assertFalse(
+                BeamedFlatBarline.flatBeforeShaft(
+                        plate.gray, WIDTH, HEIGHT, x, overlapping, noteY, staff));
     }
 
     private static final class Plate {

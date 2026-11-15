@@ -158,7 +158,7 @@ class UnpitchedGuideTests(unittest.TestCase):
 
         with self.assertRaises(ValueError):
 
-            wire.encode(original_score(), wire.GUIDE_VERSION + 1)
+            wire.encode(original_score(), max(wire.SUPPORTED_GUIDE_VERSIONS) + 1)
 
 
 

@@ -273,8 +273,15 @@ final class ArtificialHarmonics {
                     ? shaftPairedFourth(gray, w, h, x, y, gap, n, m, notes) : null;
             if (pairedHalfEighth && shaftTouch != pairedTouch) shaftTouch = null;
             boolean shaftPairedTouch = shaftTouch != null;
+            // Raw shared-shaft evidence also applies to a single printed beam. For an
+            // unlabelled touch, require a full stopped eighth and keep the optical proof.
             boolean rawTouch = pairedTouch == null && shaftTouch == null && !strictDiamond
-                    && !symbolTouch && !ruleCrossedTouch && n.beamCount() >= 2
+                    && !symbolTouch && !ruleCrossedTouch
+                    && (n.beamCount() >= 2
+                            || n.beamCount() == 1 && n.unbeamedDurationBeats() == 0
+                                    && n.visualSize() == ScoreNoteEvent.VisualSize.FULL
+                                    && !n.crossStaffBeam()
+                                    && labelledTouchRegion(labels, gray, w, h, x, y - 1.5f * gap, gap))
                     && n.stemDirection() != 0 && unlabelledShaftTouch(gray, w, h, x, y, gap,
                             n.stemDirection());
 
@@ -857,6 +864,31 @@ final class ArtificialHarmonics {
             }
         }
         return found;
+    }
+
+    /** Require a tall symbol body before searching for the shaft-owned touch of an eighth. */
+    private static boolean labelledTouchRegion(
+            byte[] labels, byte[] gray, int width, int height, float x, float y, float gap) {
+        if (labels == null || labels.length != gray.length || gap < 6 || gap > 36) return false;
+        int r = Math.round(gap * .65f);
+        int left = Math.round(x) - r, right = Math.round(x) + r;
+        int top = Math.round(y) - r, bottom = Math.round(y) + r;
+        if (left < 0 || right >= width || top < 0 || bottom >= height) return false;
+        int rows = 0, symbols = 0, heads = 0;
+        int rowMinimum = Math.max(2, Math.round(gap * .2f));
+        for (int row = top; row <= bottom; row++) {
+            int supported = 0;
+            for (int column = left; column <= right; column++) {
+                int pixel = row * width + column;
+                if ((gray[pixel] & 255) >= 185) continue;
+                if (labels[pixel] == OmrMeasurePostProcessor.SYMBOL) supported++;
+                if (labels[pixel] == OmrMeasurePostProcessor.NOTEHEAD) heads++;
+            }
+            if (supported >= rowMinimum) rows++;
+            symbols += supported;
+        }
+        return rows >= Math.round(gap * .95f)
+                && symbols >= gap * gap * .48f && symbols >= heads * 2;
     }
 
     private static boolean unlabelledShaftTouch(

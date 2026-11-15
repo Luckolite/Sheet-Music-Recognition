@@ -57,9 +57,9 @@ public final class LocalAccidentalLineageOriginalTest {
         assertFalse(c.ambiguous());
         assertNotNull(l.role(source(p), CROP, 0, a.notes()));
         assertEquals(List.of(new SourceLocalAccidental.PrintedMark(c.note(), 1)),
-                l.printedMarks(a.notes(), a.notes()));
-        assertTrue(l.printedMarks(a.notes(), List.of()).isEmpty());
-        assertTrue(l.printedMarks(a.notes(), List.of(c.originalNote(), c.originalNote())).isEmpty());
+                l.printedMarks(a.notes(), a.notes(), MEASURES));
+        assertTrue(l.printedMarks(a.notes(), List.of(), MEASURES).isEmpty());
+        assertTrue(l.printedMarks(a.notes(), List.of(c.originalNote(), c.originalNote()), MEASURES).isEmpty());
     }
 
     @Test
@@ -114,7 +114,7 @@ public final class LocalAccidentalLineageOriginalTest {
         var p = new SharpPitchAlignmentTest.Page(116, 124);
         var a = analyze(p);
         assertNull(local(a).role(source(p), CROP, 0, a.notes()));
-        assertTrue(local(a).printedMarks(a.notes(), a.notes()).isEmpty());
+        assertTrue(local(a).printedMarks(a.notes(), a.notes(), MEASURES).isEmpty());
     }
 
     @Test

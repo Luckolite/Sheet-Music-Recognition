@@ -103,7 +103,7 @@ def require_legacy_compatible(source, note_count):
         raise ValueError('Legacy guide cannot preserve source beams')
 
 
-def encode_source(source, note_count):
+def encode_source(source, note_count, engraved_tuplets=False):
     source = checked(source,note_count); out=io.BytesIO()
     def put(fmt,*values):
         out.write(struct.pack('>'+fmt,*values))
@@ -114,8 +114,6 @@ def encode_source(source, note_count):
         for a in c['members']: anchor(a)
     put('i',len(source['groups']))
     for g in source['groups']:
-        if 'tupletMark' in g:
-            raise ValueError('Guide beam frame cannot preserve engraved tuplet marks')
         raw=g['id'].encode('utf-8');put('i',len(raw));out.write(raw)
         put('i',len(g['columns']))
         for c in g['columns']: column(c)
@@ -123,6 +121,11 @@ def encode_source(source, note_count):
         for mask in g['bridges']: put('i',mask)
         put('i',len(g['hooks']))
         for h in g['hooks']: put('iii',h['columnIndex'],h['level'],DIRECTIONS.index(h['direction']))
+        mark = g.get('tupletMark')
+        if engraved_tuplets:
+            put('B', 0 if mark is None else _TUPLET_MARKS.index(mark) + 1)
+        elif mark is not None:
+            raise ValueError('Guide beam frame cannot preserve engraved tuplet marks')
     put('i',len(source['detachedColumns']))
     for c in source['detachedColumns']: column(c)
     put('i',len(source['noteOrigins']))
@@ -132,7 +135,7 @@ def encode_source(source, note_count):
     payload=out.getvalue();return struct.pack('>i',len(payload))+payload
 
 
-def decode_source(data, note_count):
+def decode_source(data, note_count, engraved_tuplets=False):
     if not 16 <= len(data) <= MAX_BYTES+4: raise ValueError('Invalid beam frame')
     view=memoryview(data); pos=0
     def take(fmt):
@@ -158,7 +161,12 @@ def decode_source(data, note_count):
         bridges=[take('i')[0] for _ in range(nb)]; hooks=[]
         for _ in range(count(n*8)):
             c,level,d=take('iii');_int(d,0,1);hooks.append(dict(columnIndex=c,level=level,direction=DIRECTIONS[d]))
-        groups.append(dict(id=name,columns=cs,bridges=bridges,hooks=hooks))
+        group = dict(id=name, columns=cs, bridges=bridges, hooks=hooks)
+        if engraved_tuplets:
+            code = _int(take('B')[0], 0, len(_TUPLET_MARKS))
+            if code:
+                group['tupletMark'] = _TUPLET_MARKS[code - 1]
+        groups.append(group)
     nd=count()
     if total+nd>MAX: raise ValueError('Too many beam columns')
     detached=[column() for _ in range(nd)]; no=count()

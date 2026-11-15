@@ -128,7 +128,7 @@ class WholeRestWriterTest(unittest.TestCase):
     def test_unknown_future_layout_rejects(self):
         for writer in (wire,):
             with self.assertRaises(ValueError):
-                writer.encode(score(), wire.GUIDE_VERSION + 1)
+                writer.encode(score(), max(wire.SUPPORTED_GUIDE_VERSIONS) + 1)
 
     def test_same_geometry_literal_and_full_remain_distinct_records(self):
         original = score()

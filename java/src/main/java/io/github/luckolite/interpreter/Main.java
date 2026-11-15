@@ -319,7 +319,8 @@ public final class Main {
         result.put("events", events);
         result.put("tablatureWarnings", tabWarnings);
         result.put("measureBeats", beats);
-        var accidentals = decoded.accidentalSource().printedMarks(decoded.originalNotes(), score.notes());
+        var accidentals = decoded.accidentalSource().printedMarks(
+                decoded.originalNotes(), score.notes(), decoded.accidentalMeasures());
         if (!accidentals.isEmpty()) result.put("printedAccidentals", accidentals);
         if (!wrapped.continuations().isEmpty())
             result.put("printedMeasureContinuations", wrapped.continuations());

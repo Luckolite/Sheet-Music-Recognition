@@ -58,6 +58,7 @@ final class FingeringAnnotationFilter {
                         words, staffs, measures, notes, gray, width, height);
         notes = isolatedParentheticalSixteenths(words, staffs, measures, notes, gray, width, height);
         notes = belowStaffNumerals(words, staffs, measures, notes, gray, width, height);
+        notes = removeStaffRuleFingeringLobes(words, staffs, measures, notes, gray, width, height);
         List<Candidate> candidates = null;
         var result = new ArrayList<ScoreNoteEvent>(notes.size());
         for (var note : notes) {
@@ -1440,6 +1441,149 @@ final class FingeringAnnotationFilter {
 
     /** OCR can call a notehead and its short ledger a digit. An attached shaft
      * continuing well outside that text box is independent musical evidence. */
+    /** A typographic loop across the lowest staff rule can appear as a second head. */
+    private static List<ScoreNoteEvent> removeStaffRuleFingeringLobes(
+            List<PlayingTechniqueDetector.Word> words, List<PlayingTechniqueDetector.Staff> staffs,
+            List<MeasureRegion> measures, List<ScoreNoteEvent> notes, byte[] gray, int width, int height) {
+        var digits = words.stream().filter(word -> word.text() != null
+                && (word.text().strip().equals("3") || word.text().strip().equals("8"))).toList();
+        if (digits.isEmpty()) return notes;
+        List<ScoreNoteEvent> removed = new ArrayList<>();
+        for (var note : notes) {
+            int index = note.measureIndex();
+            if (index < 0 || index >= measures.size()
+                    || note.kind() != ScoreNoteEvent.Kind.PITCHED
+                    || note.visualSize() != ScoreNoteEvent.VisualSize.FULL
+                    || note.staffIndex() != 0 || note.staffCount() != 1 || note.staffStep() != 0
+                    || note.stemDirection() != 0 || note.beamCount() != 3 || note.tupletDivisor() != 1
+                    || note.augmentationDots() != 0 || note.unbeamedDurationBeats() != 0
+                    || note.tiedFromPrevious() || note.boundaryTies() != 0
+                    || (note.articulations() & NoteOrnament.GRACE) != 0) continue;
+            var measure = measures.get(index);
+            float x = fingeringHeadX(measure, note, width), y = note.pageY() * height;
+            for (var staff : staffs) {
+                float gap = staff.gap();
+                if (staff.index() != 0 || staff.count() != 1 || gap < 10 || gap > 25
+                        || staff.top() < measure.top() * height || staff.bottom() > measure.bottom() * height
+                        || Math.abs(y - staff.bottom()) > gap * .48f) continue;
+                for (var digit : digits) {
+                    float left = digit.left() * width, right = digit.right() * width;
+                    float top = digit.top() * height, bottom = digit.bottom() * height;
+                    if (x <= left || x >= right || y <= top || y >= bottom
+                            || Math.abs((left + right) * .5f - x) > gap * .23f
+                            || right - left < gap * .95f || right - left > gap * 1.75f
+                            || bottom - top < gap * 1.2f || bottom - top > gap * 2.15f
+                            || printedStemBeyondWord(gray, width, height, x, y, top, bottom, gap)
+                            || !twoLobesOnStaffRule(gray, width, height, x, y, gap, left, right, bottom)
+                            || !hasIndependentUpperBeam(gray, width, height, measure, notes, note, x, y, gap))
+                        continue;
+                    removed.add(note);
+                    break;
+                }
+                if (removed.contains(note)) break;
+            }
+        }
+        return removed.isEmpty() ? notes : notes.stream().filter(note -> !removed.contains(note)).toList();
+    }
+
+    private static float fingeringHeadX(MeasureRegion measure, ScoreNoteEvent note, int width) {
+        return (measure.left() + (measure.right() - measure.left()) * note.positionInMeasure()) * width;
+    }
+
+    private static boolean hasIndependentUpperBeam(
+            byte[] gray, int width, int height, MeasureRegion measure, List<ScoreNoteEvent> notes,
+            ScoreNoteEvent alias, float x, float y, float gap) {
+        ScoreNoteEvent left = null, center = null, right = null;
+        for (var note : notes) {
+            if (note.measureIndex() != alias.measureIndex() || note.staffIndex() != 0
+                    || note.staffCount() != 1 || note.kind() != ScoreNoteEvent.Kind.PITCHED
+                    || note.stemDirection() != -1 || note.beamCount() != 2
+                    || note.visualSize() != ScoreNoteEvent.VisualSize.FULL
+                    || (note.articulations() & NoteOrnament.GRACE) != 0) continue;
+            float dx = fingeringHeadX(measure, note, width) - x, dy = y - note.pageY() * height;
+            if (dy < gap * 5.1f || dy > gap * 7.7f) continue;
+            if (Math.abs(dx) <= gap * .24f) {
+                if (center != null) return false;
+                center = note;
+            } else if (dx >= -gap * 2.35f && dx <= -gap * 1.64f) {
+                if (left != null) return false;
+                left = note;
+            } else if (dx <= gap * 2.35f && dx >= gap * 1.64f) {
+                if (right != null) return false;
+                right = note;
+            }
+        }
+        if (left == null || center == null || right == null) return false;
+        float a = left.pageY() * height, b = center.pageY() * height, c = right.pageY() * height;
+        if (b - a < gap * .34f || b - a > gap * .68f
+                || c - b < gap * .34f || c - b > gap * .68f) return false;
+        float centerX = fingeringHeadX(measure, center, width);
+        return PrintedTupletBeamOwner.connectedHeads(gray, width, height,
+                    fingeringHeadX(measure, left, width), a, centerX, b, gap, -1)
+                && PrintedTupletBeamOwner.connectedHeads(gray, width, height,
+                    centerX, b, fingeringHeadX(measure, right, width), c, gap, -1);
+    }
+
+    private static boolean twoLobesOnStaffRule(
+            byte[] gray, int width, int height, float x, float y, float gap,
+            float opticalLeft, float opticalRight, float opticalBottom) {
+        int l = Math.round(opticalLeft), r = Math.round(opticalRight);
+        int margin = Math.round(gap * .45f);
+        int start = Math.round(y - gap * .55f), end = Math.round(y + gap * .18f);
+        if (l < margin || r + margin >= width || start < gap || end + gap >= height) return false;
+        int lineTop = -1, lineBottom = -1;
+        for (int row = start; row <= end; row++) {
+            boolean connects = true;
+            for (int offset = 1; offset <= margin; offset++) {
+                if ((gray[row * width + l-offset] & 255) > 165
+                        || (gray[row * width + r+offset] & 255) > 165) connects = false;
+            }
+            if (!connects) continue;
+            if (lineBottom >= 0 && lineBottom + 1 != row) return false;
+            if (lineTop < 0) lineTop = row;
+            lineBottom = row;
+        }
+        if (lineTop < 0 || lineBottom - lineTop + 1 > gap * .31f
+                || y - lineBottom < .6f || y - lineBottom > gap * .24f) return false;
+        int t = lineTop - Math.round(gap * .76f), bottom = Math.round(opticalBottom);
+        if (t < 0 || bottom >= height || bottom <= lineBottom) return false;
+        var topInk = RawNumeralComponents.capture(gray, width, height, l, t, r, lineTop - 1, () -> {}, () -> {});
+        var bottomInk = RawNumeralComponents.capture(
+                gray, width, height, l, lineBottom + 1, r, bottom, () -> {}, () -> {});
+        var upper = joinedLobe(topInk, l, r, x, gap, .40f, .77f);
+        var lower = joinedLobe(bottomInk, l, r, x, gap, .20f, .48f);
+        if (upper == null || lower == null || upper.top <= t || upper.bottom != lineTop - 1
+                || lower.top != lineBottom + 1 || lower.bottom >= bottom
+                || y < lower.top || y > lower.bottom) return false;
+        int openingRows = 0;
+        for (int row = upper.top + 1; row < upper.bottom; row++) {
+            boolean leftInk = false, rightInk = false;
+            int white = 0;
+            for (int col = upper.left; col <= upper.right; col++) {
+                if ((gray[row * width + col] & 255) <= 165) {
+                    if (col < x) leftInk = true;
+                    else if (col > x) rightInk = true;
+                } else if (leftInk && !rightInk) white++;
+            }
+            if (leftInk && rightInk && white >= 2) openingRows++;
+        }
+        return openingRows >= 2;
+    }
+
+    private static RawNumeralComponents.Component joinedLobe(
+            RawNumeralComponents ink, int left, int right, float x, float gap, float minHeight, float maxHeight) {
+        RawNumeralComponents.Component found = null;
+        for (var shape : ink.components()) {
+            float w = shape.right - shape.left + 1, h = shape.bottom - shape.top + 1;
+            if (w < gap * .55f || w > gap * .99f || h < gap * minHeight || h > gap * maxHeight
+                    || shape.left <= left || shape.right >= right
+                    || Math.abs((shape.left + shape.right) * .5f - x) > gap * .22f) continue;
+            if (found != null) return null;
+            found = shape;
+        }
+        return found;
+    }
+
     private static boolean printedStemBeyondWord(
             byte[] gray,
             int width,

@@ -11,21 +11,28 @@ final class PrintedCadenceDurations {
 
     static ScorePageInterpretation capture(
             ScorePageInterpretation score, byte[] labels, byte[] gray, int width, int height) {
+        return captureWithRejectedLedgerRows(score, labels, gray, width, height, List.of(), null);
+    }
+
+    static ScorePageInterpretation captureWithRejectedLedgerRows(
+            ScorePageInterpretation score, byte[] labels, byte[] gray, int width, int height,
+            List<MeasureRegion> rejectedLedgerRows, byte[] annotationGray) {
         if (score.notes().isEmpty()) return score;
-        var staffs = OmrScoreInterpreter.techniqueStaffs(labels, gray, width, height, score.measures());
+        var staffs = OmrScoreInterpreter.techniqueStaffs(
+                labels, gray, width, height, score.measures(), rejectedLedgerRows);
         score = terminalHarmonicQuarter(score, labels, gray, width, height, staffs);
-        return capture(score, labels, gray, width, height, staffs);
+        return capture(score, labels, gray, width, height, staffs, annotationGray);
     }
 
     static ScorePageInterpretation capture(
             ScorePageInterpretation score, byte[] gray, int width, int height,
             List<PlayingTechniqueDetector.Staff> staffs) {
-        return capture(score, null, gray, width, height, staffs);
+        return capture(score, null, gray, width, height, staffs, null);
     }
 
     private static ScorePageInterpretation capture(
             ScorePageInterpretation score, byte[] labels, byte[] gray, int width, int height,
-            List<PlayingTechniqueDetector.Staff> staffs) {
+            List<PlayingTechniqueDetector.Staff> staffs, byte[] annotationGray) {
         int count = score.measures().size();
         var notes = new ArrayList<List<ScoreNoteEvent>>(count);
         for (int i = 0; i < count; i++) notes.add(new ArrayList<>());
@@ -145,6 +152,9 @@ final class PrintedCadenceDurations {
             if (!accidentalMeterAlias
                     && !independentlyClosedQuarter
                     && !closedFlatSystemEnd
+                    && !(duration == 1 && annotationGray != null
+                            && shiftedTerminalQuarter(gray, width, height, measure, next, staffs, chord)
+                            && shiftedTerminalQuarter(annotationGray, width, height, measure, next, staffs, chord))
                     && !proved(
                             gray,
                             width,
@@ -155,6 +165,10 @@ final class PrintedCadenceDurations {
                             chord,
                             next != null && meter[i + 1])
                     && !compactTerminalQuarter(gray, width, height, measure, next, chord)
+                    && !(duration == 2 && i > 0 && next != null && !meter[i + 1]
+                            && fullSixteenthDyadRun(notes.get(i - 1))
+                            && closedInlineHalf(gray, width, height, score.measures().get(i - 1),
+                                    measure, next, chord))
                     && !expandedTerminalDyad(gray, width, height, measure, next, chord)
                     && !PrintedQuarterDyadAccidentals.proves(
                             labels, gray, width, height, measure, next, chord, staffs)
@@ -613,6 +627,74 @@ final class PrintedCadenceDurations {
                 && (note.articulations() & NoteOrnament.GRACE) == 0;
     }
 
+    /** Re-anchor a sloped system end using five local rules and both written separators. */
+    static boolean shiftedTerminalQuarter(
+            byte[] gray, int width, int height, MeasureRegion measure, MeasureRegion next,
+            List<PlayingTechniqueDetector.Staff> staffs, List<ScoreNoteEvent> chord) {
+        if (gray == null || gray.length != (long) width * height || chord.isEmpty()
+                || chord.size() > 2) return false;
+        float gap = (measure.bottom() - measure.top()) * height / 8.2f;
+        float left = measure.left() * width, right = measure.right() * width;
+        float span = right - left;
+        if (gap < 8 || gap > 30 || span < gap * 4 || span > gap * 8.5f
+                || next != null && Math.abs(next.top() - measure.top()) * height < gap) return false;
+        int direction = chord.get(0).stemDirection();
+        double first = chord.stream().mapToDouble(ScoreNoteEvent::positionInMeasure).min().orElseThrow();
+        double last = chord.stream().mapToDouble(ScoreNoteEvent::positionInMeasure).max().orElseThrow();
+        if (direction == 0 || first < .23 || last > .62 || (last - first) * span > gap * .22f
+                || !chord.stream().allMatch(n -> exactCadenceNote(n, 1)
+                        && n.stemDirection() == direction
+                        && n.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_FROM_KEY)) return false;
+        float hint = measure.bottom() * height - gap * 2.1f;
+        float[] rules = PrintedDirectionStaff.printedRules(
+                gray, width, height, left + gap * 1.5f, hint, gap);
+        if (rules == null) return false;
+        float g = rules[1];
+        var local = new PlayingTechniqueDetector.Staff(rules[0] - 4 * g, rules[0], g, 0, 1);
+        boolean coherentShift = staffs.stream().anyMatch(staff ->
+                staff.count() == 1 && staff.index() == 0
+                        && staff.top() >= measure.top() * height - gap
+                        && staff.bottom() <= measure.bottom() * height + gap
+                        && Math.abs(staff.gap() - g) <= g * .18f
+                        && Math.abs(staff.bottom() - local.bottom()) >= g * .5f
+                        && Math.abs(staff.bottom() - local.bottom()) <= g * 1.45f);
+        if (!coherentShift
+                || boundaryColumn(gray, width, local, left - g * .53f, true, false) < 0
+                || !completeCadence(gray, width, local, left, right,
+                        left + first * span, left + last * span, right, false, true, false))
+            return false;
+        return quarterShaft(gray, width, height, left, span, g, direction, chord);
+    }
+
+    private static boolean quarterShaft(
+            byte[] gray, int width, int height, float left, float span, float gap, int direction,
+            List<ScoreNoteEvent> chord) {
+        float xLow = 0, xHigh = width - 1;
+        float yLow = height, yHigh = 0;
+        for (var note : chord) {
+            float x = left + span * note.positionInMeasure();
+            xLow = Math.max(xLow, x + (direction > 0 ? .28f : -.86f) * gap);
+            xHigh = Math.min(xHigh, x + (direction > 0 ? .86f : -.28f) * gap);
+            float y = note.pageY() * height;
+            yLow = Math.min(yLow, y);
+            yHigh = Math.max(yHigh, y);
+        }
+        int start = Math.round(yLow - (direction > 0 ? 1.15f : -.15f) * gap);
+        int end = Math.round(yHigh + (direction < 0 ? 1.15f : -.15f) * gap);
+        if (start < 0 || end >= height || xLow < 1 || xHigh >= width - 1) return false;
+        for (int x = (int) Math.ceil(xLow); x <= (int) Math.floor(xHigh); x++) {
+            int dark = 0;
+            for (int y = start; y <= end; y++) {
+                int i = y * width + x;
+                if ((gray[i] & 255) < 155) dark++;
+            }
+            if (dark >= (end - start + 1) * .86f) return true;
+        }
+        return false;
+    }
+
+
+
     private static boolean proved(
             byte[] gray, int width, int height, MeasureRegion measure, MeasureRegion next,
             List<PlayingTechniqueDetector.Staff> staffs, List<ScoreNoteEvent> chord,
@@ -718,6 +800,50 @@ final class PrintedCadenceDurations {
         if (first.staffStep() == second.staffStep() || first.stemDirection() == 0
                 || first.stemDirection() != second.stemDirection()) return false;
         return boundaryColumn(gray, width, staff, left - staff.gap() * .53f, true, false) >= 0;
+    }
+
+    private static boolean fullSixteenthDyadRun(List<ScoreNoteEvent> heads) {
+        return heads.size() == 32 && heads.stream().allMatch(n ->
+                exactCadenceRhythm(n, 0, 2));
+    }
+
+    /** A wide same-row half dyad needs independent opening and closing rules. */
+    private static boolean closedInlineHalf(byte[] gray, int width, int height,
+            MeasureRegion before, MeasureRegion measure, MeasureRegion next, List<ScoreNoteEvent> chord) {
+        if (gray == null || gray.length != (long) width * height || chord.size() != 2
+                || measure.cadenceQuarterBeats() != 0) return false;
+        var a = chord.get(0);
+        var b = chord.get(1);
+        if (a.staffStep() == b.staffStep() || a.stemDirection() == 0
+                || a.stemDirection() != b.stemDirection()
+                || a.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_FROM_KEY
+                || b.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_FROM_KEY) return false;
+        float left = measure.left() * width, right = measure.right() * width;
+        float gap = (measure.bottom() - measure.top()) * height / 8.2f, span = right - left;
+        if (gap < 9 || gap > 30 || span <= 8 * gap || span > 9 * gap
+                || Math.abs(before.top() - measure.top()) * height > gap * .5f
+                || Math.abs(next.top() - measure.top()) * height > gap * .5f
+                || (left - before.right() * width) < gap * .6f
+                || (left - before.right() * width) > gap * 1.7f
+                || (next.left() * width - right) < gap * .6f
+                || (next.left() * width - right) > gap * 1.7f) return false;
+        float first = Math.min(a.positionInMeasure(), b.positionInMeasure());
+        float last = Math.max(a.positionInMeasure(), b.positionInMeasure());
+        if (first < .27f || last > .54f || (last - first) * span > gap * .30f) return false;
+        var rails = PrintedDirectionStaff.printedRules(gray, width, height, left + gap * 1.85f,
+                measure.bottom() * height - 2.1f * gap, gap);
+        if (rails == null) return false;
+        int top = Math.round(rails[0] - 4 * rails[1]), bottom = Math.round(rails[0]);
+        gap = rails[1];
+        var staff = new PlayingTechniqueDetector.Staff(top, bottom, gap, 0, 1);
+        int opening = boundaryColumn(gray, width, staff, (before.right() * width + left) / 2, true, false);
+        int closing = boundaryColumn(gray, width, staff, (right + next.left() * width) / 2, false, false);
+        return opening >= 0 && closing >= 0
+                && !ClosedHeadBarlineGuard.attached(gray, width, height, opening, top, bottom, gap)
+                && !DottedDyadMeasureSeparator.continuesBeyondStaff(gray, width, height, opening, top, bottom, gap)
+                && !DottedDyadMeasureSeparator.continuesBeyondStaff(gray, width, height, closing, top, bottom, gap)
+                && emptyOutsideChord(gray, width, staff, left, right,
+                        left + first * span, left + last * span, false);
     }
 
     /** A short terminal bar cannot always provide a full-width staff sample around its chord. */
