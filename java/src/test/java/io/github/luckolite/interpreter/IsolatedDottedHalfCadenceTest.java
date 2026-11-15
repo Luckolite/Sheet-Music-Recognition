@@ -4,6 +4,7 @@ package io.github.luckolite.interpreter;
 
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
 import java.util.Arrays;
@@ -46,6 +47,31 @@ public class IsolatedDottedHalfCadenceTest {
         var single = gray.clone();
         paint(single, 302, 305, 55, 123, 255);
         assertFalse(proved(single));
+    }
+
+    @Test
+    public void closeOpeningInRegularStaffFrameRequiresADotAndDoubleClose() throws Exception {
+        var gray = source();
+        paint(gray, 293, 305, 54, 124, 255);
+        for (int y : new int[] {55, 72, 89, 106, 122}) {
+            paint(gray, 291, 321, y, y + 1, 0);
+        }
+        paint(gray, 306, 308, 55, 123, 0);
+        paint(gray, 314, 316, 55, 123, 0);
+        float midpoint = (CURRENT.left() + CURRENT.right()) * WIDTH / 2;
+        assertNotNull(PrintedDirectionStaff.printedRules(gray, WIDTH, HEIGHT, midpoint, 123, GAP));
+        assertTrue(proved(gray));
+
+        var undotted = gray.clone();
+        paint(undotted, 272, 282, 92, 103, 255);
+        assertFalse(proved(undotted));
+
+        var singleRule = gray.clone();
+        paint(singleRule, 314, 316, 54, 124, 255);
+        for (int y : new int[] {55, 72, 89, 106, 122}) {
+            paint(singleRule, 314, 316, y, y + 1, 0);
+        }
+        assertFalse(proved(singleRule));
     }
 
     private static boolean proved(byte[] gray) throws Exception {

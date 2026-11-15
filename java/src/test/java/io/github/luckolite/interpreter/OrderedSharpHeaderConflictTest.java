@@ -228,4 +228,19 @@ public class OrderedSharpHeaderConflictTest {
         assertEquals(-1, OmrScoreInterpreter.inheritedSharpHeaderStart(
                 complete.gray, complete.labels, W, H, 10, 120, 164, 16, 2));
     }
+
+    @Test
+    public void clippedHeaderSharpSpineNeedsConnectedSourceInk() {
+        var page = new Page(124, true, true, false);
+        for (int y = 102; y < 118; y++)
+            for (int x = 104; x <= 105; x++) page.labels[y * W + x] = 0;
+
+        assertEquals(56, OmrScoreInterpreter.inheritedSharpHeaderStart(
+                page.gray, page.labels, W, H, 10, 120, 164, 16, 2));
+
+        for (int y = 102; y < 118; y++)
+            for (int x = 104; x <= 105; x++) page.gray[y * W + x] = (byte) (y == 116 ? 0 : 255);
+        assertEquals(-1, OmrScoreInterpreter.inheritedSharpHeaderStart(
+                page.gray, page.labels, W, H, 10, 120, 164, 16, 2));
+    }
 }

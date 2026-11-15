@@ -50,6 +50,17 @@ public class UpperLedgerSpaceBeamOwnershipTest {
     }
 
     @Test
+    public void middleHeadKeepsBothRailsWithinRasterRounding() throws Exception {
+        int[] rounded = {53, 98, 130};
+        var ink = ink(rounded, MIDDLE, 1);
+        assertTrue(admitted(ink, ink, rounded, MIDDLE, 1));
+
+        int[] separated = {53, 99, 131};
+        var wide = ink(separated, MIDDLE, 1);
+        assertFalse(admitted(wide, wide, separated, MIDDLE, 1));
+    }
+
+    @Test
     public void apexRequiresItsPrintedCrossingLedger() throws Exception {
         var ink = ink(APEX, 0);
         assertTrue(admitted(ink, ink, APEX, 0));
@@ -60,10 +71,14 @@ public class UpperLedgerSpaceBeamOwnershipTest {
     }
 
     private static byte[] ink(int[] heights, int owner) {
+        return ink(XS, heights, owner);
+    }
+
+    private static byte[] ink(int[] centers, int[] heights, int owner) {
         byte[] gray = new byte[WIDTH * HEIGHT];
         Arrays.fill(gray, (byte) 255);
-        for (int i = 0; i < XS.length; i++) {
-            int x = XS[i], y = heights[i];
+        for (int i = 0; i < centers.length; i++) {
+            int x = centers[i], y = heights[i];
             for (int row = y - 9; row <= y + 9; row++) {
                 double normalized = (row - y) / 9.4;
                 int reach = (int) Math.floor(10.8 * Math.sqrt(1 - normalized * normalized));
@@ -77,7 +92,7 @@ public class UpperLedgerSpaceBeamOwnershipTest {
                 paint(gray, x - half, rule - 1, x + half, rule + 1, (byte) 0);
             }
         }
-        paint(gray, XS[0] - 10, 155, XS[2] - 8, 159, (byte) 0);
+        paint(gray, centers[0] - 10, 155, centers[2] - 8, 159, (byte) 0);
         return gray;
     }
 
@@ -88,6 +103,11 @@ public class UpperLedgerSpaceBeamOwnershipTest {
 
     private static boolean admitted(byte[] gray, byte[] raw, int[] heights, int ownerIndex)
             throws Exception {
+        return admitted(gray, raw, XS, heights, ownerIndex);
+    }
+
+    private static boolean admitted(byte[] gray, byte[] raw, int[] centers,
+            int[] heights, int ownerIndex) throws Exception {
         var outer = OmrScoreInterpreter.class;
         var component = Class.forName(outer.getName() + "$Component");
         var staff = Class.forName(outer.getName() + "$Staff");
@@ -101,16 +121,16 @@ public class UpperLedgerSpaceBeamOwnershipTest {
                         float.class,
                         float.class);
         componentShape.setAccessible(true);
-        var heads = new Object[XS.length];
+        var heads = new Object[centers.length];
         for (int i = 0; i < heads.length; i++)
             heads[i] =
                     componentShape.newInstance(
                             310,
-                            XS[i] - 10,
-                            XS[i] + 10,
+                            centers[i] - 10,
+                            centers[i] + 10,
                             heights[i] - 9,
                             heights[i] + 9,
-                            (float) XS[i],
+                            (float) centers[i],
                             (float) heights[i]);
         var staffShape = staff.getDeclaredConstructor(float.class, float.class, float.class);
         staffShape.setAccessible(true);

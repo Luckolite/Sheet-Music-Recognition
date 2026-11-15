@@ -506,6 +506,10 @@ final class WrappedEighthTriplets {
                             && sharpOwnsDot(
                                     gray, labels, width, height, x[i], y[i], dot, x[i + 1],
                                     y[i + 1], gap))
+                    && !(wrapped
+                            && notes.get(owners.get(i + 1)).writtenAccidental()
+                                    == ScoreNoteEvent.ACCIDENTAL_NATURAL
+                            && naturalOwnsDot(gray, labels, width, height, dot, x[i + 1], y[i + 1], gap))
                     && (x.length != 18
                             || !headConnectedLedger(gray, width, height, x[i], y[i], dot, gap))
                     && !(x.length == 12
@@ -622,6 +626,52 @@ final class WrappedEighthTriplets {
         return false;
     }
 
+    /** The dot-window stroke belongs to the next attack's literal natural sign. */
+    static boolean naturalOwnsDot(
+            byte[] gray,
+            byte[] labels,
+            int width,
+            int height,
+            WrappedTripletDotInk.Center core,
+            float nextX,
+            float nextY,
+            float gap) {
+        if (labels == null || labels.length != gray.length || gap < 6 || gap > 32
+                || nextX - core.x() < gap * .94f || nextX - core.x() > gap * 2.30f
+                || Math.abs(nextY - core.y()) > gap * 1.48f
+                || labels[core.y() * width + core.x()] != OmrMeasurePostProcessor.CLEF_OR_KEY)
+            return false;
+        int left = Math.max(0, Math.round(nextX - gap * 3.10f));
+        int top = Math.max(0, Math.round(nextY - gap * 2.22f));
+        int right = Math.min(width - 1, Math.round(nextX - gap * .64f));
+        int bottom = Math.min(height - 1, Math.round(nextY + gap * 1.92f));
+        if (core.x() < left || core.x() > right || core.y() < top || core.y() > bottom)
+            return false;
+        int w = right - left + 1, h = bottom - top + 1;
+        byte[] semantic = new byte[w * h];
+        java.util.Arrays.fill(semantic, (byte) 255);
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                int source = (top + y) * width + left + x;
+                if (labels[source] == OmrMeasurePostProcessor.CLEF_OR_KEY
+                        && (gray[source] & 255) < 170) semantic[y * w + x] = 0;
+            }
+        }
+        var components = RawNumeralComponents.capture(
+                semantic, w, h, 0, 0, w - 1, h - 1, () -> {}, () -> {});
+        int corePixel = (core.y() - top) * w + core.x() - left;
+        for (var glyph : components.components()) {
+            boolean containsCore = false;
+            for (int i = 0; i < glyph.size(); i++) containsCore |= glyph.pixel(i) == corePixel;
+            if (!containsCore) continue;
+            java.util.Arrays.fill(semantic, (byte) 255);
+            for (int i = 0; i < glyph.size(); i++) semantic[glyph.pixel(i)] = 0;
+            return OmrScoreInterpreter.provesNaturalMeterInk(
+                    semantic, w, h, glyph.left, glyph.right, nextY - top, gap, h + 1);
+        }
+        return false;
+    }
+
     /** A clipped lower lobe can be part of a completely printed fingering above the next note. */
     static boolean fingeringThreeOwnsDot(
             byte[] gray,
@@ -668,7 +718,7 @@ final class WrappedEighthTriplets {
     }
 
     /** A short, head-connected ledger tip is part of the printed pitch. */
-    private static boolean highLedgerOwnsDot(
+    static boolean highLedgerOwnsDot(
             byte[] gray,
             byte[] labels,
             int width,

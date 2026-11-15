@@ -81,7 +81,7 @@ final class WrappedTripletMeasure {
                                 labels);
                 undotted = true;
                 if (lead == null || tail == null) {
-                    lead =
+                    var leadShafts =
                             WrappedShaftContinuation.half(
                                     gray,
                                     width,
@@ -89,8 +89,8 @@ final class WrappedTripletMeasure {
                                     regions.get(i),
                                     notes,
                                     byMeasure.get(i),
-                                    true);
-                    tail =
+                                    true, labels);
+                    var tailShafts =
                             WrappedShaftContinuation.half(
                                     gray,
                                     width,
@@ -98,8 +98,10 @@ final class WrappedTripletMeasure {
                                     regions.get(i + 1),
                                     notes,
                                     byMeasure.get(i + 1),
-                                    false);
-                    recoveredShafts = true;
+                                    false, labels);
+                    if (leadShafts != null) lead = leadShafts;
+                    if (tailShafts != null) tail = tailShafts;
+                    recoveredShafts = leadShafts != null || tailShafts != null;
                 } else if (followingCount == 19
                         && !WrappedEighthTriplets.followingRailAlias(
                                 gray,

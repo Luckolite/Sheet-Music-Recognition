@@ -91,9 +91,13 @@ final class IsolatedDottedHalfCadence {
             // A barline column is its first ink pixel, and the preceding fitted box is
             // inset. Allow a small left-side tolerance only in the proved terminal frame.
             float openingClearance = headCenteredFrame ? 1.7f : terminalFrame ? 1.85f : 2;
-            if (opening < 0 || closing < 0 || center - opening < gap * openingClearance
+            if (opening < 0 || closing < 0 || center - opening < gap * 1.70f
                     || closing - center < gap * 2) continue;
-            if (headCenteredFrame
+            boolean compactOpening = center - opening < gap * openingClearance;
+            if (compactOpening
+                    && PrintedCadenceDurations.boundaryColumn(
+                            gray, width, staff, right + gap * .45f, false, true) < 0) continue;
+            if ((headCenteredFrame || compactOpening)
                     && !LegacyTripletDotInk.singleDotCore(
                             gray, width, height, center, note.pageY() * height, closing, gap))
                 continue;

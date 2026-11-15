@@ -774,6 +774,10 @@ public final class SheetInterpreter {
                 DottedOpeningBeamHooks.apply(
                         finalInterpretation, gray, annotationGray, width, height);
         finalInterpretation =
+                ClosedDottedSixteenths.restoreUnclaimedOctaveBeamGroups(
+                        finalInterpretation, inheritedMeter, gray, annotationGray, width, height,
+                        physicalPage);
+        finalInterpretation =
                 finalInterpretation.withClockContextSource(
                         ScoreClockContextCapture.capture(
                                 labels,

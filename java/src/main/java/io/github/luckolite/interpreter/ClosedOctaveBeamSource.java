@@ -29,9 +29,15 @@ final class ClosedOctaveBeamSource {
         }
     }
 
-    private record Ink(byte[] gray, int width, int height) {
+    private record Ink(byte[] gray, int width, int height, boolean inverted) {
+        Ink(byte[] gray, int width, int height) {
+            this(gray, width, height, false);
+        }
+
         boolean dark(int x, int y) {
-            return x >= 0 && x < width && y >= 0 && y < height && (gray[y * width + x] & 255) < 165;
+            if (x < 0 || x >= width || y < 0 || y >= height) return false;
+            int row = inverted ? height - 1 - y : y;
+            return (gray[row * width + x] & 255) < 165;
         }
 
         boolean core(int x, int y, int radius) {
@@ -52,6 +58,121 @@ final class ClosedOctaveBeamSource {
         return provesRibbons(gray, width, height, gap, attacks, null)
                 ? project(source, page, attacks)
                 : source;
+    }
+
+    /** Admits only complete four-stem groups in an independently separated printed bar. */
+    static ScoreBeamSource captureSeparateDottedOctaveGroups(
+            ScoreBeamSource source, int page, byte[] gray, byte[] original,
+            int width, int height, float gap, List<Attack> attacks) {
+        if (page < 0 || attacks.size() != 16 || gap < 10 || gap > 27
+                || gray == null || original == null || gray.length != (long) width * height
+                || gray.length != original.length) return source;
+        var ink = new Ink(gray, width, height);
+        var raw = new Ink(original, width, height);
+        var budget = new PrintedBeamShafts.Budget(160_000);
+        for (int cut = 4; cut < attacks.size(); cut += 4) {
+            var left = boundaryAxis(ink, attacks.get(cut - 1), gap, budget);
+            var right = boundaryAxis(ink, attacks.get(cut), gap, budget);
+            if (left == null || right == null
+                    || !openBetweenRibbons(ink, left, right, gap)
+                    || original != gray && !openBetweenRibbons(raw, left, right, gap)) return source;
+        }
+        if (budget.refused()) return source;
+        var result = source;
+        for (int index = 0; index < attacks.size(); index += 4) {
+            var group = attacks.subList(index, index + 4);
+            if (provesRibbons(gray, width, height, gap, group, null)
+                    && (original == gray || provesRibbons(original, width, height, gap, group, null)))
+                result = project(result, page, group);
+        }
+        return result;
+    }
+
+    private static Axis boundaryAxis(
+            Ink ink, Attack attack, float gap, PrintedBeamShafts.Budget budget) {
+        var shafts = PrintedBeamShafts.at(
+                ink.gray, ink.width, ink.height, attack.lowerX, attack.lowerY, gap, budget);
+        if (shafts.size() != 1 || shafts.get(0).direction() != 1) return null;
+        var shaft = shafts.get(0);
+        return new Axis((shaft.left() + shaft.right()) / 2, shaft.endY(), shaft.left(), shaft.right());
+    }
+
+    private static boolean openBetweenRibbons(Ink ink, Axis left, Axis right, float gap) {
+        if (right.left - left.right < gap * 1.4f) return false;
+        int center = (left.right + right.left) / 2;
+        int margin = Math.round(gap * .18f);
+        int drift = Math.round((right.x - left.x) * .20f);
+        int top = Math.max(left.tip, right.tip) - Math.round(gap * 2.30f) - drift;
+        int bottom = Math.min(left.tip, right.tip) + Math.round(gap * .42f) + drift;
+        if (top < 0 || bottom >= ink.height || bottom - top < gap * .70f) return false;
+        for (int x = center - margin; x <= center + margin; x++)
+            for (int y = top + 1; y < bottom; y++)
+                if (ink.core(x, y, 1)
+                        && (ink.dark(x, y - 2) || ink.dark(x, y + 2))) return false;
+        return true;
+    }
+
+    /** Proves each detached group from a single physical shaft shared by each dyad. */
+    static ScoreBeamSource captureDetachedDottedDyads(
+            ScoreBeamSource source, int page, byte[] gray, byte[] original,
+            int width, int height, float gap, List<Attack> attacks, List<Integer> directions) {
+        if (page < 0 || attacks.size() != 16 || directions.size() != attacks.size()
+                || gap < 10 || gap > 27 || gray == null || original == null
+                || gray.length != (long) width * height || gray.length != original.length)
+            return source;
+        var printed = source;
+        for (int start = 0; start < attacks.size(); start += 4) {
+            var selected = attacks.subList(start, start + 4);
+            int direction = directions.get(start);
+            if (direction != 1 && direction != -1
+                    || directions.subList(start, start + 4).stream().anyMatch(d -> d != direction))
+                continue;
+            if (provesDetachedDyadRibbon(gray, width, height, gap, selected, direction, page)
+                    && (original == gray || provesDetachedDyadRibbon(
+                            original, width, height, gap, selected, direction, page)))
+                printed = project(printed, page, selected);
+        }
+        return printed;
+    }
+
+    private static boolean provesDetachedDyadRibbon(
+            byte[] gray, int width, int height, float gap,
+            List<Attack> attacks, int direction, int page) {
+        var budget = new PrintedBeamShafts.Budget(1_200_000);
+        var frame = new PrintedBeamShaftPixels.Frame(attacks, gray, width, height, page, budget::take, true);
+        var axes = new ArrayList<Axis>(4);
+        for (var attack : attacks) {
+            var axis = sharedDyadAxis(gray, width, height, gap, attack, direction, budget, frame);
+            if (axis == null || budget.refused()) return false;
+            axes.add(axis);
+        }
+        return closedRibbon(new Ink(gray, width, height, direction < 0), axes, gap, null, true);
+    }
+
+    private static Axis sharedDyadAxis(
+            byte[] gray, int width, int height, float gap, Attack attack, int direction,
+            PrintedBeamShafts.Budget budget, PrintedBeamShaftPixels.Frame frame) {
+        var upper = PrintedBeamShafts.atAllVisited(
+                gray, width, height, attack.upperX, attack.upperY, gap, budget, frame);
+        var lower = PrintedBeamShafts.atAllVisited(
+                gray, width, height, attack.lowerX, attack.lowerY, gap, budget, frame);
+        // Each shaft must independently connect its head to the same beam-side cap.
+        Axis answer = null;
+        for (var a : upper) {
+            for (var b : lower) {
+                if (a.direction() != direction || b.direction() != direction
+                        || Math.abs(a.endY() - b.endY()) > gap * .42f) continue;
+                int left = Math.max(a.left(), b.left()), right = Math.min(a.right(), b.right());
+                if (left > right) continue;
+                int x = (left + right + 1) / 2;
+                int tip = direction > 0 ? Math.min(a.endY(), b.endY())
+                        : height - 1 - Math.max(a.endY(), b.endY());
+                var witness = new Axis(x, tip, left, right);
+                if (answer != null && !answer.equals(witness)) return null;
+                answer = witness;
+            }
+        }
+        return answer;
     }
 
     /** A bounded four-column dotted group reaching a proved closing measure edge. */
@@ -201,6 +322,11 @@ final class ClosedOctaveBeamSource {
     }
 
     private static boolean closedRibbon(Ink ink, List<Axis> axes, float gap, Fragment fragment) {
+        return closedRibbon(ink, axes, gap, fragment, false);
+    }
+
+    private static boolean closedRibbon(
+            Ink ink, List<Axis> axes, float gap, Fragment fragment, boolean detached) {
         int radius = Math.max(1, Math.round(.12f * gap));
         var first = axes.get(0);
         var last = axes.get(3);
@@ -222,11 +348,32 @@ final class ClosedOctaveBeamSource {
                                     || fragmentInsideFusedRails(ink, rails, fragment, gap, radius))
                             && coversBridges(ink, rails, axes, radius, margin, fragment != null)
                             && shortBackwardHook(ink, rails, axes.get(1).x, gap, radius)
-                            && shortBackwardHook(ink, rails, axes.get(3).x, gap, radius))
+                            && shortBackwardHook(ink, rails, axes.get(3).x, gap, radius)
+                            && (!detached || terminatesAtOwnStem(ink, rails, first, -1, gap, radius)
+                                    && terminatesAtOwnStem(ink, rails, last, 1, gap, radius)))
                         return true;
                 }
             }
         return false;
+    }
+
+    private static boolean terminatesAtOwnStem(
+            Ink ink, Rails rails, Axis shaft, int side, float gap, int radius) {
+        int edge = side < 0 ? shaft.left : shaft.right;
+        int near = Math.round(.22f * gap), far = Math.round(.52f * gap);
+        int tolerance = Math.round(.18f * gap);
+        if (edge + side * far < 0 || edge + side * far >= ink.width) return false;
+        for (int rail : new int[] {0, rails.separation}) {
+            for (int dy = -tolerance; dy <= tolerance; dy++) {
+                int count = 0;
+                for (int distance = near; distance <= far; distance++) {
+                    int x = edge + side * distance;
+                    if (ink.core(x, rails.primary(x) - rail + dy, radius)) count++;
+                }
+                if (count >= far - near) return false;
+            }
+        }
+        return true;
     }
 
     private static boolean coversBridges(

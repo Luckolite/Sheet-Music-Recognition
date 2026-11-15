@@ -875,6 +875,76 @@ final class ClosedDottedSixteenths {
 
     private record Dyad(Head upper, Head lower) {}
 
+    static ScorePageInterpretation restoreUnclaimedOctaveBeamGroups(
+            ScorePageInterpretation score, ScoreMeterChange inherited,
+            byte[] gray, byte[] original, int width, int height, int physicalPage) {
+        if (physicalPage < 0 || gray == null || original == null || width < 1 || height < 1
+                || gray.length != (long) width * height || gray.length != original.length)
+            return score;
+        var current = score.beamSource();
+        var bars = groupedHeads(score, width, height);
+        var ink = new Ink(gray, width, height);
+        var meter = inherited;
+        int change = 0;
+        for (int bar = 0; bar < bars.size(); bar++) {
+            while (change < score.meterChanges().size()
+                    && score.meterChanges().get(change).measureIndex() <= bar)
+                meter = score.meterChanges().get(change++);
+            var row = bars.get(bar);
+            var region = score.measures().get(bar);
+            int measure = bar;
+            if (row.size() != 32 || meter == null || meter.numerator() != 4 || meter.denominator() != 4
+                    || region.cadenceQuarterBeats() != 0
+                    || score.rests().stream().anyMatch(r -> r.measureIndex() == measure)) continue;
+            float gap = (region.bottom() - region.top()) * height / 8.2f;
+            if (gap < 10 || gap > 27) continue;
+            float left = region.left() * width, right = region.right() * width;
+            var track = readOctaveStaff(ink, left, right,
+                    region.bottom() * height - 2.1f * gap, gap);
+            if (track == null || !barline(ink, right, track.at(right))) continue;
+            var notes = row.stream().map(Head::note).toList();
+            var ordered = row.stream().sorted(Comparator.comparingDouble(Head::x)).toList();
+            var attacks = new ArrayList<ClosedOctaveBeamSource.Attack>(16);
+            var directions = new ArrayList<Integer>(16);
+            boolean octaves = Math.abs(ordered.get(0).y - ordered.get(1).y) >= gap * 2.8f;
+            float distance = octaves ? 3.5f * gap : gap;
+            for (int k = 0; k < 16; k++) {
+                var a = ordered.get(2 * k);
+                var b = ordered.get(2 * k + 1);
+                if (b.x - a.x > gap * .30f
+                        || Math.abs(Math.abs(a.y - b.y) - distance) > .55f * gap
+                        || a.note.stemDirection() == 0 || a.note.stemDirection() != b.note.stemDirection()
+                        || !octaves && a.note.stemDirection() != -1
+                        || !writtenDottedOctaveHead(a.note, notes, k)
+                        || !writtenDottedOctaveHead(b.note, notes, k)) break;
+                var upper = a.y <= b.y ? a : b;
+                var lower = upper == a ? b : a;
+                attacks.add(new ClosedOctaveBeamSource.Attack(
+                        upper.index, lower.index, upper.x, upper.y, lower.x, lower.y));
+                directions.add(-a.note.stemDirection());
+            }
+            if (attacks.size() != 16) continue;
+            if (octaves && directions.stream().allMatch(d -> d == 1)) {
+                current = ClosedOctaveBeamSource.captureSeparateDottedOctaveGroups(
+                        current, physicalPage, gray, original, width, height, gap, attacks);
+            } else {
+                current = ClosedOctaveBeamSource.captureDetachedDottedDyads(
+                        current, physicalPage, gray, original, width, height, gap, attacks, directions);
+            }
+        }
+        return current == score.beamSource() ? score : score.withBeamSource(current);
+    }
+
+    private static boolean writtenDottedOctaveHead(
+            ScoreNoteEvent note, List<ScoreNoteEvent> notes, int column) {
+        if (!regular(note)) return false;
+        boolean dotted = (column & 1) == 0;
+        var placement = ScoreNoteTiming.writtenPlacement(note, notes, 4f).orElse(null);
+        return placement != null && !placement.grace()
+                && placement.onsetBeats() == column / 2 * .5 + (dotted ? 0 : .375)
+                && placement.durationBeats() == (dotted ? .375 : .125);
+    }
+
     /** Identifies head-shaped regions contained by the beam of a closed dyad clock. */
     private static List<Head> joinedDyadRailAliases(Ink ink, MeasureRegion bar, List<Head> row) {
         float gap = (bar.bottom() - bar.top()) * ink.h / 8.2f;

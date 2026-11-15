@@ -229,6 +229,40 @@ public class ClosedDottedOctavesTest {
                         reserved, 7, page, WIDTH, HEIGHT, 16, previous, ending));
     }
 
+    @Test
+    public void separatedDottedGroupsKeepHooksOnlyWhereTheRawSourceProvesThem() {
+        var source = ScoreBeamSource.empty(32);
+        var attacks = new ArrayList<ClosedOctaveBeamSource.Attack>();
+        for (int i = 0; i < 16; i++) {
+            int x = FIRST + i * SPACING;
+            int upper = UPPER + (i == 1 ? 12 : 0);
+            attacks.add(new ClosedOctaveBeamSource.Attack(
+                    2 * i, 2 * i + 1, x, upper, x, upper + LOWER - UPPER));
+        }
+        var raw = image();
+        var result = ClosedOctaveBeamSource.captureSeparateDottedOctaveGroups(
+                source, 0, raw, raw, WIDTH, HEIGHT, 16, attacks);
+        assertEquals(4, result.groups().size());
+        assertEquals(
+                List.of(
+                        new ScoreBeamSource.Hook(1, 3, ScoreBeamSource.Direction.BACKWARD),
+                        new ScoreBeamSource.Hook(3, 3, ScoreBeamSource.Direction.BACKWARD)),
+                result.groups().get(0).hooks());
+
+        var erased = raw.clone();
+        int second = FIRST + SPACING - 9;
+        paint(erased, second - 13, second - 2, 312, 325, (byte) 255);
+        assertEquals(result.groups().subList(1, 4),
+                ClosedOctaveBeamSource.captureSeparateDottedOctaveGroups(
+                        source, 0, raw, erased, WIDTH, HEIGHT, 16, attacks).groups());
+
+        var joined = raw.clone();
+        paint(joined, FIRST + 3 * SPACING - 10, FIRST + 4 * SPACING - 8,
+                342, 349, (byte) 0);
+        assertSame(source, ClosedOctaveBeamSource.captureSeparateDottedOctaveGroups(
+                source, 0, raw, joined, WIDTH, HEIGHT, 16, attacks));
+    }
+
     private static boolean provesTripleClock(
             byte[] paper,
             List<ClosedOctaveBeamSource.Attack> attacks,

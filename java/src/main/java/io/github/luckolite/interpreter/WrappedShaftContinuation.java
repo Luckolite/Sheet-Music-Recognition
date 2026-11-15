@@ -16,6 +16,12 @@ final class WrappedShaftContinuation {
             List<ScoreNoteEvent> notes,
             List<Integer> candidates,
             boolean firstHalf) {
+        return half(gray, width, height, bar, notes, candidates, firstHalf, null);
+    }
+
+    static WrappedTripletMeasure.Half half(
+            byte[] gray, int width, int height, MeasureRegion bar,
+            List<ScoreNoteEvent> notes, List<Integer> candidates, boolean firstHalf, byte[] labels) {
         if (candidates.size() != 9) return null;
         var owners =
                 candidates.stream()
@@ -54,11 +60,15 @@ final class WrappedShaftContinuation {
                                     && note.stemDirection() == 1)) return null;
             x[i] = (bar.left() + (bar.right() - bar.left()) * note.positionInMeasure()) * width;
             y[i] = note.pageY() * height;
-            if (i > 0 && (x[i] - x[i - 1] < gap * 1.55f || x[i] - x[i - 1] > gap * 3.4f)
-                    || i > 0
-                            && WrappedTripletDotInk.uniqueCore(
-                                            gray, width, height, x[i - 1], y[i - 1], x[i], gap)
-                                    != null) return null;
+            if (i > 0) {
+                if (x[i] - x[i - 1] < gap * 1.55f || x[i] - x[i - 1] > gap * 3.4f) return null;
+                var dot = WrappedTripletDotInk.uniqueCore(
+                        gray, width, height, x[i - 1], y[i - 1], x[i], gap);
+                if (dot != null && (labels == null
+                        || !WrappedEighthTriplets.highLedgerOwnsDot(
+                                gray, labels, width, height, bar, x[i - 1], y[i - 1], dot, gap)))
+                    return null;
+            }
             var raw = PrintedBeamShafts.at(gray, width, height, x[i], y[i], gap, budget);
             if (raw.size() > 1
                     || raw.size() == 1 && raw.get(0).direction() != -note.stemDirection())

@@ -1060,6 +1060,8 @@ final class OmrScoreInterpreter {
                         gray, width, height, heads, staffs, recoveredBeamCapGraces));
         rejectedBeamHeads.addAll(ownedSlopedBeamFragments(labels, gray, width, height, heads, staffs));
         rejectedBeamHeads.addAll(
+                locallyScaledDoubleRailFragments(gray, width, height, heads, staffs, measures));
+        rejectedBeamHeads.addAll(
                 leadingSingleRailCapMasks(
                         labels, gray, annotationGray, width, height, heads, staffs, measures));
         rejectedBeamHeads.addAll(filledBeamBandHeads(gray, width, height, heads, staffs));
@@ -9984,11 +9986,20 @@ final class OmrScoreInterpreter {
             var symbol = new Component(body.area, body.minX + start, body.maxX + start,
                     body.minY + top, body.maxY + top, body.centerX + start, body.centerY + top);
             var candidate = new AccidentalCandidate(symbol, key);
-            if (!isSharpGlyph(labels, width, height, candidate, gap)) return -1;
-            float center = sharpPitchCenter(mask, columns, rows, new AccidentalCandidate(body, key), gap);
+            float center = isSharpGlyph(labels, width, height, candidate, gap)
+                    ? top + sharpPitchCenter(mask, columns, rows, new AccidentalCandidate(body, key), gap)
+                    : Float.NaN;
+            if (!Float.isFinite(center)) {
+                // A staff crossing can truncate a key sharp's semantic spines.
+                // Keep the owned column and measure the intact sharp in the original ink.
+                center = rawSharpPitchInBounds(gray, width, height, symbol, gap,
+                        symbol.minX, symbol.maxX,
+                        Math.max(top, symbol.minY - Math.round(gap * .8f)),
+                        Math.min(end, symbol.maxY + Math.round(gap * .4f)), true, true);
+            }
             if (!Float.isFinite(center)) return -1;
             sharps.add(new SignatureGlyph(symbol.centerX, ScoreNoteEvent.ACCIDENTAL_SHARP,
-                    top + center, symbol));
+                    center, symbol));
         }
         sharps.sort(Comparator.comparingDouble(SignatureGlyph::x));
         if (sharps.size() != expectedSharps
@@ -14137,7 +14148,8 @@ final class OmrScoreInterpreter {
         Component before = null, after = null, later = null;
         for (var peer : heads) {
             float dx = peer.centerX - head.centerX;
-            if (dx < -gap * 2.8f
+            // Allow a one-pixel endpoint rounding error before checking both physical rails.
+            if (dx < -gap * 2.8f - 1
                     || dx > gap * 5.2f
                     || Math.abs(dx) < gap * 1.4f
                     || Math.abs(peer.centerY - head.centerY) > gap * 2.9f
@@ -19979,6 +19991,22 @@ final class OmrScoreInterpreter {
             int bottom,
             boolean checkEdges,
             boolean pairedCrossbars) {
+        return Float.isFinite(rawSharpPitchInBounds(
+                gray, width, height, head, gap, left, right, top, bottom, checkEdges, pairedCrossbars));
+    }
+
+    private static float rawSharpPitchInBounds(
+            byte[] gray,
+            int width,
+            int height,
+            Component head,
+            float gap,
+            int left,
+            int right,
+            int top,
+            int bottom,
+            boolean checkEdges,
+            boolean pairedCrossbars) {
         int w = right - left + 1, h = bottom - top + 1;
         int reach = Math.max(3, Math.round(gap * .6f)), probe = Math.max(2, Math.round(gap * .2f));
         // Preserve the original exclusive cutoffs for complete semantic seeds.
@@ -20041,7 +20069,7 @@ final class OmrScoreInterpreter {
                             new AccidentalCandidate(glyph, OmrMeasurePostProcessor.CLEF_OR_KEY),
                             gap);
             if (Float.isFinite(center) && Math.abs(center + top - head.centerY) < gap * .4f)
-                return true;
+                return top + center;
         }
         // Preserve the ordinary faint-ink proof before trying stronger paired-bar closing.
         for (int faintPass = 0; checkEdges && faintPass < (pairedCrossbars ? 2 : 1); faintPass++) {
@@ -20067,11 +20095,11 @@ final class OmrScoreInterpreter {
                                             glyph, OmrMeasurePostProcessor.CLEF_OR_KEY),
                                     gap);
                     if (Float.isFinite(center) && Math.abs(center + top - head.centerY) < gap * .4f)
-                        return true;
+                        return top + center;
                 }
             }
         }
-        return false;
+        return Float.NaN;
     }
 
     /**
@@ -28182,11 +28210,49 @@ final class OmrScoreInterpreter {
         return true;
     }
 
+    /** Use the enclosing measure's staff scale when the page-wide estimate is too small. */
+    private static List<Component> locallyScaledDoubleRailFragments(
+            byte[] gray,
+            int width,
+            int height,
+            List<Component> heads,
+            List<Staff> staffs,
+            List<MeasureRegion> measures) {
+        if (gray == null) return List.of();
+        var rejected = new ArrayList<Component>();
+        for (var fragment : heads) {
+            var staff = nearestHeadStaff(staffs, fragment.centerY);
+            if (staff == null || staff.count != 1 || staff.gap < 8) continue;
+            float gap = staff.gap;
+            int across = fragment.maxX - fragment.minX + 1;
+            int depth = fragment.maxY - fragment.minY + 1;
+            if (fragment.area <= gap * gap * .8f
+                    || fragment.area > gap * gap * 1.0f
+                    || across <= gap * 1.25f
+                    || across > gap * 1.45f
+                    || depth > gap * 1.10f) continue;
+            int at = containingMeasureForStaff(
+                    measures, fragment.centerX / width, fragment.centerY / height, staff, height);
+            if (at < 0) continue;
+            var measure = measures.get(at);
+            float measureGap = (measure.bottom() - measure.top()) * height / 8.2f;
+            if (measureGap <= gap + .5f || measureGap > gap * 1.12f
+                    || fragment.area > measureGap * measureGap * .8f
+                    || across > measureGap * 1.25f
+                    || depth > measureGap * 1.05f
+                    || attachedRawStem(gray, width, height, fragment, measureGap,
+                            Math.round(measureGap * .7f), 170) != null) continue;
+            if (coveredBeamMask(gray, width, height, fragment, heads, measureGap, null))
+                rejected.add(fragment);
+        }
+        return rejected;
+    }
+
     private static boolean coveredBeamMask(
             byte[] gray, int width, int height, Component fragment, List<Component> heads, float gap, int[] borrowedShaft) {
         for (Component owner : heads) {
             if (Math.abs(owner.centerX - fragment.centerX) > gap * 2
-                    || Math.abs(owner.centerY - fragment.centerY) < gap * 3
+                    || Math.abs(owner.centerY - fragment.centerY) < Math.floor(gap * 3)
                     || Math.abs(owner.centerY - fragment.centerY) > gap * 6
                     || !filledBeamEndpointCore(gray, width, height, owner, gap)) continue;
             int[] shaft = attachedRawStem(gray, width, height, owner, gap, 2, 170);
