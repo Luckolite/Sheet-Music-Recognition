@@ -1,10 +1,18 @@
 // Copyright 2026 Music Sheets contributors. SPDX-License-Identifier: Apache-2.0
 package io.github.luckolite.interpreter;
 
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.VarHandle;
+import java.nio.ByteOrder;
 import java.util.Arrays;
 
 /** Literal local classification support. This does not authorize a rest or a source frame. */
 final class FaintQuarterRestInk {
+    private static final VarHandle INK_WORDS =
+            MethodHandles.byteArrayViewVarHandle(long[].class, ByteOrder.LITTLE_ENDIAN);
+    private static final long HIGH_BITS = 0x8080808080808080L;
+    private static final long PAPER_CUTOFF = 0x0101010101010101L * (230 - 128);
+
     private FaintQuarterRestInk() {}
 
     static final class Refusal extends RuntimeException {
@@ -214,7 +222,10 @@ final class FaintQuarterRestInk {
         }
 
         private boolean foreground(int x, int y) {
-            int pixel = y * width + x;
+            return foreground(x, y, y * width + x);
+        }
+
+        private boolean foreground(int x, int y, int pixel) {
             int value = raw[pixel] & 255;
             if (value < 170) return true;
             if (value >= 230
@@ -290,25 +301,37 @@ final class FaintQuarterRestInk {
             int[] queue = null;
             int[] lo = new int[h], hi = new int[h];
             Arrays.fill(lo, -1);
-            boolean hasSupport = false;
+            int total = 0, firstSupported = -1;
             for (int y = first; y <= last; y++) {
                 if (rules[y]) continue;
+                int row = y - first;
                 int runs = 0;
                 boolean prior = false;
-                for (int x = left; x <= right; x++) {
-                    boolean ink = foreground(x, y);
-                    if (ink) {
-                        support[(y - first) * w + x - left] = 1;
-                        if (!prior) runs++;
-                        if (lo[y - first] < 0) lo[y - first] = x;
-                        hi[y - first] = x;
+                for (int x = left, pixel = y * width + left, at = row * w; x <= right; ) {
+                    int columns = Math.min(Long.BYTES, right - x + 1);
+                    if (columns == Long.BYTES && paperWord(raw, pixel)) {
+                        prior = false;
+                        x += Long.BYTES;
+                        pixel += Long.BYTES;
+                        at += Long.BYTES;
+                    } else {
+                        for (int end = x + columns; x < end; x++, pixel++, at++) {
+                            boolean ink = foreground(x, y, pixel);
+                            if (ink) {
+                                support[at] = 1;
+                                total++;
+                                if (firstSupported < 0) firstSupported = at;
+                                if (!prior) runs++;
+                                if (lo[row] < 0) lo[row] = x;
+                                hi[row] = x;
+                            }
+                            prior = ink;
+                        }
                     }
-                    prior = ink;
                 }
-                if (runs != 0) hasSupport = true;
-                if (runs > 1) lo[y - first] = -2;
+                if (runs > 1) lo[row] = -2;
             }
-            if (!hasSupport) return null;
+            if (firstSupported < 0) return null;
             for (int y = first; y <= last; ) {
                 if (!rules[y]) {
                     y++;
@@ -333,7 +356,10 @@ final class FaintQuarterRestInk {
                             x <= Math.min(right, end); x++, at++) {
                         // Retain existing raw ink through the ruled crossing.
                         if ((raw[at] & 255) < 230) {
-                            support[rowStart + x] = 1;
+                            int supported = rowStart + x;
+                            support[supported] = 1;
+                            total++;
+                            firstSupported = Math.min(firstSupported, supported);
                             any = true;
                         }
                     }
@@ -372,18 +398,10 @@ final class FaintQuarterRestInk {
                 for (int at = (bandStart - first) * w, end = c * w; at < end; at++)
                     if (support[at] != 0 && crossing[at] != 3) return null;
             }
-            int total = 0, start = -1;
-            for (int at = 0; at < support.length; at++) {
-                if (support[at] != 0) {
-                    total++;
-                    if (start < 0) start = at;
-                }
-            }
-            if (start < 0) return null;
             int count = 1;
             if (queue == null) queue = new int[(int) area];
-            queue[0] = start;
-            support[start] = 2;
+            queue[0] = firstSupported;
+            support[firstSupported] = 2;
             int x0 = w, x1 = -1, y0 = h, y1 = -1;
             for (int cursor = 0; cursor < count; cursor++) {
                 int at = queue[cursor], x = at % w, y = at / w;
@@ -392,9 +410,9 @@ final class FaintQuarterRestInk {
                 x1 = Math.max(x1, x);
                 y0 = Math.min(y0, y);
                 y1 = Math.max(y1, y);
-                for (int yy = Math.max(0, y - 1); yy <= Math.min(h - 1, y + 1); yy++) {
-                    for (int xx = Math.max(0, x - 1); xx <= Math.min(w - 1, x + 1); xx++) {
-                        int next = yy * w + xx;
+                // Border pixels were rejected above, so all neighbors are inside the crop.
+                for (int dy = -1, row = at - w - 1; dy <= 1; dy++, row += w) {
+                    for (int next = row, end = row + 3; next < end; next++) {
                         if (support[next] == 1) {
                             support[next] = 2;
                             queue[count++] = next;
@@ -513,12 +531,31 @@ final class FaintQuarterRestInk {
         return new Scan(raw, width, height, top, bottom, gap, rules, budget);
     }
 
+    private static boolean paperWord(byte[] raw, int pixel) {
+        return inkMask(raw, pixel) == 0;
+    }
+
+    private static long inkMask(byte[] raw, int pixel) {
+        long tones = (long) INK_WORDS.get(raw, pixel);
+        return (((tones | HIGH_BITS) - PAPER_CUTOFF) & tones & HIGH_BITS) ^ HIGH_BITS;
+    }
+
     private static boolean printedRuleRow(byte[] raw, int start, int width, float gap) {
         int required = width / 4 + 1;
         int requiredRun = (int) Math.ceil(gap * 5);
         int end = start + width, at = start;
         while (at < end) {
-            while (at < end && (raw[at] & 255) >= 230) at++;
+            if ((raw[at] & 255) >= 230) {
+                while (at <= end - Long.BYTES) {
+                    long ink = inkMask(raw, at);
+                    if (ink != 0) {
+                        at += Long.numberOfTrailingZeros(ink) / Byte.SIZE;
+                        break;
+                    }
+                    at += Long.BYTES;
+                }
+                while (at < end && (raw[at] & 255) >= 230) at++;
+            }
             int first = at;
             int stop = at + Math.min(end - at, Math.min(required, requiredRun));
             while (at < stop && (raw[at] & 255) < 230) at++;

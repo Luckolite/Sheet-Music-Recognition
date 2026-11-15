@@ -150,13 +150,24 @@ final class DenseTieArcContinuity {
                 // A staff crossing may be obscured only by real raw ink at this column.
                 // Outside a rule, thick vertical objects cannot supply the curve corridor.
                 if (!straightRows.contains(y)) {
-                    int a = y, b = y;
-                    while (a > Math.max(0, y - reach)
-                            && (gray[(a - 1) * width + x] & 255) <= inkLimit) a--;
-                    if (y - a > maximumThickness) continue;
-                    while (b < Math.min(height - 1, y + reach)
-                            && (gray[(b + 1) * width + x] & 255) <= inkLimit) b++;
-                    if (b - a > maximumThickness) continue;
+                    int inkTop = y, inkBottom = y;
+                    int firstRow = Math.max(0, y - reach);
+                    int pixel = at - width;
+                    while (inkTop > firstRow && (gray[pixel] & 255) <= inkLimit) {
+                        inkTop--;
+                        pixel -= width;
+                    }
+                    if (y - inkTop > maximumThickness) continue;
+                    int lastRow = Math.min(height - 1, y + reach);
+                    // The first excess row rejects this stroke without scanning its far edge.
+                    if (maximumThickness < (1 << 24) && lastRow - inkTop > maximumThickness)
+                        lastRow = inkTop + (int) maximumThickness + 1;
+                    pixel = at + width;
+                    while (inkBottom < lastRow && (gray[pixel] & 255) <= inkLimit) {
+                        inkBottom++;
+                        pixel += width;
+                    }
+                    if (inkBottom - inkTop > maximumThickness) continue;
                 }
                 // Both frontiers and candidate rows are ordered, so cursors only advance.
                 while (previousCursor < previousSize && previous[previousCursor] < y - rise)
