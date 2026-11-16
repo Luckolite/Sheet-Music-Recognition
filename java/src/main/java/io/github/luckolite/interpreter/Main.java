@@ -321,6 +321,9 @@ public final class Main {
         result.put("measureBeats", beats);
         var accidentals = decoded.accidentalSource().printedMarks(
                 decoded.originalNotes(), score.notes(), decoded.accidentalMeasures());
+        accidentals =
+                SourceLocalAccidental.includeClosedTripletSharps(
+                        accidentals, decoded.closedTripletSharpOwners(), score.notes());
         if (!accidentals.isEmpty()) result.put("printedAccidentals", accidentals);
         if (!wrapped.continuations().isEmpty())
             result.put("printedMeasureContinuations", wrapped.continuations());

@@ -240,7 +240,7 @@ final class ClosedSixteenthPairBeforeHalf {
         return writtenHead(n, true);
     }
 
-    private static boolean writtenHead(ScoreNoteEvent n, boolean requireUntied) {
+    static boolean writtenHead(ScoreNoteEvent n, boolean requireUntied) {
         return n.kind() == ScoreNoteEvent.Kind.PITCHED
                 && n.visualSize() == ScoreNoteEvent.VisualSize.FULL
                 && n.staffCount() == 1

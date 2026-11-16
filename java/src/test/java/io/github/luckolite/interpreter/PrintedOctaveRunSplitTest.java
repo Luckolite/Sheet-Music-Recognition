@@ -122,6 +122,64 @@ public final class PrintedOctaveRunSplitTest {
         }
     }
 
+
+    @Test
+    public void clippedOctaveAndPrintedThreeFourOwnTheCompleteBar() throws Exception {
+        assertEquals(inlineRaw(), throughStaffOctaves('3', 430, true));
+    }
+
+    @Test
+    public void clippedRunNeedsItsOwnSignatureShaftAndClosingBarline() throws Exception {
+        assertEquals(throughStaffFitted(430), throughStaffOctaves('2', 430, true));
+        assertEquals(throughStaffFitted(445), throughStaffOctaves('3', 445, true));
+        assertEquals(throughStaffFitted(430), throughStaffOctaves('3', 430, false));
+    }
+
+    private List<MeasureRegion> throughStaffOctaves(char numerator, int cut, boolean closed)
+            throws Exception {
+        notes.clear();
+        Arrays.fill(gray, (byte) 255);
+        for (int y = STAFF_TOP; y <= STAFF_BOTTOM; y += 16) paint(32, 943, y, y, 0);
+        byte[] signature = InlineTripleMeterProofTest.signature(numerator, '4', true);
+        byte[] labels = new byte[gray.length];
+        for (int y = STAFF_TOP; y <= STAFF_BOTTOM; y += 16)
+            Arrays.fill(labels, y * WIDTH + 32, y * WIDTH + 944, (byte) 4);
+        for (int y = 51; y <= 121; y++) {
+            for (int x = 96; x <= 162; x++) {
+                int at = (y + 50) * WIDTH + x + 49;
+                gray[at] = signature[y * 320 + x];
+                if (x >= 123 && x < 157 && (y - 54) % 16 != 0 && (gray[at] & 255) < 150)
+                    labels[at] = 3;
+            }
+        }
+        if (closed) paint(649, 651, STAFF_TOP, STAFF_BOTTOM, 0);
+        // A continuous twice-beamed run has no two independent four-attack closures.
+        paint(258, 590, 66, 70, 0);
+        paint(258, 590, 80, 84, 0);
+        var bars = inlineRaw();
+        var region = bars.get(1);
+        for (int i = 0; i < 12; i++) {
+            int x = 250 + i * 30;
+            paint(x + 8, x + 10, 68, 159, 0);
+            paint(x - 5, x + 10, 99, 107, 0);
+            paint(x - 5, x + 10, 155, 163, 0);
+            float pos = (x / (float) WIDTH - region.left()) / (region.right() - region.left());
+            notes.add(head(1, pos, 8, 103, false));
+            notes.add(head(1, pos, 1, 159, false));
+        }
+        return PrintedMeasureRhythmGuard.preserveCompleteRuns(
+                bars, throughStaffFitted(cut), notes, List.of(), labels, gray, WIDTH, HEIGHT);
+    }
+
+    private List<MeasureRegion> inlineRaw() {
+        return List.of(bar(45, 150), bar(170, 640), bar(660, 930));
+    }
+
+    private List<MeasureRegion> throughStaffFitted(int cut) {
+        var measures = inlineRaw();
+        return List.of(measures.get(0), bar(170, cut - 4), bar(cut + 4, 640), measures.get(2));
+    }
+
     private List<MeasureRegion> reconcile() {
         return PrintedMeasureRhythmGuard.preserveCompleteRuns(
                 raw, fitted, notes, gray, WIDTH, HEIGHT);

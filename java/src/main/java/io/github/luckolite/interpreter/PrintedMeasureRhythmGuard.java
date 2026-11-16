@@ -1163,11 +1163,92 @@ final class PrintedMeasureRhythmGuard {
                         || printedBarlineNearCut(region, cut, gray, width, height)
                         || pieces.size() == 2 && provesDottedHalfClosingBar(
                                 pieces.get(0), pieces.get(1), raw, labels, gray, width, height);
+                if (!complete && pieces.size() == 2 && provesClosedOctaveQuarter(
+                        pieces.get(0), pieces.get(1), raw, labels, gray, width, height)) {
+                    var cadence = pieces.get(1);
+                    pieces = List.of(pieces.get(0), new MeasureRegion(
+                            cadence.left(), cadence.right(), cadence.top(), cadence.bottom(), 1));
+                    complete = true;
+                }
             }
             if (complete) result.addAll(pieces);
             else result.add(region);
         }
         return List.copyOf(result);
+    }
+
+    /** Preserve a separate quarter-note octave after a literal three-beat double-stop run. */
+    private static boolean provesClosedOctaveQuarter(
+            MeasureRegion before, MeasureRegion cadence, List<MeasureRegion> raw,
+            byte[] labels, byte[] gray, int width, int height) {
+        if (labels == null || labels.length != gray.length || cadence.cadenceQuarterBeats() != 0)
+            return false;
+        int index = raw.indexOf(cadence);
+        if (index < 2 || index + 1 >= raw.size() || !raw.get(index - 1).equals(before)
+                || !sameRow(before, cadence) || sameRow(cadence, raw.get(index + 1))) return false;
+        var header = raw.get(index - 2);
+        if (!sameRow(header, before)) return false;
+        float left = cadence.left() * width, right = cadence.right() * width;
+        float border = before.right() * width;
+        float gap = (cadence.bottom() - cadence.top()) * height / 8.2f;
+        if (gap < 10 || gap > 28 || right - left < gap * 5.5f || right - left > gap * 8f
+                || border - before.left() * width < gap * 26f
+                || left - border < gap * .55f || left - border > gap * 1.5f) return false;
+        float center = (left + right) * .5f;
+        float hint = cadence.bottom() * height - 2.1f * gap;
+        var lead = PrintedDirectionStaff.printedRules(gray, width, height, center - gap * .5f, hint, gap);
+        var tail = PrintedDirectionStaff.printedRules(gray, width, height, center, hint, gap);
+        if (lead == null || tail == null || Math.abs(lead[0] - tail[0]) > gap * .2f
+                || Math.abs(lead[1] - tail[1]) > gap * .08f) return false;
+        var staff = new PlayingTechniqueDetector.Staff(tail[0] - 4 * tail[1], tail[0], tail[1], 0, 1);
+        if (!ClosedSixteenthPairBeforeHalf.ownedSeparator(
+                        gray, width, height, staff, (left + border) * .5f)
+                || PrintedCadenceDurations.boundaryColumn(gray, width, staff, right, false, true) < 0)
+            return false;
+
+        var local = List.of(header, before, cadence);
+        var analyzed = OmrScoreInterpreter.analyze(labels, gray, width, height, local);
+        if (analyzed.rests().stream().anyMatch(rest -> rest.measureIndex() > 0)) return false;
+        var run = completeSixteenthOctaves(analyzed.notes(), 1, before, width, height);
+        if (run.size() != 24 || !ClosedSixteenthPairBeforeHalf.closedOctaveRailsBeforeTieValidation(
+                        run, before, gray, width, height, staff.gap(), staff.bottom())) return false;
+        var chord = analyzed.notes().stream().filter(note -> note.measureIndex() == 2).toList();
+        if (chord.size() != 2 || chord.stream().anyMatch(note -> !plainQuarterOwner(note))) return false;
+        var a = chord.get(0);
+        var b = chord.get(1);
+        if (Math.abs(a.staffStep() - b.staffStep()) != 7 || a.stemDirection() != b.stemDirection())
+            return false;
+        float ax = left + a.positionInMeasure() * (right - left);
+        float bx = left + b.positionInMeasure() * (right - left);
+        float first = Math.min(ax, bx), last = Math.max(ax, bx);
+        if (last - first > gap * .22f || first - left < gap * 1.45f || first - left > gap * 3.3f
+                || right - last < gap * 2.7f
+                || !PrintedCadenceDurations.emptyOutsideChord(
+                        gray, width, staff, left, right, first, last, false)) return false;
+        var budget = new PrintedBeamShafts.Budget(30_000);
+        var firstShaft = PrintedBeamShafts.at(gray,width,height,ax,a.pageY() * height,staff.gap(),budget);
+        var secondShaft = PrintedBeamShafts.at(gray,width,height,bx,b.pageY() * height,staff.gap(),budget);
+        if (firstShaft.size() != 1 || secondShaft.size() != 1) return false;
+        var one = firstShaft.get(0);
+        var two = secondShaft.get(0);
+        if (one.direction() != -a.stemDirection() || two.direction() != one.direction()
+                || Math.max(one.left(), two.left()) > Math.min(one.right(), two.right())
+                || Math.abs(one.endY() - two.endY()) > gap * .12f) return false;
+        return MeterFontMatcher.standaloneReadings(labels, gray, width, height, local, analyzed.notes())
+                .contains(new ScoreMeterChange(0, 3, 4));
+    }
+
+    private static boolean plainQuarterOwner(ScoreNoteEvent note) {
+        return note.kind() == ScoreNoteEvent.Kind.PITCHED
+                && note.staffIndex() == 0 && note.staffCount() == 1
+                && note.visualSize() == ScoreNoteEvent.VisualSize.FULL
+                && note.unbeamedDurationBeats() == 1 && note.beamCount() == 0
+                && note.augmentationDots() == 0 && note.tupletDivisor() == 1
+                && note.stemDirection() != 0 && !note.crossStaffBeam()
+                && !note.tiedFromPrevious() && note.boundaryTies() == 0
+                && note.leadingRestBeats() == 0 && note.followingRestBeats() == 0
+                && note.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_FROM_KEY
+                && (note.articulations() & NoteOrnament.GRACE) == 0;
     }
 
     /** A lone dotted half can authenticate a separator on a former system-ending bar. */
@@ -1529,7 +1610,10 @@ final class PrintedMeasureRhythmGuard {
                             octaves, region, gray, width, height, rails.gap(), rails.bottom()))
                 return false;
         } else if (!ClosedSixteenthPairBeforeHalf.closedOctaveRailsBeforeTieValidation(
-                octaves, region, gray, width, height, rails.gap(), rails.bottom())) return false;
+                octaves, region, gray, width, height, rails.gap(), rails.bottom())) {
+            return ownsClippedInlineTripleBar(
+                    raw, rests, index, octaves, staff, labels, gray, width, height, cut);
+        }
 
         for (int other = 0; other < raw.size(); other++) {
             var peer = raw.get(other);
@@ -1546,6 +1630,25 @@ final class PrintedMeasureRhythmGuard {
                             head, peer, gray, width, height, rails.gap(), rails.bottom())) return true;
         }
         return !fourBeat && ownsInlineTriple(raw, rests, index, octaves, staff, labels, gray, width, height);
+    }
+
+    private static boolean ownsClippedInlineTripleBar(
+            List<MeasureRegion> raw, List<ScoreRestEvent> rests, int index,
+            List<ScoreNoteEvent> octaves, PlayingTechniqueDetector.Staff staff,
+            byte[] labels, byte[] gray, int width, int height, float cut) {
+        // A sloping beam may touch a staff rule. Require the actual closing barline
+        // and the shared shaft of the pair bisected by the proposed divider.
+        if (index + 1 >= raw.size() || octaves.stream().anyMatch(n ->
+                !ClosedSixteenthPairBeforeHalf.writtenHead(n, false)
+                        || (n.articulations() & NoteOrnament.GRACE) != 0)) return false;
+        var region = raw.get(index);
+        var next = raw.get(index + 1);
+        float right = region.right() * width, left = next.left() * width;
+        return left > right && left - right <= staff.gap() * 1.5f && sameRow(region, next)
+                && ClosedSixteenthPairBeforeHalf.ownedSeparator(
+                        gray, width, height, staff, (right + left) * .5f)
+                && cutPassesThroughOwnedOctave(octaves, region, gray, width, height, staff, cut)
+                && ownsInlineTriple(raw, rests, index, octaves, staff, labels, gray, width, height);
     }
 
     private static boolean cutPassesThroughOwnedOctave(

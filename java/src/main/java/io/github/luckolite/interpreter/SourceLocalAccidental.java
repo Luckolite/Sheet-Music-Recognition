@@ -629,6 +629,26 @@ final class SourceLocalAccidental {
         return List.copyOf(marks);
     }
 
+    static List<PrintedMark> includeClosedTripletSharps(
+            List<PrintedMark> marks, List<ScoreNoteEvent> proved, List<ScoreNoteEvent> retained) {
+        if (proved.isEmpty()) return marks;
+        var owners = new HashMap<NoteLocation, Integer>();
+        for (int i = 0; i < retained.size(); i++)
+            if (retained.get(i).kind() == ScoreNoteEvent.Kind.PITCHED)
+                owners.merge(new NoteLocation(retained.get(i)), i, (a, b) -> -1);
+        var combined = new TreeMap<Integer, PrintedMark>();
+        for (var mark : marks) combined.put(mark.noteIndex(), mark);
+        for (var note : proved) {
+            int index = owners.getOrDefault(new NoteLocation(note), -1);
+            if (index >= 0
+                    && retained.get(index).writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_SHARP
+                    && retained.get(index).clefBottomDiatonic() == note.clefBottomDiatonic())
+                combined.putIfAbsent(
+                        index, new PrintedMark(index, ScoreNoteEvent.ACCIDENTAL_SHARP));
+        }
+        return List.copyOf(combined.values());
+    }
+
     private boolean ambiguousVerticalOwner(
             Choice choice, ScoreNoteEvent note, List<MeasureRegion> measures,
             Map<Integer, List<ScoreNoteEvent>> notesByMeasure,

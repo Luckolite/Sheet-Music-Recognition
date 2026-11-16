@@ -14,8 +14,26 @@ final class MeterDoubleRuleCrop {
                 || crop==null || crop.gap()<8 || crop.gap()>32
                 || crop.left()<0 || crop.right()>width || crop.top()<0 || crop.bottom()>height)
             return crop;
-        float gap=crop.gap();
         if (ownerLeft<crop.left() || ownerLeft>crop.right()) return crop;
+        var trimmed = trimRules(crop, gray, width, height, ownerLeft, false);
+        if (trimmed != crop) return trimmed;
+
+        // A wide crop can begin in verified paper before both bars. Discard only
+        // that paper, and require the same complete pair past the shorter prefix.
+        int left = crop.left() + Math.round(crop.gap() * .42f);
+        if (left >= ownerLeft || left >= crop.right()) return crop;
+        for (int x = crop.left(); x < left; x++)
+            if (!paperBetweenRules(gray, width, height, x, crop.firstLine(), crop.gap())) return crop;
+        var narrowed = new MeterChangeDetector.Crop(
+                left, crop.top(), crop.right(), crop.bottom(), crop.firstLine(), crop.gap());
+        var recovered = trimRules(narrowed, gray, width, height, ownerLeft, true);
+        return recovered == narrowed ? crop : recovered;
+    }
+
+    private static MeterChangeDetector.Crop trimRules(
+            MeterChangeDetector.Crop crop, byte[] gray, int width, int height,
+            float ownerLeft, boolean requiresPair) {
+        float gap=crop.gap();
         int end=Math.min(crop.right()-Math.round(1.3f*gap),
                 Math.min(crop.left()+Math.round(gap*1.28f),Math.round(ownerLeft+gap*.3f)));
         if (end<=crop.left()) return crop;
@@ -39,6 +57,7 @@ final class MeterDoubleRuleCrop {
         if (first == null || first.left - crop.left() > gap * .42f) return crop;
         int boundary;
         if (second == null) {
+            if (requiresPair) return crop;
             float distance = ownerLeft - first.right;
             if (first.right - first.left > maxSingleWidth
                     || distance < gap * .24f || distance > gap * .76f) return crop;

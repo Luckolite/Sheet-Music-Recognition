@@ -77,6 +77,26 @@ public final class MeterPrefixRuleCropTest {
         assertSame(METER, trim(single));
     }
 
+    @Test
+    public void widerPaperFringeMayPrecedeOnlyACompletePairedRule() {
+        var crop = new MeterChangeDetector.Crop(30, 20, 96, 98, 22, 16);
+        var page = new byte[WIDTH * HEIGHT];
+        Arrays.fill(page, (byte) 255);
+        paint(page, 40, 22, 44, 86, 0);
+        paint(page, 47, 22, 51, 86, 0);
+        paint(page, 57, 29, 68, 46, 0);
+        paint(page, 58, 57, 69, 81, 0);
+        assertEquals(52, MeterDoubleRuleCrop.trim(crop, page, WIDTH, HEIGHT, 54).left());
+
+        var single = page.clone();
+        paint(single, 47, 22, 51, 86, 255);
+        assertSame(crop, MeterDoubleRuleCrop.trim(crop, single, WIDTH, HEIGHT, 54));
+
+        var marked = page.clone();
+        paint(marked, 33, 29, 33, 35, 0);
+        assertSame(crop, MeterDoubleRuleCrop.trim(crop, marked, WIDTH, HEIGHT, 54));
+    }
+
     private static MeterChangeDetector.Crop trim(byte[] page) {
         return MeterDoubleRuleCrop.trim(METER, page, WIDTH, HEIGHT, 45);
     }

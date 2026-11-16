@@ -180,7 +180,8 @@ public final class SheetInterpreter {
             ScorePageInterpretation score,
             List<ScoreNoteEvent> originalNotes,
             SourceLocalAccidental accidentalSource,
-            List<MeasureRegion> accidentalMeasures) {}
+            List<MeasureRegion> accidentalMeasures,
+            List<ScoreNoteEvent> closedTripletSharpOwners) {}
 
     static AnalyzedPage analyzeWithPrintedSources(
             byte[] labels, byte[] gray, int width, int height, Annotations annotations,
@@ -340,11 +341,10 @@ public final class SheetInterpreter {
         score =
                 RecognizedMultiRestProjection.apply(
                         score, measures, labels, gray, width, height, recognizedRests);
-        var noteOwners = MeterNumeralWholeNoteAlias.remove(
+        var wholeMeterAlias = MeterNumeralWholeNoteAlias.capture(
                 score.notes(), measures, labels, gray, annotationGray, width, height);
-        noteOwners =
-                InlineTripleMeterNoteAlias.remove(
-                        noteOwners, measures, labels, gray, annotationGray, width, height);
+        var noteOwners = InlineTripleMeterNoteAlias.remove(
+                wholeMeterAlias.notes(), measures, labels, gray, annotationGray, width, height);
         noteOwners = tripleRuns.retain(noteOwners, labels, gray, annotationGray, width, height);
         var rhythm =
                 TripletRhythmDetector.withRests(
@@ -436,6 +436,10 @@ public final class SheetInterpreter {
                 PrintedWordArticulations.apply(
                         articulationWords, staffs, measures, notes, labels, gray, width, height);
         var meters = new java.util.ArrayList<>(annotations.meters);
+        for (var meter : wholeMeterAlias.inlineMeters()) {
+            if (meters.stream().noneMatch(current -> current.measureIndex() == meter.measureIndex()))
+                meters.add(meter);
+        }
         var meterEvidence =
                 ocr == null
                         ? new MusicalOcr.MeterEvidence(List.of(), List.of())
@@ -764,9 +768,10 @@ public final class SheetInterpreter {
                             phrasePending);
         finalInterpretation = harmonicTriplets.projectBeams(finalInterpretation, physicalPage);
         finalInterpretation = mixedBeamTransition.projectBeams(finalInterpretation, physicalPage);
-        finalInterpretation =
+        var accidentalTriplets =
                 WrappedEighthTriplets.closeAccidentalMarkedTripletBars(
                         finalInterpretation, labels, gray, width, height);
+        finalInterpretation = accidentalTriplets.score();
         finalInterpretation =
                 PrintedPassOmission.apply(
                         finalInterpretation, words, staffs, gray, width, height, physicalPage);
@@ -824,6 +829,9 @@ public final class SheetInterpreter {
         return new AnalyzedPage(
                 TerminalMixedHarmonicCadence.capture(
                         cadences, labels, annotationGray, gray, width, height),
-                clockAnalysis.notes(), clockAnalysis.clockProducerSource().localAccidentals(), measures);
+                clockAnalysis.notes(),
+                clockAnalysis.clockProducerSource().localAccidentals(),
+                measures,
+                accidentalTriplets.sharpOwners());
     }
 }

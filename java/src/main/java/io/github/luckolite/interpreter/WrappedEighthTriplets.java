@@ -258,15 +258,18 @@ final class WrappedEighthTriplets {
         return result == notes ? notes : List.copyOf(result);
     }
 
+    record AccidentalTripletBars(ScorePageInterpretation score, List<ScoreNoteEvent> sharpOwners) {}
+
     /** A printed accidental can occupy the dot window beside a complete set of eighth triplets. */
-    static ScorePageInterpretation closeAccidentalMarkedTripletBars(
+    static AccidentalTripletBars closeAccidentalMarkedTripletBars(
             ScorePageInterpretation score, byte[] labels, byte[] gray, int width, int height) {
         if (score.beamSource().groups().isEmpty()
                 || score.meterChanges().isEmpty()
                 || labels == null
                 || gray == null
                 || labels.length != gray.length
-                || gray.length != (long) width * height) return score;
+                || gray.length != (long) width * height)
+            return new AccidentalTripletBars(score, List.of());
         var singleGroups = new HashSet<List<Integer>>();
         for (var group : score.beamSource().resolve().groups()) {
             var columns = group.columns();
@@ -282,10 +285,11 @@ final class WrappedEighthTriplets {
                                                     || c.source().members().size() != 1)) continue;
             singleGroups.add(columns.stream().map(c -> c.owners().get(0)).toList());
         }
-        if (singleGroups.size() < 6) return score;
+        if (singleGroups.size() < 6) return new AccidentalTripletBars(score, List.of());
         var notes = score.notes();
         var regions = score.measures();
         var edited = notes;
+        var sharpOwners = new ArrayList<ScoreNoteEvent>();
         List<ScoreMeterChange> literalMeters = null;
         var bars = new ArrayList<List<Integer>>(regions.size());
         for (int m = 0; m < regions.size(); m++) bars.add(new ArrayList<>());
@@ -341,19 +345,76 @@ final class WrappedEighthTriplets {
                                 labels, gray, width, height, regions, notes);
             if (!literalMeters.contains(meter)) continue;
             if (edited == notes) edited = new ArrayList<>(notes);
-            int first = owners.get(0);
-            for (int owner : owners) {
-                var note =
-                        owner == first
-                                ? ClosingTripletRhythm.singleBeam(notes.get(owner))
-                                : notes.get(owner);
+            float gap = (region.bottom() - region.top()) * height / 8.2f;
+            for (int i = 0; i < owners.size(); i++) {
+                int owner = owners.get(i);
+                var note = notes.get(owner);
+                if (!atHeader
+                        && note.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_SHARP
+                        && closedBarHasPrintedSharp(
+                                gray,
+                                labels,
+                                width,
+                                height,
+                                proof.x()[i],
+                                note.pageY() * height,
+                                gap)) sharpOwners.add(note);
+                if (i == 0) note = ClosingTripletRhythm.singleBeam(note);
                 edited.set(owner, note.withTupletRatio(3, 2));
             }
         }
-        return edited == notes
-                ? score
-                : score.withNotes(
-                        edited, java.util.stream.IntStream.range(0, notes.size()).boxed().toList());
+        if (edited == notes) return new AccidentalTripletBars(score, List.of());
+        return new AccidentalTripletBars(
+                score.withNotes(
+                        edited, java.util.stream.IntStream.range(0, notes.size()).boxed().toList()),
+                List.copyOf(sharpOwners));
+    }
+
+    /** A native alteration can be inherited. A sharp tag needs its own glyph at the head. */
+    static boolean closedBarHasPrintedSharp(
+            byte[] gray, byte[] labels, int width, int height, float x, float y, float gap) {
+        if (gray == null
+                || labels == null
+                || width <= 0
+                || height <= 0
+                || gray.length != (long) width * height
+                || labels.length != gray.length
+                || !Float.isFinite(x)
+                || !Float.isFinite(y)
+                || !Float.isFinite(gap)
+                || x < 0
+                || x >= width
+                || y < 0
+                || y >= height
+                || gap < 10
+                || gap > 30) return false;
+        int top = Math.round(y - gap * 1.1f);
+        int middle = Math.round(y);
+        int bottom = Math.round(y + gap * 1.4f);
+        if (top < 0 || bottom >= height) return false;
+        int first = Math.round(x - gap * 2.1f), last = Math.round(x - gap * 1.1f);
+        int pad = Math.round(gap * .3f), reach = Math.round(gap * 1.3f);
+        int headEdge = Math.round(x - gap * .72f);
+        int minimum = Math.max(3, Math.round(gap * gap * .10f));
+        for (int seam = first; seam <= last; seam++) {
+            int left = seam - pad, right = Math.min(seam + reach, headEdge);
+            if (left < 0 || right >= width || left >= right) continue;
+            int above = 0, below = 0;
+            for (int yy = top; yy <= bottom; yy++) {
+                for (int xx = left; xx <= right; xx++) {
+                    int at = yy * width + xx;
+                    if (labels[at] != OmrMeasurePostProcessor.CLEF_OR_KEY
+                            || (gray[at] & 255) >= 150) continue;
+                    if (yy < middle) above++;
+                    else below++;
+                }
+            }
+            if (above >= minimum
+                    && below >= minimum
+                    && OmrScoreInterpreter.printedSharpBeforeDyad(
+                            gray, width, height, seam, x, y, gap)) return true;
+        }
+        return false;
     }
 
     static WrappedTripletMeasure.Half closedFourGroups(
