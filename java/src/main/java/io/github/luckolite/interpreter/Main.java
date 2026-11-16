@@ -306,6 +306,8 @@ public final class Main {
                             lateDyadOnsets[i], .25, -1, -1, false, 0));
             }
         }
+        HarmonicBeamBarline.placeTails(
+                decoded.harmonicTails(), score.notes(), events, beats, starts);
         attachNotePerformance(score.notes(), events);
         if (standardViolin) {
             var recovered = OpenStringHarmonics.recover(score, initialKey);

@@ -116,6 +116,36 @@ public class IsolatedDottedHalfCadenceTest {
         assertFalse(proved(missingStaffRail, current, 10f / 59, 122, 0));
     }
 
+    @Test
+    public void missedRuleAttachedDotNeedsAgreementAcrossTheTwoRasters() {
+        var gray = source();
+        paint(gray, 276, 278, 102, 106, 0);
+        var labels = new byte[WIDTH * HEIGHT];
+        paint(labels, 273, 281, 94, 103, OmrMeasurePostProcessor.SYMBOL);
+        var note = new ScoreNoteEvent(1, 19f / 69, 2, 0, 1, 106f / HEIGHT,
+                false, 0, 0, ScoreNoteEvent.ACCIDENTAL_FROM_KEY, 2, 1, 0, 0, 30,
+                false, 0, false, 0, 0, 1, 1);
+        assertTrue(IsolatedDottedHalfCadence.provesMissingDot(
+                labels, gray, gray.clone(), WIDTH, HEIGHT, PREVIOUS, CURRENT, NEXT,
+                note, List.of(STAFF)));
+
+        var withoutDot = gray.clone();
+        paint(withoutDot, 272, 282, 93, 105, 255);
+        assertFalse(IsolatedDottedHalfCadence.provesMissingDot(
+                labels, gray, withoutDot, WIDTH, HEIGHT, PREVIOUS, CURRENT, NEXT,
+                note, List.of(STAFF)));
+
+        var singleRule = gray.clone();
+        paint(singleRule, 302, 305, 55, 123, 255);
+        assertFalse(IsolatedDottedHalfCadence.provesMissingDot(
+                labels, singleRule, singleRule.clone(), WIDTH, HEIGHT, PREVIOUS, CURRENT, NEXT,
+                note, List.of(STAFF)));
+
+        assertFalse(IsolatedDottedHalfCadence.provesMissingDot(
+                new byte[labels.length], gray, gray, WIDTH, HEIGHT, PREVIOUS, CURRENT, NEXT,
+                note, List.of(STAFF)));
+    }
+
     private static boolean proved(byte[] gray) throws Exception {
         return proved(gray, CURRENT, 19f / 69, 106, 2);
     }

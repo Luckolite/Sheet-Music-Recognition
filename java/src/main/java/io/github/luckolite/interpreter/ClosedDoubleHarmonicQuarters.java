@@ -20,7 +20,7 @@ final class ClosedDoubleHarmonicQuarters {
 
     static ScorePageInterpretation apply(
             ScorePageInterpretation score, byte[] gray, int width, int height) {
-        var contracted = closedAttacks(score, gray, width, height);
+        var contracted = provedAttacks(score, gray, width, height);
         if (contracted.isEmpty()) return score;
         var renewed = new ArrayList<>(score.notes());
         for (var attack : contracted) {
@@ -37,7 +37,7 @@ final class ClosedDoubleHarmonicQuarters {
 
     static Map<Integer, Integer> writtenOnsets(
             ScorePageInterpretation score, byte[] gray, int width, int height, float[] beats) {
-        var attacks = closedAttacks(score, gray, width, height);
+        var attacks = provedAttacks(score, gray, width, height);
         if (attacks.isEmpty()) return Map.of();
         var placed = new HashMap<Integer, Integer>();
         for (int i = 0; i < attacks.size(); i += 2) {
@@ -50,6 +50,53 @@ final class ClosedDoubleHarmonicQuarters {
             }
         }
         return placed;
+    }
+
+    private static List<Attack> provedAttacks(
+            ScorePageInterpretation score, byte[] gray, int width, int height) {
+        var fullRun = closedAttacks(score, gray, width, height);
+        if (!fullRun.isEmpty() || gray == null || gray.length != (long) width * height)
+            return fullRun;
+        var bars = score.measures();
+        var meters = score.meterChanges();
+        if (meters.isEmpty()) return List.of();
+        var meter = meters.get(meters.size() - 1);
+        if (meter.numerator() != 2 || meter.denominator() != 4) return List.of();
+        var claimed = new ArrayList<Attack>();
+        for (int i = meter.measureIndex() + 1; i + 1 < bars.size(); i++) {
+            var bar = bars.get(i);
+            var previous = bars.get(i - 1);
+            var next = bars.get(i + 1);
+            float nominal = (bar.bottom() - bar.top()) * height / 8.2f;
+            float span = (bar.right() - bar.left()) * width;
+            if (bar.cadenceQuarterBeats() != 0 || nominal < 9 || nominal > 25
+                    || span < nominal * 6.4f || span > nominal * 8.15f
+                    || Math.abs(bar.top() - previous.top()) * height > nominal * .36f
+                    || Math.abs(bar.top() - next.top()) * height > nominal * .36f) continue;
+            int index = i;
+            if (score.rests().stream().anyMatch(rest -> rest.measureIndex() == index)) continue;
+            var owners = local(score, i, width, height);
+            if (owners.size() != 4 || owners.stream().filter(o -> quarter(o.note())).count() < 3
+                    || owners.stream().anyMatch(o -> !quarter(o.note()) && o.note().beamCount() == 0))
+                continue;
+            var fit = PrintedDirectionStaff.printedRules(
+                    gray, width, height, (bar.left() + bar.right()) * width * .5f,
+                    bar.bottom() * height - nominal * 2.1f, nominal);
+            if (fit == null) continue;
+            float gap = fit[1];
+            var staff = new PlayingTechniqueDetector.Staff(fit[0] - 4 * gap, fit[0], gap, 0, 1);
+            if (!interiorRule(gray, width, height, staff, previous, bar)
+                    || !interiorRule(gray, width, height, staff, bar, next)) continue;
+            var first = attack(owners, 0, gray, width, height, staff);
+            var second = attack(owners, 2, gray, width, height, staff);
+            if (first == null || second == null || first.direction() != second.direction()
+                    || second.upper().x() - first.upper().x() < gap * 3.15f
+                    || second.upper().x() - first.upper().x() > gap * 3.85f
+                    || !paperSeparatesAttacks(gray, width, height, first, second, staff)) continue;
+            claimed.add(first);
+            claimed.add(second);
+        }
+        return claimed;
     }
 
     private static List<Attack> closedAttacks(

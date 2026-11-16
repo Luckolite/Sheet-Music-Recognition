@@ -84,7 +84,8 @@ public final class SheetInterpreter {
 
     record AnalyzedPage(ScorePageInterpretation score, List<ScoreNoteEvent> originalNotes,
             SourceLocalAccidental accidentalSource, List<MeasureRegion> accidentalMeasures,
-            List<ScoreNoteEvent> closedTripletSharpOwners) {}
+            List<ScoreNoteEvent> closedTripletSharpOwners,
+            List<List<ScoreNoteEvent>> harmonicTails) {}
 
     static AnalyzedPage analyzeWithPrintedSources(byte[] labels, byte[] gray, int width, int height,
             Annotations annotations, MusicalOcr ocr, int physicalPage, byte[] decoderGray,
@@ -92,7 +93,7 @@ public final class SheetInterpreter {
         var score = analyze(labels, gray, width, height, annotations, ocr, physicalPage,
                 decoderGray, preparedTabs);
         return new AnalyzedPage(score, score.notes(), SourceLocalAccidental.unavailable(),
-                score.measures(), List.of());
+                score.measures(), List.of(), List.of());
     }
 
 }

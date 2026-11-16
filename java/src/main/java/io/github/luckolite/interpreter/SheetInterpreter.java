@@ -181,7 +181,8 @@ public final class SheetInterpreter {
             List<ScoreNoteEvent> originalNotes,
             SourceLocalAccidental accidentalSource,
             List<MeasureRegion> accidentalMeasures,
-            List<ScoreNoteEvent> closedTripletSharpOwners) {}
+            List<ScoreNoteEvent> closedTripletSharpOwners,
+            List<List<ScoreNoteEvent>> harmonicTails) {}
 
     static AnalyzedPage analyzeWithPrintedSources(
             byte[] labels, byte[] gray, int width, int height, Annotations annotations,
@@ -308,6 +309,10 @@ public final class SheetInterpreter {
         measures =
                 BeamedFlatBarline.joinLedgerOctaveFragments(
                         measures, labels, gray, annotationGray, width, height);
+        var beforeHarmonicJoin = measures;
+        var harmonicJoinedMeasures =
+                HarmonicBeamBarline.join(measures, labels, gray, annotationGray, width, height);
+        measures = harmonicJoinedMeasures;
         var tripleRuns =
                 MidstaffSixteenthTripleBars.recover(
                         measures, labels, gray, annotationGray, width, height);
@@ -807,6 +812,16 @@ public final class SheetInterpreter {
                         physicalPage);
         finalInterpretation = PenultimateHarmonicQuarterAlias.capture(
                 finalInterpretation, labels, annotationGray, gray, width, height);
+        var harmonicTail =
+                HarmonicBeamBarline.recoverTail(
+                        finalInterpretation,
+                        beforeHarmonicJoin,
+                        harmonicJoinedMeasures,
+                        gray,
+                        annotationGray,
+                        width,
+                        height);
+        finalInterpretation = harmonicTail.score();
         finalInterpretation =
                 finalInterpretation.withClockContextSource(
                         ScoreClockContextCapture.capture(
@@ -832,6 +847,7 @@ public final class SheetInterpreter {
                 clockAnalysis.notes(),
                 clockAnalysis.clockProducerSource().localAccidentals(),
                 measures,
-                accidentalTriplets.sharpOwners());
+                accidentalTriplets.sharpOwners(),
+                harmonicTail.tails());
     }
 }

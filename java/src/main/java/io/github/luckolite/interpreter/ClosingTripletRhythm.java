@@ -336,12 +336,36 @@ final class ClosingTripletRhythm {
     }
 
     static ScoreNoteEvent singleBeam(ScoreNoteEvent n) {
+        return beamedValue(n, 1);
+    }
+
+    static ScoreNoteEvent beamedValue(ScoreNoteEvent n, int rails) {
         return new ScoreNoteEvent(
-                n.measureIndex(), n.positionInMeasure(), n.staffStep(), n.staffIndex(), n.staffCount(),
-                n.pageY(), n.tiedFromPrevious(), n.augmentationDots(), 1, n.writtenAccidental(), 0,
-                n.tupletDivisor(), n.followingRestBeats(), n.articulations(), n.clefBottomDiatonic(),
-                n.crossStaffBeam(), n.leadingRestBeats(), n.compactOpening(), n.octaveShift(),
-                n.boundaryTies(), n.tupletNormalNotes(), n.stemDirection(), n.kind(), n.visualSize(),
-                n.harmonicSemitones(), n.openStringTouch());
+                n.measureIndex(),
+                n.positionInMeasure(),
+                n.staffStep(),
+                n.staffIndex(),
+                n.staffCount(),
+                n.pageY(),
+                n.tiedFromPrevious(),
+                n.augmentationDots(),
+                rails,
+                n.writtenAccidental(),
+                0,
+                n.tupletDivisor(),
+                n.followingRestBeats(),
+                n.articulations(),
+                n.clefBottomDiatonic(),
+                n.crossStaffBeam(),
+                n.leadingRestBeats(),
+                n.compactOpening(),
+                n.octaveShift(),
+                n.boundaryTies(),
+                n.tupletNormalNotes(),
+                n.stemDirection(),
+                n.kind(),
+                n.visualSize(),
+                n.harmonicSemitones(),
+                n.openStringTouch());
     }
 }

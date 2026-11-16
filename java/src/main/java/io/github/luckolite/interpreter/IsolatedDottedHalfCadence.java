@@ -32,6 +32,62 @@ final class IsolatedDottedHalfCadence {
         }
     }
 
+    /** A dot joined to the staff rule can escape the notehead rhythm detector. */
+    static boolean provesMissingDot(
+            byte[] labels, byte[] gray, byte[] annotation, int width, int height,
+            MeasureRegion previous, MeasureRegion current, MeasureRegion next,
+            ScoreNoteEvent note, List<PlayingTechniqueDetector.Staff> staffs) {
+        if (labels == null || labels.length != (long) width * height || annotation == null
+                || next.top() <= current.bottom()
+                || note.visualSize() != ScoreNoteEvent.VisualSize.FULL || note.stemDirection() == 0
+                || note.positionInMeasure() < .25f || note.positionInMeasure() > .70f) return false;
+        float left = current.left() * width, right = current.right() * width;
+        float x = left + (right - left) * note.positionInMeasure(), y = note.pageY() * height;
+        for (var fitted : staffs) {
+            float gap = fitted.gap();
+            float separation = (current.left() - previous.right()) * width;
+            if (fitted.index() != 0 || fitted.count() != 1 || gap < 10
+                    || right - left > gap * 8
+                    || fitted.top() < current.top() * height - gap
+                    || fitted.bottom() > current.bottom() * height + gap
+                    || Math.abs(previous.top() - current.top()) * height > gap * .5f
+                    || Math.abs(previous.bottom() - current.bottom()) * height > gap * .5f
+                    || separation < 0 || separation > gap * 1.5f) continue;
+            boolean accidental = note.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_FROM_KEY;
+            var dot = attachedDot(gray, width, height, left, right, x, y, fitted, accidental);
+            if (dot == null || labels[dot.y() * width + dot.x()] != OmrMeasurePostProcessor.SYMBOL)
+                continue;
+            var original = attachedDot(
+                    annotation, width, height, left, right, x, y, fitted, accidental);
+            if (original != null && Math.abs(dot.x() - original.x()) <= gap * .15f
+                    && Math.abs(dot.y() - original.y()) <= gap * .15f
+                    && labels[original.y() * width + original.x()] == OmrMeasurePostProcessor.SYMBOL)
+                return true;
+        }
+        return false;
+    }
+
+    private static WrappedTripletDotInk.Center attachedDot(
+            byte[] gray, int width, int height, float left, float right, float x, float y,
+            PlayingTechniqueDetector.Staff fitted, boolean accidental) {
+        var rules = PrintedDirectionStaff.printedRules(
+                gray, width, height, x, fitted.bottom(), fitted.gap());
+        if (rules == null) return null;
+        float gap = rules[1], top = rules[0] - 4 * gap;
+        if (top < 0 || rules[0] >= height) return null;
+        var staff = new PlayingTechniqueDetector.Staff(top, rules[0], gap, 0, 1);
+        int opening = PrintedCadenceDurations.boundaryColumn(
+                gray, width, staff, left - gap * .5f, true, false);
+        int closing = PrintedCadenceDurations.boundaryColumn(gray, width, staff, right, false, true);
+        if (opening < 0 || closing < 0 || x - opening < gap * 1.7f || closing - x < gap * 2.3f)
+            return null;
+        var dot = WrappedTripletDotInk.dottedHalfCore(gray, width, height, x, y, closing, gap);
+        if (dot == null || !PrintedCadenceDurations.emptyOutsideChord(
+                gray, width, staff, Math.max(left, opening + gap * .65f), closing + gap * .45f,
+                x, x, accidental)) return null;
+        return dot;
+    }
+
     private static boolean admissible(ScoreNoteEvent note) {
         return note.kind() == ScoreNoteEvent.Kind.PITCHED
                 && note.staffIndex() == 0 && note.staffCount() == 1

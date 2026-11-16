@@ -127,6 +127,20 @@ final class PrintedCadenceDurations {
             }
             if (duration != 1 && duration != 2) continue;
             if (!chord.stream().allMatch(note -> exactCadenceNote(note, duration))) continue;
+            var owner = chord.get(0);
+            if (duration == 2 && chord.size() == 1 && i > 0 && next != null
+                    && interruptedTriple[i + 1] && !meter[i]
+                    && IsolatedDottedHalfCadence.provesMissingDot(
+                            labels, gray, annotationGray, width, height,
+                            score.measures().get(i - 1), measure, next, owner, staffs)) {
+                if (repairedNotes == null) repairedNotes = new ArrayList<>(score.notes());
+                repairedNotes.set(score.notes().indexOf(owner),
+                        closedNote(owner, duration, owner.positionInMeasure(), 1));
+                regions.set(i, new MeasureRegion(measure.left(), measure.right(),
+                        measure.top(), measure.bottom(), 3));
+                changed = true;
+                continue;
+            }
             boolean independentlyClosedQuarter =
                     duration == 1
                             && next != null
@@ -442,6 +456,11 @@ final class PrintedCadenceDurations {
     }
 
     private static ScoreNoteEvent closedNote(ScoreNoteEvent note, float duration, float position) {
+        return closedNote(note, duration, position, note.augmentationDots());
+    }
+
+    private static ScoreNoteEvent closedNote(
+            ScoreNoteEvent note, float duration, float position, int augmentationDots) {
         return new ScoreNoteEvent(
                 note.measureIndex(),
                 position,
@@ -450,7 +469,7 @@ final class PrintedCadenceDurations {
                 note.staffCount(),
                 note.pageY(),
                 note.tiedFromPrevious(),
-                note.augmentationDots(),
+                augmentationDots,
                 0,
                 note.writtenAccidental(),
                 duration,
