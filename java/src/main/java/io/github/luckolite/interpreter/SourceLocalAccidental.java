@@ -118,6 +118,8 @@ final class SourceLocalAccidental {
     private final List<Glyph> glyphs;
     private final List<Choice> choices;
     private final Set<Integer> joinedNaturalOwners;
+    // Absent when the producer has no authenticated double-sharp claims.
+    private final Set<Integer> printedDoubleSharpOwners;
     private final Map<Integer, Integer> splitAccidentalOwners;
     private final List<Head> headAlternatives;
     private final List<Integer> unrepresentedGlyphMembers;
@@ -135,6 +137,7 @@ final class SourceLocalAccidental {
             List<Head> headAlternatives,
             List<Choice> choices,
             Set<Integer> joinedNaturalOwners,
+            Set<Integer> printedDoubleSharpOwners,
             Map<Integer, Integer> splitAccidentalOwners,
             List<Integer> unrepresentedGlyphMembers,
             boolean complete,
@@ -150,6 +153,8 @@ final class SourceLocalAccidental {
         this.headAlternatives = List.copyOf(headAlternatives);
         this.choices = List.copyOf(choices);
         this.joinedNaturalOwners = Set.copyOf(joinedNaturalOwners);
+        this.printedDoubleSharpOwners =
+                printedDoubleSharpOwners.isEmpty() ? null : Set.copyOf(printedDoubleSharpOwners);
         this.splitAccidentalOwners = Map.copyOf(splitAccidentalOwners);
         this.unrepresentedGlyphMembers = List.copyOf(unrepresentedGlyphMembers);
         this.complete = complete;
@@ -171,13 +176,14 @@ final class SourceLocalAccidental {
                 && headAlternatives.equals(other.headAlternatives)
                 && choices.equals(other.choices)
                 && joinedNaturalOwners.equals(other.joinedNaturalOwners)
+                && Objects.equals(printedDoubleSharpOwners, other.printedDoubleSharpOwners)
                 && splitAccidentalOwners.equals(other.splitAccidentalOwners)
                 && unrepresentedGlyphMembers.equals(other.unrepresentedGlyphMembers);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(
+        int hash = Objects.hash(
                 rawSha,
                 labelSha,
                 width,
@@ -192,12 +198,13 @@ final class SourceLocalAccidental {
                 unrepresentedGlyphMembers,
                 complete,
                 authenticatedFrame);
+        return printedDoubleSharpOwners == null ? hash : 31 * hash + printedDoubleSharpOwners.hashCode();
     }
 
     static SourceLocalAccidental unavailable() {
         return new SourceLocalAccidental(
-                "", "", 0, 0, 0, 0, List.of(), List.of(), List.of(), Set.of(), Map.of(), List.of(),
-                false, false);
+                "", "", 0, 0, 0, 0, List.of(), List.of(), List.of(), Set.of(), Set.of(), Map.of(),
+                List.of(), false, false);
     }
 
     List<Choice> choices() {
@@ -283,6 +290,34 @@ final class SourceLocalAccidental {
             Map<Object, List<Object>> accidentalFragments,
             Set<Object> provedNaturalHeads,
             List<SplitAccidental> splitProofs) {
+        return capture(
+                symbols,
+                clefs,
+                originalGlyphs,
+                allHeads,
+                heads,
+                actualChoices,
+                finalHeads,
+                notes,
+                accidentalFragments,
+                provedNaturalHeads,
+                splitProofs,
+                Set.of());
+    }
+
+    static SourceLocalAccidental capture(
+            ExactComponentMembers.Collector symbols,
+            ExactComponentMembers.Collector clefs,
+            List<?> originalGlyphs,
+            List<?> allHeads,
+            ExactComponentMembers.Collector heads,
+            Map<?, OmrScoreInterpreter.WrittenAccidentalChoice> actualChoices,
+            List<?> finalHeads,
+            List<ScoreNoteEvent> notes,
+            Map<Object, List<Object>> accidentalFragments,
+            Set<Object> provedNaturalHeads,
+            List<SplitAccidental> splitProofs,
+            Set<Object> provedDoubleSharpHeads) {
         var budget = new ExactComponentMembers.Budget(64_000_000, 128L * 1024 * 1024);
         if (symbols == null || clefs == null || heads == null || finalHeads.size() != notes.size())
             return unavailable();
@@ -350,6 +385,7 @@ final class SourceLocalAccidental {
                             status));
         }
         var joinedNaturalOwners = new HashSet<Integer>();
+        var printedDoubleSharpOwners = new HashSet<Integer>();
         var fragmentClaims = new IdentityHashMap<Object, Integer>();
         if (!provedNaturalHeads.isEmpty()) {
             for (var head : finalHeads) {
@@ -390,6 +426,21 @@ final class SourceLocalAccidental {
                         && members.length == headToken.stats().area()
                         && partition != null
                         && partition.residual().isEmpty()) joinedNaturalOwners.add(n);
+            }
+            if (authenticatedFrame
+                    && headId != null
+                    && headToken != null
+                    && choice.head() == head
+                    && provedDoubleSharpHeads.contains(head)
+                    && (!choice.ambiguous()
+                            || choice.accidental() == ScoreNoteEvent.ACCIDENTAL_DOUBLE_SHARP)
+                    && note.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_DOUBLE_SHARP) {
+                int[] members = headToken.pixels(budget);
+                var partition = partitions.get(head);
+                if (members != null
+                        && members.length == headToken.stats().area()
+                        && partition != null
+                        && partition.residual().isEmpty()) printedDoubleSharpOwners.add(n);
             }
             String status = "UNKNOWN_UNBOUND_OR_CHANGED_PICKER_ROLE";
             if (choice.head() == head
@@ -443,6 +494,7 @@ final class SourceLocalAccidental {
                 alternatives,
                 rows,
                 joinedNaturalOwners,
+                printedDoubleSharpOwners,
                 splitAccidentalOwners,
                 unrepresented,
                 complete,
@@ -605,9 +657,15 @@ final class SourceLocalAccidental {
                             && glyphOwners.getOrDefault(choice.glyph(), 0) == 1
                             && representedGlyphs.containsKey(choice.glyph());
             Integer ownedKind = splitAccidentalOwners.get(choice.note());
+            boolean ownedDoubleSharp =
+                    !originalGlyph
+                            && ownedKind == null
+                            && printedDoubleSharpOwners != null
+                            && printedDoubleSharpOwners.contains(choice.note());
             if ((!originalGlyph
                             && !joinedNaturalOwners.contains(choice.note())
-                            && ownedKind == null)
+                            && ownedKind == null
+                            && !ownedDoubleSharp)
                     || choice.note() < 0
                     || choice.note() >= original.size()) continue;
             var originalNote = original.get(choice.note());
@@ -617,7 +675,17 @@ final class SourceLocalAccidental {
             int index = retainedIndexes.getOrDefault(location, -1);
             if (index < 0 || originalLocations.get(location) != 1) continue;
             var note = retained.get(index);
-            int accidental = ownedKind == null ? choice.accidental() : ownedKind;
+            if (ownedDoubleSharp
+                    && (note.kind() != ScoreNoteEvent.Kind.PITCHED
+                            || choice.originalNote() != originalNote
+                            || note.diatonicPitchIdentity() != originalNote.diatonicPitchIdentity()
+                            || note.octaveShift() != originalNote.octaveShift()
+                            || note.harmonicSemitones() != originalNote.harmonicSemitones()))
+                continue;
+            int accidental =
+                    ownedDoubleSharp
+                            ? ScoreNoteEvent.ACCIDENTAL_DOUBLE_SHARP
+                            : ownedKind == null ? choice.accidental() : ownedKind;
             if (note.kind() == ScoreNoteEvent.Kind.PITCHED
                     && note.writtenAccidental() == accidental
                     && (!originalGlyph || ownedKind != null || joinedNaturalOwners.contains(choice.note())

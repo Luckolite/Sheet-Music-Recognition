@@ -291,10 +291,70 @@ def expression_direction(measure, mark, offset):
     element(direction, 'offset', offset)
 
 
+def _pitch_element(note, spelling):
+    step, alter, octave = spelling
+    pitch = element(note, 'pitch')
+    element(pitch, 'step', step)
+    if alter:
+        element(pitch, 'alter', alter)
+    element(pitch, 'octave', octave)
+
+
+def _artificial_harmonic_role(note, role):
+    notation = note.find('notations')
+    if notation is None:
+        notation = element(note, 'notations')
+    technical = notation.find('technical')
+    if technical is None:
+        technical = element(notation, 'technical')
+    harmonic = element(technical, 'harmonic', **{'print-object': 'no'})
+    element(harmonic, 'artificial')
+    element(harmonic, role)
+
+
+def _closed_fourth_spelling(event, source):
+    if event.get('artificialHarmonicFourth') is not True:
+        return None
+    base, touch, sound = (event.get(k) for k in ('writtenMidi', 'harmonicTouchMidi', 'midi'))
+    if (any(type(x) is not int or not 0 <= x <= 127 for x in (base, touch, sound))
+            or touch - base != 5 or sound - base != 24
+            or event_kind(event) != 'PITCHED' or event.get('octaveShift', 0)
+            or event.get('clefInferred', False) or source is None
+            or event_kind(source) != 'PITCHED' or source.get('harmonicSemitones') != 24
+            or any(event.get(k) != source.get(k) for k in ('measureIndex', 'staffIndex', 'staffCount'))):
+        raise ValueError('Artificial fourth requires one retained stopped head and matching pitches')
+    diatonic = source['clefBottomDiatonic'] + source['staffStep']
+
+    def spelled(step, midi):
+        octave, letter = divmod(step, 7)
+        alter = midi - ((octave + 1) * 12 + (0, 2, 4, 5, 7, 9, 11)[letter])
+        if not 0 <= octave <= 9 or not -2 <= alter <= 2:
+            raise ValueError('Artificial fourth has invalid written spelling')
+        return 'CDEFGAB'[letter], alter, octave
+
+    return spelled(diatonic, base), spelled(diatonic + 3, touch), spelled(diatonic + 14, sound)
+
+
 def emit_note(measure, duration, voice, event=None, chord=False, stop=False, start=False, flats=False,
               gliss_start=False, gliss_stop=False, slide_start=False, slide_stop=False, fragment_end=None, rest_symbols=(), full_measure=False,
               articulation_flags=0, attack_fragment=True, grace=None, bow_direction=None):
+    fourth = event.get('retainedArtificialFourth') if event else None
+    if fourth:
+        if (duration != DIVISIONS or duration != event['end'] - event['start']
+                or chord or stop or start or grace is not None or not attack_fragment
+                or event.get('durationFallback') or event.get('retainedTremolo')):
+            raise ValueError('Artificial fourth requires an isolated written quarter')
+        carrier = element(measure, 'note', **{'print-object': 'no'})
+        _pitch_element(carrier, fourth[2])
+        element(carrier, 'duration', duration)
+        element(carrier, 'voice', voice)
+        element(carrier, 'type', 'quarter')
+        _artificial_harmonic_role(carrier, 'sounding-pitch')
     node = element(measure, 'note')
+    if fourth:
+        # Full-size cue heads retain the written chord and are silent in MusicXML.
+        element(node, 'cue')
+        element(node, 'chord')
     if grace is not None:
         element(node, 'grace', **{('steal-time-previous' if grace['afterGrace'] else 'steal-time-following'): grace['stealPercent']})
     if chord:
@@ -313,11 +373,7 @@ def emit_note(measure, duration, voice, event=None, chord=False, stop=False, sta
                  ('F', 1), ('G', 0), ('G', 1), ('A', 0), ('A', 1), ('B', 0))
         step, alter = names[midi % 12]
         step, alter, octave = event.get('retainedSpelling') or (step, alter, midi // 12 - 1)
-        pitch = element(node, 'pitch')
-        element(pitch, 'step', step)
-        if alter:
-            element(pitch, 'alter', alter)
-        element(pitch, 'octave', octave)
+        _pitch_element(node, fourth[0] if fourth else (step, alter, octave))
     if grace is None:
         element(node, 'duration', duration)
     for active, kind in ((stop, 'stop'), (start, 'start')):
@@ -428,6 +484,18 @@ def emit_note(measure, duration, voice, event=None, chord=False, stop=False, sta
                     articulations = element(notation, 'articulations')
                 element(articulations, 'caesura' if kind == 'CAESURA' else 'breath-mark',
                         None if kind == 'CAESURA' else symbol.get('value', 'comma'))
+    if fourth:
+        node.find('type').set('size', 'full')
+        _artificial_harmonic_role(node, 'base-pitch')
+        touched = element(measure, 'note')
+        element(touched, 'cue')
+        element(touched, 'chord')
+        _pitch_element(touched, fourth[1])
+        element(touched, 'duration', duration)
+        element(touched, 'voice', voice)
+        element(touched, 'type', 'quarter', size='full')
+        element(touched, 'notehead', 'diamond')
+        _artificial_harmonic_role(touched, 'touching-pitch')
     return node
 
 
@@ -676,6 +744,11 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
                                retainedOrnamentFlags=ornament_export.retained(page, note_index),
                                retainedTremolo=paired_tremolos.get(note_index), retainedArpeggio=False, retainedNaturalHarmonic=False))
             owner = n.get('sourceNoteIndex')
+            if n.get('artificialHarmonicFourth') is True:
+                source = (source_notes[owner]
+                          if type(owner) is int and owner == note_index and 0 <= owner < len(source_notes)
+                          else None)
+                events[-1]['retainedArtificialFourth'] = _closed_fourth_spelling(n, source)
             if type(owner) is int and 0 <= owner < len(source_notes):
                 events[-1]['retainedFollowingRest'] = source_notes[owner].get('followingRestBeats', 0)
             if is_grace:

@@ -59,10 +59,10 @@ public final class VerticalAccidentalOwnershipTest {
                     "MODEL_SUPPORTED_ACTUAL_LOCAL_ACCIDENTAL");
             var ctor = SourceLocalAccidental.class.getDeclaredConstructor(String.class, String.class,
                     int.class, int.class, int.class, int.class, List.class, List.class, List.class,
-                    Set.class, Map.class, List.class, boolean.class, boolean.class);
+                    Set.class, Set.class, Map.class, List.class, boolean.class, boolean.class);
             ctor.setAccessible(true);
             source = ctor.newInstance("synthetic", "synthetic", WIDTH, HEIGHT, glyphs.size(), 1,
-                    glyphs, List.of(head), List.of(choice), Set.of(), Map.of(), List.of(), true, true);
+                    glyphs, List.of(head), List.of(choice), Set.of(), Set.of(), Map.of(), List.of(), true, true);
         }
 
         List<SourceLocalAccidental.PrintedMark> printed(List<ScoreNoteEvent> notes) {

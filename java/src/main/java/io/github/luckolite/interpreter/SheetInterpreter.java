@@ -316,7 +316,8 @@ public final class SheetInterpreter {
         var beforeHarmonicJoin = measures;
         var harmonicJoinedMeasures =
                 HarmonicBeamBarline.join(measures, labels, gray, annotationGray, width, height);
-        measures = harmonicJoinedMeasures;
+        measures = TerminalHollowHarmonicBarline.join(
+                harmonicJoinedMeasures, labels, gray, annotationGray, width, height);
         var tripleRuns =
                 MidstaffSixteenthTripleBars.recover(
                         measures, labels, gray, annotationGray, width, height);
@@ -398,6 +399,9 @@ public final class SheetInterpreter {
                             ornamentWords);
         }
         notes = ArtificialHarmonics.apply(labels, gray, width, height, measures, notes, staffs);
+        notes =
+                ArtificialHarmonics.removeWholeTouchAliases(
+                        notes, measures, labels, gray, annotationGray, width, height);
         notes = ScoreTiePitchGuard.apply(notes, score.keyChanges());
         notes = DottedCadenceShortBeams.apply(notes, measures, staffs, gray, width, height);
         List<PlayingTechniqueDetector.Word> dynamicEvidence = words;
@@ -797,6 +801,10 @@ public final class SheetInterpreter {
         finalInterpretation =
                 ClosedSixteenthDyads.apply(finalInterpretation, gray, annotationGray, width, height);
         finalInterpretation = ClosedDottedSixteenths.apply(finalInterpretation, gray, width, height);
+        finalInterpretation = ClosedDottedSixteenths.applyOpeningWideDyadHooks(
+                finalInterpretation, gray, annotationGray, width, height, physicalPage);
+        finalInterpretation = ClosedDottedThirds.removeDenseInsertedMarks(
+                finalInterpretation, inheritedMeter, gray, annotationGray, width, height, physicalPage);
         finalInterpretation =
                 ClosedDottedThirds.apply(
                         finalInterpretation, inheritedMeter, labels, gray, width, height);
@@ -834,6 +842,8 @@ public final class SheetInterpreter {
                         height);
         finalInterpretation = HalfDyadBeforeSixteenthBar.restoreCompactTripleQuarter(
                 harmonicTail.score(), gray, annotationGray, width, height);
+        finalInterpretation = ClosedSingleHarmonicQuarter.capture(
+                finalInterpretation, labels, gray, annotationGray, width, height);
         finalInterpretation =
                 finalInterpretation.withClockContextSource(
                         ScoreClockContextCapture.capture(

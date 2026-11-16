@@ -365,6 +365,119 @@ final class ArtificialHarmonics {
         return List.copyOf(result);
     }
 
+    /** A stemless whole placeholder can be the raised diamond already owned by a beamed harmonic. */
+    static List<ScoreNoteEvent> removeWholeTouchAliases(
+            List<ScoreNoteEvent> notes,
+            List<MeasureRegion> measures,
+            byte[] labels,
+            byte[] normalized,
+            byte[] original,
+            int width,
+            int height) {
+        if (labels == null
+                || normalized == null
+                || original == null
+                || labels.length != (long) width * height
+                || normalized.length != labels.length
+                || original.length != labels.length) return notes;
+        List<ScoreNoteEvent> kept = null;
+        for (int i = 0; i < notes.size(); i++) {
+            var touch = notes.get(i);
+            if (wholeTouchAlias(
+                    touch, notes, measures, labels, normalized, original, width, height)) {
+                if (kept == null) kept = new ArrayList<>(notes.subList(0, i));
+            } else if (kept != null) kept.add(touch);
+        }
+        return kept == null ? notes : List.copyOf(kept);
+    }
+
+    private static boolean wholeTouchAlias(
+            ScoreNoteEvent touch,
+            List<ScoreNoteEvent> notes,
+            List<MeasureRegion> measures,
+            byte[] labels,
+            byte[] normalized,
+            byte[] original,
+            int width,
+            int height) {
+        if (touch.kind() != ScoreNoteEvent.Kind.PITCHED
+                || touch.visualSize() != ScoreNoteEvent.VisualSize.FULL
+                || touch.openStringTouch() != null
+                || touch.harmonicSemitones() != 0
+                || !ordinaryIsolatedHarmonicHead(touch)
+                || touch.staffIndex() != 0
+                || touch.staffCount() != 1
+                || touch.beamCount() != 0
+                || touch.stemDirection() != 0
+                || touch.unbeamedDurationBeats() != ScoreNoteEvent.DURATION_WHOLE
+                || touch.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_FROM_KEY
+                || touch.octaveShift() != 0
+                || touch.articulations() != 0) return false;
+        var measure = measures.get(touch.measureIndex());
+        float span = (measure.right() - measure.left()) * width;
+        float nominal = (measure.bottom() - measure.top()) * height / 8.2f;
+        if (nominal < 10 || nominal > 25) return false;
+        ScoreNoteEvent stop = null;
+        for (var note : notes) {
+            if (note.measureIndex() != touch.measureIndex()
+                    || note.staffIndex() != touch.staffIndex()
+                    || note.staffCount() != touch.staffCount()
+                    || note.staffStep() >= touch.staffStep()
+                    || Math.abs(note.positionInMeasure() - touch.positionInMeasure()) * span
+                            > nominal * .3f
+                    || Math.abs((touch.pageY() - note.pageY()) * height + nominal * 1.75f)
+                            > nominal * .36f) continue;
+            if (stop != null) return false;
+            stop = note;
+        }
+        if (stop == null
+                || stop.kind() != ScoreNoteEvent.Kind.PITCHED
+                || stop.visualSize() != ScoreNoteEvent.VisualSize.FULL
+                || stop.openStringTouch() != null
+                || stop.harmonicSemitones() != 0
+                || !ordinaryIsolatedHarmonicHead(stop)
+                || stop.clefBottomDiatonic() != touch.clefBottomDiatonic()
+                || stop.octaveShift() != 2
+                || stop.stemDirection() != 1
+                || stop.beamCount() < 1
+                || stop.beamCount() > 2
+                || stop.unbeamedDurationBeats() != 0
+                || touch.staffStep() - stop.staffStep() != 4) return false;
+        float left = measure.left() * width;
+        float x = left + stop.positionInMeasure() * span, y = stop.pageY() * height;
+        float tx = left + touch.positionInMeasure() * span, ty = touch.pageY() * height;
+        return ownedWholeTouch(labels, original, width, height, measure, x, y, tx, ty)
+                && ownedWholeTouch(labels, normalized, width, height, measure, x, y, tx, ty);
+    }
+
+    private static boolean ownedWholeTouch(
+            byte[] labels,
+            byte[] gray,
+            int width,
+            int height,
+            MeasureRegion measure,
+            float x,
+            float y,
+            float tx,
+            float ty) {
+        var track = WrappedMeasureBoundaries.verifiedTripletStaff(gray, width, height, measure);
+        if (track == null) return false;
+        float gap = track.at(x)[1];
+        if (!quarterTouchDiamond(labels, gray, width, height, x, y, gap)
+                || !symbolDiamond(labels, gray, width, height, tx, ty, gap)
+                || !joinedQuarterStem(gray, width, height, x, y, gap, 1)) return false;
+        var budget = new PrintedBeamShafts.Budget(100_000);
+        var heads = PrintedBeamShafts.at(gray, width, height, x, y, gap, budget);
+        var touches = PrintedBeamShafts.at(gray, width, height, tx, ty, gap, budget);
+        if (heads.size() != 1 || touches.size() != 1) return false;
+        var a = heads.get(0);
+        var b = touches.get(0);
+        return a.direction() == -1
+                && b.direction() == -1
+                && Math.abs(a.endY() - b.endY()) <= gap * .12f
+                && Math.max(a.left(), b.left()) <= Math.min(a.right(), b.right());
+    }
+
     static boolean isolatedQuarterTouch(
             byte[] labels,
             byte[] gray,
@@ -1085,7 +1198,7 @@ final class ArtificialHarmonics {
         return true;
     }
 
-    private static boolean enclosedCounter(
+    static boolean enclosedCounter(
             byte[] gray, int w, int h, float cx, float cy, float r,
             float verticalTolerance) {
         return enclosedCounter(gray, w, h, cx, cy, r, verticalTolerance, 4);

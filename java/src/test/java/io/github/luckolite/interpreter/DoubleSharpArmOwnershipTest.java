@@ -64,7 +64,39 @@ public final class DoubleSharpArmOwnershipTest {
         assertTrue(plate.hasArmAttack(plate.notes(plate.gray)));
     }
 
+    @Test
+    public void onlyTheTwoPlaneCrossProducesALiteralMark() {
+        var plate = new Plate();
+        var actual = plate.analyze(plate.gray);
+        assertEquals(
+                List.of(new SourceLocalAccidental.PrintedMark(0, 3)),
+                plate.printed(actual, actual.notes(), actual.notes()));
+
+        byte[] erased = plate.gray.clone();
+        for (int y = CROSS_Y; y < CROSS_Y + 8; y++) {
+            Arrays.fill(erased, y * WIDTH + CROSS_X, y * WIDTH + CROSS_X + 9, (byte) 255);
+        }
+        var read = plate.analyze(erased);
+        assertTrue(plate.printed(read, read.notes(), read.notes()).isEmpty());
+    }
+
+    @Test
+    public void copiedOriginsAndDifferentRetainedPitchCannotReuseTheMark() {
+        var plate = new Plate();
+        var actual = plate.analyze(plate.gray);
+        var notes = actual.notes();
+        var owned = notes.get(0);
+        var copy = owned.withOctaveShift(owned.octaveShift());
+        assertEquals(owned, copy);
+        assertFalse(owned == copy);
+        assertTrue(plate.printed(actual, List.of(copy), notes).isEmpty());
+        assertTrue(plate.printed(actual, notes, List.of(owned.withOctaveShift(1))).isEmpty());
+        assertTrue(plate.printed(actual, notes, List.of(owned, owned)).isEmpty());
+    }
+
     private static final class Plate {
+        private static final List<MeasureRegion> BARS =
+                List.of(new MeasureRegion(.02f, .96f, .25f, .8f));
         final byte[] gray = new byte[WIDTH * HEIGHT];
         final byte[] labels = new byte[WIDTH * HEIGHT];
 
@@ -88,15 +120,21 @@ public final class DoubleSharpArmOwnershipTest {
             }
         }
 
+        OmrScoreInterpreter.Analysis analyze(byte[] source) {
+            return OmrScoreInterpreter.analyze(labels, gray, WIDTH, HEIGHT, BARS, source);
+        }
+
         List<ScoreNoteEvent> notes(byte[] source) {
-            return OmrScoreInterpreter.analyze(
-                            labels,
-                            gray,
-                            WIDTH,
-                            HEIGHT,
-                            List.of(new MeasureRegion(.02f, .96f, .25f, .8f)),
-                            source)
-                    .notes();
+            return analyze(source).notes();
+        }
+
+        List<SourceLocalAccidental.PrintedMark> printed(
+                OmrScoreInterpreter.Analysis actual,
+                List<ScoreNoteEvent> original,
+                List<ScoreNoteEvent> retained) {
+            return actual.clockProducerSource()
+                    .localAccidentals()
+                    .printedMarks(original, retained, BARS);
         }
 
         boolean hasArmAttack(List<ScoreNoteEvent> notes) {

@@ -98,6 +98,144 @@ final class ClosedDottedSixteenths {
         return score.withNotes(retained,owners);
     }
 
+    static ScorePageInterpretation applyOpeningWideDyadHooks(
+            ScorePageInterpretation score, byte[] gray, byte[] original, int width, int height,
+            int physicalPage) {
+        if (gray == null || original == null || width < 256 || height < 128
+                || gray.length != (long) width * height || gray.length != original.length) return score;
+        var rows = groupedHeads(score, width, height);
+        var normalized = new Ink(gray, width, height);
+        var source = new Ink(original, width, height);
+        List<ScoreNoteEvent> repaired = score.notes();
+        var beams = score.beamSource();
+        for (var meter : score.meterChanges()) {
+            int index = meter.measureIndex();
+            if (index < 1 || index >= rows.size() || meter.numerator() != 4 || meter.denominator() != 4
+                    || rows.get(index).size() != 32
+                    || score.rests().stream().anyMatch(rest -> rest.measureIndex() == index)) continue;
+            var bar = score.measures().get(index);
+            var previous = score.measures().get(index - 1);
+            if (bar.cadenceQuarterBeats() != 0 || bar.top() <= previous.bottom()) continue;
+            var heads = rows.get(index).stream().sorted(Comparator.comparingDouble(Head::x)).toList();
+            var trial = openingWideDyadHooks(normalized, source, bar, heads);
+            if (trial.isEmpty()) continue;
+            if (repaired == score.notes()) repaired = new ArrayList<>(repaired);
+            for (int i = 0; i < trial.size(); i++) repaired.set(heads.get(i).index, trial.get(i));
+            beams = captureRestoredDyadBeams(beams, repaired, heads.stream().map(Head::index).toList(),
+                    bar, gray, original, width, height, physicalPage);
+        }
+        if (repaired == score.notes()) return score;
+        return score.withBeamSource(beams).withNotes(repaired,
+                java.util.stream.IntStream.range(0, repaired.size()).boxed().toList());
+    }
+
+    static ScoreBeamSource captureRestoredDyadBeams(ScoreBeamSource beams, List<ScoreNoteEvent> notes,
+            List<Integer> ordered, MeasureRegion bar, byte[] gray, byte[] original,
+            int width, int height, int physicalPage) {
+        if (physicalPage < 0 || ordered.size() != 32) return beams;
+        float left = bar.left() * width, span = (bar.right() - bar.left()) * width;
+        float gap = (bar.bottom() - bar.top()) * height / 8.2f;
+        var attacks = new ArrayList<ClosedOctaveBeamSource.Attack>(16);
+        var directions = new ArrayList<Integer>(16);
+        for (int i = 0; i < ordered.size(); i += 2) {
+            int upper = ordered.get(i), lower = ordered.get(i + 1);
+            if (notes.get(upper).pageY() > notes.get(lower).pageY()) {
+                upper = ordered.get(i + 1);
+                lower = ordered.get(i);
+            }
+            var a = notes.get(upper);
+            var b = notes.get(lower);
+            attacks.add(new ClosedOctaveBeamSource.Attack(upper, lower,
+                    left + a.positionInMeasure() * span, a.pageY() * height,
+                    left + b.positionInMeasure() * span, b.pageY() * height));
+            directions.add(-a.stemDirection());
+        }
+        return ClosedOctaveBeamSource.captureDetachedDottedDyads(
+                beams, physicalPage, gray, original, width, height, gap, attacks, directions);
+    }
+
+    private static List<ScoreNoteEvent> openingWideDyadHooks(
+            Ink gray, Ink source, MeasureRegion bar, List<Head> heads) {
+        float gap = (bar.bottom() - bar.top()) * gray.h / 8.2f;
+        float right = bar.right() * gray.w;
+        float lastHead = heads.get(31).x;
+        if (gap < 10 || gap > 27 || right - lastHead < gap * .75f || right - lastHead > gap * 2
+                || !independentUpstemClosingRule(gray, bar, lastHead, gap)
+                || !independentUpstemClosingRule(source, bar, lastHead, gap)) return List.of();
+        var trial = new ArrayList<ScoreNoteEvent>(heads.size());
+        boolean falseDottedPair = false;
+        int corrections = 0;
+        int interval = Math.abs(heads.get(0).note.staffStep() - heads.get(1).note.staffStep());
+        if (interval < 4 || interval > 6) return List.of();
+        for (int i = 0; i < heads.size(); i += 2) {
+            var left = heads.get(i);
+            var rightHead = heads.get(i + 1);
+            boolean dotted = i % 4 == 0;
+            float next = i + 2 < heads.size() ? heads.get(i + 2).x : right;
+            if (rightHead.x - left.x > gap * .24f || Math.abs(left.y - rightHead.y) < gap * 1.6f
+                    || Math.abs(left.note.staffStep() - rightHead.note.staffStep()) != interval
+                    || i + 2 < heads.size() && (next - rightHead.x < gap * 1.38f || next - rightHead.x > gap * 3.6f))
+                return List.of();
+            for (var owner : List.of(left, rightHead)) {
+                if (!regular(owner.note) || owner.note.stemDirection() != 1 || owner.note.beamCount() < 2
+                        || owner.note.clefBottomDiatonic() != heads.get(0).note.clefBottomDiatonic()
+                        || dot(gray, owner, next, gap) != dotted || dot(source, owner, next, gap) != dotted)
+                    return List.of();
+            }
+            int depth = dotted ? 2 : 3, dots = dotted ? 1 : 0;
+            if (left.note.beamCount() == depth && rightHead.note.beamCount() == depth
+                    && left.note.augmentationDots() == dots && rightHead.note.augmentationDots() == dots) {
+                trial.add(left.note);
+                trial.add(rightHead.note);
+                continue;
+            }
+            if (dotted || ++corrections > 2 || left.note.beamCount() != 2 || rightHead.note.beamCount() != 2
+                    || left.note.augmentationDots() != rightHead.note.augmentationDots()
+                    || !ascendingSharedThirdHook(gray, heads.get(i - 2), heads.get(i - 1), left, rightHead, gap)
+                    || !ascendingSharedThirdHook(source, heads.get(i - 2), heads.get(i - 1), left, rightHead, gap))
+                return List.of();
+            falseDottedPair |= left.note.augmentationDots() == 1;
+            trial.add(rhythm(left.note, false));
+            trial.add(rhythm(rightHead.note, false));
+        }
+        return falseDottedPair && fillsDottedClock(trial, 4f) ? trial : List.of();
+    }
+
+    private static boolean ascendingSharedThirdHook(
+            Ink ink, Head a, Head b, Head first, Head second, float gap) {
+        var budget = new PrintedBeamShafts.Budget(40_000);
+        var preceding = sharedUpAxis(ink, a, b, gap, budget);
+        var owner = sharedUpAxis(ink, first, second, gap, budget);
+        return preceding != null && owner != null && !budget.refused()
+                && OwnedTertiaryBeamlets.ownsThirdRailAtUpStemEnd(
+                        ink.pixels, ink.w, ink.h, owner, preceding, gap);
+    }
+
+    private static boolean independentUpstemClosingRule(Ink ink, MeasureRegion bar, float lastHead, float gap) {
+        float left = bar.left() * ink.w, right = bar.right() * ink.w;
+        var track = readOctaveStaff(ink, left, right, bar.bottom() * ink.h - 2.1f * gap, gap);
+        if (track == null) return false;
+        var rail = track.at(right);
+        if (rail[0] - 4 * rail[1] < 1 || rail[0] >= ink.h) return false;
+        var staff = new PlayingTechniqueDetector.Staff(rail[0] - 4 * rail[1], rail[0], rail[1], 0, 1);
+        float hint = Math.max(right, lastHead + gap * 1.62f);
+        int boundary = PrintedCadenceDurations.boundaryColumn(ink.pixels, ink.w, staff, hint, true, false);
+        return boundary >= lastHead + gap * .92f && Math.abs(boundary - right) <= gap * .80f;
+    }
+
+    private static int[] sharedUpAxis(
+            Ink ink, Head a, Head b, float gap, PrintedBeamShafts.Budget budget) {
+        var first = PrintedBeamShafts.at(ink.pixels, ink.w, ink.h, a.x, a.y, gap, budget);
+        var second = PrintedBeamShafts.at(ink.pixels, ink.w, ink.h, b.x, b.y, gap, budget);
+        if (first.size() != 1 || second.size() != 1
+                || first.get(0).direction() != -1 || second.get(0).direction() != -1) return null;
+        var left = first.get(0);
+        var right = second.get(0);
+        int low = Math.max(left.left(), right.left()), high = Math.min(left.right(), right.right());
+        if (low > high || Math.abs(left.endY() - right.endY()) > 1) return null;
+        return new int[] {(low + high) / 2, (left.endY() + right.endY()) / 2};
+    }
+
     static ScorePageInterpretation applyClosedMonophonicHooks(
             ScorePageInterpretation score, ScoreMeterChange inherited, byte[] gray, int w, int h) {
         if (gray == null || gray.length != (long) w * h || w < 256 || h < 128) return score;

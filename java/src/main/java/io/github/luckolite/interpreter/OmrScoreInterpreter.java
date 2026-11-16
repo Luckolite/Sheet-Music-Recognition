@@ -3649,7 +3649,19 @@ final class OmrScoreInterpreter {
                                                         height,
                                                         rawNaturalGaps,
                                                         writtenAccidentalChoices),
-                                                splitAccidentalProofs)));
+                                                splitAccidentalProofs,
+                                                verifiedPrintedDoubleSharps(
+                                                        labels,
+                                                        gray,
+                                                        annotationGray,
+                                                        width,
+                                                        height,
+                                                        measures,
+                                                        staffs,
+                                                        localAccidentals,
+                                                        clockFinalHeads,
+                                                        voicedNotes,
+                                                        writtenAccidentalChoices))));
         var page =
                 new ScorePageInterpretation(
                         measures,
@@ -19851,6 +19863,142 @@ final class OmrScoreInterpreter {
                 || fadedPeak >= 200
                         && fadedRows >= 3
                         && fadedEnclosed >= Math.max(8, Math.round(w * h * .025f));
+    }
+
+    /** A two-plane compact cross must belong to a single, independently stemmed note. */
+    private static java.util.Set<Object> verifiedPrintedDoubleSharps(
+            byte[] labels,
+            byte[] gray,
+            byte[] source,
+            int width,
+            int height,
+            List<MeasureRegion> measures,
+            List<Staff> staffs,
+            List<AccidentalCandidate> accidentals,
+            List<Component> heads,
+            List<ScoreNoteEvent> notes,
+            Map<Object, WrittenAccidentalChoice> choices) {
+        var result =
+                java.util.Collections.newSetFromMap(
+                        new java.util.IdentityHashMap<Object, Boolean>());
+        if (gray == null
+                || source == null
+                || gray.length != (long) width * height
+                || source.length != gray.length
+                || heads.size() != notes.size()) return result;
+        for (int i = 0; i < notes.size(); i++) {
+            var note = notes.get(i);
+            var head = heads.get(i);
+            if (head == null
+                    || note.kind() != ScoreNoteEvent.Kind.PITCHED
+                    || note.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_DOUBLE_SHARP
+                    || note.visualSize() != ScoreNoteEvent.VisualSize.FULL
+                    || note.stemDirection() == 0
+                    || note.crossStaffBeam()
+                    || note.harmonicSemitones() != 0
+                    || note.tiedFromPrevious()
+                    || note.measureIndex() < 0
+                    || note.measureIndex() >= measures.size()) continue;
+            var staff = nearestHeadStaff(staffs, head.centerY);
+            if (staff == null) continue;
+            float gap = staff.gap;
+            if (head.maxX - head.minX + 1 < .85f * gap
+                    || head.area < .55f * gap * gap
+                    || attachedRawStem(gray, width, height, head, gap) == null
+                    || attachedRawStem(source, width, height, head, gap) == null) continue;
+            float left = measures.get(note.measureIndex()).left() * width;
+            Component owned = null;
+            for (var accidental : accidentals) {
+                var cross = accidental.component;
+                if (cross.minX < left
+                        || !doubleSharpBesideHead(cross, head, gap)
+                        || !DoubleSharpGlyph.matchesRaw(
+                                gray,
+                                width,
+                                height,
+                                cross.minX,
+                                cross.minY,
+                                cross.maxX,
+                                cross.maxY,
+                                gap)
+                        || !DoubleSharpGlyph.matchesRaw(
+                                source,
+                                width,
+                                height,
+                                cross.minX,
+                                cross.minY,
+                                cross.maxX,
+                                cross.maxY,
+                                gap)
+                        || !hasDoubleSharpGlyphSupport(labels, gray, source, width, cross, gap))
+                    continue;
+                if (owned != null && !sameDoubleSharpInk(owned, cross)) {
+                    owned = null;
+                    break;
+                }
+                owned = cross;
+            }
+            if (owned == null) continue;
+            var pick = choices.get(head);
+            // The ordinary picker can see several labelled unions of one complete cross.
+            if (pick == null
+                    || pick.head() != head
+                    || pick.ambiguous()
+                            && (pick.accidental() != ScoreNoteEvent.ACCIDENTAL_DOUBLE_SHARP
+                                    || !(pick.glyph() instanceof Component chosen)
+                                    || !sameDoubleSharpInk(chosen, owned))) continue;
+            boolean unique = true;
+            for (int j = 0; j < notes.size(); j++) {
+                if (j == i || heads.get(j) == null) continue;
+                var other = notes.get(j);
+                if (other.kind() == ScoreNoteEvent.Kind.PITCHED
+                        && other.measureIndex() == note.measureIndex()
+                        && other.staffIndex() == note.staffIndex()
+                        && doubleSharpBesideHead(owned, heads.get(j), gap)) {
+                    unique = false;
+                    break;
+                }
+            }
+            if (unique) result.add(head);
+        }
+        return result;
+    }
+
+    private static boolean doubleSharpBesideHead(Component cross, Component head, float gap) {
+        float distance = head.minX - cross.maxX;
+        return distance >= .12f * gap
+                && distance <= 1.35f * gap
+                && Math.abs((cross.minY + cross.maxY) * .5f - head.centerY) <= .35f * gap;
+    }
+
+    private static boolean sameDoubleSharpInk(Component first, Component second) {
+        int x = Math.min(first.maxX, second.maxX) - Math.max(first.minX, second.minX) + 1;
+        int y = Math.min(first.maxY, second.maxY) - Math.max(first.minY, second.minY) + 1;
+        return x > 0
+                && y > 0
+                && x * y
+                        >= .75f
+                                * Math.max(
+                                        (first.maxX - first.minX + 1)
+                                                * (first.maxY - first.minY + 1),
+                                        (second.maxX - second.minX + 1)
+                                                * (second.maxY - second.minY + 1));
+    }
+
+    private static boolean hasDoubleSharpGlyphSupport(
+            byte[] labels, byte[] gray, byte[] source, int width, Component cross, float gap) {
+        int members = 0;
+        for (int y = cross.minY; y <= cross.maxY; y++) {
+            for (int x = cross.minX; x <= cross.maxX; x++) {
+                int index = y * width + x;
+                byte label = labels[index];
+                if ((label == OmrMeasurePostProcessor.CLEF_OR_KEY
+                                || label == OmrMeasurePostProcessor.SYMBOL)
+                        && (gray[index] & 255) < 155
+                        && (source[index] & 255) < 155) members++;
+            }
+        }
+        return members >= .28f * gap * gap;
     }
 
     private static java.util.Set<Object> verifiedNaturalUnions(

@@ -449,6 +449,16 @@ public final class Main {
                     (octave + 1 + note.octaveShift()) * 12
                             + new int[] {0, 2, 4, 5, 7, 9, 11}[letter]
                             + ScoreNoteEvent.accidentalSemitones(accidental);
+            if (note.harmonicSemitones() == 24 && note.octaveShift() == 0) {
+                int touch = ScoreTiePitchGuard.writtenMidi(
+                        diatonic + 3, ScoreNoteEvent.ACCIDENTAL_FROM_KEY, key);
+                if (touch - midi == 5 && midi + 24 <= 127) {
+                    identity.put("writtenMidi", midi);
+                    identity.put("harmonicTouchMidi", touch);
+                    identity.put("artificialHarmonicFourth", true);
+                    midi += 24;
+                }
+            }
             identity.put("midi", midi);
         }
         identity.put("clefInferred", guessed);

@@ -62,7 +62,9 @@ final class OriginalBeamAnalysisSnapshot {
                                             && naturals.isEmpty()
                                     || f.getName().equals("splitAccidentalOwners")
                                             && field instanceof Map<?, ?> splitOwners
-                                            && splitOwners.isEmpty())) continue;
+                                            && splitOwners.isEmpty()
+                                    || f.getName().equals("printedDoubleSharpOwners")
+                                            && field == null)) continue;
                     sorted.put(f.getName(), field);
                 }
         return fields(sorted);
