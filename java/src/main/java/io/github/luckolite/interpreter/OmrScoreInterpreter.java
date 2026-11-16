@@ -1082,7 +1082,21 @@ final class OmrScoreInterpreter {
                         gray, width, height, heads, staffs, recoveredBeamCapGraces));
         rejectedBeamHeads.addAll(ownedSlopedBeamFragments(labels, gray, width, height, heads, staffs));
         rejectedBeamHeads.addAll(
+                borrowedInnerDoubleRailHeads(labels, gray, annotationGray, width, height, heads, staffs));
+        rejectedBeamHeads.addAll(
                 locallyScaledDoubleRailFragments(gray, width, height, heads, staffs, measures));
+        var clippedSingleRailStarts = new java.util.HashSet<Component>();
+        rejectedBeamHeads.addAll(
+                clippedTripletRailAliases(
+                        labels,
+                        gray,
+                        annotationGray,
+                        width,
+                        height,
+                        heads,
+                        staffs,
+                        measures,
+                        clippedSingleRailStarts));
         rejectedBeamHeads.addAll(
                 leadingSingleRailCapMasks(
                         labels, gray, annotationGray, width, height, heads, staffs, measures));
@@ -2029,6 +2043,10 @@ final class OmrScoreInterpreter {
                                 beamCount,
                                 beamsBeyondTremolo(gray, beamLabels, width, height, head, staff));
             if (flaggedTremolos.containsKey(head)) beamCount = 1;
+            // Keep the measured single rail at the owned start when removing masks changes the
+            // semantic beam count.
+            if (!unpitched && beamCount == 2 && clippedSingleRailStarts.contains(head))
+                beamCount = 1;
             boolean finiteCapFilled = finiteCapFilledHeads.get(head) == staff;
             var admissions = new ArrayList<String>();
             PrintedValueDecision printedValue =
@@ -27721,6 +27739,130 @@ final class OmrScoreInterpreter {
         return a;
     }
 
+    /** A clipped opening triplet can lend its filled rail to two separate head masks. */
+    private static List<Component> clippedTripletRailAliases(
+            byte[] labels, byte[] gray, byte[] source, int width, int height,
+            List<Component> heads, List<Staff> staffs, List<MeasureRegion> measures,
+            java.util.Set<Component> singleRailStarts) {
+        if (gray == null || source == null || gray.length != source.length) return List.of();
+        var rejected = new ArrayList<Component>();
+        for (var cap : heads) {
+            var staff = nearestHeadStaff(staffs, cap.centerY);
+            if (staff == null || staff.count != 1) continue;
+            float gap = staff.gap;
+            if (gap < 10 || gap > 30 || cap.area < gap * gap * .74f || cap.area > gap * gap
+                    || cap.maxX - cap.minX + 1 < gap * 1.30f
+                    || cap.maxX - cap.minX + 1 > gap * 1.58f
+                    || cap.maxY - cap.minY + 1 < gap * .74f
+                    || cap.maxY - cap.minY + 1 > gap * .99f) continue;
+            int index = containingMeasureForStaff(
+                    measures, cap.centerX / width, cap.centerY / height, staff, height);
+            if (index <= 0 || index + 1 >= measures.size()) continue;
+            var bar = measures.get(index);
+            if (Math.abs(bar.top() - measures.get(index - 1).top()) * height > gap * .33f
+                    || Math.abs(bar.top() - measures.get(index + 1).top()) * height > gap * .33f)
+                continue;
+            int[] reverse = attachedRawStem(gray, width, height, cap, gap, 2, 170);
+            if (reverse == null || reverse[2] != 1 || reverse[0] < cap.minX
+                    || reverse[0] > cap.minX + gap * .12f
+                    || reverse[1] - cap.centerY < gap * 3.5f
+                    || reverse[1] - cap.centerY > gap * 4.5f
+                    || !java.util.Arrays.equals(reverse,
+                            attachedRawStem(source, width, height, cap, gap, 2, 170)))
+                continue;
+            var owners = new ArrayList<Component>(3);
+            for (var head : heads) {
+                float before = head.centerX - reverse[0], drop = reverse[1] - head.centerY;
+                if (head == cap || before < -gap * .78f || before > gap * 4.4f
+                        || drop < -gap * .25f || drop > gap * 2.45f
+                        || nearestHeadStaff(staffs, head.centerY) != staff
+                        || !filledBeamEndpointCore(source, width, height, head, gap)) continue;
+                owners.add(head);
+                if (owners.size() > 3) break;
+            }
+            if (owners.size() != 3) continue;
+            owners.sort(java.util.Comparator.comparingDouble(h -> h.centerX));
+            var first = owners.get(0);
+            if (reverse[0] - first.centerX < gap * .42f
+                    || reverse[0] - first.centerX > gap * .73f
+                    || Math.abs(reverse[1] - first.centerY) > gap * .24f
+                    || first.centerX - bar.left() * width < gap * .8f
+                    || first.centerX - bar.left() * width > gap * 1.65f) continue;
+            var a = clippedOpeningTriplet(gray, width, height, gap, owners);
+            var b = clippedOpeningTriplet(source, width, height, gap, owners);
+            if (a == null || b == null || Math.abs(a[0].endY() - b[0].endY()) > 1
+                    || Math.abs(a[2].endY() - b[2].endY()) > 1
+                    || Math.abs((a[0].left() + a[0].right()) * .5f - reverse[0]) > 1
+                    || !maskInsideOpeningRail(labels, gray, source, width, height, cap, a, gap))
+                continue;
+            Component fragment = null;
+            for (var small : heads) {
+                if (small.centerX < owners.get(1).centerX + gap * .9f
+                        || small.centerX > owners.get(2).centerX + gap * .12f
+                        || small.centerY > cap.centerY - gap * .6f
+                        || small.centerY < cap.centerY - gap * 2.2f
+                        || small.area > gap * gap * .28f
+                        || small.maxX - small.minX + 1 > gap * .8f
+                        || small.maxY - small.minY + 1 > gap * .7f
+                        || attachedRawStem(gray, width, height, small, gap, 2, 170) != null
+                        || attachedRawStem(source, width, height, small, gap, 2, 170) != null
+                        || !maskInsideOpeningRail(labels, gray, source, width, height, small, a, gap))
+                    continue;
+                if (fragment != null) {
+                    fragment = null;
+                    break;
+                }
+                fragment = small;
+            }
+            if (fragment != null) {
+                rejected.add(cap);
+                rejected.add(fragment);
+                singleRailStarts.add(first);
+            }
+        }
+        return rejected;
+    }
+
+    private static PrintedBeamShafts.Shaft[] clippedOpeningTriplet(
+            byte[] gray, int width, int height, float gap, List<Component> heads) {
+        var x = new float[3];
+        var y = new float[3];
+        var shafts = new PrintedBeamShafts.Shaft[3];
+        var budget = new PrintedBeamShafts.Budget(300_000);
+        for (int i = 0; i < 3; i++) {
+            x[i] = heads.get(i).centerX;
+            y[i] = heads.get(i).centerY;
+            if (i > 0 && (x[i] - x[i - 1] < gap * 1.75f || x[i] - x[i - 1] > gap * 2.9f
+                    || y[i - 1] - y[i] < gap * .85f || y[i - 1] - y[i] > gap * 1.2f))
+                return null;
+            var candidates = PrintedBeamShafts.at(gray, width, height, x[i], y[i], gap, budget);
+            if (candidates.size() > 1 || !candidates.isEmpty() && candidates.get(0).direction() != -1)
+                return null;
+            if (!candidates.isEmpty()) shafts[i] = candidates.get(0);
+        }
+        var proof = WrappedShaftContinuation.recoverGroup(gray, width, height, gap, x, y, -1, shafts);
+        return proof != null && proof.revised() == 1 ? proof.shafts() : null;
+    }
+
+    private static boolean maskInsideOpeningRail(
+            byte[] labels, byte[] gray, byte[] source, int width, int height,
+            Component mask, PrintedBeamShafts.Shaft[] shafts, float gap) {
+        float start = (shafts[0].left() + shafts[0].right()) * .5f;
+        float end = (shafts[2].left() + shafts[2].right()) * .5f;
+        if (end <= start) return false;
+        float slope = (shafts[2].endY() - shafts[0].endY()) / (end - start);
+        if (slope < -.43f || slope > -.24f) return false;
+        int[] members = completeHeadMembers(labels, width, height, mask);
+        if (members == null) return false;
+        for (int pixel : members) {
+            float offset = pixel / width - (shafts[0].endY() + slope * (pixel % width - start));
+            if (offset < -gap * .11f || offset > gap * .73f
+                    || (source[pixel] & 255) >= 185 || (gray[pixel] & 255) >= 185)
+                return false;
+        }
+        return true;
+    }
+
     /** An upstroke at a system-end opening can lend its upper rail cap to a false mask. */
     private static List<Component> leadingSingleRailCapMasks(
             byte[] labels,
@@ -28057,6 +28199,97 @@ final class OmrScoreInterpreter {
         return false;
     }
 
+    /** A shallow interior island between two independently owned downstem octave columns. */
+    private static boolean pairedOctaveRailMask(
+            byte[] labels,
+            byte[] gray,
+            int width,
+            int height,
+            Component mask,
+            List<Component> heads,
+            Staff staff) {
+        float gap = staff.gap;
+        if (staff.count != 1
+                || gap < 10
+                || gap > 28
+                || mask.area < gap * gap * .45f
+                || mask.area > gap * gap * .65f
+                || mask.maxX - mask.minX + 1 < gap * 1.05f
+                || mask.maxX - mask.minX + 1 > gap * 1.32f
+                || mask.maxY - mask.minY + 1 > gap * .74f
+                || attachedRawStem(gray, width, height, mask, gap, 2, 170) != null
+                || !continuousDyadRailMask(gray, width, height, mask, gap)) return false;
+        Component left = null, right = null;
+        for (Component head : heads) {
+            float dx = head.centerX - mask.centerX, dy = mask.centerY - head.centerY;
+            if (dy < gap * 2.5f
+                    || dy > gap * 3.35f
+                    || Math.abs(dx) < gap * .85f
+                    || Math.abs(dx) > gap * 2.05f
+                    || !filledBeamEndpointCore(gray, width, height, head, gap)) continue;
+            if (dx < 0) {
+                if (left != null) return false;
+                left = head;
+            } else {
+                if (right != null) return false;
+                right = head;
+            }
+        }
+        if (left == null
+                || right == null
+                || Math.abs(left.centerY - right.centerY) > gap * .32f
+                || !hasOctaveHead(gray, width, height, heads, left, gap)
+                || !hasOctaveHead(gray, width, height, heads, right, gap)) return false;
+
+        var budget = new PrintedBeamShafts.Budget(180_000);
+        var earlier =
+                PrintedBeamShafts.at(gray, width, height, left.centerX, left.centerY, gap, budget);
+        var later =
+                PrintedBeamShafts.at(
+                        gray, width, height, right.centerX, right.centerY, gap, budget);
+        if (earlier.size() != 1 || later.size() != 1) return false;
+        var a = earlier.get(0);
+        var b = later.get(0);
+        int span = b.left() - a.right();
+        if (a.direction() != 1
+                || b.direction() != 1
+                || span < gap * 2.3f
+                || span > gap * 3.3f
+                || mask.minX - a.right() < gap * .48f
+                || b.left() - mask.maxX < gap * .48f
+                || Math.abs(a.endY() - b.endY()) > span * .18f
+                || !WrappedEighthTriplets.matchesBeamRails(gray, width, height, a, b, gap, 2))
+            return false;
+
+        var members = completeHeadMembers(labels, width, height, mask);
+        if (members == null) return false;
+        for (int pixel : members) {
+            int x = pixel % width;
+            int y = pixel / width;
+            float tip = a.endY() + (b.endY() - a.endY()) * (x - a.right()) / (float) span;
+            if ((gray[pixel] & 255) >= 155 || y < tip - gap * 1.02f || y > tip + gap * .14f)
+                return false;
+        }
+        return true;
+    }
+
+    private static boolean hasOctaveHead(
+            byte[] gray, int width, int height, List<Component> heads, Component lower, float gap) {
+        return heads.stream()
+                        .filter(
+                                upper ->
+                                        Math.abs(upper.centerX - lower.centerX) <= gap * .12f
+                                                && Math.abs(
+                                                                lower.centerY
+                                                                        - upper.centerY
+                                                                        - gap * 3.5f)
+                                                        <= gap * .2f
+                                                && filledBeamEndpointCore(
+                                                        gray, width, height, upper, gap))
+                        .count()
+                == 1;
+    }
+
     private static List<Component> ownedSlopedBeamFragments(
             byte[] labels, byte[] gray, int width, int height, List<Component> heads, List<Staff> staffs) {
         List<Component> rejected = new ArrayList<>();
@@ -28107,9 +28340,14 @@ final class OmrScoreInterpreter {
                     continue;
                 }
             }
-            if (gap < 8 || fragment.area > gap * gap * .8f
+            if (gap < 8
+                    || fragment.area > gap * gap * .8f
                     || fragment.maxX - fragment.minX + 1 > gap * 1.25f
                     || fragment.maxY - fragment.minY + 1 > gap * 1.05f) continue;
+            if (pairedOctaveRailMask(labels, gray, width, height, fragment, heads, staff)) {
+                rejected.add(fragment);
+                continue;
+            }
             int[] borrowed = attachedRawStem(gray, width, height, fragment, gap, 2, 170);
             if (staff.count == 1
                     && borrowed != null
@@ -28702,6 +28940,122 @@ final class OmrScoreInterpreter {
             if (!beamCore(gray, width, height, x, y, 1)) return false;
         }
         return true;
+    }
+
+    /** A filled pair of rails can lend its middle downstroke to a false note mask. */
+    private static List<Component> borrowedInnerDoubleRailHeads(
+            byte[] labels, byte[] gray, byte[] source, int width, int height,
+            List<Component> heads, List<Staff> staffs) {
+        if (gray == null || source == null || gray.length != source.length) return List.of();
+        var rejected = new ArrayList<Component>();
+        for (var mask : heads) {
+            Staff staff = nearestHeadStaff(staffs, mask.centerY);
+            if (staff == null || staff.count != 1) continue;
+            float gap = staff.gap;
+            int across = mask.maxX - mask.minX + 1, depth = mask.maxY - mask.minY + 1;
+            if (gap < 10 || across < gap * .8f || across > gap * 1.16f
+                    || depth < gap || depth > gap * 1.35f
+                    || mask.area < gap * gap * .52f || mask.area > gap * gap * .9f
+                    || filledBeamEndpointCore(source, width, height, mask, gap)) continue;
+            int[] reverse = attachedRawStem(gray, width, height, mask, gap, 2, 170);
+            if (reverse == null || reverse[2] != -1
+                    || reverse[0] < mask.centerX || reverse[0] > mask.maxX
+                    || mask.centerY - reverse[1] < gap * 3.5f
+                    || mask.centerY - reverse[1] > gap * 4.9f
+                    || !java.util.Arrays.equals(reverse,
+                            attachedRawStem(source, width, height, mask, gap, 2, 170)))
+                continue;
+
+            int[][] shafts = new int[3][];
+            boolean ambiguous = false;
+            for (var head : heads) {
+                if (head == mask || Math.abs(head.centerX - mask.centerX) > gap * 3.4f
+                        || mask.centerY - head.centerY < gap * 2.55f
+                        || mask.centerY - head.centerY > gap * 5.7f
+                        || nearestHeadStaff(staffs, head.centerY) != staff
+                        || !filledBeamEndpointCore(source, width, height, head, gap)) continue;
+                int[] shaft = attachedRawStem(gray, width, height, head, gap, 2, 170);
+                if (shaft == null || shaft[2] != 1 || shaft[1] - head.centerY < gap * 3.4f
+                        || Math.abs(shaft[1] - mask.centerY) > gap * 1.45f
+                        || !java.util.Arrays.equals(shaft,
+                                attachedRawStem(source, width, height, head, gap, 2, 170)))
+                    continue;
+                int dx = shaft[0] - reverse[0];
+                int role;
+                if (Math.abs(dx) <= 2 && Math.abs(reverse[1] - head.centerY) <= gap * .35f) {
+                    role = 1;
+                } else if (dx >= gap * 1.45f && dx <= gap * 2.35f) {
+                    role = 2;
+                } else if (-dx >= gap * 1.45f && -dx <= gap * 2.35f) {
+                    role = 0;
+                } else continue;
+                if (shafts[role] != null) {
+                    ambiguous = true;
+                    break;
+                }
+                shafts[role] = shaft;
+            }
+            if (ambiguous || shafts[0] == null || shafts[1] == null || shafts[2] == null)
+                continue;
+            int[] left = shafts[0], middle = shafts[1], right = shafts[2];
+            float slope = (right[1] - left[1]) / (float) (right[0] - left[0]);
+            if (Math.abs(slope) > .28f
+                    || Math.abs(middle[1] - left[1] - slope * (middle[0] - left[0])) > gap * .45f)
+                continue;
+            int[] pixels = completeHeadMembers(labels, width, height, mask);
+            if (pixels != null && matchesBorrowedInnerRails(
+                    gray, source, width, height, mask, pixels, left, right, slope, gap))
+                rejected.add(mask);
+        }
+        return rejected;
+    }
+
+    private static boolean matchesBorrowedInnerRails(
+            byte[] gray, byte[] source, int width, int height, Component mask,
+            int[] pixels, int[] left, int[] right, float slope, float gap) {
+        int margin = Math.max(3, Math.round(gap * .28f));
+        int first = left[0] + margin, last = right[0] - margin;
+        if (mask.minX - first < gap * .55f || last - mask.maxX < gap * .55f) return false;
+        float minDepth = Float.POSITIVE_INFINITY, maxDepth = Float.NEGATIVE_INFINITY;
+        int dark = 0;
+        for (int pixel : pixels) {
+            int x = pixel % width, y = pixel / width;
+            float depth = left[1] + slope * (x - left[0]) - y;
+            minDepth = Math.min(minDepth, depth);
+            maxDepth = Math.max(maxDepth, depth);
+            if ((gray[pixel] & 255) < 185 && (source[pixel] & 255) < 185) dark++;
+        }
+        if (dark < pixels.length * .97f) return false;
+
+        // Separated ink rails must run through both neighboring intervals. The mask may
+        // bridge their seam only next to the shaft, with visible paper on both sides.
+        for (int near = Math.round(gap * .22f); near <= Math.round(gap * .45f); near++) {
+            if (!continuousBeamRail(gray, width, height, left, slope, first, last, near)
+                    || !continuousBeamRail(source, width, height, left, slope, first, last, near))
+                continue;
+            for (int step = Math.round(gap * .62f); step <= Math.round(gap * .92f); step++) {
+                int far = near + step;
+                if (minDepth < near - gap * .30f || maxDepth > far + gap * .38f
+                        || !continuousBeamRail(gray, width, height, left, slope, first, last, far)
+                        || !continuousBeamRail(source, width, height, left, slope, first, last, far))
+                    continue;
+                int seam = (near + far) / 2;
+                int clearLeft = 0, clearRight = 0;
+                for (int x = first; x <= last; x++) {
+                    if (x >= mask.minX && x <= mask.maxX) continue;
+                    int y = Math.round(left[1] + slope * (x - left[0])) - seam;
+                    if (y < 1 || y >= height - 1) return false;
+                    if ((gray[y * width + x] & 255) < 185 || (source[y * width + x] & 255) < 185)
+                        continue;
+                    if (x < mask.minX) clearLeft++;
+                    else clearRight++;
+                }
+                if (clearLeft >= gap * .45f && clearRight >= gap * .45f
+                        && clearLeft >= (mask.minX - first) * .55f
+                        && clearRight >= (last - mask.maxX) * .55f) return true;
+            }
+        }
+        return false;
     }
 
     /** Use the enclosing measure's staff scale when the page-wide estimate is too small. */

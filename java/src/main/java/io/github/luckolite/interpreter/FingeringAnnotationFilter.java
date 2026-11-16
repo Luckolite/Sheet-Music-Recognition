@@ -26,6 +26,9 @@ final class FingeringAnnotationFilter {
     private static final Pattern COMPACT_SEGUE_CAPTION =
             Pattern.compile("[1-5](?:\\s+[1-5])?\\s+segue[.]?", Pattern.CASE_INSENSITIVE);
 
+    private static final Pattern FINGERING_SEGUE =
+            Pattern.compile("[0-5]\\s+segue[.]?", Pattern.CASE_INSENSITIVE);
+
     private FingeringAnnotationFilter() {}
 
     private record Candidate(
@@ -48,6 +51,7 @@ final class FingeringAnnotationFilter {
                 || width <= 0
                 || height <= 0
                 || gray.length != (long) width * height) return notes;
+        notes = removeDescenderAliases(words, staffs, measures, notes, gray, width, height);
         notes = annotatedSingleLines(words, staffs, measures, notes, gray, width, height);
         notes = separatedFingeringCaptions(words, staffs, measures, notes, gray, width, height);
         notes = shortFingeringCaptions(words, staffs, measures, notes, gray, width, height);
@@ -386,6 +390,101 @@ final class FingeringAnnotationFilter {
         return output == null ? notes : output.stream().filter(Objects::nonNull).toList();
     }
 
+    /** A detached caption descender can be segmented as a stemless whole note. */
+    private static List<ScoreNoteEvent> removeDescenderAliases(
+            List<PlayingTechniqueDetector.Word> words,
+            List<PlayingTechniqueDetector.Staff> staffs,
+            List<MeasureRegion> measures,
+            List<ScoreNoteEvent> notes,
+            byte[] gray, int width, int height) {
+        var captions = words.stream().filter(word -> word.text() != null
+                && FINGERING_SEGUE.matcher(word.text().strip()).matches()).toList();
+        if (captions.isEmpty()) return notes;
+        var removed = Collections.newSetFromMap(new IdentityHashMap<ScoreNoteEvent, Boolean>());
+        for (var note : notes) {
+            if (note.measureIndex() < 0 || note.measureIndex() >= measures.size()
+                    || !captionGlyphHead(note, false) || note.staffStep() != -2
+                    || note.beamCount() != 0 || note.unbeamedDurationBeats() != 4
+                    || note.articulations() != 0) continue;
+            var region = measures.get(note.measureIndex());
+            float span = (region.right() - region.left()) * width;
+            float x = region.left() * width + note.positionInMeasure() * span, y = note.pageY() * height;
+            for (var staff : staffs) {
+                float gap = staff.gap(), distance = y - staff.bottom();
+                if (staff.index() != 0 || staff.count() != 1 || gap < 10 || gap > 26
+                        || staff.bottom() > region.bottom() * height || staff.top() < region.top() * height
+                        || distance < gap * .55f || distance > gap * 1.40f) continue;
+                for (var caption : captions) {
+                    float left = caption.left() * width, right = caption.right() * width;
+                    float top = caption.top() * height, bottom = caption.bottom() * height;
+                    float captionWidth = right - left;
+                    if (captionWidth < gap * 7 || captionWidth > gap * 11
+                            || bottom - top < gap * 1.7f || bottom - top > gap * 3
+                            || left < region.left() * width || right > region.right() * width
+                            || x < left + captionWidth * .50f || x > left + captionWidth * .72f
+                            || y < top || y > bottom
+                            || printedStemBeyondWord(gray, width, height, x, y, top, bottom, gap)
+                            || !captionDescender(gray, width, height, staff, caption, x, y)) continue;
+                    var run = notes.stream().filter(n -> n.measureIndex() == note.measureIndex() && n != note)
+                            .sorted(Comparator.comparingDouble(ScoreNoteEvent::positionInMeasure)).toList();
+                    if (closesDescenderBar(run, span, gap)) {
+                        removed.add(note);
+                        break;
+                    }
+                }
+                if (removed.contains(note)) break;
+            }
+        }
+        return removed.isEmpty() ? notes : notes.stream().filter(n -> !removed.contains(n)).toList();
+    }
+
+    private static boolean captionDescender(
+            byte[] gray, int width, int height, PlayingTechniqueDetector.Staff staff,
+            PlayingTechniqueDetector.Word caption, float x, float y) {
+        float gap = staff.gap();
+        int left = Math.round(caption.left() * width), right = Math.round(caption.right() * width);
+        int top = Math.max(Math.round(caption.top() * height), Math.round(staff.bottom() + gap * .14f));
+        int bottom = Math.round(caption.bottom() * height);
+        if (left < 0 || right >= width || top < 0 || bottom >= height || left >= right || top >= bottom)
+            return false;
+        var graph = RawNumeralComponents.capture(gray, width, height, left, top, right, bottom, () -> {}, () -> {});
+        for (var glyph : graph.components()) {
+            if (glyph.left >= x || glyph.right <= x || glyph.top >= y || glyph.bottom <= y + gap * .65f
+                    || glyph.left <= left || glyph.right >= right || glyph.top <= top || glyph.bottom >= bottom
+                    || glyph.right - glyph.left < gap * .9f || glyph.right - glyph.left > gap * 2.1f
+                    || glyph.bottom - glyph.top < gap || glyph.bottom - glyph.top > gap * 1.8f) continue;
+            int neighbors = 0, before = 0, after = 0;
+            for (var peer : graph.components()) {
+                if (peer == glyph || peer.left <= left || peer.right >= right || peer.top <= top || peer.bottom >= bottom
+                        || Math.abs(peer.top - glyph.top) > gap * .35f
+                        || peer.bottom - peer.top < gap * .52f || peer.bottom - peer.top > gap * 1.1f
+                        || peer.right - peer.left < gap * .4f || peer.right - peer.left > gap * 1.3f) continue;
+                if (peer.right < glyph.left && glyph.left - peer.right < gap * 2.7f) before++;
+                if (peer.left > glyph.right && peer.left - glyph.right < gap * 2.7f) after++;
+                neighbors++;
+            }
+            if (neighbors >= 3 && before >= 1 && after >= 1) return true;
+        }
+        return false;
+    }
+
+    private static boolean closesDescenderBar(List<ScoreNoteEvent> run, float span, float gap) {
+        if (run.size() != 12) return false;
+        for (int i = 0; i < run.size(); i++) {
+            var note = run.get(i);
+            if (note.kind() != ScoreNoteEvent.Kind.PITCHED || note.staffCount() != 1 || note.staffIndex() != 0
+                    || note.stemDirection() != -1 || note.beamCount() != 2 || note.augmentationDots() != 0
+                    || note.unbeamedDurationBeats() != 0 || note.tupletDivisor() != 1
+                    || note.leadingRestBeats() != 0 || note.followingRestBeats() != 0) return false;
+            if (i > 0) {
+                float spacing = (note.positionInMeasure() - run.get(i - 1).positionInMeasure()) * span;
+                if (spacing < gap * 1.6f || spacing > gap * 4) return false;
+            }
+        }
+        return closedWrittenSixteenths(run);
+    }
+
+
     /** An italic initial alongside fingering digits can own a false head below the staff. */
     private static List<ScoreNoteEvent> compactSegueCaptions(
             List<PlayingTechniqueDetector.Word> words,
@@ -405,7 +504,9 @@ final class FingeringAnnotationFilter {
                         && alias.staffStep() == -2 && digitCount == 2;
                 boolean wholeAlias = alias.beamCount() == 0 && alias.unbeamedDurationBeats() == 4
                         && alias.staffStep() == -1 && digitCount == 1;
-                if (!beamAlias && !wholeAlias) continue;
+                boolean singleDigitBeamAlias = digitCount == 1 && alias.staffStep() == -1
+                        && alias.beamCount() == 3 && alias.unbeamedDurationBeats() == 0;
+                if (!beamAlias && !wholeAlias && !singleDigitBeamAlias) continue;
                 var bar = measures.get(alias.measureIndex());
                 float x = (bar.left() + (bar.right() - bar.left()) * alias.positionInMeasure()) * width;
                 float y = alias.pageY() * height;
@@ -414,10 +515,16 @@ final class FingeringAnnotationFilter {
                 var music = notes.stream().filter(n -> n.measureIndex() == alias.measureIndex() && n != alias)
                         .sorted(Comparator.comparingDouble(ScoreNoteEvent::positionInMeasure)).toList();
                 if (music.size() != 12 || music.stream().anyMatch(n -> n.stemDirection() != -1)) continue;
-                int firstTriplet = tripletRunStart(music);
-                if (firstTriplet == -2 || beamAlias && firstTriplet >= 0) continue;
-                var corrected = music.stream().map(n -> n.tupletDivisor() == 3
-                        ? n.withTupletRatio(1, 1) : n).toList();
+                List<ScoreNoteEvent> corrected;
+                if (singleDigitBeamAlias) {
+                    corrected = straightCompactBeamGroups(music);
+                    if (corrected.isEmpty()) continue;
+                } else {
+                    int firstTriplet = tripletRunStart(music);
+                    if (firstTriplet == -2 || beamAlias && firstTriplet >= 0) continue;
+                    corrected = music.stream().map(n -> n.tupletDivisor() == 3
+                            ? n.withTupletRatio(1, 1) : n).toList();
+                }
                 for (var staff : staffs) {
                     float gap = staff.gap(), bottom = staff.bottom();
                     float left = caption.left() * width, right = caption.right() * width;
@@ -434,8 +541,8 @@ final class FingeringAnnotationFilter {
                             corrected, bar, staff, gray, width, height, 3.9f, true, .95f,
                             beamAlias ? 1 : 0, 3.1f, true)) continue;
                     if (output == null) output = new ArrayList<>(notes);
-                    if (firstTriplet >= 0)
-                        for (int i = firstTriplet; i < firstTriplet + 3; i++)
+                    for (int i = 0; i < music.size(); i++)
+                        if (music.get(i) != corrected.get(i))
                             output.set(notes.indexOf(music.get(i)), corrected.get(i));
                     output.set(notes.indexOf(alias), null);
                     break;
@@ -444,6 +551,29 @@ final class FingeringAnnotationFilter {
         }
         return output == null ? notes : output.stream().filter(Objects::nonNull).toList();
     }
+
+    /** Verify soft triplet interpretations fall within independently closed four-note beams. */
+    private static List<ScoreNoteEvent> straightCompactBeamGroups(List<ScoreNoteEvent> notes) {
+        var corrected = new ArrayList<>(notes);
+        int runs = 0;
+        for (int group = 0; group < notes.size(); group += 4) {
+            int first = -1, count = 0;
+            for (int i = group; i < group + 4; i++) {
+                var note = notes.get(i);
+                if (note.tupletDivisor() == 1 && note.tupletNormalNotes() == 1) continue;
+                if (note.tupletDivisor() != 3 || note.tupletNormalNotes() != 2) return List.of();
+                if (first < 0) first = i;
+                else if (i != first + count) return List.of();
+                count++;
+            }
+            if (count == 0) continue;
+            if (count != 3 || ++runs > 2) return List.of();
+            for (int i = first; i < first + 3; i++)
+                corrected.set(i, notes.get(i).withTupletRatio(1, 1));
+        }
+        return corrected;
+    }
+
 
     private static boolean ownsCompactSegueInitial(
             byte[] gray, int width, int height, PlayingTechniqueDetector.Staff staff,

@@ -1412,6 +1412,7 @@ final class PrintedMeasureRhythmGuard {
             int width,
             int height) {
         List<MeasureRegion> result = new ArrayList<>(fitted);
+        List<RawStaffLineDetector.StaffLines> staffs = null;
         for (int index = 0; index < raw.size(); index++) {
             MeasureRegion region = raw.get(index);
             List<MeasureRegion> pieces = fragments(region, result);
@@ -1419,6 +1420,17 @@ final class PrintedMeasureRhythmGuard {
                     || Math.abs(pieces.get(0).left() - region.left()) > .006f
                     || Math.abs(pieces.get(1).right() - region.right()) > .006f) continue;
             float cut = (pieces.get(0).right() + pieces.get(1).left()) * .5f;
+            var octaves = completeSixteenthOctaves(notes, index, region, width, height);
+            if (!octaves.isEmpty() && gray != null
+                    && !printedBarline(region, cut, gray, width, height, true)) {
+                if (staffs == null) staffs = RawStaffLineDetector.detect(gray, width, height);
+                if (ownsSingleStaffRun(raw, notes, index, octaves, staffs, gray, width, height, cut)) {
+                    int at = result.indexOf(pieces.get(0));
+                    result.removeAll(pieces);
+                    result.add(at, region);
+                    continue;
+                }
+            }
             if (printedBarline(region, cut, gray, width, height)) continue;
             List<Span> voices = spans(notes, index);
             boolean complete = false;
@@ -1446,6 +1458,55 @@ final class PrintedMeasureRhythmGuard {
             result.add(at, region);
         }
         return List.copyOf(result);
+    }
+
+    private static List<ScoreNoteEvent> completeSixteenthOctaves(
+            List<ScoreNoteEvent> notes, int index, MeasureRegion region, int width, int height) {
+        var local = notes.stream()
+                .filter(n -> n.measureIndex() == index)
+                .sorted(Comparator.comparingDouble(ScoreNoteEvent::positionInMeasure))
+                .toList();
+        if (local.size() != 24 || local.stream().anyMatch(n ->
+                n.staffCount() != 1 || n.staffIndex() != 0
+                || n.beamCount() != 2 || n.augmentationDots() != 0
+                || n.tupletDivisor() != 1 || n.unbeamedDurationBeats() != 0))
+            return List.of();
+        float gap = (region.bottom() - region.top()) * height / 8.2f;
+        float span = (region.right() - region.left()) * width;
+        for (int i = 0; i < local.size(); i += 2) {
+            var a = local.get(i);
+            var b = local.get(i + 1);
+            if (Math.abs(a.staffStep() - b.staffStep()) != 7
+                    || b.stemDirection() != a.stemDirection()
+                    || (b.positionInMeasure() - a.positionInMeasure()) * span > gap * .33f)
+                return List.of();
+        }
+        return local;
+    }
+
+    private static boolean ownsSingleStaffRun(
+            List<MeasureRegion> raw, List<ScoreNoteEvent> notes, int index,
+            List<ScoreNoteEvent> octaves, List<RawStaffLineDetector.StaffLines> staffs,
+            byte[] gray, int width, int height, float cut) {
+        var region = raw.get(index);
+        var local = staffs.stream().filter(s -> s.center() > region.top() * height
+                && s.center() < region.bottom() * height).toList();
+        if (local.size() != 1) return false;
+        var rails = local.get(0);
+        var staff = new PlayingTechniqueDetector.Staff(rails.top(), rails.bottom(), rails.gap(), 0, 1);
+        if (ClosedSixteenthPairBeforeHalf.ownedSeparator(gray, width, height, staff, cut * width)
+                || !ClosedSixteenthPairBeforeHalf.closedOctaveRailsBeforeTieValidation(
+                        octaves, region, gray, width, height, rails.gap(), rails.bottom()))
+            return false;
+        for (int other = 0; other < raw.size(); other++) {
+            var peer = raw.get(other);
+            if (other == index || !sameRow(peer, region)) continue;
+            var head = completeSixteenthOctaves(notes, other, peer, width, height);
+            if (!head.isEmpty() && ClosedSixteenthPairBeforeHalf.closedOctaveRailsBeforeTieValidation(
+                    head, peer, gray, width, height, rails.gap(), rails.bottom()))
+                return true;
+        }
+        return false;
     }
 
     private static boolean same(double a, double b) {

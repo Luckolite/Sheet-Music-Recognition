@@ -4377,7 +4377,7 @@ final class TripletRhythmDetector {
         return otherDigits >= 2;
     }
 
-    private static boolean fingerOne(byte[] gray, int width, RawNumeralComponents.Component glyph) {
+    static boolean fingerOne(byte[] gray, int width, RawNumeralComponents.Component glyph) {
         int h = glyph.bottom - glyph.top + 1, w = glyph.right - glyph.left + 1;
         if (w > h * .65f) return false;
         int spine = 0;

@@ -43,6 +43,29 @@ public class RegisteredFrameOriginalTest {
     @Test
     public void completePairKeepsOriginalExpandedEndpoints() throws Exception {
         float[] r = {100, 116, 133, 149, 166};
+        assertTrue(completePair(scene(r), r));
+    }
+
+    @Test
+    public void registeredPairAllowsOnePixelOfOuterRounding() throws Exception {
+        float[] r = {100, 116, 133, 149, 166};
+        byte[] g = scene(r);
+        g[100 * W + 100] = (byte) 255;
+        assertTrue(completePair(g, r));
+        g[166 * W + 100] = (byte) 255;
+        assertFalse(completePair(g, r));
+    }
+
+    @Test
+    public void registeredPairRejectsTwoMissingOuterPixels() throws Exception {
+        float[] r = {100, 116, 133, 149, 166};
+        byte[] g = scene(r);
+        g[100 * W + 100] = (byte) 255;
+        g[101 * W + 100] = (byte) 255;
+        assertFalse(completePair(g, r));
+    }
+
+    private static boolean completePair(byte[] g, float[] r) throws Exception {
         var m =
                 OmrMeasurePostProcessor.class.getDeclaredMethod(
                         "completeCounterRulePair",
@@ -55,7 +78,7 @@ public class RegisteredFrameOriginalTest {
                         float.class,
                         float[].class);
         m.setAccessible(true);
-        assertTrue((Boolean) m.invoke(null, scene(r), W, H, 100, 98, 168, 16f, r));
+        return (Boolean) m.invoke(null, g, W, H, 100, 98, 168, 16f, r);
     }
 
     @Test

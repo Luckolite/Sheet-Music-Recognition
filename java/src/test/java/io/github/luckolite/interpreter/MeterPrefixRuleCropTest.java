@@ -55,6 +55,28 @@ public final class MeterPrefixRuleCropTest {
         assertSame(METER, trim(noSeparator));
     }
 
+    @Test
+    public void pairedRuleCanShedAConnectedTaperBeforeTheNumerals() {
+        var page = new byte[WIDTH * HEIGHT];
+        Arrays.fill(page, (byte) 255);
+        paint(page, 33, 22, 35, 86, 0);
+        paint(page, 40, 22, 42, 86, 0);
+        paint(page, 43, 22, 43, 70, 0);
+        paint(page, 44, 38, 44, 61, 0);
+        paint(page, 45, 43, 45, 57, 0);
+        paint(page, 49, 28, 61, 47, 0);
+        paint(page, 50, 59, 62, 79, 0);
+        assertEquals(46, trim(page).left());
+
+        var detached = page.clone();
+        paint(detached, 45, 26, 45, 37, 0);
+        assertSame(METER, trim(detached));
+
+        var single = page.clone();
+        paint(single, 33, 22, 35, 86, 255);
+        assertSame(METER, trim(single));
+    }
+
     private static MeterChangeDetector.Crop trim(byte[] page) {
         return MeterDoubleRuleCrop.trim(METER, page, WIDTH, HEIGHT, 45);
     }

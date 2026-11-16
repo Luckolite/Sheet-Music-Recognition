@@ -32,6 +32,16 @@ final class RestCompetingGlyphs {
             if (rest.durationBeats() == 1
                     && naturalOwnsQuarterAlias(
                             rest, notes, measures.get(bar), gray, source, width, height)) continue;
+            if (rest.durationBeats() == .5
+                    && stackedFingeringsOwnEighthRest(
+                            rest,
+                            notes,
+                            measures.get(bar),
+                            bar + 1 < measures.size() ? measures.get(bar + 1) : null,
+                            gray,
+                            source,
+                            width,
+                            height)) continue;
             if (rest.durationBeats() == .125
                     && (accidentalsOwn(rest, notes, measures.get(bar), labels, gray, source, width, height)
                             || lowerNaturalOwns(rest, notes, measures.get(bar), gray, source, width, height)))
@@ -39,6 +49,110 @@ final class RestCompetingGlyphs {
             kept.add(rest);
         }
         return kept.size() == rests.size() ? rests : List.copyOf(kept);
+    }
+
+    private static boolean stackedFingeringsOwnEighthRest(
+            ScoreRestEvent rest,
+            List<ScoreNoteEvent> notes,
+            MeasureRegion bar,
+            MeasureRegion next,
+            byte[] gray,
+            byte[] source,
+            int width,
+            int height) {
+        float gap = (bar.bottom() - bar.top()) * height / 8.2f;
+        float restSize = rest.pageHeight() * height;
+        float rx = x(bar, rest.positionInMeasure(), width), ry = rest.pageY() * height;
+        float span = (bar.right() - bar.left()) * width;
+        if (rest.kind() != ScoreRestEvent.Kind.LITERAL
+                || gap < 10
+                || gap > 27
+                || span < 3.7f * gap
+                || span > 7 * gap
+                || Math.abs(ry - bar.top() * height) > gap * .38f
+                || restSize < gap * 1.7f
+                || restSize > gap * 2.25f) return false;
+        var chord = notes.stream().filter(n -> n.measureIndex() == rest.measureIndex()).toList();
+        if (chord.size() != 2
+                || Math.abs(chord.get(0).staffStep() - chord.get(1).staffStep()) != 7
+                || chord.stream()
+                        .anyMatch(
+                                n ->
+                                        n.kind() != ScoreNoteEvent.Kind.PITCHED
+                                                || n.staffIndex() != 0
+                                                || n.staffCount() != 1
+                                                || n.visualSize() != ScoreNoteEvent.VisualSize.FULL
+                                                || n.unbeamedDurationBeats() != 2
+                                                || n.beamCount() != 0
+                                                || n.augmentationDots() != 0
+                                                || n.tupletDivisor() != 1
+                                                || n.tiedFromPrevious()
+                                                || n.crossStaffBeam()
+                                                || n.boundaryTies() != 0
+                                                || n.followingRestBeats() != 0
+                                                || (n.articulations() & NoteOrnament.GRACE) != 0
+                                                || Math.abs(
+                                                                x(bar, n.positionInMeasure(), width)
+                                                                        - rx)
+                                                        > gap * .33f)) return false;
+        float headX =
+                (x(bar, chord.get(0).positionInMeasure(), width)
+                                + x(bar, chord.get(1).positionInMeasure(), width))
+                        * .5f;
+        float headY = Math.min(chord.get(0).pageY(), chord.get(1).pageY()) * height;
+        for (byte[] raster : List.of(gray, source)) {
+            var rails =
+                    PrintedDirectionStaff.printedRules(
+                            raster, width, height, headX, bar.bottom() * height - 2.1f * gap, gap);
+            if (rails == null) return false;
+            float measured = rails[1], top = rails[0] - 4 * measured;
+            if (top - (ry + restSize * .5f) < measured * .8f
+                    || top - (ry + restSize * .5f) > measured * 1.55f
+                    || !threeThenOne(raster, width, height, rx, ry, headX, measured)) return false;
+            var staff = new PlayingTechniqueDetector.Staff(top, rails[0], measured, 0, 1);
+            var stem = PairedTremoloInk.stem(raster, width, height, headX, headY, measured, 1);
+            if (stem == null
+                    || stem.x() < headX + measured * .45f
+                    || stem.endY() < top - measured * 1.3f
+                    || !PrintedCadenceDurations.proved(
+                            raster, width, height, bar, next, List.of(staff), chord, false))
+                return false;
+        }
+        return true;
+    }
+
+    static boolean threeThenOne(
+            byte[] gray, int width, int height, float restX, float restY, float headX, float gap) {
+        int left = Math.round(restX - gap * .77f);
+        int right = Math.round(Math.min(restX + gap * .76f, headX + gap * .47f));
+        int top = Math.round(restY - gap * 1.9f), bottom = Math.round(restY + gap * 1.46f);
+        if (left < 0 || right >= width || top < 0 || bottom >= height) return false;
+        var glyphs =
+                RawNumeralComponents.capture(
+                                gray, width, height, left, top, right, bottom, () -> {}, () -> {})
+                        .components()
+                        .stream()
+                        .filter(c -> c.size() >= 8)
+                        .sorted(Comparator.comparingInt(c -> c.top))
+                        .toList();
+        if (glyphs.size() != 2) return false;
+        var three = glyphs.get(0);
+        var one = glyphs.get(1);
+        if (three.top <= top
+                || one.bottom >= bottom
+                || one.top - three.bottom < gap * .15f
+                || one.top - three.bottom > gap * .55f) return false;
+        for (var digit : glyphs) {
+            float dx = (digit.left + digit.right) * .5f - restX;
+            int glyphHeight = digit.bottom - digit.top + 1;
+            if (digit.left <= left
+                    || digit.right >= right
+                    || Math.abs(dx) > gap * .3f
+                    || glyphHeight < gap * .85f
+                    || glyphHeight > gap * 1.34f) return false;
+        }
+        return TripletRhythmDetector.isIsolatedThree(three, width)
+                && TripletRhythmDetector.fingerOne(gray, width, one);
     }
 
     private static boolean meterOwns(ScoreRestEvent rest, List<ScoreNoteEvent> notes,

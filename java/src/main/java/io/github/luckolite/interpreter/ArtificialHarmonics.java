@@ -397,12 +397,12 @@ final class ArtificialHarmonics {
         if (notes.stream().filter(note -> note.measureIndex() == index).count() != 2) return false;
 
         float left = measure.left() * width, right = measure.right() * width;
-        if (right - left < gap * 3.5f || right - left > gap * 8
-                || Math.abs(staff.bottom() - touch.pageY() * height) > gap * .7f) return false;
+        if (right - left < gap * 3.5f || right - left > gap * 8) return false;
         var rails = PrintedDirectionStaff.printedRules(
                 gray, width, height, right - 2.6f * gap, staff.bottom(), gap);
         if (rails == null) return false;
         float localGap = rails[1];
+        if (Math.abs(rails[0] - touch.pageY() * height) > localGap * .7f) return false;
         var local = new PlayingTechniqueDetector.Staff(
                 rails[0] - 4 * localGap, rails[0], localGap, 0, 1);
         if (PrintedCadenceDurations.boundaryColumn(

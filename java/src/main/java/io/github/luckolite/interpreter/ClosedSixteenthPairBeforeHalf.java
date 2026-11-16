@@ -165,11 +165,23 @@ final class ClosedSixteenthPairBeforeHalf {
             int height,
             float gap,
             float floor) {
-        if (notes.size() < 30 || notes.size() > 32) return false;
+        return closedSixteenths(notes, region, gray, width, height, gap, floor, 16, true);
+    }
+
+    static boolean closedOctaveRailsBeforeTieValidation(
+            List<ScoreNoteEvent> notes, MeasureRegion region, byte[] gray,
+            int width, int height, float gap, float floor) {
+        return closedSixteenths(notes, region, gray, width, height, gap, floor, 12, false);
+    }
+
+    private static boolean closedSixteenths(
+            List<ScoreNoteEvent> notes, MeasureRegion region, byte[] gray,
+            int width, int height, float gap, float floor, int attackCount, boolean requireUntied) {
+        if (notes.size() < 2 * attackCount - 2 || notes.size() > 2 * attackCount) return false;
         var columns = new ArrayList<List<ScoreNoteEvent>>();
         float span = (region.right() - region.left()) * width;
         for (var n : notes) {
-            if (!writtenHead(n)
+            if (!writtenHead(n, requireUntied)
                     || n.unbeamedDurationBeats() != 0
                     || n.beamCount() != 2
                     || n.augmentationDots() != 0) return false;
@@ -187,7 +199,7 @@ final class ClosedSixteenthPairBeforeHalf {
                             || n.staffStep() == owners.get(0).staffStep())) return false;
             owners.add(n);
         }
-        if (columns.size() != 16) return false;
+        if (columns.size() != attackCount) return false;
         int proved = 0;
         for (int i = 0; i < columns.size(); i += 4) {
             var heads = new ClosedFourDyadBeam.Head[4];
@@ -218,6 +230,10 @@ final class ClosedSixteenthPairBeforeHalf {
     }
 
     private static boolean writtenHead(ScoreNoteEvent n) {
+        return writtenHead(n, true);
+    }
+
+    private static boolean writtenHead(ScoreNoteEvent n, boolean requireUntied) {
         return n.kind() == ScoreNoteEvent.Kind.PITCHED
                 && n.visualSize() == ScoreNoteEvent.VisualSize.FULL
                 && n.staffCount() == 1
@@ -227,7 +243,7 @@ final class ClosedSixteenthPairBeforeHalf {
                 && n.tupletDivisor() == 1
                 && n.tupletNormalNotes() == 1
                 && n.boundaryTies() == 0
-                && !n.tiedFromPrevious()
+                && (!requireUntied || !n.tiedFromPrevious())
                 && n.leadingRestBeats() == 0
                 && n.followingRestBeats() == 0;
     }

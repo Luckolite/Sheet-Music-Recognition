@@ -54,13 +54,51 @@ final class MeterDoubleRuleCrop {
             boundary = second.right;
         }
         if (boundary + 2 >= crop.right()) return crop;
-        // Separating paper columns rule out trimming the initial stroke of a numeral.
-        if (!paperBetweenRules(gray, width, height, boundary, crop.firstLine(), gap)) boundary++;
+        // Prefer the paper immediately beside the established rule. A displaced edge
+        // of a verified pair can taper for a few more connected columns.
         if (!paperBetweenRules(gray, width, height, boundary, crop.firstLine(), gap)
-                || !paperBetweenRules(gray, width, height, boundary + 1, crop.firstLine(), gap))
-            return crop;
+                || !paperBetweenRules(gray, width, height, boundary + 1, crop.firstLine(), gap)) {
+            int next = boundary + 1;
+            if (paperBetweenRules(gray, width, height, next, crop.firstLine(), gap)
+                    && paperBetweenRules(gray, width, height, next + 1, crop.firstLine(), gap))
+                boundary = next;
+            else if (second != null)
+                boundary = pairedRuleFringe(gray, width, height, crop, boundary);
+            else return crop;
+            if (boundary < 0) return crop;
+        }
         return new MeterChangeDetector.Crop(
                 boundary, crop.top(), crop.right(), crop.bottom(), crop.firstLine(), gap);
+    }
+
+    private static int pairedRuleFringe(
+            byte[] gray, int width, int height, MeterChangeDetector.Crop crop, int start) {
+        float gap = crop.gap();
+        int top = crop.firstLine();
+        if (DottedDyadMeasureSeparator.continuesBeyondStaff(
+                gray, width, height, start - 1, top, Math.round(top + 4 * gap), gap)) return -1;
+        int last = Math.min(crop.right() - 3, start + Math.round(gap * .24f));
+        int previous = Integer.MAX_VALUE;
+        for (int x = start; x <= last; x++) {
+            if (paperBetweenRules(gray, width, height, x, top, gap)
+                    && paperBetweenRules(gray, width, height, x + 1, top, gap)) return x;
+            int samples = 0;
+            for (int space = 0; space < 4; space++) {
+                int first = Math.round(top + (space + .22f) * gap);
+                int end = Math.round(top + (space + .80f) * gap);
+                if (first < 1 || end >= height - 1) return -1;
+                for (int y = first; y <= end; y++) {
+                    if ((gray[y * width + x] & 255) >= 155) continue;
+                    if ((gray[(y - 1) * width + x - 1] & 255) >= 155
+                            && (gray[y * width + x - 1] & 255) >= 155
+                            && (gray[(y + 1) * width + x - 1] & 255) >= 155) return -1;
+                    samples++;
+                }
+            }
+            if (samples == 0 || samples >= previous) return -1;
+            previous = samples;
+        }
+        return -1;
     }
 
     private static boolean extendsBeyondStaff(

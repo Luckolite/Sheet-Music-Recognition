@@ -71,6 +71,12 @@ public class IsolatedHarmonicQuarterTest {
                 ArtificialHarmonics.isolatedQuarterTouch(
                         labels, gray, WIDTH, HEIGHT, bars, decoded, stopped, touch, cadence, staff,
                         stoppedX, stoppedY, GAP));
+        var estimated = new PlayingTechniqueDetector.Staff(
+                bottom - 4 * GAP - 8, bottom - 8, GAP, 0, 1);
+        assertTrue(
+                ArtificialHarmonics.isolatedQuarterTouch(
+                        labels, gray, WIDTH, HEIGHT, bars, decoded, stopped, touch, cadence, estimated,
+                        stoppedX, stoppedY, GAP));
         assertEquals(
                 List.of(stopped.withOctaveShift(2)),
                 ArtificialHarmonics.apply(

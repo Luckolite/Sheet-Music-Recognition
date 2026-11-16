@@ -4155,12 +4155,12 @@ final class OmrMeasurePostProcessor {
         if (first < 0 || last >= height || last <= first) return false;
         int radius = Math.max(2, Math.round(gap * 1.2f));
         for (int a = Math.max(0, column - radius); a <= Math.min(width - 1, column + 2); a++) {
-            if (!completeCounterRuleColumn(gray, width, a, first, last, gap)) continue;
+            if (!completeRegisteredCounterRuleColumn(gray, width, a, first, last, gap)) continue;
             for (int b = a + Math.max(3, Math.round(gap * .3f));
                     b <= Math.min(width - 1, a + radius);
                     b++) {
                 if (Math.min(Math.abs(a - column), Math.abs(b - column)) > 2
-                        || !completeCounterRuleColumn(gray, width, b, first, last, gap)) continue;
+                        || !completeRegisteredCounterRuleColumn(gray, width, b, first, last, gap)) continue;
                 int sampled = 0, clear = 0;
                 for (int y = first; y <= last; y++) {
                     if (ParallelStaffRules.registeredRuleRow(y, physicalRows)) continue;
@@ -4178,6 +4178,15 @@ final class OmrMeasurePostProcessor {
             }
         }
         return false;
+    }
+
+    /** A registered outer rule can round one pixel beyond an otherwise complete stroke. */
+    private static boolean completeRegisteredCounterRuleColumn(
+            byte[] gray, int width, int column, int first, int last, float gap) {
+        int start = (gray[first * width + column] & 255) <= 160 ? first : first + 1;
+        int end = (gray[last * width + column] & 255) <= 160 ? last : last - 1;
+        return end - start >= last - first - 1
+                && completeCounterRuleColumn(gray, width, column, start, end, gap);
     }
 
     /** Both ends and the complete between-rule extent must belong to one fixed ink column. */

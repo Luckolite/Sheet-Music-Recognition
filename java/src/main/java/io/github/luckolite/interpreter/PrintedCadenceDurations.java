@@ -164,6 +164,10 @@ final class PrintedCadenceDurations {
                             staffs,
                             chord,
                             next != null && meter[i + 1])
+                    && !(duration == 2 && next != null && meter[i + 1] && annotationGray != null
+                            && closedHalfBeforeInlineMeter(gray, width, height, measure, next, chord)
+                            && closedHalfBeforeInlineMeter(
+                                    annotationGray, width, height, measure, next, chord))
                     && !compactTerminalQuarter(gray, width, height, measure, next, chord)
                     && !(duration == 2 && i > 0 && next != null && !meter[i + 1]
                             && fullSixteenthDyadRun(notes.get(i - 1))
@@ -695,7 +699,7 @@ final class PrintedCadenceDurations {
 
 
 
-    private static boolean proved(
+    static boolean proved(
             byte[] gray, int width, int height, MeasureRegion measure, MeasureRegion next,
             List<PlayingTechniqueDetector.Staff> staffs, List<ScoreNoteEvent> chord,
             boolean nextHasMeter) {
@@ -805,6 +809,35 @@ final class PrintedCadenceDurations {
     private static boolean fullSixteenthDyadRun(List<ScoreNoteEvent> heads) {
         return heads.size() == 32 && heads.stream().allMatch(n ->
                 exactCadenceRhythm(n, 0, 2));
+    }
+
+    /** The next playable crop can start beyond the written meter and its two closing rules. */
+    static boolean closedHalfBeforeInlineMeter(
+            byte[] gray, int width, int height, MeasureRegion measure, MeasureRegion next,
+            List<ScoreNoteEvent> chord) {
+        if (gray == null || gray.length != (long) width * height || chord.size() != 2)
+            return false;
+        float left = measure.left() * width, right = measure.right() * width;
+        float gap = (measure.bottom() - measure.top()) * height / 8.2f;
+        float span = right - left, followingGap = next.left() * width - right;
+        if (gap < 9 || gap > 30 || span < 4 * gap || span > 8 * gap
+                || followingGap < 2.35f * gap || followingGap > 5.5f * gap
+                || Math.abs(next.top() - measure.top()) * height > gap * .5f)
+            return false;
+        float first = Math.min(chord.get(0).positionInMeasure(), chord.get(1).positionInMeasure());
+        float last = Math.max(chord.get(0).positionInMeasure(), chord.get(1).positionInMeasure());
+        if (first < .22f || last > .65f || (last - first) * span > gap * .26f
+                || !chord.stream().allMatch(n -> exactCadenceNote(n, 2)
+                        && n.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_FROM_KEY))
+            return false;
+        var rules = PrintedDirectionStaff.printedRules(
+                gray, width, height, left + gap * 1.5f, measure.bottom() * height - 2.1f * gap, gap);
+        if (rules == null) return false;
+        gap = rules[1];
+        var staff = new PlayingTechniqueDetector.Staff(rules[0] - 4 * gap, rules[0], gap, 0, 1);
+        return provedIsolatedHalfDyad(gray, width, left, staff, chord)
+                && completeCadence(gray, width, staff, left, right, left + first * span,
+                        left + last * span, right + .55f * gap, false, false, false);
     }
 
     /** A wide same-row half dyad needs independent opening and closing rules. */
