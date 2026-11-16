@@ -24,6 +24,21 @@ final class UnnumberedTripletInk {
         return new Rows((int)Math.ceil(first * height), Math.min(height - 1, (int)Math.floor(last * height)));
     }
 
+    /** Check the bracket separately when a numeral alone could be a fingering. */
+    static boolean bracketBesideBeam(
+            byte[] ink, int width, int height, float gap, float first, float last,
+            float headTop, float headBottom, float shaftTip, Rows rows, StaffPitchTrack track) {
+        int margin = Math.round(2.5f * gap);
+        int left = Math.round(first - gap), right = Math.round(last + gap);
+        int top = Math.max(0, Math.round(headTop - 7 * gap) - 12);
+        int bottom = Math.min(height - 1, Math.round(Math.max(headBottom, shaftTip) + 7 * gap) + 12);
+        if (left < margin || right + margin >= width) return true;
+        var mask = trackedStaffMask(ink, width, height, left, right, top, bottom, track, gap);
+        var window = new Window(ink, width, left, top, right - left + 1, bottom - top + 1, mask);
+        return window.bracket(window.staffRows(margin, gap), first, last, headTop,
+                Math.max(headBottom, shaftTip), headTop, shaftTip, gap, rows);
+    }
+
     static boolean clear(byte[] ink, int width, int height, float gap,
             float[] headsX, float[] headsY, List<PrintedBeamShafts.Shaft> shafts) {
         return clear(ink, width, height, gap, headsX, headsY, shafts, new Rows(0, height - 1));
@@ -46,9 +61,24 @@ final class UnnumberedTripletInk {
         return staff != null && clear(ink,width,height,gap,headsX,headsY,shafts,sourceRows,staff,words);
     }
 
+    static boolean clearFollowing(byte[] ink, int width, int height, float gap,
+            float[] headsX, float[] headsY, List<PrintedBeamShafts.Shaft> shafts, Rows sourceRows,
+            StaffPitchTrack staffTrack, List<PlayingTechniqueDetector.Word> words, List<Head> lowerHeads) {
+        return staffTrack != null && clear(ink, width, height, gap, headsX, headsY, shafts, sourceRows,
+                staffTrack, words, lowerHeads);
+    }
+
+    record Head(float x, float y) {}
+
     private static boolean clear(byte[] ink, int width, int height, float gap,
             float[] headsX, float[] headsY, List<PrintedBeamShafts.Shaft> shafts, Rows sourceRows,
             StaffPitchTrack staffTrack, List<PlayingTechniqueDetector.Word> words) {
+        return clear(ink, width, height, gap, headsX, headsY, shafts, sourceRows, staffTrack, words, null);
+    }
+
+    private static boolean clear(byte[] ink, int width, int height, float gap,
+            float[] headsX, float[] headsY, List<PrintedBeamShafts.Shaft> shafts, Rows sourceRows,
+            StaffPitchTrack staffTrack, List<PlayingTechniqueDetector.Word> words, List<Head> lowerHeads) {
         if (ink == null || width < 1 || height < 1 || ink.length != (long) width * height
                 || !Float.isFinite(gap) || gap < 10 || gap > 25
                 || headsX.length != 3 || headsY.length != 3 || shafts.size() != 3) return false;
@@ -119,9 +149,20 @@ final class UnnumberedTripletInk {
             boolean markBand = beamSide >= gap * .18f && beamSide <= gap * 1.8f;
             boolean headBand = headSide >= gap * .95f && headSide <= gap * 5f;
             if (!(markBand || headBand)) continue;
-            int inkWidth = maxX - minX + 1, inkHeight = maxY - minY + 1;
-            if (markBand && ownedReturningCurve(queue, size, window, minX, maxX, shafts, travel, gap))
+            if (lowerHeads != null && !markBand && minY >= bottomHead + 2.5f * gap
+                    && memberOwnsLowerHead(queue, size, window, minX, maxX, minY, maxY, lowerHeads, gap))
                 continue;
+            int inkWidth = maxX - minX + 1, inkHeight = maxY - minY + 1;
+            if (lowerHeads != null && !markBand && minY >= bottomHead + 1.8f * gap
+                    && inkWidth <= .60f * gap && inkHeight <= .60f * gap
+                    && size >= .60f * inkWidth * inkHeight) {
+                float dotY = (minY + maxY) * .5f;
+                if (lowerHeads.stream().filter(head -> Math.abs(head.x() - center) <= .27f * gap
+                        && head.y() - dotY >= 1.15f * gap && head.y() - dotY <= 1.9f * gap).count() == 1)
+                    continue;
+            }
+            if (markBand && ownedReturningCurve(queue, size, window, minX, maxX, shafts, travel, gap,
+                    lowerHeads != null ? headsX : null)) continue;
             if (travel > 0 && markBand && ownedBowCaption(
                     ink,width,height,gap,minX,minY,maxX,maxY,words)) continue;
             if (inkWidth > .58f * gap || inkHeight > .58f * gap || size < .74f * inkWidth * inkHeight)
@@ -135,6 +176,24 @@ final class UnnumberedTripletInk {
             if (!dot) return false;
         }
         return true;
+    }
+
+    private static boolean memberOwnsLowerHead(int[] pixels, int size, Window window, int left, int right,
+            int top, int bottom, List<Head> lowerHeads, float gap) {
+        int radius = Math.round(gap * .17f);
+        int area = (2 * radius + 1) * (2 * radius + 1);
+        for (var head : lowerHeads) {
+            int x = Math.round(head.x()), y = Math.round(head.y());
+            if (x - radius < left || x + radius > right || y - radius < top || y + radius > bottom) continue;
+            int core = 0;
+            for (int i = 0; i < size; i++) {
+                int xx = pixels[i] % window.width + window.left;
+                int yy = pixels[i] / window.width + window.top;
+                if (Math.abs(xx - x) <= radius && Math.abs(yy - y) <= radius) core++;
+            }
+            if (core >= .8f * area) return true;
+        }
+        return false;
     }
 
     private static boolean ownedBowCaption(
@@ -176,7 +235,7 @@ final class UnnumberedTripletInk {
     }
 
     private static boolean ownedReturningCurve(int[] pixels, int size, Window window, int left, int right,
-            List<PrintedBeamShafts.Shaft> shafts, int travel, float gap) {
+            List<PrintedBeamShafts.Shaft> shafts, int travel, float gap, float[] headsX) {
         if (right - left < gap * 2.1f || right - left > gap * 3f) return false;
         boolean owned = false;
         for (int i = 0; i < 2; i++) {
@@ -184,6 +243,8 @@ final class UnnumberedTripletInk {
             var b = shafts.get(i + 1);
             if (Math.abs(left - (a.left() + a.right()) * .5f) <= gap * .38f
                     && Math.abs(right - (b.left() + b.right()) * .5f) <= gap * .38f) owned = true;
+            if (headsX != null && travel < 0 && left > headsX[i] && right < headsX[i + 1]
+                    && left - headsX[i] <= gap * .62f && headsX[i + 1] - right <= gap * .73f) owned = true;
         }
         if (!owned) return false;
         int length = right - left + 1;

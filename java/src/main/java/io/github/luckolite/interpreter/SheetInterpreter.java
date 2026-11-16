@@ -794,7 +794,8 @@ public final class SheetInterpreter {
                         finalInterpretation, null, gray, annotationGray, width, height);
         finalInterpretation =
                 TerminalDottedCadenceHooks.apply(finalInterpretation, null, gray, width, height);
-        finalInterpretation = ClosedSixteenthDyads.apply(finalInterpretation, gray, width, height);
+        finalInterpretation =
+                ClosedSixteenthDyads.apply(finalInterpretation, gray, annotationGray, width, height);
         finalInterpretation = ClosedDottedSixteenths.apply(finalInterpretation, gray, width, height);
         finalInterpretation =
                 ClosedDottedThirds.apply(

@@ -14175,6 +14175,10 @@ final class OmrScoreInterpreter {
             List<Staff> staffs,
             List<Component> heads) {
         if (raw == null || owner.count != 1) return false;
+        if (Math.abs(physical.pitchBottom - owner.pitchBottom) > physical.pitchGap) {
+            physical = lowerStaffForLedgerRail(labels, gray, raw, width, height, head, physical, owner);
+            if (physical == null) return false;
+        }
         float gap = physical.pitchGap;
         if (gap < 12
                 || gap > 26
@@ -14254,6 +14258,26 @@ final class OmrScoreInterpreter {
                 next,
                 downShaft(gray, width, height, later, gap, budget),
                 gap);
+    }
+
+    private static Staff lowerStaffForLedgerRail(
+            byte[] labels, byte[] gray, byte[] raw, int width, int height,
+            Component head, Staff previous, Staff owner) {
+        // The competing frame ends well above this head. The assigned lower staff needs
+        // its own local five-line evidence on both planes before validating the ledger rail.
+        float gap = owner.pitchGap;
+        if (gap < 12 || gap > 26
+                || previous.bottom + previous.pitchGap * 3 > head.centerY
+                || owner.top <= head.centerY) return null;
+        float bottom = owner.pitchBottom + owner.pitchSlope * (head.centerX - width * .5f);
+        float[] normalized = StaffPitchTrack.localPrintedRules(labels, gray, width, height,
+                head.centerX, head.minX, head.maxX, bottom, gap);
+        float[] source = StaffPitchTrack.localPrintedRules(labels, raw, width, height,
+                head.centerX, head.minX, head.maxX, bottom, gap);
+        if (normalized == null || source == null
+                || Math.abs(normalized[0] - source[0]) > gap * .06f
+                || Math.abs(normalized[1] - source[1]) > gap * .04f) return null;
+        return new Staff(normalized[0] - normalized[1] * 4, normalized[0], normalized[1]);
     }
 
     private static boolean singleRailOnBothPlanes(
@@ -24264,7 +24288,64 @@ final class OmrScoreInterpreter {
             if (agreed != Integer.MIN_VALUE && agreed != pitch) return original;
             agreed = pitch;
         }
-        return maxY - minY <= gap * .04f ? agreed : original;
+        if (maxY - minY > gap * .04f) return original;
+        if (original >= 13 && original % 2 == 1 && agreed == original - 1
+                && preservesUpperLedgerSpace(gray, width, height, head.centerX, head.centerY,
+                        maxY, bottom, gap, agreed)) return original;
+        return agreed;
+    }
+
+    /** A close ledger can survive the oval opening and pull its centroid down. */
+    static boolean preservesUpperLedgerSpace(byte[] gray, int width, int height, float x, float headY,
+            float openedY, float staffBottom, float gap, int lineStep) {
+        if (gray == null || gray.length != (long) width * height || width < 1 || height < 1
+                || !Float.isFinite(x + headY + openedY + staffBottom + gap)
+                || gap < 9 || gap > 30 || lineStep < 12 || lineStep % 2 != 0) return false;
+        float lineHint = staffBottom - lineStep * gap * .5f;
+        float first = compactLedgerBand(gray, width, height, x, lineHint, gap);
+        float second = compactLedgerBand(gray, width, height, x, lineHint + gap, gap);
+        if (!Float.isFinite(first) || !Float.isFinite(second)) return false;
+        float spacing = second - first;
+        return spacing >= gap * .82f && spacing <= gap * 1.15f
+                && first - openedY >= spacing * .34f
+                && first - headY <= spacing * .70f;
+    }
+
+    private static float compactLedgerBand(
+            byte[] gray, int width, int height, float headX, float centerY, float gap) {
+        int x = Math.round(headX), y = Math.round(centerY);
+        int span = Math.round(gap * .81f), reach = Math.round(gap * .43f);
+        int flank = Math.round(gap * 1.13f), margin = Math.round(gap * .40f);
+        if (x - flank - 1 < 0 || x + flank + 1 >= width
+                || y - reach - margin < 0 || y + reach + margin >= height) return Float.NaN;
+        int top = -1, bottom = -1;
+        for (int row = y - reach; row <= y + reach; row++) {
+            int dark = 0;
+            for (int col = x - span; col <= x + span; col++) {
+                if ((gray[row * width + col] & 255) < 155) dark++;
+            }
+            if (dark < (2 * span + 1) * .91f) continue;
+            if (bottom >= 0 && row != bottom + 1) return Float.NaN;
+            if (top < 0) top = row;
+            bottom = row;
+        }
+        if (top < 0 || bottom - top + 1 > gap * .40f || top == y - reach || bottom == y + reach)
+            return Float.NaN;
+        int row = (top + bottom) / 2;
+        for (int outside : new int[] {x - flank, x + flank}) {
+            int paper = 0;
+            for (int yy = row - 1; yy <= row + 1; yy++) {
+                for (int col = outside - 1; col <= outside + 1; col++) {
+                    if ((gray[yy * width + col] & 255) > 180) paper++;
+                }
+            }
+            if (paper < 7) return Float.NaN;
+        }
+        int paperBelow = 0;
+        for (int col = x - span; col <= x + span; col++) {
+            if ((gray[(row + margin) * width + col] & 255) > 180) paperBelow++;
+        }
+        return paperBelow >= (2 * span + 1) * .74f ? (top + bottom) * .5f : Float.NaN;
     }
 
     private static float[] localStaffPitch(

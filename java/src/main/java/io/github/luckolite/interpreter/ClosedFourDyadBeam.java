@@ -224,6 +224,50 @@ final class ClosedFourDyadBeam {
         return false;
     }
 
+    /** Both chord heads reach the primary rail in an intact two-sixteenth and eighth close. */
+    static boolean provesIntactTwoSixteenthsAndEighth(
+            byte[] gray, int width, int height, Head[] heads, float gap) {
+        if (heads.length != 3 || gap < 12 || gap > 23) return false;
+        var budget = new PrintedBeamShafts.Budget(100_000);
+        int[] x = new int[3], tip = new int[3];
+        for (int i = 0; i < heads.length; i++) {
+            var h = heads[i];
+            if (h.bottom - h.top < gap * .65f || h.bottom - h.top > gap * 1.4f
+                    || i > 0 && (h.x - heads[i - 1].x < gap * 2.5f
+                            || h.x - heads[i - 1].x > gap * 3.7f)) return false;
+            var upper = PrintedBeamShafts.at(gray, width, height, h.x, h.top, gap, budget);
+            var lower = PrintedBeamShafts.at(gray, width, height, h.x, h.bottom, gap, budget);
+            if (upper.size() != 1 || lower.size() != 1) return false;
+            var a = upper.get(0);
+            var b = lower.get(0);
+            int left = Math.max(a.left(), b.left()), right = Math.min(a.right(), b.right());
+            if (a.direction() != 1 || b.direction() != 1 || left > right
+                    || Math.abs(a.endY() - b.endY()) > gap * .18f) return false;
+            x[i] = (left + right) / 2;
+            tip[i] = Math.min(a.endY(), b.endY());
+        }
+        float slope = (tip[2] - tip[0]) / (float) (x[2] - x[0]);
+        if (Math.abs(slope) > .32f || Math.abs(tip[0] + slope * (x[1] - x[0]) - tip[1]) > gap * .22f)
+            return false;
+        int pad = Math.round(gap * .34f), reach = Math.round(gap * .75f);
+        for (int inset = Math.round(gap * .08f); inset <= Math.round(gap * .32f); inset++) {
+            float primary = tip[0] - inset;
+            if (coverage(gray, width, height, x[0], x[0] + pad, x[2] - pad, primary, slope, 2) < .94f
+                    || coverage(gray, width, height, x[0], x[0] - reach, x[0] - pad, primary, slope, 2) > .18f
+                    || coverage(gray, width, height, x[0], x[2] + pad, x[2] + reach, primary, slope, 2) > .18f)
+                continue;
+            for (int depth = Math.round(gap * .52f); depth <= Math.round(gap * 1.10f); depth++) {
+                float secondary = primary - depth;
+                if (coverage(gray, width, height, x[0], x[0] + pad, x[1] - pad, secondary, slope, 2) >= .91f
+                        && coverage(gray, width, height, x[0], x[1] + pad, x[2] - pad, secondary, slope, 2) <= .22f
+                        && coverage(gray, width, height, x[0], x[0] + pad, x[1] - pad,
+                                primary - depth * .5f, slope, 0) <= .50f)
+                    return true;
+            }
+        }
+        return false;
+    }
+
     private static boolean brokenShaft(
             byte[] gray, int width, int height, int x, int cap, int rail, float gap) {
         if (x < 0 || x + 1 >= width || cap < 0 || rail >= height) return false;

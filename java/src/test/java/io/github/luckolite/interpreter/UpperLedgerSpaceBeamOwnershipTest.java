@@ -11,7 +11,7 @@ import org.junit.Test;
 
 public class UpperLedgerSpaceBeamOwnershipTest {
     private static final int WIDTH = 220;
-    private static final int HEIGHT = 220;
+    private static final int HEIGHT = 360;
     private static final float GAP = 16;
     private static final float TOP = 126;
     private static final float BOTTOM = 190;
@@ -70,6 +70,32 @@ public class UpperLedgerSpaceBeamOwnershipTest {
         assertFalse(admitted(ink, noWings, APEX, 0));
     }
 
+    @Test
+    public void interstaffApexUsesFiveOwnedRulesAndTheUnbrokenSourceRail() throws Exception {
+        int shift = 128;
+        int[] heights = Arrays.stream(APEX).map(y -> y + shift).toArray();
+        var unshifted = ink(APEX, 0);
+        var gray = new byte[WIDTH * HEIGHT];
+        var labels = new byte[gray.length];
+        Arrays.fill(gray, (byte) 255);
+        System.arraycopy(unshifted, 0, gray, shift * WIDTH, (HEIGHT - shift) * WIDTH);
+        for (int row = 16; row <= 80; row += 16)
+            paint(gray, 2, row, WIDTH - 3, row, (byte) 0);
+        for (int row = (int) TOP + shift; row <= BOTTOM + shift; row += 16) {
+            paint(gray, 2, row, WIDTH - 3, row, (byte) 0);
+            paint(labels, 2, row, WIDTH - 3, row, (byte) 4);
+        }
+        assertTrue(admitted(labels, gray, gray, XS, heights, 0, shift, 80));
+        var noRawStaff = gray.clone();
+        paint(noRawStaff, 2, (int) BOTTOM + shift, WIDTH - 3, (int) BOTTOM + shift, (byte) 255);
+        assertFalse(admitted(labels, gray, noRawStaff, XS, heights, 0, shift, 80));
+        var noRawLedger = gray.clone();
+        paint(noRawLedger, 36, 27 + shift, 42, 33 + shift, (byte) 255);
+        paint(noRawLedger, 64, 27 + shift, 70, 33 + shift, (byte) 255);
+        assertFalse(admitted(labels, gray, noRawLedger, XS, heights, 0, shift, 80));
+        assertFalse(admitted(labels, gray, gray, XS, heights, 0, shift, 142));
+    }
+
     private static byte[] ink(int[] heights, int owner) {
         return ink(XS, heights, owner);
     }
@@ -108,6 +134,11 @@ public class UpperLedgerSpaceBeamOwnershipTest {
 
     private static boolean admitted(byte[] gray, byte[] raw, int[] centers,
             int[] heights, int ownerIndex) throws Exception {
+        return admitted(new byte[gray.length], gray, raw, centers, heights, ownerIndex, 0, 0);
+    }
+
+    private static boolean admitted(byte[] labels, byte[] gray, byte[] raw, int[] centers,
+            int[] heights, int ownerIndex, int shift, float precedingBottom) throws Exception {
         var outer = OmrScoreInterpreter.class;
         var component = Class.forName(outer.getName() + "$Component");
         var staff = Class.forName(outer.getName() + "$Staff");
@@ -134,7 +165,11 @@ public class UpperLedgerSpaceBeamOwnershipTest {
                             (float) heights[i]);
         var staffShape = staff.getDeclaredConstructor(float.class, float.class, float.class);
         staffShape.setAccessible(true);
-        var owner = staffShape.newInstance(TOP, BOTTOM, GAP);
+        var owner = staffShape.newInstance(TOP + shift, BOTTOM + shift, GAP);
+        var physical =
+                shift == 0
+                        ? owner
+                        : staffShape.newInstance(precedingBottom - 4 * GAP, precedingBottom, GAP);
         var probe =
                 outer.getDeclaredMethod(
                         "upperLedgerHeadOnSingleRail",
@@ -152,13 +187,13 @@ public class UpperLedgerSpaceBeamOwnershipTest {
         return (boolean)
                 probe.invoke(
                         null,
-                        new byte[gray.length],
+                        labels,
                         gray,
                         raw,
                         WIDTH,
                         HEIGHT,
                         heads[ownerIndex],
-                        owner,
+                        physical,
                         owner,
                         List.of(owner),
                         List.of(heads));
