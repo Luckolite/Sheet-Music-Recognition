@@ -61,6 +61,20 @@ final class PrintedDottedTripletBar {
                 }
                 continue;
             }
+            if (meter.numerator() == 4 && heads.size() == 12
+                    && raw != null && raw.length == gray.length
+                    && score.rests().stream().noneMatch(r -> r.measureIndex() == index)) {
+                heads.sort(Comparator.comparingDouble(Head::x));
+                if (qualifiedFourGroups(raster, new Raster(raw, width, height),
+                        score.measures().get(barIndex), heads)) {
+                    for (int slot = 0; slot < heads.size(); slot++) {
+                        var owner = heads.get(slot);
+                        rewrite[owner.owner] = withTriplet(owner.note, slot % 3 == 0 ? 1 : 0);
+                    }
+                    changed = true;
+                }
+                continue;
+            }
             boolean mixed = meter.numerator() == 4 && heads.size() == 16;
             if (mixed || meter.numerator() == 6 && heads.size() == 20) {
                 if (score.rests().stream().anyMatch(r -> r.measureIndex() == index)) continue;
@@ -231,15 +245,8 @@ final class PrintedDottedTripletBar {
         float coarseGap=(bar.bottom()-bar.top())*p.height/8.2f;
         if (coarseGap<10 || coarseGap>28 || right-left<26*coarseGap || right-left>50*coarseGap)
             return null;
-        var samples=new ArrayList<float[]>();
-        for (int j=0;j<=12;j++) {
-            float x=left+(right-left)*j/12;
-            var sample=PrintedDirectionStaff.printedRules(p.ink,p.width,p.height,
-                    x,bar.bottom()*p.height-2.1f*coarseGap,coarseGap);
-            if (sample!=null) samples.add(new float[]{x,sample[0],sample[1]});
-        }
-        if (samples.size()<7) return null;
-        var track=StaffPitchTrack.fromVerifiedSamples(samples);
+        var track = staffTrack(p, bar, coarseGap);
+        if (track == null) return null;
         if (!barline(p,left,track.at(left)) || !barline(p,right,track.at(right))) return null;
         List<Head> result=null;
         int clef=candidates.get(0).note.clefBottomDiatonic();
@@ -259,6 +266,54 @@ final class PrintedDottedTripletBar {
             }
         }
         return result;
+    }
+
+    /** Four separate dotted triplets fill a closed common-time bar. */
+    private static boolean qualifiedFourGroups(Raster corrected, Raster raw, MeasureRegion bar, List<Head> heads) {
+        float gap = (bar.bottom() - bar.top()) * raw.height / 8.2f;
+        float left = bar.left() * raw.width, right = bar.right() * raw.width;
+        if (bar.cadenceQuarterBeats() != 0 || gap < 10 || gap > 27
+                || right - left < gap * 23 || right - left > gap * 36
+                || heads.get(0).x - left < gap * .65f || heads.get(0).x - left > gap * 3.15f
+                || right - heads.get(11).x < gap * .75f || right - heads.get(11).x > gap * 3.15f)
+            return false;
+        int clef = heads.get(0).note.clefBottomDiatonic();
+        for (int i = 0; i < heads.size(); i++) {
+            var note = heads.get(i).note;
+            int slot = i % 3;
+            if (!ordinary(note) || note.unbeamedDurationBeats() != 0
+                    || note.clefBottomDiatonic() != clef || note.beamCount() != (slot == 1 ? 2 : 1)
+                    || note.stemDirection() != heads.get(i - slot).note.stemDirection()
+                    || slot == 0 && note.augmentationDots() < 1) return false;
+        }
+        for (Raster plane : List.of(raw, corrected)) {
+            var track = staffTrack(plane, bar, gap);
+            if (track == null || !barline(plane, left, track.at(left)) || !barline(plane, right, track.at(right)))
+                return false;
+            for (int i = 0; i < heads.size(); i += 3) {
+                var a = heads.get(i);
+                var b = heads.get(i + 1);
+                var c = heads.get(i + 2);
+                float local = track.at(b.x)[1];
+                int direction = b.note.stemDirection();
+                if (b.x - a.x < local * 2.25f || b.x - a.x > local * 3.8f
+                        || c.x - b.x < local * 1.65f || c.x - b.x > local * 3.05f
+                        || !dot(plane, a, b, local) || dot(plane, b, c, local)
+                        || !PrintedTupletBeamOwner.connectedHeads(
+                                plane.ink, plane.width, plane.height, a.x, a.y, b.x, b.y, local, direction)
+                        || !PrintedTupletBeamOwner.connectedHeads(
+                                plane.ink, plane.width, plane.height, b.x, b.y, c.x, c.y, local, direction))
+                    return false;
+                if (i + 3 >= heads.size()) continue;
+                var following = heads.get(i + 3);
+                if (following.x - c.x < local * 1.65f || following.x - c.x > local * 3.2f
+                        || dot(plane, c, following, local)
+                        || !SeparateBeamGroups.between(
+                                plane.ink, plane.width, plane.height, c.x, c.y, following.x, following.y, local))
+                    return false;
+            }
+        }
+        return true;
     }
 
     /** Two separated dotted triplets followed by four dotted-sixteenth and hook pairs. */
@@ -443,6 +498,18 @@ final class PrintedDottedTripletBar {
                 && b.right() >= beam.b.x
                 && Math.abs(a.startY() - b.endY()) < gap * .6f
                 && Math.abs(a.endY() - b.startY()) < gap * .6f;
+    }
+
+    private static StaffPitchTrack staffTrack(Raster plane, MeasureRegion bar, float gap) {
+        var samples = new ArrayList<float[]>();
+        float left = bar.left() * plane.width, right = bar.right() * plane.width;
+        for (int i = 0; i <= 12; i++) {
+            float x = left + (right - left) * i / 12;
+            var sample = PrintedDirectionStaff.printedRules(plane.ink, plane.width, plane.height,
+                    x, bar.bottom() * plane.height - 2.1f * gap, gap);
+            if (sample != null) samples.add(new float[]{x, sample[0], sample[1]});
+        }
+        return samples.size() < 7 ? null : StaffPitchTrack.fromVerifiedSamples(samples);
     }
 
     private static boolean barline(Raster p, float edge, float[] rails) {

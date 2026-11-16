@@ -76,6 +76,17 @@ final class ClosedSixteenthDyads {
                 active=score.meterChanges().get(meter++);
             final int bar=m;
             int count = bars.get(m).size();
+            if (active != null
+                    && active.numerator() == 6
+                    && active.denominator() == 4
+                    && count == 24
+                    && regions.get(m).cadenceQuarterBeats() == 0
+                    && score.rests().stream().noneMatch(r -> r.measureIndex() == bar)) {
+                var next = m + 1 < regions.size() ? regions.get(m + 1) : null;
+                restoreClosedMonophonicSixFour(
+                        ink, original, regions.get(m), next, bars.get(m), result);
+                continue;
+            }
             if (count != 30 && count != 32
                     || regions.get(m).cadenceQuarterBeats() != 0
                     || score.rests().stream().anyMatch(r -> r.measureIndex() == bar)) continue;
@@ -96,13 +107,20 @@ final class ClosedSixteenthDyads {
                         regions, bars.get(m), result);
                 continue;
             }
-            if (active.measureIndex()==m && closedHeaderSixteenths(ink,regions.get(m),bars.get(m))) {
+            boolean header = active.measureIndex() == m;
+            boolean compact = header && closedHeaderSixteenths(ink, regions.get(m), bars.get(m));
+            boolean wide = header && !compact && closedWideHeaderThirds(ink, original, regions.get(m),
+                    m + 1 < regions.size() ? regions.get(m + 1) : null, bars.get(m));
+            if (compact || wide) {
                 for (var head:bars.get(m)) {
                     var note=head.note.withTupletRatio(1,1);
                     result.set(head.owner,note.augmentationDots()==0 ? note : withoutDot(note));
                 }
-                if (!closes(bars.get(m),result))
+                if (!closes(bars.get(m),result)) {
                     for (var head:bars.get(m)) result.set(head.owner,head.note);
+                } else if (wide && physicalPage >= 0) {
+                    printedBeams = projectDoubleRails(printedBeams, physicalPage, bars.get(m));
+                }
                 continue;
             }
             if (restoreSteppedOctaveShaft(ink, regions.get(m), bars.get(m), result)) continue;
@@ -166,7 +184,90 @@ final class ClosedSixteenthDyads {
         return new ScoreBeamSource(groups, source.detachedColumns(), origins);
     }
 
-    /** Clear a spurious triplet claim across two independently separate four-dyad beam groups. */
+    /** Four literal stems on each side of a beam break contradict a triplet spanning that break. */
+    private static void restoreClosedMonophonicSixFour(
+            Ink normalized,
+            Ink original,
+            MeasureRegion bar,
+            MeasureRegion next,
+            List<Head> row,
+            List<ScoreNoteEvent> result) {
+        if (original == null || next == null || row.size() != 24) return;
+        float gap = (bar.bottom() - bar.top()) * normalized.height / 8.2f;
+        float left = bar.left() * normalized.width, right = bar.right() * normalized.width;
+        if (gap < 10
+                || gap > 26
+                || right - left < 44 * gap
+                || right - left > 55 * gap
+                || Math.abs(next.top() - bar.top()) * normalized.height > gap * .35f) return;
+        var heads = row.stream().sorted(Comparator.comparingDouble(Head::x)).toList();
+        for (int i = 0; i < heads.size(); i++) {
+            var head = heads.get(i);
+            var note = head.note();
+            int written = i >= 2 && i <= 4 ? 3 : 1;
+            if (note.kind() != ScoreNoteEvent.Kind.PITCHED
+                    || note.staffIndex() != 0
+                    || note.staffCount() != 1
+                    || note.visualSize() != ScoreNoteEvent.VisualSize.FULL
+                    || note.beamCount() != 2
+                    || note.augmentationDots() != 0
+                    || note.unbeamedDurationBeats() != 0
+                    || note.tupletDivisor() != written
+                    || note.tupletNormalNotes() != (written == 3 ? 2 : 1)
+                    || note.leadingRestBeats() != 0
+                    || note.followingRestBeats() != 0
+                    || note.tiedFromPrevious()
+                    || note.boundaryTies() != 0
+                    || note.crossStaffBeam()
+                    || (note.articulations() & NoteOrnament.GRACE) != 0) return;
+            if (i > 0) {
+                float advance = head.x() - heads.get(i - 1).x();
+                if (advance < gap * 1.5f || advance > gap * 3.5f) return;
+            }
+        }
+        if (!closedOpposingQuartets(normalized, bar, next, heads, gap)
+                || !closedOpposingQuartets(original, bar, next, heads, gap)) return;
+        for (int i = 2; i <= 4; i++) {
+            var owner = heads.get(i);
+            result.set(owner.owner(), owner.note().withTupletRatio(1, 1));
+        }
+    }
+
+    private static boolean closedOpposingQuartets(
+            Ink ink, MeasureRegion bar, MeasureRegion next, List<Head> heads, float gap) {
+        float close = (bar.right() + next.left()) * ink.width / 2;
+        float bottom = bar.bottom() * ink.height - 2.1f * gap;
+        var lines =
+                PrintedDirectionStaff.printedRules(
+                        ink.raw, ink.width, ink.height, close - gap * 1.25f, bottom, gap);
+        if (lines == null) return false;
+        var staff =
+                new PlayingTechniqueDetector.Staff(
+                        lines[0] - 4 * lines[1], lines[0], lines[1], 0, 1);
+        if (PrintedCadenceDurations.boundaryColumn(ink.raw, ink.width, staff, close, true, false)
+                < 0) return false;
+        var budget = new PrintedBeamShafts.Budget(180_000);
+        PrintedBeamShafts.Shaft previous = null;
+        for (int i = 0; i < 8; i++) {
+            var head = heads.get(i);
+            int direction = i < 4 ? -1 : 1;
+            if (head.note().stemDirection() != -direction) return false;
+            var shafts =
+                    PrintedBeamShafts.at(
+                            ink.raw, ink.width, ink.height, head.x(), head.y(), gap, budget);
+            if (shafts.size() != 1 || shafts.get(0).direction() != direction || budget.refused())
+                return false;
+            var shaft = shafts.get(0);
+            if (i % 4 != 0
+                    && !FingeringAnnotationFilter.pairedBeamRails(
+                            ink.raw, ink.width, ink.height, previous, shaft, gap)) return false;
+            previous = shaft;
+        }
+        return true;
+    }
+
+    /** Recover one visually joined upper shaft above a complete bar of double-rail octave dyads. */
+    /** Clear false triplet claims only when four complete printed double beams fill the measure. */
     private static boolean closeAcrossPrintedBeams(
             Ink ink,
             Ink original,
@@ -181,43 +282,61 @@ final class ClosedSixteenthDyads {
         var groups = new ClosedFourDyadBeam.Head[16];
         var pairs = new ArrayList<Dyad>(16);
         int clef = heads.get(0).note.clefBottomDiatonic();
-        int firstClaim = -1, claimCount = 0, direction = 0;
+        boolean wideSixths = Math.abs(heads.get(0).y - heads.get(1).y) >= gap * 2.20f;
+        int claimMask = 0, direction = 0;
         for (int slot = 0; slot < groups.length; slot++) {
             var a = heads.get(slot * 2);
             var b = heads.get(slot * 2 + 1);
             var pair = a.y < b.y ? new Dyad(a, b) : new Dyad(b, a);
             if (slot % 4 == 0) direction = a.note.stemDirection();
             boolean claim = a.note.tupletDivisor() == 3;
+            boolean widePair = pair.bottom.y - pair.top.y >= gap * 2.20f;
             if (direction == 0
-                    || claim && direction != -1
-                    || b.x - a.x > gap * .16f
-                    || pair.bottom.y - pair.top.y < gap * .65f
-                    || pair.bottom.y - pair.top.y > gap * 1.4f
+                    || widePair != wideSixths
+                    || (!wideSixths && claim && direction != -1)
+                    || !sameShaftDyadGeometry(a, b, gap)
                     || !ordinaryDoubleRail(a.note, clef, direction, claim)
                     || !ordinaryDoubleRail(b.note, clef, direction, claim)) return false;
             float x = (a.x + b.x) * .5f;
-            if (slot > 0
-                    && (x - groups[slot - 1].x() < gap * 1.65f
-                            || x - groups[slot - 1].x() > gap * 2.7f)) return false;
+            if (slot > 0) {
+                float spacing = (x - groups[slot - 1].x()) / gap;
+                if (spacing < (wideSixths ? 1.55f : 1.65f) || spacing > (wideSixths ? 3.35f : 2.7f))
+                    return false;
+            }
             groups[slot] = new ClosedFourDyadBeam.Head(x, pair.top.y, pair.bottom.y);
             pairs.add(pair);
-            if (claim) {
-                if (firstClaim < 0) firstClaim = slot;
-                if (slot != firstClaim + claimCount++) return false;
-            }
+            if (claim) claimMask |= 1 << slot;
         }
-        if (claimCount != 3 || firstClaim / 4 == (firstClaim + 2) / 4) return false;
+        if (claimMask == 0) return false;
+        var firstClaims = new ArrayList<Integer>();
+        for (int left = claimMask; left != 0; ) {
+            int first = Integer.numberOfTrailingZeros(left);
+            if (first > 13 || ((left >> first) & 7) != 7) return false;
+            firstClaims.add(first);
+            left &= ~(7 << first);
+        }
+        if (!wideSixths) {
+            int first = firstClaims.get(0);
+            if (firstClaims.size() != 1 || first / 4 == (first + 2) / 4) return false;
+        }
         var rows = UnnumberedTripletInk.sourceRows(region, regions, ink.height);
-        if (!printedFourRailGroups(ink, region, pairs, groups, firstClaim, gap, rows)
-                || !printedFourRailGroups(original, region, pairs, groups, firstClaim, gap, rows))
+        if (!printedFourRailGroups(ink, regions, measure, pairs, groups, firstClaims, gap, rows)
+                || !printedFourRailGroups(original, regions, measure, pairs, groups, firstClaims, gap, rows))
             return false;
-        for (int i = firstClaim * 2; i < (firstClaim + 3) * 2; i++) {
-            var head = heads.get(i);
-            result.set(head.owner, head.note.withTupletRatio(1, 1));
-        }
+        for (int first : firstClaims)
+            for (int i = first * 2; i < (first + 3) * 2; i++) {
+                var head = heads.get(i);
+                result.set(head.owner, head.note.withTupletRatio(1, 1));
+            }
         if (closes(heads, result)) return true;
         for (var head : heads) result.set(head.owner, head.note);
         return false;
+    }
+
+    private static boolean sameShaftDyadGeometry(Head a, Head b, float gap) {
+        float separation = Math.abs(b.y - a.y) / gap;
+        return (b.x - a.x <= gap * .16f && separation >= .65f && separation <= 1.4f)
+                || (b.x - a.x <= gap * .21f && separation >= 2.20f && separation <= 2.84f);
     }
 
     private static boolean ordinaryDoubleRail(
@@ -233,12 +352,14 @@ final class ClosedSixteenthDyads {
 
     private static boolean printedFourRailGroups(
             Ink ink,
-            MeasureRegion bar,
+            List<MeasureRegion> regions,
+            int measure,
             List<Dyad> pairs,
             ClosedFourDyadBeam.Head[] columns,
-            int firstClaim,
+            List<Integer> firstClaims,
             float gap,
             UnnumberedTripletInk.Rows rows) {
+        var bar = regions.get(measure);
         var samples = new ArrayList<float[]>();
         var stems = new ArrayList<List<Shaft>>();
         for (var dyad : pairs) {
@@ -256,10 +377,39 @@ final class ClosedSixteenthDyads {
         for (int i = 0; i < sampleCount; i++)
             anchors.add(samples.get(i * (samples.size() - 1) / (sampleCount - 1)));
         var track = StaffPitchTrack.fromVerifiedSamples(anchors);
-        if (track == null
-                || !WrappedMeasureBoundaries.confirmsClosedWithVerifiedStaff(
-                        ink.raw, ink.width, ink.height, bar, columns[0].x(), columns[15].x(), track)
-                || claimedBracket(ink, columns, firstClaim, gap, rows, track)) return false;
+        if (track == null) return false;
+        boolean closed =
+                WrappedMeasureBoundaries.confirmsClosedWithVerifiedStaff(
+                        ink.raw,
+                        ink.width,
+                        ink.height,
+                        bar,
+                        columns[0].x(),
+                        columns[15].x(),
+                        track);
+        var end = pairs.get(15);
+        if (!closed
+                && end.top.note.stemDirection() == -1
+                && end.bottom.y - end.top.y >= gap * 2.20f) {
+            float lastShaft = stems.get(15).stream().mapToInt(Shaft::x).max().orElseThrow();
+            closed =
+                    WrappedMeasureBoundaries.confirmsPackedRightEdgeFromStem(
+                            ink.raw,
+                            ink.width,
+                            ink.height,
+                            bar,
+                            columns[0].x(),
+                            columns[15].x(),
+                            lastShaft,
+                            track);
+        }
+        boolean openingWithMeter = !closed
+                && WrappedMeasureBoundaries.confirmsOpeningFourFourWithVerifiedStaff(
+                        ink.raw, ink.width, ink.height, regions, measure,
+                        columns[0].x(), columns[15].x(), track);
+        if (!closed && !openingWithMeter) return false;
+        for (int first : firstClaims)
+            if (claimedBracket(ink, columns, first, gap, rows, track, openingWithMeter)) return false;
         for (int i = 0; i < columns.length - 1; i++) {
             var a = pairs.get(i);
             var b = pairs.get(i + 1);
@@ -274,11 +424,90 @@ final class ClosedSixteenthDyads {
                         || !beams(ink, stems.get(i), stems.get(i + 1), a, b, gap, direction)
                                 .isEmpty()) return false;
             } else if (beams(ink, stems.get(i), stems.get(i + 1), a, b, gap, direction, track)
-                    .isEmpty()) {
+                            .isEmpty()
+                    && !(i % 4 == 1
+                            && direction == -1
+                            && obscuredMiddleRailSeam(ink, stems, pairs, i, gap, track))) {
                 return false;
             }
         }
         return true;
+    }
+
+    /**
+     * Adjacent spans of the same sloping double beam can establish the separation where
+     * the bottom staff rule fills the paper between the rails over the middle span.
+     */
+    private static boolean obscuredMiddleRailSeam(
+            Ink ink,
+            List<List<Shaft>> stems,
+            List<Dyad> dyads,
+            int i,
+            float gap,
+            StaffPitchTrack staff) {
+        for (int n = i - 1; n <= i + 2; n++) {
+            var pair = dyads.get(n);
+            if (pair.bottom.y - pair.top.y < gap * 2.2f) return false;
+        }
+        var left =
+                beams(
+                        ink,
+                        stems.get(i - 1),
+                        stems.get(i),
+                        dyads.get(i - 1),
+                        dyads.get(i),
+                        gap,
+                        -1,
+                        staff);
+        var right =
+                beams(
+                        ink,
+                        stems.get(i + 1),
+                        stems.get(i + 2),
+                        dyads.get(i + 1),
+                        dyads.get(i + 2),
+                        gap,
+                        -1,
+                        staff);
+        if (left.isEmpty() || right.isEmpty()) return false;
+        var before = left.get(0);
+        var after = right.get(0);
+        int x0 = before.x1, x1 = after.x0;
+        if (x1 - x0 < gap * 1.5f
+                || x1 - x0 > gap * 3.2f
+                || Math.abs(before.separation - after.separation) > gap * .22f) return false;
+        float from = (before.y1 - before.y0) / (float) (before.x1 - before.x0);
+        float through = (after.y1 - before.y0) / (float) (after.x1 - before.x0);
+        float to = (after.y1 - after.y0) / (float) (after.x1 - after.x0);
+        if (Math.abs(through) < .10f
+                || Math.abs(through) > .35f
+                || Math.abs(from - through) > .12f
+                || Math.abs(to - through) > .12f) return false;
+        int y0 = Math.round(before.y0 + through * (x0 - before.x0));
+        int y1 = Math.round(before.y0 + through * (x1 - before.x0));
+        if (Math.abs(y0 - before.y1) > .30f * gap || Math.abs(y1 - after.y0) > .30f * gap)
+            return false;
+
+        int margin = Math.round(gap * .3f), radius = Math.max(2, Math.round(gap * .12f));
+        int first = x0 + margin, last = x1 - margin;
+        int d = Math.round((before.separation + after.separation) * .5f);
+        int offset = Math.round(gap * .26f);
+        for (int shift = -offset; shift <= offset; shift++) {
+            var rail = new Rails(x0, y0 + shift, x1, y1 + shift, d);
+            if (band(ink, rail, first, last, 0, radius) < .97f
+                    || band(ink, rail, first, last, d, radius) < .97f
+                    || band(ink, rail, first, last, 2 * d, radius) >= .60f) continue;
+            int coveredByRule = 0;
+            for (int x = first; x <= last; x++) {
+                int y = rail.at(x) - d / 2;
+                var frame = staff.at(x);
+                if (Math.abs(y - frame[0]) <= frame[1] * .22f && stroke(ink, x, y, 1) >= 2)
+                    coveredByRule++;
+            }
+
+            if (coveredByRule >= (last - first + 1) * .60f) return true;
+        }
+        return false;
     }
 
     private static boolean clearTwoRailCut(
@@ -489,8 +718,8 @@ final class ClosedSixteenthDyads {
                 int claims = tripletClaims >> i & 0xf;
                 if (claims == 0) continue;
                 int first = i + Integer.numberOfTrailingZeros(claims);
-                if (claimedBracket(ink, geometry, first, gap, rows, normalizedTrack)
-                        || claimedBracket(original, geometry, first, gap, rows, originalTrack)) return;
+                if (claimedBracket(ink, geometry, first, gap, rows, normalizedTrack, false)
+                        || claimedBracket(original, geometry, first, gap, rows, originalTrack, false)) return;
             }
         }
         var revised = new ArrayList<ScoreNoteEvent>(30);
@@ -510,21 +739,29 @@ final class ClosedSixteenthDyads {
 
     private static boolean claimedBracket(
             Ink ink, ClosedFourDyadBeam.Head[] geometry, int first, float gap,
-            UnnumberedTripletInk.Rows rows, StaffPitchTrack track) {
+            UnnumberedTripletInk.Rows rows, StaffPitchTrack track, boolean verifyContinuingStroke) {
         float top = Float.POSITIVE_INFINITY, bottom = Float.NEGATIVE_INFINITY;
-        int tip = 0;
+        int tip = 0, direction = 0;
         var budget = new PrintedBeamShafts.Budget(100_000);
         for (int i = first; i < first + 3; i++) {
             var chord = geometry[i];
             var shafts = PrintedBeamShafts.at(ink.raw, ink.width, ink.height,
                     chord.x(), chord.top(), gap, budget);
-            if (shafts.size() != 1 || shafts.get(0).direction() != 1) return true;
-            tip = Math.max(tip, shafts.get(0).endY());
+            if (shafts.size() != 1) return true;
+            var shaft = shafts.get(0);
+            if (i == first) {
+                direction = shaft.direction();
+                tip = shaft.endY();
+            } else if (shaft.direction() != direction) {
+                return true;
+            } else {
+                tip = direction == 1 ? Math.max(tip, shaft.endY()) : Math.min(tip, shaft.endY());
+            }
             top = Math.min(top, chord.top());
             bottom = Math.max(bottom, chord.bottom());
         }
         return UnnumberedTripletInk.bracketBesideBeam(ink.raw, ink.width, ink.height, gap,
-                geometry[first].x(), geometry[first + 2].x(), top, bottom, tip, rows, track);
+                geometry[first].x(), geometry[first + 2].x(), top, bottom, tip, rows, track, verifyContinuingStroke);
     }
 
     private static boolean printedBoundaries(
@@ -585,6 +822,144 @@ final class ClosedSixteenthDyads {
                 n.visualSize(),
                 n.harmonicSemitones(),
                 n.openStringTouch());
+    }
+
+
+    /** A complete 4/4 heading can enclose four printed quartets of parallel thirds. */
+    private static boolean closedWideHeaderThirds(
+            Ink normalized, Ink original, MeasureRegion bar, MeasureRegion next, List<Head> source) {
+        if (original == null || next == null) return false;
+        float gap = (bar.bottom() - bar.top()) * normalized.height / 8.2f;
+        float left = bar.left() * normalized.width, right = bar.right() * normalized.width;
+        float closingGap = (next.left() - bar.right()) * normalized.width;
+        if (gap < 10 || gap > 27 || right - left < 46 * gap || right - left > 55 * gap
+                || closingGap < .65f * gap || closingGap > 1.3f * gap
+                || Math.abs(next.top() - bar.top()) * normalized.height > gap * .35f)
+            return false;
+        var heads = source.stream().sorted(Comparator.comparingDouble(Head::x)).toList();
+        int clef = heads.get(0).note().clefBottomDiatonic();
+        var columns = new ArrayList<Dyad>(16);
+        int inferredTriplets = 0;
+        for (int i = 0; i < 16; i++) {
+            var a = heads.get(2 * i);
+            var b = heads.get(2 * i + 1);
+            var pair = a.y() < b.y() ? new Dyad(a, b) : new Dyad(b, a);
+            int ratio = a.note().tupletDivisor();
+            if (ratio != 1 && ratio != 3 || b.note().tupletDivisor() != ratio
+                    || b.x() - a.x() > .17f * gap
+                    || Math.abs(a.note().staffStep() - b.note().staffStep()) != 2
+                    || pair.bottom().y() - pair.top().y() < .84f * gap
+                    || pair.bottom().y() - pair.top().y() > 1.26f * gap)
+                return false;
+            for (var head : List.of(a, b)) {
+                var n = head.note();
+                if (!ordinaryGeometry(n, clef) || n.stemDirection() != -1
+                        || n.beamCount() != 2 || n.augmentationDots() != 0
+                        || n.unbeamedDurationBeats() != 0
+                        || n.tupletNormalNotes() != (ratio == 3 ? 2 : 1)) return false;
+            }
+            if (i > 0) {
+                float advance = pair.top().x() - columns.get(i - 1).top().x();
+                if (advance < 2.55f * gap || advance > 3.95f * gap) return false;
+            }
+            if (ratio == 3) inferredTriplets++;
+            columns.add(pair);
+        }
+        float first = columns.get(0).top().x(), last = columns.get(15).top().x();
+        return inferredTriplets == 6 && first - left >= 1.9f * gap && first - left <= 3.25f * gap
+                && right - last >= 2.3f * gap && right - last <= 3.5f * gap
+                && provesWideHeaderThirds(normalized, bar, next, columns, gap)
+                && provesWideHeaderThirds(original, bar, next, columns, gap);
+    }
+
+    private static boolean provesWideHeaderThirds(
+            Ink ink, MeasureRegion bar, MeasureRegion next, List<Dyad> columns, float gap) {
+        float left = bar.left() * ink.width, close = (bar.right() + next.left()) * ink.width * .5f;
+        float hint = bar.bottom() * ink.height - 2.1f * gap;
+        var opening = PrintedDirectionStaff.printedRules(ink.raw, ink.width, ink.height, left + 2.8f * gap, hint, gap);
+        var closing = PrintedDirectionStaff.printedRules(ink.raw, ink.width, ink.height, close - 1.25f * gap, hint, gap);
+        if (opening == null || closing == null || Math.abs(opening[1] - closing[1]) > gap * .12f
+                || !closedSingleRule(ink, close - closing[1] * .5f, closing)) return false;
+        float first = columns.get(0).top().x(), g = opening[1];
+        int staffTop = Math.round(opening[0] - 4 * g);
+        var crop = new MeterChangeDetector.Crop(
+                Math.round(first - 4.35f * g), Math.round(staffTop - g * .45f),
+                Math.round(first - 1.45f * g), Math.round(opening[0] + g * .65f), staffTop, g);
+        var meter = MeterFontMatcher.readCrop(ink.raw, ink.width, ink.height, crop);
+        if (!meter.text().equals("4/4") || meter.topScore() < .86f || meter.bottomScore() < .86f)
+            return false;
+        var budget = new PrintedBeamShafts.Budget(420_000);
+        PrintedBeamShafts.Shaft previous = null;
+        boolean contact = false;
+        for (int i = 0; i < columns.size(); i++) {
+            var pair = columns.get(i);
+            var upper = PrintedBeamShafts.at(ink.raw, ink.width, ink.height, pair.top().x(), pair.top().y(), gap, budget);
+            var lower = PrintedBeamShafts.at(ink.raw, ink.width, ink.height, pair.bottom().x(), pair.bottom().y(), gap, budget);
+            if (upper.size() != 1 || lower.size() != 1 || budget.refused()) return false;
+            var a = upper.get(0);
+            var b = lower.get(0);
+            if (a.direction() != 1 || b.direction() != 1
+                    || Math.max(a.left(), b.left()) > Math.min(a.right(), b.right())
+                    || Math.abs(a.endY() - b.endY()) > .20f * gap) return false;
+            if (previous != null) {
+                boolean connected = FingeringAnnotationFilter.pairedBeamRails(
+                        ink.raw, ink.width, ink.height, previous, b, gap);
+                if (i % 4 == 0) {
+                    if (connected || railsWithContactingMiddle(ink, previous, b, gap)) return false;
+                } else if (!connected) {
+                    if (contact || !railsWithContactingMiddle(ink, previous, b, gap)) return false;
+                    contact = true;
+                }
+            }
+            previous = b;
+        }
+        return true;
+    }
+
+    /** Two full rail cores can touch in the middle while leaving separate ends. */
+    private static boolean railsWithContactingMiddle(
+            Ink ink, PrintedBeamShafts.Shaft first, PrintedBeamShafts.Shaft second, float gap) {
+        int x0 = (first.left() + first.right()) / 2, x1 = (second.left() + second.right()) / 2;
+        int span = x1 - x0;
+        if (span < 2.6f * gap || span > 3.35f * gap) return false;
+        int margin = Math.round(gap * .35f), edge = Math.round(gap * .42f);
+        int start = x0 + margin, end = x1 - margin;
+        int width = end - start + 1;
+        int lowOffset = Math.round(.2f * gap), highOffset = Math.round(.57f * gap);
+        int radius = Math.max(2, Math.round(.12f * gap));
+        for (int a = lowOffset; a <= highOffset; a++) {
+            int y0 = first.endY() - a;
+            for (int b = lowOffset; b <= highOffset; b++) {
+                int y1 = second.endY() - b;
+                if (Math.abs(y1 - y0) > span * .22f) continue;
+                var axis = new Rails(x0, y0, x1, y1, 0);
+                if (band(ink, axis, start, end, 0, radius) < .97f) continue;
+                for (int d = Math.round(.62f * gap); d <= Math.round(.84f * gap); d++) {
+                    if (band(ink, axis, start, end, d, radius) < .97f
+                            || hasThirdRail(ink, axis, start, end, d, gap, radius)) continue;
+                    int open = 0, left = 0, right = 0;
+                    for (int x = start; x <= end; x++) {
+                        if (ink.dark(x, axis.at(x) - d / 2)) continue;
+                        open++;
+                        if (x < start + edge) left++;
+                        if (x > end - edge) right++;
+                    }
+                    if (open >= width * .42f && left >= edge * .70f && right >= edge * .70f)
+                        return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static boolean hasThirdRail(
+            Ink ink, Rails axis, int start, int end, int separation, float gap, int radius) {
+        int min = separation + Math.round(.62f * gap);
+        int max = separation + Math.round(.84f * gap);
+        for (int shift = min; shift <= max; shift++) {
+            if (band(ink, axis, start, end, shift, radius) >= .72f) return true;
+        }
+        return false;
     }
 
     private static boolean closedHeaderSixteenths(Ink ink,MeasureRegion bar,List<Head> heads) {

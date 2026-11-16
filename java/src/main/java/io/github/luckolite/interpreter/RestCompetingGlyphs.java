@@ -30,7 +30,13 @@ final class RestCompetingGlyphs {
                     continue;
             }
             if (rest.durationBeats() == 1
-                    && naturalOwnsQuarterAlias(
+                    && (naturalOwnsQuarterAlias(
+                                    rest, notes, measures.get(bar), gray, source, width, height)
+                            || fingeredHeadOwnsQuarterAlias(
+                                    rest, notes, measures.get(bar), gray, source, width, height)))
+                continue;
+            if (rest.durationBeats() == .5
+                    && ledgerAndArcOwnEighthRest(
                             rest, notes, measures.get(bar), gray, source, width, height)) continue;
             if (rest.durationBeats() == .5
                     && stackedFingeringsOwnEighthRest(
@@ -51,6 +57,213 @@ final class RestCompetingGlyphs {
             kept.add(rest);
         }
         return kept.size() == rests.size() ? rests : List.copyOf(kept);
+    }
+
+    /** A detached fingering above a filled, beamed head can fuse into a rest mask. */
+    private static boolean fingeredHeadOwnsQuarterAlias(
+            ScoreRestEvent rest,
+            List<ScoreNoteEvent> notes,
+            MeasureRegion bar,
+            byte[] gray,
+            byte[] source,
+            int width,
+            int height) {
+        float gap = (bar.bottom() - bar.top()) * height / 8.2f;
+        float span = (bar.right() - bar.left()) * width;
+        float restHeight = rest.pageHeight() * height;
+        if (rest.kind() != ScoreRestEvent.Kind.LITERAL
+                || gap < 10
+                || gap > 26
+                || span < 44 * gap
+                || span > 55 * gap
+                || restHeight < gap * 2.75f
+                || restHeight > gap * 3.16f) return false;
+        var music = notes.stream().filter(n -> n.measureIndex() == rest.measureIndex()).toList();
+        if (music.size() != 24
+                || music.stream()
+                        .anyMatch(
+                                n ->
+                                        n.staffIndex() != 0
+                                                || n.staffCount() != 1
+                                                || n.kind() != ScoreNoteEvent.Kind.PITCHED
+                                                || n.visualSize() != ScoreNoteEvent.VisualSize.FULL
+                                                || n.beamCount() != 2
+                                                || n.augmentationDots() != 0
+                                                || n.unbeamedDurationBeats() != 0)) return false;
+        float rx = x(bar, rest.positionInMeasure(), width), ry = rest.pageY() * height;
+        var targets =
+                music.stream()
+                        .filter(
+                                n ->
+                                        Math.abs(x(bar, n.positionInMeasure(), width) - rx)
+                                                <= gap * .21f)
+                        .toList();
+        if (targets.size() != 1) return false;
+        var note = targets.get(0);
+        float headX = x(bar, note.positionInMeasure(), width), headY = note.pageY() * height;
+        if (Math.abs(headY - ry - restHeight * .5f) > gap * .20f) return false;
+        for (byte[] plane : List.of(gray, source)) {
+            var shafts =
+                    PrintedBeamShafts.at(
+                            plane,
+                            width,
+                            height,
+                            headX,
+                            headY,
+                            gap,
+                            new PrintedBeamShafts.Budget(50_000));
+            if (shafts.size() != 1 || shafts.get(0).direction() != 1) return false;
+            float[] lines =
+                    PrintedDirectionStaff.printedRules(
+                            plane, width, height, rx, bar.bottom() * height - 2.1f * gap, gap);
+            if (lines == null
+                    || !isolatedFingeringAboveHead(plane, width, height, rx, ry, headY, lines))
+                return false;
+        }
+        return true;
+    }
+
+    private static boolean isolatedFingeringAboveHead(
+            byte[] gray, int width, int height, float x, float restY, float headY, float[] lines) {
+        float gap = lines[1], topRule = lines[0] - 4 * gap;
+        if (Math.abs(restY - topRule) > gap * .18f) return false;
+        int left = Math.round(x - gap * .65f), right = Math.round(x + gap * .65f);
+        int top = Math.round(topRule - gap * 1.7f), bottom = Math.round(topRule - gap * .14f);
+        if (left < 0 || right >= width || top < 0 || bottom >= height) return false;
+        var glyphs =
+                RawNumeralComponents.capture(
+                                gray, width, height, left, top, right, bottom, () -> {}, () -> {})
+                        .components()
+                        .stream()
+                        .filter(c -> c.size() >= 8)
+                        .toList();
+        if (glyphs.size() != 1) return false;
+        var c = glyphs.get(0);
+        int tall = c.bottom - c.top + 1;
+        if (c.left <= left
+                || c.right >= right
+                || c.top <= top
+                || c.bottom >= bottom
+                || tall < .9f * gap
+                || tall > 1.25f * gap) return false;
+        var font =
+                JoinedDigitTemplates.inspect(
+                        gray,
+                        width,
+                        height,
+                        new java.util.BitSet(),
+                        c.left,
+                        c.top,
+                        c.right,
+                        c.bottom,
+                        () -> {});
+        if (font == null
+                || font.observedCells() != 384
+                || font.scores()[2] < .67f
+                || font.best() != font.scores()[2]) return false;
+        for (int i = 0; i < font.scores().length; i++)
+            if (i != 2 && font.scores()[2] - font.scores()[i] < .10f) return false;
+        int headTop = Math.round(headY - gap * .49f);
+        for (int y = c.bottom + 1; y < headTop; y++) {
+            float staffOffset = y - topRule;
+            if (Math.abs(staffOffset - Math.round(staffOffset / gap) * gap) <= gap * .17f) continue;
+            for (int px = left; px <= right; px++)
+                if ((gray[y * width + px] & 255) < 165) return false;
+        }
+        return true;
+    }
+
+    private static boolean ledgerAndArcOwnEighthRest(
+            ScoreRestEvent rest,
+            List<ScoreNoteEvent> notes,
+            MeasureRegion bar,
+            byte[] gray,
+            byte[] source,
+            int width,
+            int height) {
+        float gap = (bar.bottom() - bar.top()) * height / 8.2f;
+        float x = x(bar, rest.positionInMeasure(), width);
+        float y = rest.pageY() * height;
+        float extent = rest.pageHeight() * height;
+        if (rest.kind() != ScoreRestEvent.Kind.LITERAL
+                || gap < 10
+                || gap > 27
+                || extent < gap * 1.45f
+                || extent > gap * 1.75f) return false;
+        if (!separateLedgerAndArc(gray, width, height, x, y, extent, gap)
+                || !separateLedgerAndArc(source, width, height, x, y, extent, gap)) return false;
+        for (var note : notes) {
+            float hx = x(bar, note.positionInMeasure(), width), hy = note.pageY() * height;
+            if (note.measureIndex() != rest.measureIndex()
+                    || note.staffIndex() != rest.staffIndex()
+                    || note.staffCount() != rest.staffCount()
+                    || note.kind() != ScoreNoteEvent.Kind.PITCHED
+                    || note.visualSize() != ScoreNoteEvent.VisualSize.FULL
+                    || note.beamCount() < 1
+                    || Math.abs(hx - x) > gap * .30f
+                    || y - hy < gap * 1.8f
+                    || y - hy > gap * 2.35f) continue;
+            var a = PairedTremoloInk.stem(gray, width, height, hx, hy, gap, 1);
+            var b = PairedTremoloInk.stem(source, width, height, hx, hy, gap, 1);
+            if (a != null
+                    && b != null
+                    && Math.abs(a.x() - b.x()) <= 2
+                    && Math.abs(a.endY() - b.endY()) <= 2) return true;
+        }
+        return false;
+    }
+
+    /** A detached horizontal dash above the long end of a curve cannot own one rest glyph. */
+    private static boolean separateLedgerAndArc(
+            byte[] plane, int width, int height, float x, float y, float extent, float gap) {
+        float top = y - extent * .5f, foot = y + extent * .5f;
+        int left = Math.round(x - gap * 2f), right = Math.round(x + gap * .82f);
+        int first = Math.round(top - gap * .12f), last = Math.round(foot + gap * .9f);
+        if (left < 0 || first < 0 || right >= width || last >= height) return false;
+        var components =
+                RawNumeralComponents.capture(
+                                plane, width, height, left, first, right, last, 170, () -> {},
+                                () -> {})
+                        .components();
+        RawNumeralComponents.Component cap = null, arc = null;
+        for (var glyph : components) {
+            if (glyph.size() < gap * gap * .035f
+                    || glyph.right < x - gap * .58f
+                    || glyph.left > x + gap * .58f
+                    || glyph.top > foot) continue;
+            int w = glyph.right - glyph.left + 1, h = glyph.bottom - glyph.top + 1;
+            if (glyph.left > left
+                    && glyph.right < right
+                    && Math.abs((glyph.left + glyph.right) * .5f - x) <= gap * .16f
+                    && Math.abs(glyph.top - top) <= gap * .16f
+                    && w >= gap * .97f
+                    && w <= gap * 1.55f
+                    && h <= gap * .45f
+                    && glyph.size() >= w * h * .72f) {
+                if (cap != null) return false;
+                cap = glyph;
+            } else if (glyph.left == left
+                    && glyph.right < right
+                    && glyph.bottom < last
+                    && w >= gap * 1.8f
+                    && glyph.right >= x + gap * .22f
+                    && glyph.top >= y - gap * .08f
+                    && glyph.bottom >= foot + gap * .32f
+                    && glyph.size() >= w * gap * .13f
+                    && glyph.size() <= w * gap * .45f) {
+                if (arc != null) return false;
+                arc = glyph;
+            } else return false;
+        }
+        if (cap == null || arc == null || arc.top - cap.bottom < gap * .35f) return false;
+
+        int leftTop = height, rightBottom = -1;
+        for (int i = 0; i < arc.size(); i++) {
+            int pixel = arc.pixel(i), xx = pixel % width, yy = pixel / width;
+            if (xx <= left + gap * .25f) leftTop = Math.min(leftTop, yy);
+            if (xx >= arc.right - gap * .25f) rightBottom = Math.max(rightBottom, yy);
+        }
+        return leftTop >= foot + gap * .25f && rightBottom <= foot - gap * .12f;
     }
 
     private static boolean stackedFingeringsOwnEighthRest(

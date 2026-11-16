@@ -375,6 +375,9 @@ public final class SheetInterpreter {
         // Thin octave dashes can fade in the paper-corrected note raster.
         notes = OctaveMarkDetector.apply(words, staffs, measures, notes, annotationGray, width, height);
         notes =
+                FingeringAnnotationFilter.removeWholeFingeringAliases(
+                        words, staffs, measures, notes, gray, annotationGray, width, height);
+        notes =
                 FingeringAnnotationFilter.apply(
                         words, staffs, measures, notes, gray, width, height);
         if (!notes.isEmpty() && !staffs.isEmpty()) {
@@ -764,7 +767,7 @@ public final class SheetInterpreter {
                 finalInterpretation, gray, width, height);
         finalInterpretation =
                 ClosedDottedSixteenths.applyClosedMonophonicHooks(
-                        finalInterpretation, inheritedMeter, gray, width, height);
+                        finalInterpretation, inheritedMeter, gray, annotationGray, width, height);
         finalInterpretation =
                 ClosedDottedSixteenths.applyClosedTailDyadHooks(
                         finalInterpretation, inheritedMeter, gray, width, height);

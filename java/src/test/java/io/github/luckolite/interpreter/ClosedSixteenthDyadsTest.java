@@ -116,6 +116,66 @@ public class ClosedSixteenthDyadsTest {
         assertEquals(occupied, blocked.beamSource());
     }
 
+    @Test
+    public void opposingQuartetsKeepSixFourStraightAcrossAnInferredTriplet() {
+        var ink = new byte[WIDTH * HEIGHT];
+        Arrays.fill(ink, (byte) 255);
+        int top = STAFF_BOTTOM - 4 * GAP, nextLeft = RIGHT + 18;
+        for (int y = top; y <= STAFF_BOTTOM; y += GAP)
+            draw(ink, 22, WIDTH - 20, y, y + 1, (byte) 0);
+        draw(ink, RIGHT + 8, RIGHT + 10, top, STAFF_BOTTOM, (byte) 0);
+        var region =
+                new MeasureRegion(
+                        (float) LEFT / WIDTH, (float) RIGHT / WIDTH,
+                        (STAFF_BOTTOM - 98f) / HEIGHT, (STAFF_BOTTOM + 33f) / HEIGHT);
+        var next = new MeasureRegion((float) nextLeft / WIDTH, .98f, region.top(), region.bottom());
+        var notes = new ArrayList<ScoreNoteEvent>();
+        for (int i = 0; i < 24; i++) {
+            int x = FIRST + i * 30;
+            int y = i < 4 ? 294 - 8 * i : 264 - (i % 4) * 7;
+            boolean rising = i < 4;
+            int shaft = x + (rising ? 8 : -8);
+            draw(ink, x - 8, x + 8, y - 4, y + 4, (byte) 0);
+            if (i < 8) draw(ink, shaft, shaft + 2, rising ? 209 : y, rising ? y : 325, (byte) 0);
+            var note =
+                    new ScoreNoteEvent(
+                                    0,
+                                    (float) (x - LEFT) / (RIGHT - LEFT),
+                                    0,
+                                    0,
+                                    1,
+                                    (float) y / HEIGHT,
+                                    false,
+                                    0,
+                                    2,
+                                    ScoreNoteEvent.ACCIDENTAL_FROM_KEY,
+                                    0)
+                            .withStemDirection(rising ? 1 : -1);
+            notes.add(i >= 2 && i <= 4 ? note.withTupletRatio(3, 2) : note);
+        }
+        draw(ink, FIRST + 8, FIRST + 100, 209, 216, (byte) 0);
+        draw(ink, FIRST + 8, FIRST + 100, 222, 228, (byte) 0);
+        draw(ink, FIRST + 112, FIRST + 204, 318, 325, (byte) 0);
+        draw(ink, FIRST + 112, FIRST + 204, 305, 312, (byte) 0);
+        var prior =
+                new ScorePageInterpretation(
+                        List.of(region, next),
+                        notes,
+                        0,
+                        List.of(),
+                        List.of(),
+                        List.of(new ScoreMeterChange(0, 6, 4)),
+                        List.of());
+        var actual = ClosedSixteenthDyads.apply(prior, ink, ink, WIDTH, HEIGHT);
+        assertEquals(notes.stream().map(n -> n.withTupletRatio(1, 1)).toList(), actual.notes());
+        var erased = ink.clone();
+        draw(erased, FIRST + 70, FIRST + 80, 204, 234, (byte) 255);
+        assertSame(prior, ClosedSixteenthDyads.apply(prior, ink, erased, WIDTH, HEIGHT));
+        var rest = new ScoreRestEvent(0, .6f, .65f, .018f, 0, 1, 1.0);
+        var trueRest = prior.withRests(List.of(rest));
+        assertSame(trueRest, ClosedSixteenthDyads.apply(trueRest, ink, ink, WIDTH, HEIGHT));
+    }
+
     private static ScorePageInterpretation crossCutFixture() {
         int right = 656;
         var region =

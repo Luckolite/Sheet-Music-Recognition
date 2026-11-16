@@ -28,15 +28,24 @@ final class UnnumberedTripletInk {
     static boolean bracketBesideBeam(
             byte[] ink, int width, int height, float gap, float first, float last,
             float headTop, float headBottom, float shaftTip, Rows rows, StaffPitchTrack track) {
+        return bracketBesideBeam(ink, width, height, gap, first, last,
+                headTop, headBottom, shaftTip, rows, track, false);
+    }
+
+    static boolean bracketBesideBeam(
+            byte[] ink, int width, int height, float gap, float first, float last,
+            float headTop, float headBottom, float shaftTip, Rows rows, StaffPitchTrack track,
+            boolean verifyContinuingStroke) {
         int margin = Math.round(2.5f * gap);
         int left = Math.round(first - gap), right = Math.round(last + gap);
-        int top = Math.max(0, Math.round(headTop - 7 * gap) - 12);
-        int bottom = Math.min(height - 1, Math.round(Math.max(headBottom, shaftTip) + 7 * gap) + 12);
+        float upper = Math.min(headTop, shaftTip), lower = Math.max(headBottom, shaftTip);
+        int top = Math.max(0, Math.round(upper - 7 * gap) - 12);
+        int bottom = Math.min(height - 1, Math.round(lower + 7 * gap) + 12);
         if (left < margin || right + margin >= width) return true;
         var mask = trackedStaffMask(ink, width, height, left, right, top, bottom, track, gap);
         var window = new Window(ink, width, left, top, right - left + 1, bottom - top + 1, mask);
         return window.bracket(window.staffRows(margin, gap), first, last, headTop,
-                Math.max(headBottom, shaftTip), headTop, shaftTip, gap, rows);
+                lower, upper, lower, gap, rows, verifyContinuingStroke);
     }
 
     static boolean clear(byte[] ink, int width, int height, float gap,
@@ -357,6 +366,12 @@ final class UnnumberedTripletInk {
 
         private boolean bracket(boolean[] staff, float start, float end, float headTop,
                 float headBottom, float upper, float lower, float gap, Rows sourceRows) {
+            return bracket(staff, start, end, headTop, headBottom, upper, lower, gap, sourceRows, false);
+        }
+
+        private boolean bracket(boolean[] staff, float start, float end, float headTop,
+                float headBottom, float upper, float lower, float gap, Rows sourceRows,
+                boolean verifyContinuingStroke) {
             float middle = (start + end) * .5f;
             int a = Math.round(start - gap * .32f), b = Math.round(middle - gap * .72f);
             int c = Math.round(middle + gap * .72f), d = Math.round(end + gap * .32f);
@@ -367,8 +382,76 @@ final class UnnumberedTripletInk {
                 if (y > upper - gap * .48f && y < lower + gap * .48f) continue;
                 for (int slope = -2; slope <= 2; slope++)
                     if (arm(staff, y, middle, slope * .06f, a, b)
-                            && arm(staff, y, middle, slope * .06f, c, d))
+                            && arm(staff, y, middle, slope * .06f, c, d)
+                            && (!verifyContinuingStroke || !continuingStroke(
+                                    staff, start, end, gap, y, middle, slope * .06f, a, b, c, d)))
                         return true;
+            }
+            return false;
+        }
+
+        /** Require source ownership of both arm traces by one continuing stroke. */
+        private boolean continuingStroke(
+                boolean[] staff, float start, float end, float gap,
+                int y, float middle, float slope, int a, int b, int c, int d) {
+            int x0 = Math.max(0, Math.round(start - gap * 2.4f));
+            int x1 = Math.min(stride - 1, Math.round(end + gap * 2.4f));
+            int sheetHeight = plane.length / stride;
+            int y0 = Math.max(0, Math.round(y - gap * 1.65f));
+            int y1 = Math.min(sheetHeight - 1, Math.round(y + gap * 1.65f));
+            if ((long) (x1 - x0 + 1) * (y1 - y0 + 1) > 16_384) return false;
+            int expectedLeft = 0, expectedRight = 0;
+            for (int x = a; x <= b; x++)
+                if (dark(x, y + Math.round(slope * (x - middle)), staff)) expectedLeft++;
+            for (int x = c; x <= d; x++)
+                if (dark(x, y + Math.round(slope * (x - middle)), staff)) expectedRight++;
+
+            var components = RawNumeralComponents.capture(plane, stride, sheetHeight,
+                    x0, y0, x1, y1, 204, () -> {}, () -> {}).components();
+            for (var ink : components) {
+                boolean extendsLeft = start - ink.left >= gap * 1.25f;
+                boolean extendsRight = ink.right - end >= gap * 1.25f;
+                if (ink.left > a || ink.right < d || !extendsLeft && !extendsRight)
+                    continue;
+                int[] high = new int[ink.right - ink.left + 1], low = new int[high.length];
+                Arrays.fill(high, sheetHeight);
+                int leftInk = 0, rightInk = 0;
+                for (int i = 0; i < ink.size(); i++) {
+                    int pixel = ink.pixel(i), x = pixel % stride, row = pixel / stride;
+                    int column = x - ink.left;
+                    high[column] = Math.min(high[column], row);
+                    low[column] = Math.max(low[column], row);
+                    int modeled = y + Math.round(slope * (x - middle));
+                    if (row != modeled) continue;
+                    if (x >= a && x <= b && dark(x, row, staff)) leftInk++;
+                    if (x >= c && x <= d && dark(x, row, staff)) rightInk++;
+                }
+                if (leftInk != expectedLeft || rightInk != expectedRight) continue;
+                boolean thin = true;
+                for (int i = 0; i < high.length; i++)
+                    if (low[i] - high[i] + 1 > gap * .43f) {
+                        thin = false;
+                        break;
+                    }
+                if ((thin || extendsLeft && extendsRight)
+                        && !hasBracketTick(staff, start, end, gap, y, middle, slope, a, d)) return true;
+            }
+            return false;
+        }
+
+        private boolean hasBracketTick(
+                boolean[] staff, float start, float end, float gap,
+                int y, float middle, float slope, int left, int right) {
+            int reach = Math.round(gap * .77f), minimum = Math.round(gap * .49f);
+            for (int x = left; x <= right; x++) {
+                if (Math.abs(x - start) > gap * .45f && Math.abs(x - end) > gap * .45f) continue;
+                int center = y + Math.round(slope * (x - middle));
+                if (!dark(x, center, staff)) continue;
+                int first = center, last = center;
+                while (first > Math.max(top, center - reach) && dark(x, first - 1, staff)) first--;
+                while (last < Math.min(top + height - 1, center + reach)
+                        && dark(x, last + 1, staff)) last++;
+                if (last - first + 1 >= minimum) return true;
             }
             return false;
         }

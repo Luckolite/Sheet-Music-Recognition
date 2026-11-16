@@ -29,6 +29,67 @@ public final class StaffRuleFingeringLobeTest {
         assertEquals(4, read(true, true, true));
     }
 
+    @Test
+    public void wholeValueAliasRequiresTheCurledDigitAndIndependentBeamInBothPlanes() {
+        var glyph = wholeValueFixture(false);
+        var heldWhole = wholeValueFixture(true);
+        var missingStroke = glyph.clone();
+        rectangle(missingStroke, 90, 156, 94, 162, 255);
+        var missingMusicShaft = glyph.clone();
+        rectangle(missingMusicShaft, 82, 76, 90, 110, 255);
+
+        assertEquals(1, wholeValueCount(glyph, glyph, "3"));
+        assertEquals(2, wholeValueCount(glyph, glyph, "8"));
+        for (var rival : List.of(heldWhole, missingStroke, missingMusicShaft)) {
+            assertEquals(2, wholeValueCount(glyph, rival, "3"));
+            assertEquals(2, wholeValueCount(rival, glyph, "3"));
+        }
+    }
+
+    private static int wholeValueCount(byte[] normalized, byte[] raw, String text) {
+        var alias =
+                new ScoreNoteEvent(
+                        0,
+                        (96f / WIDTH - BAR.left()) / (BAR.right() - BAR.left()),
+                        -1,
+                        0,
+                        1,
+                        160f / HEIGHT,
+                        false,
+                        0,
+                        0,
+                        2,
+                        4);
+        var notes = List.of(event(94, 60, 12, 2, -1), alias);
+        var words =
+                List.of(
+                        new PlayingTechniqueDetector.Word(
+                                text, 83f / WIDTH, 139f / HEIGHT, 109f / WIDTH, 171f / HEIGHT));
+        var staffs = List.of(new PlayingTechniqueDetector.Staff(86, 150, 16, 0, 1));
+        return FingeringAnnotationFilter.removeWholeFingeringAliases(
+                        words, staffs, List.of(BAR), notes, normalized, raw, WIDTH, HEIGHT)
+                .size();
+    }
+
+    private static byte[] wholeValueFixture(boolean hollowWhole) {
+        byte[] paper = new byte[WIDTH * HEIGHT];
+        Arrays.fill(paper, (byte) 255);
+        for (int line = 86; line <= 150; line += 16) rectangle(paper, 12, line, 186, line + 1, 0);
+        rectangle(paper, 84, 56, 102, 64, 0);
+        rectangle(paper, 84, 60, 87, 121, 0);
+        rectangle(paper, 84, 116, 142, 121, 0);
+        if (hollowWhole) {
+            rectangle(paper, 81, 154, 111, 164, 0);
+            rectangle(paper, 91, 157, 102, 162, 255);
+            return paper;
+        }
+        rectangle(paper, 92, 145, 102, 152, 0);
+        rectangle(paper, 100, 153, 103, 162, 0);
+        rectangle(paper, 91, 156, 94, 162, 0);
+        rectangle(paper, 93, 162, 102, 164, 0);
+        return paper;
+    }
+
     private static int read(boolean upperLobe, boolean sharedBeam, boolean lowerStem) {
         byte[] gray = new byte[WIDTH * HEIGHT];
         Arrays.fill(gray, (byte) 255);

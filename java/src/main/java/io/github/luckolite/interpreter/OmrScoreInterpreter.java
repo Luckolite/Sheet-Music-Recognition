@@ -1910,7 +1910,25 @@ final class OmrScoreInterpreter {
                             heads)
                     && (rejectedLedgerRows.isEmpty()
                             || !sharedBeamedUpperOctave(
-                                    gray, annotationGray, width, height, head, physicalStaff, staff, heads))
+                                    gray,
+                                    annotationGray,
+                                    width,
+                                    height,
+                                    head,
+                                    physicalStaff,
+                                    staff,
+                                    heads))
+                    && !sharedBeamedUpperSixthLedger(
+                            labels,
+                            gray,
+                            annotationGray,
+                            width,
+                            height,
+                            head,
+                            physicalStaff,
+                            staff,
+                            staffs,
+                            heads)
                     && !filledBeamedDyadLedger(
                             labels,
                             gray,
@@ -14497,6 +14515,122 @@ final class OmrScoreInterpreter {
                 && Math.abs(own[1] - other[1]) <= 2;
     }
 
+    /** A connected downward sixth can carry abbreviated ledgers near the two head outlines. */
+    private static boolean sharedBeamedUpperSixthLedger(
+            byte[] labels,
+            byte[] gray,
+            byte[] raw,
+            int width,
+            int height,
+            Component head,
+            Staff physical,
+            Staff owner,
+            List<Staff> staffs,
+            List<Component> heads) {
+        float gap = physical.pitchGap;
+        float position = (physical.pitchBottom - head.centerY) * 2 / gap;
+        int step = Math.round(position);
+        if (raw == null
+                || owner.count != 1
+                || gap < 12
+                || gap > 26
+                || step < 12
+                || step > 15
+                || Math.abs(position - step) > .35f
+                || Math.abs(physical.pitchBottom - owner.pitchBottom) > gap
+                || !filledBeamEndpointCore(gray, width, height, head, gap)
+                || !filledBeamEndpointCore(raw, width, height, head, gap)
+                || competingPrintedCore(labels, gray, width, height, head, physical, staffs))
+            return false;
+
+        int[] own = attachedRawStem(gray, width, height, head, gap, 2, 170);
+        int[] printed = attachedRawStem(raw, width, height, head, gap, 2, 170);
+        if (own == null
+                || own[2] != 1
+                || !sameDownwardLedgerShaft(own, printed)
+                || Math.abs(own[0] - head.minX) > gap * .22f
+                || own[1] < physical.top + gap * 2.2f
+                || own[1] > physical.bottom + gap * .6f) return false;
+
+        Component lower = null;
+        for (var peer : heads) {
+            float lowerPosition = (physical.pitchBottom - peer.centerY) * 2 / gap;
+            if (Math.abs(peer.centerX - head.centerX) > gap * .20f
+                    || Math.abs(lowerPosition - (step - 5)) > .36f
+                    || !filledBeamEndpointCore(gray, width, height, peer, gap)
+                    || !filledBeamEndpointCore(raw, width, height, peer, gap)
+                    || staffForHead(labels, gray, width, height, staffs, peer) != owner
+                    || !sameDownwardLedgerShaft(
+                            own, attachedRawStem(gray, width, height, peer, gap, 2, 170))
+                    || !sameDownwardLedgerShaft(
+                            printed, attachedRawStem(raw, width, height, peer, gap, 2, 170)))
+                continue;
+            if (lower != null) return false;
+            lower = peer;
+        }
+        if (lower == null) return false;
+
+        for (int ledger = 10; ledger <= step; ledger += 2) {
+            float row = physical.pitchBottom - ledger * gap * .5f;
+            Component onLedger = ledger == step ? head : ledger == step - 5 ? lower : null;
+            if (onLedger != null) {
+                float corrected = printedLedgerLine(gray, width, height, onLedger, row, gap, true);
+                float source = printedLedgerLine(raw, width, height, onLedger, row, gap, true);
+                if (!Float.isFinite(corrected)
+                        || !Float.isFinite(source)
+                        || Math.abs(corrected - source) > gap * .12f) return false;
+                continue;
+            }
+            boolean touchesHead = ledger == step - 1;
+            if (!shortUpperSpaceLedger(gray, width, height, head, own[0], row, gap, touchesHead)
+                    || !shortUpperSpaceLedger(
+                            raw, width, height, head, printed[0], row, gap, touchesHead))
+                return false;
+        }
+
+        var budget = new PrintedBeamShafts.Budget(200_000);
+        var shaft = downShaft(gray, width, height, head, gap, budget);
+        var rawShaft = downShaft(raw, width, height, head, gap, budget);
+        if (shaft == null
+                || rawShaft == null
+                || Math.abs(shaft.left() - own[0]) > 2
+                || Math.abs(rawShaft.left() - printed[0]) > 2
+                || Math.abs(shaft.endY() - own[1]) > 2
+                || Math.abs(rawShaft.endY() - printed[1]) > 2) return false;
+        for (var peer : heads) {
+            float dx = peer.centerX - head.centerX;
+            if (Math.abs(dx) < gap * 1.5f
+                    || Math.abs(dx) > gap * 2.4f
+                    || Math.abs(peer.centerY - head.centerY) > gap * 1.6f
+                    || staffForHead(labels, gray, width, height, staffs, peer) != owner
+                    || !filledBeamEndpointCore(gray, width, height, peer, gap)
+                    || !filledBeamEndpointCore(raw, width, height, peer, gap)) continue;
+            var other = downShaft(gray, width, height, peer, gap, budget);
+            var rawOther = downShaft(raw, width, height, peer, gap, budget);
+            if (other == null
+                    || rawOther == null
+                    || Math.abs(other.left() - rawOther.left()) > 2
+                    || Math.abs(other.endY() - rawOther.endY()) > 2) continue;
+            if (WrappedEighthTriplets.matchesBeamRails(
+                            gray,
+                            width,
+                            height,
+                            dx < 0 ? other : shaft,
+                            dx < 0 ? shaft : other,
+                            gap,
+                            2)
+                    && WrappedEighthTriplets.matchesBeamRails(
+                            raw,
+                            width,
+                            height,
+                            dx < 0 ? rawOther : rawShaft,
+                            dx < 0 ? rawShaft : rawOther,
+                            gap,
+                            2)) return true;
+        }
+        return false;
+    }
+
     /** A compact downstem chord can have ledgers aligned to its shaft rather than the oval rim. */
     private static boolean filledBeamedDyadLedger(
             byte[] labels,
@@ -25993,7 +26127,7 @@ final class OmrScoreInterpreter {
         // A narrow vertical staccato may contain almost as much ink as the genuine dot.
         boolean narrowStaccato =
                 second.area < first.area
-                        && second.maxY - second.minY + 1 >= (second.maxX - second.minX + 1) * 1.35f;
+                        && second.maxY - second.minY + 1 >= (second.maxX - second.minX + 1) * 1.30f;
         if (gap < 8
                 || firstAdvance < gap * .98f
                 || firstAdvance > gap * 1.32f

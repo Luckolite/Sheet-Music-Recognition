@@ -38,6 +38,28 @@ public class UnnumberedTripletInkTest {
         }
     }
 
+    @Test public void extendingStrokeCannotClaimAnIndependentTripletBracket() {
+        byte[] line = clearBeam();
+        for (int x = 63; x <= 180; x++)
+            line[208 * WIDTH + x] = 0;
+        var rows = new UnnumberedTripletInk.Rows(0, HEIGHT - 1);
+        assertTrue(UnnumberedTripletInk.bracketBesideBeam(
+                line, WIDTH, HEIGHT, GAP, X[0], X[2], 134, 171, 174, rows, null));
+        assertFalse(UnnumberedTripletInk.bracketBesideBeam(
+                line, WIDTH, HEIGHT, GAP, X[0], X[2], 134, 171, 174, rows, null, true));
+
+        byte[] marked = line.clone();
+        bracket(marked, 221);
+        assertTrue(UnnumberedTripletInk.bracketBesideBeam(
+                marked, WIDTH, HEIGHT, GAP, X[0], X[2], 134, 171, 174, rows, null, true));
+
+        byte[] connectedTicks = line.clone();
+        for (int y = 198; y < 208; y++)
+            connectedTicks[y * WIDTH + 92] = connectedTicks[y * WIDTH + 148] = 0;
+        assertTrue(UnnumberedTripletInk.bracketBesideBeam(
+                connectedTicks, WIDTH, HEIGHT, GAP, X[0], X[2], 134, 171, 174, rows, null, true));
+    }
+
     @Test public void uncertainInkAndMarksJoinedToRailAreRetained() {
         byte[] uncertain = clearBeam();
         for (int dy = 0; dy < 12; dy++) uncertain[(183 + dy) * WIDTH + 118 + dy / 4] = (byte) 190;

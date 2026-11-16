@@ -203,6 +203,149 @@ final class FingeringAnnotationFilter {
         return remove.isEmpty() ? notes : notes.stream().filter(n -> !remove.contains(n)).toList();
     }
 
+    /** A curled fingering 3 crosses the bottom rule and its lower bowl can be labeled a whole head. */
+    static List<ScoreNoteEvent> removeWholeFingeringAliases(
+            List<PlayingTechniqueDetector.Word> words,
+            List<PlayingTechniqueDetector.Staff> staffs,
+            List<MeasureRegion> measures,
+            List<ScoreNoteEvent> notes,
+            byte[] normalized,
+            byte[] raw,
+            int width,
+            int height) {
+        if (raw == null
+                || normalized == null
+                || raw.length != (long) width * height
+                || normalized.length != raw.length
+                || staffs.isEmpty()) return notes;
+        var digits = words.stream().filter(word -> "3".equals(word.text())).toList();
+        if (digits.isEmpty()) return notes;
+        var remove = Collections.newSetFromMap(new IdentityHashMap<ScoreNoteEvent, Boolean>());
+        for (var note : notes) {
+            int index = note.measureIndex();
+            if (index < 0
+                    || index >= measures.size()
+                    || !captionGlyphHead(note, false, -1, -1)
+                    || note.beamCount() != 0
+                    || note.unbeamedDurationBeats() != 4) continue;
+            var measure = measures.get(index);
+            float x = fingeringHeadX(measure, note, width), y = note.pageY() * height;
+            for (var staff : staffs) {
+                float gap = staff.gap(), bottom = staff.bottom();
+                if (staff.index() != 0
+                        || staff.count() != 1
+                        || gap < 9
+                        || gap > 26
+                        || staff.top() < measure.top() * height
+                        || bottom > measure.bottom() * height
+                        || y - bottom < gap * .40f
+                        || y - bottom > gap * .92f) continue;
+                for (var digit : digits) {
+                    float l = digit.left() * width, r = digit.right() * width;
+                    float t = digit.top() * height, b = digit.bottom() * height;
+                    if (x <= l
+                            || x >= r
+                            || y <= t
+                            || y >= b
+                            || Math.abs((l + r) * .5f - x) > gap * .25f
+                            || r - l < gap * 1.15f
+                            || r - l > gap * 2.1f
+                            || bottom - t < gap * .36f
+                            || bottom - t > gap * .85f
+                            || b - bottom < gap * .95f
+                            || b - bottom > gap * 1.65f) continue;
+                    if (printedStemBeyondWord(raw, width, height, x, y, t, b, gap)
+                            || printedStemBeyondWord(normalized, width, height, x, y, t, b, gap)
+                            || printedLedgerAcrossWord(raw, width, height, l, r, y, gap)
+                            || printedLedgerAcrossWord(normalized, width, height, l, r, y, gap)
+                            || !hasFingerThreeBowl(raw, width, height, x, bottom, gap)
+                            || !hasFingerThreeBowl(normalized, width, height, x, bottom, gap)
+                            || !hasFingeredBeamOwner(
+                                    normalized,
+                                    raw,
+                                    width,
+                                    height,
+                                    measure,
+                                    note,
+                                    notes,
+                                    x,
+                                    y,
+                                    gap)) continue;
+                    remove.add(note);
+                    break;
+                }
+                if (remove.contains(note)) break;
+            }
+        }
+        return remove.isEmpty() ? notes : notes.stream().filter(n -> !remove.contains(n)).toList();
+    }
+
+    private static boolean hasFingerThreeBowl(
+            byte[] plane, int width, int height, float x, float bottom, float gap) {
+        int cx = Math.round(x), cy = Math.round(bottom);
+        int outside = Math.round(gap * .63f),
+                left = Math.round(gap * .20f),
+                spine = Math.round(gap * .30f),
+                inset = Math.max(1, Math.round(gap * .075f));
+        if (cx < outside + 1
+                || cx + outside + 1 >= width
+                || cy - gap < 0
+                || cy + gap * 1.15f >= height) return false;
+        int open = 0, pocket = 0, joined = 0;
+        for (int row = cy + Math.round(gap * .17f); row <= cy + Math.round(gap * .93f); row++) {
+            int stride = row * width;
+            if ((plane[stride + cx - outside] & 255) < 155
+                    || (plane[stride + cx + outside] & 255) < 155) return false;
+            boolean rightInk = (plane[stride + cx + spine] & 255) < 155;
+            boolean leftInk = (plane[stride + cx - left] & 255) < 155;
+            boolean recess = (plane[stride + cx + inset] & 255) >= 180;
+            if (!rightInk) continue;
+            if (recess && !leftInk && pocket == 0) open++;
+            else if (recess && leftInk && open > 0 && joined == 0) pocket++;
+            else if (!recess && pocket >= 2) joined++;
+        }
+        return open >= 1 && pocket >= 2 && joined >= 1;
+    }
+
+    private static boolean hasFingeredBeamOwner(
+            byte[] normalized,
+            byte[] raw,
+            int width,
+            int height,
+            MeasureRegion measure,
+            ScoreNoteEvent alias,
+            List<ScoreNoteEvent> notes,
+            float x,
+            float y,
+            float gap) {
+        ScoreNoteEvent owner = null;
+        for (var note : notes) {
+            if (note.measureIndex() != alias.measureIndex()
+                    || note.staffIndex() != 0
+                    || note.staffCount() != 1
+                    || note.kind() != ScoreNoteEvent.Kind.PITCHED
+                    || note.stemDirection() != -1
+                    || note.beamCount() < 1
+                    || note.visualSize() != ScoreNoteEvent.VisualSize.FULL
+                    || (note.articulations() & NoteOrnament.GRACE) != 0
+                    || Math.abs(fingeringHeadX(measure, note, width) - x) > gap * .27f) continue;
+            float rise = y - note.pageY() * height;
+            if (rise < gap * 4.2f || rise > gap * 8f) continue;
+            if (owner != null) return false;
+            owner = note;
+        }
+        if (owner == null) return false;
+        float headX = fingeringHeadX(measure, owner, width), headY = owner.pageY() * height;
+        var a = PairedTremoloInk.stem(normalized, width, height, headX, headY, gap, -1);
+        var b = PairedTremoloInk.stem(raw, width, height, headX, headY, gap, -1);
+        return a != null
+                && b != null
+                && Math.abs(a.x() - b.x()) <= gap * .12f
+                && Math.abs(a.endY() - b.endY()) <= gap * .17f
+                && a.endY() <= y - gap * 1.15f
+                && b.endY() <= y - gap * 1.15f;
+    }
+
     private static boolean bracketedByFingerings(
             List<Candidate> words, MeasureRegion measure, float x, float y, float gap, int width) {
         boolean left = false, right = false;
@@ -1478,6 +1621,18 @@ final class FingeringAnnotationFilter {
         return closedWrittenSixteenths(result)?result:List.of();
     }
 
+    static boolean pairedBeamRails(
+            byte[] gray,
+            int width,
+            int height,
+            PrintedBeamShafts.Shaft first,
+            PrintedBeamShafts.Shaft second,
+            float gap) {
+        return first.direction() == second.direction()
+                && pairedRails(
+                        gray, width, height, first, second, gap, true, true, first.direction());
+    }
+
     private static boolean pairedRails(byte[] gray,int width,int height,
             PrintedBeamShafts.Shaft a,PrintedBeamShafts.Shaft b,float gap) {
         return pairedRails(gray, width, height, a, b, gap, false);
@@ -1491,6 +1646,19 @@ final class FingeringAnnotationFilter {
     private static boolean pairedRails(byte[] gray, int width, int height,
             PrintedBeamShafts.Shaft a, PrintedBeamShafts.Shaft b, float gap,
             boolean narrowSeam, boolean fineSeam) {
+        return pairedRails(gray, width, height, a, b, gap, narrowSeam, fineSeam, 1);
+    }
+
+    private static boolean pairedRails(
+            byte[] gray,
+            int width,
+            int height,
+            PrintedBeamShafts.Shaft a,
+            PrintedBeamShafts.Shaft b,
+            float gap,
+            boolean narrowSeam,
+            boolean fineSeam,
+            int direction) {
         int x0=(a.left()+a.right())/2,x1=(b.left()+b.right())/2;
         int margin=Math.round(gap*.37f),rad=Math.max(2,Math.round(gap*.14f));
         if(x0+margin>=x1-margin) return false;
@@ -1498,11 +1666,19 @@ final class FingeringAnnotationFilter {
             for(int separation=Math.round(gap*.55f);separation<=Math.round(gap*.92f);separation++) {
                 int first=0,second=0,seam=0,lightSeam=0,linePaper=0;
                 for(int x=x0+margin;x<=x1-margin;x++) {
-                    int axis=Math.round(a.endY()+(b.endY()-a.endY())*(x-x0)/(float)(x1-x0))-offset;
-                    if (axis+rad>=height || axis-separation-rad<0) continue;
+                    int axis =
+                            Math.round(
+                                            a.endY()
+                                                    + (b.endY() - a.endY())
+                                                            * (x - x0)
+                                                            / (float) (x1 - x0))
+                                    - offset * direction;
+                    int inner = axis - separation * direction;
+                    if (Math.max(axis, inner) + rad >= height || Math.min(axis, inner) - rad < 0)
+                        continue;
                     if(verticalInk(gray,width,x,axis,rad)>=2*rad) first++;
-                    if(verticalInk(gray,width,x,axis-separation,rad)>=2*rad) second++;
-                    int trough = axis - separation / 2;
+                    if (verticalInk(gray, width, x, inner, rad) >= 2 * rad) second++;
+                    int trough = axis - separation * direction / 2;
                     if(verticalInk(gray,width,x,trough,1)<=1) seam++;
                     int shade = gray[trough * width + x] & 255;
                     if (narrowSeam && shade >= 185) lightSeam++;

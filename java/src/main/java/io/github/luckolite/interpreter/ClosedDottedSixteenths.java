@@ -238,6 +238,16 @@ final class ClosedDottedSixteenths {
 
     static ScorePageInterpretation applyClosedMonophonicHooks(
             ScorePageInterpretation score, ScoreMeterChange inherited, byte[] gray, int w, int h) {
+        return applyClosedMonophonicHooks(score, inherited, gray, null, w, h);
+    }
+
+    static ScorePageInterpretation applyClosedMonophonicHooks(
+            ScorePageInterpretation score,
+            ScoreMeterChange inherited,
+            byte[] gray,
+            byte[] raw,
+            int w,
+            int h) {
         if (gray == null || gray.length != (long) w * h || w < 256 || h < 128) return score;
         var ink = new Ink(gray, w, h);
         var bars = groupedHeads(score, w, h);
@@ -268,7 +278,14 @@ final class ClosedDottedSixteenths {
             if (row.get(0).x - left > gap * 2.2f || right - row.get(15).x > gap * 2.7f) continue;
             var head = missingSingleHook(row, gap);
             if (head == null) {
-                if (provesFourClosedDottedGroups(ink, region, row, gap)) {
+                if (raw != null
+                        && raw.length == gray.length
+                        && provesOpposedDottedHookEnds(ink, new Ink(raw, w, h), region, row, gap)) {
+                    for (int slot : new int[] {1, row.size() - 1}) {
+                        var owner = row.get(slot);
+                        corrected.set(owner.index, rhythm(owner.note, false));
+                    }
+                } else if (provesFourClosedDottedGroups(ink, region, row, gap)) {
                     for (int slot = 0; slot < row.size(); slot++) {
                         var owner = row.get(slot);
                         boolean dotted = slot % 2 == 0;
@@ -299,6 +316,47 @@ final class ClosedDottedSixteenths {
                 : score.withNotes(
                         corrected,
                         java.util.stream.IntStream.range(0, notes.size()).boxed().toList());
+    }
+
+    /** The first and final short notes may carry hooks on opposite sides of the staff. */
+    private static boolean provesOpposedDottedHookEnds(
+            Ink corrected, Ink raw, MeasureRegion region, List<Head> row, float gap) {
+        int terminal = row.size() - 1;
+        int clef = row.get(0).note.clefBottomDiatonic();
+        for (int slot = 0; slot < row.size(); slot++) {
+            Head head = row.get(slot);
+            boolean dotted = slot % 2 == 0;
+            int expectedBeams = dotted || slot == 1 || slot == terminal ? 2 : 3;
+            if (!regular(head.note)
+                    || head.note.stemDirection() != (slot < row.size() / 2 ? -1 : 1)
+                    || head.note.clefBottomDiatonic() != clef
+                    || head.note.beamCount() != expectedBeams
+                    || head.note.augmentationDots() != (dotted ? 1 : 0)) return false;
+            if (slot > 0) {
+                float advance = head.x - row.get(slot - 1).x;
+                if (advance < gap * 1.55f || advance > gap * 3.7f) return false;
+            }
+        }
+        float right = region.right() * raw.w;
+        var last = row.get(terminal);
+        float floor = last.y + last.note.staffStep() * gap * .5f;
+        for (Ink plane : List.of(raw, corrected)) {
+            float[] rules = localRules(plane, right - gap * .72f, floor, gap);
+            if (rules == null || !barline(plane, right, rules)) return false;
+            for (int slot : new int[] {1, terminal}) {
+                var own = row.get(slot);
+                var before = row.get(slot - 1);
+                if (!OwnedTertiaryBeamlets.provesMonophonicBackwardHook(
+                        plane.pixels,
+                        plane.w,
+                        plane.h,
+                        new OwnedTertiaryBeamlets.Head(own.index, own.note, own.x, own.y, gap),
+                        new OwnedTertiaryBeamlets.Head(
+                                before.index, before.note, before.x, before.y, gap),
+                        rules[1])) return false;
+            }
+        }
+        return true;
     }
 
     private static boolean provesFourClosedDottedGroups(
