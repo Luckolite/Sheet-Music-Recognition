@@ -576,6 +576,237 @@ final class BeamedFlatBarline {
                         rules[1]);
     }
 
+    /** A 12-dyad bar can retain a false cut between the final group's two pairs. */
+    static List<MeasureRegion> joinPairedFlatTails(
+            List<MeasureRegion> measures,
+            byte[] labels,
+            byte[] gray,
+            byte[] raw,
+            int width,
+            int height) {
+        if (width < 1
+                || height < 1
+                || gray == null
+                || raw == null
+                || labels == null
+                || gray.length != (long) width * height
+                || labels.length != gray.length
+                || raw.length != gray.length) return measures;
+        List<RawStaffLineDetector.StaffLines> staffs = null;
+        List<MeasureRegion> result = null;
+        for (int i = 1; i + 2 < measures.size(); i++) {
+            var left = measures.get(i);
+            var right = measures.get(i + 1);
+            var before = measures.get(i - 1);
+            var following = measures.get(i + 2);
+            float gap = (left.bottom() - left.top()) * height / 8.2f;
+            float leftSpan = (left.right() - left.left()) * width;
+            float rightSpan = (right.right() - right.left()) * width;
+            float tailSpan = (following.right() - following.left()) * width;
+            float pocket = (right.left() - left.right()) * width;
+            if (gap < 10
+                    || gap > 25
+                    || left.cadenceQuarterBeats() != 0
+                    || right.cadenceQuarterBeats() != 0
+                    || leftSpan < gap * 30
+                    || leftSpan > gap * 46
+                    || rightSpan < gap * 6.5f
+                    || rightSpan > gap * 10.2f
+                    || tailSpan < gap * 6.5f
+                    || tailSpan > gap * 10.5f
+                    || pocket < gap * .7f
+                    || pocket > gap * 1.4f
+                    || !sameRow(left, right, gap, height)
+                    || !sameRow(left, before, gap, height)
+                    || !sameRow(left, following, gap, height)) continue;
+            int min = Math.round(left.right() * width), max = Math.round(right.left() * width);
+            int axis = (min + max) / 2;
+            int hint = Math.round(left.bottom() * height - 2.1f * gap);
+            if (!hasAccidentalSpine(
+                    labels, width, height, axis, Math.round(hint - 4 * gap), hint, gap)) continue;
+            if (staffs == null) staffs = RawStaffLineDetector.detect(raw, width, height);
+            var candidates =
+                    staffs.stream()
+                            .filter(
+                                    s ->
+                                            Math.abs(s.bottom() - hint) <= gap * .35f
+                                                    && Math.abs(s.gap() - gap) <= gap * .16f)
+                            .toList();
+            if (candidates.size() != 1) continue;
+            var staff = candidates.get(0);
+            if (!undivided(gray, raw, width, height, left, right, staff)
+                    || continuousStroke(gray, width, min, max, staff)
+                    || continuousStroke(raw, width, min, max, staff)
+                    || !provedAdjacentRule(gray, raw, width, height, before, left, staff)
+                    || !provedAdjacentRule(gray, raw, width, height, right, following, staff))
+                continue;
+            var joined = new MeasureRegion(left.left(), right.right(), left.top(), left.bottom());
+            var closed =
+                    terminalPairedFlatGroup(
+                            labels, gray, raw, width, height, joined, min, max, staff.gap());
+            if (closed == null
+                    || !ownsPairedFlats(labels, gray, width, height, closed, min, max, staff)
+                    || !ownsPairedFlats(labels, raw, width, height, closed, min, max, staff))
+                continue;
+            if (result == null) result = new ArrayList<>(measures);
+            int edit = i - (measures.size() - result.size());
+            result.set(edit, joined);
+            result.remove(edit + 1);
+            i++;
+        }
+        return result == null ? measures : List.copyOf(result);
+    }
+
+    private static boolean sameRow(MeasureRegion a, MeasureRegion b, float gap, int height) {
+        return Math.abs(a.top() - b.top()) * height <= gap * .35f
+                && Math.abs(a.bottom() - b.bottom()) * height <= gap * .35f;
+    }
+
+    private static boolean continuousStroke(
+            byte[] plane, int width, int first, int last, RawStaffLineDetector.StaffLines staff) {
+        // A barline can touch a flat or another mark outside the staff. A nearly continuous
+        // column through all five lines is independently sufficient reason to retain a cut.
+        for (int x = first; x <= last; x++) {
+            int ink = 0;
+            for (int y = staff.top(); y <= staff.bottom(); y++) {
+                if ((plane[y * width + x] & 255) < 155) ink++;
+            }
+            if (ink >= (staff.bottom() - staff.top() + 1) * .92f) return true;
+        }
+        return false;
+    }
+
+    private static boolean provedAdjacentRule(
+            byte[] gray,
+            byte[] raw,
+            int width,
+            int height,
+            MeasureRegion left,
+            MeasureRegion right,
+            RawStaffLineDetector.StaffLines staff) {
+        int from = Math.round(left.right() * width), to = Math.round(right.left() * width);
+        float gap = staff.gap();
+        if (from < 0 || to >= width || to - from < 1 || to - from > 1.4f * gap) return false;
+        int visible = 0;
+        for (int x = from; x <= to; x++) {
+            if (seamRule(gray, width, height, x, staff, gap)
+                    && seamRule(raw, width, height, x, staff, gap)) {
+                if (++visible >= 2) return true;
+            } else visible = 0;
+        }
+        return false;
+    }
+
+    private static ClosedFourDyadBeam.Head[] terminalPairedFlatGroup(
+            byte[] labels,
+            byte[] gray,
+            byte[] raw,
+            int w,
+            int h,
+            MeasureRegion bar,
+            int seamLeft,
+            int seamRight,
+            float gap) {
+        var analysis = OmrScoreInterpreter.analyze(labels, gray, w, h, List.of(bar), raw);
+        if (!analysis.rests().isEmpty() || analysis.notes().size() != 24) return null;
+        var notes =
+                analysis.notes().stream()
+                        .sorted(
+                                java.util.Comparator.comparingDouble(
+                                        ScoreNoteEvent::positionInMeasure))
+                        .toList();
+        var tail = new ClosedFourDyadBeam.Head[4];
+        float left = bar.left() * w, span = (bar.right() - bar.left()) * w;
+        for (int j = 0; j < 12; j++) {
+            var a = notes.get(2 * j);
+            var b = notes.get(2 * j + 1);
+            if (!straightSixteenth(a)
+                    || !straightSixteenth(b)
+                    || a.stemDirection() == 0
+                    || a.stemDirection() != b.stemDirection()
+                    || Math.abs(a.staffStep() - b.staffStep()) < 2
+                    || (b.positionInMeasure() - a.positionInMeasure()) * span > .28f * gap)
+                return null;
+            float x = left + span * (a.positionInMeasure() + b.positionInMeasure()) * .5f;
+            if (j < 10 ? x >= seamLeft : x <= seamRight) return null;
+            if (j < 8) continue;
+            if (a.stemDirection() != 1
+                    || j == 10
+                            && (a.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_FLAT
+                                    || b.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_FLAT))
+                return null;
+            tail[j - 8] =
+                    new ClosedFourDyadBeam.Head(
+                            x,
+                            Math.min(a.pageY(), b.pageY()) * h,
+                            Math.max(a.pageY(), b.pageY()) * h);
+        }
+        return tail;
+    }
+
+    private static boolean straightSixteenth(ScoreNoteEvent note) {
+        return note.kind() == ScoreNoteEvent.Kind.PITCHED
+                && note.staffIndex() == 0
+                && note.staffCount() == 1
+                && note.visualSize() == ScoreNoteEvent.VisualSize.FULL
+                && note.beamCount() == 2
+                && note.unbeamedDurationBeats() == 0
+                && note.tupletDivisor() == 1
+                && note.tupletNormalNotes() == 1
+                && note.augmentationDots() == 0
+                && !note.crossStaffBeam()
+                && !note.tiedFromPrevious()
+                && note.boundaryTies() == 0
+                && note.leadingRestBeats() == 0
+                && note.followingRestBeats() == 0
+                && (note.articulations() & NoteOrnament.GRACE) == 0;
+    }
+
+    static boolean ownsPairedFlats(
+            byte[] labels,
+            byte[] plane,
+            int w,
+            int h,
+            ClosedFourDyadBeam.Head[] tail,
+            int left,
+            int right,
+            RawStaffLineDetector.StaffLines staff) {
+        float gap = staff.gap();
+        if (!ClosedFourDyadBeam.proves(plane, w, h, tail, gap, -1)) return false;
+        var chord = tail[2];
+        if (chord.bottom() - chord.top() < 2.2f * gap || chord.bottom() - chord.top() > 3f * gap)
+            return false;
+        var shaft = PairedTremoloInk.stem(plane, w, h, chord.x(), chord.bottom(), gap, 1);
+        if (shaft == null) return false;
+        for (int upper = left; upper <= right; upper++) {
+            if (!typedFlatBeforeShaft(labels, plane, w, h, upper, shaft, chord.top(), staff))
+                continue;
+            for (int lower = Math.max(left, upper - Math.round(gap * .42f));
+                    lower <= Math.min(right, upper + Math.round(gap * .42f));
+                    lower++) {
+                if (typedFlatBeforeShaft(labels, plane, w, h, lower, shaft, chord.bottom(), staff))
+                    return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean typedFlatBeforeShaft(
+            byte[] labels,
+            byte[] plane,
+            int width,
+            int height,
+            int x,
+            PairedTremoloInk.Stem shaft,
+            float headY,
+            RawStaffLineDetector.StaffLines staff) {
+        float gap = staff.gap();
+        int from = Math.max(0, Math.round(headY - gap * 1.65f));
+        int to = Math.min(height - 1, Math.round(headY + gap * .56f));
+        return hasAccidentalSpine(labels, width, height, x, from, to, gap)
+                && flatBeforeShaft(plane, width, height, x, shaft, headY, staff);
+    }
+
     private static boolean hasAccidentalSpine(
             byte[] labels, int width, int height, int column, int top, int bottom, float gap) {
         if (column < 0 || column >= width || top < 0 || bottom >= height) return false;

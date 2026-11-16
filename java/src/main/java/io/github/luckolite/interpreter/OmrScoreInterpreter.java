@@ -1586,6 +1586,9 @@ final class OmrScoreInterpreter {
         localAccidentals =
                 splitTouchingChordAccidentals(
                         labels, width, height, localAccidentals, heads, staffs);
+        heads.removeAll(
+                doubleSharpArmHeads(
+                        gray, annotationGray, width, height, heads, staffs, localAccidentals));
         // A header key glyph must not act as the local accidental of a grace head.
         List<Component> rejectedAccidentalGraces = new ArrayList<>();
         for (Component head : accidentalGraces)
@@ -20341,6 +20344,82 @@ final class OmrScoreInterpreter {
      * natural from both its accidental seed and the joined candidate, with an independent
      * full-sized following note as crop anchor.
      */
+    /** Suppress a notehead label on the upper-right arm of a separately owned double sharp. */
+    private static List<Component> doubleSharpArmHeads(
+            byte[] gray,
+            byte[] source,
+            int width,
+            int height,
+            List<Component> heads,
+            List<Staff> staffs,
+            List<AccidentalCandidate> accidentals) {
+        List<Component> result = new ArrayList<>();
+        if (gray == null
+                || source == null
+                || gray.length != (long) width * height
+                || source.length != gray.length) return result;
+        for (var arm : heads) {
+            var staff = nearestHeadStaff(staffs, arm.centerY);
+            if (staff == null) continue;
+            float gap = staff.gap;
+            if (arm.area > gap * gap * .38f
+                    || arm.maxX - arm.minX + 1 > gap * .8f
+                    || arm.maxY - arm.minY + 1 > gap * .8f) continue;
+            for (var accidental : accidentals) {
+                var shape = accidental.component;
+                if (accidental.label != 0
+                        || arm.minX < shape.minX
+                        || arm.maxX > shape.maxX + Math.round(gap * .10f)
+                        || arm.minY < shape.minY - Math.round(gap * .10f)
+                        || arm.maxY > shape.maxY
+                        || arm.centerX < shape.centerX + gap * .14f
+                        || arm.centerY > shape.centerY - gap * .20f) continue;
+                if (!DoubleSharpGlyph.matchesRaw(
+                                gray,
+                                width,
+                                height,
+                                shape.minX,
+                                shape.minY,
+                                shape.maxX,
+                                shape.maxY,
+                                gap)
+                        || !DoubleSharpGlyph.matchesRaw(
+                                source,
+                                width,
+                                height,
+                                shape.minX,
+                                shape.minY,
+                                shape.maxX,
+                                shape.maxY,
+                                gap)
+                        || attachedRawStem(gray, width, height, arm, gap) != null
+                        || attachedRawStem(source, width, height, arm, gap) != null) continue;
+                Component owner = null;
+                for (var head : heads) {
+                    if (head == arm
+                            || head.minX - shape.maxX < gap * .12f
+                            || head.minX - shape.maxX > gap * .95f
+                            || Math.abs(head.centerY - shape.centerY) > gap * .35f
+                            || head.area < gap * gap * .58f
+                            || head.maxX - head.minX + 1 < gap * .88f
+                            || nearestHeadStaff(staffs, head.centerY) != staff
+                            || attachedRawStem(gray, width, height, head, gap) == null
+                            || attachedRawStem(source, width, height, head, gap) == null) continue;
+                    if (owner != null) {
+                        owner = null;
+                        break;
+                    }
+                    owner = head;
+                }
+                if (owner != null) {
+                    result.add(arm);
+                    break;
+                }
+            }
+        }
+        return result;
+    }
+
     private static List<Component> naturalCrossbarHeads(
             byte[] gray,
             int width,

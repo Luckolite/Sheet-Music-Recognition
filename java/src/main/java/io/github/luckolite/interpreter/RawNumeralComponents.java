@@ -67,6 +67,20 @@ final class RawNumeralComponents {
             int threshold,
             ObservedFringeContinuation.Charge charge,
             Runnable newComponent) {
+        return capture(gray, width, height, left, top, right, bottom,
+                threshold, charge, newComponent, 16_384);
+    }
+
+    static RawNumeralComponents captureLongWindow(
+            byte[] gray, int width, int height, int left, int top, int right, int bottom) {
+        return capture(gray, width, height, left, top, right, bottom, 154,
+                () -> {}, () -> {}, 650_000);
+    }
+
+    private static RawNumeralComponents capture(
+            byte[] gray, int width, int height, int left, int top, int right, int bottom,
+            int threshold, ObservedFringeContinuation.Charge charge, Runnable newComponent,
+            int maxCells) {
         if (left > right || top > bottom)
             throw new IllegalArgumentException("raw core graph bounds");
         int w = right - left + 1, h = bottom - top + 1;
@@ -80,7 +94,7 @@ final class RawNumeralComponents {
                 || bottom >= height
                 || w < 1
                 || h < 1
-                || (long) w * h > 16384)
+                || (long) w * h > maxCells)
             throw new IllegalArgumentException("raw core graph bounds");
         BitSet seen = new BitSet(w * h);
         int[] queue = new int[w * h];

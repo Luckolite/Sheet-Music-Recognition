@@ -165,6 +165,8 @@ public final class Main {
                 beats);
         IsolatedDottedHalfCadence.apply(score, labels, decoderGray == null ? gray : decoderGray,
                 width, height, beats, cadences);
+        PrintedFiveBeatMeasure.apply(
+                score, decoderGray == null ? gray : decoderGray, gray, width, height, beats);
         int[] keys = measureKeys(beats.length, initialKey, score.keyChanges());
         var wrapped =
                 WrappedTripletMeasure.capture(

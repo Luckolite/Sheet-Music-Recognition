@@ -304,6 +304,13 @@ final class WrappedMeasureBoundaries {
     static boolean confirmsOpeningTripletBar(
             byte[] gray, int width, int height, List<MeasureRegion> regions,
             float firstHead, float lastHead, boolean provedTerminalGroup) {
+        return confirmsOpeningTripletBar(gray, width, height, regions, firstHead, lastHead,
+                provedTerminalGroup, false);
+    }
+
+    static boolean confirmsOpeningTripletBar(
+            byte[] gray, int width, int height, List<MeasureRegion> regions,
+            float firstHead, float lastHead, boolean provedTerminalGroup, boolean wideHeader) {
         if (regions.size() < 2) return false;
         var opening = box(regions.get(0), width, height);
         var following = box(regions.get(1), width, height);
@@ -328,7 +335,7 @@ final class WrappedMeasureBoundaries {
             return false;
 
         int margin = Math.max(2, Math.round(gap * .65f));
-        int limit = Math.max(margin, Math.round(opening.left - gap * 10));
+        int limit = Math.max(margin, Math.round(opening.left - gap * (wideHeader ? 16 : 10)));
         for (int x = Math.round(opening.left - gap); x >= limit; x--) {
             if (staffRules(gray, width, height, staff, x) == 5
                     && staffRules(gray, width, height, staff, x - margin) == 0) return true;

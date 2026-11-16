@@ -216,6 +216,10 @@ final class WrappedEighthTriplets {
             var proof = singleRailGroups(gray, width, height, bar, proofNotes, owners, true);
             boolean numberedOpening = false;
             if (proof == null && canUseOpening && hasOriginal && !recoverEndpoint) {
+                proof = thinStaffOpening(gray, original, labels, width, height, regions, proofNotes, owners, meter);
+                numberedOpening = proof != null;
+            }
+            if (proof == null && canUseOpening && hasOriginal && !recoverEndpoint) {
                 var opening = clearBorrowedOpeningStaccatos(
                         bar, proofNotes, owners, labels, original, width, height);
                 if (opening != proofNotes) {
@@ -291,6 +295,26 @@ final class WrappedEighthTriplets {
             }
         }
         return result == notes ? notes : List.copyOf(result);
+    }
+
+    private static WrappedTripletMeasure.Half thinStaffOpening(
+            byte[] gray, byte[] original, byte[] labels, int width, int height,
+            List<MeasureRegion> regions, List<ScoreNoteEvent> notes, List<Integer> owners,
+            ScoreMeterChange meter) {
+        var bar = regions.get(0);
+        var proof = singleRailGroups(gray, width, height, bar, notes, owners, true, false, null, true);
+        if (proof == null
+                || singleRailGroups(original, width, height, bar, notes, owners, true, false, null, true) == null)
+            return null;
+        float first = proof.x()[0], last = proof.x()[owners.size() - 1];
+        if (!WrappedMeasureBoundaries.confirmsOpeningTripletBar(
+                        gray, width, height, regions, first, last, true, true)
+                || !WrappedMeasureBoundaries.confirmsOpeningTripletBar(
+                        original, width, height, regions, first, last, true, true)
+                || !MeterFontMatcher.standaloneReadings(
+                        labels, original, width, height, List.of(bar), owners.stream().map(notes::get).toList())
+                        .equals(List.of(meter))) return null;
+        return proof;
     }
 
     private static List<ScoreNoteEvent> clearBorrowedOpeningStaccatos(
@@ -376,13 +400,23 @@ final class WrappedEighthTriplets {
         var bars = score.measures();
         var previous = score.beamSource();
         var opening = fullSixFourTriplets(score, 0, corrected, original, width, height);
+        boolean thinStaffOpening = opening == null;
+        if (thinStaffOpening) {
+            var owners = fullSixFourOwners(score, 0);
+            if (owners.isEmpty()) return score;
+            opening = thinStaffOpening(corrected, original, labels, width, height,
+                    bars, scoreNotes, owners, score.meterChanges().get(0));
+        }
         if (opening == null || !WrappedMeasureBoundaries.confirmsOpeningTripletBar(
-                original, width, height, bars, opening.x()[0], opening.x()[17], true)) return score;
+                original, width, height, bars, opening.x()[0], opening.x()[17], true, thinStaffOpening)) return score;
         var first = bars.get(0);
         float openingGap = (first.bottom() - first.top()) * height / 8.2f;
         var middle = scoreNotes.get(opening.owners().get(1));
-        if (!ownedOpeningNumeral(original, labels, width, height, opening.x()[1], middle.pageY() * height,
-                openingGap)) return score;
+        float middleX = opening.x()[1], middleY = middle.pageY() * height;
+        if (!ownedOpeningNumeral(original, labels, width, height, middleX, middleY, openingGap)
+                && !(thinStaffOpening && OpeningTripletNumeral.present(
+                        words, original, corrected, labels, width, height, middleX, middleY, openingGap)))
+            return score;
         var groups = new ArrayList<>(previous.groups());
         var firstColumns = existingTripletColumns(previous, opening.owners().subList(0, 3));
         if (firstColumns.isEmpty()) return score;
@@ -396,7 +430,7 @@ final class WrappedEighthTriplets {
                 owner.id(), owner.columns(), owner.bridges(), owner.hooks(), ScoreBeamSource.TupletMark.NUMBERED));
 
         // A shortened source record can end before the verified terminal stem of the following bar.
-        var following = fullSixFourTriplets(score, 1, corrected, original, width, height);
+        var following = thinStaffOpening ? null : fullSixFourTriplets(score, 1, corrected, original, width, height);
         if (following != null
                 && score.meterChanges().stream().noneMatch(m -> m.measureIndex() == 1)
                 && WrappedMeasureBoundaries.confirmsPocketClosedTripletBar(
@@ -416,25 +450,41 @@ final class WrappedEighthTriplets {
                 }
             }
         }
-        markUnnumberedTripletGroups(score, groups, original, corrected, width, height, words);
+        markUnnumberedTripletGroups(score, groups, original, corrected, width, height, words,
+                opening, thinStaffOpening);
         return groups.equals(previous.groups()) ? score : score.withBeamSource(
                 new ScoreBeamSource(groups, previous.detachedColumns(), previous.noteOrigins()));
     }
 
     private static void markUnnumberedTripletGroups(
             ScorePageInterpretation score, List<ScoreBeamSource.Group> groups, byte[] original,
-            byte[] corrected, int width, int height, List<PlayingTechniqueDetector.Word> words) {
+            byte[] corrected, int width, int height, List<PlayingTechniqueDetector.Word> words,
+            WrappedTripletMeasure.Half opening, boolean openingOnly) {
         var bars = score.measures();
         var source = score.beamSource();
         var notes = score.notes();
         int meterChange = bars.size();
         if (score.meterChanges().size() > 1) meterChange = score.meterChanges().get(1).measureIndex();
+        if (openingOnly) meterChange = Math.min(meterChange, 1);
         for (int m = 0; m < meterChange; m++) {
-            var proof = fullSixFourTriplets(score, m, corrected, original, width, height);
+            var proof = m == 0 ? opening : fullSixFourTriplets(score, m, corrected, original, width, height);
             if (proof == null) continue;
             var bar = bars.get(m);
             float gap = (bar.bottom() - bar.top()) * height / 8.2f;
             var rows = UnnumberedTripletInk.sourceRows(bar, bars, height);
+            byte[] markInk = original;
+            OpeningTripletContextInk.Pair context = null;
+            StaffPitchTrack correctedStaff = null;
+            if (openingOnly) {
+                float[] openingY = new float[proof.owners().size()];
+                for (int i = 0; i < openingY.length; i++)
+                    openingY[i] = notes.get(proof.owners().get(i)).pageY() * height;
+                context = OpeningTripletContextInk.withoutContext(original, corrected, width, height,
+                        gap, proof.x(), openingY, words);
+                markInk = context.original();
+                correctedStaff = WrappedMeasureBoundaries.verifiedTripletStaff(corrected, width, height, bar);
+                if (correctedStaff == null) continue;
+            }
             StaffPitchTrack local = null, broad = null;
             boolean fitted = false;
             var budget = new PrintedBeamShafts.Budget(800_000);
@@ -470,7 +520,7 @@ final class WrappedEighthTriplets {
                     shafts.add(possible.get(0));
                 }
                 if (shafts.size() != 3) continue;
-                boolean clear = UnnumberedTripletInk.clear(original, width, height, gap, x, y, shafts, rows);
+                boolean clear = UnnumberedTripletInk.clear(markInk, width, height, gap, x, y, shafts, rows);
                 if (!clear) {
                     if (!fitted) {
                         fitted = true;
@@ -480,10 +530,13 @@ final class WrappedEighthTriplets {
                         broad = StaffPitchTrack.forPrintedSlurs(original, width, height, top, bottom, gap);
                     }
                     clear = UnnumberedTripletInk.clearWithTrackedStaff(
-                                    original, width, height, gap, x, y, shafts, rows, local, words)
+                                    markInk, width, height, gap, x, y, shafts, rows, local, words)
                             || UnnumberedTripletInk.clearWithTrackedStaff(
-                                    original, width, height, gap, x, y, shafts, rows, broad, words);
+                                    markInk, width, height, gap, x, y, shafts, rows, broad, words);
                 }
+                if (clear && context != null)
+                    clear = UnnumberedTripletInk.clearWithTrackedStaff(context.corrected(),
+                            width, height, gap, x, y, shafts, rows, correctedStaff, words);
                 if (clear) groups.set(groupIndex, new ScoreBeamSource.Group(
                         group.id(), group.columns(), group.bridges(), group.hooks(), ScoreBeamSource.TupletMark.UNNUMBERED));
             }
@@ -492,16 +545,23 @@ final class WrappedEighthTriplets {
 
     private static WrappedTripletMeasure.Half fullSixFourTriplets(
             ScorePageInterpretation score, int bar, byte[] corrected, byte[] original, int width, int height) {
-        if (score.rests().stream().anyMatch(r -> r.measureIndex() == bar)) return null;
         var notes = score.notes();
-        var owners = java.util.stream.IntStream.range(0, notes.size())
-                .filter(i -> notes.get(i).measureIndex() == bar).boxed().toList();
-        if (owners.size() != 18 || owners.stream().map(notes::get).anyMatch(n -> n.beamCount() != 1
-                || n.tupletDivisor() != 3 || n.tupletNormalNotes() != 2)) return null;
+        var owners = fullSixFourOwners(score, bar);
+        if (owners.isEmpty()) return null;
         var region = score.measures().get(bar);
         var proof = singleRailGroups(corrected, width, height, region, notes, owners, true);
         return proof != null && singleRailGroups(original, width, height, region, notes, owners, true) != null
                 ? proof : null;
+    }
+
+    private static List<Integer> fullSixFourOwners(ScorePageInterpretation score, int bar) {
+        if (score.rests().stream().anyMatch(r -> r.measureIndex() == bar)) return List.of();
+        var notes = score.notes();
+        var owners = java.util.stream.IntStream.range(0, notes.size())
+                .filter(i -> notes.get(i).measureIndex() == bar).boxed().toList();
+        return owners.size() == 18 && owners.stream().map(notes::get).allMatch(
+                n -> n.beamCount() == 1 && n.tupletDivisor() == 3 && n.tupletNormalNotes() == 2)
+                ? owners : List.of();
     }
 
     private static List<ScoreBeamSource.Column> existingTripletColumns(
@@ -723,6 +783,14 @@ final class WrappedEighthTriplets {
             boolean closedBar,
             boolean allowSingleFlat,
             byte[] labels) {
+        return singleRailGroups(gray, width, height, bar, notes, candidates, closedBar,
+                allowSingleFlat, labels, false);
+    }
+
+    private static WrappedTripletMeasure.Half singleRailGroups(
+            byte[] gray, int width, int height, MeasureRegion bar,
+            List<ScoreNoteEvent> notes, List<Integer> candidates, boolean closedBar,
+            boolean allowSingleFlat, byte[] labels, boolean thinStaffOpening) {
         boolean labeled = !closedBar && labels != null && labels.length == gray.length;
         boolean closedNaturalPredecessor = labeled && candidates.size() == 18;
         boolean wrapped = labeled && !closedNaturalPredecessor;
@@ -926,12 +994,14 @@ final class WrappedEighthTriplets {
             if (i % 3 == 2) {
                 if (same) {
                     var ribbon = bestRibbon(gray, width, height, a, b, gap);
-                    if (ribbon.coverage() > .46f
-                            && (!closedBar
-                                    || x.length != 12
-                                    || !staffRuleOnlyCut(
-                                            gray, width, height, bar, a, b, gap, ribbon, false)))
-                        return null;
+                    if (ribbon.coverage() > .46f) {
+                        boolean staffRule = closedBar
+                                && (x.length == 12
+                                        && staffRuleOnlyCut(gray, width, height, bar, a, b, gap, ribbon, false)
+                                    || thinStaffOpening && x.length == 18
+                                        && thinStaffRuleBetweenRails(gray, width, height, bar, a, b, gap, ribbon));
+                        if (!staffRule) return null;
+                    }
                 }
                 continue;
             }
@@ -1486,6 +1556,54 @@ final class WrappedEighthTriplets {
     }
 
     /** A staff crossing can imitate part of a beam without joining the two shafts. */
+    /** A staff rule running through the endpoints of two groups is thinner than both beams. */
+    static boolean thinStaffRuleBetweenRails(
+            byte[] gray, int width, int height, MeasureRegion bar,
+            PrintedBeamShafts.Shaft left, PrintedBeamShafts.Shaft right, float gap, Ribbon ribbon) {
+        if (ribbon.coverage() < .75f) return false;
+        var track = WrappedMeasureBoundaries.closedTripletStaff(gray, width, height, bar);
+        if (track == null) return false;
+        int from = (left.left() + left.right()) / 2;
+        int to = (right.left() + right.right()) / 2;
+        int inset = Math.round(gap * .45f);
+        int first = from + inset, last = to - inset;
+        if (last - first < gap * .70f || !track.verifiedAt(from) || !track.verifiedAt(to)) return false;
+        var mid = track.at((from + to) * .5f);
+        int rule = Math.round((mid[0] - (ribbon.leftY() + ribbon.rightY()) * .5f) / mid[1]);
+        if (rule < 0 || rule >= 5) return false;
+        var a = track.at(from);
+        var b = track.at(to);
+        if (Math.abs(a[0] - rule * a[1] - ribbon.leftY()) > gap * .30f
+                || Math.abs(b[0] - rule * b[1] - ribbon.rightY()) > gap * .30f)
+            return false;
+
+        int reference = rule < 4 ? rule + 1 : rule - 1;
+        int band = Math.round(gap * .28f), thin = Math.round(gap * .25f);
+        int darkColumns = 0;
+        for (int x = first; x <= last; x++) {
+            var at = track.at(x);
+            int same = ruleThickness(gray, width, height, x, Math.round(at[0] - rule * at[1]), band);
+            int near = ruleThickness(gray, width, height, x, Math.round(at[0] - reference * at[1]), band);
+            if (same > 0 && same <= thin && near > 0 && Math.abs(same - near) <= 1) darkColumns++;
+        }
+        if (darkColumns < (last - first + 1) * .88f) return false;
+
+        var bandInk = new RuleBand(first, java.util.stream.IntStream.rangeClosed(first, last)
+                .map(col -> {
+                    var ruleTrack = track.at(col);
+                    return Math.round(ruleTrack[0] - rule * ruleTrack[1]);
+                }).toArray(), band);
+        return bestRibbon(gray, width, height, left, right, gap, bandInk).coverage() <= .46f;
+    }
+
+    private static int ruleThickness(byte[] gray, int width, int height, int x, int y, int band) {
+        if (x < 0 || x >= width || y - band < 0 || y + band >= height) return 0;
+        int count = 0;
+        for (int row = y - band; row <= y + band; row++)
+            if ((gray[row * width + x] & 255) < 155) count++;
+        return count;
+    }
+
     private static boolean staffRuleOnlyCut(
             byte[] gray,
             int width,

@@ -310,6 +310,9 @@ public final class SheetInterpreter {
         measures =
                 BeamedFlatBarline.joinLedgerOctaveFragments(
                         measures, labels, gray, annotationGray, width, height);
+        measures =
+                BeamedFlatBarline.joinPairedFlatTails(
+                        measures, labels, gray, annotationGray, width, height);
         var beforeHarmonicJoin = measures;
         var harmonicJoinedMeasures =
                 HarmonicBeamBarline.join(measures, labels, gray, annotationGray, width, height);
@@ -787,7 +790,8 @@ public final class SheetInterpreter {
                 PrintedPassOmission.apply(
                         finalInterpretation, words, staffs, gray, width, height, physicalPage);
         finalInterpretation =
-                PrintedDottedTripletBar.apply(finalInterpretation, null, gray, width, height);
+                PrintedDottedTripletBar.apply(
+                        finalInterpretation, null, gray, annotationGray, width, height);
         finalInterpretation =
                 TerminalDottedCadenceHooks.apply(finalInterpretation, null, gray, width, height);
         finalInterpretation = ClosedSixteenthDyads.apply(finalInterpretation, gray, width, height);

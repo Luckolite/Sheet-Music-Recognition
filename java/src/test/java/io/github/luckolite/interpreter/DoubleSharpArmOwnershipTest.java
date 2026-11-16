@@ -1,0 +1,112 @@
+// Copyright 2026 Luckolite
+// SPDX-License-Identifier: Apache-2.0
+package io.github.luckolite.interpreter;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
+
+import java.util.Arrays;
+import java.util.List;
+import org.junit.Test;
+
+public final class DoubleSharpArmOwnershipTest {
+    private static final int WIDTH = 390;
+    private static final int HEIGHT = 220;
+    private static final int CROSS_X = 196;
+    private static final int CROSS_Y = 71;
+    private static final int HEAD_X = 227;
+    private static final int HEAD_Y = 81;
+    private static final int NOTEHEAD = OmrMeasurePostProcessor.NOTEHEAD;
+    private static final int SYMBOL = OmrMeasurePostProcessor.SYMBOL;
+    private static final int CLEF_OR_KEY = OmrMeasurePostProcessor.CLEF_OR_KEY;
+
+    @Test
+    public void accidentalArmCannotSupplyAnExtraAttack() {
+        var plate = new Plate();
+        var notes = plate.notes(plate.gray);
+        assertFalse(plate.hasArmAttack(notes));
+        assertEquals(1, notes.size());
+        assertEquals(ScoreNoteEvent.ACCIDENTAL_DOUBLE_SHARP, notes.get(0).writtenAccidental());
+    }
+
+    @Test
+    public void missingInkInOnePlaneRetainsIndependentHeadEvidence() {
+        var plate = new Plate();
+        byte[] incomplete = plate.gray.clone();
+        for (int y = CROSS_Y; y < CROSS_Y + 8; y++) {
+            Arrays.fill(incomplete, y * WIDTH + CROSS_X, y * WIDTH + CROSS_X + 9, (byte) 255);
+        }
+        assertTrue(plate.hasArmAttack(plate.notes(incomplete)));
+    }
+
+    @Test
+    public void aSmallAttackWithItsOwnShaftSurvives() {
+        var plate = new Plate();
+        int shaft = CROSS_X + 18;
+        for (int y = CROSS_Y - 42; y <= CROSS_Y + 9; y++) {
+            plate.dot(shaft, y, 1);
+            plate.dot(shaft + 1, y, 1);
+        }
+        for (int x = CROSS_X + 16; x < shaft; x++) {
+            plate.gray[(CROSS_Y + 4) * WIDTH + x] = 0;
+        }
+        assertTrue(
+                DoubleSharpGlyph.matchesRaw(
+                        plate.gray,
+                        WIDTH,
+                        HEIGHT,
+                        CROSS_X,
+                        CROSS_Y,
+                        CROSS_X + 17,
+                        CROSS_Y + 17,
+                        16));
+        assertTrue(plate.hasArmAttack(plate.notes(plate.gray)));
+    }
+
+    private static final class Plate {
+        final byte[] gray = new byte[WIDTH * HEIGHT];
+        final byte[] labels = new byte[WIDTH * HEIGHT];
+
+        Plate() {
+            Arrays.fill(gray, (byte) 255);
+            for (int y = 80; y <= 144; y += 16) for (int x = 16; x < WIDTH - 15; x++) dot(x, y, 4);
+            for (int y = 0; y < 18; y++)
+                for (int x = 0; x < 18; x++)
+                    if (Math.abs(x - y) <= 4 || Math.abs(x + y - 17) <= 4) {
+                        int label = x >= 9 && y < 8 ? NOTEHEAD : y < 10 ? SYMBOL : CLEF_OR_KEY;
+                        dot(CROSS_X + x, CROSS_Y + y, label);
+                    }
+            for (int y = HEAD_Y - 8; y <= HEAD_Y + 8; y++)
+                for (int x = HEAD_X - 11; x <= HEAD_X + 11; x++) {
+                    double dx = (x - HEAD_X) / 11.0, dy = (y - HEAD_Y) / 8.0;
+                    if (dx * dx + dy * dy <= 1) dot(x, y, NOTEHEAD);
+                }
+            for (int y = HEAD_Y + 3; y <= HEAD_Y + 49; y++) {
+                dot(HEAD_X - 10, y, 1);
+                dot(HEAD_X - 9, y, 1);
+            }
+        }
+
+        List<ScoreNoteEvent> notes(byte[] source) {
+            return OmrScoreInterpreter.analyze(
+                            labels,
+                            gray,
+                            WIDTH,
+                            HEIGHT,
+                            List.of(new MeasureRegion(.02f, .96f, .25f, .8f)),
+                            source)
+                    .notes();
+        }
+
+        boolean hasArmAttack(List<ScoreNoteEvent> notes) {
+            return notes.stream()
+                    .anyMatch(n -> n.positionInMeasure() * .94 * WIDTH + .02 * WIDTH < HEAD_X - 14);
+        }
+
+        void dot(int x, int y, int label) {
+            labels[y * WIDTH + x] = (byte) label;
+            gray[y * WIDTH + x] = 0;
+        }
+    }
+}
