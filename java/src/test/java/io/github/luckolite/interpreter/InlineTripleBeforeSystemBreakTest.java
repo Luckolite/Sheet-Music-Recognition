@@ -34,6 +34,36 @@ public final class InlineTripleBeforeSystemBreakTest {
     }
 
     @Test
+    public void readsCompactTripleOnlyWhenBothRuleStrokesArePresentOnBothPlanes() throws Exception {
+        var before = new MeterChangeDetector.Crop(384, 86, 436, 159, TOP, GAP);
+        var half = region(285, 379);
+        var run = region(397, 905);
+        var positive = staff(true);
+        for (int y = TOP; y <= BOTTOM; y++) {
+            if ((y - TOP) % GAP == 0) continue;
+            Arrays.fill(positive, y * WIDTH + 381, y * WIDTH + 393, (byte) 255);
+        }
+        stroke(positive, 386);
+        stroke(positive, 394);
+        var missing = positive.clone();
+        for (int y = TOP; y <= BOTTOM; y++)
+            if ((y - TOP) % GAP != 0)
+                Arrays.fill(missing, y * WIDTH + 394, y * WIDTH + 396, (byte) 255);
+        var wrongDigits = staff(true, "4/4");
+        for (int y = before.top(); y < before.bottom(); y++)
+            System.arraycopy(positive, y * WIDTH + 380, wrongDigits, y * WIDTH + 380, 20);
+        var cropped = HalfDyadBeforeSixteenthBar.compactInlineTripleCrop(
+                List.of(before), PRIOR, half, run, positive, positive, WIDTH, HEIGHT, GAP);
+        assertEquals(new MeterChangeDetector.Crop(396, 86, 436, 159, TOP, GAP), cropped);
+        assertNull(HalfDyadBeforeSixteenthBar.compactInlineTripleCrop(
+                List.of(before), PRIOR, half, run, missing, positive, WIDTH, HEIGHT, GAP));
+        assertNull(HalfDyadBeforeSixteenthBar.compactInlineTripleCrop(
+                List.of(before), PRIOR, half, run, positive, missing, WIDTH, HEIGHT, GAP));
+        assertNull(HalfDyadBeforeSixteenthBar.compactInlineTripleCrop(
+                List.of(before), PRIOR, half, run, wrongDigits, positive, WIDTH, HEIGHT, GAP));
+    }
+
+    @Test
     public void requiresCompleteOctaveColumnsAndAllowsMatchedTerminalBeamClaim() {
         var gray = blankStaff(true);
         var notes = new ArrayList<ScoreNoteEvent>();

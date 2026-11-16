@@ -155,6 +155,8 @@ final class HalfDyadBeforeSixteenthBar {
             float gap = (half.bottom() - half.top()) * height / 8.2f;
             float left = half.left() * width, halfEnd = half.right() * width;
             float runStart = run.left() * width, right = run.right() * width;
+            float separation = runStart - halfEnd;
+            boolean compact = separation >= .75f * gap && separation <= 1.8f * gap;
             if (half.cadenceQuarterBeats() != 0
                     || run.cadenceQuarterBeats() != 0
                     || gap < 10
@@ -163,8 +165,7 @@ final class HalfDyadBeforeSixteenthBar {
                     || halfEnd - left > 7 * gap
                     || right - runStart < 24 * gap
                     || right - runStart > 35 * gap
-                    || runStart - halfEnd < 2.4f * gap
-                    || runStart - halfEnd > 4.6f * gap
+                    || (!compact && (separation < 2.4f * gap || separation > 4.6f * gap))
                     || !sameStaff(prior, half, gap, height)
                     || !sameStaff(run, half, gap, height)
                     || (following.top() - run.bottom()) * height < 3 * gap) continue;
@@ -182,13 +183,14 @@ final class HalfDyadBeforeSixteenthBar {
             if (merged < 0) continue;
             if (candidates == null)
                 candidates = MeterChangeDetector.candidates(labels, normal, width, height);
-            var meter =
-                    inlineTripleCrop(candidates, prior, half, run, normal, raw, width, height, gap);
+            var meter = compact
+                    ? compactInlineTripleCrop(candidates, prior, half, run, normal, raw, width, height, gap)
+                    : inlineTripleCrop(candidates, prior, half, run, normal, raw, width, height, gap);
             if (meter == null) continue;
             var parts = List.of(half, run);
             var analysis = OmrScoreInterpreter.analyze(labels, normal, width, height, parts, raw);
-            if (!qualifiesStraightTriple(parts, analysis, normal, width, height)
-                    || !qualifiesStraightTriple(parts, analysis, raw, width, height)
+            if (!qualifiesStraightTriple(parts, analysis, normal, width, height, compact)
+                    || !qualifiesStraightTriple(parts, analysis, raw, width, height, compact)
                     || !MeterChangeDetector.precedesNotes(
                             meter, labels, normal, width, height, 1, parts, analysis.notes())
                     || !MeterChangeDetector.precedesNotes(
@@ -238,12 +240,63 @@ final class HalfDyadBeforeSixteenthBar {
         return meter;
     }
 
+    /** On a compact transition both rule strokes can lie inside the original digit crop. */
+    static MeterChangeDetector.Crop compactInlineTripleCrop(
+            List<MeterChangeDetector.Crop> crops,
+            MeasureRegion prior,
+            MeasureRegion half,
+            MeasureRegion run,
+            byte[] normal,
+            byte[] raw,
+            int width,
+            int height,
+            float gap) {
+        MeterChangeDetector.Crop accepted = null;
+        float opening = (prior.right() + half.left()) * width * .5f;
+        float runStart = run.left() * width;
+        if (half.left() * width - opening > gap) return null;
+        for (var crop : crops) {
+            float hint = crop.firstLine() + 4 * crop.gap();
+            if (Math.abs(crop.gap() - gap) > .15f * gap
+                    || crop.top() < half.top() * height
+                    || crop.bottom() > half.bottom() * height
+                    || crop.left() < half.right() * width
+                    || crop.left() > runStart - .65f * gap
+                    || crop.right() < runStart + .9f * gap
+                    || crop.right() > runStart + 3.1f * gap) continue;
+            var source = MeterDoubleRuleCrop.trimPair(crop, raw, width, height, runStart);
+            var corrected = MeterDoubleRuleCrop.trimPair(crop, normal, width, height, runStart);
+            if (source == crop
+                    || corrected == crop
+                    || Math.abs(source.left() - corrected.left()) > 1
+                    || source.left() < runStart - .15f * gap
+                    || source.left() > runStart + .65f * gap
+                    || !triple(raw, width, height, source)
+                    || !triple(normal, width, height, corrected)
+                    || !boundaryAt(normal, width, height, opening, hint, gap)
+                    || !boundaryAt(raw, width, height, opening, hint, gap)) continue;
+            if (accepted != null && !accepted.equals(source)) return null;
+            accepted = source;
+        }
+        return accepted;
+    }
+
     static boolean qualifiesStraightTriple(
             List<MeasureRegion> parts,
             OmrScoreInterpreter.Analysis analysis,
             byte[] gray,
             int width,
             int height) {
+        return qualifiesStraightTriple(parts, analysis, gray, width, height, false);
+    }
+
+    private static boolean qualifiesStraightTriple(
+            List<MeasureRegion> parts,
+            OmrScoreInterpreter.Analysis analysis,
+            byte[] gray,
+            int width,
+            int height,
+            boolean compact) {
         if (!analysis.rests().isEmpty()) return false;
         var cadence = parts.get(0);
         var run = parts.get(1);
@@ -257,26 +310,52 @@ final class HalfDyadBeforeSixteenthBar {
         if (notes.size() != 24) return false;
         float span = (run.right() - run.left()) * width;
         float gap = (run.bottom() - run.top()) * height / 8.2f;
+        boolean recoveredSharedStem = false;
         for (int slot = 0; slot < notes.size(); slot += 2) {
             var a = notes.get(slot);
             var b = notes.get(slot + 1);
-            if (!plainHead(a)
-                    || !plainHead(b)
-                    || a.unbeamedDurationBeats() != 0
-                    || b.unbeamedDurationBeats() != 0
+            if (!plainHead(a, compact)
+                    || !plainHead(b, compact)
                     || a.stemDirection() == 0
                     || a.stemDirection() != b.stemDirection()
                     || Math.abs(a.staffStep() - b.staffStep()) != 7
-                    || (b.positionInMeasure() - a.positionInMeasure()) * span > .3f * gap
-                    || a.beamCount() != b.beamCount()
-                    || (a.beamCount() != 2 && !(slot == notes.size() - 2 && a.beamCount() == 3)))
-                return false;
+                    || (b.positionInMeasure() - a.positionInMeasure()) * span > .3f * gap) return false;
+            boolean regular = a.unbeamedDurationBeats() == 0
+                    && b.unbeamedDurationBeats() == 0
+                    && a.beamCount() == b.beamCount()
+                    && (a.beamCount() == 2 || slot == notes.size() - 2 && a.beamCount() == 3);
+            if (!regular) {
+                if (!compact || recoveredSharedStem || slot == 0 || slot == notes.size() - 2
+                        || !quarterAliasOnSharedStem(a, b, run, gray, width, height, gap)) return false;
+                recoveredSharedStem = true;
+            }
             if (slot < 2) continue;
             float advance =
                     (a.positionInMeasure() - notes.get(slot - 2).positionInMeasure()) * span;
             if (advance < gap || advance > 3.5f * gap) return false;
         }
         return true;
+    }
+
+    private static boolean quarterAliasOnSharedStem(
+            ScoreNoteEvent a, ScoreNoteEvent b, MeasureRegion run,
+            byte[] gray, int width, int height, float gap) {
+        var beam = a.beamCount() == 2 ? a : b;
+        var quarter = beam == a ? b : a;
+        if (beam.beamCount() != 2 || beam.unbeamedDurationBeats() != 0
+                || quarter.beamCount() != 0 || quarter.unbeamedDurationBeats() != 1) return false;
+        float left = run.left() * width, span = (run.right() - run.left()) * width;
+        var budget = new PrintedBeamShafts.Budget(100_000);
+        var first = PrintedBeamShafts.at(gray, width, height,
+                left + span * a.positionInMeasure(), a.pageY() * height, gap, budget);
+        var second = PrintedBeamShafts.at(gray, width, height,
+                left + span * b.positionInMeasure(), b.pageY() * height, gap, budget);
+        if (first.size() != 1 || second.size() != 1) return false;
+        var x = first.get(0);
+        var y = second.get(0);
+        return x.direction() == -a.stemDirection() && x.direction() == y.direction()
+                && Math.min(x.right(), y.right()) - Math.max(x.left(), y.left()) >= 1
+                && Math.abs(x.endY() - y.endY()) <= .18f * gap;
     }
 
     private static boolean isolatedHalfOctave(
@@ -512,6 +591,10 @@ final class HalfDyadBeforeSixteenthBar {
     }
 
     private static boolean plainHead(ScoreNoteEvent note) {
+        return plainHead(note, false);
+    }
+
+    private static boolean plainHead(ScoreNoteEvent note, boolean allowInternalTie) {
         return note.kind() == ScoreNoteEvent.Kind.PITCHED
                 && note.staffIndex() == 0
                 && note.staffCount() == 1
@@ -519,7 +602,7 @@ final class HalfDyadBeforeSixteenthBar {
                 && note.augmentationDots() == 0
                 && note.tupletDivisor() == 1
                 && !note.crossStaffBeam()
-                && !note.tiedFromPrevious()
+                && (allowInternalTie || !note.tiedFromPrevious())
                 && note.boundaryTies() == 0
                 && note.leadingRestBeats() == 0
                 && note.followingRestBeats() == 0

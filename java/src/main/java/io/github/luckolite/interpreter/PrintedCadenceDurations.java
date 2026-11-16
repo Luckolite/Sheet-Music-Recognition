@@ -206,6 +206,11 @@ final class PrintedCadenceDurations {
                     && !expandedTerminalDyad(gray, width, height, measure, next, chord)
                     && !PrintedQuarterDyadAccidentals.proves(
                             labels, gray, width, height, measure, next, chord, staffs)
+                    && !(duration == 1 && next == null && annotationGray != null
+                            && PrintedQuarterDyadAccidentals.provesWidePageEnd(
+                                    labels, gray, width, height, measure, chord, staffs)
+                            && PrintedQuarterDyadAccidentals.provesWidePageEnd(
+                                    labels, annotationGray, width, height, measure, chord, staffs))
                     && !(duration == 1
                             && i > 0
                             && next != null
@@ -705,7 +710,7 @@ final class PrintedCadenceDurations {
         return quarterShaft(gray, width, height, left, span, g, direction, chord);
     }
 
-    private static boolean quarterShaft(
+    static boolean quarterShaft(
             byte[] gray, int width, int height, float left, float span, float gap, int direction,
             List<ScoreNoteEvent> chord) {
         float xLow = 0, xHigh = width - 1;

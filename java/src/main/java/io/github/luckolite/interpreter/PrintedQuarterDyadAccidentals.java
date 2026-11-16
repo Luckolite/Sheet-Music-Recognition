@@ -13,7 +13,7 @@ final class PrintedQuarterDyadAccidentals {
     static boolean proves(byte[] labels, byte[] gray, int width, int height,
             MeasureRegion measure, MeasureRegion next, List<ScoreNoteEvent> chord,
             List<PlayingTechniqueDetector.Staff> staffs) {
-        return proves(labels, gray, width, height, measure, next, chord, staffs, false, false);
+        return proves(labels, gray, width, height, measure, next, chord, staffs, false, false, false);
     }
 
     static boolean provesBeforeTripleRepeat(
@@ -25,13 +25,21 @@ final class PrintedQuarterDyadAccidentals {
             MeasureRegion next,
             List<ScoreNoteEvent> chord,
             List<PlayingTechniqueDetector.Staff> staffs) {
-        return proves(labels, gray, width, height, measure, next, chord, staffs, true, false);
+        return proves(labels, gray, width, height, measure, next, chord, staffs, true, false, false);
     }
 
     static boolean provesSeparatedTerminalFlats(byte[] labels, byte[] gray, int width, int height,
             MeasureRegion measure, MeasureRegion next, List<ScoreNoteEvent> chord,
             List<PlayingTechniqueDetector.Staff> staffs) {
-        return proves(labels, gray, width, height, measure, next, chord, staffs, false, true);
+        return proves(labels, gray, width, height, measure, next, chord, staffs, false, true, false);
+    }
+
+    /** Wider final measures still need two separate signs, both rules, and one shared shaft. */
+    static boolean provesWidePageEnd(
+            byte[] labels, byte[] gray, int width, int height,
+            MeasureRegion measure, List<ScoreNoteEvent> chord,
+            List<PlayingTechniqueDetector.Staff> staffs) {
+        return proves(labels, gray, width, height, measure, null, chord, staffs, false, false, true);
     }
 
     /** Verifies two literal flats in a quarter-note chord at the end of a 3/4 system. */
@@ -116,6 +124,7 @@ final class PrintedQuarterDyadAccidentals {
                 true,
                 by - ay >= gap * 2.1f,
                 false,
+                false,
                 false);
     }
 
@@ -128,7 +137,7 @@ final class PrintedQuarterDyadAccidentals {
             MeasureRegion next,
             List<ScoreNoteEvent> chord,
             List<PlayingTechniqueDetector.Staff> staffs,
-            boolean inline, boolean onlySeparatedFlats) {
+            boolean inline, boolean onlySeparatedFlats, boolean widePageEnd) {
         if (gray == null
                 || labels == null
                 || gray.length != (long) width * height
@@ -185,7 +194,7 @@ final class PrintedQuarterDyadAccidentals {
                             && ay - by >= gap * 2.1f
                             && ay - by <= gap * 3.25f
                             && span >= gap * 5.5f
-                            && span <= gap * 9.5f;
+                            && span <= gap * (widePageEnd ? 10f : 9.5f);
             boolean separated =
                     !inline
                             && (twoFlats
@@ -200,7 +209,8 @@ final class PrintedQuarterDyadAccidentals {
                     || fitted.count() != 1
                     || onlySeparatedFlats && !separated
                     || next == null && !lowerNatural
-                    || wide && !singleNatural && (twoFlats || !separated || span > gap * 9.5f)
+                    || widePageEnd && (!lowerNatural || span <= gap * 9.5f)
+                    || wide && !singleNatural && (twoFlats || !separated || span > gap * (widePageEnd ? 10f : 9.5f))
                     || twoFlats && span < gap * (inline ? 4.5f : 5.5f)
                     || inline && Math.abs(measure.top() - next.top()) * height > gap * .5f
                     || Math.abs(ax - bx) > gap * .30f
@@ -239,6 +249,15 @@ final class PrintedQuarterDyadAccidentals {
             }
             if (opening < 0 || closing < 0 || ax - opening < 2.5f * gap
                     || closing - ax < 2.5f * gap) continue;
+            if (widePageEnd
+                    && (ClosedHeadBarlineGuard.attached(
+                                    gray, width, height, opening, Math.round(top),
+                                    Math.round(staff.bottom()), gap)
+                            || DottedDyadMeasureSeparator.continuesBeyondStaff(
+                                    gray, width, height, opening, Math.round(top),
+                                    Math.round(staff.bottom()), gap)
+                            || !PrintedCadenceDurations.quarterShaft(
+                                    gray, width, height, left, span, gap, a.stemDirection(), chord))) continue;
             if (ownedPair(
                     labels,
                     gray,
@@ -254,7 +273,7 @@ final class PrintedQuarterDyadAccidentals {
                     twoFlats,
                     separated,
                     wide || onlySeparatedFlats,
-                    singleNatural)) return true;
+                    singleNatural, widePageEnd)) return true;
         }
         return false;
     }
@@ -274,7 +293,7 @@ final class PrintedQuarterDyadAccidentals {
             boolean twoFlats,
             boolean separated,
             boolean wide,
-            boolean singleNatural) {
+            boolean singleNatural, boolean isolatedNatural) {
         float gap = staff.gap();
         int left = Math.max(opening + Math.round(gap * .48f), Math.round(Math.min(ax, bx) - gap * 3.15f));
         int right = Math.round(Math.max(ax, bx) - gap * .7f);
@@ -292,7 +311,7 @@ final class PrintedQuarterDyadAccidentals {
             }
         }
         if (separated && separatedPair(
-                gray, width, staff, opening, closing, ax, ay, bx, by, left, top, semantic, w, h, twoFlats))
+                gray, width, staff, opening, closing, ax, ay, bx, by, left, top, semantic, w, h, twoFlats, isolatedNatural))
             return true;
         if (wide && !singleNatural) return false;
 
@@ -338,7 +357,7 @@ final class PrintedQuarterDyadAccidentals {
     private static boolean separatedPair(
             byte[] gray, int width, PlayingTechniqueDetector.Staff staff, int opening, int closing,
             float ax, float ay, float bx, float by, int left, int top, byte[] semantic, int w, int h,
-            boolean twoFlats) {
+            boolean twoFlats, boolean isolatedNatural) {
         if (semantic.length > 16_384) return false;
         float gap = staff.gap();
         var ink = RawNumeralComponents.capture(semantic, w, h, 0, 0, w - 1, h - 1, () -> {}, () -> {});
@@ -362,6 +381,11 @@ final class PrintedQuarterDyadAccidentals {
         for (int i = 0; i < flat.size(); i++) flatInk[flat.pixel(i)] = 0;
         var upper = twoFlats ? flats(naturalInk, w, h, ax - left, ay - top, gap)
                 : naturals(naturalInk, w, h, ax - left, ay - top, gap, Math.round(staff.top()) - top);
+        if (upper.isEmpty() && isolatedNatural && naturalBelow) {
+            // Only the isolated semantic component reaches this check. Applying
+            // staff-line suppression again can sever the two owned crossbars.
+            upper = naturals(naturalInk, w, h, ax - left, ay - top, gap, h + 1);
+        }
         if (upper.isEmpty()) return false;
         int flatTop = flat.top;
         List<Ink> confirmedFlats = flats(flatInk, w, h, bx - left, by - top, gap);

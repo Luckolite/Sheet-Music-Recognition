@@ -49,14 +49,21 @@ final class ClosedFourDyadBeam {
     static boolean provesOctavesAfterRule(byte[] gray, int width, int height, Head[] heads,
             float gap, float staffBottom, int direction, int leftRule) {
         return Float.isFinite(staffBottom)
-                && proves(gray, width, height, heads, gap, direction, 4.7f, staffBottom, false, leftRule);
+                && proves(gray, width, height, heads, gap, direction, 4.7f, staffBottom, false, leftRule, -1);
+    }
+
+    static boolean provesOctavesWithSteppedStem(byte[] gray, int width, int height, Head[] heads,
+            float gap, float staffBottom, int direction, int steppedIndex) {
+        return heads.length == 4 && steppedIndex > 0 && steppedIndex < 3
+                && Float.isFinite(staffBottom)
+                && proves(gray, width, height, heads, gap, direction, 4.7f, staffBottom, false, -1, steppedIndex);
     }
 
     private static boolean proves(
             byte[] gray, int width, int height, Head[] heads, float gap, int direction,
             float maximumSpacing, float staffBottom, boolean allowInnerRailStaffCrossing) {
         return proves(gray, width, height, heads, gap, direction, maximumSpacing, staffBottom,
-                allowInnerRailStaffCrossing, -1);
+                allowInnerRailStaffCrossing, -1, -1);
     }
 
     private static boolean proves(
@@ -69,7 +76,8 @@ final class ClosedFourDyadBeam {
             float maximumSpacing,
             float staffBottom,
             boolean allowInnerRailStaffCrossing,
-            int leftRule) {
+            int leftRule,
+            int steppedIndex) {
         if (gap < 8 || gap > 32 || direction == 0) return false;
         var budget = new PrintedBeamShafts.Budget(100_000);
         Stem[] stems = new Stem[heads.length];
@@ -87,9 +95,15 @@ final class ClosedFourDyadBeam {
             var a = upper.get(0);
             var b = lower.get(0);
             int left = Math.max(a.left(), b.left()), right = Math.min(a.right(), b.right());
-            if (a.direction() != direction || b.direction() != direction || left > right
-                    || Math.abs(a.endY() - b.endY()) > gap * .18f) return false;
-            stems[i] = new Stem(left, right, a.endY());
+            if (a.direction() != direction || b.direction() != direction) return false;
+            if (i == steppedIndex) {
+                stems[i] = steppedStem(gray, width, a, b, gap, direction);
+                if (stems[i] == null) return false;
+            } else if (left <= right && Math.abs(a.endY() - b.endY()) <= gap * .18f) {
+                stems[i] = new Stem(left, right, a.endY());
+            } else {
+                return false;
+            }
         }
         int x0 = (stems[0].left + stems[0].right) / 2;
         int x1 = (stems[3].left + stems[3].right) / 2;
@@ -123,7 +137,8 @@ final class ClosedFourDyadBeam {
                                 inner,
                                 slope,
                                 gap,
-                                staffBottom)) return true;
+                                staffBottom,
+                                steppedIndex >= 0)) return true;
             }
         }
         return false;
@@ -281,6 +296,26 @@ final class ClosedFourDyadBeam {
         return staffPixels <= Math.round(gap * .20f);
     }
 
+    private static Stem steppedStem(byte[] gray, int width, PrintedBeamShafts.Shaft above,
+            PrintedBeamShafts.Shaft below, float gap, int direction) {
+        var headSide = direction > 0 ? above : below;
+        var beamSide = direction > 0 ? below : above;
+        int extra = (beamSide.endY() - headSide.endY()) * direction;
+        if (extra < gap * 1.2f || extra > gap * 3.5f) return null;
+        int c0 = headSide.right() < beamSide.left() ? headSide.right() : headSide.left();
+        int c1 = headSide.right() < beamSide.left() ? beamSide.left() : beamSide.right();
+        if (Math.abs(c0 - c1) != 1) return null;
+        int begin = Math.max(Math.min(above.startY(), above.endY()), Math.min(below.startY(), below.endY()));
+        int end = Math.min(Math.max(above.startY(), above.endY()), Math.max(below.startY(), below.endY()));
+        int joined = 0;
+        for (int y = begin; y <= end; y++) {
+            boolean both = (gray[y * width + c0] & 255) < 165 && (gray[y * width + c1] & 255) < 165;
+            joined = both ? joined + 1 : 0;
+            if (joined >= gap * .55f) return new Stem(beamSide.left(), beamSide.right(), beamSide.endY());
+        }
+        return null;
+    }
+
     private static boolean separated(
             byte[] gray,
             int width,
@@ -291,7 +326,8 @@ final class ClosedFourDyadBeam {
             float inner,
             float slope,
             float gap,
-            float staffBottom) {
+            float staffBottom,
+            boolean followNarrowPaperSeam) {
         int margin = Math.round(gap * .23f);
         boolean usedStaffCrossing = false;
         for (int i = 1; i < stems.length; i++) {
@@ -299,7 +335,10 @@ final class ClosedFourDyadBeam {
             int blank = 0, staffInk = 0;
             for (int x = left; x <= right; x++) {
                 float middle = (outer + inner) * .5f + slope * (x - x0);
-                if (!core(gray, width, height, x, middle, 0)) blank++;
+                if (!core(gray, width, height, x, middle, 0)
+                        || followNarrowPaperSeam
+                                && (!core(gray, width, height, x, middle - 1, 0)
+                                        || !core(gray, width, height, x, middle + 1, 0))) blank++;
                 else if (Math.abs(middle - staffBottom) <= gap * .17f) staffInk++;
             }
             int samples = right - left + 1;

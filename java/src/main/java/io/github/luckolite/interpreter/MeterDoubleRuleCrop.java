@@ -10,12 +10,22 @@ final class MeterDoubleRuleCrop {
 
     static MeterChangeDetector.Crop trim(MeterChangeDetector.Crop crop,byte[] gray,
             int width,int height,float ownerLeft) {
+        return trim(crop, gray, width, height, ownerLeft, false);
+    }
+
+    static MeterChangeDetector.Crop trimPair(
+            MeterChangeDetector.Crop crop, byte[] gray, int width, int height, float ownerLeft) {
+        return trim(crop, gray, width, height, ownerLeft, true);
+    }
+
+    private static MeterChangeDetector.Crop trim(MeterChangeDetector.Crop crop, byte[] gray,
+            int width, int height, float ownerLeft, boolean requiresPair) {
         if (gray==null || gray.length!=(long)width*height || !Float.isFinite(ownerLeft)
                 || crop==null || crop.gap()<8 || crop.gap()>32
                 || crop.left()<0 || crop.right()>width || crop.top()<0 || crop.bottom()>height)
             return crop;
         if (ownerLeft<crop.left() || ownerLeft>crop.right()) return crop;
-        var trimmed = trimRules(crop, gray, width, height, ownerLeft, false);
+        var trimmed = trimRules(crop, gray, width, height, ownerLeft, requiresPair);
         if (trimmed != crop) return trimmed;
 
         // A wide crop can begin in verified paper before both bars. Discard only

@@ -185,8 +185,13 @@ final class OctaveMarkDetector {
                             word.bottom() * height,
                             gap);
             if (shift == 1 && printed.contains(sourceWord)) {
-                var ribbon = provedPrintedRibbon(gray, width, height, word, gap, right);
-                if (ribbon != null) right = ribbon.right;
+                float crossedStart = earlySlurRibbonEnd(gray, width, height, word, gap);
+                if (crossedStart >= 0) {
+                    right = crossedStart;
+                } else {
+                    var ribbon = provedPrintedRibbon(gray, width, height, word, gap, right);
+                    if (ribbon != null) right = ribbon.right;
+                }
                 if (right >= 0)
                     left = closedBeamStart(gray, width, height, word, owner, staffs, measures, notes, left, right);
             }
@@ -682,6 +687,12 @@ final class OctaveMarkDetector {
                                             box.top,
                                             box.bottom,
                                             gap);
+                    float crossedStart = !below
+                            ? qualifiedEarlySlurRibbonEnd(gray, width, height, box, gap) : -1;
+                    if (crossedStart >= 0) {
+                        dashRight = crossedStart;
+                        hookDirection = 1;
+                    }
                     if (closedEight && !below && hookDirection <= 0) {
                         var ribbon = completeDottedRibbon(gray, width, height, box, gap);
                         if (ribbon != null) {
@@ -1951,6 +1962,94 @@ final class OctaveMarkDetector {
         dots.addAll(tail);
         return new DottedRibbon(edge, dots);
     }
+
+    private static float earlySlurRibbonEnd(byte[] gray, int width, int height,
+            PlayingTechniqueDetector.Word word, float gap) {
+        var box = new InkBox(Math.round(word.left() * width), Math.round(word.top() * height),
+                Math.round(word.right() * width) - 1, Math.round(word.bottom() * height) - 1, 0);
+        return qualifiedEarlySlurRibbonEnd(gray, width, height, box, gap);
+    }
+
+    private static float qualifiedEarlySlurRibbonEnd(byte[] gray, int width, int height,
+            InkBox box, float gap) {
+        float end = earlySlurRibbonEnd(gray, width, height, box.right, box.top, gap);
+        if (end < 0) return -1;
+        return bareEightShape(gray, width, box, gap)
+                || canRepairEight(gray, width, box, gap) && brokenEightShape(gray, width, box, gap)
+                ? end : -1;
+    }
+
+    /** A slur can cross at the first dots of an otherwise complete short dotted octave line. */
+    static float earlySlurRibbonEnd(byte[] gray, int width, int height,
+            int numeralRight, int numeralTop, float gap) {
+        if (gray == null || gray.length != (long) width * height || !Float.isFinite(gap)
+                || gap < 10 || gap > 24) return -1;
+        int left = numeralRight + 1, top = numeralTop - Math.round(gap * .86f);
+        int right = left + Math.round(gap * 10), bottom = numeralTop + Math.round(gap * 2.45f);
+        if (left < 0 || top < 0 || right >= width || bottom >= height
+                || (long) (right - left + 1) * (bottom - top + 1) > 16_384) return -1;
+        var ink = RawNumeralComponents.capture(gray, width, height, left, top, right, bottom,
+                () -> {}, () -> {});
+        RawNumeralComponents.Component prefix = null, last = null;
+        int tail = 0;
+        for (var dot : dottedComponents(ink, gap, .69f)) {
+            float y = dotY(dot);
+            if (y < numeralTop + gap * .13f || y > numeralTop + gap * .62f) continue;
+            if (prefix == null) {
+                if (dot.left - left > gap * .44f) return -1;
+                prefix = dot;
+                continue;
+            }
+            if (Math.abs(y - dotY(prefix)) > gap * .20f) continue;
+            if (last == null) {
+                float step = dotX(dot) - dotX(prefix);
+                if (step < gap * 1.32f || step > gap * 2.42f
+                        || !slurCrossesInitialDots(ink, prefix, dot, width, gap)) return -1;
+            } else {
+                float step = dotX(dot) - dotX(last);
+                if (step < gap * .38f || step > gap * .74f) return -1;
+            }
+            last = dot;
+            tail++;
+        }
+        if (tail < 8 || last == null || dottedHookDirection(
+                gray, width, height, last.right, last.top, last.bottom, gap) != 1)
+            return -1;
+        return last.right + gap * .55f;
+    }
+
+    private static boolean slurCrossesInitialDots(RawNumeralComponents ink,
+            RawNumeralComponents.Component prefix, RawNumeralComponents.Component resume,
+            int width, float gap) {
+        int center = Math.round(dotY(prefix));
+        int above = center - Math.round(gap * .49f), below = center + Math.round(gap * .25f);
+        for (var component : ink.components()) {
+            if (component.top > above || component.bottom < center + gap * .30f
+                    || component.bottom > center + gap * .51f
+                    || component.left > prefix.left + gap * .23f
+                    || component.right < resume.left - gap * .42f
+                    || component.right > resume.left + gap * .17f) continue;
+            int upperInk = 0, centerInk = 0, lowerInk = 0, upperX = 0, lowerX = 0;
+            for (int i = 0; i < component.size(); i++) {
+                int pixel = component.pixel(i), row = pixel / width;
+                if (row == above) {
+                    upperInk++;
+                    upperX += pixel % width;
+                } else if (row == center) {
+                    centerInk++;
+                } else if (row == below) {
+                    lowerInk++;
+                    lowerX += pixel % width;
+                }
+            }
+            if (upperInk == 0 || lowerInk == 0 || lowerInk > upperInk * .72f
+                    || centerInk < gap * .56f || centerInk > gap * 1.40f) continue;
+            float slope = lowerX / (float) lowerInk - upperX / (float) upperInk;
+            if (slope >= gap * .65f && slope <= gap * 2.15f) return true;
+        }
+        return false;
+    }
+
 
     private static List<RawNumeralComponents.Component> dottedComponents(
             RawNumeralComponents field, float gap, float maxWidth) {

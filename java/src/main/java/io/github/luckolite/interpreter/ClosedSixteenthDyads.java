@@ -64,6 +64,7 @@ final class ClosedSixteenthDyads {
                     for (var head:bars.get(m)) result.set(head.owner,head.note);
                 continue;
             }
+            if (restoreSteppedOctaveShaft(ink, regions.get(m), bars.get(m), result)) continue;
             var pair=prove(ink,regions.get(m),bars.get(m));
             if (pair == null) pair = terminalOctaveHookDot(ink, regions.get(m), bars.get(m));
             if (pair==null) continue;
@@ -76,6 +77,70 @@ final class ClosedSixteenthDyads {
         }
         if (result.equals(notes)) return score;
         return score.withNotes(result,IntStream.range(0,notes.size()).boxed().toList());
+    }
+
+    /** Recover one visually joined upper shaft above a complete bar of double-rail octave dyads. */
+    private static boolean restoreSteppedOctaveShaft(
+            Ink ink, MeasureRegion bar, List<Head> source, List<ScoreNoteEvent> result) {
+        var heads = source.stream().sorted(Comparator.comparingDouble(Head::x)).toList();
+        float gap = (bar.bottom() - bar.top()) * ink.height / 8.2f;
+        if (gap < 10 || gap > 26) return false;
+        float bottom = bar.bottom() * ink.height - 2.1f * gap;
+        int clef = heads.get(0).note.clefBottomDiatonic();
+        var columns = new ClosedFourDyadBeam.Head[16];
+        var directions = new int[4];
+        int missing = -1;
+        for (int slot = 0; slot < columns.length; slot++) {
+            var a = heads.get(slot * 2);
+            var b = heads.get(slot * 2 + 1);
+            var upper = a.y < b.y ? a : b;
+            var lower = a.y < b.y ? b : a;
+            var topNote = upper.note;
+            var bottomNote = lower.note;
+            int direction = bottomNote.stemDirection();
+            if (!ordinary(topNote, clef) || !ordinary(bottomNote, clef)
+                    || topNote.augmentationDots() != 0 || bottomNote.augmentationDots() != 0
+                    || direction == 0 || topNote.stemDirection() != direction
+                    || bottomNote.beamCount() != 2 || bottomNote.unbeamedDurationBeats() != 0
+                    || Math.abs(topNote.staffStep() - bottomNote.staffStep()) != 7
+                    || b.x - a.x > gap * .16f
+                    || lower.y - upper.y < gap * 3.15f
+                    || lower.y - upper.y > gap * 3.8f) return false;
+            if (slot % 4 == 0) directions[slot / 4] = -direction;
+            else if (directions[slot / 4] != -direction) return false;
+            if (topNote.beamCount() == 0 && topNote.unbeamedDurationBeats() == 1) {
+                if (missing >= 0 || direction != -1 || slot % 4 == 0 || slot % 4 == 3) return false;
+                missing = slot;
+            } else if (topNote.beamCount() != 2 || topNote.unbeamedDurationBeats() != 0) {
+                return false;
+            }
+            columns[slot] = new ClosedFourDyadBeam.Head((a.x + b.x) * .5f, upper.y, lower.y);
+        }
+        if (missing < 0) return false;
+        var openingRails = DottedDyadMeasureSeparator.localRails(
+                ink.raw, ink.width, ink.height, Math.round(bar.left() * ink.width), bottom, gap);
+        if (openingRails == null) return false;
+        var staff = StaffPitchTrack.linear(ink.width, openingRails[0], openingRails[1], 0);
+        if (!WrappedMeasureBoundaries.confirmsClosedWithVerifiedStaff(
+                ink.raw, ink.width, ink.height, bar, columns[0].x(), columns[15].x(), staff)) return false;
+        for (int group = 0; group < directions.length; group++) {
+            int start = group * 4;
+            var four = java.util.Arrays.copyOfRange(columns, start, start + 4);
+            if (group == missing / 4) {
+                if (!ClosedFourDyadBeam.provesOctavesWithSteppedStem(
+                        ink.raw, ink.width, ink.height, four, gap, bottom, directions[group], missing % 4)) return false;
+            } else if (!ClosedFourDyadBeam.provesOctaves(
+                    ink.raw, ink.width, ink.height, four, gap, bottom, directions[group], false)) {
+                return false;
+            }
+        }
+        var headA = heads.get(missing * 2);
+        var headB = heads.get(missing * 2 + 1);
+        var owner = headA.y < headB.y ? headA : headB;
+        result.set(owner.owner, asSharedBeam(owner.note, 2));
+        if (closes(source, result)) return true;
+        result.set(owner.owner, owner.note);
+        return false;
     }
 
     private static void closeToEighth(
@@ -163,7 +228,7 @@ final class ClosedSixteenthDyads {
         var revised = new ArrayList<ScoreNoteEvent>(30);
         for (int i = 0; i < 30; i++) {
             var note = heads.get(i).note;
-            revised.add(i < 28 ? note.withTupletRatio(1, 1) : asSharedEighth(note));
+            revised.add(i < 28 ? note.withTupletRatio(1, 1) : asSharedBeam(note, 1));
         }
         for (int i = 0; i < 30; i++) {
             var placed = ScoreNoteTiming.writtenPlacement(revised.get(i), revised, 4f).orElse(null);
@@ -184,7 +249,7 @@ final class ClosedSixteenthDyads {
         return true;
     }
 
-    private static ScoreNoteEvent asSharedEighth(ScoreNoteEvent n) {
+    private static ScoreNoteEvent asSharedBeam(ScoreNoteEvent n, int beams) {
         return new ScoreNoteEvent(
                 n.measureIndex(),
                 n.positionInMeasure(),
@@ -194,7 +259,7 @@ final class ClosedSixteenthDyads {
                 n.pageY(),
                 n.tiedFromPrevious(),
                 n.augmentationDots(),
-                1,
+                beams,
                 n.writtenAccidental(),
                 0,
                 n.tupletDivisor(),

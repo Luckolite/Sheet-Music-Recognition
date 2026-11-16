@@ -87,6 +87,71 @@ public class PrintedQuarterDyadAccidentalsTest {
         assertFalse(provesNaturalCadence(missingSpine, true));
     }
 
+    @Test
+    public void widePageEndUsesBothOwnedSignsWithoutSuppressingTheirConnectorsAgain() {
+        var source = widePageEnd();
+        assertTrue(widePageEndProved(source));
+        paint(source.gray(), 153, 159, 158, 162, 255);
+        assertFalse(widePageEndProved(source));
+    }
+
+    @Test
+    public void widePageEndNeedsTwoRulesAndASharedQuarterShaft() {
+        var singleRule = widePageEnd();
+        paint(singleRule.gray(), 282, 284, 115, 175, 255);
+        assertFalse(widePageEndProved(singleRule));
+
+        var brokenShaft = widePageEnd();
+        paint(brokenShaft.gray(), 174, 177, 167, 181, 255);
+        assertFalse(widePageEndProved(brokenShaft));
+
+        var anotherStroke = widePageEnd();
+        paint(anotherStroke.gray(), 223, 226, 113, 176, 0);
+        assertFalse(widePageEndProved(anotherStroke));
+    }
+
+    private static boolean widePageEndProved(Page page) {
+        final int right = 287;
+        var bar = new MeasureRegion(
+                LEFT / (float) WIDTH, right / (float) WIDTH, 75f / HEIGHT, 207f / HEIGHT);
+        var chord = List.of(
+                new ScoreNoteEvent(
+                        0, (182f - LEFT) / (right - LEFT), 7, 0, 1, 120f / HEIGHT,
+                        false, 0, 0, ScoreNoteEvent.ACCIDENTAL_FLAT, 1, 1, 0, 0, 30,
+                        false, 0, false, 0, 0, 1, -1),
+                new ScoreNoteEvent(
+                        0, (183f - LEFT) / (right - LEFT), 2, 0, 1, 160f / HEIGHT,
+                        false, 0, 0, ScoreNoteEvent.ACCIDENTAL_NATURAL, 1, 1, 0, 0, 30,
+                        false, 0, false, 0, 0, 1, -1));
+        return PrintedQuarterDyadAccidentals.provesWidePageEnd(
+                page.labels(), page.gray(), WIDTH, HEIGHT, bar, chord,
+                List.of(new PlayingTechniqueDetector.Staff(112, 176, 16, 0, 1)));
+    }
+
+    private static Page widePageEnd() {
+        byte[] gray = new byte[WIDTH * HEIGHT];
+        Arrays.fill(gray, (byte) 255);
+        var page = new Page(gray, new byte[gray.length]);
+        for (int y = 112; y <= 176; y += 16) paint(gray, 40, 284, y, y + 1, 0);
+        paint(gray, 120, 122, 112, 177, 0);
+        paint(gray, 274, 276, 112, 177, 0);
+        paint(gray, 282, 284, 112, 177, 0);
+        paint(gray, 175, 176, 119, 181, 0);
+        paint(gray, 175, 190, 117, 124, 0);
+        paint(gray, 176, 190, 157, 164, 0);
+
+        mark(page, 153, 156, 92, 128);
+        mark(page, 153, 166, 112, 118);
+        mark(page, 153, 164, 119, 122);
+        mark(page, 153, 160, 123, 126);
+
+        mark(page, 149, 152, 131, 171);
+        mark(page, 160, 163, 143, 181);
+        mark(page, 149, 163, 142, 146);
+        mark(page, 149, 163, 158, 162);
+        return page;
+    }
+
     private static boolean provesNaturalCadence(Page image, boolean lowerNatural) {
         var bar =
                 new MeasureRegion(
