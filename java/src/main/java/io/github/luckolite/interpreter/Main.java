@@ -315,6 +315,52 @@ public final class Main {
             var recovered = OpenStringHarmonics.recover(score, initialKey);
             score = appendOpenStringHarmonics(score, events, recovered, height);
         }
+        var hollow = tabs.isEmpty() ? TerminalOpenHarmonicHeads.capture(score, labels,
+                decoderGray == null ? gray : decoderGray, gray, width, height, beats,
+                annotations.words().stream().map(SheetInterpreter.Word::internal).toList(),
+                initialKey, standardViolin) : List.<TerminalOpenHarmonicHeads.Chord>of();
+        if (standardViolin && !hollow.isEmpty()) {
+            var notes = new ArrayList<>(score.notes());
+            var owners = new ArrayList<>(java.util.stream.IntStream.range(0,notes.size()).boxed().toList());
+            var archived = new ArrayList<TerminalOpenHarmonicHeads.Chord>();
+            for (var chord : hollow) {
+                int bar = chord.measureIndex();
+                var heads = new ArrayList<TerminalOpenHarmonicHeads.Head>();
+                var region = score.measures().get(bar);
+                for (var written : chord.heads()) {
+                    int index = notes.size();
+                    float position = (written.x()/width-region.left())/(region.right()-region.left());
+                    float y = written.y()/height;
+                    var note = new ScoreNoteEvent(bar,position,written.staffStep(),0,1,y,
+                            false,0,0,ScoreNoteEvent.ACCIDENTAL_FROM_KEY,1,1,0,0,
+                            ScoreNoteEvent.CLEF_TREBLE).withStemDirection(1);
+                    var event = new LinkedHashMap<String,Object>();
+                    event.put("measureIndex",bar);
+                    event.put("staffIndex",0);
+                    event.put("staffCount",1);
+                    event.put("sourceNoteIndex",index);
+                    event.put("midi",written.soundingMidi());
+                    event.put("writtenMidi",written.writtenMidi());
+                    event.put("harmonicTouchMidi",written.writtenMidi());
+                    event.put("startBeat",starts[bar]+chord.quarterBeatOffset());
+                    event.put("durationBeats",1);
+                    event.put("clefInferred",false);
+                    event.put("durationFallback",false);
+                    event.put("tiedFromPrevious",false);
+                    event.put("x",written.x());
+                    event.put("y",written.y());
+                    events.add(event);
+                    notes.add(note);
+                    owners.add(-1);
+                    heads.add(new TerminalOpenHarmonicHeads.Head(written.staffStep(),written.writtenMidi(),
+                            written.x(),written.y(),written.soundingMidi(),index));
+                }
+                archived.add(new TerminalOpenHarmonicHeads.Chord(bar,chord.quarterBeatOffset(),List.copyOf(heads)));
+            }
+            var context = score.clockContextSource().withNoteCount(notes.size());
+            score = score.withNotes(notes,owners).withClockContextSource(context);
+            hollow = List.copyOf(archived);
+        }
         var result = new LinkedHashMap<String, Object>();
         result.put("schemaVersion", 1);
         result.put("width", width);
@@ -323,11 +369,12 @@ public final class Main {
         result.put("events", events);
         result.put("tablatureWarnings", tabWarnings);
         result.put("measureBeats", beats);
+        if (!hollow.isEmpty()) result.put("printedOpenHarmonicChords", hollow);
         var accidentals = decoded.accidentalSource().printedMarks(
                 decoded.originalNotes(), score.notes(), decoded.accidentalMeasures());
         accidentals =
                 SourceLocalAccidental.includeClosedTripletSharps(
-                        accidentals, decoded.closedTripletSharpOwners(), score.notes());
+                        accidentals, decoded.provedSharpOwners(), score.notes());
         if (!accidentals.isEmpty()) result.put("printedAccidentals", accidentals);
         if (!wrapped.continuations().isEmpty())
             result.put("printedMeasureContinuations", wrapped.continuations());

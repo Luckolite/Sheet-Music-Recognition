@@ -32,7 +32,11 @@ import java.util.*;
 
 public final class SheetInterpreter {
     public record NumberToken(int value, float left, float top, float right, float bottom, float annotationLeft) {}
-    public record Word(String text, float left, float top, float right, float bottom) {}
+    public record Word(String text, float left, float top, float right, float bottom) {
+        PlayingTechniqueDetector.Word internal() {
+            return new PlayingTechniqueDetector.Word(text, left, top, right, bottom);
+        }
+    }
     public record Annotations(List<NumberToken> measureNumbers, List<NumberToken> tempoNumbers,
             List<NumberToken> restCounts, List<Word> words, List<ScoreMeterChange> meters, List<Word> tabWords) {
         public static final Annotations EMPTY = new Annotations(List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
@@ -84,7 +88,7 @@ public final class SheetInterpreter {
 
     record AnalyzedPage(ScorePageInterpretation score, List<ScoreNoteEvent> originalNotes,
             SourceLocalAccidental accidentalSource, List<MeasureRegion> accidentalMeasures,
-            List<ScoreNoteEvent> closedTripletSharpOwners,
+            List<ScoreNoteEvent> provedSharpOwners,
             List<List<ScoreNoteEvent>> harmonicTails) {}
 
     static AnalyzedPage analyzeWithPrintedSources(byte[] labels, byte[] gray, int width, int height,

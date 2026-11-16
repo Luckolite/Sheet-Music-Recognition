@@ -181,7 +181,7 @@ public final class SheetInterpreter {
             List<ScoreNoteEvent> originalNotes,
             SourceLocalAccidental accidentalSource,
             List<MeasureRegion> accidentalMeasures,
-            List<ScoreNoteEvent> closedTripletSharpOwners,
+            List<ScoreNoteEvent> provedSharpOwners,
             List<List<ScoreNoteEvent>> harmonicTails) {}
 
     static AnalyzedPage analyzeWithPrintedSources(
@@ -300,6 +300,9 @@ public final class SheetInterpreter {
         measures = recoveredCadence.measures();
         labels = recoveredCadence.labels();
         measures =
+                InlineSixteenthQuarterCadence.recover(
+                        measures, labels, gray, annotationGray, width, height);
+        measures =
                 VerifiedOpeningMeterSlot.recover(
                         measures, labels, gray, annotationGray, width, height);
         measures = ClosedSixteenthPairBeforeHalf.recover(
@@ -313,6 +316,8 @@ public final class SheetInterpreter {
         measures =
                 BeamedFlatBarline.joinPairedFlatTails(
                         measures, labels, gray, annotationGray, width, height);
+        var sharpTails = BeamedFlatBarline.joinDottedSharpTails(measures, labels, gray, annotationGray, width, height);
+        measures = sharpTails.measures();
         var beforeHarmonicJoin = measures;
         var harmonicJoinedMeasures =
                 HarmonicBeamBarline.join(measures, labels, gray, annotationGray, width, height);
@@ -398,6 +403,7 @@ public final class SheetInterpreter {
                             notes,
                             ornamentWords);
         }
+        notes = SixteenthBeamRailAlias.remove(notes, measures, gray, annotationGray, width, height);
         notes = ArtificialHarmonics.apply(labels, gray, width, height, measures, notes, staffs);
         notes =
                 ArtificialHarmonics.removeWholeTouchAliases(
@@ -799,7 +805,14 @@ public final class SheetInterpreter {
         finalInterpretation =
                 TerminalDottedCadenceHooks.apply(finalInterpretation, null, gray, width, height);
         finalInterpretation =
-                ClosedSixteenthDyads.apply(finalInterpretation, gray, annotationGray, width, height);
+                ClosedSixteenthDyads.apply(
+                        finalInterpretation,
+                        inheritedMeter,
+                        gray,
+                        annotationGray,
+                        width,
+                        height,
+                        physicalPage);
         finalInterpretation = ClosedDottedSixteenths.apply(finalInterpretation, gray, width, height);
         finalInterpretation = ClosedDottedSixteenths.applyOpeningWideDyadHooks(
                 finalInterpretation, gray, annotationGray, width, height, physicalPage);
@@ -863,13 +876,15 @@ public final class SheetInterpreter {
         var cadences = PrintedCadenceDurations.captureWithRejectedLedgerRows(
                 touches, labels, gray, width, height, rejectedLedgerRows, annotationGray);
         cadences = ClosedLedgerHalfDyad.capture(cadences, annotationGray, width, height);
+        var provedSharpOwners = new java.util.ArrayList<>(accidentalTriplets.sharpOwners());
+        provedSharpOwners.addAll(sharpTails.printedSharpOwners(clockAnalysis.notes(), measures, width, height));
         return new AnalyzedPage(
                 TerminalMixedHarmonicCadence.capture(
                         cadences, labels, annotationGray, gray, width, height),
                 clockAnalysis.notes(),
                 clockAnalysis.clockProducerSource().localAccidentals(),
                 measures,
-                accidentalTriplets.sharpOwners(),
+                List.copyOf(provedSharpOwners),
                 harmonicTail.tails());
     }
 }

@@ -657,6 +657,147 @@ final class BeamedFlatBarline {
         return result == null ? measures : List.copyOf(result);
     }
 
+
+    /** Rejoins the last dotted-beam dyad when its two sharps form the apparent barline. */
+    static SharpTailJoin joinDottedSharpTails(
+            List<MeasureRegion> measures, byte[] labels, byte[] gray, byte[] raw, int width, int height) {
+        if (labels == null || gray == null || raw == null || width < 1 || height < 1
+                || gray.length != (long) width * height || labels.length != gray.length
+                || raw.length != gray.length) return new SharpTailJoin(measures, List.of());
+        List<RawStaffLineDetector.StaffLines> staffs = null;
+        List<MeasureRegion> result = null;
+        var tails = new ArrayList<Dyad>();
+        for (int i = 0; i + 2 < measures.size(); i++) {
+            var left = measures.get(i);
+            var tail = measures.get(i + 1);
+            var next = measures.get(i + 2);
+            float gap = (left.bottom() - left.top()) * height / 8.2f;
+            float leftSpan = (left.right() - left.left()) * width;
+            float tailSpan = (tail.right() - tail.left()) * width;
+            float seam = (tail.left() - left.right()) * width;
+            if (gap < 10 || gap > 25 || left.cadenceQuarterBeats() != 0
+                    || tail.cadenceQuarterBeats() != 0 || leftSpan < 38 * gap || leftSpan > 48 * gap
+                    || tailSpan < 2.7f * gap || tailSpan > 4.4f * gap
+                    || seam < .8f * gap || seam > 1.35f * gap
+                    || (next.right() - next.left()) * width < 30 * gap
+                    || !sameRow(left, tail, gap, height) || !sameRow(left, next, gap, height))
+                continue;
+            int cut = Math.round((left.right() + tail.left()) * width * .5f);
+            int hint = Math.round(left.bottom() * height - 2.1f * gap);
+            if (!hasAccidentalSpine(labels, width, height, cut, Math.round(hint - 4 * gap), hint, gap))
+                continue;
+            if (staffs == null) staffs = RawStaffLineDetector.detect(raw, width, height);
+            var candidates = staffs.stream()
+                    .filter(s -> Math.abs(s.bottom() - hint) <= gap * .35f
+                            && Math.abs(s.gap() - gap) <= gap * .16f)
+                    .toList();
+            if (candidates.size() != 1) continue;
+            var staff = candidates.get(0);
+            if (!undivided(gray, raw, width, height, left, tail, staff)
+                    || !provedAdjacentRule(gray, raw, width, height, tail, next, staff)) continue;
+            var joined = new MeasureRegion(left.left(), tail.right(), left.top(), left.bottom());
+            var owner = ownedDottedSharpTail(labels, gray, raw, width, height, left, tail, joined, cut, staff.gap());
+            if (owner == null) continue;
+            tails.add(owner);
+            if (result == null) result = new ArrayList<>(measures);
+            int index = i - (measures.size() - result.size());
+            result.set(index, joined);
+            result.remove(index + 1);
+            i++;
+        }
+        return new SharpTailJoin(result == null ? measures : List.copyOf(result), List.copyOf(tails));
+    }
+
+    private static Dyad ownedDottedSharpTail(
+            byte[] labels, byte[] gray, byte[] raw, int w, int h,
+            MeasureRegion left, MeasureRegion tail, MeasureRegion joined, int cut, float gap) {
+        var analyzed = OmrScoreInterpreter.analyze(labels, gray, w, h, List.of(joined), raw);
+        if (!analyzed.rests().isEmpty() || analyzed.notes().size() != 24) return null;
+        var notes = analyzed.notes().stream()
+                .sorted(java.util.Comparator.comparingDouble(ScoreNoteEvent::positionInMeasure))
+                .toList();
+        float span = (joined.right() - joined.left()) * w;
+        Dyad earlier = null;
+        Dyad closing = null;
+        for (int slot = 0; slot < 12; slot++) {
+            var a = notes.get(slot * 2);
+            var b = notes.get(slot * 2 + 1);
+            int dots = 1 - slot % 2;
+            if (!dottedSharpTailHead(a, dots) || !dottedSharpTailHead(b, dots)
+                    || a.stemDirection() != b.stemDirection()
+                    || Math.abs(a.staffStep() - b.staffStep()) != 5
+                    || (b.positionInMeasure() - a.positionInMeasure()) * span > gap * .24f)
+                return null;
+            float x = joined.left() * w + (a.positionInMeasure() + b.positionInMeasure()) * .5f * span;
+            if (slot < 11 ? x >= left.right() * w : x <= tail.left() * w) return null;
+            if (slot < 10) continue;
+            if (a.stemDirection() != -1) return null;
+            var dyad = new Dyad(x, Math.min(a.pageY(), b.pageY()) * h, Math.max(a.pageY(), b.pageY()) * h);
+            if (slot == 10) {
+                earlier = dyad;
+            } else {
+                if (a.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_SHARP
+                        || b.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_SHARP) return null;
+                closing = dyad;
+            }
+        }
+        return earlier != null && closing != null
+                && cut - earlier.x() <= 3.5f * gap && closing.x() - cut <= 2 * gap
+                && dottedSharpSeam(gray, w, h, cut, earlier, closing, gap)
+                && dottedSharpSeam(raw, w, h, cut, earlier, closing, gap) ? closing : null;
+    }
+
+    private static boolean dottedSharpTailHead(ScoreNoteEvent note, int dots) {
+        return note.kind() == ScoreNoteEvent.Kind.PITCHED
+                && note.staffIndex() == 0 && note.staffCount() == 1
+                && note.visualSize() == ScoreNoteEvent.VisualSize.FULL
+                && note.beamCount() == 3 - dots && note.augmentationDots() == dots
+                && note.unbeamedDurationBeats() == 0
+                && note.tupletDivisor() == 1 && note.tupletNormalNotes() == 1
+                && note.stemDirection() != 0 && !note.crossStaffBeam()
+                && !note.tiedFromPrevious() && note.boundaryTies() == 0
+                && note.leadingRestBeats() == 0 && note.followingRestBeats() == 0
+                && (note.articulations() & NoteOrnament.GRACE) == 0;
+    }
+
+    private static boolean dottedSharpSeam(
+            byte[] plane, int w, int h, int cut, Dyad earlier, Dyad closing, float gap) {
+        return joinedByTwoShaftsAndRails(plane, w, h, cut, earlier, closing, gap)
+                && OmrScoreInterpreter.printedTerminalDyadSharp(plane, w, h, closing.x(), closing.upper(), gap, false)
+                && OmrScoreInterpreter.printedTerminalDyadSharp(plane, w, h, closing.x(), closing.lower(), gap, true);
+    }
+
+
+    record SharpTailJoin(List<MeasureRegion> measures, List<Dyad> tails) {
+        List<ScoreNoteEvent> printedSharpOwners(
+                List<ScoreNoteEvent> notes, List<MeasureRegion> resolved, int width, int height) {
+            if (tails.isEmpty()) return List.of();
+            var result = new ArrayList<ScoreNoteEvent>();
+            for (var tail : tails) {
+                var pair = notes.stream()
+                        .filter(note -> ownsTerminalSharp(note, resolved, tail, width, height))
+                        .toList();
+                if (pair.size() == 2
+                        && pair.get(0).measureIndex() == pair.get(1).measureIndex()
+                        && Math.abs(pair.get(0).pageY() - pair.get(1).pageY()) * height > 4)
+                    result.addAll(pair);
+            }
+            return List.copyOf(result);
+        }
+    }
+
+    private static boolean ownsTerminalSharp(
+            ScoreNoteEvent note, List<MeasureRegion> resolved, Dyad tail, int width, int height) {
+        int index = note.measureIndex();
+        if (!dottedSharpTailHead(note, 0) || note.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_SHARP
+                || index < 0 || index >= resolved.size()) return false;
+        var region = resolved.get(index);
+        float x = (region.left() + (region.right() - region.left()) * note.positionInMeasure()) * width;
+        float y = note.pageY() * height;
+        return Math.abs(x - tail.x()) <= 2
+                && (Math.abs(y - tail.upper()) <= 2 || Math.abs(y - tail.lower()) <= 2);
+    }
+
     private static boolean sameRow(MeasureRegion a, MeasureRegion b, float gap, int height) {
         return Math.abs(a.top() - b.top()) * height <= gap * .35f
                 && Math.abs(a.bottom() - b.bottom()) * height <= gap * .35f;

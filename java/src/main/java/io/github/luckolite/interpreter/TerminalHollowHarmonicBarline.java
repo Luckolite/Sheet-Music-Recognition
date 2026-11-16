@@ -53,6 +53,58 @@ final class TerminalHollowHarmonicBarline {
         return patched.size() == measures.size() ? measures : List.copyOf(patched);
     }
 
+    record HeadPair(float x, float lowerY, float upperY, int lower, int upper, float gap) {}
+
+    static List<HeadPair> writtenOpening(byte[] labels, byte[] ink, int w, int h,
+            MeasureRegion bar, MeasureRegion following) {
+        var staff=writtenFrame(ink,w,h,bar,4.7f);
+        if (staff==null) return List.of();
+        float gap=staff.gap(), left=bar.left()*w, right=bar.right()*w;
+        if ((right-left)<gap*8 || (right-left)>gap*12 || !sameStaff(bar,following,gap,h)) return List.of();
+        var first=shaft(labels,ink,w,h,staff,left+gap*2.8f,left+gap*4.5f);
+        if (first==null) return List.of();
+        var second=shaft(labels,ink,w,h,staff,first.x+gap*3.65f,first.x+gap*4.8f);
+        int rule=PrintedCadenceDurations.boundaryColumn(ink,w,staff,
+                (right+following.left()*w)*.5f,true,false);
+        if (second==null || rule<0) return List.of();
+        float x1=first.x-gap*.68f,x2=second.x-gap*.68f;
+        if (!PrintedCadenceDurations.emptyOutsideChord(ink,w,staff,left,x2-gap*.5f,x1,x1,false)
+                || !PrintedCadenceDurations.emptyOutsideChord(ink,w,staff,x1+gap*.75f,rule,x2,x2,false))
+            return List.of();
+        return List.of(headPair(first,staff),headPair(second,staff));
+    }
+
+    static List<HeadPair> writtenEnding(byte[] labels, byte[] ink, int w, int h,
+            MeasureRegion previous, MeasureRegion bar) {
+        var staff=writtenFrame(ink,w,h,bar,5.4f);
+        if (staff==null || bar.cadenceQuarterBeats()!=1) return List.of();
+        float gap=staff.gap(),left=bar.left()*w,right=bar.right()*w;
+        if ((right-left)<gap*6 || (right-left)>gap*10 || !sameStaff(bar,previous,gap,h)) return List.of();
+        int before=PrintedCadenceDurations.boundaryColumn(ink,w,staff,(previous.right()*w+left)*.5f,true,false);
+        int end=PrintedCadenceDurations.boundaryColumn(ink,w,staff,right+gap*.85f,false,true);
+        var head=shaft(labels,ink,w,h,staff,left+gap*3f,left+gap*5.1f);
+        if (before<0 || end<0 || head==null) return List.of();
+        float x=head.x-gap*.68f;
+        return PrintedCadenceDurations.emptyOutsideChord(ink,w,staff,left,end,x,x,false)
+                ? List.of(headPair(head,staff)) : List.of();
+    }
+
+    private static PlayingTechniqueDetector.Staff writtenFrame(
+            byte[] ink,int w,int h,MeasureRegion bar,float inset) {
+        float nominal=(bar.bottom()-bar.top())*h/8.2f;
+        if (nominal<10 || nominal>25) return null;
+        var frame=PrintedDirectionStaff.printedRules(ink,w,h,bar.left()*w+inset*nominal,
+                bar.bottom()*h-nominal*2.1f,nominal);
+        if (frame==null || Math.abs(frame[1]-nominal)>nominal*.12f) return null;
+        return new PlayingTechniqueDetector.Staff(frame[0]-4*frame[1],frame[0],frame[1],0,1);
+    }
+
+    private static HeadPair headPair(Shaft head,PlayingTechniqueDetector.Staff staff) {
+        float gap=staff.gap(),bottom=staff.bottom();
+        return new HeadPair(head.x-gap*.68f,bottom-head.lower*gap*.5f,
+                bottom-head.upper*gap*.5f,head.lower,head.upper,gap);
+    }
+
     private static boolean sameStaff(MeasureRegion first, MeasureRegion last, float gap, int height) {
         return Math.abs(first.top() - last.top()) * height <= gap * .28f
                 && Math.abs(first.bottom() - last.bottom()) * height <= gap * .28f;

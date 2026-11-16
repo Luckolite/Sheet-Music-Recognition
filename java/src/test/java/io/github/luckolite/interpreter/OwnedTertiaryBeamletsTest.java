@@ -40,6 +40,35 @@ public final class OwnedTertiaryBeamletsTest {
         assertEquals(false, closingDyadHook(true, true, true));
     }
 
+
+    @Test
+    public void longDownstrokeOwnsTheThirdHookUnderTheStaffRule() {
+        assertEquals(true, highLedgerHook(true, true, false));
+        assertEquals(false, highLedgerHook(false, true, false));
+        assertEquals(false, highLedgerHook(true, false, false));
+        assertEquals(false, highLedgerHook(true, true, true));
+    }
+
+    private static boolean highLedgerHook(boolean hook, boolean pairedRails, boolean filledHead) {
+        byte[] gray = new byte[WIDTH * HEIGHT];
+        Arrays.fill(gray, (byte) 255);
+        int owner = 423, prior = 339;
+        int top = 124, upper = 50, lower = 69, tip = 159;
+        int shaft = shaftX(owner), reverse = shaft - 8;
+        for (int x : new int[] {prior, owner}) {
+            oval(gray, x, upper, false);
+            oval(gray, x, lower, false);
+            ink(gray, shaftX(x), upper, shaftX(x) + 2, tip);
+        }
+        ink(gray, 300, top - 1, 490, top + 1);
+        ink(gray, shaftX(prior), tip - 8, shaft + 2, tip);
+        if (pairedRails) ink(gray, shaftX(prior), tip - 21, shaft + 2, tip - 14);
+        if (hook) ink(gray, shaft - 14, top + 2, shaft + 2, top + 10);
+        if (filledHead) ink(gray, reverse - 4, top - 8, reverse + 4, top + 8);
+        return OwnedTertiaryBeamlets.ownsHighLedgerHookOnStaffLine(
+                gray, WIDTH, HEIGHT, reverse, top + 6, owner, lower, prior, lower, ESTIMATED_GAP, top);
+    }
+
     private static boolean closingDyadHook(
             boolean terminalHook, boolean sharedPeerShaft, boolean peerAlsoHooks) {
         byte[] gray = new byte[WIDTH * HEIGHT];

@@ -4,7 +4,10 @@ package io.github.luckolite.interpreter;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.stream.IntStream;
 
 /** Reject an excess dotted sixteenth when independent beam evidence fills an entire printed bar. */
@@ -29,6 +32,27 @@ final class ClosedSixteenthDyads {
 
     static ScorePageInterpretation apply(
             ScorePageInterpretation score, byte[] gray, byte[] raw, int w, int h) {
+        return apply(score, null, gray, raw, w, h);
+    }
+
+    static ScorePageInterpretation apply(
+            ScorePageInterpretation score,
+            ScoreMeterChange inheritedMeter,
+            byte[] gray,
+            byte[] raw,
+            int w,
+            int h) {
+        return apply(score, inheritedMeter, gray, raw, w, h, -1);
+    }
+
+    static ScorePageInterpretation apply(
+            ScorePageInterpretation score,
+            ScoreMeterChange inheritedMeter,
+            byte[] gray,
+            byte[] raw,
+            int w,
+            int h,
+            int physicalPage) {
         if (gray==null || gray.length!=(long)w*h || w<256 || h<128) return score;
         var ink=new Ink(gray,w,h);
         var original = raw != null && raw.length == gray.length ? new Ink(raw,w,h) : null;
@@ -46,17 +70,27 @@ final class ClosedSixteenthDyads {
                     (b.left()+n.positionInMeasure()*(b.right()-b.left()))*w,n.pageY()*h));
         }
         var result=new ArrayList<>(notes);
+        var printedBeams = score.beamSource();
         for (int m=0;m<regions.size();m++) {
             while (meter<score.meterChanges().size() && score.meterChanges().get(meter).measureIndex()<=m)
                 active=score.meterChanges().get(meter++);
             final int bar=m;
             int count = bars.get(m).size();
-            if (active == null
-                    || active.numerator() != 4
-                    || active.denominator() != 4
-                    || count != 30 && count != 32
+            if (count != 30 && count != 32
                     || regions.get(m).cadenceQuarterBeats() != 0
                     || score.rests().stream().anyMatch(r -> r.measureIndex() == bar)) continue;
+            var effective = active == null ? inheritedMeter : active;
+            if (count == 32
+                    && original != null
+                    && effective != null
+                    && effective.numerator() == 4
+                    && effective.denominator() == 4
+                    && closeAcrossPrintedBeams(ink, original, regions, m, bars.get(m), result)) {
+                if (physicalPage >= 0)
+                    printedBeams = projectDoubleRails(printedBeams, physicalPage, bars.get(m));
+                continue;
+            }
+            if (active == null || active.numerator() != 4 || active.denominator() != 4) continue;
             if (count == 30) {
                 closeToEighth(ink, original, regions.get(m), bar == 0,
                         regions, bars.get(m), result);
@@ -83,7 +117,207 @@ final class ClosedSixteenthDyads {
             }
         }
         if (result.equals(notes)) return score;
-        return score.withNotes(result,IntStream.range(0,notes.size()).boxed().toList());
+        var corrected = score.withNotes(result, IntStream.range(0, notes.size()).boxed().toList());
+        return printedBeams == score.beamSource()
+                ? corrected
+                : corrected.withBeamSource(printedBeams);
+    }
+
+    private static ScoreBeamSource projectDoubleRails(
+            ScoreBeamSource source, int physicalPage, List<Head> sourceHeads) {
+        var heads = sourceHeads.stream().sorted(Comparator.comparingDouble(Head::x)).toList();
+        var origins = new ArrayList<>(source.noteOrigins());
+        var counts = new HashMap<ScoreBeamSource.Anchor, Integer>();
+        for (var origin : origins) origin.ifPresent(a -> counts.merge(a, 1, Integer::sum));
+        var claimed = new HashSet<ScoreBeamSource.Anchor>();
+        var ids = new HashSet<String>();
+        for (var group : source.groups()) {
+            ids.add(group.id());
+            for (var column : group.columns()) claimed.addAll(column.members());
+        }
+        for (var column : source.detachedColumns()) claimed.addAll(column.members());
+        var groups = new ArrayList<>(source.groups());
+        for (int group = 0; group < 4; group++) {
+            var columns = new ArrayList<ScoreBeamSource.Column>(4);
+            int firstOwner = Integer.MAX_VALUE;
+            for (int slot = group * 4; slot < group * 4 + 4; slot++) {
+                var members = new ArrayList<ScoreBeamSource.Anchor>(2);
+                for (int across = 0; across < 2; across++) {
+                    int owner = heads.get(slot * 2 + across).owner;
+                    var retained = origins.get(owner);
+                    var anchor =
+                            retained.orElseGet(
+                                    () -> new ScoreBeamSource.Anchor(physicalPage, owner));
+                    int expectedCount = retained.isPresent() ? 1 : 0;
+                    if (anchor.pageIndex() != physicalPage
+                            || counts.getOrDefault(anchor, 0) != expectedCount
+                            || !claimed.add(anchor)) return source;
+                    origins.set(owner, Optional.of(anchor));
+                    counts.put(anchor, 1);
+                    members.add(anchor);
+                    firstOwner = Math.min(firstOwner, anchor.noteIndex());
+                }
+                columns.add(new ScoreBeamSource.Column(members));
+            }
+            String id = "beam-page:" + physicalPage + ":" + firstOwner;
+            if (!ids.add(id)) return source;
+            groups.add(new ScoreBeamSource.Group(id, columns, List.of(3, 3, 3), List.of()));
+        }
+        return new ScoreBeamSource(groups, source.detachedColumns(), origins);
+    }
+
+    /** Clear a spurious triplet claim across two independently separate four-dyad beam groups. */
+    private static boolean closeAcrossPrintedBeams(
+            Ink ink,
+            Ink original,
+            List<MeasureRegion> regions,
+            int measure,
+            List<Head> source,
+            List<ScoreNoteEvent> result) {
+        var region = regions.get(measure);
+        float gap = (region.bottom() - region.top()) * ink.height / 8.2f;
+        if (gap < 10 || gap > 26) return false;
+        var heads = source.stream().sorted(Comparator.comparingDouble(Head::x)).toList();
+        var groups = new ClosedFourDyadBeam.Head[16];
+        var pairs = new ArrayList<Dyad>(16);
+        int clef = heads.get(0).note.clefBottomDiatonic();
+        int firstClaim = -1, claimCount = 0, direction = 0;
+        for (int slot = 0; slot < groups.length; slot++) {
+            var a = heads.get(slot * 2);
+            var b = heads.get(slot * 2 + 1);
+            var pair = a.y < b.y ? new Dyad(a, b) : new Dyad(b, a);
+            if (slot % 4 == 0) direction = a.note.stemDirection();
+            boolean claim = a.note.tupletDivisor() == 3;
+            if (direction == 0
+                    || claim && direction != -1
+                    || b.x - a.x > gap * .16f
+                    || pair.bottom.y - pair.top.y < gap * .65f
+                    || pair.bottom.y - pair.top.y > gap * 1.4f
+                    || !ordinaryDoubleRail(a.note, clef, direction, claim)
+                    || !ordinaryDoubleRail(b.note, clef, direction, claim)) return false;
+            float x = (a.x + b.x) * .5f;
+            if (slot > 0
+                    && (x - groups[slot - 1].x() < gap * 1.65f
+                            || x - groups[slot - 1].x() > gap * 2.7f)) return false;
+            groups[slot] = new ClosedFourDyadBeam.Head(x, pair.top.y, pair.bottom.y);
+            pairs.add(pair);
+            if (claim) {
+                if (firstClaim < 0) firstClaim = slot;
+                if (slot != firstClaim + claimCount++) return false;
+            }
+        }
+        if (claimCount != 3 || firstClaim / 4 == (firstClaim + 2) / 4) return false;
+        var rows = UnnumberedTripletInk.sourceRows(region, regions, ink.height);
+        if (!printedFourRailGroups(ink, region, pairs, groups, firstClaim, gap, rows)
+                || !printedFourRailGroups(original, region, pairs, groups, firstClaim, gap, rows))
+            return false;
+        for (int i = firstClaim * 2; i < (firstClaim + 3) * 2; i++) {
+            var head = heads.get(i);
+            result.set(head.owner, head.note.withTupletRatio(1, 1));
+        }
+        if (closes(heads, result)) return true;
+        for (var head : heads) result.set(head.owner, head.note);
+        return false;
+    }
+
+    private static boolean ordinaryDoubleRail(
+            ScoreNoteEvent note, int clef, int direction, boolean claim) {
+        return ordinaryGeometry(note, clef)
+                && note.stemDirection() == direction
+                && note.beamCount() == 2
+                && note.augmentationDots() == 0
+                && note.unbeamedDurationBeats() == 0
+                && note.tupletDivisor() == (claim ? 3 : 1)
+                && note.tupletNormalNotes() == (claim ? 2 : 1);
+    }
+
+    private static boolean printedFourRailGroups(
+            Ink ink,
+            MeasureRegion bar,
+            List<Dyad> pairs,
+            ClosedFourDyadBeam.Head[] columns,
+            int firstClaim,
+            float gap,
+            UnnumberedTripletInk.Rows rows) {
+        var samples = new ArrayList<float[]>();
+        var stems = new ArrayList<List<Shaft>>();
+        for (var dyad : pairs) {
+            var head = dyad.top;
+            float estimatedBottom = head.y + head.note.staffStep() * gap * .5f;
+            var sample = localRules(ink, head.x, estimatedBottom, gap);
+            if (sample != null) samples.add(new float[] {head.x, sample[0], sample[1]});
+            var candidates = shafts(ink, dyad, gap, head.note.stemDirection());
+            if (candidates.isEmpty()) return false;
+            stems.add(candidates);
+        }
+        if (samples.size() < 8) return false;
+        int sampleCount = Math.min(13, samples.size());
+        var anchors = new ArrayList<float[]>(sampleCount);
+        for (int i = 0; i < sampleCount; i++)
+            anchors.add(samples.get(i * (samples.size() - 1) / (sampleCount - 1)));
+        var track = StaffPitchTrack.fromVerifiedSamples(anchors);
+        if (track == null
+                || !WrappedMeasureBoundaries.confirmsClosedWithVerifiedStaff(
+                        ink.raw, ink.width, ink.height, bar, columns[0].x(), columns[15].x(), track)
+                || claimedBracket(ink, columns, firstClaim, gap, rows, track)) return false;
+        for (int i = 0; i < columns.length - 1; i++) {
+            var a = pairs.get(i);
+            var b = pairs.get(i + 1);
+            int direction = a.top.note.stemDirection();
+            boolean cut = i % 4 == 3;
+            if (direction != b.top.note.stemDirection()) {
+                if (!cut) return false;
+                continue;
+            }
+            if (cut) {
+                if (!clearTwoRailCut(ink, stems.get(i), stems.get(i + 1), track, gap, direction)
+                        || !beams(ink, stems.get(i), stems.get(i + 1), a, b, gap, direction)
+                                .isEmpty()) return false;
+            } else if (beams(ink, stems.get(i), stems.get(i + 1), a, b, gap, direction, track)
+                    .isEmpty()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean clearTwoRailCut(
+            Ink ink,
+            List<Shaft> left,
+            List<Shaft> right,
+            StaffPitchTrack staff,
+            float gap,
+            int direction) {
+        int from = left.stream().mapToInt(Shaft::x).max().orElseThrow() + Math.round(gap * .42f);
+        int to = right.stream().mapToInt(Shaft::x).min().orElseThrow() - Math.round(gap * .42f);
+        int inward = -direction;
+        int a = inward * left.stream().mapToInt(s -> s.tip * inward).max().orElseThrow();
+        int b = inward * right.stream().mapToInt(s -> s.tip * inward).max().orElseThrow();
+        int top = Math.min(a, b), bottom = Math.max(a, b);
+        int margin = Math.round(gap * .32f), depth = Math.round(gap * 1.1f);
+        if (inward > 0) {
+            top -= depth;
+            bottom += margin;
+        } else {
+            top -= margin;
+            bottom += depth;
+        }
+        if (from < 0 || to >= ink.width || top < 0 || bottom >= ink.height) return false;
+        int columns = 0;
+        for (int x = from; x <= to; x++) {
+            var frame = staff.at(x);
+            int offRule = 0, white = 0;
+            for (int y = top; y <= bottom; y++) {
+                float level = (frame[0] - y) / frame[1];
+                if (level >= -.2f && level <= 4.2f && Math.abs(level - Math.round(level)) <= .19f)
+                    continue;
+                offRule++;
+                if (!ink.dark(x, y)) white++;
+            }
+            columns = offRule > gap && white >= .9f * offRule ? columns + 1 : 0;
+            if (columns >= Math.max(3, Math.round(gap * .26f))) return true;
+        }
+        return false;
     }
 
     /** Recover one visually joined upper shaft above a complete bar of double-rail octave dyads. */
@@ -699,6 +933,18 @@ final class ClosedSixteenthDyads {
 
     private static List<Rails> beams(Ink ink,List<Shaft> left,List<Shaft> right,Dyad a,Dyad b,
             float gap,int direction) {
+        return beams(ink, left, right, a, b, gap, direction, null);
+    }
+
+    private static List<Rails> beams(
+            Ink ink,
+            List<Shaft> left,
+            List<Shaft> right,
+            Dyad a,
+            Dyad b,
+            float gap,
+            int direction,
+            StaffPitchTrack staff) {
         int margin=Math.round(gap*.3f),radius=Math.max(2,Math.round(gap*.12f));
         int minOffset=Math.round(gap*(direction>0 ? -1.6f : -.81f)),maxOffset=Math.round(gap*.55f);
         int minSeparation=Math.round(gap*.66f),maxSeparation=Math.round(gap*1.15f);
@@ -717,13 +963,41 @@ final class ClosedSixteenthDyads {
                 if (band(ink,axis,first,last,0,radius)<.97f) continue;
                 for (int d=minSeparation;d<=maxSeparation;d++) {
                     if (band(ink,axis,first,last,-direction*d,radius)<.97f
-                            || band(ink,axis,first,last,-direction*(d/2),1)>=.65f
                             || band(ink,axis,first,last,-direction*2*d,radius)>=.60f) continue;
-                    accepted.add(new Rails(s.x,y,t.x,z,d));
+                            int middle = -direction * (d / 2);
+                            if (band(ink, axis, first, last, middle, 1) >= .65f
+                                    && (staff == null
+                                            || !staffBridgesRailSeam(
+                                                    ink, staff, axis, first, last, middle,
+                                                    direction))) continue;
+                            var rails = new Rails(s.x, y, t.x, z, d);
+                            if (staff != null) return List.of(rails);
+                            accepted.add(rails);
                 }
             }
         }
         return accepted;
+    }
+
+    private static boolean staffBridgesRailSeam(
+            Ink ink,
+            StaffPitchTrack staff,
+            Rails rail,
+            int first,
+            int last,
+            int middle,
+            int direction) {
+        if (direction != -1) return false;
+        int paper = 0, rule = 0, unexplained = 0;
+        for (int x = first; x <= last; x++) {
+            int y = rail.at(x) - middle;
+            var frame = staff.at(x);
+            if (stroke(ink, x, y, 1) < 2) paper++;
+            else if (Math.abs(y - frame[0]) <= .19f * frame[1]) rule++;
+            else unexplained++;
+        }
+        int span = last - first + 1;
+        return paper >= span * .20f && rule >= span * .35f && unexplained <= span * .08f;
     }
 
     private static float band(Ink ink,Rails axis,int first,int last,int shift,int radius) {

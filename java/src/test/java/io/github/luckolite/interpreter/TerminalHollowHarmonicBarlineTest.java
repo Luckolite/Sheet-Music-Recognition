@@ -53,6 +53,55 @@ public class TerminalHollowHarmonicBarlineTest {
         assertEquals(BOXES.size()-1,found.size());
     }
 
+    @Test
+    public void recognizedOpenFingeringsStaySilentWithoutAnExplicitViolin() {
+        var page = page();
+        var bars = TerminalHollowHarmonicBarline.join(BOXES, page.labels, page.paper, page.paper, WIDTH, HEIGHT);
+        var control = new ScoreNoteEvent(3, .5f, 0, 0, 1, FLOOR / (float) HEIGHT,
+                false, 0, 0, ScoreNoteEvent.ACCIDENTAL_FROM_KEY, 1, 1, 0, 0, ScoreNoteEvent.CLEF_TREBLE);
+        var score = new ScorePageInterpretation(bars, List.of(control));
+        float[] beats = {4, 2, 2, 2, 2, 1};
+        var words = new java.util.ArrayList<PlayingTechniqueDetector.Word>();
+        for (int shaft : new int[]{OPENING, SECOND, ENDING}) {
+            int x = shaft - 10;
+            for (int y : new int[]{137, 268}) {
+                openZero(page.paper, x, y);
+                words.add(new PlayingTechniqueDetector.Word("0", (x - 12) / (float) WIDTH,
+                        (y - 12) / (float) HEIGHT, (x + 12) / (float) WIDTH, (y + 12) / (float) HEIGHT));
+            }
+        }
+        var neutral = TerminalOpenHarmonicHeads.capture(
+                score, page.labels, page.paper, page.paper, WIDTH, HEIGHT, beats, words, 0, false);
+        assertEquals(List.of(1, 1, 5), neutral.stream().map(TerminalOpenHarmonicHeads.Chord::measureIndex).toList());
+        assertEquals(List.of(64, 67, 64, 71, 64, 67), neutral.stream().flatMap(c -> c.heads().stream())
+                .map(TerminalOpenHarmonicHeads.Head::writtenMidi).toList());
+        assertEquals(0, neutral.stream().flatMap(c -> c.heads().stream())
+                .filter(head -> head.soundingMidi() != null).count());
+        var violin = TerminalOpenHarmonicHeads.capture(
+                score, page.labels, page.paper, page.paper, WIDTH, HEIGHT, beats, words, 0, true);
+        assertEquals(List.of(83, 86, 83, 90, 83, 86), violin.stream().flatMap(c -> c.heads().stream())
+                .map(TerminalOpenHarmonicHeads.Head::soundingMidi).toList());
+        var strokeRemoved = page.paper.clone();
+        paint(strokeRemoved, ENDING - 22, 257, ENDING + 2, 279, (byte) 255);
+        for (var image : List.of(strokeRemoved, page.paper)) {
+            var other = image == strokeRemoved ? page.paper : strokeRemoved;
+            var held = TerminalOpenHarmonicHeads.capture(
+                    score, page.labels, image, other, WIDTH, HEIGHT, beats, words, 0, true);
+            assertEquals(violin.subList(0, 2), held);
+        }
+        assertEquals(List.of(), TerminalOpenHarmonicHeads.capture(
+                score, page.labels, page.paper, page.paper, WIDTH, HEIGHT, beats, List.of(), 0, false));
+    }
+
+    private static void openZero(byte[] image, int x, int y) {
+        for (int dy = -8; dy <= 8; dy++) {
+            for (int dx = -6; dx <= 6; dx++) {
+                float distance = dx * dx / 36f + dy * dy / 64f;
+                if (distance >= .42f && distance <= 1f) image[(y + dy) * WIDTH + x + dx] = 0;
+            }
+        }
+    }
+
     private record Scene(byte[] paper, byte[] labels) {}
 
     private static Scene page() {

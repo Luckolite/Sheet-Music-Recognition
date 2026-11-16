@@ -102,6 +102,62 @@ public final class BeamedFlatBarlineTest {
                         plate.gray, WIDTH, HEIGHT, x, overlapping, noteY, staff));
     }
 
+
+    @Test
+    public void offsetTerminalSharpsKeepSeparatePitchOwnership() {
+        var plate = new Plate();
+        Arrays.fill(plate.gray, (byte) 255);
+        int targetX = 193, upperY = 138, lowerY = 177;
+        drawSharp(plate, 161, upperY);
+        drawSharp(plate, 155, lowerY);
+        assertTrue(terminalSharp(plate, targetX, upperY, false));
+        assertTrue(terminalSharp(plate, targetX, lowerY, true));
+
+        // One stem through the projected overlap is not a second accidental.
+        for (int y = lowerY - 23; y <= lowerY + 21; y++) {
+            Arrays.fill(plate.gray, y * WIDTH + 151, y * WIDTH + 179, (byte) 255);
+        }
+        plate.ink(166, 168, lowerY - 23, lowerY + 21, (byte) 0);
+        assertTrue(terminalSharp(plate, targetX, upperY, false));
+        assertFalse(terminalSharp(plate, targetX, lowerY, true));
+    }
+
+    private static void drawSharp(Plate plate, int left, int pitch) {
+        plate.ink(left + 4, left + 6, pitch - 19, pitch + 22, (byte) 0);
+        plate.ink(left + 12, left + 14, pitch - 22, pitch + 18, (byte) 0);
+        for (int dx = 0; dx <= 17; dx++) {
+            int center = pitch + 2 - dx / 4;
+            plate.ink(left + dx, left + dx, center - 10, center - 5, (byte) 0);
+            plate.ink(left + dx, left + dx, center + 6, center + 11, (byte) 0);
+        }
+    }
+
+    private static boolean terminalSharp(Plate plate, int x, int y, boolean lower) {
+        return OmrScoreInterpreter.printedTerminalDyadSharp(
+                plate.gray, WIDTH, HEIGHT, x, y, GAP, lower);
+    }
+
+
+    @Test
+    public void pairedSharpSourceRequiresTwoUniqueRetainedOwners() {
+        var region = new MeasureRegion(.12f, .88f, .2f, .8f);
+        var regions = java.util.List.of(region);
+        float x = WIDTH * .5f;
+        var source = new BeamedFlatBarline.SharpTailJoin(regions,
+                java.util.List.of(new BeamedFlatBarline.Dyad(x, 105, 145)));
+        var upper = new ScoreNoteEvent(0, .5f, 10, 0, 1, 105f / HEIGHT,
+                false, 0, 3, ScoreNoteEvent.ACCIDENTAL_SHARP, 0).withStemDirection(-1);
+        var lower = new ScoreNoteEvent(0, .5f, 5, 0, 1, 145f / HEIGHT,
+                false, 0, 3, ScoreNoteEvent.ACCIDENTAL_SHARP, 0).withStemDirection(-1);
+        var held = java.util.List.of(upper, lower);
+        assertTrue(source.printedSharpOwners(held, regions, WIDTH, HEIGHT).equals(held));
+        assertTrue(source.printedSharpOwners(java.util.List.of(upper), regions, WIDTH, HEIGHT).isEmpty());
+        assertTrue(source.printedSharpOwners(java.util.List.of(upper, upper, lower),
+                regions, WIDTH, HEIGHT).isEmpty());
+        assertTrue(source.printedSharpOwners(java.util.List.of(upper, upper),
+                regions, WIDTH, HEIGHT).isEmpty());
+    }
+
     private static final class Plate {
         final byte[] labels = new byte[WIDTH * HEIGHT];
         final byte[] gray = new byte[WIDTH * HEIGHT];

@@ -1110,6 +1110,8 @@ final class OmrScoreInterpreter {
 
         var backwardHookFragments =
                 compactBackwardHookFragments(gray, width, height, heads, staffs);
+        backwardHookFragments.putAll(highLedgerHookFragments(
+                gray, annotationGray, width, height, heads, staffs));
         rejectedBeamHeads.addAll(backwardHookFragments.keySet());
         var backwardHookOwners = new java.util.HashSet<>(backwardHookFragments.values());
         var closedBeamEndOwners = new ArrayList<Component>();
@@ -16232,6 +16234,43 @@ final class OmrScoreInterpreter {
         return rejected;
     }
 
+
+    private static Map<Component, Component> highLedgerHookFragments(
+            byte[] gray, byte[] original, int width, int height, List<Component> heads, List<Staff> staffs) {
+        Map<Component, Component> owned = new java.util.IdentityHashMap<>();
+        if (gray == null || original == null) return owned;
+        for (var fragment : heads) {
+            var staff = nearestHeadStaff(staffs, fragment.centerY);
+            if (staff == null || staff.count != 1) continue;
+            float gap = staff.gap, offset = fragment.centerY - staff.top;
+            if (gap < 10 || gap > 27 || offset < gap * .16f || offset > gap * .63f
+                    || fragment.area > gap * gap * .38f
+                    || fragment.maxX - fragment.minX + 1 > gap * .97f
+                    || fragment.maxY - fragment.minY + 1 > gap * .76f) continue;
+            var following = new ArrayList<Component>();
+            var previous = new ArrayList<Component>();
+            for (var note : heads) {
+                if (note.area < gap * gap * .80f || note.maxX - note.minX + 1 < gap) continue;
+                float advance = note.centerX - fragment.centerX, depth = fragment.centerY - note.centerY;
+                if (depth < gap * 3.1f || depth > gap * 4.15f) continue;
+                if (advance >= gap * .98f && advance <= gap * 1.22f) following.add(note);
+                if (advance >= -gap * 4.35f && advance <= -gap * 3.9f) previous.add(note);
+            }
+            if (following.size() != 1 || previous.size() != 1) continue;
+            var owner = following.get(0);
+            var peer = previous.get(0);
+            if (Math.abs(owner.centerY - peer.centerY) > gap * .22f) continue;
+            if (OwnedTertiaryBeamlets.ownsHighLedgerHookOnStaffLine(
+                            gray, width, height, fragment.centerX, fragment.centerY,
+                            owner.centerX, owner.centerY, peer.centerX, peer.centerY, gap, staff.top)
+                    && OwnedTertiaryBeamlets.ownsHighLedgerHookOnStaffLine(
+                            original, width, height, fragment.centerX, fragment.centerY,
+                            owner.centerX, owner.centerY, peer.centerX, peer.centerY, gap, staff.top))
+                owned.put(fragment, owner);
+        }
+        return owned;
+    }
+
     private static Map<Component, Component> compactBackwardHookFragments(
             byte[] gray, int width, int height, List<Component> heads, List<Staff> staffs) {
         Map<Component, Component> owned = new java.util.IdentityHashMap<>();
@@ -19908,6 +19947,7 @@ final class OmrScoreInterpreter {
                     || attachedRawStem(source, width, height, head, gap) == null) continue;
             float left = measures.get(note.measureIndex()).left() * width;
             Component owned = null;
+            var matchingCrops = new ArrayList<Component>();
             for (var accidental : accidentals) {
                 var cross = accidental.component;
                 if (cross.minX < left
@@ -19932,13 +19972,23 @@ final class OmrScoreInterpreter {
                                 gap)
                         || !hasDoubleSharpGlyphSupport(labels, gray, source, width, cross, gap))
                     continue;
-                if (owned != null && !sameDoubleSharpInk(owned, cross)) {
-                    owned = null;
-                    break;
-                }
-                owned = cross;
+                matchingCrops.add(cross);
+                if (owned == null || doubleSharpCropArea(cross) > doubleSharpCropArea(owned))
+                    owned = cross;
             }
             if (owned == null) continue;
+            var outer = doubleSharpBounds(owned);
+            boolean conflictingCrops = false;
+            for (var crop : matchingCrops) {
+                if (crop != owned
+                        && !sameDoubleSharpInk(owned, crop)
+                        && !DoubleSharpGlyph.sameNestedInk(
+                                gray, source, width, height, outer, doubleSharpBounds(crop), gap)) {
+                    conflictingCrops = true;
+                    break;
+                }
+            }
+            if (conflictingCrops) continue;
             var pick = choices.get(head);
             // The ordinary picker can see several labelled unions of one complete cross.
             if (pick == null
@@ -19946,7 +19996,8 @@ final class OmrScoreInterpreter {
                     || pick.ambiguous()
                             && (pick.accidental() != ScoreNoteEvent.ACCIDENTAL_DOUBLE_SHARP
                                     || !(pick.glyph() instanceof Component chosen)
-                                    || !sameDoubleSharpInk(chosen, owned))) continue;
+                                    || (!sameDoubleSharpInk(chosen, owned)
+                                            && !matchingCrops.contains(chosen)))) continue;
             boolean unique = true;
             for (int j = 0; j < notes.size(); j++) {
                 if (j == i || heads.get(j) == null) continue;
@@ -19971,18 +20022,21 @@ final class OmrScoreInterpreter {
                 && Math.abs((cross.minY + cross.maxY) * .5f - head.centerY) <= .35f * gap;
     }
 
+    private static DoubleSharpGlyph.Crop doubleSharpBounds(Component crop) {
+        return new DoubleSharpGlyph.Crop(crop.minX, crop.minY, crop.maxX, crop.maxY);
+    }
+
+    private static int doubleSharpCropArea(Component crop) {
+        return (crop.maxX - crop.minX + 1) * (crop.maxY - crop.minY + 1);
+    }
+
     private static boolean sameDoubleSharpInk(Component first, Component second) {
         int x = Math.min(first.maxX, second.maxX) - Math.max(first.minX, second.minX) + 1;
         int y = Math.min(first.maxY, second.maxY) - Math.max(first.minY, second.minY) + 1;
         return x > 0
                 && y > 0
                 && x * y
-                        >= .75f
-                                * Math.max(
-                                        (first.maxX - first.minX + 1)
-                                                * (first.maxY - first.minY + 1),
-                                        (second.maxX - second.minX + 1)
-                                                * (second.maxY - second.minY + 1));
+                        >= .75f * Math.max(doubleSharpCropArea(first), doubleSharpCropArea(second));
     }
 
     private static boolean hasDoubleSharpGlyphSupport(
@@ -20371,6 +20425,20 @@ final class OmrScoreInterpreter {
         var upperHead = accidentalReferenceHead(x, y, gap);
         return rawSharpInBounds(
                 gray, width, height, upperHead, gap, left, right, top, bottom, true, true);
+    }
+
+
+    // A fitted terminal dyad can have staggered sharps with overlapping outer envelopes.
+    // Its beam and seam independently bound these two pitch-local crops.
+    static boolean printedTerminalDyadSharp(
+            byte[] gray, int width, int height, float x, float y, float gap, boolean lower) {
+        int left = Math.round(x - gap * 2.4f);
+        int right = Math.round(x - gap * (lower ? 1.14f : .86f));
+        int top = Math.round(y - gap * 1.55f), bottom = Math.round(y + gap * 1.35f);
+        if (left < 0 || right >= width || left >= right || top < 0 || bottom >= height)
+            return false;
+        return rawSharpInBounds(gray, width, height, accidentalReferenceHead(x, y, gap), gap,
+                left, right, top, bottom, false);
     }
 
     private static boolean rawSharpInBounds(

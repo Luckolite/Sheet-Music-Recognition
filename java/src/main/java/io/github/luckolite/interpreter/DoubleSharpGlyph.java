@@ -4,6 +4,59 @@ package io.github.luckolite.interpreter;
 
 /** Compact diagonal cross: four arms, a filled centre, and open upper/lower notches. */
 final class DoubleSharpGlyph {
+    record Crop(int left, int top, int right, int bottom) {}
+
+    /** Independently qualified nested crops can describe the same optical waist. */
+    static boolean sameNestedInk(
+            byte[] gray, byte[] source, int width, int height, Crop outer, Crop inner, float gap) {
+        if (gray == null
+                || source == null
+                || width <= 0
+                || height <= 0
+                || gray.length != (long) width * height
+                || source.length != gray.length
+                || !Float.isFinite(gap)
+                || gap < 5
+                || outer.left() < 0
+                || outer.top() < 0
+                || outer.right() >= width
+                || outer.bottom() >= height
+                || inner.left() < outer.left()
+                || inner.top() < outer.top()
+                || inner.right() > outer.right()
+                || inner.bottom() > outer.bottom()
+                || inner.right() - inner.left() < 4
+                || inner.bottom() - inner.top() < 4) return false;
+        int x = outer.left() + (outer.right() - outer.left()) / 2;
+        int y = outer.top() + (outer.bottom() - outer.top()) / 2;
+        int radius = Math.max(2, Math.round(gap * .23f));
+        if (x - 1 < inner.left()
+                || x + 1 > inner.right()
+                || Math.abs(x - (inner.left() + (inner.right() - inner.left()) / 2)) > radius
+                || Math.abs(y - (inner.top() + (inner.bottom() - inner.top()) / 2)) > radius)
+            return false;
+        int rows = 0;
+        boolean offStaffRule = false;
+        for (int row = Math.max(inner.top(), y - radius);
+                row <= Math.min(inner.bottom(), y + radius);
+                row++) {
+            int center = row * width + x;
+            if (!commonDark(gray, source, center - 1)
+                    || !commonDark(gray, source, center)
+                    || !commonDark(gray, source, center + 1)) continue;
+            rows++;
+            int left = row * width + outer.left();
+            int right = row * width + outer.right();
+            if (!commonDark(gray, source, left) && !commonDark(gray, source, right))
+                offStaffRule = true;
+        }
+        return rows >= 2 && offStaffRule;
+    }
+
+    private static boolean commonDark(byte[] gray, byte[] source, int pixel) {
+        return (gray[pixel] & 255) < 155 && (source[pixel] & 255) < 155;
+    }
+
     /** Read printed ink only inside an accidental-seeded, compact glyph box. */
     static boolean matchesRaw(
             byte[] gray,

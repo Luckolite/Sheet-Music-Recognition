@@ -94,6 +94,62 @@ public final class DoubleSharpArmOwnershipTest {
         assertTrue(plate.printed(actual, notes, List.of(owned, owned)).isEmpty());
     }
 
+    @Test
+    public void nestedCrossCropsNeedTheSameTwoPlaneWaist() {
+        var plate = new Plate();
+        var outer = new DoubleSharpGlyph.Crop(45, 151, 62, 168);
+        var inner = new DoubleSharpGlyph.Crop(48, 154, 59, 165);
+        paintCross(plate, outer);
+        assertTrue(sourceCross(plate, outer));
+        assertTrue(sourceCross(plate, inner));
+        assertTrue(
+                DoubleSharpGlyph.sameNestedInk(
+                        plate.gray, plate.gray, WIDTH, HEIGHT, outer, inner, 16));
+        byte[] erasedOriginal = plate.gray.clone();
+        for (int row = 155; row <= 164; row++)
+            Arrays.fill(erasedOriginal, row * WIDTH + 51, row * WIDTH + 56, (byte) 255);
+        assertFalse(
+                DoubleSharpGlyph.sameNestedInk(
+                        plate.gray, erasedOriginal, WIDTH, HEIGHT, outer, inner, 16));
+    }
+
+    @Test
+    public void twoOverlappingCropsWithIndependentlyCompleteCrossesRemainDistinct() {
+        var plate = new Plate();
+        var first = new DoubleSharpGlyph.Crop(45, 151, 62, 168);
+        var second = new DoubleSharpGlyph.Crop(58, 164, 75, 181);
+        paintCross(plate, first);
+        paintCross(plate, second);
+        assertTrue(first.right() > second.left() && first.bottom() > second.top());
+        assertTrue(sourceCross(plate, first));
+        assertTrue(sourceCross(plate, second));
+        assertFalse(
+                DoubleSharpGlyph.sameNestedInk(
+                        plate.gray, plate.gray, WIDTH, HEIGHT, first, second, 16));
+        assertFalse(
+                DoubleSharpGlyph.sameNestedInk(
+                        plate.gray, plate.gray, WIDTH, HEIGHT, second, first, 16));
+    }
+
+    private static boolean sourceCross(Plate plate, DoubleSharpGlyph.Crop crop) {
+        return DoubleSharpGlyph.matchesRaw(
+                plate.gray,
+                WIDTH,
+                HEIGHT,
+                crop.left(),
+                crop.top(),
+                crop.right(),
+                crop.bottom(),
+                16);
+    }
+
+    private static void paintCross(Plate plate, DoubleSharpGlyph.Crop crop) {
+        for (int y = 0; y < 18; y++)
+            for (int x = 0; x < 18; x++)
+                if (Math.abs(x - y) <= 3 || Math.abs(x + y - 17) <= 3)
+                    plate.dot(crop.left() + x, crop.top() + y, SYMBOL);
+    }
+
     private static final class Plate {
         private static final List<MeasureRegion> BARS =
                 List.of(new MeasureRegion(.02f, .96f, .25f, .8f));

@@ -301,6 +301,10 @@ def _pitch_element(note, spelling):
 
 
 def _artificial_harmonic_role(note, role):
+    _harmonic_role(note, 'artificial', role)
+
+
+def _harmonic_role(note, kind, role):
     notation = note.find('notations')
     if notation is None:
         notation = element(note, 'notations')
@@ -308,8 +312,127 @@ def _artificial_harmonic_role(note, role):
     if technical is None:
         technical = element(notation, 'technical')
     harmonic = element(technical, 'harmonic', **{'print-object': 'no'})
-    element(harmonic, 'artificial')
+    element(harmonic, kind)
     element(harmonic, role)
+    return technical
+
+
+def _written_open_harmonics(page, measure_starts, continuations, bars):
+    rows = page.get('printedOpenHarmonicChords', [])
+    if not rows:
+        return {}
+    if not isinstance(rows, list) or len(rows) > 3:
+        raise ValueError('Invalid printed open harmonic chords')
+    score = page['score']
+    regions, raw_notes = score['measures'], score['notes']
+    events = page['events']
+    width, height = page['width'], page['height']
+    result = defaultdict(list)
+    owners = set()
+    for row in rows:
+        index, offset, heads = (row.get(k) for k in ('measureIndex', 'quarterBeatOffset', 'heads'))
+        if (type(index) is not int or not 0 <= index < len(bars)
+                or index in continuations or index + 1 in continuations
+                or type(offset) is not int or offset != len(result[index])
+                or not isinstance(heads, list) or len(heads) != 2):
+            raise ValueError('Invalid printed open harmonic chord position')
+        region = regions[index]
+        chord = []
+        for head in heads:
+            step, midi, x, y = (head.get(k) for k in ('staffStep', 'writtenMidi', 'x', 'y'))
+            if (type(step) is not int or not 0 <= step <= 8 or type(midi) is not int
+                    or not 0 <= midi <= 127
+                    or type(x) not in (float, int) or type(y) not in (float, int)
+                    or not region['left'] < x / width < region['right']
+                    or not region['top'] < y / height < region['bottom']):
+                raise ValueError('Invalid printed open harmonic head')
+            octave, letter = divmod(30 + step, 7)
+            natural = (octave + 1) * 12 + (0, 2, 4, 5, 7, 9, 11)[letter]
+            alter = midi - natural
+            key = bars[index]['key']
+            key_order = (3, 0, 4, 1, 5, 2, 6) if key >= 0 else (6, 2, 5, 1, 4, 0, 3)
+            if alter != ((1 if key > 0 else -1) if letter in key_order[:abs(key)] else 0):
+                raise ValueError('Printed open harmonic head has inconsistent written spelling')
+            sound, owner = head.get('soundingMidi'), head.get('sourceNoteIndex')
+            if owner is not None:
+                if (type(owner) is not int or not 0 <= owner < min(len(raw_notes), len(events))
+                        or owner in owners or type(sound) is not int or not 0 <= sound <= 127):
+                    raise ValueError('Invalid open harmonic sounding owner')
+                event, native = events[owner], raw_notes[owner]
+                expected = dict(measureIndex=index, staffIndex=0, staffCount=1)
+                if (any(event.get(k) != v or native.get(k) != v for k, v in expected.items())
+                        or native.get('clefBottomDiatonic') != 30 or native.get('staffStep') != step
+                        or event.get('sourceNoteIndex') != owner or event.get('midi') != sound
+                        or event.get('writtenMidi') != midi or event.get('harmonicTouchMidi') != midi
+                        or (event.get('x'), event.get('y')) != (x, y)
+                        or ticks(event['startBeat']) != ticks(measure_starts[index] + offset)
+                        or ticks(event['durationBeats']) != DIVISIONS):
+                    raise ValueError('Open harmonic sounding owner does not match the written head')
+                owners.add(owner)
+            elif sound is not None:
+                raise ValueError('A neutral written harmonic cannot claim a sounding pitch')
+            chord.append((('CDEFGAB'[letter], alter, octave), sound))
+        if (heads[0]['x'] != heads[1]['x'] or heads[0]['y'] <= heads[1]['y']
+                or heads[0]['staffStep'] >= heads[1]['staffStep']):
+            raise ValueError('A printed open harmonic chord requires two ordered heads on one shaft')
+        result[index].append(chord)
+    for index, chords in result.items():
+        if (bars[index]['length'] != len(chords) * DIVISIONS
+                or any(row.get('measureIndex') == index for row in score.get('rests', ()))
+                or any(event.get('measureIndex') == index and owner not in owners
+                       for owner, event in enumerate(events))):
+            raise ValueError('Written open harmonic chords must fill one unoccupied bar')
+    if len(owners) not in (0, len(rows) * 2):
+        raise ValueError('Mixed neutral and sounding harmonic owners')
+    return result
+
+
+def _write_open_harmonics(measure, chords):
+    original = measure.findall('note')
+    sounding = chords[0][0][1] is not None
+    if sounding:
+        expected = [sound for chord in chords for _, sound in chord]
+        pitches = {'C': 0, 'D': 2, 'E': 4, 'F': 5, 'G': 7, 'A': 9, 'B': 11}
+        actual = [(int(n.findtext('pitch/octave')) + 1) * 12
+                  + pitches[n.findtext('pitch/step')] + int(n.findtext('pitch/alter', '0'))
+                  for n in original if n.find('pitch') is not None]
+        if (len(original) != len(expected) or actual != expected
+                or any(n.findtext('duration') != str(DIVISIONS) or n.findtext('voice') != '1'
+                       or (n.find('chord') is not None) != bool(i % 2)
+                       or n.find('tie') is not None or n.find('grace') is not None
+                       for i, n in enumerate(original))):
+            raise ValueError('Cannot identify the exact open harmonic playback carriers')
+    elif (len(original) != 1 or original[0].find('rest') is None
+          or original[0].findtext('duration') != str(DIVISIONS * len(chords))
+          or original[0].find('notations') is not None):
+        raise ValueError('Cannot replace a nonempty bar with neutral written harmonics')
+    if measure.find('backup') is not None or measure.find('forward') is not None:
+        raise ValueError('Open harmonic chords require an unambiguous bar clock')
+    at = list(measure).index(original[0])
+    for node in original:
+        measure.remove(node)
+    for i, chord in enumerate(chords):
+        if sounding:
+            for carrier in original[2*i:2*i+2]:
+                carrier.set('print-object', 'no')
+                _harmonic_role(carrier, 'natural', 'sounding-pitch')
+                measure.insert(at, carrier)
+                at += 1
+        for k, (spelling, _) in enumerate(chord):
+            note = ET.Element('note')
+            element(note, 'cue')
+            if sounding or k:
+                element(note, 'chord')
+            _pitch_element(note, spelling)
+            element(note, 'duration', DIVISIONS)
+            element(note, 'voice', 1)
+            element(note, 'type', 'quarter', size='full')
+            element(note, 'stem', 'up')
+            element(note, 'notehead', 'diamond', filled='no')
+            technical = _harmonic_role(note, 'natural', 'touching-pitch')
+            element(technical, 'fingering', '0', placement='above' if k else 'below')
+            measure.insert(at, note)
+            at += 1
 
 
 def _closed_fourth_spelling(event, source):
@@ -660,6 +783,9 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
                 bar['rightBarline'] = barline_styles[index]
             bars.append(bar)
             local_start += length
+        for index, chords in _written_open_harmonics(
+                page, measure_starts, continuation_rows, bars[first_bar:]).items():
+            bars[first_bar + index]['writtenOpenHarmonics'] = chords
         for row in score.get('rests', []):
             if rest_kind(row) == 'FULL_MEASURE':
                 bar_index = first_bar+row['measureIndex']
@@ -973,6 +1099,7 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
         # Preserve the existing literal-only reconstruction and part identities.
         staffs = sorted({n.get('staffIndex', 0) for n in events}
                         | {m['staffIndex'] for m in expressions if m.get('scope') == 'REST'}) or [0]
+    open_harmonic_measures = []
     for identity in staffs:
         staff, count = identity if full_rests else (identity, None)
         same_staff = lambda row: physical_staff(row) == identity if full_rests else row.get('staffIndex', 0) == staff
@@ -1160,6 +1287,8 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
         for index, bar in enumerate(bars):
             measure = element(part, 'measure', number=first_number+index)
             octave_measure_pages[measure] = bar['sourcePageIndex']
+            if 'writtenOpenHarmonics' in bar and same_staff({'staffIndex': 0, 'staffCount': 1}):
+                open_harmonic_measures.append((measure, bar['writtenOpenHarmonics']))
             attributes = element(measure, 'attributes')
             element(attributes, 'divisions', DIVISIONS)
             element(element(attributes, 'key'), 'fifths', bar['key'])
@@ -1344,6 +1473,8 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
         raise ValueError('A printed string mark has no written attack')
     for note, mark in printed_string_attacks.values():
         printed_string_export.write(note, mark)
+    for measure, chords in open_harmonic_measures:
+        _write_open_harmonics(measure, chords)
     ET.indent(root)
     ET.ElementTree(root).write(Path(path), encoding='utf-8', xml_declaration=True)
 

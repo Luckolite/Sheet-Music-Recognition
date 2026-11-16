@@ -35,11 +35,33 @@ final class MeterCropStaff {
         // Two agreeing five-rule witnesses can prove that the existing crop clips an
         // outer staff rule. Correct its phase without altering raster values.
         float last = first + 4 * gap;
-        if (a != null && b == null
-                && first >= c.top() && Math.abs(first - c.firstLine()) <= c.gap() * .35f
+        if (a != null
+                && b == null
+                && first >= c.top()
+                && Math.abs(first - c.firstLine()) <= c.gap() * .35f
                 && Math.abs(gap - c.gap()) <= c.gap() * .12f
-                && last >= c.bottom() && last - c.bottom() <= c.gap() * .15f)
-            return extendClippedLowerRule(gray, w, h, c, first, gap, last);
+                && last >= c.bottom()
+                && last - c.bottom() <= c.gap() * .15f)
+            return extendClippedLowerRule(gray, w, h, c, first, gap, last, 0);
+        // At a tight header, the first beamed chord can obscure all right-side staff samples.
+        // Require a second prefix sample and a complete lower rule across the original crop
+        // columns.
+        if (a != null
+                && b == null
+                && first >= c.top()
+                && Math.abs(first - c.firstLine()) <= c.gap() * .45f
+                && Math.abs(gap - c.gap()) <= c.gap() * .10f
+                && last >= c.bottom()
+                && last - c.bottom() <= c.gap() * .34f) {
+            var prefix =
+                    PrintedDirectionStaff.printedRules(
+                            gray, w, h, c.left() - c.gap() * 1.6f, hint, c.gap());
+            if (prefix != null
+                    && Math.abs(prefix[0] - a[0]) <= c.gap() * .10f
+                    && Math.abs(prefix[1] - a[1]) <= c.gap() * .05f)
+                return extendClippedLowerRule(
+                        gray, w, h, c, first, gap, last, Math.round(gap * .20f));
+        }
         boolean clipped =
                 a != null
                         && b != null
@@ -66,16 +88,24 @@ final class MeterCropStaff {
 
     /** One complete prefix profile and a continuous clipped rule prove a shallow lower extension. */
     private static MeterChangeDetector.Crop extendClippedLowerRule(
-            byte[] gray, int w, int h, MeterChangeDetector.Crop crop, int first, float gap, float last) {
+            byte[] gray,
+            int w,
+            int h,
+            MeterChangeDetector.Crop crop,
+            int first,
+            float gap,
+            float last,
+            int proofLeftPadding) {
         int rail = Math.round(last);
         int bottom = rail + Math.max(2, Math.round(gap * .25f)) + 1;
         if (bottom > h) return crop;
         int dark = 0;
         for (int x = crop.left(); x < crop.right(); x++)
             if ((gray[rail * w + x] & 255) < 155) dark++;
+        int proofLeft = Math.max(0, crop.left() - proofLeftPadding);
         int proofRight = Math.min(w, crop.right() + Math.max(1, Math.round(gap * .12f)));
         if (dark < (crop.right() - crop.left()) * .80f
-                || !stackedInk(gray, w, crop.left(), proofRight, crop.top(), bottom, first, gap))
+                || !stackedInk(gray, w, proofLeft, proofRight, crop.top(), bottom, first, gap))
             return crop;
         return new MeterChangeDetector.Crop(crop.left(), crop.top(), crop.right(), bottom, first, gap);
     }

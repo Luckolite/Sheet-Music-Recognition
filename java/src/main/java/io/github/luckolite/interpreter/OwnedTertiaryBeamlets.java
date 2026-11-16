@@ -487,6 +487,52 @@ final class OwnedTertiaryBeamlets {
         return false;
     }
 
+
+    /** A long downstroke can make its backward third hook look like an upward note on the top rule. */
+    static boolean ownsHighLedgerHookOnStaffLine(
+            byte[] gray, int w, int h, float x, float y, float ownerX, float ownerY,
+            float previousX, float previousY, float gap, float topRule) {
+        float depth = y - ownerY;
+        if (gap < 10 || gap > 27
+                || y - topRule < gap * .16f || y - topRule > gap * .63f
+                || depth < gap * 3.1f || depth > gap * 4.15f) return false;
+        var budget = new PrintedBeamShafts.Budget(150_000);
+        var owners = PrintedBeamShafts.at(gray, w, h, ownerX, ownerY, gap, budget);
+        var peers = PrintedBeamShafts.at(gray, w, h, previousX, previousY, gap, budget);
+        var aliases = PrintedBeamShafts.at(gray, w, h, x, y, gap, budget);
+        if (owners.size() != 1 || peers.size() != 1 || aliases.size() != 1 || budget.refused())
+            return false;
+        var reverse = aliases.get(0);
+        if (owners.get(0).direction() != 1 || peers.get(0).direction() != 1
+                || reverse.direction() != -1 || ownerY - reverse.endY() < gap * .85f
+                || ownerY - reverse.endY() > gap * 1.45f) return false;
+        int center = Math.round(x), row = Math.round(y), staff = Math.round(topRule);
+        for (int px = center - 2; px <= center + 2; px++)
+            for (int py = staff - Math.round(gap * .47f); py <= staff - 3; py++)
+                if (ink(gray, w, h, px, py)) return false;
+        for (var column : owners.get(0).columns()) {
+            int shaft = column.x(), tip = column.endY();
+            if (shaft < reverse.left() || shaft > reverse.right()
+                    || shaft - x < gap * .36f || shaft - x > gap * .70f
+                    || tip - y < gap * 1.45f || tip - y > gap * 2f) continue;
+            boolean attached = true;
+            for (int px = center; px <= shaft && attached; px++)
+                attached = ink(gray, w, h, px, row - 1)
+                        && ink(gray, w, h, px, row) && ink(gray, w, h, px, row + 1);
+            if (!attached) continue;
+            var axis = new Axis(shaft, tip, 1);
+            for (var peer : downwardAxes(peers.get(0))) {
+                int span = axis.x - peer.x;
+                if (span < gap * 4.6f || span > gap * 5.65f) continue;
+                float slope = (axis.tip - peer.tip) / (float) span;
+                if (Math.abs(slope) <= .14f
+                        && doubleRails(gray, w, h, axis, peer, slope, gap, true)
+                        && hook(gray, w, h, axis, gap, -1)) return true;
+            }
+        }
+        return false;
+    }
+
     static boolean provesBackwardHook(
             byte[] gray, int w, int h, float x, float y, float peerX, float peerY, float gap) {
         var budget = new PrintedBeamShafts.Budget(100_000);
