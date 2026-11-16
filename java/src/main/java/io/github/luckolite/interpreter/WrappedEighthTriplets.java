@@ -258,8 +258,8 @@ final class WrappedEighthTriplets {
         return result == notes ? notes : List.copyOf(result);
     }
 
-    /** A printed flat can occupy the dot window and the first head can overreport a second beam. */
-    static ScorePageInterpretation closeFlatMarkedTripletBars(
+    /** A printed accidental can occupy the dot window beside a complete set of eighth triplets. */
+    static ScorePageInterpretation closeAccidentalMarkedTripletBars(
             ScorePageInterpretation score, byte[] labels, byte[] gray, int width, int height) {
         if (score.beamSource().groups().isEmpty()
                 || score.meterChanges().isEmpty()
@@ -287,18 +287,31 @@ final class WrappedEighthTriplets {
         var regions = score.measures();
         var edited = notes;
         List<ScoreMeterChange> literalMeters = null;
-        for (var meter : score.meterChanges()) {
-            int measure = meter.measureIndex();
-            if (measure <= 0
-                    || measure >= regions.size()
-                    || meter.numerator() != 6
-                    || meter.denominator() != 4
-                    || regions.get(measure).top() <= regions.get(measure - 1).bottom()
-                    || score.rests().stream().anyMatch(r -> r.measureIndex() == measure)) continue;
+        var bars = new ArrayList<List<Integer>>(regions.size());
+        for (int m = 0; m < regions.size(); m++) bars.add(new ArrayList<>());
+        for (int i = 0; i < notes.size(); i++) bars.get(notes.get(i).measureIndex()).add(i);
+        var meterChanges = score.meterChanges();
+        int nextMeter = 0;
+        ScoreMeterChange meter = null;
+        for (int measure = 1; measure < regions.size(); measure++) {
+            while (nextMeter < meterChanges.size()
+                    && meterChanges.get(nextMeter).measureIndex() <= measure) {
+                meter = meterChanges.get(nextMeter++);
+            }
+            if (meter == null || meter.numerator() != 6 || meter.denominator() != 4
+                    || bars.get(measure).size() != 18) continue;
+            var region = regions.get(measure);
+            var meterRegion = regions.get(meter.measureIndex());
+            boolean atHeader = meter.measureIndex() == measure;
+            if (atHeader
+                    ? region.top() <= regions.get(measure - 1).bottom()
+                    : region.top() >= meterRegion.bottom() || region.bottom() <= meterRegion.top()) {
+                continue;
+            }
+            final int barIndex = measure;
+            if (score.rests().stream().anyMatch(r -> r.measureIndex() == barIndex)) continue;
             var owners =
-                    java.util.stream.IntStream.range(0, notes.size())
-                            .boxed()
-                            .filter(i -> notes.get(i).measureIndex() == measure)
+                    bars.get(measure).stream()
                             .sorted(
                                     Comparator.comparingDouble(
                                             i -> notes.get(i).positionInMeasure()))
@@ -311,8 +324,9 @@ final class WrappedEighthTriplets {
             for (int group = 0; group < owners.size(); group += 3)
                 complete &= singleGroups.contains(owners.subList(group, group + 3));
             if (!complete) continue;
-            var region = regions.get(measure);
-            var proof = singleRailGroups(gray, width, height, region, notes, owners, true, true);
+            var proof = singleRailGroups(
+                    gray, width, height, region, notes, owners, true, atHeader,
+                    atHeader ? null : labels);
             if (proof == null
                     || !WrappedMeasureBoundaries.confirmsClosedTripletBar(
                             gray,
@@ -381,6 +395,8 @@ final class WrappedEighthTriplets {
         boolean labeled = !closedBar && labels != null && labels.length == gray.length;
         boolean closedNaturalPredecessor = labeled && candidates.size() == 18;
         boolean wrapped = labeled && !closedNaturalPredecessor;
+        boolean closedSharpBar = closedBar && labels != null && labels.length == gray.length
+                && candidates.size() == 18;
         var owners = candidates.stream()
                 .sorted(Comparator.comparingDouble(i -> notes.get(i).positionInMeasure())).toList();
         float[] x = new float[owners.size()], y = new float[owners.size()];
@@ -521,6 +537,7 @@ final class WrappedEighthTriplets {
         }
         boolean flatOwnsDot = false;
         boolean naturalOwnsDot = false;
+        boolean sharpOwnsDot = false;
         for (int i = 0; i + 1 < x.length; i++) {
             var dot =
                     WrappedTripletDotInk.uniqueCore(gray, width, height, x[i], y[i], x[i + 1], gap);
@@ -528,6 +545,12 @@ final class WrappedEighthTriplets {
                     && notes.get(owners.get(i + 1)).writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_NATURAL
                     && naturalOwnsDot(gray, labels, width, height, dot, x[i + 1], y[i + 1], gap);
             naturalOwnsDot |= ownedNatural;
+            boolean ownedSharp = closedSharpBar
+                    && dot != null
+                    && notes.get(owners.get(i + 1)).writtenAccidental()
+                            == ScoreNoteEvent.ACCIDENTAL_SHARP
+                    && closedBarSharpOwnsDot(gray, labels, width, height, dot, x[i + 1], y[i + 1], gap);
+            sharpOwnsDot |= ownedSharp;
             if (dot != null
                     && !(wrapped
                             && highLedgerOwnsDot(
@@ -539,6 +562,7 @@ final class WrappedEighthTriplets {
                                     gray, labels, width, height, x[i], y[i], dot, x[i + 1],
                                     y[i + 1], gap))
                     && !ownedNatural
+                    && !ownedSharp
                     && (x.length != 18
                             || !headConnectedLedger(gray, width, height, x[i], y[i], dot, gap))
                     && !(x.length == 12
@@ -582,7 +606,9 @@ final class WrappedEighthTriplets {
             }
             if (!same || !singleRail(gray, width, height, a, b, gap)) return null;
         }
-        return (!allowSingleFlat || flatOwnsDot) && (!closedNaturalPredecessor || naturalOwnsDot)
+        return (!allowSingleFlat || flatOwnsDot)
+                        && (!closedNaturalPredecessor || naturalOwnsDot)
+                        && (!closedSharpBar || sharpOwnsDot)
                 ? new WrappedTripletMeasure.Half(owners, x) : null;
     }
 
@@ -623,6 +649,35 @@ final class WrappedEighthTriplets {
                         && singleRail(gray, width, height, shortened, c, gap)
                 ? shortened
                 : null;
+    }
+
+    /** A sharp's shaft can be slightly off-center inside the apparent dot window. */
+    static boolean closedBarSharpOwnsDot(
+            byte[] gray,
+            byte[] labels,
+            int width,
+            int height,
+            WrappedTripletDotInk.Center core,
+            float nextX,
+            float nextY,
+            float gap) {
+        int y = core.y();
+        int offset = y * width;
+        if (labels[offset + core.x()] != OmrMeasurePostProcessor.CLEF_OR_KEY
+                || nextX - core.x() < gap * 1.35f
+                || nextX - core.x() > gap * 2.15f
+                || y - nextY < gap * .80f
+                || y - nextY > gap * 1.55f) return false;
+        int tolerance = Math.round(gap * .12f);
+        int left = Math.max(0, core.x() - tolerance);
+        int right = Math.min(width - 1, core.x() + tolerance);
+        for (int x = left; x <= right; x++) {
+            if (labels[offset + x] == OmrMeasurePostProcessor.CLEF_OR_KEY
+                    && (gray[offset + x] & 255) < 150
+                    && OmrScoreInterpreter.printedSharpBeforeDyad(
+                            gray, width, height, x, nextX, nextY, gap)) return true;
+        }
+        return false;
     }
 
     /** The core lies on the next pitch's printed sharp or on the current head's ledger tip. */

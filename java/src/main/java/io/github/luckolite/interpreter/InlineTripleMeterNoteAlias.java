@@ -73,8 +73,8 @@ final class InlineTripleMeterNoteAlias {
                         new PlayingTechniqueDetector.Staff(
                                 crop.firstLine(), crop.firstLine() + 4 * gap, gap, 0, 1);
                 if (staff.top() < 0 || staff.bottom() >= height) continue;
-                if (!proved(crop, gray, width, height, staff, seam)
-                        || !proved(crop, original, width, height, staff, seam)) continue;
+                if (!provesPrintedTriple(crop, gray, width, height, staff, seam)
+                        || !provesPrintedTriple(crop, original, width, height, staff, seam)) continue;
                 removed.add(note);
                 break;
             }
@@ -110,7 +110,7 @@ final class InlineTripleMeterNoteAlias {
                 && (note.articulations() & NoteOrnament.GRACE) == 0;
     }
 
-    private static boolean proved(
+    static boolean provesPrintedTriple(
             MeterChangeDetector.Crop crop,
             byte[] gray,
             int width,

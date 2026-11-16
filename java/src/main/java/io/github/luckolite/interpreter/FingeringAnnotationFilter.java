@@ -52,6 +52,7 @@ final class FingeringAnnotationFilter {
                 || height <= 0
                 || gray.length != (long) width * height) return notes;
         notes = removeDescenderAliases(words, staffs, measures, notes, gray, width, height);
+        notes = detachedSegueBeamAliases(words, staffs, measures, notes, gray, width, height);
         notes = annotatedSingleLines(words, staffs, measures, notes, gray, width, height);
         notes = separatedFingeringCaptions(words, staffs, measures, notes, gray, width, height);
         notes = shortFingeringCaptions(words, staffs, measures, notes, gray, width, height);
@@ -344,6 +345,77 @@ final class FingeringAnnotationFilter {
         return notes.stream().filter(n -> !discard.contains(n)).toList();
     }
 
+    static boolean hasSegueWord(List<PlayingTechniqueDetector.Word> words) {
+        return words.stream().anyMatch(word -> word.text() != null
+                && SINGLE_SEGUE.matcher(word.text().strip()).matches());
+    }
+
+    /** Detached printed lettering can inherit a nearby beam without having a written shaft. */
+    static List<ScoreNoteEvent> detachedSegueBeamAliases(
+            List<PlayingTechniqueDetector.Word> words, List<PlayingTechniqueDetector.Staff> staffs,
+            List<MeasureRegion> measures, List<ScoreNoteEvent> notes,
+            byte[] gray, int width, int height) {
+        Set<ScoreNoteEvent> rejected = Collections.newSetFromMap(new IdentityHashMap<>());
+        for (var word : words) {
+            if (word.text() == null || !SINGLE_SEGUE.matcher(word.text().strip()).matches())
+                continue;
+            float left = word.left() * width, right = word.right() * width;
+            float top = word.top() * height, bottom = word.bottom() * height;
+            for (var staff : staffs) {
+                float gap = staff.gap(), floor = staff.bottom();
+                if (staff.index() != 0 || staff.count() != 1 || gap < 10 || gap > 25
+                        || top < floor || top > floor + gap * .50f
+                        || bottom < floor + gap * 2 || bottom > floor + gap * 3.2f
+                        || right - left < gap * 5 || right - left > gap * 7.5f)
+                    continue;
+                int measure = uniqueCaptionMeasure(
+                        measures, word, word, (staff.top() + floor) * .5f / height);
+                if (measure < 0) continue;
+                var region = measures.get(measure);
+                var proposals = notes.stream()
+                        .filter(n -> n.measureIndex() == measure && captionGlyphHead(n, false, -5, -1)
+                                && (n.beamCount() == 2 || n.beamCount() == 3)
+                                && n.unbeamedDurationBeats() == 0
+                                && insideInk(n, region, staff, List.of(word), gray, width, height))
+                        .sorted(Comparator.comparingDouble(ScoreNoteEvent::positionInMeasure)).toList();
+                if (proposals.size() == 2
+                        && ownsDetachedSegueGlyphs(proposals, region, staff, word, gray, width, height))
+                    rejected.addAll(proposals);
+            }
+        }
+        return rejected.isEmpty() ? notes : notes.stream().filter(n -> !rejected.contains(n)).toList();
+    }
+
+    private static boolean ownsDetachedSegueGlyphs(
+            List<ScoreNoteEvent> aliases, MeasureRegion bar, PlayingTechniqueDetector.Staff staff,
+            PlayingTechniqueDetector.Word word, byte[] gray, int width, int height) {
+        var graph = captionComponents(gray, width, height, staff, word);
+        if (graph == null) return false;
+        float gap = staff.gap();
+        var glyphs = graph.components().stream()
+                .filter(c -> c.left > graph.left && c.right < graph.right
+                        && c.top > graph.top && c.bottom < graph.bottom
+                        && c.top > staff.bottom() + gap * .55f
+                        && c.right - c.left >= gap * .55f
+                        && c.bottom - c.top >= gap && c.bottom - c.top <= gap * 2
+                        && c.size() >= gap * 4)
+                .sorted(Comparator.comparingInt(c -> c.left)).toList();
+        if (glyphs.size() < 3 || glyphs.size() > 5) return false;
+        var first = glyphs.get(0);
+        var last = glyphs.get(glyphs.size() - 1);
+        if (first.right - first.left > gap * 1.1f || last.right - first.left < gap * 4)
+            return false;
+        float left = bar.left() * width, span = (bar.right() - bar.left()) * width;
+        var upper = aliases.get(0);
+        var descender = aliases.get(1);
+        return Math.abs(first.top - last.top) <= gap * .20f
+                && last.bottom - first.bottom >= gap * .33f
+                && ownsTextCenter(first, left + span * upper.positionInMeasure(), upper.pageY() * height, width)
+                && ownsTextCenter(last, left + span * descender.positionInMeasure(),
+                        descender.pageY() * height, width)
+                && descender.pageY() * height > first.bottom;
+    }
+
     /** A merged OCR record retains the caption, including an ink lobe read as a whole note. */
     private static List<ScoreNoteEvent> shortFingeringCaptions(
             List<PlayingTechniqueDetector.Word> words, List<PlayingTechniqueDetector.Staff> staffs,
@@ -398,7 +470,8 @@ final class FingeringAnnotationFilter {
             List<ScoreNoteEvent> notes,
             byte[] gray, int width, int height) {
         var captions = words.stream().filter(word -> word.text() != null
-                && FINGERING_SEGUE.matcher(word.text().strip()).matches()).toList();
+                && (FINGERING_SEGUE.matcher(word.text().strip()).matches()
+                        || SINGLE_SEGUE.matcher(word.text().strip()).matches())).toList();
         if (captions.isEmpty()) return notes;
         var removed = Collections.newSetFromMap(new IdentityHashMap<ScoreNoteEvent, Boolean>());
         for (var note : notes) {
@@ -418,13 +491,17 @@ final class FingeringAnnotationFilter {
                     float left = caption.left() * width, right = caption.right() * width;
                     float top = caption.top() * height, bottom = caption.bottom() * height;
                     float captionWidth = right - left;
-                    if (captionWidth < gap * 7 || captionWidth > gap * 11
+                    // The OCR may split the word from the fingering digit.
+                    boolean separate = SINGLE_SEGUE.matcher(caption.text().strip()).matches();
+                    if (captionWidth < gap * (separate ? 5.5f : 7)
+                            || captionWidth > gap * (separate ? 7.25f : 11)
                             || bottom - top < gap * 1.7f || bottom - top > gap * 3
                             || left < region.left() * width || right > region.right() * width
-                            || x < left + captionWidth * .50f || x > left + captionWidth * .72f
+                            || x < left + captionWidth * (separate ? .33f : .50f)
+                            || x > left + captionWidth * (separate ? .58f : .72f)
                             || y < top || y > bottom
                             || printedStemBeyondWord(gray, width, height, x, y, top, bottom, gap)
-                            || !captionDescender(gray, width, height, staff, caption, x, y)) continue;
+                            || !captionDescender(gray, width, height, staff, caption, x, y, separate)) continue;
                     var run = notes.stream().filter(n -> n.measureIndex() == note.measureIndex() && n != note)
                             .sorted(Comparator.comparingDouble(ScoreNoteEvent::positionInMeasure)).toList();
                     if (closesDescenderBar(run, span, gap)) {
@@ -440,7 +517,7 @@ final class FingeringAnnotationFilter {
 
     private static boolean captionDescender(
             byte[] gray, int width, int height, PlayingTechniqueDetector.Staff staff,
-            PlayingTechniqueDetector.Word caption, float x, float y) {
+            PlayingTechniqueDetector.Word caption, float x, float y, boolean separate) {
         float gap = staff.gap();
         int left = Math.round(caption.left() * width), right = Math.round(caption.right() * width);
         int top = Math.max(Math.round(caption.top() * height), Math.round(staff.bottom() + gap * .14f));
@@ -457,8 +534,8 @@ final class FingeringAnnotationFilter {
             for (var peer : graph.components()) {
                 if (peer == glyph || peer.left <= left || peer.right >= right || peer.top <= top || peer.bottom >= bottom
                         || Math.abs(peer.top - glyph.top) > gap * .35f
-                        || peer.bottom - peer.top < gap * .52f || peer.bottom - peer.top > gap * 1.1f
-                        || peer.right - peer.left < gap * .4f || peer.right - peer.left > gap * 1.3f) continue;
+                        || peer.bottom - peer.top < gap * .52f || peer.bottom - peer.top > gap * (separate ? 1.22f : 1.1f)
+                        || peer.right - peer.left < gap * .4f || peer.right - peer.left > gap * (separate ? 1.65f : 1.3f)) continue;
                 if (peer.right < glyph.left && glyph.left - peer.right < gap * 2.7f) before++;
                 if (peer.left > glyph.right && peer.left - glyph.right < gap * 2.7f) after++;
                 neighbors++;
@@ -699,13 +776,18 @@ final class FingeringAnnotationFilter {
     }
 
     private static boolean captionGlyphHead(ScoreNoteEvent n, boolean allowTextTie) {
+        return captionGlyphHead(n, allowTextTie, -2, 1);
+    }
+
+    private static boolean captionGlyphHead(
+            ScoreNoteEvent n, boolean allowTextTie, int minStep, int maxStep) {
         return n.kind() == ScoreNoteEvent.Kind.PITCHED
                 && n.staffCount() == 1
                 && n.staffIndex() == 0
                 && n.stemDirection() == 0
                 && n.visualSize() == ScoreNoteEvent.VisualSize.FULL
-                && n.staffStep() >= -2
-                && n.staffStep() <= 1
+                && n.staffStep() >= minStep
+                && n.staffStep() <= maxStep
                 && !n.crossStaffBeam()
                 && n.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_FROM_KEY
                 && n.augmentationDots() == 0

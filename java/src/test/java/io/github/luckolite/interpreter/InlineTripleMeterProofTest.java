@@ -11,7 +11,6 @@ import java.awt.Graphics2D;
 import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
 import java.io.File;
-import java.lang.reflect.Method;
 import org.junit.Test;
 
 /** Uses independently rendered Bravura digits and hand-drawn rules. */
@@ -37,21 +36,11 @@ public class InlineTripleMeterProofTest {
     }
 
     private static boolean proves(byte[] gray) throws Exception {
-        Method method =
-                InlineTripleMeterNoteAlias.class.getDeclaredMethod(
-                        "proved",
-                        MeterChangeDetector.Crop.class,
-                        byte[].class,
-                        int.class,
-                        int.class,
-                        PlayingTechniqueDetector.Staff.class,
-                        float.class);
-        method.setAccessible(true);
         var staff = new PlayingTechniqueDetector.Staff(TOP, TOP + 4 * GAP, GAP, 0, 1);
-        return (boolean) method.invoke(null, CROP, gray, WIDTH, HEIGHT, staff, BARLINE + 3f);
+        return InlineTripleMeterNoteAlias.provesPrintedTriple(CROP, gray, WIDTH, HEIGHT, staff, BARLINE + 3f);
     }
 
-    private static byte[] signature(char numerator, char denominator, boolean doubleRule)
+    static byte[] signature(char numerator, char denominator, boolean doubleRule)
             throws Exception {
         var image = new BufferedImage(WIDTH, HEIGHT, BufferedImage.TYPE_BYTE_GRAY);
         var graphics = image.createGraphics();

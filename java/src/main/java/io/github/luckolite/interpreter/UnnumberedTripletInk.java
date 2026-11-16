@@ -9,8 +9,28 @@ import java.util.List;
 final class UnnumberedTripletInk {
     private UnnumberedTripletInk() {}
 
+    record Rows(int first, int last) {}
+
+    /** A nearby system can place strokes inside an otherwise plausible search window. */
+    static Rows sourceRows(MeasureRegion bar, List<MeasureRegion> page, int height) {
+        float first = 0, last = 1;
+        for (var region : page) {
+            if (region.left() >= bar.right() || region.right() <= bar.left()) continue;
+            if (region.bottom() < bar.top())
+                first = Math.max(first, (region.bottom() + bar.top()) * .5f);
+            if (region.top() > bar.bottom())
+                last = Math.min(last, (region.top() + bar.bottom()) * .5f);
+        }
+        return new Rows((int)Math.ceil(first * height), Math.min(height - 1, (int)Math.floor(last * height)));
+    }
+
     static boolean clear(byte[] ink, int width, int height, float gap,
             float[] headsX, float[] headsY, List<PrintedBeamShafts.Shaft> shafts) {
+        return clear(ink, width, height, gap, headsX, headsY, shafts, new Rows(0, height - 1));
+    }
+
+    static boolean clear(byte[] ink, int width, int height, float gap,
+            float[] headsX, float[] headsY, List<PrintedBeamShafts.Shaft> shafts, Rows sourceRows) {
         if (ink == null || width < 1 || height < 1 || ink.length != (long) width * height
                 || !Float.isFinite(gap) || gap < 10 || gap > 25
                 || headsX.length != 3 || headsY.length != 3 || shafts.size() != 3) return false;
@@ -45,7 +65,7 @@ final class UnnumberedTripletInk {
             if (joined) return false;
         }
         if (window.bracket(staff, Math.min(lo, headsX[0]), Math.max(hi, headsX[2]),
-                topHead, bottomHead, top, bottom, gap)) return false;
+                topHead, bottomHead, top, bottom, gap, sourceRows)) return false;
         int cells = window.width * window.height;
         boolean[] used = new boolean[cells];
         int[] queue = new int[cells];
@@ -69,7 +89,8 @@ final class UnnumberedTripletInk {
                         queue[size++] = next;
                     }
             }
-            if (size < Math.max(3, Math.round(.35f * gap))) continue;
+            if (maxY < sourceRows.first || minY > sourceRows.last
+                    || size < Math.max(3, Math.round(.35f * gap))) continue;
             float center = (minX + maxX) * .5f;
             float fraction = (center - lo) / (hi - lo);
             if (fraction < .15f || fraction > .85f) continue;
@@ -166,13 +187,13 @@ final class UnnumberedTripletInk {
         }
 
         private boolean bracket(boolean[] staff, float start, float end, float headTop,
-                float headBottom, float upper, float lower, float gap) {
+                float headBottom, float upper, float lower, float gap, Rows sourceRows) {
             float middle = (start + end) * .5f;
             int a = Math.round(start - gap * .32f), b = Math.round(middle - gap * .72f);
             int c = Math.round(middle + gap * .72f), d = Math.round(end + gap * .32f);
             int pad = Math.max(6, Math.round(.12f * Math.max(middle - a, d - middle)) + 1);
-            int first = Math.max(top + pad, Math.round(headTop - 7 * gap));
-            int last = Math.min(top + height - pad - 1, Math.round(headBottom + 7 * gap));
+            int first = Math.max(sourceRows.first, Math.max(top + pad, Math.round(headTop - 7 * gap)));
+            int last = Math.min(sourceRows.last, Math.min(top + height - pad - 1, Math.round(headBottom + 7 * gap)));
             for (int y = first; y <= last; y++) {
                 if (y > upper - gap * .48f && y < lower + gap * .48f) continue;
                 for (int slope = -2; slope <= 2; slope++)

@@ -47,6 +47,23 @@ public class UnnumberedTripletInkTest {
         assertFalse(clear(joined));
     }
 
+    @Test public void previousSystemStrokesDoNotClaimTheCurrentBracket() {
+        var here = new MeasureRegion(.10f, .80f, .43f, .71f);
+        var previous = new MeasureRegion(.08f, .85f, .26f, .34f);
+        var rows = UnnumberedTripletInk.sourceRows(here, List.of(previous, here), HEIGHT);
+        byte[] paper = clearBeam();
+        bracket(paper, 99);
+        assertFalse(clear(paper));
+        assertTrue(UnnumberedTripletInk.clear(paper, WIDTH, HEIGHT, GAP, X, Y, SHAFTS, rows));
+        bracket(paper, 124);
+        assertFalse(UnnumberedTripletInk.clear(paper, WIDTH, HEIGHT, GAP, X, Y, SHAFTS, rows));
+    }
+
+    private static void bracket(byte[] paper, int y) {
+        Arrays.fill(paper,y * WIDTH + 91,y * WIDTH + 111,(byte) 0);
+        Arrays.fill(paper,y * WIDTH + 131,y * WIDTH + 152,(byte) 0);
+    }
+
     private static void paint(byte[] paper, int left, int top, String... lines) {
         for (int dy = 0; dy < lines.length; dy++)
             for (int dx = 0; dx < lines[dy].length(); dx++)

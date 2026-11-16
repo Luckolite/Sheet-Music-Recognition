@@ -30,6 +30,13 @@ final class PrintedMeasureRhythmGuard {
             int width,
             int height,
             Set<Float> rejectedAnchorTops) {
+        return reconcile(raw, fitted, labels, gray, width, height, rejectedAnchorTops, List.of());
+    }
+
+    static List<MeasureRegion> reconcile(
+            List<MeasureRegion> raw, List<MeasureRegion> fitted, byte[] labels, byte[] gray,
+            int width, int height, Set<Float> rejectedAnchorTops,
+            List<PlayingTechniqueDetector.Word> words) {
         raw = rejectOverlappingRows(raw);
         fitted = rejectOverlappingRows(fitted);
         fitted = preserveCountNeutralRows(raw, fitted, gray, width, height);
@@ -55,6 +62,11 @@ final class PrintedMeasureRhythmGuard {
             return appendTerminalQuarter(fitted, labels, gray, width, height);
         var analysis = OmrScoreInterpreter.analyze(labels, gray, width, height, raw);
         var notes = analysis.notes();
+        if (FingeringAnnotationFilter.hasSegueWord(words)) {
+            var staffs = OmrScoreInterpreter.techniqueStaffs(labels, gray, width, height, raw);
+            notes = FingeringAnnotationFilter.detachedSegueBeamAliases(
+                    words, staffs, raw, notes, gray, width, height);
+        }
         fitted =
                 preservePartialWrittenBars(
                         raw, fitted, notes, analysis.rests(), gray, width, height);
@@ -63,7 +75,7 @@ final class PrintedMeasureRhythmGuard {
         if (!split) return appendTerminalQuarter(preserved, labels, gray, width, height);
         var aligned = alignPrintedSeparators(raw, preserved, notes, gray, width, height);
         return appendTerminalQuarter(
-                preserveCompleteRuns(raw, aligned, notes, gray, width, height),
+                preserveCompleteRuns(raw, aligned, notes, analysis.rests(), labels, gray, width, height),
                 labels, gray, width, height);
     }
 
@@ -1411,6 +1423,18 @@ final class PrintedMeasureRhythmGuard {
             byte[] gray,
             int width,
             int height) {
+        return preserveCompleteRuns(raw, fitted, notes, List.of(), null, gray, width, height);
+    }
+
+    static List<MeasureRegion> preserveCompleteRuns(
+            List<MeasureRegion> raw,
+            List<MeasureRegion> fitted,
+            List<ScoreNoteEvent> notes,
+            List<ScoreRestEvent> rests,
+            byte[] labels,
+            byte[] gray,
+            int width,
+            int height) {
         List<MeasureRegion> result = new ArrayList<>(fitted);
         List<RawStaffLineDetector.StaffLines> staffs = null;
         for (int index = 0; index < raw.size(); index++) {
@@ -1424,7 +1448,8 @@ final class PrintedMeasureRhythmGuard {
             if (!octaves.isEmpty() && gray != null
                     && !printedBarline(region, cut, gray, width, height, true)) {
                 if (staffs == null) staffs = RawStaffLineDetector.detect(gray, width, height);
-                if (ownsSingleStaffRun(raw, notes, index, octaves, staffs, gray, width, height, cut)) {
+                if (ownsSingleStaffRun(
+                        raw, notes, rests, index, octaves, staffs, labels, gray, width, height, cut)) {
                     int at = result.indexOf(pieces.get(0));
                     result.removeAll(pieces);
                     result.add(at, region);
@@ -1466,7 +1491,7 @@ final class PrintedMeasureRhythmGuard {
                 .filter(n -> n.measureIndex() == index)
                 .sorted(Comparator.comparingDouble(ScoreNoteEvent::positionInMeasure))
                 .toList();
-        if (local.size() != 24 || local.stream().anyMatch(n ->
+        if ((local.size() != 24 && local.size() != 32) || local.stream().anyMatch(n ->
                 n.staffCount() != 1 || n.staffIndex() != 0
                 || n.beamCount() != 2 || n.augmentationDots() != 0
                 || n.tupletDivisor() != 1 || n.unbeamedDurationBeats() != 0))
@@ -1485,28 +1510,96 @@ final class PrintedMeasureRhythmGuard {
     }
 
     private static boolean ownsSingleStaffRun(
-            List<MeasureRegion> raw, List<ScoreNoteEvent> notes, int index,
-            List<ScoreNoteEvent> octaves, List<RawStaffLineDetector.StaffLines> staffs,
-            byte[] gray, int width, int height, float cut) {
+            List<MeasureRegion> raw, List<ScoreNoteEvent> notes, List<ScoreRestEvent> rests,
+            int index, List<ScoreNoteEvent> octaves, List<RawStaffLineDetector.StaffLines> staffs,
+            byte[] labels, byte[] gray, int width, int height, float cut) {
         var region = raw.get(index);
         var local = staffs.stream().filter(s -> s.center() > region.top() * height
                 && s.center() < region.bottom() * height).toList();
         if (local.size() != 1) return false;
         var rails = local.get(0);
         var staff = new PlayingTechniqueDetector.Staff(rails.top(), rails.bottom(), rails.gap(), 0, 1);
-        if (ClosedSixteenthPairBeforeHalf.ownedSeparator(gray, width, height, staff, cut * width)
-                || !ClosedSixteenthPairBeforeHalf.closedOctaveRailsBeforeTieValidation(
-                        octaves, region, gray, width, height, rails.gap(), rails.bottom()))
+        if (ClosedSixteenthPairBeforeHalf.ownedSeparator(gray, width, height, staff, cut * width))
             return false;
+        boolean fourBeat = octaves.size() == 32;
+        if (fourBeat) {
+            if (rests.stream().anyMatch(rest -> rest.measureIndex() == index)
+                    || !cutPassesThroughOwnedOctave(octaves, region, gray, width, height, staff, cut)
+                    || !ClosedSixteenthPairBeforeHalf.closedFourBeatOctavesAtClippedHead(
+                            octaves, region, gray, width, height, rails.gap(), rails.bottom()))
+                return false;
+        } else if (!ClosedSixteenthPairBeforeHalf.closedOctaveRailsBeforeTieValidation(
+                octaves, region, gray, width, height, rails.gap(), rails.bottom())) return false;
+
         for (int other = 0; other < raw.size(); other++) {
             var peer = raw.get(other);
             if (other == index || !sameRow(peer, region)) continue;
             var head = completeSixteenthOctaves(notes, other, peer, width, height);
-            if (!head.isEmpty() && ClosedSixteenthPairBeforeHalf.closedOctaveRailsBeforeTieValidation(
-                    head, peer, gray, width, height, rails.gap(), rails.bottom()))
-                return true;
+            if (head.size() != octaves.size()) continue;
+            if (!fourBeat && ClosedSixteenthPairBeforeHalf.closedOctaveRailsBeforeTieValidation(
+                    head, peer, gray, width, height, rails.gap(), rails.bottom())) return true;
+            float seam = (peer.left() > region.left()
+                    ? peer.left() + region.right() : region.left() + peer.right()) * width * .5f;
+            if (fourBeat && Math.abs(other - index) == 1
+                    && ClosedSixteenthPairBeforeHalf.ownedSeparator(gray, width, height, staff, seam)
+                    && ClosedSixteenthPairBeforeHalf.closedSixteenths(
+                            head, peer, gray, width, height, rails.gap(), rails.bottom())) return true;
+        }
+        return !fourBeat && ownsInlineTriple(raw, rests, index, octaves, staff, labels, gray, width, height);
+    }
+
+    private static boolean cutPassesThroughOwnedOctave(
+            List<ScoreNoteEvent> notes, MeasureRegion region, byte[] gray, int width, int height,
+            PlayingTechniqueDetector.Staff staff, float cut) {
+        float gap = staff.gap(), span = (region.right() - region.left()) * width;
+        var budget = new PrintedBeamShafts.Budget(100_000);
+        for (int i = 0; i < notes.size(); i += 2) {
+            var a = notes.get(i);
+            var b = notes.get(i + 1);
+            float x1 = region.left() * width + a.positionInMeasure() * span;
+            float x2 = region.left() * width + b.positionInMeasure() * span;
+            if (Math.abs(x1 - cut * width) > gap * .35f || Math.abs(x2 - cut * width) > gap * .35f)
+                continue;
+            var one = PrintedBeamShafts.at(gray, width, height, x1, a.pageY() * height, gap, budget);
+            var two = PrintedBeamShafts.at(gray, width, height, x2, b.pageY() * height, gap, budget);
+            if (one.size() != 1 || two.size() != 1) continue;
+            var first = one.get(0);
+            var second = two.get(0);
+            if (first.direction() == -a.stemDirection()
+                    && second.direction() == first.direction()
+                    && Math.max(first.left(), second.left()) <= Math.min(first.right(), second.right())
+                    && Math.abs(first.endY() - second.endY()) < gap * .2f) return true;
         }
         return false;
+    }
+
+    private static boolean ownsInlineTriple(
+            List<MeasureRegion> raw, List<ScoreRestEvent> rests, int index,
+            List<ScoreNoteEvent> run, PlayingTechniqueDetector.Staff staff,
+            byte[] labels, byte[] gray, int width, int height) {
+        if (index == 0 || labels == null
+                || rests.stream().anyMatch(rest -> rest.measureIndex() == index))
+            return false;
+        var region = raw.get(index);
+        var previous = raw.get(index - 1);
+        float left = region.left() * width;
+        float priorRight = previous.right() * width;
+        float gap = staff.gap();
+        if (!sameRow(region, previous) || left <= priorRight || left - priorRight > gap * 1.5f)
+            return false;
+        int owned = 0;
+        for (var crop : MeterChangeDetector.candidates(labels, gray, width, height)) {
+            if (crop.left() < left || crop.right() > left + gap * 4
+                    || crop.right() - crop.left() > gap * 2.4f
+                    || MeterChangeDetector.followingMeasure(crop, width, height, raw) != index
+                    || !MeterChangeDetector.precedesNotes(
+                            crop, labels, gray, width, height, index, raw, run)
+                    || !InlineTripleMeterNoteAlias.provesPrintedTriple(
+                            crop, gray, width, height, staff, (left + priorRight) * .5f))
+                continue;
+            if (++owned > 1) return false;
+        }
+        return owned == 1;
     }
 
     private static boolean same(double a, double b) {

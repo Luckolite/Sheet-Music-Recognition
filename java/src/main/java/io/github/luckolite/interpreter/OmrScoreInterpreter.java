@@ -1080,7 +1080,7 @@ final class OmrScoreInterpreter {
         rejectedBeamHeads.addAll(
                 reducedPairBorrowedShaftHeads(
                         gray, width, height, heads, staffs, recoveredBeamCapGraces));
-        rejectedBeamHeads.addAll(ownedSlopedBeamFragments(labels, gray, width, height, heads, staffs));
+        rejectedBeamHeads.addAll(ownedSlopedBeamFragments(labels, gray, annotationGray, width, height, heads, staffs));
         rejectedBeamHeads.addAll(
                 borrowedInnerDoubleRailHeads(labels, gray, annotationGray, width, height, heads, staffs));
         rejectedBeamHeads.addAll(
@@ -2761,7 +2761,7 @@ final class OmrScoreInterpreter {
                     detected.add(new DetectedNote(chord, part, staff.gap));
                 }
         }
-        removeOwnedSharpFragments(detected, writtenAccidentalChoices, gray, width);
+        removeOwnedSharpFragments(detected, writtenAccidentalChoices, labels, gray, width);
         detected = alignDisplacedSeconds(detected, gray, width, height);
         detected = reconcileSingleShaftChords(detected, labels, gray, width, height);
         detected =
@@ -21575,6 +21575,7 @@ final class OmrScoreInterpreter {
     private static void removeOwnedSharpFragments(
             List<DetectedNote> notes,
             java.util.IdentityHashMap<Object, WrittenAccidentalChoice> choices,
+            byte[] labels,
             byte[] gray,
             int width) {
         if (gray == null) return;
@@ -21589,26 +21590,45 @@ final class OmrScoreInterpreter {
                 var head = candidate.head;
                 float gap = candidate.staffGap;
                 var event = candidate.event;
+                boolean halfProposal = event.unbeamedDurationBeats() == ScoreNoteEvent.DURATION_HALF
+                        && event.stemDirection() == 0;
                 if (head == note.head
                         || event.kind() != ScoreNoteEvent.Kind.PITCHED
                         || event.measureIndex() != note.event.measureIndex()
                         || event.staffIndex() != note.event.staffIndex()
                         || event.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_FROM_KEY
                         || event.beamCount() != 0
-                        || event.unbeamedDurationBeats() != 4
-                        || head.area > gap * gap * .55f
-                        || head.maxX >= note.head.minX
+                        || (!halfProposal
+                                && event.unbeamedDurationBeats() != ScoreNoteEvent.DURATION_WHOLE)
+                        || head.area > gap * gap * (halfProposal ? .65f : .55f)
+                        || head.maxX >= note.head.minX + (halfProposal ? gap * .125f : 0)
                         || head.centerX < sharp.minX || head.centerX > sharp.maxX
                         || head.centerY < sharp.minY || head.centerY > sharp.maxY
                         || head.minX < sharp.minX - gap * .65f
-                        || head.maxX > sharp.maxX + gap * .2f
+                        || head.maxX > sharp.maxX + gap * (halfProposal ? .4f : .2f)
                         || head.minY < sharp.minY - gap * .2f
                         || head.maxY > sharp.maxY + gap * .2f
-                        || sharpFragmentHasOutsideBody(gray, width, head, sharp, gap)) continue;
+                        || sharpFragmentHasOutsideBody(gray, width, head, sharp, gap)
+                        || (halfProposal && !hasOnlyAccidentalHeadMask(labels, width, head)))
+                    continue;
                 rejected.add(head);
             }
         }
         notes.removeIf(note -> rejected.contains(note.head));
+    }
+
+    private static boolean hasOnlyAccidentalHeadMask(byte[] labels, int width, Component fragment) {
+        // A recovered half can include adjacent shaft or staff pixels in its proposal.
+        // Require the accidental mask to account for the component area without any notehead.
+        int accidental = 0;
+        for (int y = fragment.minY; y <= fragment.maxY; y++) {
+            for (int x = fragment.minX; x <= fragment.maxX; x++) {
+                byte label = labels[y * width + x];
+                if (label == OmrMeasurePostProcessor.NOTEHEAD) return false;
+                if (label == OmrMeasurePostProcessor.CLEF_OR_KEY) accidental++;
+            }
+        }
+        return accidental >= fragment.area;
     }
 
     private static boolean sharpFragmentHasOutsideBody(
@@ -28291,7 +28311,7 @@ final class OmrScoreInterpreter {
     }
 
     private static List<Component> ownedSlopedBeamFragments(
-            byte[] labels, byte[] gray, int width, int height, List<Component> heads, List<Staff> staffs) {
+            byte[] labels, byte[] gray, byte[] original, int width, int height, List<Component> heads, List<Staff> staffs) {
         List<Component> rejected = new ArrayList<>();
         if (gray == null) return rejected;
         for (Component fragment : heads) {
@@ -28308,11 +28328,13 @@ final class OmrScoreInterpreter {
                 rejected.add(fragment);
                 continue;
             }
-            if (staff.count == 1 && gap >= 8 && fragment.area <= gap * gap * .68f
-                    && fragment.maxY - fragment.minY + 1 <= gap * .70f) {
+            if (staff.count == 1 && gap >= 8 && withinDenseRailMask(fragment, gap, true)) {
                 int[] reversed = attachedRawStem(gray, width, height, fragment, gap, 2, 170);
-                if (reversed != null && borrowedDenseDyadBeamMask(
-                        labels, gray, width, height, fragment, heads, gap, reversed)) {
+                if (reversed != null
+                        && (borrowedDenseDyadBeamMask(labels, gray, width, height, fragment, heads, gap,
+                                    reversed, false)
+                            || denseDyadMaskOnBothPlanes(labels, gray, original, width, height, fragment,
+                                    heads, gap, reversed))) {
                     rejected.add(fragment);
                     continue;
                 }
@@ -28629,18 +28651,38 @@ final class OmrScoreInterpreter {
         return false;
     }
 
+    private static boolean denseDyadMaskOnBothPlanes(
+            byte[] labels, byte[] gray, byte[] original, int width, int height,
+            Component fragment, List<Component> heads, float gap, int[] reversed) {
+        if (original == null || original.length != gray.length
+                || !borrowedDenseDyadBeamMask(
+                        labels, gray, width, height, fragment, heads, gap, reversed, true))
+            return false;
+        if (original == gray) return true;
+        int[] originalStem = attachedRawStem(original, width, height, fragment, gap, 2, 170);
+        return originalStem != null && borrowedDenseDyadBeamMask(
+                labels, original, width, height, fragment, heads, gap, originalStem, true);
+    }
+
+    private static boolean withinDenseRailMask(Component fragment, float gap, boolean wide) {
+        float area = wide ? 1.12f : .68f;
+        float width = wide ? 1.72f : 1.45f;
+        float height = wide ? .85f : .70f;
+        return fragment.area <= gap * gap * area
+                && fragment.maxX - fragment.minX + 1 <= gap * width
+                && fragment.maxY - fragment.minY + 1 <= gap * height;
+    }
+
     /**
      * A head-shaped mask at the foot of a lower beam can trace backward up a real
      * dyad shaft. The mask must lie inside both rails between three owned shafts.
      */
     private static boolean borrowedDenseDyadBeamMask(
             byte[] labels, byte[] gray, int width, int height, Component fragment,
-            List<Component> heads, float gap, int[] borrowed) {
+            List<Component> heads, float gap, int[] borrowed, boolean wide) {
         if (borrowed[2] != -1 || borrowed[0] < fragment.minX || borrowed[0] > fragment.maxX
                 || fragment.centerY - borrowed[1] < gap * 4
-                || fragment.area > gap * gap * .68f
-                || fragment.maxX - fragment.minX + 1 > gap * 1.45f
-                || fragment.maxY - fragment.minY + 1 > gap * .70f
+                || !withinDenseRailMask(fragment, gap, wide)
                 || filledBeamEndpointCore(gray, width, height, fragment, gap)) return false;
         List<int[]> shafts = new ArrayList<>();
         for (Component head : heads) {
@@ -28670,7 +28712,7 @@ final class OmrScoreInterpreter {
                             || Math.abs(middle[1] - left[1] - slope * (middle[0] - left[0])) > gap * .18f)
                         continue;
                     if (denseDyadRailMembership(gray, width, height, members, fragment, left, right,
-                            slope, gap)) return true;
+                            slope, gap, wide ? 1.14f : 1.08f)) return true;
                 }
             }
         }
@@ -28679,7 +28721,7 @@ final class OmrScoreInterpreter {
 
     private static boolean denseDyadRailMembership(
             byte[] gray, int width, int height, int[] members, Component fragment,
-            int[] left, int[] right, float slope, float gap) {
+            int[] left, int[] right, float slope, float gap, float maximumDepth) {
         int margin=Math.round(gap * .25f);
         int first=left[0]+margin, end=right[0]-margin;
         int near=Math.round(gap * .22f), far=Math.round(gap * .90f);
@@ -28695,7 +28737,7 @@ final class OmrScoreInterpreter {
         for (int member : members) {
             int x=member%width, y=member/width;
             float depth=left[1]+slope*(x-left[0])-y;
-            if (depth < 0 || depth > gap*1.08f || (gray[member]&255)>=155) return false;
+            if (depth < 0 || depth > gap*maximumDepth || (gray[member]&255)>=155) return false;
         }
         return true;
     }
@@ -34555,16 +34597,86 @@ final class OmrScoreInterpreter {
 
     /** Detached print beside a proven hollow head cannot supply the shaft's flag. */
     private static boolean ownsFlagBesideSustainedHead(
-            byte[] labels, byte[] gray, int width, int height, Component head, float gap,
-            float slope, float writtenValue, int[] shaft) {
-        if (!hasCurvedFlag(labels, gray, width, height, head, gap, shaft[0], shaft[1], shaft[2] < 0))
+            byte[] labels,
+            byte[] gray,
+            int width,
+            int height,
+            Component head,
+            float gap,
+            float slope,
+            float writtenValue,
+            int[] shaft) {
+        if (!hasCurvedFlag(
+                labels, gray, width, height, head, gap, shaft[0], shaft[1], shaft[2] < 0))
             return false;
         return writtenValue != ScoreNoteEvent.DURATION_HALF
                 || shaft[2] != 1
-                || !sideInkSeparatedFromDownstem(gray, width, height, shaft[0], shaft[1], gap)
+                || !(sideInkSeparatedFromDownstem(gray, width, height, shaft[0], shaft[1], gap)
+                        || detachedOneBesideDownstem(gray, width, height, shaft[0], shaft[1], gap))
                 || !ClosedWrittenHeadPocket.proved(
-                        gray, width, height, head.minX, head.minY, head.maxX, head.maxY,
-                        head.centerX, head.centerY, gap, slope);
+                        gray,
+                        width,
+                        height,
+                        head.minX,
+                        head.minY,
+                        head.maxX,
+                        head.maxY,
+                        head.centerX,
+                        head.centerY,
+                        gap,
+                        slope);
+    }
+
+    /** A complete fingering below the staff cannot also be a flag rooted at the shaft tip. */
+    private static boolean detachedOneBesideDownstem(
+            byte[] gray, int width, int height, int shaftX, int end, float gap) {
+        if (!Float.isFinite(gap) || gap < 10 || gap > 28) return false;
+        int left = shaftX + Math.round(gap * .20f);
+        int right = shaftX + Math.round(gap * 1.30f);
+        int top = end - Math.round(gap * .73f);
+        int bottom = end + Math.round(gap);
+        int flagTop = end - Math.round(gap * 2.3f);
+        if (left < 0 || right >= width || flagTop < 0 || bottom >= height) return false;
+        var glyphs =
+                RawNumeralComponents.capture(
+                                gray, width, height, left, top, right, bottom, () -> {}, () -> {})
+                        .components()
+                        .stream()
+                        .filter(c -> c.size() >= 8)
+                        .toList();
+        if (glyphs.size() != 1) return false;
+        var one = glyphs.get(0);
+        int inkHeight = one.bottom - one.top + 1;
+        if (one.left <= left
+                || one.right >= right
+                || one.top <= top
+                || one.bottom >= bottom
+                || one.top >= end - gap * .12f
+                || one.bottom <= end + gap * .48f
+                || inkHeight < gap * .81f
+                || inkHeight > gap * 1.24f
+                || !TripletRhythmDetector.fingerOne(gray, width, one)) return false;
+        // Confirm an uninterrupted paper seam wherever a root could join the shaft.
+        // Only rows of a long staff rule, not a neck or a loose edge, can occlude it.
+        int seam = 0;
+        for (int x = left; x < one.left; x++) {
+            boolean open = true;
+            for (int y = flagTop; y <= one.bottom; y++) {
+                if ((gray[y * width + x] & 255) >= 215) continue;
+                if (y < top
+                        && (rawRuleBeyondFlag(gray, width, y, shaftX, gap, 230)
+                                || (y > 0
+                                        && (gray[(y - 1) * width + x] & 255) >= 215
+                                        && (gray[(y + 1) * width + x] & 255) <= 165
+                                        && rawRuleBeyondFlag(
+                                                gray, width, y + 1, shaftX, gap, 230)))) continue;
+                open = false;
+                break;
+            }
+            seam = open ? seam + 1 : 0;
+            if (seam >= Math.max(2, Math.round(gap * .13f))) return true;
+        }
+        return false;
     }
 
     private static boolean sideInkSeparatedFromDownstem(

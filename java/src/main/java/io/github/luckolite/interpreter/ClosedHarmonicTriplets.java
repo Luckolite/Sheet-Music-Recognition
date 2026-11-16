@@ -98,7 +98,8 @@ final class ClosedHarmonicTriplets {
             var ordinals = byMeasure.get(bar).stream()
                     .sorted(Comparator.comparingDouble(i -> notes.get(i).positionInMeasure())).toList();
             var line = ordinals.stream().map(notes::get).toList();
-            var adjusted = prove(line, here, next, cadence, source, width, height);
+            var rows = UnnumberedTripletInk.sourceRows(here, measures, height);
+            var adjusted = prove(line, here, next, cadence, source, width, height, rows);
             if (adjusted == null || adjusted.notes().equals(line)) continue;
             if (adjusted.engravingClear()) bars.add(ordinals);
             if (result == null) result = new ArrayList<>(notes);
@@ -120,7 +121,7 @@ final class ClosedHarmonicTriplets {
 
     private static Proved prove(
             List<ScoreNoteEvent> line, MeasureRegion bar, MeasureRegion following,
-            ScoreNoteEvent cadence, byte[] source, int w, int h) {
+            ScoreNoteEvent cadence, byte[] source, int w, int h, UnnumberedTripletInk.Rows rows) {
         float gap = (bar.bottom() - bar.top()) * h / 8.2f;
         float span = (bar.right() - bar.left()) * w;
         if (gap < 10 || gap > 25 || span < gap * 22f || span > gap * 28f) return null;
@@ -180,7 +181,7 @@ final class ClosedHarmonicTriplets {
             }
             if (engravingClear)
                 engravingClear = UnnumberedTripletInk.clear(source, w, h, gap,
-                        Arrays.copyOfRange(xs, i, i+3), Arrays.copyOfRange(ys, i, i+3), shafts.subList(i, i+3));
+                        Arrays.copyOfRange(xs, i, i + 3), Arrays.copyOfRange(ys, i, i + 3), shafts.subList(i, i + 3), rows);
         }
         var adjusted = new ArrayList<ScoreNoteEvent>(12);
         for (int i = 0; i < line.size(); i++) {

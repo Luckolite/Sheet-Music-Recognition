@@ -43,7 +43,8 @@ final class PrintedCadenceDurations {
         var repeatedTripleMeter = new boolean[count];
         var tripleMeter = new boolean[count];
         var interruptedTriple = new boolean[count];
-        boolean triple = false;
+        var commonToTriple = new boolean[count];
+        boolean triple = false, common = false;
         for (var change : score.meterChanges()) {
             if (change.measureIndex() >= meter.length) continue;
             boolean nextTriple = change.numerator() == 3 && change.denominator() == 4;
@@ -52,7 +53,9 @@ final class PrintedCadenceDurations {
             interruptedTriple[change.measureIndex()] = triple
                     && change.numerator() == 4 && change.denominator() == 4;
             repeatedTripleMeter[change.measureIndex()] = triple && nextTriple;
+            commonToTriple[change.measureIndex()] = common && nextTriple;
             triple = nextTriple;
+            common = change.numerator() == 4 && change.denominator() == 4;
         }
         var regions = new ArrayList<>(score.measures());
         List<ScoreNoteEvent> repairedNotes = null;
@@ -73,6 +76,19 @@ final class PrintedCadenceDurations {
                             measure, next, chord, staffs)) {
                 regions.set(i, new MeasureRegion(measure.left(), measure.right(),
                         measure.top(), measure.bottom(), 3));
+                changed = true;
+                continue;
+            }
+            if (i > 0 && next != null && commonToTriple[i + 1] && !meter[i]
+                    && !rests[i - 1] && !rests[i + 1] && fullSixteenthDyadRun(notes.get(i - 1))
+                    && leftClosedHalfDyad(gray, width, height, score.measures().get(i - 1),
+                            measure, next, chord)) {
+                if (repairedNotes == null) repairedNotes = new ArrayList<>(score.notes());
+                var lower = chord.get(0).pageY() > chord.get(1).pageY() ? chord.get(0) : chord.get(1);
+                var upper = lower == chord.get(0) ? chord.get(1) : chord.get(0);
+                repairedNotes.set(score.notes().indexOf(upper), closedNote(upper, 2, lower.positionInMeasure()));
+                regions.set(i, new MeasureRegion(measure.left(), measure.right(),
+                        measure.top(), measure.bottom(), 2));
                 changed = true;
                 continue;
             }
@@ -97,7 +113,7 @@ final class PrintedCadenceDurations {
             if (isolatedBeamAlias) {
                 if (repairedNotes == null) repairedNotes = new ArrayList<>(score.notes());
                 for (var note : chord)
-                    repairedNotes.set(score.notes().indexOf(note), quarterNote(note));
+                    repairedNotes.set(score.notes().indexOf(note), closedNote(note, 1, note.positionInMeasure()));
                 regions.set(
                         i,
                         new MeasureRegion(
@@ -425,10 +441,10 @@ final class PrintedCadenceDurations {
                         .anyMatch(column -> column.members().contains(source.get()));
     }
 
-    private static ScoreNoteEvent quarterNote(ScoreNoteEvent note) {
+    private static ScoreNoteEvent closedNote(ScoreNoteEvent note, float duration, float position) {
         return new ScoreNoteEvent(
                 note.measureIndex(),
-                note.positionInMeasure(),
+                position,
                 note.staffStep(),
                 note.staffIndex(),
                 note.staffCount(),
@@ -437,7 +453,7 @@ final class PrintedCadenceDurations {
                 note.augmentationDots(),
                 0,
                 note.writtenAccidental(),
-                1,
+                duration,
                 note.tupletDivisor(),
                 note.followingRestBeats(),
                 note.articulations(),
@@ -717,7 +733,16 @@ final class PrintedCadenceDurations {
             boolean quarter = chord.get(0).unbeamedDurationBeats() == 1;
             // A wide quarter cadence still needs both closing strokes.
             boolean wideQuarter = quarter && (!sameSystem || !nextHasMeter);
-            if (span > gap * (wideQuarter ? 10.25f : 8f)) return false;
+            if (span > gap * (wideQuarter ? 10.25f : 8f)
+                    && !wideClosedHalfOctave(
+                            gray,
+                            width,
+                            height,
+                            staff,
+                            left,
+                            span,
+                            sameSystem && !nextHasMeter,
+                            chord)) return false;
             float boundary = sameSystem ? (right + next.left() * width) * .5f : right;
             double firstX = left + first * span, lastX = left + last * span;
             boolean hasAccidental = chord.stream().anyMatch(
@@ -746,6 +771,47 @@ final class PrintedCadenceDurations {
                     false, true, hasAccidental);
         }
         return false;
+    }
+
+    /** A wide same-system half octave still needs an independent opening rule and double close. */
+    private static boolean wideClosedHalfOctave(
+            byte[] gray,
+            int width,
+            int height,
+            PlayingTechniqueDetector.Staff staff,
+            float left,
+            float span,
+            boolean doubleCloseRequired,
+            List<ScoreNoteEvent> chord) {
+        float gap = staff.gap();
+        if (!doubleCloseRequired || span > gap * 8.85f || chord.size() != 2) return false;
+        var a = chord.get(0);
+        var b = chord.get(1);
+        if (a.unbeamedDurationBeats() != 2
+                || b.unbeamedDurationBeats() != 2
+                || a.stemDirection() != -1
+                || b.stemDirection() != -1
+                || a.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_FROM_KEY
+                || b.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_FROM_KEY
+                || Math.abs(a.staffStep() - b.staffStep()) != 7) return false;
+        int opening = boundaryColumn(gray, width, staff, left - gap * .53f, true, false);
+        return opening >= 0
+                && !ClosedHeadBarlineGuard.attached(
+                        gray,
+                        width,
+                        height,
+                        opening,
+                        Math.round(staff.top()),
+                        Math.round(staff.bottom()),
+                        gap)
+                && !DottedDyadMeasureSeparator.continuesBeyondStaff(
+                        gray,
+                        width,
+                        height,
+                        opening,
+                        Math.round(staff.top()),
+                        Math.round(staff.bottom()),
+                        gap);
     }
 
     /** A complete displaced natural can extend left of the usual chord exclusion. */
@@ -838,6 +904,71 @@ final class PrintedCadenceDurations {
         return provedIsolatedHalfDyad(gray, width, left, staff, chord)
                 && completeCadence(gray, width, staff, left, right, left + first * span,
                         left + last * span, right + .55f * gap, false, false, false);
+    }
+
+    /** The two hollow heads share one shaft in an independently closed system end. */
+    private static boolean leftClosedHalfDyad(
+            byte[] gray, int width, int height, MeasureRegion before, MeasureRegion bar,
+            MeasureRegion next, List<ScoreNoteEvent> chord) {
+        if (gray == null || gray.length != (long) width * height || chord.size() != 2
+                || bar.cadenceQuarterBeats() != 0 || next.top() <= bar.bottom()) return false;
+        var lower = chord.get(0);
+        var upper = chord.get(1);
+        if (lower.pageY() < upper.pageY()) {
+            var swap = lower;
+            lower = upper;
+            upper = swap;
+        }
+        if (!exactCadenceNote(lower, 2) || !exactCadenceNote(upper, 1)
+                || !ordinaryWideQuarter(lower) || !ordinaryWideQuarter(upper)
+                || lower.stemDirection() != 1 || upper.stemDirection() != 1) return false;
+        float gap = (bar.bottom() - bar.top()) * height / 8.2f;
+        float left = bar.left() * width, right = bar.right() * width, span = right - left;
+        if (gap < 8 || gap > 25 || span < gap * 4 || span > gap * 7
+                || Math.abs(before.top() - bar.top()) * height > gap * .35f
+                || (bar.left() - before.right()) * width < gap * .55f
+                || (bar.left() - before.right()) * width > gap * 1.55f) return false;
+        float ax = left + span * lower.positionInMeasure(), bx = left + span * upper.positionInMeasure();
+        float first = Math.min(ax, bx), last = Math.max(ax, bx);
+        float floor = bar.bottom() * height - 2.1f * gap;
+        if (last - first > gap * .34f || first - left < gap * 1.4f
+                || right - last < gap * 2.4f) return false;
+        var rails = PrintedDirectionStaff.printedRules(gray, width, height, right - gap * 2.5f, floor, gap);
+        if (rails == null) return false;
+        gap = rails[1];
+        var staff = new PlayingTechniqueDetector.Staff(rails[0] - 4 * gap, rails[0], gap, 0, 1);
+        int top = Math.round(staff.top()), bottom = Math.round(staff.bottom());
+        if (top < 0 || bottom >= height) return false;
+        int opening = boundaryColumn(gray, width, staff, (left + before.right()*width)*.5f, true, false);
+        int ending = boundaryColumn(gray, width, staff, right, false, true);
+        if (opening < 0 || ending < 0
+                || ClosedHeadBarlineGuard.attached(gray, width, height, opening, top, bottom, gap)
+                || DottedDyadMeasureSeparator.continuesBeyondStaff(gray, width, height, opening, top, bottom, gap)
+                || !emptyOutsideChord(gray, width, staff, left, ending + gap *.4f, first, last, false))
+            return false;
+        float ay=lower.pageY()*height, by=upper.pageY()*height;
+        if (ay-by < gap*1.25f || ay-by > gap*2.8f
+                || !hollowPocket(gray,width,height,ax,ay,gap)
+                || !hollowPocket(gray,width,height,bx,by,gap)) return false;
+        int start = Math.round(by-gap*1.4f), end = Math.round(ay-gap*.23f);
+        if (start < 0 || end >= height) return false;
+        for (int shaft = Math.round(last + gap*.16f); shaft <= Math.round(first + gap*.75f); shaft++) {
+            if (shaft < 0 || shaft >= width) continue;
+            int missing=0;
+            for (int y=start;y<=end;y++)
+                if ((gray[y*width+shaft]&255)>=155) missing++;
+            if (missing<=Math.round(gap*.11f)) return true;
+        }
+        return false;
+    }
+
+    private static boolean hollowPocket(byte[] gray,int width,int height,float x,float y,float gap) {
+        int left=Math.round(x-gap), right=Math.round(x+gap*.63f);
+        int top=Math.round(y-gap*.73f), bottom=Math.round(y+gap*.73f);
+        return left>=0 && right<width && top>=0 && bottom<height
+                && WholeHeadPocketEvidence.hasEnclosedOpening(
+                        gray,width,height,left,top,right,bottom,x-gap*.12f,y,gap,
+                        Math.max(12, Math.round(gap * gap * .065f)), 3);
     }
 
     /** A wide same-row half dyad needs independent opening and closing rules. */

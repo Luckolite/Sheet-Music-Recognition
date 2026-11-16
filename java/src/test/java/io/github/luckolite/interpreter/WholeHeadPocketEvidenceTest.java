@@ -85,6 +85,29 @@ public class WholeHeadPocketEvidenceTest {
     }
 
     @Test
+    public void aCadenceNeedsMoreThanTheDefaultAmbiguityPocket() {
+        int width = 40, height = 40;
+        byte[] tiny = new byte[width * height];
+        byte[] twoRows = new byte[width * height];
+        byte[] full = new byte[width * height];
+        for (int row = 19; row <= 20; row++) {
+            for (int x = 19; x <= 20; x++) tiny[row * width + x] = (byte) 255;
+            for (int x = 17; x <= 22; x++) twoRows[row * width + x] = (byte) 255;
+        }
+        for (int row = 19; row <= 21; row++)
+            for (int x = 18; x <= 21; x++) full[row * width + x] = (byte) 255;
+        assertTrue(WholeHeadPocketEvidence.hasEnclosedOpening(
+                tiny, width, height, 10, 10, 29, 29, 20, 20, 16));
+        assertFalse(WholeHeadPocketEvidence.hasEnclosedOpening(
+                tiny, width, height, 10, 10, 29, 29, 20, 20, 16, 12, 3));
+        assertFalse(WholeHeadPocketEvidence.hasEnclosedOpening(
+                twoRows, width, height, 10, 10, 29, 29, 20, 20, 16, 12, 3));
+        assertTrue(WholeHeadPocketEvidence.hasEnclosedOpening(
+                full, width, height, 10, 10, 29, 29, 20, 20, 16, 12, 3));
+    }
+
+
+    @Test
     public void filledGlyphsRejected() throws Exception {
         for (int s : new int[] {32, 48, 64, 80})
             assertFalse("size" + s, glyph(0xe0a4, s, true, true));

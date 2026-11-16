@@ -288,9 +288,10 @@ public final class SheetInterpreter {
                 MeasureNumberReconciler.reconcile(measures, numbers, rests, labels, gray, width, height);
         recognizedRests.expanded(rawMeasures, measures);
         var rejectedAnchorTops = new HashSet<Float>();
+        var words = annotations.words.stream().map(Word::internal).toList();
         measures =
                 PrintedMeasureRhythmGuard.reconcile(
-                        rawMeasures, measures, labels, gray, width, height, rejectedAnchorTops);
+                        rawMeasures, measures, labels, gray, width, height, rejectedAnchorTops, words);
         var recoveredCadence =
                 OverlappingQuarterCadence.recover(
                         rawMeasures, measures, labels, gray, width, height);
@@ -354,7 +355,6 @@ public final class SheetInterpreter {
                         OmrScoreInterpreter.techniqueStaffs(labels, gray, width, height, measures),
                         notes,
                         height);
-        var words = annotations.words.stream().map(Word::internal).toList();
         // Thin octave dashes can fade in the paper-corrected note raster.
         notes = OctaveMarkDetector.apply(words, staffs, measures, notes, annotationGray, width, height);
         notes =
@@ -765,7 +765,7 @@ public final class SheetInterpreter {
         finalInterpretation = harmonicTriplets.projectBeams(finalInterpretation, physicalPage);
         finalInterpretation = mixedBeamTransition.projectBeams(finalInterpretation, physicalPage);
         finalInterpretation =
-                WrappedEighthTriplets.closeFlatMarkedTripletBars(
+                WrappedEighthTriplets.closeAccidentalMarkedTripletBars(
                         finalInterpretation, labels, gray, width, height);
         finalInterpretation =
                 PrintedPassOmission.apply(

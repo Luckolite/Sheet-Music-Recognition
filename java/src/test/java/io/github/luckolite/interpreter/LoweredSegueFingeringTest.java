@@ -56,6 +56,35 @@ public class LoweredSegueFingeringTest {
         assertSame(notes, apply(words(), notes, open));
     }
 
+    @Test
+    public void beamProposalsInsideDetachedCaptionStaySilent() {
+        var picture = detachedCaption();
+        var first = note(444, 205, -2, 2, 0, false);
+        var descender = note(481, 222, -4, 3, 0, false);
+        var written = note(570, 130, 8, 2, -1, false);
+        var guesses = List.of(first, descender, written);
+        var caption = List.of(word("segue", 430, 193, 540, 231));
+        assertEquals(List.of(written), apply(caption, guesses, picture));
+
+        assertSame(guesses, apply(List.of(word("sempre", 430, 193, 540, 231)), guesses, picture));
+        var attachedStem = List.of(first, descender.withStemDirection(-1), written);
+        assertSame(attachedStem, apply(caption, attachedStem, picture));
+
+        var missingInitial = detachedCaption();
+        paint(missingInitial, 437, 450, 199, 215, (byte) 255);
+        assertSame(guesses, apply(caption, guesses, missingInitial));
+    }
+
+    private static byte[] detachedCaption() {
+        var gray = image();
+        paint(gray, 430, 540, 193, 235, (byte) 255);
+        paint(gray, 437, 450, 199, 215, (byte) 0);
+        paint(gray, 455, 467, 199, 215, (byte) 0);
+        paint(gray, 474, 527, 199, 215, (byte) 0);
+        paint(gray, 475, 487, 215, 226, (byte) 0);
+        return gray;
+    }
+
     private static List<ScoreNoteEvent> apply(
             List<PlayingTechniqueDetector.Word> words, List<ScoreNoteEvent> notes, byte[] image) {
         return FingeringAnnotationFilter.apply(

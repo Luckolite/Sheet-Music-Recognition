@@ -41,6 +41,87 @@ public final class PrintedOctaveRunSplitTest {
         assertEquals(fitted, reconcile());
     }
 
+
+    @Test
+    public void printedInlineThreeFourCanProveOneClosedRunWithoutAPeer() throws Exception {
+        assertEquals(raw, inlineRun('3', false));
+        assertEquals(inlineFitted(), inlineRun('2', false));
+        assertEquals(inlineFitted(), inlineRun('3', true));
+    }
+
+    private List<MeasureRegion> inlineRun(char numerator, boolean printedDivider) throws Exception {
+        notes.clear();
+        Arrays.fill(gray, (byte) 255);
+        for (int y = STAFF_TOP; y <= STAFF_BOTTOM; y += 16) paint(32, 943, y, y, 0);
+        drawRun(1, 550);
+
+        byte[] signature = InlineTripleMeterProofTest.signature(numerator, '4', true);
+        byte[] labels = new byte[gray.length];
+        for (int y = STAFF_TOP; y <= STAFF_BOTTOM; y += 16)
+            Arrays.fill(labels, y * WIDTH + 32, y * WIDTH + 944, (byte) 4);
+        for (int y = 51; y <= 121; y++) {
+            for (int x = 96; x <= 162; x++) {
+                int at = (y + 50) * WIDTH + x + 369;
+                gray[at] = signature[y * 320 + x];
+                if (x >= 123 && x < 157 && (y - 54) % 16 != 0 && (gray[at] & 255) < 150)
+                    labels[at] = 3;
+            }
+        }
+        if (printedDivider) paint(670, 672, STAFF_TOP, STAFF_BOTTOM, 0);
+
+        return PrintedMeasureRhythmGuard.preserveCompleteRuns(
+                raw, inlineFitted(), notes, List.of(), labels, gray, WIDTH, HEIGHT);
+    }
+
+    private List<MeasureRegion> inlineFitted() {
+        return List.of(raw.get(0), bar(490, 667), bar(675, 930));
+    }
+
+
+    @Test
+    public void splitThroughAnOwnedOctaveCannotDivideTwoPrintedFourBeatBars() {
+        assertEquals(raw, fourBeatPair(243, true, true));
+    }
+
+    @Test
+    public void requiresAnOwnedOctaveAtTheCutAndASeparatedCompletePeer() {
+        assertEquals(fourBeatFitted(255), fourBeatPair(255, true, true));
+        assertEquals(fourBeatFitted(243), fourBeatPair(243, false, true));
+        assertEquals(fourBeatFitted(243), fourBeatPair(243, true, false));
+    }
+
+    private List<MeasureRegion> fourBeatPair(int cut, boolean betweenBars, boolean peerComplete) {
+        notes.clear();
+        Arrays.fill(gray, (byte) 255);
+        for (int y = STAFF_TOP; y <= STAFF_BOTTOM; y += 16) paint(32, 943, y, y, 0);
+        if (betweenBars) paint(479, 481, STAFF_TOP, STAFF_BOTTOM, 0);
+        drawFourBeatRun(0, 75);
+        if (peerComplete) drawFourBeatRun(1, 520);
+        return PrintedMeasureRhythmGuard.preserveCompleteRuns(
+                raw, fourBeatFitted(cut), notes, gray, WIDTH, HEIGHT);
+    }
+
+    private List<MeasureRegion> fourBeatFitted(int cut) {
+        return List.of(bar(45, cut - 4), bar(cut + 4, 470), raw.get(1));
+    }
+
+    private void drawFourBeatRun(int bar, int start) {
+        var region = raw.get(bar);
+        for (int i = 0; i < 16; i++) {
+            int x = start + i * 24;
+            if (i % 4 == 0) {
+                paint(x + 8, x + 82, 66, 70, 0);
+                paint(x + 8, x + 82, 80, 84, 0);
+            }
+            paint(x + 8, x + 10, 68, 159, 0);
+            paint(x - 5, x + 10, 99, 107, 0);
+            paint(x - 5, x + 10, 155, 163, 0);
+            float pos = (x / (float) WIDTH - region.left()) / (region.right() - region.left());
+            notes.add(head(bar, pos, 8, 103, false));
+            notes.add(head(bar, pos, 1, 159, false));
+        }
+    }
+
     private List<MeasureRegion> reconcile() {
         return PrintedMeasureRhythmGuard.preserveCompleteRuns(
                 raw, fitted, notes, gray, WIDTH, HEIGHT);

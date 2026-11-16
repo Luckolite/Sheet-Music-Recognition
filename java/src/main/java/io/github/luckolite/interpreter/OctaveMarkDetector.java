@@ -1361,7 +1361,7 @@ final class OctaveMarkDetector {
         int height = box.bottom - box.top + 1;
         int span = box.right - box.left + 1;
         if (height < gap * .65f || height > gap * 2.3f || span < gap * .3f) return false;
-        int maxWidth = (int) Math.min(gap * 1.6f, height / .9f);
+        int maxWidth = Math.round(Math.min(gap * 1.6f, height / .9f));
         if (span <= maxWidth) {
             return OctaveClefDigit.holes(gray, width, box.left, box.top, span, height) == 2;
         }

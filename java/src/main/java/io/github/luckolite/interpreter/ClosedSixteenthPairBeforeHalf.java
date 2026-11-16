@@ -165,18 +165,25 @@ final class ClosedSixteenthPairBeforeHalf {
             int height,
             float gap,
             float floor) {
-        return closedSixteenths(notes, region, gray, width, height, gap, floor, 16, true);
+        return closedSixteenths(notes, region, gray, width, height, gap, floor, 16, true, 2);
     }
 
     static boolean closedOctaveRailsBeforeTieValidation(
             List<ScoreNoteEvent> notes, MeasureRegion region, byte[] gray,
             int width, int height, float gap, float floor) {
-        return closedSixteenths(notes, region, gray, width, height, gap, floor, 12, false);
+        return closedSixteenths(notes, region, gray, width, height, gap, floor, 12, false, 2);
+    }
+
+    static boolean closedFourBeatOctavesAtClippedHead(
+            List<ScoreNoteEvent> notes, MeasureRegion region, byte[] gray,
+            int width, int height, float gap, float floor) {
+        return closedSixteenths(notes, region, gray, width, height, gap, floor, 16, false, 1);
     }
 
     private static boolean closedSixteenths(
             List<ScoreNoteEvent> notes, MeasureRegion region, byte[] gray,
-            int width, int height, float gap, float floor, int attackCount, boolean requireUntied) {
+            int width, int height, float gap, float floor, int attackCount, boolean requireUntied,
+            int minimumClosedGroups) {
         if (notes.size() < 2 * attackCount - 2 || notes.size() > 2 * attackCount) return false;
         var columns = new ArrayList<List<ScoreNoteEvent>>();
         float span = (region.right() - region.left()) * width;
@@ -226,7 +233,7 @@ final class ClosedSixteenthPairBeforeHalf {
                     && ClosedFourDyadBeam.provesOctaves(
                             gray, width, height, heads, gap, floor, -direction, false)) proved++;
         }
-        return proved >= 2;
+        return proved >= minimumClosedGroups;
     }
 
     private static boolean writtenHead(ScoreNoteEvent n) {
