@@ -158,10 +158,12 @@ final class PrintedCadenceDurations {
                                     notes.get(i - 1),
                                     chord,
                                     false);
+            boolean octaveBeforeCommon =
+                    next != null && interruptedTriple[i + 1] && !meter[i] && annotationGray != null;
             boolean closedFlatSystemEnd =
                     duration == 1
                             && i > 0
-                            && (next == null ? triple : repeatedTripleMeter[i + 1])
+                            && (next == null ? triple : repeatedTripleMeter[i + 1] || octaveBeforeCommon)
                             && !rests[i - 1]
                             && notes.get(i - 1).size() == 24
                             && notes.get(i - 1).stream()
@@ -174,7 +176,9 @@ final class PrintedCadenceDurations {
                                                             && n.beamCount() >= 2
                                                             && n.unbeamedDurationBeats() == 0)
                             && PrintedQuarterDyadAccidentals.provesClosedTripleSystemEnd(
-                                    labels, gray, width, height, measure, next, chord);
+                                    labels, gray, width, height, measure, next, chord, octaveBeforeCommon)
+                            && (!octaveBeforeCommon || closedTerminalOctaveBeforeCommon(
+                                    labels, gray, annotationGray, width, height, measure, next, chord));
             boolean accidentalMeterAlias = duration == 1 && next != null
                     && interruptedTriple[i] && tripleMeter[i + 1]
                     && PrintedQuarterDyadAccidentals.provesSeparatedTerminalFlats(
@@ -672,6 +676,19 @@ final class PrintedCadenceDurations {
     }
 
     /** Re-anchor a sloped system end using five local rules and both written separators. */
+    private static boolean closedTerminalOctaveBeforeCommon(
+            byte[] labels, byte[] gray, byte[] original, int width, int height,
+            MeasureRegion measure, MeasureRegion next, List<ScoreNoteEvent> chord) {
+        if (!PrintedQuarterDyadAccidentals.provesClosedTripleSystemEnd(
+                labels, original, width, height, measure, next, chord, true)) return false;
+        float left = measure.left() * width;
+        float span = measure.right() * width - left;
+        float gap = (measure.bottom() - measure.top()) * height / 8.2f;
+        int direction = chord.get(0).stemDirection();
+        return quarterShaft(gray, width, height, left, span, gap, direction, chord)
+                && quarterShaft(original, width, height, left, span, gap, direction, chord);
+    }
+
     static boolean shiftedTerminalQuarter(
             byte[] gray, int width, int height, MeasureRegion measure, MeasureRegion next,
             List<PlayingTechniqueDetector.Staff> staffs, List<ScoreNoteEvent> chord) {

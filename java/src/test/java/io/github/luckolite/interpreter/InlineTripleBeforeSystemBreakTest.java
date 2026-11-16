@@ -64,6 +64,27 @@ public final class InlineTripleBeforeSystemBreakTest {
     }
 
     @Test
+    public void readsAlreadyTrimmedCompactTripleWithPairedRuleOutsideTheDigitCrop()
+            throws Exception {
+        var half = region(285, 379);
+        var run = region(397, 905);
+        var positive = staff(true);
+        var missing = staff(false);
+        var wrongDigits = staff(true, "4/4");
+        assertEquals(METER, compactCrop(half, run, positive, positive));
+        assertNull(compactCrop(half, run, missing, positive));
+        assertNull(compactCrop(half, run, positive, missing));
+        assertNull(compactCrop(half, run, positive, wrongDigits));
+        assertNull(compactCrop(half, region(387, 905), positive, positive));
+    }
+
+    private static MeterChangeDetector.Crop compactCrop(
+            MeasureRegion half, MeasureRegion run, byte[] normal, byte[] raw) {
+        return HalfDyadBeforeSixteenthBar.compactInlineTripleCrop(
+                List.of(METER), PRIOR, half, run, normal, raw, WIDTH, HEIGHT, GAP);
+    }
+
+    @Test
     public void requiresCompleteOctaveColumnsAndAllowsMatchedTerminalBeamClaim() {
         var gray = blankStaff(true);
         var notes = new ArrayList<ScoreNoteEvent>();
@@ -85,6 +106,57 @@ public final class InlineTripleBeforeSystemBreakTest {
         assertFalse(qualifies(gray, beamConflict));
         notes.remove(notes.size() - 1);
         assertFalse(qualifies(gray, notes));
+    }
+
+    @Test
+    public void restoresOnlyLowerQuarterOnTwoClosedRailsAndItsSharedShaft() {
+        var gray = blankStaff(true);
+        var notes = new ArrayList<ScoreNoteEvent>();
+        for (int group = 0; group < 3; group++) {
+            int first = 455 + 150 * group;
+            int stem = group == 0 ? 1 : -1;
+            int shaftOffset = 8 * stem;
+            int end = group == 0 ? 58 : 197;
+            for (int attack = 0; attack < 4; attack++) {
+                int x = first + 34 * attack;
+                int shaft = x + shaftOffset;
+                boolean alias = group == 1 && attack == 2;
+                notes.add(head(RUN, 1, x, 7, 2, 0, stem, 0));
+                notes.add(head(RUN, 1, x, 0, alias ? 0 : 2, alias ? 1 : 0, stem, 0));
+                ink(gray, x - 7, x + 7, BOTTOM - 59, BOTTOM - 53);
+                ink(gray, x - 7, x + 7, BOTTOM - 3, BOTTOM + 3);
+                ink(gray, shaft - 1, shaft + 1, Math.min(end, BOTTOM - 56), Math.max(end, BOTTOM));
+            }
+            int left = first + shaftOffset, right = left + 3 * 34;
+            int inner = end + stem * 12;
+            ink(gray, left - 1, right + 1, end - (stem < 0 ? 3 : 0), end + (stem > 0 ? 3 : 0));
+            ink(gray, left - 1, right + 1, inner - 2, inner + 2);
+        }
+
+        assertEquals(notes.get(13), sharedQuarter(notes, gray));
+        var singleRail = gray.clone();
+        erase(singleRail, 633, 643, 182, 189);
+        assertNull(sharedQuarter(notes, singleRail));
+        var disconnected = gray.clone();
+        erase(disconnected, 663, 673, 113, 133);
+        assertNull(sharedQuarter(notes, disconnected));
+        var tied = new ArrayList<>(notes);
+        tied.set(13, notes.get(13).withBoundaryTies(1));
+        assertNull(sharedQuarter(tied, gray));
+    }
+
+    private static ScoreNoteEvent sharedQuarter(List<ScoreNoteEvent> notes, byte[] gray) {
+        return HalfDyadBeforeSixteenthBar.provedCompactTripleQuarter(notes, RUN, gray, WIDTH, HEIGHT);
+    }
+
+    private static void ink(byte[] gray, int left, int right, int top, int bottom) {
+        for (int y = top; y <= bottom; y++)
+            Arrays.fill(gray, y * WIDTH + left, y * WIDTH + right + 1, (byte) 0);
+    }
+
+    private static void erase(byte[] gray, int left, int right, int top, int bottom) {
+        for (int y = top; y <= bottom; y++)
+            Arrays.fill(gray, y * WIDTH + left, y * WIDTH + right + 1, (byte) 255);
     }
 
     private static MeterChangeDetector.Crop crop(byte[] normal, byte[] raw) {

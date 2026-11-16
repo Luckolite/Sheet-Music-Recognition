@@ -1622,6 +1622,7 @@ final class OmrScoreInterpreter {
                                     candidate.component.maxY,
                                     staff.gap))) accidentalInk.add(candidate.component);
         }
+        var dotAccidentalSource = new DotAccidentalSource(labels, annotationGray, localAccidentals);
         List<Component> roundedLedgerGraces =
                 roundedLedgerGraceHeads(labels, gray, width, height, heads, staffs);
         List<Component> bowMarks = new ArrayList<>();
@@ -2289,7 +2290,8 @@ final class OmrScoreInterpreter {
                                     ? hollowSlope
                                     : Float.NaN,
                             rhythmStaff.pitchTrack,
-                            printedPortatoOwners);
+                            printedPortatoOwners,
+                            beamCount == 2 && unbeamedDuration == 0 ? dotAccidentalSource : null);
             if (augmentationDots > 0
                     && beamCount > 0
                     && hasHollowUnisonToRight(labels, gray, width, height, head, heads, staff.gap))
@@ -24835,6 +24837,24 @@ final class OmrScoreInterpreter {
             float sustainedSlope,
             StaffPitchTrack sustainedTrack,
             java.util.Set<Component> portatoOwners) {
+        return countAugmentationDots(candidates, head, gap, gray, width, height, hollowHead,
+                excluded, neighboringHeads, sustainedSlope, sustainedTrack, portatoOwners, null);
+    }
+
+    private static int countAugmentationDots(
+            List<Component> candidates,
+            Component head,
+            float gap,
+            byte[] gray,
+            int width,
+            int height,
+            boolean hollowHead,
+            List<Component> excluded,
+            List<Component> neighboringHeads,
+            float sustainedSlope,
+            StaffPitchTrack sustainedTrack,
+            java.util.Set<Component> portatoOwners,
+            DotAccidentalSource accidentalSource) {
         // Semantic boundaries can cut a tiny round island out of a slur, stem
         // or ledger line. When the page is available, require an isolated raw
         // ink component; the model's artificial boundary is not a printed dot.
@@ -24943,7 +24963,10 @@ final class OmrScoreInterpreter {
                     duplicate = true;
                     break;
                 }
-            if (!duplicate && !graceOwnedDot(gray, width, height, head, dot, gap, neighboringHeads))
+            if (!duplicate
+                    && !graceOwnedDot(gray, width, height, head, dot, gap, neighboringHeads)
+                    && (accidentalSource == null || !followingFlatBowlOwnsDot(
+                            accidentalSource, gray, width, height, dot, gap, neighboringHeads)))
                 aligned.add(dot);
         }
         aligned.sort(Comparator.comparingDouble(Component::centerX));
@@ -24983,6 +25006,36 @@ final class OmrScoreInterpreter {
                                 gray, width, height, head, first, second, neighboringHeads, gap)))
             return 1;
         return doubleDot ? 2 : 1;
+    }
+
+    private record DotAccidentalSource(byte[] labels, byte[] original, List<AccidentalCandidate> candidates) {}
+
+    /** A broken semantic spine can leave the following flat's bowl eligible as a dot. */
+    private static boolean followingFlatBowlOwnsDot(
+            DotAccidentalSource source, byte[] gray, int width, int height,
+            Component dot, float gap, List<Component> heads) {
+        if (source.original == null || source.original.length != (long) width * height || gray == null)
+            return false;
+        int owned = 0;
+        int samples = (dot.maxX - dot.minX + 1) * (dot.maxY - dot.minY + 1);
+        for (int y = dot.minY; y <= dot.maxY; y++)
+            for (int x = dot.minX; x <= dot.maxX; x++)
+                if (source.labels[y * width + x] == OmrMeasurePostProcessor.CLEF_OR_KEY) owned++;
+        if (owned * 2 <= samples) return false;
+        for (var seed : source.candidates) {
+            var bowl = seed.component;
+            if (seed.label != OmrMeasurePostProcessor.CLEF_OR_KEY
+                    || dot.minX < bowl.minX || dot.maxX > bowl.maxX
+                    || dot.minY < bowl.minY || dot.maxY > bowl.maxY) continue;
+            for (var head : heads) {
+                if (bowl.maxX >= head.minX || head.minX - bowl.maxX > gap * .55f
+                        || Math.abs(head.centerY - dot.centerY) > gap * .34f) continue;
+                var candidate = List.of(seed);
+                if (rawFlatFromBowl(gray, width, height, candidate, head, gap)
+                        && rawFlatFromBowl(source.original, width, height, candidate, head, gap)) return true;
+            }
+        }
+        return false;
     }
 
     /** A clipped left vertex of the following harmonic's touch can look like a dot. */
@@ -25769,10 +25822,16 @@ final class OmrScoreInterpreter {
             float near,
             float far,
             double coreFill) {
-        int left = Math.round(head.centerX - gap * .14f);
-        int right = Math.round(head.centerX + gap * .18f);
-        int top = Math.round(head.centerY + gap * near);
-        int bottom = Math.round(head.centerY + gap * far);
+        return centerOwnedLowerStaccato(gray, width, height, head.centerX, head.centerY, gap, near, far, coreFill);
+    }
+
+    static boolean centerOwnedLowerStaccato(
+            byte[] gray, int width, int height, float headX, float headY,
+            float gap, float near, float far, double coreFill) {
+        int left = Math.round(headX - gap * .14f);
+        int right = Math.round(headX + gap * .18f);
+        int top = Math.round(headY + gap * near);
+        int bottom = Math.round(headY + gap * far);
         int core = Math.max(1, Math.round(gap * .095f));
         int ring = Math.max(core + 2, Math.round(gap * .33f));
         if (left < ring || top < ring || right + ring >= width || bottom + ring >= height)
@@ -27516,14 +27575,14 @@ final class OmrScoreInterpreter {
             float gap = staff.gap;
             float extent = fragment.maxX - fragment.minX + 1;
             float heightInGaps = (fragment.maxY - fragment.minY + 1) / gap;
-            if (gap < 10 || extent < gap * 1.28f || extent > gap * 1.55f
+            if (gap < 10 || extent < gap * 1.20f || extent > gap * 1.55f
                     || heightInGaps < .8f || heightInGaps > 1.13f
                     || fragment.area < gap * gap * .84f || fragment.area > gap * gap * 1.10f)
                 continue;
             int[] borrowed = attachedRawStem(gray, width, height, fragment, gap, 2, 170);
             if (borrowed == null || borrowed[2] != -1
                     || fragment.centerY - borrowed[1] < gap * 4.7f
-                    || borrowed[0] - fragment.centerX < gap * .42f
+                    || borrowed[0] - fragment.centerX < gap * .38f
                     || borrowed[0] - fragment.centerX > gap * .69f) continue;
 
             var terminal = new ArrayList<TerminalBeamOwner>(2);
@@ -27542,9 +27601,9 @@ final class OmrScoreInterpreter {
                     continue;
                 float distance = borrowed[0] - stem[0];
                 if (Math.abs(distance) <= gap * .22f) terminal.add(new TerminalBeamOwner(head, stem));
-                else if (distance >= gap * 2.35f && distance <= gap * 3.7f)
+                else if (distance >= gap * 2.10f && distance <= gap * 3.7f)
                     preceding.add(new TerminalBeamOwner(head, stem));
-                else if (distance >= gap * 5.3f && distance <= gap * 6.7f) {
+                else if (distance >= gap * 5.15f && distance <= gap * 6.7f) {
                     if (earlier != null && Math.abs(earlier[0] - stem[0]) > 1)
                         ambiguousEarlier = true;
                     earlier = stem;

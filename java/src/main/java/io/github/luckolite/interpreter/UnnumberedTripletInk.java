@@ -31,6 +31,24 @@ final class UnnumberedTripletInk {
 
     static boolean clear(byte[] ink, int width, int height, float gap,
             float[] headsX, float[] headsY, List<PrintedBeamShafts.Shaft> shafts, Rows sourceRows) {
+        return clear(ink, width, height, gap, headsX, headsY, shafts, sourceRows, null, List.of());
+    }
+
+    static boolean clearWithTrackedStaff(byte[] ink, int width, int height, float gap,
+            float[] headsX, float[] headsY, List<PrintedBeamShafts.Shaft> shafts, Rows sourceRows,
+            StaffPitchTrack staff) {
+        return clearWithTrackedStaff(ink,width,height,gap,headsX,headsY,shafts,sourceRows,staff,List.of());
+    }
+
+    static boolean clearWithTrackedStaff(byte[] ink, int width, int height, float gap,
+            float[] headsX, float[] headsY, List<PrintedBeamShafts.Shaft> shafts, Rows sourceRows,
+            StaffPitchTrack staff, List<PlayingTechniqueDetector.Word> words) {
+        return staff != null && clear(ink,width,height,gap,headsX,headsY,shafts,sourceRows,staff,words);
+    }
+
+    private static boolean clear(byte[] ink, int width, int height, float gap,
+            float[] headsX, float[] headsY, List<PrintedBeamShafts.Shaft> shafts, Rows sourceRows,
+            StaffPitchTrack staffTrack, List<PlayingTechniqueDetector.Word> words) {
         if (ink == null || width < 1 || height < 1 || ink.length != (long) width * height
                 || !Float.isFinite(gap) || gap < 10 || gap > 25
                 || headsX.length != 3 || headsY.length != 3 || shafts.size() != 3) return false;
@@ -52,7 +70,8 @@ final class UnnumberedTripletInk {
         int start = Math.round(top - gap * 7), end = Math.round(bottom + gap * 7);
         int tailRadius = Math.round(gap * 2.5f);
         if (left - tailRadius < 0 || right + tailRadius >= width || start < 0 || end >= height) return false;
-        var window = new Window(ink, width, left, start, right - left + 1, end - start + 1);
+        boolean[] verifiedStaff = trackedStaffMask(ink, width, height, left, right, start, end, staffTrack, gap);
+        var window = new Window(ink, width, left, start, right - left + 1, end - start + 1, verifiedStaff);
         boolean[] staff = window.staffRows(tailRadius, gap);
         for (int x = Math.round(lo + .15f * (hi - lo)); x <= Math.round(lo + .85f * (hi - lo)); x++) {
             float beam = first.endY() + (last.endY() - first.endY()) * (x - lo) / (hi - lo);
@@ -103,6 +122,8 @@ final class UnnumberedTripletInk {
             int inkWidth = maxX - minX + 1, inkHeight = maxY - minY + 1;
             if (markBand && ownedReturningCurve(queue, size, window, minX, maxX, shafts, travel, gap))
                 continue;
+            if (travel > 0 && markBand && ownedBowCaption(
+                    ink,width,height,gap,minX,minY,maxX,maxY,words)) continue;
             if (inkWidth > .58f * gap || inkHeight > .58f * gap || size < .74f * inkWidth * inkHeight)
                 return false;
             boolean dot = false;
@@ -114,6 +135,44 @@ final class UnnumberedTripletInk {
             if (!dot) return false;
         }
         return true;
+    }
+
+    private static boolean ownedBowCaption(
+            byte[] raw, int width, int height, float gap, int minX, int minY, int maxX, int maxY,
+            List<PlayingTechniqueDetector.Word> words) {
+        for (var word : words) {
+            if (!ExpressiveDirectionText.isBowCaption(word.text())) continue;
+            int l = Math.round(word.left() * width), r = Math.round(word.right() * width);
+            int t = Math.round(word.top() * height), b = Math.round(word.bottom() * height);
+            if (l < 0 || r >= width || t < 0 || b >= height
+                    || r-l < gap * 3.2f || r-l > gap * 9 || b-t < gap || b-t > gap * 3
+                    || minX <= l || maxX >= r || minY <= t || maxY >= b) continue;
+            var source = RawNumeralComponents.capture(raw,width,height,l,t,r,b,() -> {},() -> {});
+            int letters = 0;
+            int left = width, right = -1, top = height, bottom = -1;
+            boolean numeral = false;
+            for (var glyph : source.components()) {
+                if (glyph.size() < gap * gap * .08f) continue;
+                letters++;
+                if (glyph.left <= maxX && glyph.right >= minX && glyph.top <= maxY && glyph.bottom >= minY) {
+                    left = Math.min(left, glyph.left);
+                    right = Math.max(right, glyph.right);
+                    top = Math.min(top, glyph.top);
+                    bottom = Math.max(bottom, glyph.bottom);
+                }
+                if (glyph.bottom-glyph.top < gap * .65f || glyph.right-glyph.left > gap * 1.6f)
+                    continue;
+                int[] pixels = java.util.stream.IntStream.range(0,glyph.size()).map(glyph::pixel).toArray();
+                if (TupletNumeralBeamBand.detachedThree(
+                        pixels,width,glyph.left,glyph.top,glyph.right,glyph.bottom,gap)
+                        || TripletRhythmDetector.isIsolatedThree(glyph,width)) numeral = true;
+            }
+            // Thin antialiasing may join two letters. Keep their bounded shared
+            // ink envelope only after ruling out any separate numeral.
+            boolean owns = left <= minX + 1 && right >= maxX - 1 && top <= minY + 1 && bottom >= maxY - 1;
+            if (owns && letters >= 4 && !numeral) return true;
+        }
+        return false;
     }
 
     private static boolean ownedReturningCurve(int[] pixels, int size, Window window, int left, int right,
@@ -151,9 +210,58 @@ final class UnnumberedTripletInk {
         return PrintedSlurContours.completeReturningProfile(low, high, 0, length - 1, gap);
     }
 
-    private record Window(byte[] plane, int stride, int left, int top, int width, int height) {
+    private static boolean[] trackedStaffMask(byte[] raw, int w, int h, int left, int right,
+            int top, int bottom, StaffPitchTrack staff, float gap) {
+        if (staff == null) return null;
+        int step = Math.max(1, Math.round(gap * .22f));
+        int band = Math.max(1, Math.round(gap * .19f));
+        int bridge = Math.round(gap * 2f);
+        int span = right - left + 1;
+        boolean[] mask = new boolean[span * (bottom - top + 1)];
+        for (int x = left; x <= right; x++) {
+            if (!staff.verifiedAt(x)) continue;
+            var frame = staff.at(x);
+            for (int r = 0; r < 5; r++) {
+                int y = Math.round(frame[0] - r * frame[1]);
+                if (y - band < top || y + band > bottom) continue;
+                // Only an independently tracked rule continuous on both sides may hide dark ink.
+                for (int delta = -band; delta <= band; delta++) {
+                    if ((raw[(y + delta) * w + x] & 255) < 205
+                            && continuousStaffRule(raw, w, h, x, step, bridge, staff, r, delta))
+                        mask[(y + delta - top) * span + x - left] = true;
+                }
+            }
+        }
+        return mask;
+    }
+
+    private static boolean continuousStaffRule(byte[] raw, int w, int h, int x, int step, int bridge,
+            StaffPitchTrack staff, int rule, int delta) {
+        for (int direction : new int[]{-1,1}) {
+            int count = 0, dark = 0;
+            for (int d = step; d <= bridge; d += step) {
+                int col = x + d * direction;
+                if (col < 0 || col >= w || !staff.verifiedAt(col)) return false;
+                var frame = staff.at(col);
+                int y = Math.round(frame[0] - rule * frame[1]) + delta;
+                if (y < 1 || y + 1 >= h) return false;
+                count++;
+                for (int yy = y - 1; yy <= y + 1; yy++) {
+                    if ((raw[yy * w + col] & 255) >= 205) continue;
+                    dark++;
+                    break;
+                }
+            }
+            if (dark < count * .88f) return false;
+        }
+        return true;
+    }
+
+    private record Window(byte[] plane, int stride, int left, int top, int width, int height, boolean[] trackedMask) {
         private boolean dark(int x, int y, boolean[] staff) {
-            return !staff[y - top] && (plane[y * stride + x] & 255) < 205;
+            return !staff[y - top]
+                    && (trackedMask == null || !trackedMask[(y - top) * width + x - left])
+                    && (plane[y * stride + x] & 255) < 205;
         }
 
         private boolean[] staffRows(int tail, float gap) {

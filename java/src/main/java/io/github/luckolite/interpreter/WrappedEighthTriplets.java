@@ -163,7 +163,15 @@ final class WrappedEighthTriplets {
             int width,
             int height,
             byte[] labels) {
+        return closeQuarterBeatBars(notes, rests, regions, meters, gray, width, height, labels, null);
+    }
+
+    static List<ScoreNoteEvent> closeQuarterBeatBars(
+            List<ScoreNoteEvent> notes, List<ScoreRestEvent> rests, List<MeasureRegion> regions,
+            List<ScoreMeterChange> meters, byte[] gray, int width, int height,
+            byte[] labels, byte[] original) {
         if (meters.isEmpty() || notes.isEmpty()) return notes;
+        boolean hasOriginal = original != null && original.length == gray.length;
         var bars = new ArrayList<List<Integer>>(regions.size());
         for (int i = 0; i < regions.size(); i++) bars.add(new ArrayList<>());
         for (int i = 0; i < notes.size(); i++) bars.get(notes.get(i).measureIndex()).add(i);
@@ -206,10 +214,36 @@ final class WrappedEighthTriplets {
                 proofNotes.set(lastOwner, ClosingTripletRhythm.singleBeam(last));
             }
             var proof = singleRailGroups(gray, width, height, bar, proofNotes, owners, true);
+            boolean numberedOpening = false;
+            if (proof == null && canUseOpening && hasOriginal && !recoverEndpoint) {
+                var opening = clearBorrowedOpeningStaccatos(
+                        bar, proofNotes, owners, labels, original, width, height);
+                if (opening != proofNotes) {
+                    var verified = singleRailGroups(gray, width, height, bar, opening, owners, true);
+                    if (verified != null
+                            && singleRailGroups(original, width, height, bar, opening, owners, true) != null
+                            && WrappedMeasureBoundaries.confirmsOpeningTripletBar(
+                                    original, width, height, regions, verified.x()[0],
+                                    verified.x()[owners.size() - 1], true)
+                            && MeterFontMatcher.standaloneReadings(
+                                    labels, original, width, height, List.of(bar),
+                                    owners.stream().map(notes::get).toList()).equals(List.of(meter))) {
+                        numberedOpening = true;
+                        proof = verified;
+                        proofNotes = opening;
+                    }
+                }
+            }
             if (proof == null) continue;
             float firstHead = proof.x()[0], lastHead = proof.x()[owners.size() - 1];
-            boolean closed = WrappedMeasureBoundaries.confirmsClosedTripletBar(
+            boolean closed = numberedOpening || WrappedMeasureBoundaries.confirmsClosedTripletBar(
                     gray, width, height, bar, firstHead, lastHead);
+            if (!closed && m > 0 && meter.numerator() == 6 && !recoverEndpoint && hasOriginal)
+                closed = WrappedMeasureBoundaries.confirmsPocketClosedTripletBar(
+                                gray, width, height, regions.get(m - 1), bar, firstHead, lastHead)
+                        && WrappedMeasureBoundaries.confirmsPocketClosedTripletBar(
+                                original, width, height, regions.get(m - 1), bar, firstHead, lastHead)
+                        && singleRailGroups(original, width, height, bar, proofNotes, owners, true) != null;
             if (recoverEndpoint || !closed) {
                 if (canUseOpening) {
                     if (!WrappedMeasureBoundaries.confirmsOpeningTripletBar(
@@ -252,10 +286,246 @@ final class WrappedEighthTriplets {
             if (result == notes) result = new ArrayList<>(notes);
             for (int i : owners) {
                 var n = proofNotes.get(i);
-                if (n.tupletDivisor() != 3) result.set(i, n.withTupletRatio(3, 2));
+                if (n.tupletDivisor() != 3) n = n.withTupletRatio(3, 2);
+                if (n != notes.get(i)) result.set(i, n);
             }
         }
         return result == notes ? notes : List.copyOf(result);
+    }
+
+    private static List<ScoreNoteEvent> clearBorrowedOpeningStaccatos(
+            MeasureRegion bar, List<ScoreNoteEvent> notes, List<Integer> indexes,
+            byte[] labels, byte[] original, int width, int height) {
+        var order = indexes.stream()
+                .sorted(Comparator.comparingDouble(i -> notes.get(i).positionInMeasure())).toList();
+        var first = notes.get(order.get(0));
+        var middle = notes.get(order.get(1));
+        var last = notes.get(order.get(2));
+        if (first.augmentationDots() != 1 || middle.augmentationDots() != 1 || last.augmentationDots() != 0
+                || first.stemDirection() != 1 || middle.stemDirection() != 1 || last.stemDirection() != 1
+                || (first.articulations() & NoteArticulation.STACCATO) != 0
+                || (middle.articulations() & NoteArticulation.STACCATO) == 0
+                || (last.articulations() & NoteArticulation.STACCATO) == 0
+                || indexes.stream().filter(i -> notes.get(i).augmentationDots() != 0).count() != 2) return notes;
+        float gap = (bar.bottom() - bar.top()) * height / 8.2f;
+        float left = bar.left() * width, span = (bar.right() - bar.left()) * width;
+        float a = left + span * first.positionInMeasure(), b = left + span * middle.positionInMeasure();
+        float c = left + span * last.positionInMeasure();
+        float ay = first.pageY() * height, by = middle.pageY() * height, cy = last.pageY() * height;
+        if (gap < 10 || gap > 25 || ay - by < gap * .7f || ay - by > gap * 1.3f
+                || by - cy < gap * .7f || by - cy > gap * 1.3f
+                || !OmrScoreInterpreter.centerOwnedLowerStaccato(original,width,height,b,by,gap,1.14f,1.62f,.68)
+                || !OmrScoreInterpreter.centerOwnedLowerStaccato(original,width,height,c,cy,gap,1.14f,1.62f,.68))
+            return notes;
+        var dot = WrappedTripletDotInk.uniqueCore(original, width, height, a, ay, b, gap);
+        if (dot != null && !headConnectedLedger(original, width, height, a, ay, dot, gap)) return notes;
+        if (WrappedTripletDotInk.uniqueCore(original, width, height, b, by, c, gap) != null)
+            return notes;
+        if (!ownedOpeningNumeral(original, labels, width, height, b, by, gap)) return notes;
+        var edited = new ArrayList<>(notes);
+        edited.set(order.get(0), withoutDots(first));
+        edited.set(order.get(1), withoutDots(middle));
+        return edited;
+    }
+
+    static boolean ownedOpeningNumeral(
+            byte[] original, byte[] labels, int width, int height, float middleX, float middleY, float gap) {
+        var shaft = PrintedBeamShafts.at(original, width, height, middleX, middleY, gap,
+                new PrintedBeamShafts.Budget(100_000));
+        if (shaft.size() != 1 || shaft.get(0).direction() != -1) return false;
+        int tip = shaft.get(0).endY();
+        int left = Math.max(0, Math.round(middleX - 1.0f * gap));
+        int right = Math.min(width - 1, Math.round(middleX + 1.10f * gap));
+        int top = Math.max(0, Math.round(tip - 2.2f * gap));
+        int bottom = Math.min(height - 1, Math.round(tip - .15f * gap));
+        var ink = RawNumeralComponents.capture(original, width, height, left, top, right, bottom,
+                () -> {}, () -> {});
+        int numberCount = 0;
+        for (var glyph : ink.components()) {
+            if (glyph.top <= top || glyph.bottom >= bottom || glyph.left <= left || glyph.right >= right
+                    || Math.abs((glyph.left + glyph.right) * .5f - middleX) > gap * .4f
+                    || glyph.size() < gap * gap * .19f
+                    || glyph.size() > gap * gap * .8f) continue;
+            int[] pixels = java.util.stream.IntStream.range(0, glyph.size()).map(glyph::pixel).toArray();
+            int symbol = 0;
+            for (int pixel : pixels) if (labels[pixel] == OmrMeasurePostProcessor.SYMBOL) symbol++;
+            if (symbol >= .45f * pixels.length && TupletNumeralBeamBand.detachedThree(
+                    pixels, width, glyph.left, glyph.top, glyph.right, glyph.bottom, gap)) numberCount++;
+        }
+        return numberCount == 1;
+    }
+
+    private static ScoreNoteEvent withoutDots(ScoreNoteEvent n) {
+        return new ScoreNoteEvent(n.measureIndex(), n.positionInMeasure(), n.staffStep(),
+                n.staffIndex(), n.staffCount(), n.pageY(), n.tiedFromPrevious(), 0, n.beamCount(),
+                n.writtenAccidental(), n.unbeamedDurationBeats(), n.tupletDivisor(), n.followingRestBeats(),
+                n.articulations(), n.clefBottomDiatonic(), n.crossStaffBeam(), n.leadingRestBeats(),
+                n.compactOpening(), n.octaveShift(), n.boundaryTies(), n.tupletNormalNotes(),
+                n.stemDirection(), n.kind(), n.visualSize(), n.harmonicSemitones(), n.openStringTouch());
+    }
+
+    static ScorePageInterpretation projectOpenedQuarterTripletBeams(
+            ScorePageInterpretation score, byte[] labels, byte[] corrected, byte[] original,
+            int width, int height, List<PlayingTechniqueDetector.Word> words) {
+        if (original == null || corrected == null || labels == null || original.length != (long) width * height
+                || labels.length != original.length || corrected.length != original.length
+                || score.measures().size() < 2
+                || score.meterChanges().isEmpty()
+                || !score.meterChanges().get(0).equals(new ScoreMeterChange(0, 6, 4))) return score;
+        var scoreNotes = score.notes();
+        var bars = score.measures();
+        var previous = score.beamSource();
+        var opening = fullSixFourTriplets(score, 0, corrected, original, width, height);
+        if (opening == null || !WrappedMeasureBoundaries.confirmsOpeningTripletBar(
+                original, width, height, bars, opening.x()[0], opening.x()[17], true)) return score;
+        var first = bars.get(0);
+        float openingGap = (first.bottom() - first.top()) * height / 8.2f;
+        var middle = scoreNotes.get(opening.owners().get(1));
+        if (!ownedOpeningNumeral(original, labels, width, height, opening.x()[1], middle.pageY() * height,
+                openingGap)) return score;
+        var groups = new ArrayList<>(previous.groups());
+        var firstColumns = existingTripletColumns(previous, opening.owners().subList(0, 3));
+        if (firstColumns.isEmpty()) return score;
+        int firstGroup = groupStartingAt(groups, firstColumns.get(0));
+        if (firstGroup < 0) return score;
+        var owner = groups.get(firstGroup);
+        if (!owner.columns().equals(firstColumns) || !owner.bridges().equals(List.of(1, 1))
+                || !owner.hooks().isEmpty() || owner.tupletMark() == ScoreBeamSource.TupletMark.UNNUMBERED)
+            return score;
+        if (owner.tupletMark() == null) groups.set(firstGroup, new ScoreBeamSource.Group(
+                owner.id(), owner.columns(), owner.bridges(), owner.hooks(), ScoreBeamSource.TupletMark.NUMBERED));
+
+        // A shortened source record can end before the verified terminal stem of the following bar.
+        var following = fullSixFourTriplets(score, 1, corrected, original, width, height);
+        if (following != null
+                && score.meterChanges().stream().noneMatch(m -> m.measureIndex() == 1)
+                && WrappedMeasureBoundaries.confirmsPocketClosedTripletBar(
+                        corrected, width, height, first, bars.get(1), following.x()[0], following.x()[17])
+                && WrappedMeasureBoundaries.confirmsPocketClosedTripletBar(
+                        original, width, height, first, bars.get(1), following.x()[0], following.x()[17])) {
+            var tail = existingTripletColumns(previous, following.owners().subList(15, 18));
+            if (!tail.isEmpty()) {
+                int tailGroup = groupStartingAt(groups, tail.get(0));
+                var free = tail.get(2).members().get(0);
+                if (tailGroup >= 0 && !hasBeamOwner(previous, free)) {
+                    var partial = groups.get(tailGroup);
+                    if (partial.columns().equals(tail.subList(0, 2))
+                            && partial.bridges().equals(List.of(1)) && partial.hooks().isEmpty()) {
+                        groups.set(tailGroup, new ScoreBeamSource.Group(partial.id(), tail, List.of(1, 1), List.of()));
+                    }
+                }
+            }
+        }
+        markUnnumberedTripletGroups(score, groups, original, corrected, width, height, words);
+        return groups.equals(previous.groups()) ? score : score.withBeamSource(
+                new ScoreBeamSource(groups, previous.detachedColumns(), previous.noteOrigins()));
+    }
+
+    private static void markUnnumberedTripletGroups(
+            ScorePageInterpretation score, List<ScoreBeamSource.Group> groups, byte[] original,
+            byte[] corrected, int width, int height, List<PlayingTechniqueDetector.Word> words) {
+        var bars = score.measures();
+        var source = score.beamSource();
+        var notes = score.notes();
+        int meterChange = bars.size();
+        if (score.meterChanges().size() > 1) meterChange = score.meterChanges().get(1).measureIndex();
+        for (int m = 0; m < meterChange; m++) {
+            var proof = fullSixFourTriplets(score, m, corrected, original, width, height);
+            if (proof == null) continue;
+            var bar = bars.get(m);
+            float gap = (bar.bottom() - bar.top()) * height / 8.2f;
+            var rows = UnnumberedTripletInk.sourceRows(bar, bars, height);
+            StaffPitchTrack local = null, broad = null;
+            boolean fitted = false;
+            var budget = new PrintedBeamShafts.Budget(800_000);
+            PrintedBeamShaftPixels.Frame contrast = null;
+            for (int i = 0; i < 18; i += 3) {
+                var owners = proof.owners().subList(i, i + 3);
+                var expected = existingTripletColumns(source, owners);
+                if (expected.isEmpty()) continue;
+                int groupIndex = groupStartingAt(groups, expected.get(0));
+                if (groupIndex < 0) continue;
+                var group = groups.get(groupIndex);
+                if (group.tupletMark() != null || !group.columns().equals(expected)
+                        || !group.bridges().equals(List.of(1, 1)) || !group.hooks().isEmpty()) continue;
+                var x = java.util.Arrays.copyOfRange(proof.x(), i, i + 3);
+                var y = new float[3];
+                var shafts = new ArrayList<PrintedBeamShafts.Shaft>(3);
+                for (int n = 0; n < 3; n++) {
+                    var note = notes.get(owners.get(n));
+                    y[n] = note.pageY() * height;
+                    var possible = PrintedBeamShafts.at(original, width, height, x[n], y[n], gap, budget);
+                    if (possible.isEmpty() && !budget.refused()) {
+                        if (contrast == null) contrast = new PrintedBeamShaftPixels.Frame(
+                                original, original, width, height, 0,
+                                units -> { if (!budget.take(units)) throw new ShaftQuotaExceeded(); }, true);
+                        try {
+                            possible = PrintedBeamShafts.at(
+                                    original, width, height, x[n], y[n], gap, budget, contrast);
+                        } catch (ShaftQuotaExceeded exhausted) {
+                            break;
+                        }
+                    }
+                    if (possible.size() != 1 || possible.get(0).direction() != -note.stemDirection()) break;
+                    shafts.add(possible.get(0));
+                }
+                if (shafts.size() != 3) continue;
+                boolean clear = UnnumberedTripletInk.clear(original, width, height, gap, x, y, shafts, rows);
+                if (!clear) {
+                    if (!fitted) {
+                        fitted = true;
+                        local = WrappedMeasureBoundaries.verifiedTripletStaff(original, width, height, bar);
+                        float top = bar.top() * height + 2.1f * gap;
+                        float bottom = bar.bottom() * height - 2.1f * gap;
+                        broad = StaffPitchTrack.forPrintedSlurs(original, width, height, top, bottom, gap);
+                    }
+                    clear = UnnumberedTripletInk.clearWithTrackedStaff(
+                                    original, width, height, gap, x, y, shafts, rows, local, words)
+                            || UnnumberedTripletInk.clearWithTrackedStaff(
+                                    original, width, height, gap, x, y, shafts, rows, broad, words);
+                }
+                if (clear) groups.set(groupIndex, new ScoreBeamSource.Group(
+                        group.id(), group.columns(), group.bridges(), group.hooks(), ScoreBeamSource.TupletMark.UNNUMBERED));
+            }
+        }
+    }
+
+    private static WrappedTripletMeasure.Half fullSixFourTriplets(
+            ScorePageInterpretation score, int bar, byte[] corrected, byte[] original, int width, int height) {
+        if (score.rests().stream().anyMatch(r -> r.measureIndex() == bar)) return null;
+        var notes = score.notes();
+        var owners = java.util.stream.IntStream.range(0, notes.size())
+                .filter(i -> notes.get(i).measureIndex() == bar).boxed().toList();
+        if (owners.size() != 18 || owners.stream().map(notes::get).anyMatch(n -> n.beamCount() != 1
+                || n.tupletDivisor() != 3 || n.tupletNormalNotes() != 2)) return null;
+        var region = score.measures().get(bar);
+        var proof = singleRailGroups(corrected, width, height, region, notes, owners, true);
+        return proof != null && singleRailGroups(original, width, height, region, notes, owners, true) != null
+                ? proof : null;
+    }
+
+    private static List<ScoreBeamSource.Column> existingTripletColumns(
+            ScoreBeamSource source, List<Integer> owners) {
+        var columns = new ArrayList<ScoreBeamSource.Column>(3);
+        for (int i : owners) {
+            var anchor = source.noteOrigins().get(i);
+            if (anchor.isEmpty() || java.util.Collections.frequency(source.noteOrigins(), anchor) != 1)
+                return List.of();
+            columns.add(new ScoreBeamSource.Column(List.of(anchor.get())));
+        }
+        return List.copyOf(columns);
+    }
+
+    private static int groupStartingAt(List<ScoreBeamSource.Group> groups, ScoreBeamSource.Column column) {
+        for (int i = 0; i < groups.size(); i++)
+            if (groups.get(i).columns().get(0).equals(column)) return i;
+        return -1;
+    }
+
+    private static boolean hasBeamOwner(ScoreBeamSource beamSource, ScoreBeamSource.Anchor owner) {
+        if (beamSource.detachedColumns().stream().anyMatch(c -> c.members().contains(owner))) return true;
+        return beamSource.groups().stream()
+                .flatMap(g -> g.columns().stream()).anyMatch(c -> c.members().contains(owner));
     }
 
     record AccidentalTripletBars(ScorePageInterpretation score, List<ScoreNoteEvent> sharpOwners) {}

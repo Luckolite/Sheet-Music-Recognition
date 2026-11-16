@@ -46,6 +46,36 @@ public final class BeamedFlatBarlineTest {
     }
 
     @Test
+    public void tallOctavesNearAProposedDividerRequireBothRailCores() {
+        var plate = new Plate();
+        Arrays.fill(plate.gray, (byte) 255);
+        var a = new BeamedFlatBarline.Dyad(84, 110, 166);
+        var b = new BeamedFlatBarline.Dyad(120, 111, 167);
+        for (int x = 74; x <= 110; x++) {
+            int tip = 229 + Math.round((x - 74) * .08f);
+            plate.ink(x, x, tip - 7, tip - 3, (byte) 5);
+            plate.ink(x, x, tip - 19, tip - 15, (byte) 5);
+        }
+        plate.ink(74, 76, 110, 227, (byte) 1);
+        plate.ink(110, 112, 111, 230, (byte) 1);
+        plate.head(84, 110);
+        plate.head(84, 166);
+        plate.head(120, 111);
+        plate.head(120, 167);
+        assertTrue(tallSeam(plate, 83, a, b));
+        assertFalse(tallSeam(plate, 76, a, b));
+        for (int y = 209; y <= 224; y++)
+            Arrays.fill(plate.gray, y * WIDTH + 82, y * WIDTH + 91, (byte) 255);
+        assertFalse(tallSeam(plate, 83, a, b));
+    }
+
+    private static boolean tallSeam(
+            Plate plate, int seam, BeamedFlatBarline.Dyad a, BeamedFlatBarline.Dyad b) {
+        return BeamedFlatBarline.joinedByTwoShaftsAndRails(
+                plate.gray, WIDTH, HEIGHT, seam, a, b, GAP);
+    }
+
+    @Test
     public void fittingFlatMustOwnIndependentInkBeforeTheNextShaft() {
         int x = 102;
         float noteY = 175;

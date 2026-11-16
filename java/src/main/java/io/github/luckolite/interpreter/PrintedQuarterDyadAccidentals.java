@@ -51,6 +51,12 @@ final class PrintedQuarterDyadAccidentals {
             MeasureRegion measure,
             MeasureRegion next,
             List<ScoreNoteEvent> chord) {
+        return provesClosedTripleSystemEnd(labels, gray, width, height, measure, next, chord, false);
+    }
+
+    static boolean provesClosedTripleSystemEnd(
+            byte[] labels, byte[] gray, int width, int height, MeasureRegion measure,
+            MeasureRegion next, List<ScoreNoteEvent> chord, boolean octaveBeforeCommon) {
         if (gray == null
                 || labels == null
                 || gray.length != (long) width * height
@@ -74,13 +80,17 @@ final class PrintedQuarterDyadAccidentals {
         float ax = left + span * upper.positionInMeasure(),
                 bx = left + span * lower.positionInMeasure();
         float ay = upper.pageY() * height, by = lower.pageY() * height;
+        float minSpan = octaveBeforeCommon ? 5.3f : 5.5f;
+        float minHeight = octaveBeforeCommon ? 3.2f : .7f;
+        float maxHeight = octaveBeforeCommon ? 3.75f : 3.0f;
         if (gap < 8
                 || gap > 28
-                || span < gap * 5.5f
+                || span < gap * minSpan
                 || span > gap * 9.4f
                 || Math.abs(ax - bx) > gap * .3f
-                || by - ay < gap * .7f
-                || by - ay > gap * 3.0f
+                || by - ay < gap * minHeight
+                || by - ay > gap * maxHeight
+                || octaveBeforeCommon && (upper.staffStep() - lower.staffStep() != 7 || next == null)
                 || upper.positionInMeasure() < .25f
                 || lower.positionInMeasure() > .67f) return false;
         float hint = measure.bottom() * height - gap * 2.1f;
@@ -102,13 +112,16 @@ final class PrintedQuarterDyadAccidentals {
                     PrintedCadenceDurations.boundaryColumn(
                             gray, width, staff, right + .35f * gap, false, true);
         if (closing < 0) {
+            if (octaveBeforeCommon) return false;
             closing =
                     PrintedCadenceDurations.boundaryColumn(gray, width, staff, right, true, false);
             if (closing < 0
                     || !PrintedCadenceDurations.terminalSingleRule(
                             gray, width, height, closing, staff)) return false;
         }
-        if (opening < 0 || ax - opening < gap * 2.5f || closing - ax < gap * 2.5f) return false;
+        float rightClearance = octaveBeforeCommon ? 2.0f : 2.5f;
+        if (opening < 0 || ax - opening < gap * 2.5f || closing - ax < gap * rightClearance)
+            return false;
         return ownedPair(
                 labels,
                 gray,

@@ -70,13 +70,18 @@ final class BeamedFlatBarline {
             if (left.cadenceQuarterBeats() != 0
                     || right.cadenceQuarterBeats() != 0
                     || shortWidth < 20
-                    || shortWidth > longWidth * .19f
                     || cutWidth <= 0
                     || cutWidth > shortWidth * .55f
                     || Math.abs(left.top() - right.top()) * height > cutWidth * .3f
                     || Math.abs(left.bottom() - right.bottom()) * height > cutWidth * .3f) continue;
             if (staffs == null) staffs = RawStaffLineDetector.detect(raw, width, height);
-            var staff = ledgerStaff(staffs, left, shortWidth, longWidth, cutWidth, height);
+            var staff =
+                    shortWidth <= longWidth * .19f
+                            ? ledgerStaff(staffs, left, shortWidth, longWidth, cutWidth, height)
+                            : null;
+            boolean completeRun = staff == null;
+            if (completeRun)
+                staff = tallOctaveStaff(staffs, left, right, shortWidth, cutWidth, width, height);
             if (staff == null) continue;
             var bar =
                     new MeasureRegion(
@@ -86,7 +91,10 @@ final class BeamedFlatBarline {
                             Math.max(left.bottom(), right.bottom()));
             boolean confirmed =
                     undivided(gray, raw, width, height, left, right, staff)
-                            && (atOpening
+                            && (completeRun
+                                    ? provesContinuousOctaveSeam(
+                                            labels, gray, raw, width, height, left, right, bar, staff)
+                                    : atOpening
                                     ? provesLedgerOctaveOpening(
                                             labels, gray, raw, width, height, left, right, bar,
                                             staff)
@@ -138,6 +146,87 @@ final class BeamedFlatBarline {
             staff = candidate;
         }
         return staff;
+    }
+
+    private static RawStaffLineDetector.StaffLines tallOctaveStaff(
+            List<RawStaffLineDetector.StaffLines> candidates,
+            MeasureRegion left, MeasureRegion right, float shortWidth, float seam,
+            int width, int height) {
+        RawStaffLineDetector.StaffLines result = null;
+        float span = (right.right() - left.left()) * width;
+        for (var staff : candidates) {
+            float gap = staff.gap(), padding = left.bottom() * height - staff.bottom();
+            if (gap < 10 || gap > 26 || padding < 1.65f * gap || padding > 2.55f * gap
+                    || staff.top() - left.top() * height < 5.5f * gap
+                    || shortWidth < 4.4f * gap || seam < .75f * gap || seam > 1.3f * gap
+                    || span < 26 * gap || span > 35 * gap) continue;
+            if (result != null) return null;
+            result = staff;
+        }
+        return result;
+    }
+
+    private static boolean provesContinuousOctaveSeam(
+            byte[] labels, byte[] gray, byte[] raw, int width, int height,
+            MeasureRegion left, MeasureRegion right, MeasureRegion bar,
+            RawStaffLineDetector.StaffLines staff) {
+        var analyzed = OmrScoreInterpreter.analyze(labels, gray, width, height, List.of(bar), raw);
+        if (!analyzed.rests().isEmpty() || analyzed.notes().size() != 24) return false;
+        var notes = analyzed.notes().stream()
+                .sorted(java.util.Comparator.comparingDouble(ScoreNoteEvent::positionInMeasure))
+                .toList();
+        float gap = staff.gap(), span = (bar.right() - bar.left()) * width;
+        var columns = new ArrayList<Dyad>(12);
+        var downstem = new ArrayList<Boolean>(12);
+        int irregular = 0;
+        for (int i = 0; i < notes.size(); i += 2) {
+            var a = notes.get(i);
+            var b = notes.get(i + 1);
+            float x = (bar.left() + (bar.right() - bar.left()) * a.positionInMeasure()) * width;
+            float aY = a.pageY() * height, bY = b.pageY() * height;
+            if (!octaveSeamHead(a) || !octaveSeamHead(b)
+                    || Math.abs(a.staffStep() - b.staffStep()) != 7
+                    || (b.positionInMeasure() - a.positionInMeasure()) * span > .22f * gap)
+                return false;
+            if (!columns.isEmpty()) {
+                float advance = x - columns.get(columns.size() - 1).x();
+                if (advance < 1.4f * gap || advance > 3.5f * gap) return false;
+            }
+            final boolean sixteenth = a.beamCount() == 2 && b.beamCount() == 2
+                    && a.stemDirection() != 0 && a.stemDirection() == b.stemDirection();
+            if (!sixteenth && ++irregular > 1) return false;
+            columns.add(new Dyad(x, Math.min(aY, bY), Math.max(aY, bY)));
+            downstem.add(sixteenth && a.stemDirection() == -1);
+        }
+        float start = left.right() * width, end = right.left() * width;
+        int cut = Math.round((start + end) * .5f);
+        for (int i = 0; i + 1 < columns.size(); i++) {
+            var a = columns.get(i);
+            var b = columns.get(i + 1);
+            if (!downstem.get(i) || !downstem.get(i + 1) || a.x() > end || b.x() < end
+                    || cut - a.x() > 2.8f * gap || b.x() - cut > 2.8f * gap
+                    || Math.min(a.upper(), b.upper()) >= staff.top() - .75f * gap) continue;
+            if (joinedByTwoShaftsAndRails(gray, width, height, cut, a, b, gap)
+                    && joinedByTwoShaftsAndRails(raw, width, height, cut, a, b, gap))
+                return true;
+        }
+        return false;
+    }
+
+    private static boolean octaveSeamHead(ScoreNoteEvent note) {
+        return note.kind() == ScoreNoteEvent.Kind.PITCHED
+                && note.staffIndex() == 0 && note.staffCount() == 1
+                && note.visualSize() == ScoreNoteEvent.VisualSize.FULL
+                && note.augmentationDots() == 0 && note.tupletDivisor() == 1
+                && !note.crossStaffBeam() && (note.articulations() & NoteOrnament.GRACE) == 0;
+    }
+
+    static boolean joinedByTwoShaftsAndRails(
+            byte[] gray, int width, int height, int cut, Dyad a, Dyad b, float gap) {
+        var first = sharedDownstem(gray, width, height, a, gap);
+        var second = sharedDownstem(gray, width, height, b, gap);
+        return first != null && second != null
+                && continuesAcross(gray, width, height, cut, first, second, gap, -1, .20f);
     }
 
     private static boolean undivided(
@@ -679,9 +768,15 @@ final class BeamedFlatBarline {
             PairedTremoloInk.Stem right,
             float gap,
             int direction) {
+        return continuesAcross(gray, width, height, column, left, right, gap, direction, .52f);
+    }
+
+    private static boolean continuesAcross(
+            byte[] gray, int width, int height, int column, PairedTremoloInk.Stem left,
+            PairedTremoloInk.Stem right, float gap, int direction, float seamMargin) {
         int inset = Math.round(gap * .28f);
         int start = left.x() + inset, end = right.x() - inset;
-        if (column - start < gap * .52f || end - column < gap * .52f) return false;
+        if (column - start < gap * seamMargin || end - column < gap * seamMargin) return false;
         float slope = (right.endY() - left.endY()) / (float) (right.x() - left.x());
         if (Math.abs(slope) > .26f) return false;
         int radius = Math.max(1, Math.round(gap * .13f)), samples = end - start + 1;

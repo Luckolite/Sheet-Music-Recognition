@@ -200,6 +200,42 @@ final class WrappedMeasureBoundaries {
         return strokes == 1;
     }
 
+    /** Use the measured separator between neighboring boxes when the left crop hides its inset. */
+    static boolean confirmsPocketClosedTripletBar(
+            byte[] gray, int width, int height, MeasureRegion preceding, MeasureRegion region,
+            float firstHead, float lastHead) {
+        var prior = box(preceding, width, height);
+        var bar = box(region, width, height);
+        if (prior == null || bar == null) return false;
+        var staff = track(gray, width, height, bar);
+        if (staff == null) return false;
+        float gap = staff.at(firstHead)[1];
+        float inset = firstHead - bar.left;
+        if (!sameRow(prior, bar, gap)
+                || !boundaryPocket(prior.right, bar.left, gap)
+                || inset < gap * .6f || inset >= gap * .88f
+                || bar.right - lastHead < gap * 1.2f
+                || !unownedClosedEdge(gray, width, height, staff, bar.right, lastHead, false, gap))
+            return false;
+        int begin = Math.max(0, Math.round(prior.right - gap * .16f));
+        int end = Math.min(width - 1, Math.round(bar.left + gap * .10f));
+        int consecutive = 0;
+        for (int x = begin; x <= end; x++) {
+            if (firstHead - x < gap * 1.08f
+                    || !independentRuleColumn(gray, width, height, staff, x, gap, .92f)) {
+                consecutive = 0;
+                continue;
+            }
+            if (++consecutive >= Math.max(2, Math.round(gap * .15f))) return true;
+        }
+        return false;
+    }
+
+    static StaffPitchTrack verifiedTripletStaff(byte[] source, int width, int height, MeasureRegion region) {
+        var bar = box(region, width, height);
+        return bar == null ? null : track(source, width, height, bar);
+    }
+
     static boolean confirmsInitialStaffBar(
             byte[] gray,int width,int height,List<MeasureRegion> regions,int index,
             float firstHead,float lastHead) {

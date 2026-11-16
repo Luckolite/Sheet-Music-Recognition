@@ -580,7 +580,8 @@ public final class SheetInterpreter {
                         gray,
                         width,
                         height,
-                        labels);
+                        labels,
+                        annotationGray);
         closedTriplets =
                 ClosedOctaveTripletBars.apply(
                         closedTriplets,
@@ -774,6 +775,8 @@ public final class SheetInterpreter {
                             staffs,
                             physicalPage,
                             phrasePending);
+        finalInterpretation = WrappedEighthTriplets.projectOpenedQuarterTripletBeams(
+                finalInterpretation, labels, gray, annotationGray, width, height, words);
         finalInterpretation = harmonicTriplets.projectBeams(finalInterpretation, physicalPage);
         finalInterpretation = mixedBeamTransition.projectBeams(finalInterpretation, physicalPage);
         var accidentalTriplets =
@@ -824,7 +827,8 @@ public final class SheetInterpreter {
                         annotationGray,
                         width,
                         height);
-        finalInterpretation = harmonicTail.score();
+        finalInterpretation = HalfDyadBeforeSixteenthBar.restoreCompactTripleQuarter(
+                harmonicTail.score(), gray, annotationGray, width, height);
         finalInterpretation =
                 finalInterpretation.withClockContextSource(
                         ScoreClockContextCapture.capture(

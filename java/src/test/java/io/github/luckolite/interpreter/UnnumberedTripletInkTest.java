@@ -59,6 +59,45 @@ public class UnnumberedTripletInkTest {
         assertFalse(UnnumberedTripletInk.clear(paper, WIDTH, HEIGHT, GAP, X, Y, SHAFTS, rows));
     }
 
+    @Test public void trackedStaffIgnoresOnlyContinuousPrintedRules() {
+        var paper = clearBeam();
+        float slope = .06f;
+        for (int x = 36; x <= 222; x++) {
+            int lowest = Math.round(223 + (x - 120) * slope);
+            for (int rail = 0; rail < 5; rail++)
+                for (int dy = -1; dy <= 1; dy++)
+                    paper[(lowest - rail * 16 + dy) * WIDTH + x] = 0;
+        }
+        var verified = StaffPitchTrack.fromVerifiedSamples(List.of(
+                new float[] {36, 223 - 84 * slope, GAP},
+                new float[] {222, 223 + 102 * slope, GAP}));
+        var page = new UnnumberedTripletInk.Rows(0, HEIGHT - 1);
+        assertFalse(clear(paper));
+        assertTrue(UnnumberedTripletInk.clearWithTrackedStaff(
+                paper, WIDTH, HEIGHT, GAP, X, Y, SHAFTS, page, verified));
+
+        var marked = paper.clone();
+        bracket(marked, 111);
+        assertFalse(UnnumberedTripletInk.clearWithTrackedStaff(
+                marked, WIDTH, HEIGHT, GAP, X, Y, SHAFTS, page, verified));
+
+        var printedThree = paper.clone();
+        paint(printedThree, 116, 179, ".#####.", "##...##", ".....##", "....##.",
+                "...###.", "....##.", ".....##", ".....##", "##...##", ".#####.");
+        assertFalse(UnnumberedTripletInk.clearWithTrackedStaff(
+                printedThree, WIDTH, HEIGHT, GAP, X, Y, SHAFTS, page, verified));
+    }
+
+    @Test public void isolatedBracketCannotBecomeAStaffRuleByProjectionAlone() {
+        var paper = clearBeam();
+        bracket(paper, 207);
+        var assumed = StaffPitchTrack.fromVerifiedSamples(List.of(
+                new float[] {36, 207, GAP}, new float[] {220, 207, GAP}));
+        var page = new UnnumberedTripletInk.Rows(0, HEIGHT - 1);
+        assertFalse(UnnumberedTripletInk.clearWithTrackedStaff(
+                paper, WIDTH, HEIGHT, GAP, X, Y, SHAFTS, page, assumed));
+    }
+
     private static void bracket(byte[] paper, int y) {
         Arrays.fill(paper,y * WIDTH + 91,y * WIDTH + 111,(byte) 0);
         Arrays.fill(paper,y * WIDTH + 131,y * WIDTH + 152,(byte) 0);
