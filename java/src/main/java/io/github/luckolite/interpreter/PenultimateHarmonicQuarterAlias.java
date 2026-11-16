@@ -24,6 +24,8 @@ final class PenultimateHarmonicQuarterAlias {
         var bar = score.measures().get(barIndex);
         var next = score.measures().get(barIndex + 1);
         if (bar.cadenceQuarterBeats() != 0) return score;
+        var detached = removeTouchHalf(score, source, decoder, width, height, barIndex);
+        if (detached != score) return detached;
         float left = bar.left() * width, span = (bar.right() - bar.left()) * width;
         var owners = new ArrayList<Owner>(4);
         for (int i = 0; i < score.notes().size(); i++) {
@@ -60,6 +62,104 @@ final class PenultimateHarmonicQuarterAlias {
             sourceOwners.add(i);
         }
         return score.withNotes(notes, sourceOwners);
+    }
+
+    private static ScorePageInterpretation removeTouchHalf(
+            ScorePageInterpretation score, byte[] source, byte[] decoder, int width, int height, int index) {
+        var bars = score.measures();
+        var bar = bars.get(index);
+        var previous = bars.get(index - 1);
+        var next = bars.get(index + 1);
+        float nominal = (bar.bottom() - bar.top()) * height / 8.2f;
+        float left = bar.left() * width, span = bar.right() * width - left;
+        if (nominal < 9 || nominal > 26 || span < nominal * 8.5f || span > nominal * 11.9f
+                || Math.abs(bar.top() - next.top()) * height > nominal * .24f
+                || Math.abs(bar.top() - previous.top()) * height > nominal * .24f) return score;
+        var heads = new ArrayList<Owner>(6);
+        for (int i = 0; i < score.notes().size(); i++) {
+            var n = score.notes().get(i);
+            if (n.measureIndex() != index) continue;
+            if (heads.size() == 6) return score;
+            heads.add(new Owner(i, n, left + n.positionInMeasure() * span, n.pageY() * height));
+        }
+        if (heads.size() != 6) return score;
+        heads.sort(Comparator.comparingDouble(Owner::x));
+        if (heads.get(2).x() - heads.get(0).x() > nominal * .22f
+                || heads.get(5).x() - heads.get(3).x() > nominal * .22f
+                || heads.get(3).x() - heads.get(2).x() < nominal * 3.5f) return score;
+        var right = new ArrayList<>(heads.subList(3, 6));
+        right.sort(Comparator.comparingDouble(Owner::y));
+        var upper = right.get(0);
+        var alias = right.get(1);
+        var lower = right.get(2);
+        if (!quarterStop(upper.note()) || !quarterStop(lower.note()) || !plain(alias.note())
+                || alias.note().unbeamedDurationBeats() != 2 || alias.note().beamCount() != 0
+                || alias.note().stemDirection() != 1 || alias.note().octaveShift() != 0
+                || upper.note().stemDirection() != 1 || lower.note().stemDirection() != 1
+                || upper.note().staffStep() - lower.note().staffStep() != 5
+                || alias.note().staffStep() - lower.note().staffStep() != 3
+                || heads.subList(0, 3).stream().filter(o -> quarter(o.note())).count() != 2
+                || hasBeamOwner(score, alias.index())) return score;
+        if (!provedRightTouch(source, width, height, previous, bar, next, upper, alias, lower, nominal)
+                || !provedRightTouch(decoder, width, height, previous, bar, next, upper, alias, lower, nominal))
+            return score;
+        var retained = new ArrayList<ScoreNoteEvent>(score.notes().size() - 1);
+        var sourceOwners = new ArrayList<Integer>(score.notes().size() - 1);
+        for (int i = 0; i < score.notes().size(); i++) {
+            if (i == alias.index()) continue;
+            retained.add(score.notes().get(i));
+            sourceOwners.add(i);
+        }
+        return score.withNotes(retained, sourceOwners);
+    }
+
+    private static boolean quarterStop(ScoreNoteEvent n) {
+        return quarter(n) && n.kind() == ScoreNoteEvent.Kind.PITCHED
+                && n.visualSize() == ScoreNoteEvent.VisualSize.FULL
+                && n.staffIndex() == 0 && n.staffCount() == 1
+                && n.clefBottomDiatonic() == ScoreNoteEvent.CLEF_TREBLE
+                && n.augmentationDots() == 0 && n.tupletDivisor() == 1 && !n.crossStaffBeam()
+                && n.boundaryTies() == 0 && n.openStringTouch() == null
+                && n.leadingRestBeats() == 0 && n.followingRestBeats() == 0
+                && (n.articulations() & NoteOrnament.GRACE) == 0;
+    }
+
+    private static boolean provedRightTouch(
+            byte[] gray, int width, int height, MeasureRegion previous, MeasureRegion bar,
+            MeasureRegion next, Owner upper, Owner alias, Owner lower, float nominal) {
+        if (gray == null || gray.length != (long) width * height) return false;
+        var rails = PrintedDirectionStaff.printedRules(
+                gray, width, height, (bar.left() + bar.right()) * width * .5f,
+                bar.bottom() * height - nominal * 2.1f, nominal);
+        if (rails == null) return false;
+        float gap = rails[1];
+        var staff = new PlayingTechniqueDetector.Staff(rails[0] - 4 * gap, rails[0], gap, 0, 1);
+        if (Math.abs(upper.y() - (rails[0] - upper.note().staffStep() * gap * .5f)) > gap * .35f
+                || Math.abs(lower.y() - (rails[0] - lower.note().staffStep() * gap * .5f)) > gap * .35f
+                || Math.abs((lower.y() - alias.y()) - 1.5f * gap) > gap * .32f
+                || !filled(gray, width, height, upper, gap) || !filled(gray, width, height, lower, gap)
+                || !openCounter(gray, width, alias, gap)
+                || !ClosedSixteenthPairBeforeHalf.ownedSeparator(gray,width,height,staff,
+                        (previous.right() + bar.left()) * width * .5f)
+                || !ClosedSixteenthPairBeforeHalf.ownedSeparator(gray,width,height,staff,
+                        (bar.right() + next.left()) * width * .5f)) return false;
+        var budget = new PrintedBeamShafts.Budget(72_000);
+        var u = shaft(gray, width, height, upper, gap, budget);
+        var l = shaft(gray, width, height, lower, gap, budget);
+        if (u == null || l == null || u.direction() != -1 || l.direction() != -1) return false;
+        for (int stem = Math.max(u.left(), l.left()); stem <= Math.min(u.right(), l.right()); stem++) {
+            int end = Math.max(u.endY(), l.endY());
+            if (Math.abs(u.endY() - l.endY()) > gap * .15f
+                    || !solidShaft(gray, width, height, stem, end, lower.y(), gap)
+                    || !ArtificialHarmonics.unflaggedQuarterTip(
+                            gray, width, height, stem, upper.y() - 1.5f * gap, upper.y(), end, 1, staff)
+                    || !ArtificialHarmonics.shaftCrossedDiamond(
+                            gray, width, height, upper.x(), upper.y() - 1.5f * gap, gap, stem, 1, true))
+                continue;
+            if (ArtificialHarmonics.shaftCrossedDiamond(
+                    gray, width, height, alias.x(), alias.y(), gap, stem, 1, true)) return true;
+        }
+        return false;
     }
 
     private static boolean hasBeamOwner(ScorePageInterpretation score, int slot) {

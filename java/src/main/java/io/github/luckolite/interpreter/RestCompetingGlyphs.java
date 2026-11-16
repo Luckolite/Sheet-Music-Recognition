@@ -116,9 +116,26 @@ final class RestCompetingGlyphs {
             if (stem == null
                     || stem.x() < headX + measured * .45f
                     || stem.endY() < top - measured * 1.3f
+                            && !shaftIsSeparateFromDigits(raster, width, restSize, ry, stem, measured)
                     || !PrintedCadenceDurations.proved(
                             raster, width, height, bar, next, List.of(staff), chord, false))
                 return false;
+        }
+        return true;
+    }
+
+    private static boolean shaftIsSeparateFromDigits(
+            byte[] gray, int width, float restSize, float restY,
+            PairedTremoloInk.Stem shaft, float gap) {
+        int right = shaft.x() - Math.max(2, Math.round(gap * .14f));
+        int left = right - Math.max(1, Math.round(gap * .09f));
+        int top = Math.max(shaft.endY(), Math.round(restY - restSize * .5f));
+        int bottom = Math.round(restY + restSize * .5f + gap * .2f);
+        if (left < 0 || top < 0 || bottom >= gray.length / width || top >= bottom) return false;
+        for (int y = top; y <= bottom; y++) {
+            for (int x = left; x <= right; x++) {
+                if ((gray[y * width + x] & 255) < 175) return false;
+            }
         }
         return true;
     }
@@ -153,8 +170,15 @@ final class RestCompetingGlyphs {
                     || glyphHeight < gap * .85f
                     || glyphHeight > gap * 1.34f) return false;
         }
-        return TripletRhythmDetector.isIsolatedThree(three, width)
-                && TripletRhythmDetector.fingerOne(gray, width, one);
+        if (!TripletRhythmDetector.fingerOne(gray, width, one)) return false;
+        if (TripletRhythmDetector.isIsolatedThree(three, width)) return true;
+        // A thick upper fingering can fill the opening of a three. The complete
+        // lower numeral and separate component bounds still have to prove the stack.
+        var upper = JoinedDigitTemplates.inspect(
+                gray, width, height, new java.util.BitSet(),
+                three.left, three.top, three.right, three.bottom, () -> {});
+        return upper != null && upper.observedCells() == 384
+                && upper.scores()[3] >= .64f && upper.best() - upper.scores()[3] < .04f;
     }
 
     private static boolean meterOwns(ScoreRestEvent rest, List<ScoreNoteEvent> notes,

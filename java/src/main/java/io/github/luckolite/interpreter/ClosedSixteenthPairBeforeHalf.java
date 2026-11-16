@@ -12,7 +12,8 @@ final class ClosedSixteenthPairBeforeHalf {
     private ClosedSixteenthPairBeforeHalf() {}
 
     static List<MeasureRegion> recover(
-            List<MeasureRegion> regions, byte[] labels, byte[] gray, int width, int height) {
+            List<MeasureRegion> regions, byte[] labels, byte[] gray, byte[] raw,
+            int width, int height) {
         if (gray == null
                 || labels == null
                 || gray.length != (long) width * height
@@ -28,6 +29,7 @@ final class ClosedSixteenthPairBeforeHalf {
                                     regions.get(i + 2),
                                     labels,
                                     gray,
+                                    raw,
                                     width,
                                     height)
                             : List.<MeasureRegion>of();
@@ -43,9 +45,11 @@ final class ClosedSixteenthPairBeforeHalf {
             MeasureRegion following,
             byte[] labels,
             byte[] gray,
+            byte[] raw,
             int width,
             int height) {
         float gap = (span.bottom() - span.top()) * height / 8.2f;
+        boolean newSystem = (following.top() - half.bottom()) * height >= gap * 2;
         float widthInGaps = (span.right() - span.left()) * width / gap;
         float halfWidth = (half.right() - half.left()) * width / gap;
         if (gap < 9
@@ -53,11 +57,11 @@ final class ClosedSixteenthPairBeforeHalf {
                 || span.cadenceQuarterBeats() != 0
                 || widthInGaps < 59
                 || widthInGaps > 73
-                || halfWidth < 4.5f
+                || halfWidth < (newSystem ? 4.5f : 4f)
                 || halfWidth > 7.5f
                 || Math.abs(span.top() - half.top()) * height > gap * .4f
                 || Math.abs(span.bottom() - half.bottom()) * height > gap * .4f
-                || (following.top() - half.bottom()) * height < gap * 2
+                || !newSystem && !nextInlineBar(half, following, width, height, gap)
                 || (half.left() - span.right()) * width < gap * .35f
                 || (half.left() - span.right()) * width > gap * 1.8f) return List.of();
 
@@ -75,30 +79,56 @@ final class ClosedSixteenthPairBeforeHalf {
                         < 0) return List.of();
 
         var split = StraightDyadCadenceBoundaries.propose(span, gray, width, height);
-        if (split.size() != 2) return List.of();
+        if (split.size() != 2
+                || !newSystem && (raw == null || raw.length != gray.length
+                        || !split.equals(StraightDyadCadenceBoundaries.propose(span, raw, width, height))))
+            return List.of();
         var trial =
                 OmrScoreInterpreter.analyze(
                         labels, gray, width, height, List.of(split.get(0), split.get(1), half));
-        if (!trial.rests().isEmpty() || !terminalHalf(local(trial.notes(), 2), half, width, gap))
+        var left = local(trial.notes(), 0);
+        var right = local(trial.notes(), 1);
+        if (!trial.rests().isEmpty()
+                || !closedSixteenths(left, split.get(0), gray, width, height, gap, rules[0])
+                || !closedSixteenths(right, split.get(1), gray, width, height, gap, rules[0]))
             return List.of();
-        return closedSixteenths(
-                                local(trial.notes(), 0),
-                                split.get(0),
-                                gray,
-                                width,
-                                height,
-                                gap,
-                                rules[0])
-                        && closedSixteenths(
-                                local(trial.notes(), 1),
-                                split.get(1),
-                                gray,
-                                width,
-                                height,
-                                gap,
-                                rules[0])
-                ? split
-                : List.of();
+        if (newSystem)
+            return terminalHalf(local(trial.notes(), 2), half, width, gap) ? split : List.of();
+
+        // On the same staff, use the new meter to prove the isolated half bar.
+        // The joined analysis can assign a beam/slur hint to the half before its scope is known.
+        var followingBars = List.of(half, following);
+        var followingNotes = OmrScoreInterpreter.analyze(labels, gray, width, height, followingBars);
+        var halfNotes = local(followingNotes.notes(), 0);
+        if (!followingNotes.rests().isEmpty()
+                || !terminalHalf(halfNotes, half, width, gap)
+                || halfNotes.stream().anyMatch(note -> note.augmentationDots() != 0)
+                || !inlineTripleMeter(labels, gray, width, height, followingBars, followingNotes.notes())
+                || !ownedSeparator(raw, width, height, staff, (half.left() + span.right()) * width * .5f)
+                || PrintedCadenceDurations.boundaryColumn(
+                                raw, width, staff, half.right() * width, false, false) < 0
+                || !closedSixteenths(left, split.get(0), raw, width, height, gap, rules[0])
+                || !closedSixteenths(right, split.get(1), raw, width, height, gap, rules[0])
+                || !inlineTripleMeter(labels, raw, width, height, followingBars, followingNotes.notes()))
+            return List.of();
+        return split;
+    }
+
+    private static boolean nextInlineBar(
+            MeasureRegion half, MeasureRegion following, int width, int height, float gap) {
+        float separation = (following.left() - half.right()) * width;
+        return Math.abs(following.top() - half.top()) * height <= gap * .4f
+                && Math.abs(following.bottom() - half.bottom()) * height <= gap * .4f
+                && following.cadenceQuarterBeats() == 0
+                && separation >= gap * .35f && separation <= gap * 1.8f
+                && (following.right() - following.left()) * width >= gap * 22;
+    }
+
+    private static boolean inlineTripleMeter(
+            byte[] labels, byte[] gray, int width, int height,
+            List<MeasureRegion> bars, List<ScoreNoteEvent> notes) {
+        return MeterFontMatcher.standaloneReadings(labels, gray, width, height, bars, notes)
+                .contains(new ScoreMeterChange(1, 3, 4));
     }
 
     static boolean ownedSeparator(

@@ -2495,13 +2495,9 @@ final class OmrScoreInterpreter {
                                 head,
                                 accidentalGap,
                                 writtenAccidental == ScoreNoteEvent.ACCIDENTAL_FLAT
-                                        ? nearestFlatRightEdge(
-                                                labels,
-                                                width,
-                                                height,
-                                                localAccidentals,
-                                                head,
-                                                accidentalGap)
+                                        ? naturalRecoveryEdge(
+                                                labels, gray, annotationGray, width, height,
+                                                localAccidentals, head, accidentalGap)
                                         : -1))
                     writtenAccidental = ScoreNoteEvent.ACCIDENTAL_NATURAL;
                 if (writtenAccidental == ScoreNoteEvent.ACCIDENTAL_FROM_KEY
@@ -20432,6 +20428,18 @@ final class OmrScoreInterpreter {
         return right;
     }
 
+    /** A complete flat must not supply the replacement natural's own pixels. */
+    private static int naturalRecoveryEdge(
+            byte[] labels, byte[] gray, byte[] source, int width, int height,
+            List<AccidentalCandidate> candidates, Component head, float gap) {
+        int edge = nearestFlatRightEdge(labels, width, height, candidates, head, gap);
+        if (edge < 0) return edge;
+        return PrintedFlatGlyph.matchesOwnedInk(labels, gray, width, height, head.centerX, head.centerY, gap)
+                        && PrintedFlatGlyph.matchesOwnedInk(labels, source, width, height, head.centerX, head.centerY, gap)
+                ? edge + 1
+                : edge;
+    }
+
     /** A cancellation natural printed before a new flat must not override that flat. */
     private static boolean rawNaturalFromCrossbars(
             byte[] gray,
@@ -27773,6 +27781,10 @@ final class OmrScoreInterpreter {
             Staff staff = nearestHeadStaff(staffs, mask.centerY);
             if (staff == null || staff.count != 1 || staff.gap < 10 || staff.gap > 28) continue;
             float gap = staff.gap;
+            if (wideBorrowedStaffRuleMask(labels, gray, source, width, height, mask, heads, staff)) {
+                rejected.add(mask);
+                continue;
+            }
             float size = gap * gap;
             int across = mask.maxX - mask.minX + 1, depth = mask.maxY - mask.minY + 1;
             if (Math.abs(mask.centerY - staff.bottom) > gap * .36f
@@ -27811,6 +27823,69 @@ final class OmrScoreInterpreter {
                     gray, source, width, height, a, b, mask, members, slope, gap)) rejected.add(mask);
         }
         return rejected;
+    }
+
+    private static boolean wideBorrowedStaffRuleMask(
+            byte[] labels, byte[] gray, byte[] source, int width, int height,
+            Component mask, List<Component> heads, Staff staff) {
+        float gap = staff.gap;
+        int across = mask.maxX - mask.minX + 1, depth = mask.maxY - mask.minY + 1;
+        if (Math.abs(mask.centerY - staff.bottom) > gap * .26f
+                || across < gap * 2.05f || across > gap * 2.55f
+                || depth < gap * .50f || depth > gap * .82f
+                || mask.area < gap * gap * .70f || mask.area > gap * gap * 1.0f
+                || filledBeamEndpointCore(gray, width, height, mask, gap)
+                || filledBeamEndpointCore(source, width, height, mask, gap)) return false;
+        int[] reverse = attachedRawStem(gray, width, height, mask, gap, 2, 170);
+        if (reverse == null || reverse[2] != -1
+                || reverse[0] > mask.maxX || mask.maxX - reverse[0] > gap * .35f
+                || mask.centerY - reverse[1] < gap * 5.3f
+                || mask.centerY - reverse[1] > gap * 7.4f
+                || !java.util.Arrays.equals(
+                        reverse, attachedRawStem(source, width, height, mask, gap, 2, 170)))
+            return false;
+
+        var shafts = wideMergedDyadShafts(gray, width, height, mask, heads, gap * 1.025f, 2.35f);
+        WideMergedRailShaft left = null, middle = null, right = null;
+        for (var shaft : shafts) {
+            if (!heldBeamShaftPair(source, width, height, shaft, gap)) continue;
+            float offset = shaft.trace[0] - reverse[0];
+            if (Math.abs(offset) <= Math.round(gap * .17f)
+                    && Math.abs(shaft.upper.centerY - reverse[1]) <= gap * .32f) {
+                if (middle != null) return false;
+                middle = shaft;
+            } else if (offset >= -gap * 3.35f && offset <= -gap * 2.6f
+                    && mask.minX - shaft.trace[0] >= gap * .85f) {
+                if (left != null) return false;
+                left = shaft;
+            } else if (offset >= gap * 1.65f && offset <= gap * 2.4f
+                    && shaft.trace[0] - mask.maxX >= gap * 1.20f) {
+                if (right != null) return false;
+                right = shaft;
+            }
+        }
+        if (left == null || middle == null || right == null) return false;
+        var a = left.trace;
+        var b = right.trace;
+        float slope = (b[1] - a[1]) / (float) (b[0] - a[0]);
+        if (Math.abs(slope) > .18f
+                || Math.abs(middle.trace[1] - a[1] - slope * (middle.trace[0] - a[0])) > gap * .15f)
+            return false;
+        int[] members = completeHeadMembers(labels, width, height, mask);
+        return members != null && followsBeamsAtStaffRule(
+                gray, source, width, height, a, b, mask, members, slope, gap);
+    }
+
+    private static boolean heldBeamShaftPair(
+            byte[] source, int width, int height, WideMergedRailShaft shaft, float gap) {
+        int[] upper = attachedRawStem(source, width, height, shaft.upper, gap, 2, 170);
+        int[] lower = attachedRawStem(source, width, height, shaft.lower, gap, 2, 170);
+        return java.util.Arrays.equals(shaft.trace, upper)
+                && lower != null && lower[2] == 1
+                && Math.abs(lower[0] - upper[0]) <= gap * .15f
+                && Math.abs(lower[1] - upper[1]) <= gap * .15f
+                && filledBeamEndpointCore(source, width, height, shaft.upper, gap * 1.025f)
+                && filledBeamEndpointCore(source, width, height, shaft.lower, gap * 1.025f);
     }
 
     private static boolean followsBeamsAtStaffRule(
@@ -28721,40 +28796,7 @@ final class OmrScoreInterpreter {
             float gap) {
         var members = completeHeadMembers(labels, width, height, fragment);
         if (members == null) return null;
-        var nearby = new ArrayList<Component>();
-        var traces = new ArrayList<int[]>();
-        for (var head : heads) {
-            if (Math.abs(head.centerX - fragment.centerX) > gap * 3.7f
-                    || fragment.centerY - head.centerY < gap * 2.75f
-                    || fragment.centerY - head.centerY > gap * 8.5f
-                    || !filledBeamEndpointCore(gray, width, height, head, gap)) continue;
-            int[] stem = attachedRawStem(gray, width, height, head, gap, 2, 170);
-            if (stem == null
-                    || stem[2] != 1
-                    || stem[1] - fragment.centerY < gap * .32f
-                    || stem[1] - fragment.centerY > gap * 1.5f) continue;
-            nearby.add(head);
-            traces.add(stem);
-            if (nearby.size() > 16) return null;
-        }
-        var shafts = new ArrayList<WideMergedRailShaft>();
-        for (int i = 0; i < nearby.size(); i++) {
-            var lower = nearby.get(i);
-            int[] stem = traces.get(i);
-            for (int j = 0; j < nearby.size(); j++) {
-                var upper = nearby.get(j);
-                int[] other = traces.get(j);
-                float octave = lower.centerY - upper.centerY;
-                if (octave < gap * 3.06f
-                        || octave > gap * 3.85f
-                        || Math.abs(lower.centerX - upper.centerX) > gap * .30f
-                        || Math.abs(stem[0] - other[0]) > gap * .15f
-                        || Math.abs(stem[1] - other[1]) > gap * .15f) continue;
-                if (shafts.stream().noneMatch(v -> Math.abs(v.trace[0] - other[0]) <= gap * .15f))
-                    shafts.add(new WideMergedRailShaft(other, upper, lower));
-                break;
-            }
-        }
+        var shafts = wideMergedDyadShafts(gray, width, height, fragment, heads, gap, 2.75f);
         if (shafts.size() < 3) return null;
         for (var middleShaft : shafts) {
             int[] middle = middleShaft.trace;
@@ -28782,6 +28824,46 @@ final class OmrScoreInterpreter {
             }
         }
         return null;
+    }
+
+    private static List<WideMergedRailShaft> wideMergedDyadShafts(
+            byte[] gray, int width, int height, Component fragment,
+            List<Component> heads, float gap, float minimumDrop) {
+        var nearby = new ArrayList<Component>();
+        var traces = new ArrayList<int[]>();
+        for (var head : heads) {
+            if (Math.abs(head.centerX - fragment.centerX) > gap * 3.7f
+                    || fragment.centerY - head.centerY < gap * minimumDrop
+                    || fragment.centerY - head.centerY > gap * 8.5f
+                    || !filledBeamEndpointCore(gray, width, height, head, gap)) continue;
+            int[] stem = attachedRawStem(gray, width, height, head, gap, 2, 170);
+            if (stem == null
+                    || stem[2] != 1
+                    || stem[1] - fragment.centerY < gap * .32f
+                    || stem[1] - fragment.centerY > gap * 1.5f) continue;
+            nearby.add(head);
+            traces.add(stem);
+            if (nearby.size() > 16) return List.of();
+        }
+        var shafts = new ArrayList<WideMergedRailShaft>();
+        for (int i = 0; i < nearby.size(); i++) {
+            var lower = nearby.get(i);
+            int[] stem = traces.get(i);
+            for (int j = 0; j < nearby.size(); j++) {
+                var upper = nearby.get(j);
+                int[] other = traces.get(j);
+                float octave = lower.centerY - upper.centerY;
+                if (octave < gap * 3.06f
+                        || octave > gap * 3.85f
+                        || Math.abs(lower.centerX - upper.centerX) > gap * .30f
+                        || Math.abs(stem[0] - other[0]) > gap * .15f
+                        || Math.abs(stem[1] - other[1]) > gap * .15f) continue;
+                if (shafts.stream().noneMatch(v -> Math.abs(v.trace[0] - other[0]) <= gap * .15f))
+                    shafts.add(new WideMergedRailShaft(other, upper, lower));
+                break;
+            }
+        }
+        return shafts;
     }
 
     private static boolean wideMergedBeamMembership(

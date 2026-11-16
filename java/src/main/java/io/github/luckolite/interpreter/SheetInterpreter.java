@@ -302,7 +302,8 @@ public final class SheetInterpreter {
         measures =
                 VerifiedOpeningMeterSlot.recover(
                         measures, labels, gray, annotationGray, width, height);
-        measures = ClosedSixteenthPairBeforeHalf.recover(measures, labels, gray, width, height);
+        measures = ClosedSixteenthPairBeforeHalf.recover(
+                measures, labels, gray, annotationGray, width, height);
         measures =
                 HalfDyadBeforeSixteenthBar.preserveInlineTriple(
                         rawMeasures, measures, labels, gray, annotationGray, width, height);
@@ -325,6 +326,8 @@ public final class SheetInterpreter {
         final var retainedRegions = measures;
         var rejectedLedgerRows = retainedRegions == fittedWithOverlaps ? List.<MeasureRegion>of()
                 : fittedWithOverlaps.stream().filter(region -> !retainedRegions.contains(region)).toList();
+        measures = InterruptedStaffHeader.discard(
+                measures, labels, gray, annotationGray, width, height);
         recognizedRests.reindexed(measures);
         var numberingAnchors =
                 rejectedAnchorTops.isEmpty()

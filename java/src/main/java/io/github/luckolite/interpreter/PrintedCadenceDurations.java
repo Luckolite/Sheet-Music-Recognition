@@ -750,6 +750,12 @@ final class PrintedCadenceDurations {
             float left = measure.left() * width, right = measure.right() * width;
             boolean sameSystem = next != null && Math.abs(next.top() - measure.top()) * height < gap;
             boolean quarter = chord.get(0).unbeamedDurationBeats() == 1;
+            // An independently closed quarter can end the exercise left of the
+            // next clef and meter, even when both staves are at the same height.
+            boolean detachedHeader = quarter && sameSystem && nextHasMeter
+                    && next.left() * width - right > gap * 8
+                    && next.left() * width - right < gap * 26;
+            if (detachedHeader) sameSystem = false;
             // A wide quarter cadence still needs both closing strokes.
             boolean wideQuarter = quarter && (!sameSystem || !nextHasMeter);
             if (span > gap * (wideQuarter ? 10.25f : 8f)
@@ -762,7 +768,9 @@ final class PrintedCadenceDurations {
                             span,
                             sameSystem && !nextHasMeter,
                             chord)) return false;
-            float boundary = sameSystem ? (right + next.left() * width) * .5f : right;
+            float boundary = right;
+            if (detachedHeader) boundary += gap * .55f;
+            else if (sameSystem) boundary = (right + next.left() * width) * .5f;
             double firstX = left + first * span, lastX = left + last * span;
             boolean hasAccidental = chord.stream().anyMatch(
                     note -> note.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_FROM_KEY);
