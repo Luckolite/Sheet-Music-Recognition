@@ -1290,7 +1290,10 @@ final class OctaveMarkDetector {
 
     private static boolean canRepairEight(byte[] gray, int width, InkBox box, float gap) {
         int w = box.right - box.left + 1, h = box.bottom - box.top + 1;
-        return w >= gap * .8f && w <= gap * 1.85f && h >= gap * 1.15f && h <= gap * 2.3f
+        return w >= gap * .8f
+                && w <= Math.round(gap * 1.85f)
+                && h >= gap * 1.15f
+                && h <= gap * 2.3f
                 && OctaveClefDigit.holes(gray, width, box.left, box.top, w, h) == 1;
     }
 

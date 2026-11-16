@@ -1085,6 +1085,8 @@ final class OmrScoreInterpreter {
                 borrowedInnerDoubleRailHeads(labels, gray, annotationGray, width, height, heads, staffs));
         rejectedBeamHeads.addAll(
                 locallyScaledDoubleRailFragments(gray, width, height, heads, staffs, measures));
+        rejectedBeamHeads.addAll(staffRuleBeamMasks(
+                labels, gray, annotationGray, width, height, heads, staffs));
         var clippedSingleRailStarts = new java.util.HashSet<Component>();
         rejectedBeamHeads.addAll(
                 clippedTripletRailAliases(
@@ -1100,6 +1102,8 @@ final class OmrScoreInterpreter {
         rejectedBeamHeads.addAll(
                 leadingSingleRailCapMasks(
                         labels, gray, annotationGray, width, height, heads, staffs, measures));
+        rejectedBeamHeads.addAll(trailingSingleRailCapMasks(
+                labels, gray, annotationGray, width, height, heads, staffs, measures));
         rejectedBeamHeads.addAll(filledBeamBandHeads(gray, width, height, heads, staffs));
         rejectedBeamHeads.addAll(terminalBeamShaftEndHeads(
                 labels, gray, annotationGray, width, height, heads, staffs, measures));
@@ -27759,6 +27763,95 @@ final class OmrScoreInterpreter {
         return a;
     }
 
+    /** Both owned rails can meet a staff rule where the beam mask is observed. */
+    private static List<Component> staffRuleBeamMasks(
+            byte[] labels, byte[] gray, byte[] source, int width, int height,
+            List<Component> heads, List<Staff> staffs) {
+        if (gray == null || source == null || gray.length != source.length) return List.of();
+        var rejected = new ArrayList<Component>();
+        for (Component mask : heads) {
+            Staff staff = nearestHeadStaff(staffs, mask.centerY);
+            if (staff == null || staff.count != 1 || staff.gap < 10 || staff.gap > 28) continue;
+            float gap = staff.gap;
+            float size = gap * gap;
+            int across = mask.maxX - mask.minX + 1, depth = mask.maxY - mask.minY + 1;
+            if (Math.abs(mask.centerY - staff.bottom) > gap * .36f
+                    || across < gap * 1.32f || across > gap * 1.62f
+                    || depth < gap * .88f || depth > gap * 1.12f
+                    || mask.area < size * .44f || mask.area > size * .66f
+                    || attachedRawStem(gray, width, height, mask, gap, 2, 170) != null
+                    || attachedRawStem(source, width, height, mask, gap, 2, 170) != null) continue;
+
+            var left = new ArrayList<int[]>();
+            var right = new ArrayList<int[]>();
+            for (Component head : heads) {
+                if (Math.abs(head.centerX - mask.centerX) > gap * 2
+                        || mask.centerY - head.centerY < gap * 2.2f
+                        || mask.centerY - head.centerY > gap * 3.2f
+                        || head.area < size * .98f
+                        || nearestHeadStaff(staffs, head.centerY) != staff
+                        || !filledBeamEndpointCore(source, width, height, head, gap)) continue;
+                int[] stem = attachedRawStem(gray, width, height, head, gap, 2, 170);
+                if (stem == null || stem[2] != 1 || stem[1] - head.centerY < gap * 3.05f
+                        || !java.util.Arrays.equals(
+                                stem, attachedRawStem(source, width, height, head, gap, 2, 170))) continue;
+                if (mask.minX - stem[0] >= gap * .30f && mask.minX - stem[0] <= gap * .78f)
+                    left.add(stem);
+                if (stem[0] - mask.maxX >= gap * .30f && stem[0] - mask.maxX <= gap * .78f)
+                    right.add(stem);
+            }
+            if (left.size() != 1 || right.size() != 1) continue;
+            int[] a = left.get(0), b = right.get(0);
+            int span = b[0] - a[0];
+            float slope = (b[1] - a[1]) / (float) span;
+            if (span < gap * 2.15f || span > gap * 2.75f
+                    || Math.abs(slope) < .045f || Math.abs(slope) > .14f) continue;
+            int[] members = completeHeadMembers(labels, width, height, mask);
+            if (members != null && followsBeamsAtStaffRule(
+                    gray, source, width, height, a, b, mask, members, slope, gap)) rejected.add(mask);
+        }
+        return rejected;
+    }
+
+    private static boolean followsBeamsAtStaffRule(
+            byte[] gray, byte[] source, int width, int height,
+            int[] a, int[] b, Component mask, int[] members, float slope, float gap) {
+        float firstMember = Float.POSITIVE_INFINITY, lastMember = Float.NEGATIVE_INFINITY;
+        int dark = 0;
+        for (int pixel : members) {
+            float depth = a[1] + slope * (pixel % width - a[0]) - pixel / width;
+            firstMember = Math.min(firstMember, depth);
+            lastMember = Math.max(lastMember, depth);
+            if ((gray[pixel] & 255) < 185 && (source[pixel] & 255) < 185) dark++;
+        }
+        if (dark < members.length * .96f) return false;
+        int margin = Math.max(3, Math.round(gap * .25f));
+        int first = a[0] + margin, last = b[0] - margin;
+        int primary = Math.round(gap * .27f);
+        if (!continuousBeamRail(gray, width, height, a, slope, first, last, primary)
+                || !continuousBeamRail(source, width, height, a, slope, first, last, primary))
+            return false;
+        for (int further = Math.round(gap * 1.0f); further <= Math.round(gap * 1.18f); further++) {
+            if (firstMember < primary - gap * .20f || lastMember > further + gap * .32f
+                    || !continuousBeamRail(gray, width, height, a, slope, first, last, further)
+                    || !continuousBeamRail(source, width, height, a, slope, first, last, further))
+                continue;
+            int seam = (primary + further) / 2;
+            int clear = 0;
+            for (int x = first; x <= last; x++) {
+                int y = Math.round(a[1] + slope * (x - a[0])) - seam;
+                if (y < 1 || y >= height - 1) return false;
+                // At the converging staff rule the seam remains visible only near one end.
+                boolean paper = !beamCore(gray, width, height, x, y, 1)
+                        && !beamCore(source, width, height, x, y, 1);
+                clear = paper ? clear + 1 : 0;
+                if (clear >= Math.max(3, Math.round(gap * .18f))
+                        && (x <= mask.minX + gap * .25f || x >= mask.maxX)) return true;
+            }
+        }
+        return false;
+    }
+
     /** A clipped opening triplet can lend its filled rail to two separate head masks. */
     private static List<Component> clippedTripletRailAliases(
             byte[] labels, byte[] gray, byte[] source, int width, int height,
@@ -27843,6 +27936,100 @@ final class OmrScoreInterpreter {
         return rejected;
     }
 
+    /** A closed downstem group can lend its final rail cap to a false full-size attack. */
+    private static List<Component> trailingSingleRailCapMasks(
+            byte[] labels, byte[] gray, byte[] source, int width, int height,
+            List<Component> heads, List<Staff> staffs, List<MeasureRegion> measures) {
+        if (gray == null || source == null) return List.of();
+        var rejected = new ArrayList<Component>();
+        for (var mask : heads) {
+            var staff = nearestHeadStaff(staffs, mask.centerY);
+            if (staff == null || staff.count != 1) continue;
+            float gap = staff.gap;
+            int widthOfMask = mask.maxX - mask.minX + 1;
+            int heightOfMask = mask.maxY - mask.minY + 1;
+            if (gap < 10 || widthOfMask < gap * .93f || widthOfMask > gap * 1.13f
+                    || heightOfMask < gap * .54f || heightOfMask > gap * .78f
+                    || mask.area < gap * gap * .4f || mask.area > gap * gap * .56f
+                    || filledBeamEndpointCore(source, width, height, mask, gap)) continue;
+            int bar = containingMeasureForStaff(
+                    measures, mask.centerX / width, mask.centerY / height, staff, height);
+            if (bar < 1 || bar + 2 >= measures.size()
+                    || measures.get(bar).bottom() >= measures.get(bar + 1).top()
+                    || measures.get(bar).top() >= measures.get(bar - 1).bottom()) continue;
+            int[] reverse = attachedRawStem(gray, width, height, mask, gap, 2, 170);
+            if (reverse == null || reverse[2] != -1
+                    || reverse[0] < mask.maxX - gap * .15f || reverse[0] > mask.maxX + 1
+                    || mask.centerY - reverse[1] < gap * 3.5f
+                    || mask.centerY - reverse[1] > gap * 4.35f
+                    || !java.util.Arrays.equals(reverse,
+                        attachedRawStem(source, width, height, mask, gap, 2, 170))) continue;
+            var owners = new ArrayList<Component>(3);
+            for (var head : heads) {
+                if (head == mask || head.centerX < reverse[0] - gap * 5.2f
+                        || head.centerX > reverse[0] + gap * .74f
+                        || mask.centerY - head.centerY < gap * 1.2f
+                        || mask.centerY - head.centerY > gap * 4.2f
+                        || nearestHeadStaff(staffs, head.centerY) != staff
+                        || !filledBeamEndpointCore(source, width, height, head, gap)) continue;
+                owners.add(head);
+                if (owners.size() > 3) break;
+            }
+            if (owners.size() != 3) continue;
+            owners.sort(java.util.Comparator.comparingDouble(head -> head.centerX));
+            var last = owners.get(2);
+            if (last.centerX - reverse[0] < gap * .43f
+                    || last.centerX - reverse[0] > gap * .67f
+                    || Math.abs(reverse[1] - last.centerY) > gap * .31f) continue;
+            var left = recoverClosingDownstemGroup(gray, width, height, gap, owners);
+            var right = recoverClosingDownstemGroup(source, width, height, gap, owners);
+            if (left == null || right == null || !closingCapOwnsMask(
+                    labels, source, width, height, gap, mask, reverse[0], left, right)) continue;
+            rejected.add(mask);
+        }
+        return rejected;
+    }
+
+    private static PrintedBeamShafts.Shaft[] recoverClosingDownstemGroup(
+            byte[] gray, int width, int height, float gap, List<Component> heads) {
+        var shafts = new PrintedBeamShafts.Shaft[3];
+        var budget = new PrintedBeamShafts.Budget(300_000);
+        for (int i = 0; i < 3; i++) {
+            var head = heads.get(i);
+            if (i > 0) {
+                var previous = heads.get(i - 1);
+                float dx = head.centerX - previous.centerX, dy = previous.centerY - head.centerY;
+                if (dx < gap * 2.2f || dx > gap * 3.2f
+                        || dy < gap * .8f || dy > gap * 1.75f) return null;
+            }
+            var evidence = PrintedBeamShafts.at(gray, width, height, head.centerX, head.centerY, gap, budget);
+            if (evidence.size() != 1 || evidence.get(0).direction() != 1) return null;
+            shafts[i] = evidence.get(0);
+            if (i > 0 && !WrappedEighthTriplets.matchesRailBridge(
+                    gray, width, height, shafts[i - 1], shafts[i], gap, true)) return null;
+        }
+        return shafts;
+    }
+
+    private static boolean closingCapOwnsMask(
+            byte[] labels, byte[] source, int width, int height, float gap, Component mask,
+            int reverseX, PrintedBeamShafts.Shaft[] decoder, PrintedBeamShafts.Shaft[] original) {
+        int cap = (decoder[2].left() + decoder[2].right()) / 2;
+        int second = (decoder[1].left() + decoder[1].right()) / 2;
+        if (cap <= second || Math.abs(cap - reverseX) > 2
+                || Math.abs(decoder[2].endY() - original[2].endY()) > 2
+                || Math.abs(decoder[1].endY() - original[1].endY()) > 2) return false;
+        float slope = (decoder[2].endY() - decoder[1].endY()) / (float) (cap - second);
+        if (Math.abs(slope) > .55f) return false;
+        int[] pixels = completeHeadMembers(labels, width, height, mask);
+        if (pixels == null) return false;
+        for (int pixel : pixels) {
+            float fromCap = decoder[2].endY() + slope * (pixel % width - cap) - pixel / width;
+            if (fromCap < -gap * .17f || fromCap > gap * .8f || (source[pixel] & 255) >= 185) return false;
+        }
+        return true;
+    }
+
     private static PrintedBeamShafts.Shaft[] clippedOpeningTriplet(
             byte[] gray, int width, int height, float gap, List<Component> heads) {
         var x = new float[3];
@@ -27902,11 +28089,11 @@ final class OmrScoreInterpreter {
             int across = mask.maxX - mask.minX + 1, depth = mask.maxY - mask.minY + 1;
             if (gap < 10
                     || across < gap * .68f
-                    || across > gap * .91f
+                    || across > gap * .96f
                     || depth < gap * .54f
-                    || depth > gap * .78f
+                    || depth > gap * .82f
                     || mask.area < gap * gap * .36f
-                    || mask.area > gap * gap * .52f
+                    || mask.area > gap * gap * .55f
                     || filledBeamEndpointCore(source, width, height, mask, gap)) continue;
             int bar =
                     containingMeasureForStaff(
