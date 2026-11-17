@@ -289,6 +289,93 @@ public class PrintedMeasureRhythmGuardTest {
     }
 
     @Test
+    public void oneUnresolvedStemKeepsAnInlineTripleRunWhenThePrintedShaftClosesTheOctave()
+            throws Exception {
+        var plate = new InlineTripleRun();
+        var notes = plate.notes(1);
+        assertEquals(plate.raw, plate.preserve(notes));
+        assertEquals(0, notes.get(8).stemDirection());
+        assertEquals(plate.fitted, plate.preserve(plate.notes(2)));
+        plate.ink(375, 377, 94, 113, 255);
+        assertEquals(plate.fitted, plate.preserve(notes));
+    }
+
+    @Test
+    public void theSharedShaftStillRequiresAnInlineTripleAndPrintedClosingBarline() throws Exception {
+        var incorrectMeter = new InlineTripleRun('2');
+        assertEquals(incorrectMeter.fitted, incorrectMeter.preserve(incorrectMeter.notes(1)));
+
+        var missingBarline = new InlineTripleRun();
+        missingBarline.ink(756, 760, 54, 118, 255);
+        assertEquals(missingBarline.fitted, missingBarline.preserve(missingBarline.notes(1)));
+    }
+
+    private static final class InlineTripleRun {
+        private static final int WIDTH = 800, HEIGHT = 180, TOP = 54, GAP = 16;
+        private final byte[] gray = new byte[WIDTH * HEIGHT];
+        private final byte[] labels = new byte[gray.length];
+        private final List<MeasureRegion> raw =
+                List.of(region(44, 101), region(118, 751), region(765, 787));
+        private final List<MeasureRegion> fitted =
+                List.of(raw.get(0), region(118, 383), region(387, 751), raw.get(2));
+
+        InlineTripleRun() throws Exception {
+            this('3');
+        }
+
+        InlineTripleRun(char numerator) throws Exception {
+            Arrays.fill(gray, (byte) 255);
+            for (int y = TOP; y <= TOP + 4 * GAP; y += GAP) {
+                ink(10, 790, y, y, 0);
+                Arrays.fill(labels, y * WIDTH + 10, y * WIDTH + 791, OmrMeasurePostProcessor.STAFF);
+            }
+            var signature = InlineTripleMeterProofTest.signature(numerator, '4', true);
+            for (int y = TOP; y <= TOP + 4 * GAP; y++) {
+                for (int x = 108; x <= 159; x++) {
+                    gray[y * WIDTH + x] = signature[y * 320 + x];
+                    if ((gray[y * WIDTH + x] & 255) < 180 && (y - TOP) % GAP != 0)
+                        labels[y * WIDTH + x] = x >= 123
+                                ? OmrMeasurePostProcessor.CLEF_OR_KEY
+                                : OmrMeasurePostProcessor.STEM_OR_REST;
+                }
+            }
+            ink(756, 760, TOP, TOP + 4 * GAP, 0);
+            ink(375, 377, 68, 162, 0);
+            ink(377, 393, 66, 72, 0);
+            ink(377, 393, 122, 128, 0);
+        }
+
+        private static MeasureRegion region(int left, int right) {
+            return new MeasureRegion(left / (float) WIDTH, right / (float) WIDTH,
+                    (TOP - 30f) / HEIGHT, (TOP + 4 * GAP + 30f) / HEIGHT);
+        }
+
+        private void ink(int left, int right, int top, int bottom, int value) {
+            for (int y = top; y <= bottom; y++)
+                Arrays.fill(gray, y * WIDTH + left, y * WIDTH + right + 1, (byte) value);
+        }
+
+        private List<ScoreNoteEvent> notes(int unresolved) {
+            var notes = new ArrayList<ScoreNoteEvent>();
+            for (int i = 0; i < 12; i++) {
+                float position = (185 + i * 50 - 118) / 633f;
+                var upper = new ScoreNoteEvent(1, position, 7, 0, 1, 69f / HEIGHT,
+                        false, 0, 2, 2, 0).withStemDirection(i >= 4 && i < 4 + unresolved ? 0 : -1);
+                var lower = new ScoreNoteEvent(1, position, 0, 0, 1, 125f / HEIGHT,
+                        false, 0, 2, 2, 0).withStemDirection(-1);
+                notes.add(upper);
+                notes.add(lower);
+            }
+            return notes;
+        }
+
+        private List<MeasureRegion> preserve(List<ScoreNoteEvent> notes) {
+            return PrintedMeasureRhythmGuard.preserveCompleteRuns(
+                    raw, fitted, notes, List.of(), labels, gray, WIDTH, HEIGHT);
+        }
+    }
+
+    @Test
     public void inferredMidpointMovesToTheVisibleGrandStaffBarline() {
         byte[] g = paper();
         for (int y = 160; y <= 480; y++) g[y * 1000 + 630] = 0;

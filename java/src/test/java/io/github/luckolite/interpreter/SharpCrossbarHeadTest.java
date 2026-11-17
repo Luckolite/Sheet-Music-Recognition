@@ -94,7 +94,8 @@ public final class SharpCrossbarHeadTest {
         page.sharp(400, 148);
         var interpreter = OmrScoreInterpreter.class;
         var component = Class.forName(interpreter.getName() + "$Component");
-        var create = component.getDeclaredConstructors()[0];
+        var create = component.getDeclaredConstructor(
+                int.class, int.class, int.class, int.class, int.class, float.class, float.class);
         create.setAccessible(true);
         var fragment = create.newInstance(80, 384, 405, 153, 166, 396f, 160f);
         var sharp = create.newInstance(120, 392, 407, 126, 170, 400f, 148f);
@@ -138,13 +139,14 @@ public final class SharpCrossbarHeadTest {
 
         var interpreter = OmrScoreInterpreter.class;
         var component = Class.forName(interpreter.getName() + "$Component");
-        var create = component.getDeclaredConstructors()[0];
+        var create = component.getDeclaredConstructor(
+                int.class, int.class, int.class, int.class, int.class, float.class, float.class);
         create.setAccessible(true);
         var ghost = create.newInstance(162, 393, 413, 127, 143, 402f, 135f);
         var sharp = create.newInstance(180, 392, 407, 126, 170, 400f, 148f);
         var head = create.newInstance(160, 412, 432, 140, 155, 422f, 148f);
         var noteType = Class.forName(interpreter.getName() + "$DetectedNote");
-        var detected = noteType.getDeclaredConstructors()[0];
+        var detected = noteType.getDeclaredConstructor(ScoreNoteEvent.class, component, float.class);
         detected.setAccessible(true);
         var actual = new ScoreNoteEvent(
                 0, .6f, 4, 0, 1, 148f / H, false, 0, 2,
@@ -159,7 +161,8 @@ public final class SharpCrossbarHeadTest {
         var choices = new java.util.IdentityHashMap<>();
         if (ownerProved) {
             var selection = OmrScoreInterpreter.WrittenAccidentalChoice.class
-                    .getDeclaredConstructors()[0];
+                    .getDeclaredConstructor(
+                            int.class, Object.class, Object.class, int.class, int.class, boolean.class);
             selection.setAccessible(true);
             choices.put(head, selection.newInstance(
                     ScoreNoteEvent.ACCIDENTAL_SHARP, sharp, head, 1, 1, false));

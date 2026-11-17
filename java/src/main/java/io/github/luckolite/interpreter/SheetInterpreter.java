@@ -939,6 +939,8 @@ public final class SheetInterpreter {
                     finalInterpretation, annotationGray, gray, width, height);
         finalInterpretation = TerminalSharedArtificialHarmonics.close(
                 finalInterpretation, gray, annotationGray, width, height, initialKeyFifths);
+        finalInterpretation = ArtificialHarmonics.recoverClosedQuarterTouches(
+                finalInterpretation, labels, gray, annotationGray, width, height);
         finalInterpretation = ClosingTripletRhythm.restoreBeforeSixFour(
                 finalInterpretation, inheritedMeter, labels, gray, annotationGray, width, height, physicalPage);
         finalInterpretation = OpeningOctaveTriplets.close(

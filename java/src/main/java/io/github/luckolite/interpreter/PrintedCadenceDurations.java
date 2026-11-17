@@ -1218,6 +1218,34 @@ final class PrintedCadenceDurations {
                 && !note.compactOpening();
     }
 
+    static boolean closedAfterFit(byte[] gray, int width, int height, MeasureRegion bar,
+            List<ScoreNoteEvent> chord, float expansion) {
+        if (gray == null || gray.length != (long) width * height) return false;
+        float left = bar.left() * width, right = bar.right() * width;
+        float span = right - left, hint = (bar.bottom() - bar.top()) * height / 8.2f;
+        if (hint < 8 || hint > 28 || span < hint * 3.5f || span > hint * 8f) return false;
+        var rules = PrintedDirectionStaff.printedRules(
+                gray, width, height, right - 2.6f * hint, bar.bottom() * height - 2.1f * hint, hint);
+        if (rules == null) return false;
+        float gap = rules[1], top = rules[0] - 4 * gap;
+        if (top < 0 || rules[0] >= height) return false;
+        var staff = new PlayingTechniqueDetector.Staff(top, rules[0], gap, 0, 1);
+        double first = chord.stream().mapToDouble(ScoreNoteEvent::positionInMeasure).min().orElseThrow();
+        double last = chord.stream().mapToDouble(ScoreNoteEvent::positionInMeasure).max().orElseThrow();
+        if (first < .15 || last > .8 || (last - first) * span > gap * .4) return false;
+        int opening = boundaryColumn(gray, width, staff, left - gap * .53f, true, false);
+        if (opening < 0 || ClosedHeadBarlineGuard.attached(
+                gray, width, height, opening, Math.round(top), Math.round(rules[0]), gap)
+                || DottedDyadMeasureSeparator.continuesBeyondStaff(
+                gray, width, height, opening, Math.round(top), Math.round(rules[0]), gap))
+            return false;
+        boolean accidental = chord.stream().anyMatch(
+                note -> note.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_FROM_KEY);
+        float outer = right + gap * expansion;
+        return completeCadence(gray, width, staff, left, outer, left + first * span,
+                left + last * span, outer, false, true, accidental);
+    }
+
     private static boolean completeCadence(
             byte[] gray, int width, PlayingTechniqueDetector.Staff staff,
             float left, float right, double first, double last,

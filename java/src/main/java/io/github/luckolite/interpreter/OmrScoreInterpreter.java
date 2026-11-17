@@ -20970,8 +20970,10 @@ final class OmrScoreInterpreter {
         var result =
                 java.util.Collections.newSetFromMap(
                         new java.util.IdentityHashMap<Object, Boolean>());
-        if (gray == null
+        if (labels == null
+                || gray == null
                 || source == null
+                || labels.length != gray.length
                 || gray.length != (long) width * height
                 || source.length != gray.length
                 || heads.size() != notes.size()) return result;
@@ -21004,7 +21006,10 @@ final class OmrScoreInterpreter {
             var matchingCrops = new ArrayList<Component>();
             for (var accidental : accidentals) {
                 var cross = accidental.component;
-                if (cross.minX < left
+                if (cross.minX < Math.max(0, left)
+                        || cross.minY < 0
+                        || cross.maxX >= width
+                        || cross.maxY >= height
                         || !doubleSharpBesideHead(cross, head, gap)
                         || !DoubleSharpGlyph.matchesRaw(
                                 gray,
@@ -23795,7 +23800,9 @@ final class OmrScoreInterpreter {
                             glyphs, members, gray, raw, width, height, upper.head, lower.head, gap);
                     if (glyph != null) recovered.put(upper.head, glyph);
                 } else if (beamed && interval == 2 && separation >= gap * .90f && separation <= gap * 1.20f) {
-                    if (lower.event.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_FROM_KEY
+                    if (lower.event.visualSize() == ScoreNoteEvent.VisualSize.FULL
+                            && upper.event.visualSize() == ScoreNoteEvent.VisualSize.FULL
+                            && lower.event.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_FROM_KEY
                             && upper.event.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_FROM_KEY)
                         recoverCancelledSharpInThird(glyphs, members, lower.head, upper.head,
                                 gray, raw, width, height, gap, recovered, sharpFragments);
@@ -23931,12 +23938,29 @@ final class OmrScoreInterpreter {
                 (lowerLeft + lowerRight) * .5f, (natural.minY + lowerBottom) * .5f);
         var prefix = new Component(1, prefixLeft, prefixRight, compound.minY, compound.maxY,
                 (prefixLeft + prefixRight) * .5f, (compound.minY + compound.maxY) * .5f);
-        return lowerNaturalInJoinedSigns(plane, width, height, lowerSeed, lower, upper, gap)
-                && lowerNaturalInJoinedSigns(plane, width, height, prefix, upper, lower, gap)
+        return cancellationNaturalAtAperture(plane, width, height, lowerSeed, lower, upper, gap, 0)
+                && cancellationNaturalAtAperture(plane, width, height, prefix, upper, lower, gap, 1)
                 && rawSharpInBounds(plane, width, height, upper, gap,
                         sharpLeft, sharpRight, sharpTop, compound.maxY, false, true)
                 && !rawSharpInBounds(plane, width, height, lower, gap,
                         sharpLeft, sharpRight, sharpTop, compound.maxY, false, true);
+    }
+
+    /** The semantic edge can include an extra row or column beside the two optical spines. */
+    private static boolean cancellationNaturalAtAperture(
+            byte[] plane,
+            int width,
+            int height,
+            Component seed,
+            Component owner,
+            Component competing,
+            float gap,
+            int horizontalInset) {
+        if (lowerNaturalInJoinedSigns(plane, width, height, seed, owner, competing, gap)) return true;
+        var inset = new Component(
+                1, seed.minX + horizontalInset, seed.maxX + horizontalInset,
+                seed.minY + 1, seed.maxY, seed.centerX + horizontalInset, seed.centerY + .5f);
+        return lowerNaturalInJoinedSigns(plane, width, height, inset, owner, competing, gap);
     }
 
     private static Map<Component, Component> sharpFragmentsBesideBeamedSixths(

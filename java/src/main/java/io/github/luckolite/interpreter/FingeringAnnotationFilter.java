@@ -678,8 +678,7 @@ final class FingeringAnnotationFilter {
                         || bottom < floor + gap * 2 || bottom > floor + gap * 3.2f
                         || right - left < gap * 5 || right - left > gap * 7.5f)
                     continue;
-                int measure = uniqueCaptionMeasure(
-                        measures, word, word, (staff.top() + floor) * .5f / height);
+                int measure = detachedCaptionMeasure(measures, word, staff, height);
                 if (measure < 0) continue;
                 var region = measures.get(measure);
                 var proposals = notes.stream()
@@ -694,6 +693,20 @@ final class FingeringAnnotationFilter {
             }
         }
         return rejected.isEmpty() ? notes : notes.stream().filter(n -> !rejected.contains(n)).toList();
+    }
+
+    private static int detachedCaptionMeasure(
+            List<MeasureRegion> measures, PlayingTechniqueDetector.Word word,
+            PlayingTechniqueDetector.Staff staff, int height) {
+        int selected = -1;
+        for (int i = 0; i < measures.size(); i++) {
+            var bar = measures.get(i);
+            if (bar.cadenceQuarterBeats() != 0 || word.left() < bar.left() || word.right() > bar.right()
+                    || staff.top() < bar.top() * height || staff.bottom() > bar.bottom() * height) continue;
+            if (selected >= 0) return -1;
+            selected = i;
+        }
+        return selected;
     }
 
     private static boolean ownsDetachedSegueGlyphs(
@@ -1070,14 +1083,12 @@ final class FingeringAnnotationFilter {
                         .sorted(Comparator.comparingDouble(ScoreNoteEvent::positionInMeasure)).toList();
                 if (music.size() != 12 || music.stream().anyMatch(n -> n.stemDirection() != -1)) continue;
                 List<ScoreNoteEvent> corrected;
-                if (singleDigitBeamAlias) {
+                if (singleDigitBeamAlias || wholeAlias) {
                     corrected = straightCompactBeamGroups(music);
                     if (corrected.isEmpty()) continue;
                 } else {
-                    int firstTriplet = tripletRunStart(music);
-                    if (firstTriplet == -2 || beamAlias && firstTriplet >= 0) continue;
-                    corrected = music.stream().map(n -> n.tupletDivisor() == 3
-                            ? n.withTupletRatio(1, 1) : n).toList();
+                    if (tripletRunStart(music) != -1) continue;
+                    corrected = music;
                 }
                 for (var staff : staffs) {
                     float gap = staff.gap(), bottom = staff.bottom();

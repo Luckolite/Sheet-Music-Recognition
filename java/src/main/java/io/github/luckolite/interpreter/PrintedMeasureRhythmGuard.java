@@ -1210,8 +1210,11 @@ final class PrintedMeasureRhythmGuard {
         var analyzed = OmrScoreInterpreter.analyze(labels, gray, width, height, local);
         if (analyzed.rests().stream().anyMatch(rest -> rest.measureIndex() > 0)) return false;
         var run = completeSixteenthOctaves(analyzed.notes(), 1, before, width, height);
-        if (run.size() != 24 || !ClosedSixteenthPairBeforeHalf.closedOctaveRailsBeforeTieValidation(
-                        run, before, gray, width, height, staff.gap(), staff.bottom())) return false;
+        if (run.size() != 24) return false;
+        if (run.stream().anyMatch(note -> note.stemDirection() == 0))
+            run = verifyOctaveShaft(run, before, gray, width, height, staff.gap());
+        if (!ClosedSixteenthPairBeforeHalf.closedOctaveRailsBeforeTieValidation(
+                run, before, gray, width, height, staff.gap(), staff.bottom())) return false;
         var chord = analyzed.notes().stream().filter(note -> note.measureIndex() == 2).toList();
         if (chord.size() != 2 || chord.stream().anyMatch(note -> !plainQuarterOwner(note))) return false;
         var a = chord.get(0);
@@ -1579,13 +1582,18 @@ final class PrintedMeasureRhythmGuard {
             return List.of();
         float gap = (region.bottom() - region.top()) * height / 8.2f;
         float span = (region.right() - region.left()) * width;
+        boolean unresolved = false;
         for (int i = 0; i < local.size(); i += 2) {
             var a = local.get(i);
             var b = local.get(i + 1);
             if (Math.abs(a.staffStep() - b.staffStep()) != 7
-                    || b.stemDirection() != a.stemDirection()
                     || (b.positionInMeasure() - a.positionInMeasure()) * span > gap * .33f)
                 return List.of();
+            int first = a.stemDirection(), second = b.stemDirection();
+            if (local.size() == 24 && (first == 0 || second == 0)) {
+                if (first == second || unresolved) return List.of();
+                unresolved = true;
+            } else if (first != second) return List.of();
         }
         return local;
     }
@@ -1602,6 +1610,15 @@ final class PrintedMeasureRhythmGuard {
         var staff = new PlayingTechniqueDetector.Staff(rails.top(), rails.bottom(), rails.gap(), 0, 1);
         if (ClosedSixteenthPairBeforeHalf.ownedSeparator(gray, width, height, staff, cut * width))
             return false;
+        if (octaves.size() == 24 && octaves.stream().anyMatch(note -> note.stemDirection() == 0)) {
+            var verified = verifyOctaveShaft(octaves, region, gray, width, height, staff.gap());
+            if (verified.isEmpty()) return false;
+            if (ClosedSixteenthPairBeforeHalf.closedOctaveRailsBeforeTieValidation(
+                    verified, region, gray, width, height, rails.gap(), rails.bottom()))
+                return ownsInlineTriple(raw, rests, index, verified, staff, labels, gray, width, height);
+            return ownsClippedInlineTripleBar(
+                    raw, rests, index, verified, staff, labels, gray, width, height, cut);
+        }
         boolean fourBeat = octaves.size() == 32;
         if (fourBeat) {
             if (rests.stream().anyMatch(rest -> rest.measureIndex() == index)
@@ -1630,6 +1647,50 @@ final class PrintedMeasureRhythmGuard {
                             head, peer, gray, width, height, rails.gap(), rails.bottom())) return true;
         }
         return !fourBeat && ownsInlineTriple(raw, rests, index, octaves, staff, labels, gray, width, height);
+    }
+
+    /** A missing model stem can contribute to the boundary proof only through its printed shaft. */
+    private static List<ScoreNoteEvent> verifyOctaveShaft(
+            List<ScoreNoteEvent> octaves,
+            MeasureRegion region,
+            byte[] gray,
+            int width,
+            int height,
+            float gap) {
+        for (int i = 0; i < octaves.size(); i += 2) {
+            var a = octaves.get(i);
+            var b = octaves.get(i + 1);
+            if (a.stemDirection() != 0 && b.stemDirection() != 0) continue;
+            int missing = a.stemDirection() == 0 ? i : i + 1;
+            int direction = a.stemDirection() == 0 ? b.stemDirection() : a.stemDirection();
+            float span = (region.right() - region.left()) * width;
+            float firstX = region.left() * width + a.positionInMeasure() * span;
+            float secondX = region.left() * width + b.positionInMeasure() * span;
+            var budget = new PrintedBeamShafts.Budget(100_000);
+            var first =
+                    PrintedBeamShafts.at(gray, width, height, firstX, a.pageY() * height, gap, budget);
+            var second =
+                    PrintedBeamShafts.at(gray, width, height, secondX, b.pageY() * height, gap, budget);
+            int matches = 0;
+            for (var left : first) {
+                if (left.direction() != -direction) continue;
+                for (var right : second) {
+                    if (right.direction() == left.direction()
+                            && Math.max(left.left(), right.left()) <= Math.min(left.right(), right.right())
+                            && Math.abs(left.endY() - right.endY()) < gap * .2f) {
+                        if (++matches > 1) return List.of();
+                    }
+                }
+            }
+            if (matches != 1 || budget.refused()) return List.of();
+            var verified = new ArrayList<>(octaves);
+            verified.set(missing, verified.get(missing).withStemDirection(direction));
+            if (verified.stream().anyMatch(note ->
+                    !ClosedSixteenthPairBeforeHalf.writtenHead(note, false)
+                            || (note.articulations() & NoteOrnament.GRACE) != 0)) return List.of();
+            return verified;
+        }
+        return List.of();
     }
 
     private static boolean ownsClippedInlineTripleBar(
