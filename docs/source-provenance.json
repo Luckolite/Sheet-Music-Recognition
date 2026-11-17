@@ -3940,13 +3940,13 @@
     "GuideCacheIdentityTest.java": {
       "source_path": "app/src/test/java/com/musicsheets/app/pdf/GuideCacheIdentityTest.java",
       "standalone_path": "java/src/test/java/io/github/luckolite/interpreter/GuideCacheIdentityTest.java",
-      "source_sha256": "c63b490ea1e029e1d535d8125512c143d45d0bc7e0d3a53ac6bed7384f4d4db1",
-      "source_normalized_sha256": "c63b490ea1e029e1d535d8125512c143d45d0bc7e0d3a53ac6bed7384f4d4db1",
+      "source_sha256": "7452b4c606cb5e0d384d5dc955016aacb4f9e7cc1e9bc0862f1b46bcfb72505f",
+      "source_normalized_sha256": "7452b4c606cb5e0d384d5dc955016aacb4f9e7cc1e9bc0862f1b46bcfb72505f",
       "standalone_sha256": "64cd1e3bdd4b5ad3b6461c00777310b261bf6d84d6a38fadd071bad4cb997265",
       "license": "Apache-2.0",
       "recognition88_review_note": "Reviewed exact contextual global changes and namespace twins with original synthetic regressions. New helpers are selected explicitly by desktop decoder manifest; no models, private fixtures, schema, wire or audio changes.",
-      "reviewed_app_commit": "5a83c7704ff14579edcf52af5c1ab8e8e719a4d7",
-      "reviewed_app_state": "The recognition 147 cache identity test rejects every earlier recognition epoch while retaining the existing guide layout.",
+      "reviewed_app_commit": "b954c0cc5f30c21a302a8f65141d0c297d4177c3",
+      "reviewed_app_state": "Independent cache identity tests match Android recognition 159 and standalone recognition 157.",
       "recognition89_review_note": "Reviewed global contextual changes and namespace twins, procedural original regressions, resource and preservation checks. No private fixtures, model, dependency, wire or audio changes.",
       "recognition90_review_note": "Complete interstaff bar cores and finite physically owned hairpin endpoints; original procedural regressions only. Models, dependencies, helpers, Guide291 and audio97 unchanged.",
       "recognition91_review_note": "Reviewed recognition91: observed terminal ribbon; boundary-crossing hairpin proposal completion (anchor coordinate-span <=4; new 4M proposal budget); complete raw beam following-rest voice. Existing admission fits and 145/225, model, Guide291 and audio97 unchanged. Original procedural tests only.",
@@ -10179,11 +10179,11 @@
     },
     "page_processing_budget.py": {
       "source_path": "tools/native-worker/page_processing_budget.py",
-      "source_sha256": "306c6460008cd7c145046795310db1aba8925b0abfa258b2927fa4e88bb6a0f6",
-      "source_normalized_sha256": "306c6460008cd7c145046795310db1aba8925b0abfa258b2927fa4e88bb6a0f6",
-      "reviewed_app_commit": "f4fca934fee0c72545a3761a485a87cb0f32af1d",
-      "reviewed_source_state": "Reviewed recognition13 scoped working-tree delta; app commit records preserved base, not the uncommitted delta.",
-      "review_note": "Original shared standard-library raster budget: ordinary accepted pages retain360 seconds;8-to20MP inputs receive a bounded workload allowance up to600 seconds. Invalid dimensions reject. No downscaling, changed inference/recognition calls, model/dependency changes or dropped musical OCR passes. Desktop overall worker lifecycle includes preprocessing and remains bounded/cancellable; standalone CLI execution policy is unchanged."
+      "source_sha256": "cc69bf3f574d60a6927dcf4d8c9d3541ad30242529c267d790bf7b447efc9520",
+      "source_normalized_sha256": "cc69bf3f574d60a6927dcf4d8c9d3541ad30242529c267d790bf7b447efc9520",
+      "reviewed_app_commit": "8543291c42ee41db6ecc6407f5c08c2bd66554c7",
+      "reviewed_source_state": "Reviewed desktop page worker deadline adjustment.",
+      "review_note": "The Windows page worker now uses the existing hard 600-second decoder ceiling for every supported raster size. Note density and recognition workload can exceed the former 360-second cutoff at ordinary dimensions. The standalone CLI has its own execution path and does not use this worker-only helper."
     },
     "semantic_wire.py": {
       "source_path": "tools/native-worker/semantic_wire.py",
