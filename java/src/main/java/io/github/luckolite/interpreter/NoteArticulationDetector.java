@@ -2081,6 +2081,10 @@ final class NoteArticulationDetector {
                         if (raw
                                 && candidate == NoteArticulation.STACCATO
                                 && embeddedTextDot(glyph, context, note.gap, labels)) continue;
+                        if (raw && candidate == NoteArticulation.STACCATO
+                                && PrintedFingeringDigits.ownsTwoTerminal(
+                                        gray, width, height, note.x, note.y, note.gap,
+                                        glyph.left, glyph.top, glyph.right, glyph.bottom)) continue;
                         if (raw
                                 && paperCandidate
                                 && candidate == NoteArticulation.STACCATO
@@ -2268,7 +2272,11 @@ final class NoteArticulationDetector {
                                                                         width),
                                                         closedDotFringe)))) continue;
                         // A small off-axis dot beside a head is a duration dot, not staccato.
-                        if (candidate == NoteArticulation.STACCATO && dx > .35f) continue;
+                        if (candidate == NoteArticulation.STACCATO
+                                && (dx > .35f
+                                        || raw && separatedOuterLedgerDot(
+                                                glyph, note, gray, annotationGray, width, height)))
+                            continue;
                         if (raw && !joinedOwners.containsKey(glyph))
                             compoundClaims.eligible(glyph, n, candidate, note, gray, width, height);
                         double score = dx * 3 + dy;
@@ -4844,6 +4852,59 @@ final class NoteArticulationDetector {
             if (beyond <= look * .25f) return true;
         }
         return false;
+    }
+
+    /** The paper above an independent guide rule belongs outside the high ledger attack. */
+    private static boolean separatedOuterLedgerDot(
+            Glyph glyph, Anchor note, byte[] gray, byte[] original, int width, int height) {
+        float gap = note.gap;
+        if (!Float.isFinite(gap)
+                || gap < 6
+                || !(note.staffTop - note.y >= gap * 4.25f)
+                || note.y - glyph.bottom < gap * 2.5f
+                || original == null
+                || original.length != gray.length) return false;
+        int x = Math.round(glyph.x()), reach = Math.round(gap * 5f);
+        int first = Math.max(1, Math.round(glyph.bottom + gap * .65f));
+        int last = Math.min(height - 2, Math.round(note.y - gap * .85f));
+        if (x - reach < 0 || x + reach >= width) return false;
+        int maxThickness = Math.max(2, (int) Math.ceil(gap * .25f));
+        int maxBreak = Math.max(1, Math.round(gap * .12f));
+        for (int y = first; y <= last; y++) {
+            if ((gray[y * width + x] & 255) < 155
+                    && thinGuideRule(gray, width, height, x, y, reach, maxThickness, maxBreak)
+                    && (original == gray
+                            || thinGuideRule(
+                                    original, width, height, x, y, reach, maxThickness, maxBreak)))
+                return true;
+        }
+        return false;
+    }
+
+    private static boolean thinGuideRule(
+            byte[] gray, int width, int height, int x, int y, int reach,
+            int maxThickness, int maxBreak) {
+        for (int side = -1; side <= 1; side += 2) {
+            int thin = 0, missing = 0;
+            for (int distance = 0; distance <= reach; distance++) {
+                int xx = x + side * distance;
+                boolean ink = false;
+                for (int row = y - 1; row <= y + 1; row++) {
+                    int pixel = row * width + xx;
+                    if ((gray[pixel] & 255) < 155
+                            && thinRuleColumn(gray, width, height, pixel, row, maxThickness)) {
+                        ink = true;
+                        break;
+                    }
+                }
+                if (ink) {
+                    thin++;
+                    missing = 0;
+                } else if (++missing > maxBreak) return false;
+                if (thin + reach - distance < (reach + 1) * .95f) return false;
+            }
+        }
+        return true;
     }
 
     /** An independently long, thin rule is not a shaft continuing past its beam. */

@@ -73,7 +73,13 @@ final class RawNumeralComponents {
 
     static RawNumeralComponents captureLongWindow(
             byte[] gray, int width, int height, int left, int top, int right, int bottom) {
-        return capture(gray, width, height, left, top, right, bottom, 154,
+        return captureLongWindow(gray, width, height, left, top, right, bottom, 154);
+    }
+
+    static RawNumeralComponents captureLongWindow(
+            byte[] gray, int width, int height, int left, int top, int right, int bottom,
+            int threshold) {
+        return capture(gray, width, height, left, top, right, bottom, threshold,
                 () -> {}, () -> {}, 650_000);
     }
 

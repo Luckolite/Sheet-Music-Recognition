@@ -98,6 +98,663 @@ final class ClosedDottedSixteenths {
         return score.withNotes(retained,owners);
     }
 
+    static ScorePageInterpretation repairClosedThirdsClock(
+            ScorePageInterpretation score, byte[] gray, byte[] source, int w, int h) {
+        if (gray == null || source == null || gray.length != (long) w * h
+                || source.length != gray.length || w < 256 || h < 128) return score;
+        var rows = groupedHeads(score, w, h);
+        var raw = new Ink(source, w, h);
+        var normalized = new Ink(gray, w, h);
+        var notes = new ArrayList<>(score.notes());
+        var removed = new java.util.BitSet(notes.size());
+        int nextMeter = 0;
+        ScoreMeterChange meter = null;
+        for (int i = 0; i < rows.size(); i++) {
+            while (nextMeter < score.meterChanges().size()
+                    && score.meterChanges().get(nextMeter).measureIndex() <= i)
+                meter = score.meterChanges().get(nextMeter++);
+            if (meter == null || meter.denominator() != 4) continue;
+            var row = rows.get(i);
+            boolean openingTriple = meter.numerator() == 3 && row.size() == 25 && i > 0
+                    && score.measures().get(i).top() > score.measures().get(i - 1).bottom();
+            boolean common = meter.numerator() == 4 && (row.size() == 18 || row.size() == 27 || row.size() == 31 || row.size() == 36);
+            boolean thirdsTriple = meter.numerator() == 3 && row.size() == 24;
+            if (!openingTriple && !common && !thirdsTriple) continue;
+            int measure = i;
+            if (score.rests().stream().anyMatch(r -> r.measureIndex() == measure)
+                    || score.multiRestGroups().stream().anyMatch(g -> g.firstMeasureIndex() <= measure
+                            && g.firstMeasureIndex() + g.measureCount() > measure)) continue;
+            var bar = score.measures().get(i);
+            if (thirdsTriple) {
+                for (var head : closedOpposedThirds(raw, normalized, bar, row))
+                    notes.set(head.index, head.note);
+                continue;
+            }
+            if (openingTriple) {
+                var ribbon = closedDownstemOpeningTriple(raw, normalized, bar, row);
+                if (ribbon == null) continue;
+                removed.set(ribbon.alias.index);
+                for (int j = 0; j < ribbon.heads.size(); j++) {
+                    var head = ribbon.heads.get(j);
+                    notes.set(head.index, rhythm(head.note, j % 4 < 2));
+                }
+                continue;
+            }
+            if (row.size() == 18) {
+                var hooks = closedWideDyadsBeforeHalf(raw, normalized, bar, row);
+                for (var pair : hooks) {
+                    notes.set(pair.upper.index, rhythm(pair.upper.note, false));
+                    notes.set(pair.lower.index, rhythm(pair.lower.note, false));
+                }
+                continue;
+            }
+            var proof = switch (row.size()) {
+                case 27 -> closedThirdsWithQuarterTail(raw, normalized, bar, row);
+                case 31 -> closedThirdsClock(raw, normalized, bar, row);
+                default -> closedOctavesClock(raw, normalized, bar, row);
+            };
+            if (proof == null) continue;
+            for (var mask : proof.masks) removed.set(mask.index);
+            for (var pair : proof.shortPairs) {
+                notes.set(pair.upper.index, rhythm(pair.upper.note, false));
+                notes.set(pair.lower.index, rhythm(pair.lower.note, false));
+            }
+        }
+        if (removed.isEmpty() && notes.equals(score.notes())) return score;
+        var keep = new ArrayList<ScoreNoteEvent>();
+        var origins = new ArrayList<Integer>();
+        for (int i = 0; i < notes.size(); i++) {
+            if (removed.get(i)) continue;
+            keep.add(notes.get(i));
+            origins.add(i);
+        }
+        return score.withNotes(keep, origins);
+    }
+
+    private record ThirdsClock(List<Head> masks, List<Dyad> shortPairs) {}
+
+    private static List<Head> closedOpposedThirds(Ink raw, Ink normalized, MeasureRegion bar, List<Head> row) {
+        float gap = (bar.bottom() - bar.top()) * raw.h / 8.2f;
+        if (bar.cadenceQuarterBeats() != 0 || gap < 10 || gap > 23
+                || !hasClosingRule(raw.pixels, raw.w, raw.h, bar)
+                || !hasClosingRule(normalized.pixels, raw.w, raw.h, bar)) return List.of();
+        var ordered = row.stream().sorted(Comparator.comparingDouble(Head::x)).toList();
+        var firstDirection = ordered.get(0).note.stemDirection();
+        if (firstDirection == 0 || ordered.get(16).note.stemDirection() != -firstDirection) return List.of();
+        var trial = new ArrayList<ScoreNoteEvent>(24);
+        var replaced = new ArrayList<Head>();
+        int removedDots = 0;
+        boolean restoredHook = false;
+        for (int i = 0; i < ordered.size(); i += 2) {
+            var pair = thirdsDyad(ordered.subList(i, i + 2));
+            boolean dotted = i % 4 == 0;
+            int direction = i < 16 ? firstDirection : -firstDirection;
+            if (Math.abs(pair.lower.x - pair.upper.x) > gap * .22f
+                    || pair.upper.note.staffStep() - pair.lower.note.staffStep() != 2
+                    || i > 0 && (pair.lower.x - ordered.get(i - 2).x < gap * 1.35f
+                            || pair.lower.x - ordered.get(i - 2).x > gap * 4.4f)) return List.of();
+            boolean missedHook = !dotted && pair.lower.note.beamCount() == 2;
+            boolean missedDot = dotted && pair.upper.note.augmentationDots() + pair.lower.note.augmentationDots() == 0;
+            if (missedHook) {
+                if (i != 2 || direction != 1 || restoredHook) return List.of();
+                var prior=thirdsDyad(ordered.subList(0, 2));
+                if (!coveredUpwardHook(raw, pair, prior, gap) || !coveredUpwardHook(normalized, pair, prior, gap))
+                    return List.of();
+                restoredHook = true;
+            }
+            float next = i + 2 < ordered.size() ? ordered.get(i + 2).x : bar.right() * raw.w;
+            if (missedDot) {
+                if (i != 0 && i != 20 || ++removedDots > 2) return List.of();
+                for (var plane : List.of(raw, normalized)) {
+                    if (!dot(plane, pair.upper, next, gap) && !compactDottedHead(plane, pair.upper, gap)
+                            && !dot(plane, pair.lower, next, gap) && !compactDottedHead(plane, pair.lower, gap))
+                        return List.of();
+                }
+            }
+            for (var owner : ordered.subList(i, i + 2)) {
+                var n = owner.note;
+                if (!regular(n, 1, true) || n.stemDirection() != 0 && n.stemDirection() != direction
+                        || n.beamCount() != (dotted || missedHook ? 2 : 3)
+                        || !dotted && n.augmentationDots() != 0) return List.of();
+                var result = missedDot || missedHook ? rhythm(n, dotted) : n;
+                trial.add(result);
+                if (result != n) replaced.add(new Head(owner.index, result, owner.x, owner.y));
+            }
+        }
+        if (removedDots == 0 || replaced.isEmpty()) return List.of();
+        for (int i = 0; i < trial.size(); i++) {
+            int slot = i / 2;
+            boolean dotted = slot % 2 == 0;
+            var place = ScoreNoteTiming.writtenPlacement(trial.get(i), trial, 3).orElse(null);
+            if (place == null || place.onsetBeats() != slot / 2 * .5 + (dotted ? 0 : .375)
+                    || place.durationBeats() != (dotted ? .375 : .125)) return List.of();
+        }
+        return replaced;
+    }
+
+    private static boolean compactDottedHead(Ink ink, Head head, float gap) {
+        int r = Math.round(gap * .125f), near = Math.round(gap * .20f), far = Math.round(gap * .30f);
+        int left = Math.round(head.x + gap * .68f), right = Math.round(head.x + gap * 1.2f);
+        int top = Math.round(head.y - gap * .67f), bottom = Math.round(head.y + gap * .3f);
+        if (left < far || right + far >= ink.w || top < far || bottom + far >= ink.h) return false;
+        int side = 2 * r + 1;
+        for (int x = left; x <= right; x++) {
+            for (int y = top; y <= bottom; y++) {
+                int core = 0;
+                for (int dx = -r; dx <= r; dx++)
+                    for (int dy = -r; dy <= r; dy++)
+                        if ((ink.pixels[(y + dy) * ink.w + x + dx] & 255) < 120) core++;
+                if (core < .75f * side * side) continue;
+                if (clearedDotFaces(ink, x, y, r, near, far, -1)
+                        && clearedDotFaces(ink, x, y, r, near, far, 1)) return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean clearedDotFaces(Ink ink, int x, int y, int radius, int near, int far, int direction) {
+        boolean separatedRow = false, separatedColumn = false;
+        for (int offset = near; offset <= far; offset++) {
+            int row = 0, column = 0;
+            for (int k = -radius; k <= radius; k++) {
+                if ((ink.pixels[(y + direction * offset) * ink.w + x + k] & 255) < 125) row++;
+                if ((ink.pixels[(y + k) * ink.w + x + direction * offset] & 255) < 125) column++;
+            }
+            separatedRow |= row <= 1;
+            separatedColumn |= column <= 1;
+        }
+        return separatedRow && separatedColumn;
+    }
+
+    private static List<Dyad> closedWideDyadsBeforeHalf(Ink raw, Ink normalized, MeasureRegion bar, List<Head> row) {
+        float gap = (bar.bottom() - bar.top()) * raw.h / 8.2f;
+        if (bar.cadenceQuarterBeats() != 0 || gap < 10 || gap > 23
+                || !hasClosingRule(raw.pixels, raw.w, raw.h, bar)
+                || !hasClosingRule(normalized.pixels, raw.w, raw.h, bar)) return List.of();
+        var ordered = row.stream().sorted(Comparator.comparingDouble(Head::x)).toList();
+        var trial = new ArrayList<ScoreNoteEvent>(18);
+        var hooks = new ArrayList<Dyad>();
+        var terminal = thirdsDyad(ordered.subList(16, 18));
+        for (var plane : List.of(raw, normalized)) {
+            if (sharedUpAxis(plane, terminal.upper, terminal.lower, gap,
+                    new PrintedBeamShafts.Budget(55_000)) == null
+                    || !hollowDyadHead(plane, terminal.upper, gap)
+                    || !hollowDyadHead(plane, terminal.lower, gap)) return List.of();
+        }
+        for (int i = 0; i < ordered.size(); i += 2) {
+            var pair = thirdsDyad(ordered.subList(i, i + 2));
+            boolean half = i == 16;
+            boolean dotted = !half && i % 4 == 0;
+            int depth = pair.lower.note.beamCount();
+            boolean missing = !dotted && !half && depth == 2;
+            if (Math.abs(pair.lower.x - pair.upper.x) > gap * .22f
+                    || pair.upper.note.staffStep() - pair.lower.note.staffStep() != 5
+                    || i > 0 && (pair.lower.x - ordered.get(i - 2).x < gap * 1.5f
+                            || pair.lower.x - ordered.get(i - 2).x > gap * 3.6f)) return List.of();
+            for (var owner : ordered.subList(i, i + 2)) {
+                var n = owner.note;
+                if (!regularMarkings(n, 1) || n.stemDirection() != 1
+                        || n.augmentationDots() != (dotted ? 1 : 0)
+                        || n.unbeamedDurationBeats() != (half ? 2 : 0)
+                        || n.beamCount() != (half ? 0 : dotted || missing ? 2 : 3)) return List.of();
+                if (!half) {
+                    float next = ordered.get(i + 2).x;
+                    if (dot(raw, owner, next, gap) != dotted || dot(normalized, owner, next, gap) != dotted)
+                        return List.of();
+                }
+                trial.add(missing ? rhythm(n, false) : n);
+            }
+            if (missing) {
+                var peer = thirdsDyad(ordered.subList(i - 2, i));
+                if (!coveredUpwardHook(raw, pair, peer, gap) || !coveredUpwardHook(normalized, pair, peer, gap))
+                    return List.of();
+                hooks.add(pair);
+            }
+        }
+        if (hooks.isEmpty() || hooks.size() > 2) return List.of();
+        for (int i = 0; i < trial.size(); i++) {
+            int slot = i / 2;
+            boolean dotted = slot % 2 == 0;
+            var place = ScoreNoteTiming.writtenPlacement(trial.get(i), trial, 4).orElse(null);
+            if (place == null || place.onsetBeats() != slot / 2 * .5 + (dotted ? 0 : .375)
+                    || place.durationBeats() != (slot == 8 ? 2 : dotted ? .375 : .125)) return List.of();
+        }
+        return hooks;
+    }
+
+    private static boolean coveredUpwardHook(Ink ink, Dyad owner, Dyad peer, float gap) {
+        if (ascendingSharedThirdHook(ink, peer.upper, peer.lower, owner.upper, owner.lower, gap)) return true;
+        var budget = new PrintedBeamShafts.Budget(65_000);
+        var a = sharedUpAxis(ink, owner.upper, owner.lower, gap, budget);
+        var b = sharedUpAxis(ink, peer.upper, peer.lower, gap, budget);
+        return a != null && b != null && !budget.refused()
+                && concentratedBeamlet(ink, new Shaft(a[0], a[1]), new Shaft(b[0], b[1]), gap, -1);
+    }
+
+    private static boolean hollowDyadHead(Ink ink, Head head, float gap) {
+        int x0 = Math.round(head.x - gap), x1 = Math.round(head.x + gap * .63f);
+        int y0 = Math.round(head.y - gap * .73f), y1 = Math.round(head.y + gap * .73f);
+        return x0 >= 0 && y0 >= 0 && x1 < ink.w && y1 < ink.h
+                && WholeHeadPocketEvidence.hasEnclosedOpening(ink.pixels, ink.w, ink.h, x0, y0, x1, y1,
+                        head.x - gap * .12f, head.y, gap, Math.max(12, Math.round(gap * gap * .065f)), 3);
+    }
+
+    private record ClosedWideRibbon(Head alias, List<Head> heads) {}
+
+    private static ClosedWideRibbon closedDownstemOpeningTriple(
+            Ink raw, Ink normalized, MeasureRegion bar, List<Head> row) {
+        float gap = (bar.bottom() - bar.top()) * raw.h / 8.2f;
+        if (bar.cadenceQuarterBeats() != 0 || gap < 10 || gap > 23
+                || !hasClosingRule(raw.pixels, raw.w, raw.h, bar)
+                || !hasClosingRule(normalized.pixels, raw.w, raw.h, bar)) return null;
+        var aliases = row.stream().filter(h -> h.note.stemDirection() == 0).toList();
+        if (aliases.size() != 1) return null;
+        var alias = aliases.get(0);
+        if (!regular(alias.note) || alias.note.writtenAccidental() != 2 || alias.note.articulations() != 0
+                || alias.note.beamCount() != 1 || alias.note.augmentationDots() != 1) return null;
+        var sorted = row.stream().filter(h -> h != alias).sorted(Comparator.comparingDouble(Head::x)).toList();
+        var opening = thirdsDyad(sorted.subList(0, 2));
+        var next = thirdsDyad(sorted.subList(2, 4));
+        if (Math.abs(opening.lower.x - alias.x) > gap * .18f || alias.y - opening.lower.y < gap * 3.2f)
+            return null;
+        for (var plane : List.of(raw, normalized))
+            if (!coveredOpeningDyadBeam(plane, opening, next, alias, gap)) return null;
+
+        var trial = new ArrayList<ScoreNoteEvent>(24);
+        Dyad prior = null;
+        int missedHooks = 0;
+        int missedDots = 0;
+        for (int i = 0; i < sorted.size(); i += 2) {
+            var pair = thirdsDyad(sorted.subList(i, i + 2));
+            boolean dotted = i % 4 == 0;
+            int depth = pair.lower.note.beamCount();
+            int dots = pair.lower.note.augmentationDots();
+            boolean missedHook = !dotted && depth == 2;
+            boolean missedDot = dotted && dots == 0;
+            if (Math.abs(pair.lower.x - pair.upper.x) > gap * .24f
+                    || pair.upper.note.staffStep() - pair.lower.note.staffStep() != 5
+                    || prior != null && (pair.lower.x - prior.lower.x < gap * 2f
+                            || pair.lower.x - prior.lower.x > gap * 3.6f)) return null;
+            if (dotted ? depth != (i == 0 ? 1 : 2) : dots != 0 || depth < 2 || depth > 3) return null;
+            float following = i + 2 < sorted.size() ? sorted.get(i + 2).x : bar.right() * raw.w;
+            for (var h : sorted.subList(i, i + 2)) {
+                var n = h.note;
+                if (!regular(n, 1, true) || n.stemDirection() != -1
+                        || n.beamCount() != depth || n.augmentationDots() != dots) return null;
+                trial.add(rhythm(n, dotted));
+                for (var plane : List.of(raw, normalized))
+                    if (dot(plane, h, following, gap) != dotted) return null;
+            }
+            for (var plane : List.of(raw, normalized)) {
+                if (missedHook && !concentratedDownwardHook(plane, pair, prior, gap)) return null;
+            }
+            if (missedHook) missedHooks++;
+            if (missedDot) missedDots++;
+            prior = pair;
+        }
+        if (missedHooks < 1 || missedHooks > 3 || missedDots != 1
+                || !fillsDottedClock(trial, 3)) return null;
+        return new ClosedWideRibbon(alias, sorted);
+    }
+
+    private static boolean coveredOpeningDyadBeam(Ink ink, Dyad first, Dyad second, Head alias, float gap) {
+        var budget = new PrintedBeamShafts.Budget(90_000);
+        if (!PrintedBeamShafts.at(ink.pixels, ink.w, ink.h, alias.x, alias.y, gap, budget).isEmpty()
+                || dot(ink, alias, second.lower.x, gap)) return false;
+        var opening = commonShafts(ink, first, gap, budget);
+        var following = commonShafts(ink, second, gap, budget);
+        for (var a : opening) {
+            for (var b : following) {
+                float slope = (b.tip - a.tip) / (float) (b.x - a.x);
+                if (slope < .05f || slope > .28f || alias.x - a.x < gap * .45f
+                        || alias.x - a.x > gap * .85f) continue;
+                int outer = Math.round(a.tip - gap * .24f);
+                int center = Math.round(alias.y);
+                int x = Math.round(alias.x);
+                if (ink.weight(x, center, 2) != 5 || ink.weight(x - 4, center, 2) != 5
+                        || ink.weight(x + 7, center, 2) != 5) continue;
+                for (int depth = Math.round(gap * .62f); depth <= Math.round(gap * 1.05f); depth++) {
+                    int both = 0, separated = 0;
+                    for (int column = a.x + 3; column <= b.x - 3; column++) {
+                        int y = Math.round(outer + slope * (column - a.x));
+                        if (ink.weight(column, y, 1) != 3 || ink.weight(column, y - depth, 1) != 3)
+                            continue;
+                        both++;
+                        for (int seam = y - depth + 3; seam <= y - 3; seam++) {
+                            if (!ink.dark(column, seam)) {
+                                separated++;
+                                break;
+                            }
+                        }
+                    }
+                    if (both >= (b.x - a.x - 5) * .92f && separated >= .55f * gap) return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static boolean concentratedDownwardHook(Ink ink, Dyad pair, Dyad preceding, float gap) {
+        if (provesThirdsHookWithQuarterTail(ink, pair, preceding, gap)) return true;
+        var budget = new PrintedBeamShafts.Budget(90_000);
+        var shafts = commonShafts(ink, pair, gap, budget);
+        var previous = commonShafts(ink, preceding, gap, budget);
+        for (var own : shafts)
+            for (var peer : previous)
+                if (concentratedBeamlet(ink, own, peer, gap, 1)) return true;
+        return false;
+    }
+
+    private static boolean concentratedBeamlet(Ink ink, Shaft own, Shaft peer, float gap, int direction) {
+        float slope = (own.tip - peer.tip) / (float) (own.x - peer.x);
+        if (slope < 0 || slope > .25f) return false;
+        int radius = Math.round(gap * .30f);
+        for (int depth = Math.round(gap * 1.70f); depth <= Math.round(gap * 2.35f); depth++) {
+            int inside = 0, outside = 0;
+            for (int dx = Math.round(.40f * gap); dx <= Math.round(.77f * gap); dx++) {
+                int y = Math.round(own.tip - direction * depth - dx * slope);
+                if (ink.weight(own.x - dx, y, radius) >= gap * .42f) inside++;
+            }
+            for (int dx = Math.round(1.05f * gap); dx <= Math.round(1.35f * gap); dx++) {
+                int y = Math.round(own.tip - direction * depth - dx * slope);
+                if (ink.weight(own.x - dx, y, radius) >= gap * .38f) outside++;
+            }
+            if (inside >= gap * .30f && outside <= 1) return true;
+        }
+        return false;
+    }
+
+    private static ThirdsClock closedThirdsClock(
+            Ink raw, Ink normalized, MeasureRegion bar, List<Head> row) {
+        float gap = (bar.bottom() - bar.top()) * raw.h / 8.2f;
+        if (bar.cadenceQuarterBeats() != 0 || gap < 10 || gap > 23
+                || !hasClosingRule(raw.pixels, raw.w, raw.h, bar)
+                || !hasClosingRule(normalized.pixels, raw.w, raw.h, bar)) return null;
+        var masks = row.stream().filter(head -> head.note.stemDirection() == 0).toList();
+        if (masks.size() != 1) return null;
+        var mask = masks.get(0);
+        if (mask.note.beamCount() != 3 || mask.note.augmentationDots() != 0
+                || mask.note.unbeamedDurationBeats() != 0 || mask.note.writtenAccidental() != 2) return null;
+        var ordered = row.stream().filter(h -> h != mask).sorted(Comparator.comparingDouble(Head::x)).toList();
+        var columns = new ArrayList<List<Head>>();
+        for (var note : ordered) {
+            if (columns.isEmpty() || note.x - columns.get(columns.size() - 1).get(0).x > .24f * gap)
+                columns.add(new ArrayList<>());
+            columns.get(columns.size() - 1).add(note);
+        }
+        if (columns.size() != 16 || columns.get(0).size() != 2 || columns.get(1).size() != 2
+                || columns.stream().anyMatch(col -> col.size() > 2)) return null;
+        var trial = new ArrayList<ScoreNoteEvent>(ordered.size());
+        var marked = new ArrayList<Integer>();
+        for (int i = 0; i < columns.size(); i++) {
+            var col = columns.get(i);
+            if (i > 0) {
+                float spacing = col.get(0).x - columns.get(i - 1).get(0).x;
+                if (spacing < 1.44f * gap || spacing > 3.8f * gap) return null;
+            }
+            if (col.size() == 2 && Math.abs(col.get(0).note.staffStep() - col.get(1).note.staffStep()) > 3)
+                return null;
+            boolean dotted = i % 2 == 0;
+            for (var h : col) {
+                var n = h.note;
+                int expected = i == 1 || dotted ? 2 : 3;
+                if (n.kind() != ScoreNoteEvent.Kind.PITCHED || n.staffIndex() != 0 || n.staffCount() != 1
+                        || n.visualSize() != ScoreNoteEvent.VisualSize.FULL || n.stemDirection() != -1
+                        || n.unbeamedDurationBeats() != 0 || n.tupletDivisor() != 1
+                        || n.beamCount() != expected || n.augmentationDots() != (dotted ? 1 : 0)
+                        || n.tiedFromPrevious() || n.boundaryTies() != 0 || n.crossStaffBeam()
+                        || n.leadingRestBeats() != 0 || n.followingRestBeats() != 0
+                        || (n.articulations() & NoteOrnament.GRACE) != 0) return null;
+                trial.add(i == 1 ? rhythm(n, false) : n);
+                marked.add(i);
+            }
+        }
+        var first = thirdsDyad(columns.get(0));
+        var shortPair = thirdsDyad(columns.get(1));
+        if (!provesRestoredHook(raw, shortPair, first, gap, new PrintedBeamShafts.Budget(90_000))
+                || !provesRestoredHook(normalized, shortPair, first, gap, new PrintedBeamShafts.Budget(90_000)))
+            return null;
+        var anchors = columns.stream().filter(col -> col.size() == 2)
+                .map(ClosedDottedSixteenths::thirdsDyad)
+                .filter(d -> Math.abs(d.lower.x - mask.x) <= gap * .22f
+                        && mask.y - d.lower.y > gap * 3.8f).toList();
+        if (anchors.size() != 1 || !embeddedRailMask(raw, anchors.get(0), mask, gap)
+                || !embeddedRailMask(normalized, anchors.get(0), mask, gap)) return null;
+        for (int i = 0; i < trial.size(); i++) {
+            int attack = marked.get(i);
+            boolean dotted = attack % 2 == 0;
+            var placement = ScoreNoteTiming.writtenPlacement(trial.get(i), trial, 4).orElse(null);
+            if (placement == null
+                    || placement.onsetBeats() != attack / 2 * .5 + (dotted ? 0 : .375)
+                    || placement.durationBeats() != (dotted ? .375 : .125)) return null;
+        }
+        return new ThirdsClock(List.of(mask), List.of(shortPair));
+    }
+
+    private static ThirdsClock closedThirdsWithQuarterTail(
+            Ink raw, Ink normalized, MeasureRegion bar, List<Head> row) {
+        float gap = (bar.bottom() - bar.top()) * raw.h / 8.2f;
+        if (bar.cadenceQuarterBeats() != 0 || gap < 10 || gap > 23
+                || !hasClosingRule(raw.pixels, raw.w, raw.h, bar)
+                || !hasClosingRule(normalized.pixels, raw.w, raw.h, bar)) return null;
+        var impostors = row.stream().filter(h -> h.note.stemDirection() == 1).toList();
+        if (impostors.size() != 1) return null;
+        var mask = impostors.get(0);
+        if (mask.note.beamCount() != 0 || mask.note.unbeamedDurationBeats() != 1
+                || mask.note.augmentationDots() != 0 || mask.note.writtenAccidental() != 2
+                || mask.note.articulations() != 0) return null;
+        var sorted = row.stream().filter(h -> h != mask).sorted(Comparator.comparingDouble(Head::x)).toList();
+        var pairs = new ArrayList<Dyad>(13);
+        var replacements = new ArrayList<Dyad>();
+        var trial = new ArrayList<ScoreNoteEvent>(26);
+        for (int i = 0; i < sorted.size(); i += 2) {
+            var pair = thirdsDyad(sorted.subList(i, i + 2));
+            boolean finalQuarter = i == 24;
+            boolean dotted = !finalQuarter && i % 4 == 0;
+            boolean restored = !dotted && !finalQuarter && pair.upper.note.beamCount() == 2;
+            if (Math.abs(pair.upper.x - pair.lower.x) > gap * .25f
+                    || pair.upper.note.staffStep() - pair.lower.note.staffStep() < 2
+                    || pair.upper.note.staffStep() - pair.lower.note.staffStep() > 3
+                    || i > 0 && (pair.lower.x - pairs.get(pairs.size() - 1).lower.x < gap * 1.40f
+                            || pair.lower.x - pairs.get(pairs.size() - 1).lower.x > gap * 4f)) return null;
+            float next = finalQuarter ? bar.right() * raw.w : sorted.get(i + 2).x;
+            for (var h : sorted.subList(i, i + 2)) {
+                var n = h.note;
+                int beams = finalQuarter ? 0 : dotted || restored ? 2 : 3;
+                if (n.kind() != ScoreNoteEvent.Kind.PITCHED || n.staffIndex() != 0 || n.staffCount() != 1
+                        || n.visualSize() != ScoreNoteEvent.VisualSize.FULL || n.stemDirection() != -1
+                        || n.unbeamedDurationBeats() != (finalQuarter ? 1 : 0) || n.tupletDivisor() != 1
+                        || n.beamCount() != beams || n.augmentationDots() != (dotted ? 1 : 0)
+                        || n.boundaryTies() != 0 || n.crossStaffBeam()
+                        || n.leadingRestBeats() != 0 || n.followingRestBeats() != 0
+                        || (n.articulations() & NoteOrnament.GRACE) != 0) return null;
+                trial.add(restored ? rhythm(n, false) : n);
+            }
+            for (var ink : List.of(raw, normalized)) {
+                boolean lowDot = dot(ink, pair.lower, next, gap);
+                boolean upDot = dot(ink, pair.upper, next, gap);
+                if (dotted ? !lowDot && !upDot : lowDot && upDot || finalQuarter && (lowDot || upDot))
+                    return null;
+            }
+            if (restored) {
+                var previous = pairs.get(pairs.size() - 1);
+                if (!provesThirdsHookWithQuarterTail(raw, pair, previous, gap)
+                        || !provesThirdsHookWithQuarterTail(normalized, pair, previous, gap))
+                    return null;
+                replacements.add(pair);
+            }
+            pairs.add(pair);
+        }
+        if (replacements.isEmpty() || replacements.size() > 3
+                || !reversedHookBlob(raw, pairs.get(1), mask, gap)
+                || !reversedHookBlob(normalized, pairs.get(1), mask, gap)
+                || commonShafts(raw, pairs.get(12), gap, new PrintedBeamShafts.Budget(90_000)).isEmpty()
+                || commonShafts(normalized, pairs.get(12), gap, new PrintedBeamShafts.Budget(90_000)).isEmpty())
+            return null;
+        for (int i = 0; i < trial.size(); i++) {
+            int attack = i / 2;
+            boolean dotted = attack % 2 == 0;
+            var placement = ScoreNoteTiming.writtenPlacement(trial.get(i), trial, 4).orElse(null);
+            if (placement == null || placement.onsetBeats() != attack / 2 * .5 + (dotted ? 0 : .375)
+                    || placement.durationBeats() != (i >= 24 ? 1 : dotted ? .375 : .125)) return null;
+        }
+        return new ThirdsClock(List.of(mask), List.copyOf(replacements));
+    }
+
+    private static ThirdsClock closedOctavesClock(Ink raw, Ink normalized, MeasureRegion bar, List<Head> row) {
+        float gap = (bar.bottom() - bar.top()) * raw.h / 8.2f;
+        if (bar.cadenceQuarterBeats() != 0 || gap < 10 || gap > 23
+                || !hasClosingRule(raw.pixels, raw.w, raw.h, bar)
+                || !hasClosingRule(normalized.pixels, raw.w, raw.h, bar)) return null;
+        var masks = row.stream().filter(h -> h.note.stemDirection() != -1).toList();
+        if (masks.size() != 4 || masks.stream().filter(h -> h.note.stemDirection() == 0).count() != 1
+                || masks.stream().anyMatch(h -> h.note.writtenAccidental() != 2 || h.note.augmentationDots() != 0
+                        || h.note.articulations() != 0 || h.note.beamCount() > 1)) return null;
+        var ordered = row.stream().filter(h -> h.note.stemDirection() == -1)
+                .sorted(Comparator.comparingDouble(Head::x)).toList();
+        var dyads = new ArrayList<Dyad>(16);
+        var trial = new ArrayList<ScoreNoteEvent>(32);
+        var restored = new ArrayList<Dyad>();
+        for (int i = 0; i < ordered.size(); i += 2) {
+            var pair = thirdsDyad(ordered.subList(i, i + 2));
+            var prior = i == 0 ? null : dyads.get(dyads.size() - 1);
+            boolean dotted = i % 4 == 0;
+            boolean missedHook = !dotted && pair.lower.note.beamCount() == 2;
+            if (Math.abs(pair.lower.x - pair.upper.x) > gap * .23f
+                    || pair.upper.note.staffStep() - pair.lower.note.staffStep() != 7
+                    || prior != null && (pair.lower.x - prior.lower.x < gap * 2f
+                            || pair.lower.x - prior.lower.x > gap * 4f)) return null;
+            float next = i + 2 == ordered.size() ? bar.right() * raw.w : ordered.get(i + 2).x;
+            for (var h : ordered.subList(i, i + 2)) {
+                var note = h.note;
+                if (!regular(note, 1, true) || note.augmentationDots() != (dotted ? 1 : 0)
+                        || note.beamCount() != (dotted || missedHook ? 2 : 3)) return null;
+                trial.add(missedHook ? rhythm(note, false) : note);
+            }
+            for (var ink : List.of(raw, normalized)) {
+                boolean low = dot(ink, pair.lower, next, gap), up = dot(ink, pair.upper, next, gap);
+                if (dotted ? !low && !up : low && up) return null;
+                if (missedHook && !provesOctaveHook(ink, pair, prior, masks, gap)) return null;
+            }
+            if (missedHook) restored.add(pair);
+            dyads.add(pair);
+        }
+        if (restored.isEmpty()) return null;
+        for (var mask : masks) {
+            var following = dyads.stream().filter(p -> p.lower.x > mask.x).findFirst().orElse(null);
+            if (following == null) return null;
+            if (mask.note.stemDirection() == 0) {
+                int j = dyads.indexOf(following);
+                if (j == 0 || !insideDottedBeam(raw, dyads.get(j - 1), following, mask, gap)
+                        || !insideDottedBeam(normalized, dyads.get(j - 1), following, mask, gap)) return null;
+            } else if (!reversedHookBlob(raw, following, mask, gap)
+                    || !reversedHookBlob(normalized, following, mask, gap)) return null;
+        }
+        for (int i = 0; i < trial.size(); i++) {
+            int attack = i / 2;
+            boolean dotted = attack % 2 == 0;
+            var place = ScoreNoteTiming.writtenPlacement(trial.get(i), trial, 4).orElse(null);
+            if (place == null || place.onsetBeats() != attack / 2 * .5 + (dotted ? 0 : .375)
+                    || place.durationBeats() != (dotted ? .375 : .125)) return null;
+        }
+        return new ThirdsClock(masks, List.copyOf(restored));
+    }
+
+    private static boolean provesOctaveHook(Ink ink, Dyad pair, Dyad prior, List<Head> masks, float gap) {
+        if (provesThirdsHookWithQuarterTail(ink, pair, prior, gap)) return true;
+        var budget = new PrintedBeamShafts.Budget(90_000);
+        if (OwnedTertiaryBeamlets.provesJoinedClosingDyadHook(ink.pixels, ink.w, ink.h,
+                pair.lower.x, pair.lower.y, pair.upper.x, pair.upper.y,
+                prior.upper.x, prior.upper.y, prior.lower.x, prior.lower.y, gap, budget)) return true;
+        return !commonShafts(ink, pair, gap, budget).isEmpty() && !budget.refused()
+                && masks.stream().anyMatch(mask -> mask.note.stemDirection() == 1
+                        && reversedHookBlob(ink, pair, mask, gap));
+    }
+
+    private static boolean insideDottedBeam(Ink ink, Dyad before, Dyad after, Head mask, float gap) {
+        if (mask.note.beamCount() != 0 || mask.note.unbeamedDurationBeats() != 1
+                || mask.y < before.lower.y + gap * 2.5f) return false;
+        var budget = new PrintedBeamShafts.Budget(90_000);
+        var left = commonShafts(ink, before, gap, budget);
+        var right = commonShafts(ink, after, gap, budget);
+        for (var a : left) {
+            for (var b : right) {
+                float slope = (b.tip - a.tip) / (float) (b.x - a.x);
+                var center = a.tip + slope * (mask.x - a.x);
+                if (slope <= 0 || slope > .3f || mask.x - a.x < gap || b.x - mask.x < gap
+                        || center - mask.y < gap * .42f || center - mask.y > gap * .93f) continue;
+                int radius = Math.round(gap * .62f);
+                int supported = 0;
+                for (int x = Math.round(mask.x) - radius; x <= Math.round(mask.x) + radius; x++) {
+                    int y = Math.round(mask.y + (x - mask.x) * slope);
+                    int dark = 0;
+                    for (int dy = -2; dy <= 2; dy++) if (ink.dark(x, y + dy)) dark++;
+                    if (dark >= 3) supported++;
+                }
+                if (supported >= radius * 1.7f) return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean provesThirdsHookWithQuarterTail(Ink ink, Dyad pair, Dyad previous, float gap) {
+        var budget = new PrintedBeamShafts.Budget(90_000);
+        if (provesRestoredHook(ink, pair, previous, gap, budget)) return true;
+        return !commonShafts(ink, pair, gap, budget).isEmpty() && !budget.refused()
+                && OwnedTertiaryBeamlets.provesBackwardHookOnJoinedRails(ink.pixels, ink.w, ink.h,
+                        pair.lower.x, pair.lower.y, previous.lower.x, previous.lower.y, gap);
+    }
+
+    private static boolean reversedHookBlob(Ink ink, Dyad next, Head mask, float gap) {
+        float distance = next.lower.x - mask.x;
+        if (distance < gap * .9f || distance > gap * 1.55f || mask.y - next.lower.y < gap * 2f)
+            return false;
+        var budget = new PrintedBeamShafts.Budget(95_000);
+        var axes = PrintedBeamShafts.at(ink.pixels, ink.w, ink.h, mask.x, mask.y, gap, budget);
+        if (axes.size() != 1 || axes.get(0).direction() != -1
+                || Math.abs(axes.get(0).endY() - next.upper.y) > gap * .32f) return false;
+        var arm = axes.get(0);
+        int x = Math.round(mask.x);
+        if (arm.left() - x < gap * .35f || arm.left() - x > gap * .75f
+                || next.lower.x - arm.left() < gap * .45f || next.lower.x - arm.left() > gap * .9f)
+            return false;
+        int row = Math.round(mask.y);
+        int shortRows = 0;
+        for (int y = row - Math.round(gap * .34f); y <= row + Math.round(gap * .30f); y++) {
+            int dark = 0;
+            for (int column = x; column <= arm.left(); column++) if (ink.dark(column,y)) dark++;
+            if (dark >= (arm.left() - x + 1) * .90f) shortRows++;
+        }
+        return shortRows >= gap * .42f;
+    }
+
+    private static Dyad thirdsDyad(List<Head> heads) {
+        var a = heads.get(0);
+        var b = heads.get(1);
+        return a.y < b.y ? new Dyad(a, b) : new Dyad(b, a);
+    }
+
+    private static boolean embeddedRailMask(Ink ink, Dyad owner, Head mask, float gap) {
+        var budget = new PrintedBeamShafts.Budget(95_000);
+        if (!PrintedBeamShafts.at(ink.pixels, ink.w, ink.h, mask.x, mask.y, gap, budget).isEmpty())
+            return false;
+        for (var shaft : commonShafts(ink, owner, gap, budget)) {
+            if (mask.x - shaft.x < gap * .35f || mask.x - shaft.x > gap * .85f
+                    || shaft.tip - mask.y > gap * .9f || shaft.tip - mask.y < gap * .35f) continue;
+            int top = Math.round(mask.y - gap * .5f);
+            int bottom = Math.round(mask.y + gap * .45f);
+            int far = Math.round(mask.x + gap * 1.15f);
+            int rows = 0;
+            for (int y = top; y <= bottom; y++) {
+                int dark = 0;
+                for (int x = shaft.x; x <= far; x++) if (ink.dark(x,y)) dark++;
+                if (dark >= (far - shaft.x + 1) * .90f) rows++;
+            }
+            if (rows >= gap * .45f) return true;
+        }
+        return false;
+    }
+
     static ScorePageInterpretation applyOpeningWideDyadHooks(
             ScorePageInterpretation score, byte[] gray, byte[] original, int width, int height,
             int physicalPage) {
@@ -110,19 +767,21 @@ final class ClosedDottedSixteenths {
         var beams = score.beamSource();
         for (var meter : score.meterChanges()) {
             int index = meter.measureIndex();
-            if (index < 1 || index >= rows.size() || meter.numerator() != 4 || meter.denominator() != 4
-                    || rows.get(index).size() != 32
+            int measureBeats = meter.numerator();
+            if (index < 1 || index >= rows.size() || (measureBeats != 3 && measureBeats != 4)
+                    || meter.denominator() != 4 || rows.get(index).size() != measureBeats * 8
                     || score.rests().stream().anyMatch(rest -> rest.measureIndex() == index)) continue;
             var bar = score.measures().get(index);
             var previous = score.measures().get(index - 1);
             if (bar.cadenceQuarterBeats() != 0 || bar.top() <= previous.bottom()) continue;
             var heads = rows.get(index).stream().sorted(Comparator.comparingDouble(Head::x)).toList();
-            var trial = openingWideDyadHooks(normalized, source, bar, heads);
+            var trial = openingWideDyadHooks(normalized, source, bar, heads, measureBeats);
             if (trial.isEmpty()) continue;
             if (repaired == score.notes()) repaired = new ArrayList<>(repaired);
             for (int i = 0; i < trial.size(); i++) repaired.set(heads.get(i).index, trial.get(i));
-            beams = captureRestoredDyadBeams(beams, repaired, heads.stream().map(Head::index).toList(),
-                    bar, gray, original, width, height, physicalPage);
+            if (measureBeats == 4)
+                beams = captureRestoredDyadBeams(beams, repaired, heads.stream().map(Head::index).toList(),
+                        bar, gray, original, width, height, physicalPage);
         }
         if (repaired == score.notes()) return score;
         return score.withBeamSource(beams).withNotes(repaired,
@@ -155,10 +814,10 @@ final class ClosedDottedSixteenths {
     }
 
     private static List<ScoreNoteEvent> openingWideDyadHooks(
-            Ink gray, Ink source, MeasureRegion bar, List<Head> heads) {
+            Ink gray, Ink source, MeasureRegion bar, List<Head> heads, int measureBeats) {
         float gap = (bar.bottom() - bar.top()) * gray.h / 8.2f;
         float right = bar.right() * gray.w;
-        float lastHead = heads.get(31).x;
+        float lastHead = heads.get(heads.size() - 1).x;
         if (gap < 10 || gap > 27 || right - lastHead < gap * .75f || right - lastHead > gap * 2
                 || !independentUpstemClosingRule(gray, bar, lastHead, gap)
                 || !independentUpstemClosingRule(source, bar, lastHead, gap)) return List.of();
@@ -177,11 +836,20 @@ final class ClosedDottedSixteenths {
                     || i + 2 < heads.size() && (next - rightHead.x < gap * 1.38f || next - rightHead.x > gap * 3.6f))
                 return List.of();
             for (var owner : List.of(left, rightHead)) {
-                if (!regular(owner.note) || owner.note.stemDirection() != 1 || owner.note.beamCount() < 2
+                if (!regular(owner.note, 1, measureBeats == 3) || owner.note.stemDirection() != 1
+                        || owner.note.beamCount() < 2
                         || owner.note.clefBottomDiatonic() != heads.get(0).note.clefBottomDiatonic()
-                        || dot(gray, owner, next, gap) != dotted || dot(source, owner, next, gap) != dotted)
+                        || measureBeats == 4
+                                && (dot(gray, owner, next, gap) != dotted || dot(source, owner, next, gap) != dotted))
                     return List.of();
             }
+            if (measureBeats == 3 && dotted
+                    && ((!dot(gray, left, next, gap) && !dot(gray, rightHead, next, gap))
+                    || (!dot(source, left, next, gap) && !dot(source, rightHead, next, gap)))) return List.of();
+            if (measureBeats == 3 && !dotted
+                    && (left.note.augmentationDots() != 0 || rightHead.note.augmentationDots() != 0
+                    || dot(gray, left, next, gap) && dot(gray, rightHead, next, gap)
+                    || dot(source, left, next, gap) && dot(source, rightHead, next, gap))) return List.of();
             int depth = dotted ? 2 : 3, dots = dotted ? 1 : 0;
             if (left.note.beamCount() == depth && rightHead.note.beamCount() == depth
                     && left.note.augmentationDots() == dots && rightHead.note.augmentationDots() == dots) {
@@ -189,7 +857,8 @@ final class ClosedDottedSixteenths {
                 trial.add(rightHead.note);
                 continue;
             }
-            if (dotted || ++corrections > 2 || left.note.beamCount() != 2 || rightHead.note.beamCount() != 2
+            if (dotted || ++corrections > (measureBeats == 3 ? 3 : 2)
+                    || left.note.beamCount() != 2 || rightHead.note.beamCount() != 2
                     || left.note.augmentationDots() != rightHead.note.augmentationDots()
                     || !ascendingSharedThirdHook(gray, heads.get(i - 2), heads.get(i - 1), left, rightHead, gap)
                     || !ascendingSharedThirdHook(source, heads.get(i - 2), heads.get(i - 1), left, rightHead, gap))
@@ -198,7 +867,8 @@ final class ClosedDottedSixteenths {
             trial.add(rhythm(left.note, false));
             trial.add(rhythm(rightHead.note, false));
         }
-        return falseDottedPair && fillsDottedClock(trial, 4f) ? trial : List.of();
+        return (measureBeats == 3 ? corrections > 0 : falseDottedPair)
+                && fillsDottedClock(trial, measureBeats) ? trial : List.of();
     }
 
     private static boolean ascendingSharedThirdHook(
@@ -2040,10 +2710,18 @@ final class ClosedDottedSixteenths {
     }
 
     private static boolean regular(ScoreNoteEvent n, int maxDots) {
-        return n.unbeamedDurationBeats() == 0 && n.beamCount() > 0 && regularMarkings(n, maxDots);
+        return regular(n, maxDots, false);
+    }
+
+    private static boolean regular(ScoreNoteEvent n, int maxDots, boolean allowInternalTie) {
+        return n.unbeamedDurationBeats() == 0 && n.beamCount() > 0 && regularMarkings(n, maxDots, allowInternalTie);
     }
 
     private static boolean regularMarkings(ScoreNoteEvent n, int maxDots) {
+        return regularMarkings(n, maxDots, false);
+    }
+
+    private static boolean regularMarkings(ScoreNoteEvent n, int maxDots, boolean allowInternalTie) {
         return n.kind() == ScoreNoteEvent.Kind.PITCHED
                 && n.staffIndex() == 0
                 && n.staffCount() == 1
@@ -2052,7 +2730,7 @@ final class ClosedDottedSixteenths {
                 && n.tupletDivisor() == 1
                 && n.beamCount() <= 3
                 && n.augmentationDots() <= maxDots
-                && !n.tiedFromPrevious()
+                && (allowInternalTie || !n.tiedFromPrevious())
                 && n.boundaryTies() == 0
                 && n.leadingRestBeats() == 0
                 && n.followingRestBeats() == 0

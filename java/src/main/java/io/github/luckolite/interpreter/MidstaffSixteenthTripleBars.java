@@ -59,14 +59,18 @@ final class MidstaffSixteenthTripleBars {
             var cadence = regions.get(index + 1);
             var following = regions.get(index + 2);
             float gap = (span.bottom() - span.top()) * height / 8.2f;
+
+            float firstWidth = (span.right() - span.left()) * width;
+            float nextWidth = (cadence.right() - cadence.left()) * width;
+            boolean mergedRuns = firstWidth >= gap * 54 && firstWidth <= gap * 74
+                    && nextWidth >= gap * 4 && nextWidth <= gap * 8;
+            boolean mergedCadence = firstWidth >= gap * 25 && firstWidth <= gap * 40
+                    && nextWidth >= gap * 28 && nextWidth <= gap * 45;
             if (gap < 11
                     || gap > 25
                     || span.cadenceQuarterBeats() != 0
                     || cadence.cadenceQuarterBeats() != 0
-                    || (span.right() - span.left()) * width < gap * 54
-                    || (span.right() - span.left()) * width > gap * 74
-                    || (cadence.right() - cadence.left()) * width < gap * 4
-                    || (cadence.right() - cadence.left()) * width > gap * 8
+                    || !mergedRuns && !mergedCadence
                     || !sameRow(previous, span, height, gap)
                     || !sameRow(span, cadence, height, gap)
                     || (following.top() - cadence.bottom()) * height < gap * 2) continue;
@@ -74,15 +78,43 @@ final class MidstaffSixteenthTripleBars {
                 candidates = MeterChangeDetector.candidates(labels, gray, width, height);
             var meter = atOpening(candidates, span, gray, raw, width, height, gap);
             if (meter == null) continue;
-            var replacement = prove(span, cadence, meter, labels, gray, raw, width, height);
+            var replacement = mergedRuns
+                    ? prove(span, cadence, meter, labels, gray, raw, width, height)
+                    : splitClosedCadence(span, cadence, meter, labels, gray, raw, width, height);
             if (replacement.isEmpty()) continue;
             if (retained != null) return new Result(regions, -1, null);
             var edited = new ArrayList<>(regions);
             edited.set(index, replacement.get(0));
+            if (mergedCadence) edited.set(index + 1, replacement.get(2));
             edited.add(index + 1, replacement.get(1));
             retained = new Result(List.copyOf(edited), index, meter);
         }
         return retained == null ? new Result(regions, -1, null) : retained;
+    }
+
+
+    /** The first divider can be retained even when the terminal quarter has merged into its run. */
+    private static List<MeasureRegion> splitClosedCadence(
+            MeasureRegion first, MeasureRegion fused, MeterCrop meter,
+            byte[] labels, byte[] gray, byte[] raw, int width, int height) {
+        float gap = meter.gap;
+        float end = fused.right() * width;
+        int top = meter.crop.firstLine(), bottom = Math.round(top + 4 * gap);
+        int from = Math.round(end - 8.4f * gap), to = Math.round(end - 4.25f * gap);
+        int cut = isolatedRule(raw, width, height, top, bottom, gap, from, to);
+        int correctedCut = isolatedRule(gray, width, height, top, bottom, gap, from, to);
+        if (cut < 0 || correctedCut < 0 || Math.abs(cut - correctedCut) > 1) return List.of();
+        int inset = Math.round(gap * .52f);
+        float spanEnd = (cut - inset) / (float) width;
+        float cadenceStart = (cut + inset) / (float) width;
+        if (spanEnd <= fused.left() || cadenceStart >= fused.right()) return List.of();
+        var span = new MeasureRegion(first.left(), spanEnd, fused.top(), fused.bottom());
+        var cadence = new MeasureRegion(cadenceStart, fused.right(), fused.top(), fused.bottom(), 1);
+        var pieces = prove(span, cadence, meter, labels, gray, raw, width, height);
+        if (pieces.size() != 2
+                || Math.abs(pieces.get(0).right() - first.right()) * width > gap * .18f
+                || Math.abs(pieces.get(1).left() - fused.left()) * width > gap * .18f) return List.of();
+        return List.of(pieces.get(0), pieces.get(1), cadence);
     }
 
     private static boolean sameRow(MeasureRegion a, MeasureRegion b, int height, float gap) {

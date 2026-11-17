@@ -77,8 +77,9 @@ class OctaveSourcePageTest(unittest.TestCase):
         apply(root, owned, pages)
         self.assertEqual([["down"], [], ["stop"]], [shifts(bar) for bar in bars])
 
-    def test_first_measure_of_next_page_can_still_own_the_stop(self):
+    def test_changed_scope_after_page_turn_stops_at_the_previous_owned_note(self):
         notes = [(0, 3, 2), (1, 3, 0)]
         root, bars, owned, pages = scene([0, 1], notes)
         apply(root, owned, pages)
-        self.assertEqual([["down"], ["stop"]], [shifts(bar) for bar in bars])
+        self.assertEqual([["down", "stop"], []], [shifts(bar) for bar in bars])
+        self.assertEqual("stop", bars[0][-1].find("direction-type/octave-shift").get("type"))

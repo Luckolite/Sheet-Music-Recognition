@@ -19,6 +19,21 @@ public final class BeamedStaccatoOwnershipTest {
     private static final Class<?> OWNER = OmrScoreInterpreter.class;
 
     @Test
+    public void thickPortatoDashKeepsItsOwnDetachedDot() {
+        byte[] gray = new byte[WIDTH * HEIGHT];
+        Arrays.fill(gray, (byte) 255);
+        int x = 105, y = 126;
+        for (int row = 94; row <= 99; row++)
+            Arrays.fill(gray, row * WIDTH + x - 9, row * WIDTH + x + 10, (byte) 0);
+        for (int row = 106; row <= 110; row++)
+            Arrays.fill(gray, row * WIDTH + x - 2, row * WIDTH + x + 3, (byte) 0);
+        assertTrue(OmrScoreInterpreter.ownsAbovePortato(gray, WIDTH, HEIGHT, x, y, GAP));
+        for (int row = 94; row <= 99; row++)
+            Arrays.fill(gray, row * WIDTH + x - 9, row * WIDTH + x + 10, (byte) 255);
+        assertFalse(OmrScoreInterpreter.ownsAbovePortato(gray, WIDTH, HEIGHT, x, y, GAP));
+    }
+
+    @Test
     public void aWideRoundMarkBelongsToTheNextHigherHead() throws Exception {
         var shape = component();
         var left = head(shape, 100, 150);

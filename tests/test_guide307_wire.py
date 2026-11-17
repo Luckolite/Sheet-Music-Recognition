@@ -73,6 +73,22 @@ class Guide307WireTest(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     beam_source.decode_source(bytes(broken), 3, engraved_tuplets=True)
 
+    def test_guide308_printed_natural_sharp_preserves_owner_and_rejects_downgrade(self):
+        score = original_score()
+        score["notes"][0]["writtenAccidental"] = 1
+        score["printedAccidentals"] = [dict(noteIndex=0, accidental=1)]
+        plain = guide_writer.encode(score, 307)
+        self.assertEqual(plain[4:], guide_writer.encode(score, 308)[4:])
+        section = struct.pack(">iibi", 1, 0, 1, 0)
+        self.assertTrue(plain.endswith(section))
+
+        score["printedAccidentals"][0]["naturalPrefix"] = True
+        expected = struct.pack(">iibi", 1, 0, 4, 0)
+        styled = guide_writer.encode(score, 308)
+        self.assertEqual(plain[4:-len(section)] + expected, styled[4:])
+        with self.assertRaisesRegex(ValueError, "guide308"):
+            guide_writer.encode(score, 307)
+
     def test_bad_owners_and_unrepresentable_new_metadata_are_rejected(self):
         score = original_score()
         for key, rows, version in [

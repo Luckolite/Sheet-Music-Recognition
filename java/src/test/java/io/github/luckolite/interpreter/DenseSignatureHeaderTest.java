@@ -57,6 +57,51 @@ public class DenseSignatureHeaderTest {
         assertEquals(List.of(-5), f.keys());
     }
 
+    @Test
+    public void fifthPrintedFlatOwnsItsSmallClassifiedBowlOnlyWithBothSourceBodies() throws Exception {
+        var f = page(5);
+        f.measures.set(0, new MeasureRegion(145f / 640, 620f / 640, 65f / 720, 199f / 720));
+        for (int y = 135; y <= 151; y++)
+            for (int x = 195; x <= 216; x++)
+                if (Math.pow((x - 205) / 10., 2) + Math.pow((y - 143) / 8., 2) <= 1) f.ink(x, y, 2);
+        for (int x = 154; x <= 157; x++)
+            for (int y = 146; y <= 151; y++) f.labels[y * 640 + x] = 2;
+
+        var type = Class.forName(OmrScoreInterpreter.class.getName() + "$Component");
+        var find = OmrScoreInterpreter.class.getDeclaredMethod(
+                "findComponents", byte[].class, int.class, int.class, byte.class);
+        var locate = OmrScoreInterpreter.class.getDeclaredMethod(
+                "findStaffs", byte[].class, byte[].class, int.class, int.class, List.class);
+        var owns = OmrScoreInterpreter.class.getDeclaredMethod("denseFlatHeaderOwnsHead",
+                byte[].class, byte[].class, byte[].class, int.class, int.class, type,
+                List.class, List.class, List.class, List.class);
+        var x = type.getDeclaredMethod("centerX");
+        for (var method : List.of(find, locate, owns, x)) method.setAccessible(true);
+        var heads = (List<?>) find.invoke(null, f.labels, 640, 720, (byte) 2);
+        var flats = (List<?>) find.invoke(null, f.labels, 640, 720, (byte) 3);
+        var staffs = (List<?>) locate.invoke(null, f.labels, f.gray, 640, 720, f.measures);
+        Object alias = null;
+        Object note = null;
+        for (var head : heads) {
+            float center = (float) x.invoke(head);
+            if (center >= 154 && center <= 157) alias = head;
+            if (center >= 203 && center <= 207) note = head;
+        }
+        assertNotNull(alias);
+        assertNotNull(note);
+        assertEquals(true, owns.invoke(null, f.labels, f.gray, f.gray,
+                640, 720, alias, staffs, f.measures, flats, heads));
+        assertEquals(false, owns.invoke(null, f.labels, f.gray, f.gray,
+                640, 720, note, staffs, f.measures, flats, heads));
+
+        var erased = f.gray.clone();
+        for (int y = 119; y <= 134; y++)
+            for (int col = 146; col <= 149; col++) erased[y * 640 + col] = (byte) 255;
+        for (boolean inRaw : List.of(false, true))
+            assertEquals(false, owns.invoke(null, f.labels, inRaw ? f.gray : erased, inRaw ? erased : f.gray,
+                    640, 720, alias, staffs, f.measures, flats, heads));
+    }
+
     private int spines(boolean separated) throws Exception {
         var f = new JoinedSignatureSharpTest();
         int[] tops = {75, 51, 83, 59, 91, 67};

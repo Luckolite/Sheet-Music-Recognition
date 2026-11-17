@@ -62,6 +62,86 @@ public class StackedSharpOwnershipTest {
         assertEquals(ScoreNoteEvent.ACCIDENTAL_NATURAL, kind(mixed, false));
     }
 
+    @Test
+    public void bothSharpsCanOwnAnUpstemDyadOnOneSharedShaft() throws Exception {
+        var upward = ink.clone();
+        erase(upward, 159, 161, UPPER + 10, LOWER - 10);
+        erase(upward, 159, 161, LOWER + 10, 255);
+        for (int y = 52; y <= LOWER; y++) {
+            for (int x = 179; x <= 181; x++) upward[y * W + x] = 0;
+        }
+        var missingCrossbar = upward.clone();
+        erase(missingCrossbar, 146, 151, 156, 169);
+        for (boolean upper : new boolean[] {true, false}) {
+            assertEquals(ScoreNoteEvent.ACCIDENTAL_SHARP, beamedKind(labels, upward, upward, upper));
+            assertEquals(ScoreNoteEvent.ACCIDENTAL_FROM_KEY, beamedKind(labels, upward, missingCrossbar, upper));
+            assertEquals(ScoreNoteEvent.ACCIDENTAL_FROM_KEY, beamedKind(labels, missingCrossbar, upward, upper));
+            var missingMembers = labels.clone();
+            for (int y = 159; y <= 167; y++)
+                Arrays.fill(missingMembers, y * W + 146, y * W + 151, (byte) 0);
+            assertEquals(ScoreNoteEvent.ACCIDENTAL_FROM_KEY, beamedKind(missingMembers, upward, upward, upper));
+        }
+        var mixed = upward.clone();
+        erase(mixed, 150, 154, 153, 159);
+        erase(mixed, 143, 147, 184, 195);
+        assertEquals(ScoreNoteEvent.ACCIDENTAL_SHARP, beamedKind(labels, mixed, mixed, true));
+        assertEquals(ScoreNoteEvent.ACCIDENTAL_NATURAL, beamedKind(labels, mixed, mixed, false));
+    }
+
+    @Test
+    public void narrowLowerNaturalCanOwnItsCrossbarsInsideTheSharedGlyph() throws Exception {
+        var source = ink.clone();
+        var ownership = labels.clone();
+        erase(source, 159, 161, UPPER + 10, LOWER - 10);
+        erase(source, 159, 161, LOWER + 10, 255);
+        for (int y = 52; y <= LOWER; y++) {
+            for (int x = 179; x <= 181; x++) source[y * W + x] = 0;
+        }
+        erase(source, 150, 154, 153, 159);
+        erase(source, 143, 147, 184, 195);
+        for (int y = 167; y <= 177; y++) {
+            source[y * W + 141] = 0;
+            source[y * W + 142] = 0;
+            ownership[y * W + 141] = OmrMeasurePostProcessor.CLEF_OR_KEY;
+            ownership[y * W + 142] = OmrMeasurePostProcessor.CLEF_OR_KEY;
+        }
+        source[167 * W + 143] = 0;
+        ownership[167 * W + 143] = OmrMeasurePostProcessor.CLEF_OR_KEY;
+        assertEquals(ScoreNoteEvent.ACCIDENTAL_SHARP, beamedKind(ownership, source, source, true));
+        assertEquals(ScoreNoteEvent.ACCIDENTAL_NATURAL, beamedKind(ownership, source, source, false));
+        var missingCrossbar = source.clone();
+        erase(missingCrossbar, 146, 150, 176, 184);
+        assertEquals(ScoreNoteEvent.ACCIDENTAL_FROM_KEY, beamedKind(ownership, source, missingCrossbar, false));
+    }
+
+    private int beamedKind(byte[] mask, byte[] normalized, byte[] source, boolean upper) throws Exception {
+        var interpreter = OmrScoreInterpreter.class;
+        var component = Class.forName(interpreter.getName() + "$Component");
+        Method components =
+                interpreter.getDeclaredMethod("findComponents", byte[].class, int.class, int.class, byte.class);
+        components.setAccessible(true);
+        var heads = (List<?>) components.invoke(null, mask, W, H, OmrMeasurePostProcessor.NOTEHEAD);
+        var members = new ExactComponentMembers.Collector(normalized, mask, W, H,
+                new ExactComponentMembers.Budget(8L * mask.length, 262_144),
+                new ExactComponentMembers.Budget(8L * mask.length, 262_144));
+        Method glyphComponents = interpreter.getDeclaredMethod("findComponents", byte[].class, int.class,
+                int.class, byte.class, byte[].class, java.util.IdentityHashMap.class,
+                ExactComponentMembers.Collector.class);
+        glyphComponents.setAccessible(true);
+        var sharps = (List<?>) glyphComponents.invoke(null, mask, W, H, OmrMeasurePostProcessor.CLEF_OR_KEY,
+                normalized, null, members);
+        assertTrue(members.seal(new ExactComponentMembers.Budget(8L * mask.length, 262_144)));
+        Method center = component.getDeclaredMethod("centerY");
+        center.setAccessible(true);
+        var sorted = heads.stream().sorted(Comparator.comparingDouble(n -> y(n, center))).toList();
+        Method ownership = interpreter.getDeclaredMethod(
+                "ownedStackedAccidentalsOnBeamedSixth", byte[].class, byte[].class, int.class, int.class,
+                List.class, component, List.class, float.class, ExactComponentMembers.Collector.class, List.class);
+        ownership.setAccessible(true);
+        return (int) ownership.invoke(null, normalized, source, W, H, sharps,
+                sorted.get(upper ? 0 : 1), heads, GAP, members, new java.util.ArrayList<>());
+    }
+
     private boolean proved(byte[] source, boolean upper) throws Exception {
         return kind(source, upper) == ScoreNoteEvent.ACCIDENTAL_SHARP;
     }

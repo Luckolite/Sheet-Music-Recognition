@@ -106,6 +106,40 @@ public class OrderedSharpHeaderConflictTest {
         }
     }
 
+    @Test
+    public void darkSharpCrossbarsMustExtendAcrossTheFadedStaff() throws Exception {
+        Page page = new Page(0, false, false, false);
+        page.clearSymbols();
+        for (int rule = 100; rule <= 164; rule += 16)
+            for (int y = rule - 1; y <= rule + 1; y++)
+                Arrays.fill(page.gray, y * W + 10, y * W + 630, (byte) 120);
+        for (int y = 100; y <= 148; y++)
+            for (int x : new int[] {75, 76, 83, 84}) page.ink(x, y, 3);
+        for (int rule : new int[] {116, 132})
+            for (int y = rule - 1; y <= rule + 1; y++)
+                for (int x = 72; x <= 87; x++) page.ink(x, y, 3);
+        Class<?> omr = OmrScoreInterpreter.class;
+        Class<?> component = Class.forName(omr.getName() + "$Component");
+        Class<?> staffClass = Class.forName(omr.getName() + "$Staff");
+        Constructor<?> glyph = component.getDeclaredConstructors()[0];
+        Constructor<?> staffMaker = staffClass.getDeclaredConstructors()[0];
+        glyph.setAccessible(true);
+        staffMaker.setAccessible(true);
+        Object owner = glyph.newInstance(268, 72, 87, 100, 148, 79.5f, 124f);
+        Object staff = staffMaker.newInstance(100f, 164f, 16f);
+        Method pitch = omr.getDeclaredMethod("staffOverlaidSharpPitch", byte[].class,
+                int.class, int.class, component, staffClass, staffClass, int.class);
+        pitch.setAccessible(true);
+        assertEquals(124f, (float) pitch.invoke(null, page.gray, W, H, owner, staff, staff, 192), .01f);
+
+        // Leave the full staff stripe and both shafts in place beneath the erased bar.
+        for (int y = 115; y <= 117; y++) {
+            Arrays.fill(page.gray, y * W + 72, y * W + 88, (byte) 120);
+            for (int x : new int[] {75, 76, 83, 84}) page.ink(x, y, 3);
+        }
+        assertTrue(Float.isNaN((float) pitch.invoke(null, page.gray, W, H, owner, staff, staff, 192)));
+    }
+
     static Method method(String name) {
         Method m =
                 Arrays.stream(OmrScoreInterpreter.class.getDeclaredMethods())
@@ -194,6 +228,43 @@ public class OrderedSharpHeaderConflictTest {
     @Test
     public void wrongPitchOrderDoesNotResolveConflict() throws Exception {
         assertEquals(List.of(), new Page(140, true, true, true).keys(false));
+    }
+
+    @Test
+    public void completeDenseSharpBodiesCanResolveOneFlatLabel() throws Exception {
+        assertTrue(denseBodyOrder(0, false));
+        assertFalse(denseBodyOrder(8, false));
+        assertFalse(denseBodyOrder(0, true));
+    }
+
+    private static boolean denseBodyOrder(int movedSecond, boolean removeFifth) throws Exception {
+        var o = OmrScoreInterpreter.class;
+        var component = Class.forName(o.getName() + "$Component");
+        var glyph = Class.forName(o.getName() + "$SignatureGlyph");
+        var staffType = Class.forName(o.getName() + "$Staff");
+        var body = component.getDeclaredConstructors()[0];
+        var signature = glyph.getDeclaredConstructor(float.class, int.class, float.class, component);
+        var staff = staffType.getDeclaredConstructor(float.class, float.class, float.class);
+        var corroborate = o.getDeclaredMethod("corroboratePrintedSharpHeader",
+                List.class, List.class, component, staffType, boolean.class, float.class, float.class);
+        for (var member : List.of(body, signature, staff, corroborate)) member.setAccessible(true);
+        var semantic = new ArrayList<>();
+        var paper = new ArrayList<>();
+        int[] centers = {100,124,92,116,140};
+        for (int i = 0; i < centers.length; i++) {
+            float x = 78f + i * 18;
+            int middle = centers[i] + (i == 1 ? movedSecond : 0);
+            Object printed = body.newInstance(440, (int) x - 8, (int) x + 8, middle - 21,
+                    middle + 21, x, (float) middle);
+            semantic.add(signature.newInstance(x, i == 1 ? -1 : 1, Float.NaN, null));
+            if (i != 4 || !removeFifth) {
+                float selectedCrossbars = centers[i] + (i == 1 ? 5 : i == 4 ? -6 : 0);
+                paper.add(signature.newInstance(x, 1, selectedCrossbars, printed));
+            }
+        }
+        var clef = body.newInstance(1500, 32, 55, 69, 187, 44f, 134f);
+        return (boolean) corroborate.invoke(null, semantic, paper, clef,
+                staff.newInstance(100f, 164f, 16f), true, 57f, 176f);
     }
 
     @Test

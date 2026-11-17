@@ -6,6 +6,9 @@ import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.Comparator;
 import java.util.List;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Optional;
 
 /** A closed common-time bar can prove its four single-rail octave triplet groups. */
 final class ClosedOctaveTripletBars {
@@ -16,22 +19,101 @@ final class ClosedOctaveTripletBars {
             List<ScoreRestEvent> rests,
             List<MeasureRegion> measures,
             List<ScoreMeterChange> meters,
-            byte[] gray,
-            int width,
-            int height) {
+            byte[] gray, int width, int height) {
+        return apply(notes, rests, measures, meters, gray, width, height, null);
+    }
+
+    static List<ScoreNoteEvent> apply(
+            List<ScoreNoteEvent> notes, List<ScoreRestEvent> rests, List<MeasureRegion> measures,
+            List<ScoreMeterChange> meters, byte[] gray, int width, int height, byte[] original) {
+        return capture(notes, rests, measures, meters, gray, width, height, original, null).notes();
+    }
+
+    private record BeamBar(int measure, List<Integer> owners) {}
+
+    record Capture(List<ScoreNoteEvent> notes, List<BeamBar> proved) {
+        ScorePageInterpretation projectBeams(ScorePageInterpretation score, int page) {
+            if (proved.isEmpty() || page < 0 || score.notes().size() != notes.size()) return score;
+            var source = score.beamSource();
+            var origins = new ArrayList<>(source.noteOrigins());
+            var groups = new ArrayList<>(source.groups());
+            var identities = new HashMap<ScoreBeamSource.Anchor, Integer>();
+            var claimed = new HashSet<ScoreBeamSource.Anchor>();
+            var ids = new HashSet<String>();
+            for (var origin : origins) origin.ifPresent(anchor -> identities.merge(anchor, 1, Integer::sum));
+            for (var group : groups) {
+                ids.add(group.id());
+                for (var column : group.columns()) claimed.addAll(column.members());
+            }
+            for (var column : source.detachedColumns()) claimed.addAll(column.members());
+            for (var bar : proved) {
+                var slots = bar.owners();
+                var anchors = new ArrayList<ScoreBeamSource.Anchor>(24);
+                for (int slot : slots) {
+                    var note = score.notes().get(slot);
+                    var expected = notes.get(slot);
+                    var anchor = new ScoreBeamSource.Anchor(page, slot);
+                    var present = origins.get(slot);
+                    if (claimed.contains(anchor) || note.measureIndex() != bar.measure()
+                            || !note.equals(expected)
+                            || (present.isPresent() ? !present.get().equals(anchor)
+                                    || identities.getOrDefault(anchor, 0) != 1 : identities.containsKey(anchor)))
+                        break;
+                    anchors.add(anchor);
+                }
+                if (anchors.size() != 24) continue;
+                var additions = new ArrayList<ScoreBeamSource.Group>(4);
+                for (int start = 0; start < anchors.size(); start += 6) {
+                    var columns = new ArrayList<ScoreBeamSource.Column>(3);
+                    for (int i = start; i < start + 6; i += 2)
+                        columns.add(new ScoreBeamSource.Column(anchors.subList(i, i + 2)));
+                    int first = Math.min(anchors.get(start).noteIndex(), anchors.get(start + 1).noteIndex());
+                    String id = "printed-beam:" + page + ":" + first;
+                    if (ids.contains(id)) break;
+                    additions.add(new ScoreBeamSource.Group(id, columns, List.of(1, 1), List.of(),
+                            ScoreBeamSource.TupletMark.UNNUMBERED));
+                }
+                if (additions.size() != 4) continue;
+                groups.addAll(additions);
+                for (var group : additions) ids.add(group.id());
+                for (int i = 0; i < slots.size(); i++) {
+                    var anchor = anchors.get(i);
+                    origins.set(slots.get(i), Optional.of(anchor));
+                    claimed.add(anchor);
+                    identities.put(anchor, 1);
+                }
+            }
+            return groups.size() == source.groups().size() ? score
+                    : score.withBeamSource(new ScoreBeamSource(groups, source.detachedColumns(), origins));
+        }
+    }
+
+    static Capture capture(
+            List<ScoreNoteEvent> notes, List<ScoreRestEvent> rests, List<MeasureRegion> measures,
+            List<ScoreMeterChange> meters, byte[] gray, int width, int height, byte[] original,
+            ScoreMeterChange inherited) {
+        return capture(notes, rests, measures, meters, gray, width, height, original, inherited, List.of(), List.of());
+    }
+
+    static Capture capture(List<ScoreNoteEvent> notes, List<ScoreRestEvent> rests,
+            List<MeasureRegion> measures, List<ScoreMeterChange> meters, byte[] gray, int width, int height,
+            byte[] original, ScoreMeterChange inherited, List<PlayingTechniqueDetector.Word> wordContext,
+            List<PlayingTechniqueDetector.Staff> staffs) {
         if (notes.isEmpty()
                 || measures.isEmpty()
                 || gray == null
-                || gray.length != (long) width * height) return notes;
+                || gray.length != (long) width * height) return new Capture(notes, List.of());
         var byMeasure = new ArrayList<List<Integer>>(measures.size());
         for (int i = 0; i < measures.size(); i++) byMeasure.add(new ArrayList<>());
         for (int i = 0; i < notes.size(); i++) byMeasure.get(notes.get(i).measureIndex()).add(i);
         var hasRest = new BitSet(measures.size());
         for (var rest : rests) hasRest.set(rest.measureIndex());
         List<ScoreNoteEvent> result = null;
+        var proved = new ArrayList<BeamBar>();
         int next = 0;
+        byte[] unmarkedRaw = null, unmarkedNormalized = null;
         // Four quarters are the reader's inherited beat window until source meter overrides it.
-        ScoreMeterChange meter = new ScoreMeterChange(0, 4, 4);
+        ScoreMeterChange meter = inherited == null ? new ScoreMeterChange(0, 4, 4) : inherited;
         for (int m = 0; m < measures.size(); m++) {
             while (next < meters.size() && meters.get(next).measureIndex() <= m)
                 meter = meters.get(next++);
@@ -55,8 +137,27 @@ final class ClosedOctaveTripletBars {
                                     Comparator.comparingDouble(
                                             i -> notes.get(i).positionInMeasure()))
                             .toList();
-            var directions =
-                    directionsForClosedRails(notes, order, measures.get(m), gray, width, height);
+            var directions = directionsForClosedRails(notes, order, measures, m, gray, width, height, false);
+            if (directions == null && original != null && original.length == gray.length) {
+                var normalized = directionsForClosedRails(notes, order, measures, m, gray, width, height, true);
+                if (normalized != null && java.util.Arrays.equals(normalized,
+                        directionsForClosedRails(notes, order, measures, m, original, width, height, true))) {
+                    directions = normalized;
+                    int unnumbered = clearUnnumberedGroups(notes, order, measures, m,
+                            gray, original, width, height, wordContext);
+                    if (unnumbered != 15 && !staffs.isEmpty()) {
+                        if (unmarkedRaw == null) {
+                            unmarkedRaw = withoutPrintedOctaveDashes(original, width, height, staffs);
+                            unmarkedNormalized = original == gray ? unmarkedRaw
+                                    : withoutPrintedOctaveDashes(gray, width, height, staffs);
+                        }
+                        if (unmarkedRaw != original || unmarkedNormalized != gray)
+                            unnumbered |= clearUnnumberedGroups(notes, order, measures, m,
+                                    unmarkedNormalized, unmarkedRaw, width, height, wordContext);
+                    }
+                    if (unnumbered == 15) proved.add(new BeamBar(m, order));
+                }
+            }
             if (directions == null) continue;
             if (result == null) result = new ArrayList<>(notes);
             for (int i = 0; i < order.size(); i++) {
@@ -66,7 +167,7 @@ final class ClosedOctaveTripletBars {
                 result.set(order.get(i), note.withTupletRatio(3, 2));
             }
         }
-        return result == null ? notes : List.copyOf(result);
+        return new Capture(result == null ? notes : List.copyOf(result), List.copyOf(proved));
     }
 
     private static boolean ownsBar(
@@ -189,6 +290,73 @@ final class ClosedOctaveTripletBars {
                                         gray, width, height, bar, previous));
     }
 
+    private static byte[] withoutPrintedOctaveDashes(byte[] source, int width, int height,
+            List<PlayingTechniqueDetector.Staff> staffs) {
+        var ink = OctaveMarkDetector.printedDashInk(source, width, height, staffs);
+        if (ink.isEmpty()) return source;
+        byte[] cleared = source.clone();
+        for (int pixel = ink.nextSetBit(0); pixel >= 0; pixel = ink.nextSetBit(pixel + 1))
+            cleared[pixel] = (byte) 255;
+        return cleared;
+    }
+
+    private static int clearUnnumberedGroups(
+            List<ScoreNoteEvent> notes, List<Integer> order, List<MeasureRegion> bars, int index,
+            byte[] normalized, byte[] original, int w, int h, List<PlayingTechniqueDetector.Word> directions) {
+        var heads = order.stream().map(notes::get).toList();
+        if (seededDyads(heads) != 0) return 0;
+        var bar = bars.get(index);
+        float left = bar.left() * w, span = (bar.right() - bar.left()) * w;
+        float gap = (bar.bottom() - bar.top()) * h / 8.2f;
+        var rows = UnnumberedTripletInk.sourceRows(bar, bars, h);
+        var rawStaff = WrappedMeasureBoundaries.verifiedTripletStaff(original, w, h, bar, true);
+        var correctedStaff = WrappedMeasureBoundaries.verifiedTripletStaff(normalized, w, h, bar, true);
+        if (rawStaff == null || correctedStaff == null) return 0;
+        int mask = 0;
+        for (int group = 0; group < 4; group++) {
+            var members = heads.subList(group * 6, group * 6 + 6);
+            if (noPrintedTripletMark(original, w, h, members, left, span, gap, rows, rawStaff, directions)
+                    && noPrintedTripletMark(normalized, w, h, members, left, span, gap, rows, correctedStaff, directions))
+                mask |= 1 << group;
+        }
+        return mask;
+    }
+
+    /** Inspect both sides of a literal primary rail for a separately printed numeral or bracket. */
+    static boolean noPrintedTripletMark(byte[] source, int w, int h, List<ScoreNoteEvent> heads,
+            float left, float span, float gap, UnnumberedTripletInk.Rows rows, StaffPitchTrack track) {
+        return noPrintedTripletMark(source, w, h, heads, left, span, gap, rows, track, List.of());
+    }
+
+    private static boolean noPrintedTripletMark(byte[] source, int w, int h, List<ScoreNoteEvent> heads,
+            float left, float span, float gap, UnnumberedTripletInk.Rows rows, StaffPitchTrack track,
+            List<PlayingTechniqueDetector.Word> directions) {
+        float first = octaveCenter(heads, 0, left, span), last = octaveCenter(heads, 4, left, span);
+        float headTop = Float.POSITIVE_INFINITY, headBottom = 0;
+        int tipTop = h, tipBottom = -1;
+        var budget = new PrintedBeamShafts.Budget(82_000);
+        for (int i = 0; i < heads.size(); i += 2) {
+            var a = heads.get(i);
+            var b = heads.get(i + 1);
+            var upper = a.pageY() < b.pageY() ? a : b;
+            var lower = upper == a ? b : a;
+            headTop = Math.min(headTop, upper.pageY() * h);
+            headBottom = Math.max(headBottom, lower.pageY() * h);
+            var shaft = PrintedBeamShafts.at(source, w, h, left + span * lower.positionInMeasure(),
+                    lower.pageY() * h, gap, budget);
+            if (shaft.size() != 1 || shaft.get(0).direction() != 1 || budget.refused()) return false;
+            tipTop = Math.min(tipTop, shaft.get(0).endY());
+            tipBottom = Math.max(tipBottom, shaft.get(0).endY());
+        }
+        var accidentalHeads = heads.stream().filter(n -> n.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_SHARP
+                        || n.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_NATURAL)
+                .map(n -> new UnnumberedTripletInk.AccidentalHead(
+                        left + span * n.positionInMeasure(), n.pageY() * h, n.writtenAccidental()))
+                .toList();
+        return UnnumberedTripletInk.clearFingeringBands(source, w, h, gap,
+                first, last, headTop, headBottom, tipTop, tipBottom, rows, track, null, accidentalHeads, directions);
+    }
+
     private record Dyad(
             ScoreNoteEvent upper,
             ScoreNoteEvent lower,
@@ -201,13 +369,10 @@ final class ClosedOctaveTripletBars {
         }
     }
 
-    private static int[] directionsForClosedRails(
-            List<ScoreNoteEvent> notes,
-            List<Integer> order,
-            MeasureRegion bar,
-            byte[] gray,
-            int w,
-            int h) {
+    static int[] directionsForClosedRails(
+            List<ScoreNoteEvent> notes, List<Integer> order, List<MeasureRegion> bars, int index,
+            byte[] gray, int w, int h, boolean allowStaffOpening) {
+        var bar = bars.get(index);
         float left = bar.left() * w, span = (bar.right() - bar.left()) * w;
         float gap = (bar.bottom() - bar.top()) * h / 8.2f;
         if (!Float.isFinite(left + span + gap)
@@ -218,19 +383,17 @@ final class ClosedOctaveTripletBars {
         var heads = order.stream().map(notes::get).toList();
         int seeds = seededDyads(heads);
         if (seeds != 0 && !oneSeededTriplet(seeds)) return null;
-        if (!WrappedMeasureBoundaries.confirmsClosed(
-                gray,
-                w,
-                h,
-                bar,
-                octaveCenter(heads, 0, left, span),
-                octaveCenter(heads, 22, left, span))) return null;
+        float firstHead = octaveCenter(heads, 0, left, span);
+        float lastHead = octaveCenter(heads, 22, left, span);
+        boolean closed = WrappedMeasureBoundaries.confirmsClosed(gray, w, h, bar, firstHead, lastHead);
+        if (!closed && !allowStaffOpening) return null;
         var pairs = new Dyad[12];
         var shafts = new PrintedBeamShafts.Shaft[12];
         var incomplete = new PrintedBeamShafts.Shaft[12];
         var budget = new PrintedBeamShafts.Budget(280_000);
         int clef = heads.get(0).clefBottomDiatonic();
         if (clef == ScoreNoteEvent.CLEF_UNKNOWN) return null;
+        boolean repairedBeam = false;
         for (int i = 0; i < pairs.length; i++) {
             var a = heads.get(i * 2);
             var b = heads.get(i * 2 + 1);
@@ -238,13 +401,19 @@ final class ClosedOctaveTripletBars {
             var lower = upper == a ? b : a;
             float x0 = left + span * upper.positionInMeasure(), y0 = upper.pageY() * h;
             float x1 = left + span * lower.positionInMeasure(), y1 = lower.pageY() * h;
+            // The lower head can inherit extra rails from overlapping staff ink.
+            // Use the complete two-plane shared shaft and single-rail proof in that case.
+            boolean beamAlias = allowStaffOpening && !repairedBeam && upper.beamCount() == 1
+                    && lower.beamCount() == 3 && ordinaryFields(lower, clef)
+                    && lower.unbeamedDurationBeats() == 0;
             if (!rhythmCandidate(upper, clef)
-                    || !rhythmCandidate(lower, clef)
+                    || !rhythmCandidate(lower, clef) && !beamAlias
                     || upper.staffStep() - lower.staffStep() != 7
                     || upper.tupletDivisor() != lower.tupletDivisor()
-                    || Math.abs(x0 - x1) > gap * .18f
+                    || Math.abs(x0 - x1) > gap * (allowStaffOpening ? .21f : .18f)
                     || y1 - y0 < gap * 3.15f
                     || y1 - y0 > gap * 3.9f) return null;
+            repairedBeam |= beamAlias;
             var p = new Dyad(upper, lower, x0, y0, x1, y1);
             pairs[i] = p;
             if (i > 0) {
@@ -253,7 +422,10 @@ final class ClosedOctaveTripletBars {
             }
             var u = PrintedBeamShafts.at(gray, w, h, x0, y0, gap, budget);
             var v = PrintedBeamShafts.at(gray, w, h, x1, y1, gap, budget);
-            if (budget.refused() || u.size() > 1 || v.size() > 1 || u.isEmpty() && v.isEmpty())
+            if (budget.refused()
+                    || u.size() > 1 || v.size() > 1
+                    || (u.isEmpty() || v.isEmpty()) && beamAlias
+                    || u.isEmpty() && v.isEmpty())
                 return null;
             if (u.size() == 1 && v.size() == 1) {
                 var first = u.get(0);
@@ -264,7 +436,7 @@ final class ClosedOctaveTripletBars {
                         || Math.abs(first.endY() - second.endY()) > gap * .15f) return null;
                 shafts[i] = first.direction() == 1 ? second : first;
             } else {
-                if (i % 3 != 1) return null;
+                if (i % 3 != 1 || Math.abs(x0 - x1) > gap * .18f) return null;
                 incomplete[i] = u.isEmpty() ? v.get(0) : u.get(0);
             }
         }
@@ -290,7 +462,35 @@ final class ClosedOctaveTripletBars {
             if (competingDot(gray, w, h, p.upperX, p.upperY, next, gap, true)
                     || competingDot(gray, w, h, p.lowerX, p.lowerY, next, gap, true)) return null;
         }
+        if (!closed && !provedInitialBar(
+                gray, w, h, bars, index, firstHead, lastHead, shafts[0], gap)) return null;
         return directions;
+    }
+
+    private static boolean provedInitialBar(byte[] gray, int width, int height, List<MeasureRegion> bars,
+            int index, float first, float last, PrintedBeamShafts.Shaft shaft, float nominal) {
+        if (shaft.direction() == 1 && WrappedMeasureBoundaries.confirmsSampledInitialTripletBar(
+                gray, width, height, bars, index, first, last, shaft.left())) return true;
+        if (WrappedMeasureBoundaries.confirmsInitialStaffBar(
+                gray, width, height, bars, index, first, last)) return true;
+        float inset = first - shaft.left();
+        if (shaft.direction() == 1 && inset >= nominal * .35f && inset <= nominal * .85f
+                && WrappedMeasureBoundaries.confirmsInitialStaffBar(
+                        gray, width, height, bars, index, first, last, shaft.left())
+                && WrappedMeasureBoundaries.confirmsInitialStaffBarClosingEdge(
+                        gray, width, height, bars.get(index), last)) return true;
+        if (shaft.direction() != 1 || !WrappedMeasureBoundaries.confirmsShaftBoundedInitialStaffBar(
+                gray, width, height, bars, index, first, shaft.left())) return false;
+        var bar = bars.get(index);
+        if (WrappedMeasureBoundaries.confirmsInitialStaffBarClosingEdge(gray, width, height, bar, last))
+            return true;
+        var right = (bar.right() + bars.get(index + 1).left()) * width * .5f;
+        if (right - last < nominal * .7f) return false;
+        var rules = PrintedDirectionStaff.printedRules(gray, width, height, right - nominal * 1.4f,
+                bar.bottom() * height - nominal * 2.1f, nominal);
+        if (rules == null) return false;
+        var staff = new PlayingTechniqueDetector.Staff(rules[0] - 4 * rules[1], rules[0], rules[1], 0, 1);
+        return PrintedCadenceDurations.boundaryColumn(gray, width, staff, right, false, false) >= 0;
     }
 
     private static PrintedBeamShafts.Shaft middleShaft(
@@ -402,7 +602,7 @@ final class ClosedOctaveTripletBars {
                                         gray, width, height, headX, headY, dot, gap));
     }
 
-    private static List<PrintedBeamShafts.Shaft> contrastShaft(
+    static List<PrintedBeamShafts.Shaft> contrastShaft(
             byte[] gray,
             int width,
             int height,

@@ -59,6 +59,38 @@ public class WrappedTripletDotOwnersTest {
         assertFalse(fingeringOwnsDot(raw));
     }
 
+    @Test
+    public void theFlatBowlCannotBeUsedAsAnUnownedAugmentationDot() {
+        byte[] paper = flatInk();
+        var core = new WrappedTripletDotInk.Center(82, 90);
+        assertTrue(WrappedTripletDotInk.singleFlatOwns(paper, WIDTH, HEIGHT, core, 108, 82, GAP));
+        assertFalse(WrappedTripletDotInk.singleFlatOwns(paper, WIDTH, HEIGHT, core, 99, 82, GAP));
+        for (int y = 60; y < 77; y++) Arrays.fill(paper, y * WIDTH + 76, y * WIDTH + 78, (byte) 255);
+        assertFalse(WrappedTripletDotInk.singleFlatOwns(paper, WIDTH, HEIGHT, core, 108, 82, GAP));
+    }
+
+    @Test
+    public void theSemanticFlatSpineMustStillConnectToItsOwnBowlCore() {
+        byte[] ink = flatInk();
+        byte[] labels = new byte[ink.length];
+        for (int i = 0; i < ink.length; i++)
+            if (ink[i] == 0) labels[i] = OmrMeasurePostProcessor.CLEF_OR_KEY;
+        var core = new WrappedTripletDotInk.Center(82, 90);
+        assertTrue(WrappedTripletDotInk.labelledFlatOwns(labels, ink, WIDTH, HEIGHT, core, 105, 83, GAP));
+        for (int y = 65; y <= 74; y++) Arrays.fill(ink, y * WIDTH + 76, y * WIDTH + 78, (byte) 255);
+        assertFalse(WrappedTripletDotInk.labelledFlatOwns(labels, ink, WIDTH, HEIGHT, core, 105, 83, GAP));
+    }
+
+    private static byte[] flatInk() {
+        byte[] paper = new byte[WIDTH * HEIGHT];
+        Arrays.fill(paper, (byte) 255);
+        for (int y = 60; y <= 96; y++) Arrays.fill(paper, y * WIDTH + 76, y * WIDTH + 78, (byte) 0);
+        for (int y = 76; y <= 88; y++) Arrays.fill(paper, y * WIDTH + 85, y * WIDTH + 88, (byte) 0);
+        for (int y = 76; y <= 78; y++) Arrays.fill(paper, y * WIDTH + 80, y * WIDTH + 86, (byte) 0);
+        for (int y = 87; y <= 90; y++) Arrays.fill(paper, y * WIDTH + 76, y * WIDTH + 87, (byte) 0);
+        return paper;
+    }
+
     private static byte[] drawNumeral() {
         byte[] raw = new byte[WIDTH * HEIGHT];
         Arrays.fill(raw, (byte) 255);

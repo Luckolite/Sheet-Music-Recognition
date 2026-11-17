@@ -224,8 +224,13 @@ public class FingeringAnnotationFilterTest {
 
     private static ScoreNoteEvent captionNote(int x, int y, int step, int stem, int beams,
             float whole, int height, float left, float right) {
+        return captionNote(x, y, step, stem, beams, whole, height, left, right, false);
+    }
+
+    private static ScoreNoteEvent captionNote(int x, int y, int step, int stem, int beams,
+            float whole, int height, float left, float right, boolean tied) {
         return new ScoreNoteEvent(0, (x - left) / (right - left), step, 0, 1, y / (float) height,
-                false, 0, beams, ScoreNoteEvent.ACCIDENTAL_FROM_KEY, whole, 1, 0, 0, 30, false, 0,
+                tied, 0, beams, ScoreNoteEvent.ACCIDENTAL_FROM_KEY, whole, 1, 0, 0, 30, false, 0,
                 false, 0, 0, 1, stem, ScoreNoteEvent.Kind.PITCHED, ScoreNoteEvent.VisualSize.FULL, 0, null);
     }
 
@@ -327,5 +332,220 @@ public class FingeringAnnotationFilterTest {
         var incomplete = new ArrayList<>(notes);
         incomplete.remove(0);
         assertSame(incomplete, FingeringAnnotationFilter.apply(words, staff, region, incomplete, image, width, height));
+    }
+
+
+    @Test
+    public void mergedSegueRequiresAllSeparateFingeringAndCaptionOwnersInBothPlanes() {
+        int width = 640, height = 330;
+        float left = 30, right = 580;
+        var image = new byte[width * height];
+        Arrays.fill(image, (byte) 255);
+        var staffs = List.of(new PlayingTechniqueDetector.Staff(215, 279, 16, 0, 1));
+        var measures = List.of(new MeasureRegion(left / width, right / width, .35f, .98f));
+        var notes = closedSixteenthCaptionNotes(image, width, height, left, right);
+        var expected = List.copyOf(notes);
+        var digits = new PlayingTechniqueDetector.Word("3 2", 40f / width,
+                273f / height, 128f / width, 312f / height);
+        var caption = new PlayingTechniqueDetector.Word("2 1 segue", 197f / width,
+                270f / height, 359f / width, 312f / height);
+        var words = List.of(digits, caption);
+        for (int x : new int[] {49, 101, 209, 226, 257, 274, 291, 308, 325}) {
+            drawInk(image, width, x, x + 11, 285, 301, 0);
+        }
+        notes.add(captionNote(54, 292, -2, 0, 3, 0, height, left, right));
+        notes.add(captionNote(262, 292, -2, 0, 0, 4, height, left, right));
+        notes.add(captionNote(296, 292, -2, 0, 0, 4, height, left, right));
+        assertEquals(expected, FingeringAnnotationFilter.removeMergedSegueAliases(
+                words, staffs, measures, notes, image, image, width, height));
+        assertSame(notes, FingeringAnnotationFilter.removeMergedSegueAliases(
+                List.of(caption), staffs, measures, notes, image, image, width, height));
+
+        var missingDescender = image.clone();
+        drawInk(missingDescender, width, 291, 302, 285, 301, 255);
+        assertSame(notes, FingeringAnnotationFilter.removeMergedSegueAliases(
+                words, staffs, measures, notes, image, missingDescender, width, height));
+        var brokenGroup = image.clone();
+        drawInk(brokenGroup, width, 178, 188, 225, 254, 255);
+        assertSame(notes, FingeringAnnotationFilter.removeMergedSegueAliases(
+                words, staffs, measures, notes, brokenGroup, image, width, height));
+    }
+
+    @Test
+    public void compactSegueRetainsLeadingDigitImmediatelyBelowBottomRule() {
+        int width = 640, height = 330;
+        float left = 30, right = 580;
+        var image = new byte[width * height];
+        Arrays.fill(image, (byte) 255);
+        var staffs = List.of(new PlayingTechniqueDetector.Staff(215, 279, 16, 0, 1));
+        var measures = List.of(new MeasureRegion(left / width, right / width, .35f, .98f));
+        var notes = closedSixteenthCaptionNotes(image, width, height, left, right);
+        var expected = List.copyOf(notes);
+        for (int i = 4; i < 7; i++) notes.set(i, notes.get(i).withTupletRatio(3, 2));
+        var words = List.of(new PlayingTechniqueDetector.Word("3 segue", 61f / width,
+                270f / height, 222f / width, 313f / height));
+        drawInk(image, width, 75, 86, 281, 298, 0);
+        for (int x : new int[] {107, 124, 143, 164, 182}) {
+            drawInk(image, width, x, x + 11, 285, 298, 0);
+        }
+        notes.add(captionNote(113, 291, -2, 0, 3, 0, height, left, right));
+        assertEquals(expected, FingeringAnnotationFilter.apply(
+                words, staffs, measures, notes, image, image, width, height));
+
+        var noDigit = image.clone();
+        drawInk(noDigit, width, 75, 86, 281, 298, 255);
+        assertSame(notes, FingeringAnnotationFilter.apply(
+                words, staffs, measures, notes, image, noDigit, width, height));
+        assertSame(notes, FingeringAnnotationFilter.apply(
+                words, staffs, measures, notes, image, width, height));
+    }
+
+    @Test
+    public void pairedSegueLettersRequireTheirSeparateTextAndRealDoubleRails() {
+        int width = 640, height = 330;
+        float left = 30, right = 580;
+        var image = new byte[width * height];
+        Arrays.fill(image, (byte) 255);
+        var staffs = List.of(new PlayingTechniqueDetector.Staff(215, 279, 16, 0, 1));
+        var measures = List.of(new MeasureRegion(left / width, right / width, .35f, .98f));
+        var notes = closedSixteenthCaptionNotes(image, width, height, left, right);
+        var expected = List.copyOf(notes);
+        var words = List.of(new PlayingTechniqueDetector.Word("3 segue", 61f / width,
+                275f / height, 222f / width, 316f / height));
+        drawInk(image, width, 75, 86, 285, 301, 0);
+        for (int x : new int[] {107, 124, 143, 164, 182}) {
+            drawInk(image, width, x, x + 11, 291, x == 143 ? 312 : 307, 0);
+        }
+        notes.add(captionNote(113, 299, -3, 0, 2, 0, height, left, right));
+        notes.add(captionNote(148, 302, -3, 0, 3, 0, height, left, right, true));
+        assertEquals(expected, FingeringAnnotationFilter.apply(
+                words, staffs, measures, notes, image, image, width, height));
+
+        var missingLetter = image.clone();
+        drawInk(missingLetter, width, 143, 154, 291, 312, 255);
+        assertSame(notes, FingeringAnnotationFilter.apply(
+                words, staffs, measures, notes, image, missingLetter, width, height));
+        var cutRail = image.clone();
+        drawInk(cutRail, width, 80, 94, 225, 252, 255);
+        assertSame(notes, FingeringAnnotationFilter.apply(
+                words, staffs, measures, notes, cutRail, image, width, height));
+    }
+
+    @Test
+    public void singleSegueDescenderCanOwnAStemlessBeamAlias() {
+        int width = 640, height = 330;
+        float left = 30, right = 580;
+        var image = new byte[width * height];
+        Arrays.fill(image, (byte) 255);
+        var staffs = List.of(new PlayingTechniqueDetector.Staff(215, 279, 16, 0, 1));
+        var measures = List.of(new MeasureRegion(left / width, right / width, .35f, .98f));
+        var notes = closedSixteenthCaptionNotes(image, width, height, left, right);
+        var expected = List.copyOf(notes);
+        var words = List.of(new PlayingTechniqueDetector.Word("segue", 190f / width,
+                274f / height, 300f / width, 315f / height));
+        for (int x : new int[] {200, 215, 254, 274}) {
+            drawInk(image, width, x, x + 12, 284, 298, 0);
+        }
+        drawInk(image, width, 230, 250, 284, 310, 0);
+        notes.add(captionNote(242, 294, -2, 0, 3, 0, height, left, right));
+        assertEquals(expected, FingeringAnnotationFilter.apply(
+                words, staffs, measures, notes, image, image, width, height));
+
+        var missingTail = image.clone();
+        drawInk(missingTail, width, 230, 250, 300, 310, 255);
+        assertSame(notes, FingeringAnnotationFilter.apply(
+                words, staffs, measures, notes, image, missingTail, width, height));
+        assertSame(notes, FingeringAnnotationFilter.apply(
+                words, staffs, measures, notes, image, width, height));
+    }
+
+    private static ArrayList<ScoreNoteEvent> closedSixteenthCaptionNotes(
+            byte[] image, int width, int height, float left, float right) {
+        for (int y = 215; y <= 279; y += 16) {
+            drawInk(image, width, 1, width - 1, y, y + 1, 0);
+        }
+        drawInk(image, width, 584, 586, 215, 280, 0);
+        var notes = new ArrayList<ScoreNoteEvent>();
+        for (int slot = 0; slot < 12; slot++) {
+            int x = 73 + slot * 43, y = 205 - slot % 4 * 8;
+            notes.add(captionNote(x, y, 9 + (279 - y) / 8, -1, 2, 0, height, left, right));
+            drawInk(image, width, x - 10, x + 8, y - 5, y + 6, 0);
+            drawInk(image, width, x - 10, x - 7, y, 250, 0);
+            if (slot % 4 == 3) {
+                int xMin = x - 3 * 43 - 10;
+                drawInk(image, width, xMin, x - 7, 229, 235, 0);
+                drawInk(image, width, xMin, x - 7, 237, 250, 0);
+                for (int shaftX = xMin; shaftX < x; shaftX += 43) {
+                    drawInk(image, width, shaftX, shaftX + 3, 236, 237, 0);
+                }
+            }
+        }
+        return notes;
+    }
+
+    @Test
+    public void looseNumeralNeedsItsPairedCurvesAndSamePrintedDigit() throws Exception {
+        int w = 180, h = 170;
+        byte[] image = new byte[w * h];
+        java.util.Arrays.fill(image, (byte) 255);
+        for (int top : new int[] {111, 119, 128})
+            for (int y = top; y < top + 2; y++)
+                for (int i = 0; i < 12; i++) {
+                    image[y * w + 44 + i] = 0;
+                    image[y * w + 99 + i] = 0;
+                }
+        for (int y = 112; y < 130; y++)
+            for (int i = 0; i < 2; i++) {
+                image[y * w + 55 + i] = 0;
+                image[y * w + 110 + i] = 0;
+            }
+        for (int y = 107; y <= 133; y++) {
+            int curve = Math.round(7 * (y - 120) * (y - 120) / 169f);
+            int opening = 34 + curve, closing = 124 - curve;
+            image[y * w + opening] = image[y * w + opening - 1] = 0;
+            image[y * w + closing] = image[y * w + closing + 1] = 0;
+        }
+
+        var start = new PlayingTechniqueDetector.Word("(3", 27f/w, 100f/h, 68f/w, 139f/h);
+        var end = new PlayingTechniqueDetector.Word("3)", 93f/w, 100f/h, 132f/w, 139f/h);
+        var extract = FingeringAnnotationFilter.class.getDeclaredMethod("parenthesizedDigit",
+                byte[].class, int.class, int.class, PlayingTechniqueDetector.Word.class,
+                float.class, float.class, boolean.class);
+        var same = FingeringAnnotationFilter.class.getDeclaredMethod("sameDetachedDigit",
+                byte[].class, int.class, RawNumeralComponents.Component.class,
+                RawNumeralComponents.Component.class);
+        extract.setAccessible(true);
+        same.setAccessible(true);
+        var left = extract.invoke(null, image, w, h, start, 100f, 16f, true);
+        var right = extract.invoke(null, image, w, h, end, 100f, 16f, false);
+        org.junit.Assert.assertNotNull(left);
+        org.junit.Assert.assertNotNull(right);
+        assertEquals(true, same.invoke(null, image, w, left, right));
+
+        byte[] compact = image.clone();
+        for (int y = 107; y <= 133; y++) {
+            java.util.Arrays.fill(compact, y * w + 114, y * w + 130, (byte) 255);
+            int curve = Math.round(7 * (y - 120) * (y - 120) / 169f);
+            int closure = 118 - curve;
+            compact[y * w + closure] = compact[y * w + closure + 1] = 0;
+        }
+        var compactEnd = new PlayingTechniqueDetector.Word("(8", 93f/w, 100f/h, 132f/w, 139f/h);
+        var extractClose = FingeringAnnotationFilter.class.getDeclaredMethod("parenthesizedDigit",
+                byte[].class, int.class, int.class, PlayingTechniqueDetector.Word.class,
+                float.class, float.class, boolean.class, boolean.class);
+        extractClose.setAccessible(true);
+        org.junit.Assert.assertNull(extract.invoke(null, compact, w, h, compactEnd, 100f, 16f, false));
+        var tightlySpacedRight = extractClose.invoke(null, compact, w, h, compactEnd, 100f, 16f, false, true);
+        org.junit.Assert.assertNotNull(tightlySpacedRight);
+        assertEquals(true, same.invoke(null, compact, w, left, tightlySpacedRight));
+
+        byte[] altered = image.clone();
+        for (int y = 108; y <= 133; y++)
+            java.util.Arrays.fill(altered, y*w+99, y*w+112, (byte) 0);
+        assertEquals(false, same.invoke(null, altered, w, left, right));
+
+        for (int y = 106; y <= 134; y++)
+            java.util.Arrays.fill(image, y*w+115, y*w+128, (byte) 255);
+        org.junit.Assert.assertNull(extract.invoke(null, image, w, h, end, 100f, 16f, false));
     }
 }

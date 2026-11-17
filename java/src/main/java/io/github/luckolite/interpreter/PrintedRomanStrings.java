@@ -96,10 +96,9 @@ final class PrintedRomanStrings {
             if (ink.size() != 2) continue;
             var above = ink.get(0);
             var below = ink.get(1);
-            if (below.shafts() != above.shafts() + 1
-                    || Math.abs(above.bounds().x() - below.bounds().x()) > .35 * gap
-                    || !between(below.bounds().y() - above.bounds().y(), 1.53 * gap, 2.12 * gap)
-                    || blocksOtherStaff(staffs, staff, above.bounds()) || blocksOtherStaff(staffs, staff, below.bounds())
+            if (!stackedRows(above, below, gap)
+                    || blocksOtherStaff(staffs, staff, above.bounds())
+                    || blocksOtherStaff(staffs, staff, below.bounds())
                     || !qualifyOcr(above, below, nearby, gap)) continue;
             int higherFloor = OPEN_MIDI[above.shafts() - 1], lowerFloor = OPEN_MIDI[below.shafts() - 1];
             if (higher.midi() >= higherFloor && lower.midi() >= lowerFloor) {
@@ -124,6 +123,38 @@ final class PrintedRomanStrings {
         }
         marks.sort(Comparator.comparingInt(Mark::noteIndex));
         return List.copyOf(marks);
+    }
+
+    /** A later accidental can borrow a serif from a stacked string mark above the previous head. */
+    static boolean ownsAccidentalFragment(
+            byte[] gray,
+            int width,
+            int height,
+            Box fragment,
+            double ownerX,
+            double ownerY,
+            double gap) {
+        if (gray == null
+                || gray.length != (long) width * height
+                || gap < 10
+                || gap > 25
+                || Math.abs(fragment.x() - ownerX) > gap * .65
+                || !between(ownerY - fragment.bottom(), gap * .85, gap * 2.3)) return false;
+        var rows = glyphs(gray, width, height, ownerX, ownerY, gap);
+        if (rows.size() != 2 || !stackedRows(rows.get(0), rows.get(1), gap)) return false;
+        var lower = rows.get(1).bounds();
+        return fragment.width() <= gap * .78
+                && fragment.height() >= gap * 1.04
+                && fragment.left() >= lower.left() - 1
+                && fragment.right() <= lower.right() + 1
+                && fragment.top() >= lower.top() - 1
+                && fragment.bottom() <= lower.bottom() + 1;
+    }
+
+    private static boolean stackedRows(ShaftGroup above, ShaftGroup below, double gap) {
+        return below.shafts() == above.shafts() + 1
+                && Math.abs(above.bounds().x() - below.bounds().x()) <= .35 * gap
+                && between(below.bounds().y() - above.bounds().y(), 1.53 * gap, 2.12 * gap);
     }
 
     private static Head head(Map<String, Object> event, List<ScoreNoteEvent> notes, Map<Integer, Integer> counts) {

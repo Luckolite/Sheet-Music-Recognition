@@ -5,6 +5,7 @@ package io.github.luckolite.interpreter;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
+import java.util.Arrays;
 import org.junit.Test;
 
 /** Distinguishes complete optical natural spines at fractional staff spacing. */
@@ -30,6 +31,76 @@ public class IntegerNaturalSpineOffsetTest {
         ink(glyph, 21, 23, 10, 20, GLYPH);
         ink(glyph, 11, 13, 49, 55, GLYPH);
         assertFalse(isNatural(glyph));
+    }
+
+    @Test
+    public void twoPrintedRulesCannotTurnOffsetNaturalSpinesIntoASharp() throws Exception {
+        byte[] gray = new byte[SIZE * SIZE];
+        byte[] mask = natural();
+        Arrays.fill(gray, (byte) 255);
+        for (int i = 0; i < mask.length; i++)
+            if (mask[i] != 0) gray[i + 6] = 0;
+        ink(gray, 1, 47, 18, 19, (byte) 0);
+        ink(gray, 1, 47, 35, 36, (byte) 0);
+        ink(gray, 1, 47, 51, 52, (byte) 0);
+        assertTrue(throughRules(gray, gray));
+
+        byte[] incomplete = gray.clone();
+        ink(incomplete, 26, 30, 44, 55, (byte) 255);
+        assertFalse(throughRules(gray, incomplete));
+
+        byte[] sharp = gray.clone();
+        ink(sharp, 27, 29, 10, 20, (byte) 0);
+        ink(sharp, 17, 19, 49, 55, (byte) 0);
+        assertFalse(throughRules(sharp, sharp));
+    }
+
+    private static boolean throughRules(byte[] gray, byte[] raw) throws Exception {
+        var decoder = OmrScoreInterpreter.class;
+        var component = Class.forName(decoder.getName() + "$Component");
+        var constructor = component.getDeclaredConstructor(int.class, int.class, int.class,
+                int.class, int.class, float.class, float.class);
+        constructor.setAccessible(true);
+        var glyph = constructor.newInstance(216, 16, 30, 10, 55, 23f, 34f);
+        var head = constructor.newInstance(250, 35, 52, 27, 44, 43f, 36f);
+        var proof = decoder.getDeclaredMethod("naturalBetweenContinuedRules",
+                byte[].class, byte[].class, int.class, int.class, component, component, float.class);
+        proof.setAccessible(true);
+        return (boolean) proof.invoke(null, gray, raw, SIZE, SIZE, glyph, head, 15.875f);
+    }
+
+    @Test
+    public void aNaturalCutFromAClusterRetainsItsLowerPitchOwner() throws Exception {
+        byte[] gray = new byte[SIZE * SIZE];
+        byte[] mask = natural();
+        Arrays.fill(gray, (byte) 255);
+        for (int i = 0; i < mask.length; i++)
+            if (mask[i] != 0) gray[i + 6] = 0;
+        ink(gray, 1, 47, 18, 19, (byte) 0);
+        ink(gray, 1, 47, 35, 36, (byte) 0);
+        ink(gray, 1, 47, 51, 52, (byte) 0);
+        assertTrue(ownsLower(gray, false));
+        assertFalse(ownsLower(gray, true));
+
+        byte[] cut = gray.clone();
+        ink(cut, 26, 30, 44, 55, (byte) 255);
+        assertFalse(ownsLower(cut, false));
+    }
+
+    private static boolean ownsLower(byte[] gray, boolean reverse) throws Exception {
+        var decoder = OmrScoreInterpreter.class;
+        var component = Class.forName(decoder.getName() + "$Component");
+        var constructor = component.getDeclaredConstructor(int.class, int.class, int.class,
+                int.class, int.class, float.class, float.class);
+        constructor.setAccessible(true);
+        var glyph = constructor.newInstance(216, 16, 30, 10, 55, 23f, 34f);
+        var lower = constructor.newInstance(250, 35, 52, 27, 44, 43f, 36f);
+        var upper = constructor.newInstance(250, 35, 52, 11, 28, 43f, 20f);
+        var proof = decoder.getDeclaredMethod("lowerNaturalInJoinedSigns", byte[].class,
+                int.class, int.class, component, component, component, float.class);
+        proof.setAccessible(true);
+        return (boolean) proof.invoke(null, gray, SIZE, SIZE, glyph, reverse ? upper : lower,
+                reverse ? lower : upper, 15.875f);
     }
 
     private static byte[] natural() {

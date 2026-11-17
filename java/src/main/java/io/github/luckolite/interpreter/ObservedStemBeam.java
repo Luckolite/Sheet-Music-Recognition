@@ -99,10 +99,10 @@ final class ObservedStemBeam {
             ScoreSlurPages.Span span,
             List<? extends PrintedSlurOwners.Location> heads,
             StaffPitchTrack track) {
-        if (!bow.above()
-                || bow.asymmetric()
+        if (bow.asymmetric()
                 || !track.verified()
                 || span.start().pageIndex() != span.end().pageIndex()) return false;
+        if (!bow.above()) return ownsLowerLedgerContact(bow, span, heads, track);
         int left = bow.start().x(),
                 right = bow.end().x(),
                 ai = span.start().noteIndex(),
@@ -183,6 +183,57 @@ final class ObservedStemBeam {
                 return false;
         }
         return onRule >= (length + 1) * .75f;
+    }
+
+    /** A ledger below the first head can lead into the upper edge of the next filled head. */
+    private boolean ownsLowerLedgerContact(
+            PrintedSlurContours.Bow bow, ScoreSlurPages.Span span,
+            List<? extends PrintedSlurOwners.Location> heads, StaffPitchTrack track) {
+        int ai = span.start().noteIndex(), bi = span.end().noteIndex();
+        if (ai >= notes.size() || bi >= notes.size()) return false;
+        var first = notes.get(ai);
+        var last = notes.get(bi);
+        int ledgerStep = last.staffStep();
+        if (ledgerStep < 10 || (ledgerStep & 1) != 0 || first.staffStep() != ledgerStep + 1
+                || !upperLedgerVoice(first, first) || !upperLedgerVoice(first, last)
+                || first.beamCount() < 1 || first.beamCount() != last.beamCount()
+                || !take(heads.size() * 8L + 64)) return false;
+        PrintedSlurOwners.Location a = null, b = null;
+        for (var head : heads) {
+            if (head.owner() == ai) a = head;
+            if (head.owner() == bi) b = head;
+        }
+        if (a == null || b == null || a.grace() || b.grace()) return false;
+        int left = bow.start().x(), right = bow.end().x();
+        float gap = track.at((left + right) * .5f)[1];
+        int length = right - left + 1;
+        if (gap < 8 || gap > 32 || length < gap * 1.55f || length > gap * 2.6f
+                || Math.abs(a.y() - ledgerY(track, a.x(), ledgerStep + 1)) > gap * .2f
+                || Math.abs(b.y() - ledgerY(track, b.x(), ledgerStep)) > gap * .2f
+                || Math.abs(left - a.x()) > gap * .32f
+                || right < b.x() - gap * .55f || right > b.x() + gap * .15f
+                || bow.end().y() > b.y() - gap * .30f
+                || !take(bow.points().size() * 14L + (long) Math.ceil(gap * gap * 2))) return false;
+        if (!PrintedSlurOwners.headBody(gray, w, h, a, gap)
+                || !PrintedSlurOwners.headBody(gray, w, h, b, gap)) return false;
+
+        int rule = 0, exposedRule = 0, onHead = 0;
+        int flank = Math.round(gap * .30f);
+        for (var point : bow.points()) {
+            int x = point.x(), y = Math.round(point.y());
+            if (x < 0 || x >= w || y < flank || y + flank >= h
+                    || Math.min(raw(x, y - 1, 1), Math.min(raw(x, y, 1), raw(x, y + 1, 1))) >= 185)
+                return false;
+            if (Math.abs(point.y() - ledgerY(track, x, ledgerStep)) <= gap * .20f) {
+                rule++;
+                if (x > a.x() + gap * .6f && x < b.x() - gap * .6f
+                        && raw(x, y - flank, 1) >= 185 && raw(x, y + flank, 1) >= 185) exposedRule++;
+            } else if (x >= b.x() - gap * .68f && x <= b.x()
+                    && point.y() < b.y() && b.y() - point.y() <= gap * .70f) {
+                onHead++;
+            } else return false;
+        }
+        return rule >= length * .65f && exposedRule >= gap * .20f && onHead >= 2;
     }
 
     private static boolean upperLedgerVoice(ScoreNoteEvent a, ScoreNoteEvent b) {

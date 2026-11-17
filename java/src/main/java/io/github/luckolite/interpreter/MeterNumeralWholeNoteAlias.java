@@ -17,7 +17,9 @@ final class MeterNumeralWholeNoteAlias {
         var candidates = new ArrayList<Integer>();
         for (int i = 0; i < notes.size(); i++) {
             var note = notes.get(i);
-            if (aliasShape(note)) candidates.add(i);
+            if (aliasShape(note) || stemlessQuarterAlias(note)
+                    && note.measureIndex() > 0 && beginsStaff(measures, note.measureIndex()))
+                candidates.add(i);
         }
         if (candidates.isEmpty()) return new Capture(notes, List.of());
         var cropCandidates = MeterChangeDetector.candidates(labels, geometryGray, width, height);
@@ -32,6 +34,16 @@ final class MeterNumeralWholeNoteAlias {
             if (barHeads.isEmpty()) continue;
             float nextHead = (float) barHeads.stream().mapToDouble(n -> printedX(n, region, width))
                     .min().orElseThrow();
+            if (stemlessQuarterAlias(note)) {
+                if (openingTwoFour(labels, geometryGray, width, height, measures, barHeads, bar,
+                                x, y, nextHead)
+                        && openingTwoFour(labels, sourceGray, width, height, measures, barHeads, bar,
+                                x, y, nextHead)) {
+                    removed.add(i);
+                    inlineMeters.add(new ScoreMeterChange(bar, 2, 4));
+                }
+                continue;
+            }
             if (!beginsStaff(measures, bar)) {
                 if (provesInlineTriple(cropCandidates, labels, geometryGray, sourceGray, width,
                         height, measures, barHeads, bar, x, y, nextHead)) {
@@ -65,6 +77,36 @@ final class MeterNumeralWholeNoteAlias {
             retained.add(notes.get(i));
         }
         return new Capture(List.copyOf(retained), List.copyOf(inlineMeters));
+    }
+
+    /** A system-opening meter can supply a false stemless quarter on the upper numeral. */
+    private static boolean openingTwoFour(
+            byte[] labels, byte[] gray, int width, int height, List<MeasureRegion> measures,
+            List<ScoreNoteEvent> barHeads, int bar, float x, float y, float nextHead) {
+        var region = measures.get(bar);
+        float nominal = (region.bottom() - region.top()) * height / 8.2f;
+        if (gray == null || gray.length != labels.length || nominal < 10 || nominal > 26) return false;
+        var rails = PrintedDirectionStaff.printedRules(gray, width, height, x + nominal * 2.5f,
+                region.bottom() * height - 2.1f * nominal, nominal);
+        if (rails == null) return false;
+        float gap = rails[1];
+        int firstLine = Math.round(rails[0] - 4 * gap);
+        float inset = x - region.left() * width;
+        if (inset < gap * 1.45f || inset > gap * 2.85f
+                || Math.abs(y - (firstLine + 1.5f * gap)) > gap * .35f) return false;
+        int left = Math.round(x - gap * 1.35f), right = Math.round(x + gap * 1.35f);
+        int top = firstLine - Math.round(gap * .20f);
+        int bottom = firstLine + Math.round(gap * 4.25f);
+        if (left < 0 || right > width || top < 0 || bottom > height
+                || nextHead - right < gap * 1.65f) return false;
+        var crop = new MeterChangeDetector.Crop(left, top, right, bottom, firstLine, gap);
+        if (MeterChangeDetector.followingMeasure(crop, width, height, measures) != bar
+                || !connectedToNoteheadLabels(labels, gray, width, crop, x, y)
+                || !MeterChangeDetector.precedesNotes(crop, labels, gray, width, height,
+                        bar, measures, barHeads)) return false;
+        var reading = MeterFontMatcher.readCrop(gray, width, height, crop);
+        return reading.text().equals("2/4") && reading.topScore() >= .87f
+                && reading.bottomScore() >= .87f;
     }
 
     private static boolean provesInlineTriple(
@@ -116,11 +158,21 @@ final class MeterNumeralWholeNoteAlias {
     }
 
     private static boolean aliasShape(ScoreNoteEvent note) {
+        return note.positionInMeasure() <= .045f && note.unbeamedDurationBeats() == 4
+                && stemlessHead(note);
+    }
+
+    private static boolean stemlessQuarterAlias(ScoreNoteEvent note) {
+        return note.positionInMeasure() <= .20f && note.unbeamedDurationBeats() == 1
+                && note.harmonicSemitones() == 0 && note.octaveShift() == 0
+                && stemlessHead(note);
+    }
+
+    private static boolean stemlessHead(ScoreNoteEvent note) {
         return note.kind() == ScoreNoteEvent.Kind.PITCHED
                 && note.staffIndex() == 0 && note.staffCount() == 1
                 && note.visualSize() == ScoreNoteEvent.VisualSize.FULL
-                && note.positionInMeasure() <= .045f && note.stemDirection() == 0
-                && note.unbeamedDurationBeats() == 4 && note.beamCount() == 0
+                && note.stemDirection() == 0 && note.beamCount() == 0
                 && note.augmentationDots() == 0 && note.tupletDivisor() == 1
                 && note.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_FROM_KEY
                 && note.leadingRestBeats() == 0 && note.followingRestBeats() == 0

@@ -24,6 +24,136 @@ final class OpeningTripletContextInk {
         return withoutContext(original, corrected, width, height, gap, headsX, headsY, words, tipsY);
     }
 
+    /** Mask only the continuous source arc above two contacts with the top staff rule. */
+    static Pair withoutStaffCrossingCurve(
+            byte[] original,
+            byte[] corrected,
+            int width,
+            int height,
+            float firstHead,
+            float lastHead,
+            float gap,
+            StaffPitchTrack rawStaff,
+            StaffPitchTrack correctedStaff) {
+        if (rawStaff == null || correctedStaff == null) return new Pair(original, corrected);
+        var a = curveAboveStaff(original, width, height, firstHead, lastHead, gap, rawStaff);
+        var b = curveAboveStaff(corrected, width, height, firstHead, lastHead, gap, correctedStaff);
+        if (a == null || b == null || !sameBox(a.source(), b.source()))
+            return new Pair(original, corrected);
+        byte[] clearRaw = original.clone(), clearCorrected = corrected.clone();
+        eraseCurve(clearRaw, width, a);
+        eraseCurve(clearCorrected, width, b);
+        return new Pair(clearRaw, clearCorrected);
+    }
+
+    /**
+     * The clipped arc is independent of the staff line. Reconnect its two literal descending ends
+     * only when they close beside the first and last verified stems on both ink planes.
+     */
+    static ScoreSlurSpan.ArcEvidence staffCrossingSlur(
+            byte[] original, byte[] corrected, int width, int height, int page,
+            float firstX, float firstY, float lastX, float lastY, float gap,
+            StaffPitchTrack rawStaff, StaffPitchTrack correctedStaff) {
+        if (rawStaff == null || correctedStaff == null) return null;
+        var raw = curveAboveStaff(original, width, height, firstX, lastX, gap, rawStaff);
+        var normalized = curveAboveStaff(corrected, width, height, firstX, lastX, gap, correctedStaff);
+        if (raw == null || normalized == null || !sameBox(raw.source(), normalized.source())) return null;
+        var a = returningStemCap(original, width, height, raw, firstX, firstY, gap, rawStaff, true);
+        var b = returningStemCap(original, width, height, raw, lastX, lastY, gap, rawStaff, false);
+        var c = returningStemCap(corrected, width, height, normalized, firstX, firstY, gap, correctedStaff, true);
+        var d = returningStemCap(corrected, width, height, normalized, lastX, lastY, gap, correctedStaff, false);
+        if (a == null || b == null || !a.equals(c) || !b.equals(d)) return null;
+        return new ScoreSlurSpan.ArcEvidence(page, a.x / (float) width, a.y / (float) height,
+                b.x / (float) width, b.y / (float) height);
+    }
+
+    private record StemCap(int x, int y) {}
+
+    private static StemCap returningStemCap(
+            byte[] plane, int width, int height, Curve curve, float headX, float headY,
+            float gap, StaffPitchTrack staff, boolean left) {
+        var shafts = PrintedBeamShafts.at(plane, width, height, headX, headY, gap,
+                new PrintedBeamShafts.Budget(60_000));
+        if (shafts.size() != 1 || shafts.get(0).direction() != -1) return null;
+        var shaft = shafts.get(0);
+        float shaftX = (shaft.left() + shaft.right()) * .5f;
+        int edge = left ? curve.source().left : curve.source().right;
+        int start = left ? 0 : curve.top().length - 1;
+        int inside = Math.round(.7f * gap);
+        int shoulder = start + (left ? inside : -inside);
+        if ((left ? edge - shaftX : shaftX - edge) < .15f * gap
+                || Math.abs(edge - shaftX) > gap) return null;
+        float outerY = (curve.top()[start] + curve.bottom()[start]) * .5f;
+        float innerY = (curve.top()[shoulder] + curve.bottom()[shoulder]) * .5f;
+        float slope = (outerY - innerY) / inside;
+        if (slope < .42f || slope > 1.48f) return null;
+        StemCap outer = null;
+        int consecutive = 0;
+        for (int dx = 1; dx <= Math.round(gap * 1.1f); dx++) {
+            int x = edge + (left ? -dx : dx);
+            if (x < 1 || x >= width - 1 || Math.abs(x - shaftX) > .59f * gap) continue;
+            var frame = staff.at(x);
+            float staffTop = frame[0] - 4 * frame[1];
+            int low = Math.max(Math.round(staffTop + .2f * gap), Math.round(outerY + dx * slope - 1));
+            int high = Math.min(Math.round(shaft.endY() - .24f * gap),
+                    Math.round(outerY + dx * (slope + .57f) + 1));
+            if (low < 0 || high >= height || low > high) continue;
+            int dark = 0, totalY = 0;
+            for (int y = low; y <= high; y++) {
+                if ((plane[y * width + x] & 255) >= 162) continue;
+                dark++;
+                totalY += y;
+            }
+            if (dark == 0 || dark > .42f * gap) {
+                if (consecutive >= 3) break;
+                consecutive = 0;
+                continue;
+            }
+            consecutive++;
+            outer = new StemCap(x, Math.round((float) totalY / dark));
+        }
+        return consecutive >= 3 ? outer : null;
+    }
+
+    private static Curve curveAboveStaff(
+            byte[] source,
+            int width,
+            int height,
+            float firstHead,
+            float lastHead,
+            float gap,
+            StaffPitchTrack track) {
+        if (lastHead - firstHead < 29 * gap
+                || lastHead - firstHead > 43 * gap
+                || !track.verifiedAt(firstHead)
+                || !track.verifiedAt(lastHead)) return null;
+        var first = track.at(firstHead);
+        var middle = track.at((firstHead + lastHead) * .5f);
+        var last = track.at(lastHead);
+        float rule =
+                Math.min(
+                        first[0] - 4 * first[1],
+                        Math.min(middle[0] - 4 * middle[1], last[0] - 4 * last[1]));
+        int bottom = Math.round(rule - .28f * gap);
+        int top = Math.round(bottom - 8.7f * gap);
+        int left = Math.round(firstHead - gap);
+        int right = Math.round(lastHead + 1.8f * gap);
+        if (bottom >= height - 1 || top < 1 || left < 0 || right >= width) return null;
+        var candidates = curves(source, width, height, left, top, right, bottom, gap, false, true);
+        var owned =
+                candidates.stream()
+                        .filter(
+                                c ->
+                                        c.source().left >= firstHead - .6f * gap
+                                                && c.source().left <= firstHead + 2.4f * gap
+                                                && c.source().right >= lastHead - .85f * gap
+                                                && c.source().right <= lastHead + 1.3f * gap
+                                                && c.bottom()[0] >= bottom - 2
+                                                && c.bottom()[c.bottom().length - 1] >= bottom - 2)
+                        .toList();
+        return owned.size() == 1 ? owned.get(0) : null;
+    }
+
     private static Pair withoutContext(byte[] original, byte[] corrected, int width, int height, float gap,
             float[] headsX, float[] headsY, List<PlayingTechniqueDetector.Word> words, float[] tipsY) {
         boolean following = tipsY != null;
@@ -75,13 +205,34 @@ final class OpeningTripletContextInk {
     }
 
     private static List<Curve> curves(byte[] data, int width, int height, int l, int t, int r, int b, float gap, boolean following) {
+        return curves(data, width, height, l, t, r, b, gap, following, false);
+    }
+
+    private static List<Curve> curves(
+            byte[] data,
+            int width,
+            int height,
+            int l,
+            int t,
+            int r,
+            int b,
+            float gap,
+            boolean following,
+            boolean allowBottomContact) {
         if (l >= r || t >= b || (long) (r - l + 1) * (b - t + 1) > 650_000) return List.of();
         var graph = RawNumeralComponents.captureLongWindow(data, width, height, l, t, r, b);
         var result = new ArrayList<Curve>();
         for (var c : graph.components()) {
             int span = c.right - c.left + 1, rise = c.bottom - c.top + 1;
-            if (span < 12 * gap || span > 44 * gap || rise < .8f * gap || rise > 8 * gap
-                    || span < 3 * rise || c.left <= l || c.right >= r || c.top <= t || c.bottom >= b
+            if (span < 12 * gap
+                    || span > 44 * gap
+                    || rise < .8f * gap
+                    || rise > 8 * gap
+                    || span < 3 * rise
+                    || c.left <= l
+                    || c.right >= r
+                    || c.top <= t
+                    || (!allowBottomContact && c.bottom >= b)
                     || c.size() > span * gap * .38f) continue;
             int[] start = new int[span], end = new int[span], counts = new int[span];
             Arrays.fill(start, height);

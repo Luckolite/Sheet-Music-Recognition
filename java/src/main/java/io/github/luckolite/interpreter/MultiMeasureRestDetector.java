@@ -223,6 +223,11 @@ final class MultiMeasureRestDetector {
                 boolean thickBar = hasThickHorizontalBar(gray, width, height, window);
                 if (localHeads <= noteFreeLimit && thickBar) {
                     MeasureRegion capped = cappedRestWindow(gray, width, height, window);
+                    if (capped != null && index > 0 && index == measures.size() - 1
+                            && TerminalCompoundHarmonicQuarter.prove(
+                                    gray, width, height, measures.get(index - 1), parent,
+                                    (capped.left() + capped.right()) * width * .5f) != null)
+                        continue;
                     addOrMerge(
                             result, new RestBarCandidate(index, capped != null ? capped : window));
                 }

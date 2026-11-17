@@ -92,6 +92,17 @@ final class PrintedCadenceDurations {
                 changed = true;
                 continue;
             }
+            int harmonic = i > 0 && next != null
+                    ? ClosedHarmonicQuarterCadence.duration(
+                            score.measures().get(i - 1), measure, next, chord,
+                            labels, gray, annotationGray, width, height)
+                    : 0;
+            if (harmonic > 0) {
+                regions.set(i, new MeasureRegion(measure.left(), measure.right(),
+                        measure.top(), measure.bottom(), harmonic));
+                changed = true;
+                continue;
+            }
             boolean isolatedBeamAlias =
                     duration == 0
                             && next != null

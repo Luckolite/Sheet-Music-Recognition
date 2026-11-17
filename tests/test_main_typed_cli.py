@@ -99,15 +99,17 @@ public final class SheetInterpreter {
     record AnalyzedPage(ScorePageInterpretation score, List<ScoreNoteEvent> originalNotes,
             SourceLocalAccidental accidentalSource, List<MeasureRegion> accidentalMeasures,
             List<ScoreNoteEvent> provedSharpOwners,
-            List<List<ScoreNoteEvent>> harmonicTails) {}
+            List<List<ScoreNoteEvent>> harmonicTails,
+            List<OctaveMarkDetector.StaffSpan> printedOctaveSpans) {}
 
     static AnalyzedPage analyzeWithPrintedSources(byte[] labels, byte[] gray, int width, int height,
             Annotations annotations, MusicalOcr ocr, int physicalPage, byte[] decoderGray,
-            TablatureDecoder.Prepared preparedTabs, ScoreMeterChange inheritedMeter) {
+            TablatureDecoder.Prepared preparedTabs, ScoreMeterChange inheritedMeter,
+            Integer initialKeyFifths, boolean standardViolin) {
         var score = analyze(labels, gray, width, height, annotations, ocr, physicalPage,
                 decoderGray, preparedTabs);
         return new AnalyzedPage(score, score.notes(), SourceLocalAccidental.unavailable(),
-                score.measures(), List.of(), List.of());
+                score.measures(), List.of(), List.of(), List.of());
     }
 
 }

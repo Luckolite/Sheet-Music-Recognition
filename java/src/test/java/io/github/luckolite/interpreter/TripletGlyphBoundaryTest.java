@@ -64,6 +64,45 @@ public class TripletGlyphBoundaryTest {
     }
 
     @Test
+    public void belowBeamRestAliasRequiresAnIsolatedThreeAtItsActualCenter() throws Exception {
+        int width = 400, height = 240;
+        var method = WrappedEighthTriplets.class.getDeclaredMethod("detachedTripletThree",
+                byte[].class, int.class, int.class, float.class, float.class, float.class);
+        method.setAccessible(true);
+        byte[] paper = new byte[width * height];
+        Arrays.fill(paper, (byte) 255);
+        String[] shape = glyph();
+        for (int y = 0; y < shape.length; y++)
+            for (int x = 0; x < shape[y].length(); x++)
+                if (shape[y].charAt(x) == '#') paper[(145 + y) * width + 119 + x] = 0;
+        assertNotNull(method.invoke(null, paper, width, height, 124.5f, 155.5f, 16f));
+        assertNull(method.invoke(null, paper, width, height, 129.5f, 155.5f, 16f));
+        var closedEight = paper.clone();
+        for (int y = 2; y < shape.length - 2; y++) {
+            closedEight[(145 + y) * width + 119] = 0;
+            closedEight[(145 + y) * width + 120] = 0;
+        }
+        assertNull(method.invoke(null, closedEight, width, height, 124.5f, 155.5f, 16f));
+    }
+
+    @Test
+    public void aTripletNumeralMustLieUnderTheFirstGroup() throws Exception {
+        int width = 400, height = 240;
+        var read = WrappedEighthTriplets.class.getDeclaredMethod("firstTripletNumeral",
+                byte[].class, int.class, int.class, float.class, float.class, float.class, float.class);
+        read.setAccessible(true);
+        byte[] paper = new byte[width * height];
+        Arrays.fill(paper, (byte) 255);
+        String[] three = glyph();
+        for (int y = 0; y < three.length; y++)
+            for (int x = 0; x < three[y].length(); x++)
+                if (three[y].charAt(x) == '#') paper[(145 + y) * width + 119 + x] = 0;
+        assertNotNull(read.invoke(null, paper, width, height, 124.5f, 132f, 149f, 16f));
+        assertNull(read.invoke(null, paper, width, height, 124.5f, 132f, 155f, 16f));
+        assertNull(read.invoke(null, paper, width, height, 132f, 132f, 149f, 16f));
+    }
+
+    @Test
     public void partialPixelRowRetainsTheShortLowerOpening() {
         assertTrue(detect(glyph(), moving()).stream().allMatch(n -> n.tupletDivisor() == 3));
     }

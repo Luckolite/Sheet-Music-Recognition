@@ -30,6 +30,7 @@ public final class OctaveFloodFillTraversalParityTest {
                             int.class,
                             int.class,
                             float.class,
+                            boolean.class,
                             scratch);
             DETECT.setAccessible(true);
         } catch (Exception e) {
@@ -73,8 +74,9 @@ public final class OctaveFloodFillTraversalParityTest {
     }
 
     private static List<?> detect(Drawing d, Object scratch) throws Exception {
+        // Below-staff placement keeps the legacy counter proof under test.
         return (List<?>) DETECT.invoke(null, d.gray, d.width, d.height, d.top, d.bottom, d.gap,
-                scratch);
+                true, scratch);
     }
 
     private static String hex(byte[] bytes) {

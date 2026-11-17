@@ -75,7 +75,8 @@ final class HalfDyadBeforeSixteenthBar {
             byte[] normal,
             byte[] raw,
             int width,
-            int height) {
+            int height,
+            List<PlayingTechniqueDetector.Word> words) {
         var edited = new ArrayList<MeasureRegion>();
         List<MeterChangeDetector.Crop> crops = null;
         for (int i = 0; i < regions.size(); i++) {
@@ -118,10 +119,32 @@ final class HalfDyadBeforeSixteenthBar {
                     edited.addAll(possible);
                     continue;
                 }
+                if (terminalTriple && qualifiesStraightSplit(possible, local, words, normal, raw, width, height)) {
+                    var run = possible.get(1);
+                    edited.add(possible.get(0));
+                    edited.add(new MeasureRegion(run.left(), run.right(), run.top(), run.bottom(), 3));
+                    continue;
+                }
             }
             edited.add(current);
         }
         return edited.size() == regions.size() ? regions : List.copyOf(edited);
+    }
+
+    private static boolean qualifiesStraightSplit(
+            List<MeasureRegion> parts, OmrScoreInterpreter.Analysis local, List<PlayingTechniqueDetector.Word> words,
+            byte[] gray, byte[] raw, int width, int height) {
+        var half = local.notes().stream().filter(n -> n.measureIndex() == 0).toList();
+        var run = parts.get(1);
+        var rests = local.rests();
+        if (!rests.isEmpty() && (rests.size() != 1 || rests.get(0).measureIndex() != 1
+                || !InlineStraightOctaveTriples.fingeringRest(run, rests.get(0), words, gray, raw, width, height)))
+            return false;
+        if (!isolatedHalfOctave(parts.get(0), half, gray, width, height)
+                || !isolatedHalfOctave(parts.get(0), half, raw, width, height)) return false;
+        var notes = local.notes().stream().filter(n -> n.measureIndex() == 1).toList();
+        return InlineStraightOctaveTriples.closed(run, notes, gray, width, height)
+                && InlineStraightOctaveTriples.closed(run, notes, raw, width, height);
     }
 
     /**

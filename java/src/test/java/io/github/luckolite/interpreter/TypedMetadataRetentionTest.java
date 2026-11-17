@@ -85,16 +85,8 @@ public class TypedMetadataRetentionTest {
         var prior =
                 new ScoreNoteEvent(0, 0, target.staffStep(), 0, 2, .42f, false, 0, 0, 1, 1)
                         .withClef(target.clefBottomDiatonic());
-        Method method =
-                OmrScoreInterpreter.class.getDeclaredMethod("applyAccidentalState", List.class);
-        method.setAccessible(true);
-        var result =
-                (List<?>)
-                        method.invoke(
-                                null,
-                                List.of(
-                                        ctor.newInstance(prior, null, 10f),
-                                        ctor.newInstance(target, null, 10f)));
+        var result = AccidentalStateTestSupport.apply(
+                List.of(ctor.newInstance(prior, null, 10f), ctor.newInstance(target, null, 10f)));
         Method event = detected.getDeclaredMethod("event");
         event.setAccessible(true);
         assertFields(

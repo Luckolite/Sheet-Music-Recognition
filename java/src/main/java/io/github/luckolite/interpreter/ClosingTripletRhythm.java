@@ -84,6 +84,139 @@ final class ClosingTripletRhythm {
                 .withClockContextSource(score.clockContextSource());
     }
 
+
+    /** Recover a 4/4 half-note cadence before a literal meter on the following staff. */
+    static ScorePageInterpretation restoreBeforeSixFour(
+            ScorePageInterpretation score, ScoreMeterChange inherited, byte[] labels,
+            byte[] gray, byte[] original, int width, int height, int page) {
+        if (gray == null || labels == null || original == null || labels.length != gray.length
+                || original.length != gray.length || gray.length != (long) width * height)
+            return score;
+        var regions = score.measures();
+        var notes = score.notes();
+        ScoreMeterChange prior = inherited;
+        List<ScoreMeterChange> normalReadings = null;
+        List<ScoreMeterChange> rawReadings = null;
+        for (var change : score.meterChanges()) {
+            var previous = prior;
+            prior = change;
+            int i = change.measureIndex() - 1;
+            if (i < 0 || previous == null
+                    || previous.numerator() != 4 || previous.denominator() != 4
+                    || change.numerator() != 6 || change.denominator() != 4
+                    || regions.get(i).bottom() >= regions.get(i + 1).top()
+                    || score.rests().stream().anyMatch(rest -> rest.measureIndex() == i))
+                continue;
+            var owners = IntStream.range(0, notes.size()).boxed()
+                    .filter(index -> notes.get(index).measureIndex() == i)
+                    .sorted(Comparator.comparingDouble(index -> notes.get(index).positionInMeasure()))
+                    .toList();
+            if (owners.size() != 7) continue;
+            var bar = regions.get(i);
+            var fixed = closingHalf(score, previous, labels, gray, width, height, i, bar, owners);
+            if (fixed == score
+                    || closingHalf(score, previous, labels, original, width, height, i, bar, owners) == score)
+                continue;
+            if (normalReadings == null) {
+                normalReadings = MeterFontMatcher.standaloneReadings(labels, gray, width, height, regions, notes);
+                rawReadings = MeterFontMatcher.standaloneReadings(labels, original, width, height, regions, notes);
+            }
+            if (normalReadings.contains(change) && rawReadings.contains(change))
+                score = withCadenceBeams(fixed, owners, bar, gray, original, width, height, page);
+        }
+        return score;
+    }
+
+
+    private static ScorePageInterpretation withCadenceBeams(
+            ScorePageInterpretation score, List<Integer> owners, MeasureRegion bar,
+            byte[] gray, byte[] original, int width, int height, int page) {
+        if (page < 0) return score;
+        var source = score.beamSource();
+        var groups = new ArrayList<>(source.groups());
+        var origins = new ArrayList<>(source.noteOrigins());
+        var rows = UnnumberedTripletInk.sourceRows(bar, score.measures(), height);
+        for (int first = 0; first < 6; first += 3) {
+            var indices = owners.subList(first, first + 3);
+            var members = indices.stream().map(score.notes()::get).toList();
+            if (!unnumberedCadenceTriplet(gray, width, height, bar, members, rows)
+                    || !unnumberedCadenceTriplet(original, width, height, bar, members, rows))
+                continue;
+            var columns = new ArrayList<ScoreBeamSource.Column>(3);
+            for (int owner : indices) {
+                var old = origins.get(owner);
+                var anchor = old.orElseGet(() -> new ScoreBeamSource.Anchor(page, owner));
+                if (anchor.pageIndex() != page
+                        || java.util.Collections.frequency(origins, java.util.Optional.of(anchor))
+                                != (old.isPresent() ? 1 : 0)) break;
+                columns.add(new ScoreBeamSource.Column(List.of(anchor)));
+            }
+            if (columns.size() != 3) continue;
+            var anchors = columns.stream().map(c -> c.members().get(0)).toList();
+            if (source.detachedColumns().stream().anyMatch(c -> c.members().stream().anyMatch(anchors::contains)))
+                continue;
+            var previous = groups.stream().filter(group -> group.columns().stream()
+                    .anyMatch(c -> c.members().stream().anyMatch(anchors::contains))).toList();
+            if (previous.size() > 1 || previous.stream().anyMatch(group ->
+                    !columns.containsAll(group.columns()) || !group.hooks().isEmpty()
+                            || group.bridges().stream().anyMatch(levels -> levels != 1)
+                            || group.tupletMark() == ScoreBeamSource.TupletMark.NUMBERED)) continue;
+            String id = previous.isEmpty() ? "closed-half-triplet:" + page + ":" + indices.get(0)
+                    : previous.get(0).id();
+            if (previous.isEmpty() && groups.stream().anyMatch(group -> group.id().equals(id))) continue;
+            var group = new ScoreBeamSource.Group(id, columns, List.of(1, 1), List.of(),
+                    ScoreBeamSource.TupletMark.UNNUMBERED);
+            if (previous.isEmpty()) groups.add(group);
+            else groups.set(groups.indexOf(previous.get(0)), group);
+            for (int n = 0; n < 3; n++) origins.set(indices.get(n), java.util.Optional.of(anchors.get(n)));
+        }
+        return groups.equals(source.groups()) ? score
+                : score.withBeamSource(new ScoreBeamSource(groups, source.detachedColumns(), origins));
+    }
+
+    static boolean unnumberedCadenceTriplet(
+            byte[] ink, int width, int height, MeasureRegion bar, List<ScoreNoteEvent> notes,
+            UnnumberedTripletInk.Rows rows) {
+        float gap = (bar.bottom() - bar.top()) * height / 8.2f;
+        if (notes.size() != 3 || gap < 10 || gap > 25) return false;
+        float[] x = new float[3], y = new float[3];
+        var shafts = new ArrayList<PrintedBeamShafts.Shaft>(3);
+        var budget = new PrintedBeamShafts.Budget(100_000);
+        int direction = -notes.get(0).stemDirection();
+        if (Math.abs(direction) != 1) return false;
+        for (int i = 0; i < 3; i++) {
+            var note = notes.get(i);
+            x[i] = (bar.left() + (bar.right() - bar.left()) * note.positionInMeasure()) * width;
+            y[i] = note.pageY() * height;
+            var found = PrintedBeamShafts.at(ink, width, height, x[i], y[i], gap, budget);
+            if (found.size() != 1 || found.get(0).direction() != direction || budget.refused()) return false;
+            shafts.add(found.get(0));
+        }
+        if (!WrappedEighthTriplets.matchesBeamRails(ink, width, height, shafts.get(0), shafts.get(1), gap, 1)
+                || !WrappedEighthTriplets.matchesBeamRails(ink, width, height, shafts.get(1), shafts.get(2), gap, 1))
+            return false;
+        var track = StaffPitchTrack.forPrintedSlurs(
+                ink, width, height, bar.top() * height + 2.1f * gap, bar.bottom() * height - 2.1f * gap, gap);
+        float top = Math.min(y[0], Math.min(y[1], y[2]));
+        float bottom = Math.max(y[0], Math.max(y[1], y[2]));
+        int tip = shafts.get(0).endY();
+        for (var shaft : shafts) tip = direction > 0 ? Math.max(tip, shaft.endY()) : Math.min(tip, shaft.endY());
+        if (UnnumberedTripletInk.bracketBesideBeam(
+                ink, width, height, gap, x[0], x[2], top, bottom, tip, rows, track, true)) return false;
+        float inset = (x[2] - x[0]) * .12f;
+        int left = Math.round(x[0] + inset), right = Math.round(x[2] - inset);
+        int above = Math.max(rows.first(), Math.round(Math.min(top, tip) - 5 * gap));
+        int below = Math.min(rows.last(), Math.round(Math.max(bottom, tip) + 5 * gap));
+        if (left < 0 || right >= width || above < 0 || below >= height || left >= right || above >= below)
+            return false;
+        return RawNumeralComponents.captureLongWindow(ink, width, height, left, above, right, below)
+                .components().stream().noneMatch(mark -> {
+                    int h = mark.bottom - mark.top + 1;
+                    int w = mark.right - mark.left + 1;
+                    return h >= .55f * gap && h <= 1.7f * gap && w >= .26f * gap && w <= 1.24f * gap;
+                });
+    }
+
     private static ScorePageInterpretation dottedClosingHalf(
             ScorePageInterpretation score, ScoreMeterChange meter, byte[] gray, int width, int height,
             MeasureRegion bar, List<Integer> indices) {

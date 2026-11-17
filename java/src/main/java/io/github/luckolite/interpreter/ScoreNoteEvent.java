@@ -622,6 +622,14 @@ public record ScoreNoteEvent(
                 0);
     }
 
+    ScoreNoteEvent withWrittenAccidental(int accidental) {
+        return new ScoreNoteEvent(measureIndex, positionInMeasure, staffStep, staffIndex, staffCount,
+                pageY, tiedFromPrevious, augmentationDots, beamCount, accidental, unbeamedDurationBeats,
+                tupletDivisor, followingRestBeats, articulations, clefBottomDiatonic, crossStaffBeam,
+                leadingRestBeats, compactOpening, octaveShift, boundaryTies, tupletNormalNotes,
+                stemDirection, kind, visualSize, harmonicSemitones, openStringTouch);
+    }
+
     public ScoreNoteEvent withOctaveShift(int shift) {
         if (shift < -2 || shift > 2)
             throw new IllegalArgumentException("Octave shift must be -2..2");

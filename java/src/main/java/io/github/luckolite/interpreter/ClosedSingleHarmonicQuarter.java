@@ -15,6 +15,12 @@ final class ClosedSingleHarmonicQuarter {
     static ScorePageInterpretation capture(
             ScorePageInterpretation score, byte[] labels, byte[] normalized,
             byte[] original, int width, int height) {
+        return capture(score, labels, normalized, original, width, height, null);
+    }
+
+    static ScorePageInterpretation capture(
+            ScorePageInterpretation score, byte[] labels, byte[] normalized,
+            byte[] original, int width, int height, Integer initialKeyFifths) {
         if (original == null || normalized == null || labels == null
                 || original.length != (long) width * height
                 || normalized.length != original.length || labels.length != original.length) return score;
@@ -39,40 +45,60 @@ final class ClosedSingleHarmonicQuarter {
             float nominal = (bar.bottom() - bar.top()) * height / 8.2f;
             float span = (bar.right() - bar.left()) * width;
             var heads = owners.get(i);
+            boolean rowEnd = next.top() > bar.bottom();
+            float closingPocket = (next.left() - bar.right()) * width;
+            boolean inlineDoubleRule = !rowEnd
+                    && Math.abs(next.top() - bar.top()) * height <= nominal * .35f
+                    && closingPocket >= nominal * .65f && closingPocket <= nominal * 1.55f;
             if (bar.cadenceQuarterBeats() != 0 || nominal < 10 || nominal > 26
-                    || span < nominal * 5.5f || span > nominal * 8.5f
+                    || span < nominal * 5.5f || span > nominal * (inlineDoubleRule ? 10f : 8.5f)
                     || Math.abs(previous.top() - bar.top()) * height > nominal * .35f
-                    || next.top() <= bar.bottom() || heads.isEmpty() || heads.size() > 2) continue;
+                    || !rowEnd && !inlineDoubleRule
+                    || heads.isEmpty() || heads.size() > 2) continue;
             final int index = i;
             var rests = score.rests().stream().filter(r -> r.measureIndex() == index).toList();
             heads.sort(Comparator.comparingDouble(Head::y).reversed());
             var stopped = heads.get(0);
             var touch = heads.size() == 2 ? heads.get(1) : null;
-            if (!ordinary(stopped.note, 1)
+            boolean lowerSpace = inlineDoubleRule && touch != null && touch.note.staffStep() == -1;
+            boolean fadedStem = inlineDoubleRule && touch != null
+                    && stopped.note.stemDirection() == 0
+                    && touch.note.staffStep() >= 2 && touch.note.staffStep() <= 7;
+            if (inlineDoubleRule && (touch == null
+                    || !lowerSpace && !fadedStem && touch.note.staffStep() != 1
+                    || !lowerSpace && span > nominal * 8.5f)) continue;
+            if (lowerSpace && ((bar.left() - previous.right()) * width < nominal * .55f
+                    || (bar.left() - previous.right()) * width > nominal * 1.6f
+                    || stopped.x < touch.x)) continue;
+            if (!ordinary(stopped.note, 1, fadedStem ? 0 : 1)
                     || stopped.note.positionInMeasure() < .24f || stopped.note.positionInMeasure() > .62f
                     || stopped.note.openStringTouch() != null || stopped.note.harmonicSemitones() != 0)
                 continue;
             if (touch == null) {
                 if (stopped.note.octaveShift() != 2) continue;
-            } else if (!ordinary(touch.note, 2) || stopped.note.octaveShift() != 0
+            } else if (!ordinary(touch.note, 2, 1) || stopped.note.octaveShift() != 0
                     || touch.note.octaveShift() != 0 || touch.note.harmonicSemitones() != 0
                     || touch.note.openStringTouch() != null
-                    || Math.abs(stopped.x - touch.x) > nominal * .16f
-                    || !printedFourth(score.keyChanges(), stopped.note, touch.note)) continue;
+                    || Math.abs(stopped.x - touch.x) > nominal * (lowerSpace ? .34f : .16f)
+                    || !printedFourth(score.keyChanges(), stopped.note, touch.note,
+                            lowerSpace ? initialKeyFifths : null)) continue;
             ScoreRestEvent restAlias = null;
             if (!rests.isEmpty()) {
                 if (touch != null || rests.size() != 1
                         || !overlapsDiamond(rests.get(0), bar, stopped, width, height, nominal)) continue;
                 restAlias = rests.get(0);
             }
-            int a = prove(normalized, width, height, previous, bar, stopped, touch, nominal);
-            int b = prove(original, width, height, previous, bar, stopped, touch, nominal);
+            int a = prove(normalized, width, height, previous, bar, stopped, touch, nominal,
+                    inlineDoubleRule, lowerSpace, fadedStem);
+            int b = prove(original, width, height, previous, bar, stopped, touch, nominal,
+                    inlineDoubleRule, lowerSpace, fadedStem);
             if (a < 0 || b < 0 || Math.abs(a - b) > nominal * .12f) continue;
             regions.set(i, new MeasureRegion(bar.left(), bar.right(), bar.top(), bar.bottom(), 1));
             if (restAlias != null) removedRests.add(restAlias);
             if (touch != null) {
                 removed.add(touch.index());
-                changed.set(stopped.index(), stopped.note.withHarmonicSemitones(24));
+                changed.set(stopped.index(),
+                        stopped.note.withStemDirection(1).withHarmonicSemitones(24));
             }
         }
         if (regions.equals(measures)) return score;
@@ -107,11 +133,11 @@ final class ClosedSingleHarmonicQuarter {
     }
 
 
-    private static boolean ordinary(ScoreNoteEvent note, int duration) {
+    private static boolean ordinary(ScoreNoteEvent note, int duration, int stem) {
         return note.kind() == ScoreNoteEvent.Kind.PITCHED && note.visualSize() == ScoreNoteEvent.VisualSize.FULL
                 && note.staffIndex() == 0 && note.staffCount() == 1
                 && note.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_FROM_KEY
-                && note.clefBottomDiatonic() != ScoreNoteEvent.CLEF_UNKNOWN && note.stemDirection() == 1
+                && note.clefBottomDiatonic() != ScoreNoteEvent.CLEF_UNKNOWN && note.stemDirection() == stem
                 && note.beamCount() == 0 && note.unbeamedDurationBeats() == duration
                 && note.augmentationDots() == 0 && note.tupletDivisor() == 1
                 && !note.crossStaffBeam() && !note.tiedFromPrevious() && note.boundaryTies() == 0
@@ -119,7 +145,8 @@ final class ClosedSingleHarmonicQuarter {
                 && note.articulations() == 0;
     }
 
-    private static boolean printedFourth(List<ScoreKeyChange> keys, ScoreNoteEvent stop, ScoreNoteEvent touch) {
+    private static boolean printedFourth(List<ScoreKeyChange> keys, ScoreNoteEvent stop,
+            ScoreNoteEvent touch, Integer inferredKeyFifths) {
         if (touch.clefBottomDiatonic() != stop.clefBottomDiatonic()
                 || touch.staffStep() - stop.staffStep() != 3) return false;
         ScoreKeyChange active = null;
@@ -127,15 +154,17 @@ final class ClosedSingleHarmonicQuarter {
             if (key.measureIndex() > stop.measureIndex()) break;
             active = key;
         }
-        if (active == null) return false;
-        int base = ScoreTiePitchGuard.writtenMidi(stop.diatonicPitchIdentity(), stop.writtenAccidental(), active.fifths());
-        int upper = ScoreTiePitchGuard.writtenMidi(touch.diatonicPitchIdentity(), touch.writtenAccidental(), active.fifths());
+        if (active == null && inferredKeyFifths == null) return false;
+        int fifths = active == null ? inferredKeyFifths : active.fifths();
+        int base = ScoreTiePitchGuard.writtenMidi(stop.diatonicPitchIdentity(), stop.writtenAccidental(), fifths);
+        int upper = ScoreTiePitchGuard.writtenMidi(touch.diatonicPitchIdentity(), touch.writtenAccidental(), fifths);
         return upper - base == 5 && base + 24 <= 127;
     }
 
     private static int prove(
             byte[] ink, int width, int height, MeasureRegion previous, MeasureRegion bar,
-            Head stopped, Head touch, float nominal) {
+            Head stopped, Head touch, float nominal, boolean inlineDoubleRule, boolean lowerSpace,
+            boolean fadedStem) {
         float left = bar.left() * width, right = bar.right() * width;
         var frame = PrintedDirectionStaff.printedRules(ink, width, height, right - nominal * 2.55f,
                 bar.bottom() * height - nominal * 2.1f, nominal);
@@ -151,16 +180,26 @@ final class ClosedSingleHarmonicQuarter {
                 || !filledCore(ink, width, stopped.x, stopped.y, gap)) return -1;
         float touchX = touch == null ? stopped.x : touch.x;
         float touchY = touch == null ? stopped.y - 1.5f * gap : touch.y;
+        boolean bottomLine = Math.abs(touchY - frame[0]) <= gap * .32f;
+        boolean firstSpaceBelow = touch != null && touch.note.staffStep() == -1
+                && Math.abs(touchY - (frame[0] + gap * .5f)) <= gap * .19f;
+        boolean ownedTouch = inlineDoubleRule
+                ? lowerSpace ? firstSpaceBelow
+                        : Math.abs(touchY - (frame[0] - touch.note.staffStep() * gap * .5f)) <= gap * .24f
+                : bottomLine || firstSpaceBelow;
+        if (Math.abs(stopped.y - touchY - 1.5f * gap) > gap * .24f || !ownedTouch) return -1;
+        var budget = new PrintedBeamShafts.Budget(100_000);
+        if (fadedStem) return fadedSharedStem(ink, width, height, stopped, touch, budget, staff);
         if (Math.abs(stopped.y - touchY - 1.5f * gap) > gap * .20f
-                || Math.abs(touchY - frame[0]) > gap * .32f
                 || !ArtificialHarmonics.joinedQuarterStem(ink, width, height, stopped.x, stopped.y, gap, 1))
             return -1;
-        var budget = new PrintedBeamShafts.Budget(100_000);
         var lower = PrintedBeamShafts.at(ink, width, height, stopped.x, stopped.y, gap, budget);
         if (lower.size() != 1 || lower.get(0).direction() != -1) return -1;
         var shaft = lower.get(0);
         int first = shaft.left(), last = shaft.right();
-        if (touch != null) {
+        // The offset diamond still owns the lower note's continuous shaft and must
+        // independently pass the diamond contour and flag-free tip checks below.
+        if (touch != null && (!lowerSpace || stopped.x - touch.x <= gap * .16f)) {
             var upper = PrintedBeamShafts.at(ink, width, height, touchX, touchY, gap, budget);
             if (upper.size() != 1 || upper.get(0).direction() != -1
                     || Math.abs(upper.get(0).endY() - shaft.endY()) > gap * .38f) return -1;
@@ -172,6 +211,36 @@ final class ClosedSingleHarmonicQuarter {
                             touchY - gap * 2.65f, 1, staff)
                     && ArtificialHarmonics.shaftCrossedDiamond(ink, width, height,
                             touchX, touchY, gap, stem, 1, true)) return stem;
+        }
+        return -1;
+    }
+
+    /** A short faded join can leave only the diamond's long upper shaft recognized. */
+    private static int fadedSharedStem(
+            byte[] ink, int width, int height, Head stopped, Head touch,
+            PrintedBeamShafts.Budget budget, PlayingTechniqueDetector.Staff staff) {
+        float gap = staff.gap();
+        var upper = PrintedBeamShafts.at(ink, width, height, touch.x, touch.y, gap, budget);
+        if (upper.size() != 1 || upper.get(0).direction() != -1) return -1;
+        var shaft = upper.get(0);
+        int top = Math.round(touch.y + .16f * gap);
+        int bottom = Math.round(stopped.y - .07f * gap);
+        if (top < 0 || bottom >= height || bottom - top < gap * 1.2f) return -1;
+        for (int x = shaft.left(); x <= shaft.right(); x++) {
+            if (x < 0 || x >= width || x - stopped.x < gap * .45f || x - stopped.x > gap * .82f)
+                continue;
+            int firstMissing = -1, lastMissing = -1;
+            for (int y = top; y <= bottom; y++) {
+                if ((ink[y * width + x] & 255) < 155) continue;
+                if (firstMissing == -1) firstMissing = y;
+                lastMissing = y;
+            }
+            if (firstMissing <= top || lastMissing > touch.y + gap * .56f
+                    || lastMissing - firstMissing + 1 > gap * .32f) continue;
+            if (ArtificialHarmonics.unflaggedQuarterTip(
+                            ink, width, height, x, touch.y, stopped.y, touch.y - 2.65f * gap, 1, staff)
+                    && ArtificialHarmonics.shaftCrossedDiamond(
+                            ink, width, height, touch.x, touch.y, gap, x, 1, true)) return x;
         }
         return -1;
     }

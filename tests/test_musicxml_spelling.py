@@ -111,6 +111,30 @@ class MusicXmlSpellingTests(unittest.TestCase):
             with self.subTest(rows=rows), self.assertRaises(ValueError):
                 self.export(doc)
 
+    def test_cancellation_sharp_keeps_its_literal_print_without_changing_pitch(self):
+        doc = document(28, 1, 61)
+        page = doc['pages'][0]
+        page['events'].append(dict(page['events'][0], startBeat=1))
+        page['score']['notes'].append(dict(page['score']['notes'][0]))
+        page['printedAccidentals'] = [
+            dict(noteIndex=0, accidental=1, naturalPrefix=True),
+            dict(noteIndex=1, accidental=1),
+        ]
+        notes = self.export(doc).findall('.//note[pitch]')
+        self.assertEqual(['natural-sharp', 'sharp'], [n.findtext('accidental') for n in notes])
+        self.assertEqual(['1', '1'], [n.findtext('pitch/alter') for n in notes])
+        page['events'][0]['midi'] = 62
+        self.assertEqual([None, 'sharp'], [n.findtext('accidental')
+                          for n in self.export(doc).findall('.//note[pitch]')])
+
+    def test_cancellation_prefix_requires_an_explicit_sharp(self):
+        for sign, prefix in ((0, True), (1, 1), (1, False)):
+            doc = document()
+            doc['pages'][0]['printedAccidentals'] = [
+                dict(noteIndex=0, accidental=sign, naturalPrefix=prefix)]
+            with self.subTest(sign=sign, prefix=prefix), self.assertRaises(ValueError):
+                self.export(doc)
+
     def test_from_key_uses_resolved_bar_key(self):
         for key,d,midi,expected in [(1,31,66,('F',1,4)),(-1,34,70,('B',-1,4)),
                                     (7,27,60,('B',1,3)),(-7,28,59,('C',-1,4))]:

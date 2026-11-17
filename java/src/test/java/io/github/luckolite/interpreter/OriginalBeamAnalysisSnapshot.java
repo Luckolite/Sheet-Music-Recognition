@@ -48,7 +48,10 @@ final class OriginalBeamAnalysisSnapshot {
                 }
                 var m = c.getAccessor();
                 m.setAccessible(true);
-                sorted.put(c.getName(), m.invoke(value));
+                Object field = m.invoke(value);
+                if (value instanceof SourceLocalAccidental.Choice
+                        && c.getName().equals("naturalPrefix") && field == null) continue;
+                sorted.put(c.getName(), field);
             }
         } else
             for (var f : value.getClass().getDeclaredFields())
@@ -56,6 +59,10 @@ final class OriginalBeamAnalysisSnapshot {
                     f.setAccessible(true);
                     Object field = f.get(value);
                     // Preserve the original snapshot shape for absent accidental provenance.
+                    if (value instanceof ScoreClockProducerSource
+                            && f.getName().equals("accidentalCarries")
+                            && field instanceof List<?> carries
+                            && carries.isEmpty()) continue;
                     if (value instanceof SourceLocalAccidental
                             && (f.getName().equals("joinedNaturalOwners")
                                             && field instanceof Set<?> naturals

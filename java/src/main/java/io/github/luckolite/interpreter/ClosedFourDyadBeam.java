@@ -59,6 +59,19 @@ final class ClosedFourDyadBeam {
                 && proves(gray, width, height, heads, gap, direction, 4.7f, staffBottom, false, -1, steppedIndex);
     }
 
+    /** These independently measured five rules may cross a tip or the seam in one shaft span. */
+    static boolean provesAcrossStaffRules(byte[] gray, int width, int height, Head[] heads,
+            float gap, float staffBottom, int direction) {
+        return Float.isFinite(staffBottom) && proves(gray, width, height, heads,
+                gap, direction, 4.7f, staffBottom, false, -1, -1, 1);
+    }
+
+    static boolean provesAcrossDistinctStaffRules(byte[] gray, int width, int height,
+            Head[] heads, float gap, float staffBottom, int direction) {
+        return Float.isFinite(staffBottom) && proves(gray, width, height, heads,
+                gap, direction, 4.7f, staffBottom, false, -1, -1, 2);
+    }
+
     private static boolean proves(
             byte[] gray, int width, int height, Head[] heads, float gap, int direction,
             float maximumSpacing, float staffBottom, boolean allowInnerRailStaffCrossing) {
@@ -78,6 +91,16 @@ final class ClosedFourDyadBeam {
             boolean allowInnerRailStaffCrossing,
             int leftRule,
             int steppedIndex) {
+        return proves(gray, width, height, heads, gap, direction, maximumSpacing,
+                staffBottom, allowInnerRailStaffCrossing, leftRule, steppedIndex, 0);
+    }
+
+    private static boolean proves(
+            byte[] gray, int width, int height, Head[] heads, float gap, int direction,
+            float maximumSpacing, float staffBottom, boolean allowInnerRailStaffCrossing,
+            int leftRule, int steppedIndex, int staffRuleSpans) {
+        boolean allStaffRules = staffRuleSpans > 0;
+
         if (gap < 8 || gap > 32 || direction == 0) return false;
         var budget = new PrintedBeamShafts.Budget(100_000);
         Stem[] stems = new Stem[heads.length];
@@ -111,7 +134,7 @@ final class ClosedFourDyadBeam {
         if (Math.abs(slope) > .4f) return false;
         for (int offset = 1; offset <= Math.round(gap * .30f); offset++) {
             float center = stems[0].topTip - direction * offset;
-            if (!closed(gray, width, height, x0, x1, center, slope, gap, Float.NaN, leftRule)) continue;
+            if (!closed(gray, width, height, x0, x1, center, slope, gap, allStaffRules ? staffBottom : Float.NaN, leftRule, allStaffRules)) continue;
             for (int sep = Math.round(gap * .45f); sep <= Math.round(gap * 1.05f); sep++) {
                 float inner = center - direction * sep;
                 if (closed(
@@ -123,10 +146,11 @@ final class ClosedFourDyadBeam {
                                 inner,
                                 slope,
                                 gap,
-                                allowInnerRailStaffCrossing && direction == 1
+                                allStaffRules || allowInnerRailStaffCrossing && direction == 1
                                         ? staffBottom
                                         : Float.NaN,
-                                leftRule)
+                                leftRule,
+                                allStaffRules)
                         && separated(
                                 gray,
                                 width,
@@ -138,7 +162,8 @@ final class ClosedFourDyadBeam {
                                 slope,
                                 gap,
                                 staffBottom,
-                                steppedIndex >= 0)) return true;
+                                steppedIndex >= 0,
+                                staffRuleSpans)) return true;
             }
         }
         return false;
@@ -312,7 +337,7 @@ final class ClosedFourDyadBeam {
             float slope,
             float gap,
             float staffBottom,
-            int leftRule) {
+            int leftRule, boolean allStaffRules) {
         int radius = Math.max(1, Math.round(gap * .075f));
         int full = 0;
         for (int x = first; x <= last; x++)
@@ -332,12 +357,15 @@ final class ClosedFourDyadBeam {
                 if (side < 0 && leftRule >= 0 && first - leftRule >= gap * .6f
                         && first - leftRule <= gap * 1.5f && Math.abs(x - leftRule) <= gap * .23f)
                     continue;
-                if (Math.abs(row - staffBottom) <= gap * .17f) staffPixels++;
+                boolean onRule = allStaffRules
+                        ? printedStaffRule(gray, width, height, x, row, staffBottom, gap)
+                        : Math.abs(row - staffBottom) <= gap * .17f;
+                if (onRule) staffPixels++;
                 else again++;
             }
             if (again > (end - begin + 1) * .20f) return false;
         }
-        return staffPixels <= Math.round(gap * .20f);
+        return allStaffRules || staffPixels <= Math.round(gap * .20f);
     }
 
     private static Stem steppedStem(byte[] gray, int width, PrintedBeamShafts.Shaft above,
@@ -371,29 +399,55 @@ final class ClosedFourDyadBeam {
             float slope,
             float gap,
             float staffBottom,
-            boolean followNarrowPaperSeam) {
+            boolean followNarrowPaperSeam, int staffRuleSpans) {
         int margin = Math.round(gap * .23f);
-        boolean usedStaffCrossing = false;
+        boolean allStaffRules = staffRuleSpans > 0;
+        int usedSpans = 0, usedRules = 0;
         for (int i = 1; i < stems.length; i++) {
             int left = stems[i - 1].right + margin, right = stems[i].left - margin;
-            int blank = 0, staffInk = 0;
+            int blank = 0, staffInk = 0, rules = 0;
             for (int x = left; x <= right; x++) {
                 float middle = (outer + inner) * .5f + slope * (x - x0);
                 if (!core(gray, width, height, x, middle, 0)
                         || followNarrowPaperSeam
                                 && (!core(gray, width, height, x, middle - 1, 0)
                                         || !core(gray, width, height, x, middle + 1, 0))) blank++;
-                else if (Math.abs(middle - staffBottom) <= gap * .17f) staffInk++;
+                else if (allStaffRules
+                        ? printedStaffRule(gray, width, height, x, middle, staffBottom, gap)
+                        : Math.abs(middle - staffBottom) <= gap * .17f) {
+                    staffInk++;
+                    rules |= 1 << Math.round((staffBottom - middle) / gap);
+                }
             }
             int samples = right - left + 1;
             if (right - left < margin) return false;
             if (blank >= samples * .75f) continue;
             // At most one bridge may cross the independently measured bottom staff rule.
-            if (usedStaffCrossing || blank < samples * .40f || blank + staffInk < samples * .95f)
-                return false;
-            usedStaffCrossing = true;
+            if (blank + staffInk < samples * .95f) return false;
+            if (allStaffRules) {
+                if (Integer.bitCount(rules) != 1 || (rules & usedRules) != 0
+                        || ++usedSpans > staffRuleSpans) return false;
+                usedRules |= rules;
+            } else if (usedSpans++ != 0 || blank < samples * .40f) return false;
         }
         return true;
+    }
+
+
+    private static boolean printedStaffRule(
+            byte[] gray, int width, int height, int x, float y, float bottom, float gap) {
+        int line = Math.round((bottom - y) / gap);
+        if (line < 0 || line > 4 || Math.abs(y - (bottom - line * gap)) > gap * .18f) return false;
+        int extent = Math.round(gap * .74f);
+        if (x - extent < 0 || x + extent >= width) return false;
+        int row = Math.round(y);
+        for (int sample = row - 1; sample <= row + 1; sample++) {
+            int dark = 0;
+            for (int i = x - extent; i <= x + extent; i++)
+                if (core(gray, width, height, i, sample, 0)) dark++;
+            if (dark >= (2 * extent + 1) * .80f) return true;
+        }
+        return false;
     }
 
     private static boolean core(byte[] gray, int width, int height, int x, float y, int radius) {

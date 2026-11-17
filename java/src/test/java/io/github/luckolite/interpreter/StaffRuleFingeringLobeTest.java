@@ -46,6 +46,23 @@ public final class StaffRuleFingeringLobeTest {
         }
     }
 
+    @Test
+    public void groupedFingeringTextRequiresTheSameLiteralDigitInBothPlanes() {
+        var numeral = wholeValueFixture(false);
+        var mixedWithLedger = numeral.clone();
+        rectangle(mixedWithLedger, 73, 160, 83, 161, 0);
+        rectangle(mixedWithLedger, 109, 160, 121, 161, 0);
+        var erased = numeral.clone();
+        rectangle(erased, 91, 155, 94, 161, 255);
+
+        assertEquals(1, wholeValueCount(numeral, numeral, "2 3 2"));
+        assertEquals(2, wholeValueCount(numeral, numeral, "2 4 2"));
+        for (var rival : List.of(wholeValueFixture(true), erased, mixedWithLedger)) {
+            assertEquals(2, wholeValueCount(numeral, rival, "2 3 2"));
+            assertEquals(2, wholeValueCount(rival, numeral, "2 3 2"));
+        }
+    }
+
     private static int wholeValueCount(byte[] normalized, byte[] raw, String text) {
         var alias =
                 new ScoreNoteEvent(
@@ -64,7 +81,8 @@ public final class StaffRuleFingeringLobeTest {
         var words =
                 List.of(
                         new PlayingTechniqueDetector.Word(
-                                text, 83f / WIDTH, 139f / HEIGHT, 109f / WIDTH, 171f / HEIGHT));
+                                text, (text.length() == 1 ? 83f : 48f) / WIDTH, 139f / HEIGHT,
+                                (text.length() == 1 ? 109f : 142f) / WIDTH, 171f / HEIGHT));
         var staffs = List.of(new PlayingTechniqueDetector.Staff(86, 150, 16, 0, 1));
         return FingeringAnnotationFilter.removeWholeFingeringAliases(
                         words, staffs, List.of(BAR), notes, normalized, raw, WIDTH, HEIGHT)

@@ -131,6 +131,40 @@ public final class DoubleSharpArmOwnershipTest {
                         plate.gray, plate.gray, WIDTH, HEIGHT, second, first, 16));
     }
 
+    @Test
+    public void staffJoinedCrossNeedsItsOwnArmsInBothPlanes() {
+        var plate = new Plate();
+        int centerX = 315, centerY = 136, crossX = 282;
+        paintCross(plate, new DoubleSharpGlyph.Crop(crossX, 127, crossX + 17, 144));
+        for (int y : new int[] {128, 144})
+            for (int x = 245; x <= 320; x++) plate.dot(x, y, SYMBOL);
+        for (int y = centerY - 8; y <= centerY + 8; y++) {
+            for (int x = centerX - 11; x <= centerX + 11; x++) {
+                double dx = (x - centerX) / 11.0, dy = (y - centerY) / 8.0;
+                if (dx * dx + dy * dy <= 1) plate.dot(x, y, NOTEHEAD);
+            }
+        }
+        for (int y = centerY + 3; y <= centerY + 47; y++) {
+            plate.dot(centerX - 10, y, 1);
+            plate.dot(centerX - 9, y, 1);
+        }
+        var actual = plate.analyze(plate.gray);
+        assertEquals(2, actual.notes().size());
+        assertEquals(ScoreNoteEvent.ACCIDENTAL_DOUBLE_SHARP, actual.notes().get(1).writtenAccidental());
+        assertEquals(List.of(new SourceLocalAccidental.PrintedMark(0, 3),
+                             new SourceLocalAccidental.PrintedMark(1, 3)),
+                plate.printed(actual, actual.notes(), actual.notes()));
+
+        byte[] partial = plate.gray.clone();
+        for (int y = 129; y <= 135; y++)
+            Arrays.fill(partial, y * WIDTH + crossX, y * WIDTH + crossX + 9, (byte) 255);
+        var erased = plate.analyze(partial);
+        assertEquals(2, erased.notes().size());
+        assertEquals(ScoreNoteEvent.ACCIDENTAL_FROM_KEY, erased.notes().get(1).writtenAccidental());
+        assertEquals(List.of(new SourceLocalAccidental.PrintedMark(0, 3)),
+                plate.printed(erased, erased.notes(), erased.notes()));
+    }
+
     private static boolean sourceCross(Plate plate, DoubleSharpGlyph.Crop crop) {
         return DoubleSharpGlyph.matchesRaw(
                 plate.gray,

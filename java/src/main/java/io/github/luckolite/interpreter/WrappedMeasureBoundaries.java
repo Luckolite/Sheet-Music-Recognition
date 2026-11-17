@@ -266,14 +266,72 @@ final class WrappedMeasureBoundaries {
         return false;
     }
 
+    /** Decoder crops can cut the narrow inset before the following printed barline. */
+    static boolean confirmsNeighborBoundedTripletBar(byte[] source, int width, int height,
+            List<MeasureRegion> regions, int index, float firstHead, float lastHead) {
+        if (index <= 0 || index + 1 >= regions.size()) return false;
+        var bar = box(regions.get(index), width, height);
+        var preceding = box(regions.get(index - 1), width, height);
+        var following = box(regions.get(index + 1), width, height);
+        if (bar == null || preceding == null || following == null) return false;
+        float gap = bar.height() / 8.2f;
+        float inset = bar.right - lastHead;
+        if (gap < 10 || gap > 25 || inset < gap * .60f || inset >= gap * 1.2f
+                || firstHead - bar.left < gap * .85f
+                || !sameRow(preceding, bar, gap) || !sameRow(bar, following, gap)
+                || !boundaryPocket(preceding.right, bar.left, gap)
+                || !boundaryPocket(bar.right, following.left, gap)) return false;
+
+        float left = (preceding.right + bar.left) * .5f;
+        float right = (bar.right + following.left) * .5f;
+        float bottom = bar.bottom - gap * 2.1f;
+        var staff = StaffPitchTrack.forPrintedSlurs(
+                source, width, height, bottom - gap * 4, bottom, gap);
+        if (staff == null || !staff.verifiedAt(left) || !staff.verifiedAt(right)) return false;
+        float[] start = staff.at(left), end = staff.at(right);
+        if (Math.abs(start[1] - gap) > gap * .12f
+                || Math.abs(end[1] - gap) > gap * .12f
+                || Math.abs(start[0] - bottom) > gap * .55f
+                || Math.abs(end[0] - bottom) > gap * .55f) return false;
+        return unownedClosedEdge(source, width, height, staff, left, firstHead, true, start[1])
+                && unownedClosedEdge(source, width, height, staff, right, lastHead, false, end[1]);
+    }
+
     static StaffPitchTrack verifiedTripletStaff(byte[] source, int width, int height, MeasureRegion region) {
+        return verifiedTripletStaff(source, width, height, region, false);
+    }
+
+    static StaffPitchTrack verifiedTripletStaff(
+            byte[] source, int width, int height, MeasureRegion region, boolean nearby) {
         var bar = box(region, width, height);
-        return bar == null ? null : track(source, width, height, bar);
+        return bar == null ? null : track(source, width, height, bar, nearby);
     }
 
     static boolean confirmsInitialStaffBar(
             byte[] gray,int width,int height,List<MeasureRegion> regions,int index,
             float firstHead,float lastHead) {
+        return confirmsInitialStaffBar(gray,width,height,regions,index,firstHead,lastHead,Float.POSITIVE_INFINITY);
+    }
+
+    /** Keep the clear header pocket before a separately proved first shaft. */
+    static boolean confirmsInitialStaffBar(
+            byte[] gray,int width,int height,List<MeasureRegion> regions,int index,
+            float firstHead,float lastHead,float firstShaftLeft) {
+        return confirmsInitialStaffBar(gray, width, height, regions, index, firstHead, lastHead,
+                firstShaftLeft, false);
+    }
+
+    /** Try nearby clear rail windows when closely spaced shafts defeat the regular samples. */
+    static boolean confirmsSampledInitialTripletBar(
+            byte[] gray, int width, int height, List<MeasureRegion> regions, int index,
+            float firstHead, float lastHead, int firstShaftLeft) {
+        return confirmsInitialStaffBar(gray, width, height, regions, index, firstHead, lastHead,
+                firstShaftLeft, true);
+    }
+
+    private static boolean confirmsInitialStaffBar(
+            byte[] gray, int width, int height, List<MeasureRegion> regions, int index,
+            float firstHead, float lastHead, float firstShaftLeft, boolean nearbySamples) {
         if(index<1 || index+1>=regions.size()) return false;
         var bar=box(regions.get(index),width,height);
         var before=box(regions.get(index-1),width,height);
@@ -284,10 +342,14 @@ final class WrappedMeasureBoundaries {
                 || !sameRow(bar,after,estimatedGap) || firstHead-bar.left<estimatedGap*2
                 || !boundaryPocket(bar.right,after.left,estimatedGap)) return false;
         var staff=track(gray,width,height,bar);
+        if (nearbySamples) {
+            if (staff != null) return false;
+            staff = track(gray, width, height, bar, true);
+        }
         if(staff==null) return false;
         float gap=staff.at(firstHead)[1];
         float afterSignature=bar.left+gap*1.15f;
-        float beforeAttack=firstHead-gap*.75f;
+        float beforeAttack=Math.min(firstHead-gap*.75f,firstShaftLeft-gap*.2f);
         return beforeAttack-afterSignature>=gap*.8f
                 && staffRules(gray,width,height,staff,Math.round(afterSignature))==5
                 && staffRules(gray,width,height,staff,Math.round(beforeAttack))==5
@@ -303,6 +365,36 @@ final class WrappedMeasureBoundaries {
             int index,
             float firstHead,
             int firstShaftLeft) {
+        return confirmsShaftBoundedInitialStaffBar(
+                gray, width, height, regions, index, firstHead, firstShaftLeft, null);
+    }
+
+    static boolean confirmsCompleteShaftBoundedInitialStaffBar(
+            byte[] gray,
+            int width,
+            int height,
+            List<MeasureRegion> regions,
+            int index,
+            float firstHead,
+            float lastHead,
+            int firstShaftLeft,
+            StaffPitchTrack staff) {
+        return staff.verified()
+                && confirmsShaftBoundedInitialStaffBar(
+                        gray, width, height, regions, index, firstHead, firstShaftLeft, staff)
+                && confirmsInitialStaffBarClosingEdge(
+                        gray, width, height, box(regions.get(index), width, height), lastHead, staff);
+    }
+
+    private static boolean confirmsShaftBoundedInitialStaffBar(
+            byte[] gray,
+            int width,
+            int height,
+            List<MeasureRegion> regions,
+            int index,
+            float firstHead,
+            int firstShaftLeft,
+            StaffPitchTrack verifiedStaff) {
         if (index < 1 || index + 1 >= regions.size()) return false;
         var bar = box(regions.get(index), width, height);
         var before = box(regions.get(index - 1), width, height);
@@ -315,7 +407,7 @@ final class WrappedMeasureBoundaries {
                 || !sameRow(bar, after, guess)
                 || !boundaryPocket(bar.right, after.left, guess)
                 || firstHead - bar.left < guess * 2) return false;
-        var staff = track(gray, width, height, bar);
+        var staff = verifiedStaff == null ? track(gray, width, height, bar) : verifiedStaff;
         if (staff == null) return false;
         float gap = staff.at(firstHead)[1];
         float firstInk = firstShaftLeft;
@@ -328,10 +420,18 @@ final class WrappedMeasureBoundaries {
             if (staffRules(gray, width, height, staff, Math.round(x)) != 5) return false;
         // The incoming five rules must visibly start before the cropped key slot.
         int end = Math.round(bar.left - gap * 1.25f);
-        for (int x = end; x >= Math.max(0, Math.round(bar.left - gap * 7)); x--)
-            if (staffRules(gray, width, height, staff, x) == 5
-                    && staffRules(gray, width, height, staff, Math.round(x - gap * .65f)) == 0)
+        int nearLimit = Math.max(0, Math.round(bar.left - 7 * gap));
+        int wideLimit = Math.max(0, Math.round(bar.left - 9 * gap));
+        for (int x = end; x >= wideLimit; x--) {
+            if (staffRules(gray, width, height, staff, x) != 5
+                    || staffRules(gray, width, height, staff, Math.round(x - gap * .65f)) != 0)
+                continue;
+            // A wide key header can put the opening rule farther from the note crop.
+            // Check the incoming five rules again inside the header before accepting it.
+            if (x >= nearLimit || staffRules(gray, width, height, staff, Math.round(x + gap)) == 5
+                    && staffRules(gray, width, height, staff, Math.round(x + 3 * gap)) == 5)
                 return true;
+        }
         return false;
     }
 
@@ -440,6 +540,53 @@ final class WrappedMeasureBoundaries {
                 gray, width, height, bar, lastHead, staff);
     }
 
+    /** A crowded rail run can leave five independent samples only around its closing divider. */
+    static boolean confirmsSampledClosingEdge(
+            byte[] gray, int width, int height, MeasureRegion region, float lastHead) {
+        var bar = box(region, width, height);
+        if (bar == null) return false;
+        float gap = bar.height() / 8.2f;
+        if (gap < 10 || gap > 25) return false;
+        float left = bar.right - gap * .40f, right = bar.right + gap * .92f;
+        float bottom = bar.bottom - gap * 2.1f;
+        var a = closingPocketRules(gray, width, height, left, bottom, gap);
+        var b = closingPocketRules(gray, width, height, right, bottom, gap);
+        if (a == null || b == null || Math.abs(a[0] - b[0]) > gap * .24f
+                || Math.abs(a[1] - b[1]) > gap * .12f) return false;
+        var staff = StaffPitchTrack.fromVerifiedSamples(
+                List.of(new float[] {left, a[0], a[1]}, new float[] {right, b[0], b[1]}));
+        return confirmsInitialStaffBarClosingEdge(gray, width, height, bar, lastHead, staff);
+    }
+
+    private static float[] closingPocketRules(
+            byte[] gray, int width, int height, float x, float bottom, float gap) {
+        int left = Math.round(x - gap * .20f), right = Math.round(x + gap * .20f);
+        if (left < 0 || right >= width) return null;
+        float[] centers = new float[5];
+        int margin = Math.round(gap * .28f);
+        for (int line = 0; line < 5; line++) {
+            int center = Math.round(bottom - line * gap);
+            if (center - margin < 0 || center + margin >= height) return null;
+            int first = -1, last = -1;
+            for (int y = center - margin; y <= center + margin; y++) {
+                int observed = 0;
+                for (int col = left; col <= right; col++)
+                    if ((gray[y * width + col] & 255) < 155) observed++;
+                if (observed < (right - left + 1) * .86f) continue;
+                if (last >= 0 && y != last + 1) return null;
+                if (first < 0) first = y;
+                last = y;
+            }
+            if (first < 0 || last - first + 1 > gap * .27f) return null;
+            centers[line] = (first + last) * .5f;
+        }
+        float actual = (centers[0] - centers[4]) * .25f;
+        if (Math.abs(actual - gap) > gap * .12f) return null;
+        for (int i = 1; i < 4; i++)
+            if (Math.abs(centers[i] - (centers[0] - i * actual)) > gap * .12f) return null;
+        return new float[] {centers[0], actual};
+    }
+
     private static boolean confirmsInitialStaffBarClosingEdge(
             byte[] gray, int width, int height, Box bar, float lastHead, StaffPitchTrack staff) {
         float gap = staff.at(lastHead)[1];
@@ -527,13 +674,27 @@ final class WrappedMeasureBoundaries {
     }
 
     private static StaffPitchTrack track(byte[] gray, int width, int height, Box box) {
+        return track(gray, width, height, box, false);
+    }
+
+    private static StaffPitchTrack track(byte[] gray, int width, int height, Box box, boolean nearby) {
         float gap = box.height() / 8.2f, hint = box.bottom - 2.1f * gap;
         var samples = new ArrayList<float[]>();
         for (int i = 0; i <= 8; i++) {
             float x = box.left + (box.right - box.left) * i / 8;
             var rules = PrintedDirectionStaff.printedRules(gray, width, height, x, hint, gap);
-            if (rules != null && Math.abs(rules[1] - gap) <= .15f * gap
-                    && Math.abs(rules[0] - hint) <= .65f * gap)
+            if (nearby && !frameNearHint(rules, hint, gap)) {
+                for (float offset : new float[] {-.45f, .45f, -.78f, .78f}) {
+                    float next = x + gap * offset;
+                    if (next < box.left || next > box.right) continue;
+                    rules = PrintedDirectionStaff.printedRules(gray, width, height, next, hint, gap);
+                    if (frameNearHint(rules, hint, gap)) {
+                        x = next;
+                        break;
+                    }
+                }
+            }
+            if (frameNearHint(rules, hint, gap))
                 samples.add(new float[] {x, rules[0], rules[1]});
         }
         if (samples.size() < 3) return null;
@@ -543,6 +704,11 @@ final class WrappedMeasureBoundaries {
         if (first[0] - box.left > widthOfBar * .38f
                 || box.right - last[0] > widthOfBar * .38f) return null;
         return StaffPitchTrack.fromVerifiedSamples(samples);
+    }
+
+    private static boolean frameNearHint(float[] rules, float hint, float gap) {
+        return rules != null && Math.abs(rules[1] - gap) <= .15f * gap
+                && Math.abs(rules[0] - hint) <= .65f * gap;
     }
 
     private static boolean hasBoundary(byte[] gray, int width, int height, StaffPitchTrack track,

@@ -35,7 +35,18 @@ final class PrintedSlurContours {
     }
 
     record Result(
-            List<Bow> bows, boolean limitReached, Set<Bow> shortRailBows, Set<Bow> jointBows) {
+            List<Bow> bows,
+            boolean limitReached,
+            Set<Bow> shortRailBows,
+            Set<Bow> jointBows,
+            boolean optionalLimitReached) {
+        Result(List<Bow> bows, boolean limitReached, Set<Bow> shortRailBows, Set<Bow> jointBows) {
+            this(bows, limitReached, shortRailBows, jointBows, false);
+        }
+
+        boolean requiredLimitReached() {
+            return limitReached && !optionalLimitReached;
+        }
         Result(List<Bow> bows, boolean limitReached, Set<Bow> shortRailBows) {
             this(bows, limitReached, shortRailBows, Set.of());
         }
@@ -456,6 +467,9 @@ final class PrintedSlurContours {
                 orientedFallback(
                         gray, labels, width, height, left, top, right, bottom, track, heads, frames,
                         bows, rawSink, compactStemWindow);
+        // The optional orientation search can refuse without invalidating the complete
+        // primary scan. No later optional candidate should be added from that frame.
+        if (fallbackLimit) return new Result(bows, true, Set.of(), Set.of(), true);
         var shortRailBows = Collections.newSetFromMap(new IdentityHashMap<Bow, Boolean>());
         if (!unownedLimited)
             literalConnectivityFallback(
@@ -488,7 +502,7 @@ final class PrintedSlurContours {
                     bows,
                     rawSink,
                     jointBows);
-        return new Result(bows, fallbackLimit, shortRailBows, jointBows);
+        return new Result(bows, false, shortRailBows, jointBows);
     }
 
     private static void appendJointRibbons(
@@ -1392,6 +1406,39 @@ final class PrintedSlurContours {
             }
         }
         return connected;
+    }
+
+    static boolean originalOctaveCaps(
+            byte[] gray, byte[] labels, int width, int height, Bow bow, StaffPitchTrack track,
+            HeadEvidence hints, PrintedSlurOwners.Location first, PrintedSlurOwners.Location last) {
+        float[] bottoms = new float[width], gaps = new float[width];
+        for (int x = 0; x < width; x++) {
+            var frame = track.at(x);
+            bottoms[x] = frame[0];
+            gaps[x] = frame[1];
+        }
+        var frames = new Frames(bottoms, gaps, false, false);
+        return (capped(gray, labels, width, height, bow, track, true, hints, frames)
+                        || clearAboveHead(gray, width, height, bow.start(), first, gaps[bow.start().x()]))
+                && (capped(gray, labels, width, height, bow, track, false, hints, frames)
+                        || clearAboveHead(gray, width, height, bow.end(), last, gaps[bow.end().x()]));
+    }
+
+    /** A short stripe of original paper can separate a cap from its facing head vertically. */
+    private static boolean clearAboveHead(
+            byte[] gray, int width, int height, Point cap, PrintedSlurOwners.Location head, float gap) {
+        int left = Math.max(0, cap.x() - Math.round(gap * .22f));
+        int right = Math.min(width - 1, cap.x() + Math.round(gap * .22f));
+        int top = Math.max(0, (int) Math.ceil(cap.y() + 1));
+        int bottom = Math.min(height - 1, Math.round(head.y() - gap * .44f));
+        if (right - left < gap * .36f || bottom - top > gap || bottom < top) return false;
+        for (int y = top; y <= bottom; y++) {
+            boolean blank = true;
+            for (int x = left; x <= right; x++)
+                if ((gray[y * width + x] & 255) <= 205) blank = false;
+            if (blank) return true;
+        }
+        return false;
     }
 
     /** A staff/beam occlusion cannot manufacture a new phrase endpoint in the middle of a bow. */

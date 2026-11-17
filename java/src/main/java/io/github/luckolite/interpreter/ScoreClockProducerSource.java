@@ -62,16 +62,27 @@ final class ScoreClockProducerSource {
     }
 
     private SourceLocalAccidental localAccidentals = SourceLocalAccidental.unavailable();
+    private transient List<OctaveAccidentalCarry> accidentalCarries = List.of();
 
     SourceLocalAccidental localAccidentals() {
         return localAccidentals == null ? SourceLocalAccidental.unavailable() : localAccidentals;
     }
 
+    List<OctaveAccidentalCarry> accidentalCarries() {
+        return accidentalCarries == null ? List.of() : accidentalCarries;
+    }
+
     ScoreClockProducerSource withLocalAccidentals(SourceLocalAccidental source) {
+        return withLocalAccidentals(source, accidentalCarries());
+    }
+
+    ScoreClockProducerSource withLocalAccidentals(
+            SourceLocalAccidental source, List<OctaveAccidentalCarry> carries) {
         var answer =
                 new ScoreClockProducerSource(
                         rawSha, labelSha, emissions, finalNotes, accounting, printedValues);
         answer.localAccidentals = Objects.requireNonNull(source);
+        answer.accidentalCarries = List.copyOf(carries);
         return answer;
     }
 

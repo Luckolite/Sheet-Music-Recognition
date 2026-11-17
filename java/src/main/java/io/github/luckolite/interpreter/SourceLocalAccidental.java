@@ -34,9 +34,20 @@ final class SourceLocalAccidental {
             int glyphAlternatives,
             int headAlternatives,
             boolean ambiguous,
-            String status) {}
+            String status,
+            Boolean naturalPrefix) {
+        Choice(int note, ScoreNoteEvent originalNote, int glyph, int head, int accidental,
+                int glyphAlternatives, int headAlternatives, boolean ambiguous, String status) {
+            this(note, originalNote, glyph, head, accidental, glyphAlternatives, headAlternatives,
+                    ambiguous, status, null);
+        }
+    }
 
-    record PrintedMark(int noteIndex, int accidental) {}
+    record PrintedMark(int noteIndex, int accidental, Boolean naturalPrefix) {
+        PrintedMark(int noteIndex, int accidental) {
+            this(noteIndex, accidental, null);
+        }
+    }
 
     /** Optically proved sloping crossbars. Each strip is checked against the exact parent pixels. */
     record AccidentalStrips(
@@ -318,6 +329,24 @@ final class SourceLocalAccidental {
             Set<Object> provedNaturalHeads,
             List<SplitAccidental> splitProofs,
             Set<Object> provedDoubleSharpHeads) {
+        return capture(symbols, clefs, originalGlyphs, allHeads, heads, actualChoices, finalHeads, notes,
+                accidentalFragments, provedNaturalHeads, splitProofs, provedDoubleSharpHeads, Map.of(), Map.of());
+    }
+
+    static SourceLocalAccidental capture(
+            ExactComponentMembers.Collector symbols,
+            ExactComponentMembers.Collector clefs,
+            List<?> originalGlyphs,
+            List<?> allHeads,
+            ExactComponentMembers.Collector heads,
+            Map<?, OmrScoreInterpreter.WrittenAccidentalChoice> actualChoices,
+            List<?> finalHeads,
+            List<ScoreNoteEvent> notes,
+            Map<Object, List<Object>> accidentalFragments,
+            Set<Object> provedNaturalHeads,
+            List<SplitAccidental> splitProofs,
+            Set<Object> provedDoubleSharpHeads,
+            Map<?, ?> recoveredNaturals, Map<?, ?> recoveredDyadAccidentals) {
         var budget = new ExactComponentMembers.Budget(64_000_000, 128L * 1024 * 1024);
         if (symbols == null || clefs == null || heads == null || finalHeads.size() != notes.size())
             return unavailable();
@@ -385,6 +414,7 @@ final class SourceLocalAccidental {
                             status));
         }
         var joinedNaturalOwners = new HashSet<Integer>();
+        var dyadOwners = new HashMap<Integer, Integer>();
         var printedDoubleSharpOwners = new HashSet<Integer>();
         var fragmentClaims = new IdentityHashMap<Object, Integer>();
         if (!provedNaturalHeads.isEmpty()) {
@@ -442,6 +472,32 @@ final class SourceLocalAccidental {
                         && partition != null
                         && partition.residual().isEmpty()) printedDoubleSharpOwners.add(n);
             }
+            Integer naturalGlyph = glyphIds.get(recoveredNaturals.get(head));
+            if (authenticatedFrame && naturalGlyph != null && exactGlyphs.containsKey(naturalGlyph)
+                    && headId != null && headToken != null
+                    && note.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_NATURAL) {
+                var partition = partitions.get(head);
+                if (partition != null && partition.residual().isEmpty()) {
+                    joinedNaturalOwners.add(n);
+                    rows.add(new Choice(n, note, naturalGlyph, headId, ScoreNoteEvent.ACCIDENTAL_NATURAL,
+                            choice.glyphAlternatives(), choice.headAlternatives(), false, SUPPORTED));
+                    continue;
+                }
+            }
+            Integer dyadGlyph = glyphIds.get(recoveredDyadAccidentals.get(head));
+            if (authenticatedFrame && dyadGlyph != null && exactGlyphs.containsKey(dyadGlyph)
+                    && headId != null && headToken != null
+                    && (note.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_FLAT
+                            || note.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_SHARP)) {
+                var partition = partitions.get(head);
+                if (partition != null && partition.residual().isEmpty()) {
+                    dyadOwners.put(n, note.writtenAccidental());
+                    rows.add(new Choice(n, note, dyadGlyph, headId, note.writtenAccidental(),
+                            choice.glyphAlternatives(), choice.headAlternatives(), false, SUPPORTED,
+                            choice.naturalPrefix() ? Boolean.TRUE : null));
+                    continue;
+                }
+            }
             String status = "UNKNOWN_UNBOUND_OR_CHANGED_PICKER_ROLE";
             if (choice.head() == head
                     && glyph != null
@@ -483,6 +539,7 @@ final class SourceLocalAccidental {
                                 accidentalFragments,
                                 symbols.width)
                         : Map.<Integer, Integer>of();
+        dyadOwners.putAll(splitAccidentalOwners);
         return new SourceLocalAccidental(
                 symbols.rawSha,
                 symbols.labelSha,
@@ -495,7 +552,7 @@ final class SourceLocalAccidental {
                 rows,
                 joinedNaturalOwners,
                 printedDoubleSharpOwners,
-                splitAccidentalOwners,
+                dyadOwners,
                 unrepresented,
                 complete,
                 authenticatedFrame);
@@ -691,7 +748,8 @@ final class SourceLocalAccidental {
                     && (!originalGlyph || ownedKind != null || joinedNaturalOwners.contains(choice.note())
                             || !ambiguousVerticalOwner(choice, originalNote, sourceMeasures,
                                     notesByMeasure, representedGlyphs, glyphsByRow)))
-                marks.add(new PrintedMark(index, accidental));
+                marks.add(new PrintedMark(index, accidental,
+                        accidental == ScoreNoteEvent.ACCIDENTAL_SHARP ? choice.naturalPrefix() : null));
         }
         marks.sort(Comparator.comparingInt(PrintedMark::noteIndex));
         return List.copyOf(marks);

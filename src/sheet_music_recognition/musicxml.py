@@ -435,52 +435,310 @@ def _write_open_harmonics(measure, chords):
             at += 1
 
 
-def _closed_fourth_spelling(event, source):
-    if event.get('artificialHarmonicFourth') is not True:
-        return None
+def _harmonic_spelling(diatonic, midi):
+    octave, letter = divmod(diatonic, 7)
+    alter = midi - ((octave + 1) * 12 + (0, 2, 4, 5, 7, 9, 11)[letter])
+    if not 0 <= octave <= 9 or not -2 <= alter <= 2:
+        raise ValueError('Harmonic has invalid written spelling')
+    return 'CDEFGAB'[letter], alter, octave
+
+
+def _closed_artificial_spelling(event, source, third):
     base, touch, sound = (event.get(k) for k in ('writtenMidi', 'harmonicTouchMidi', 'midi'))
+    interval, steps, transposition = (4, 2, 28) if third else (5, 3, 24)
     if (any(type(x) is not int or not 0 <= x <= 127 for x in (base, touch, sound))
-            or touch - base != 5 or sound - base != 24
+            or touch - base != interval or sound - base != transposition
             or event_kind(event) != 'PITCHED' or event.get('octaveShift', 0)
             or event.get('clefInferred', False) or source is None
-            or event_kind(source) != 'PITCHED' or source.get('harmonicSemitones') != 24
+            or event_kind(source) != 'PITCHED' or source.get('harmonicSemitones') != transposition
             or any(event.get(k) != source.get(k) for k in ('measureIndex', 'staffIndex', 'staffCount'))):
-        raise ValueError('Artificial fourth requires one retained stopped head and matching pitches')
+        raise ValueError('Artificial harmonic requires one retained stopped head and matching pitches')
     diatonic = source['clefBottomDiatonic'] + source['staffStep']
+    return (_harmonic_spelling(diatonic, base), _harmonic_spelling(diatonic + steps, touch),
+            _harmonic_spelling(diatonic + (16 if third else 14), sound))
 
-    def spelled(step, midi):
-        octave, letter = divmod(step, 7)
-        alter = midi - ((octave + 1) * 12 + (0, 2, 4, 5, 7, 9, 11)[letter])
-        if not 0 <= octave <= 9 or not -2 <= alter <= 2:
-            raise ValueError('Artificial fourth has invalid written spelling')
-        return 'CDEFGAB'[letter], alter, octave
 
-    return spelled(diatonic, base), spelled(diatonic + 3, touch), spelled(diatonic + 14, sound)
+def _ordinary_compound_quarter(note, stem=1):
+    return (event_kind(note) == 'PITCHED' and note.get('clefBottomDiatonic') == 30
+            and note.get('visualSize', 'FULL') == 'FULL' and note.get('beamCount') == 0
+            and note.get('unbeamedDurationBeats') == 1 and note.get('augmentationDots', 0) == 0
+            and note.get('tupletDivisor', 1) == 1 and note.get('stemDirection') == stem
+            and not any(note.get(k) for k in ('octaveShift', 'crossStaffBeam', 'articulations',
+                                              'boundaryTies', 'tiedFromPrevious')))
+
+
+def _compound_open_harmonics(page, source_notes, shared_terminal=()):
+    """Bind the recovered open-string attack to the printed shared shaft."""
+    events = page['events']
+    result = {}
+    fourth_partners = {}
+    fourth_touches = {}
+    for i, base in enumerate(events):
+        if i in shared_terminal:
+            continue
+        third = base.get('artificialHarmonicThird') is True
+        fourth = base.get('compoundHarmonicFourth') is True
+        mixed = base.get('mixedHarmonicQuarter') is True
+        if not (third or fourth):
+            continue
+        if (i >= len(source_notes) or base.get('sourceNoteIndex') != i or third == fourth
+                or (base.get('artificialHarmonicFourth') is True) != fourth or fourth and mixed):
+            raise ValueError('Invalid stopped compound harmonic owner')
+        stopped = source_notes[i]
+        touch = stopped.get('openStringTouch')
+        stem = stopped.get('stemDirection') if fourth else -1 if mixed else 1
+        if stem not in (-1, 1):
+            raise ValueError('Compound harmonic has no printed shaft direction')
+        matches = [
+            (j, event) for j, event in enumerate(events)
+            if j != i and type(event.get('openStringMidi')) is int
+            and type(event.get('x')) in (int, float) and type(base.get('x')) in (int, float)
+            and abs(event['x'] - base['x']) <= page['width'] * .002
+            and all(event.get(k) == base.get(k) for k in
+                    ('measureIndex', 'staffIndex', 'staffCount', 'startBeat', 'durationBeats'))
+        ]
+        if (not isinstance(touch, dict) or not _ordinary_compound_quarter(stopped, stem)
+                or len(matches) != 1 or base.get('durationBeats') != 1 or base.get('tiedFromPrevious')
+                or base.get('durationFallback')):
+            raise ValueError('Compound harmonic requires one retained open-string quarter')
+        j, event = matches[0]
+        if (j >= len(source_notes) or event.get('sourceNoteIndex') != j
+                or event.get('tiedFromPrevious') or event.get('durationFallback')
+                or event.get('clefInferred') or event_kind(event) != 'PITCHED' or j in result
+                or event.get('octaveShift', 0) or event.get('boundaryTies', 0)
+                or (base.get('mixedHarmonicQuarter') is True) != (event.get('mixedHarmonicQuarter') is True)):
+            raise ValueError('Invalid compound open-string harmonic owner')
+        note = source_notes[j]
+        steps = note.get('staffStep')
+        written, sound, open_string = (event.get(k) for k in ('writtenMidi', 'midi', 'openStringMidi'))
+        if (not _ordinary_compound_quarter(note, stem) or type(steps) is not int
+                or steps != touch.get('staffStep') or note.get('pageY') != touch.get('pageY')
+                or note.get('positionInMeasure') != stopped.get('positionInMeasure')
+                or type(event.get('y')) not in (int, float) or type(note.get('pageY')) not in (int, float)
+                or not abs(event['y'] - note['pageY'] * page['height']) <= .01
+                or note.get('writtenAccidental') != touch.get('writtenAccidental')
+                or note.get('clefBottomDiatonic') != stopped.get('clefBottomDiatonic')
+                or any(event.get(k) != note.get(k) for k in ('measureIndex', 'staffIndex', 'staffCount'))
+                or any(type(n) is not int or not 0 <= n <= 127 for n in (written, sound))
+                or written != event.get('harmonicTouchMidi')
+                or open_string not in (55, 62, 69, 76)
+                or sound - open_string != {4: 28, 5: 24, 7: 19, 9: 28}.get(written - open_string)):
+            raise ValueError('Compound open string has invalid printed or sounding pitch')
+        diatonic = note['clefBottomDiatonic'] + steps
+        sound_step = diatonic + {4: 14, 5: 11, 7: 7, 9: 11}[written - open_string]
+        if fourth:
+            separation = steps - stopped['staffStep']
+            lower = _terminal_lower_open_fourth(page, base, stopped, written, separation, stem)
+            if ((not lower and (separation not in (5, 6) or written <= base['harmonicTouchMidi']))
+                    or sound == base['midi']):
+                raise ValueError('Fourth harmonic does not share its printed shaft with the open string')
+            stem_name = 'up' if stem > 0 else 'down'
+            fourth_partners[i] = stem_name
+            fourth_touches[j] = stem_name, lower
+        result[j] = _harmonic_spelling(diatonic, written), _harmonic_spelling(sound_step, sound)
+    return result, fourth_partners, fourth_touches
+
+def _terminal_lower_open_fourth(page, event, stopped, written, separation, stem):
+    """The lower touch of a closed final quarter carries its open fingering below."""
+    spans = page['measureBeats']
+    regions = page['score'].get('measures', ())
+    bar = stopped.get('measureIndex')
+    return (stem == -1 and separation == -2 and type(event.get('writtenMidi')) is int
+            and written < event['writtenMidi']
+            and type(bar) is int and bar >= 1 and bar + 1 == len(spans) == len(regions)
+            and spans[bar] == 1 and regions[bar].get('cadenceQuarterBeats') == 1
+            and event['startBeat'] == sum(spans[:bar])
+            and bar not in page.get('printedMeasureContinuations', ()))
+
+
+def _terminal_shared_artificial_harmonics(page, source_notes):
+    """Two stopped harmonic attacks can share the closed final quarter's upstem."""
+    spans = page['measureBeats']
+    regions = page['score'].get('measures', ())
+    bar = len(spans) - 1
+    if (bar < 1 or spans[bar] != 1 or len(regions) != len(spans)
+            or regions[bar].get('cadenceQuarterBeats') != 1
+            or bar in page.get('printedMeasureContinuations', ())
+            or any(rest['measureIndex'] == bar for rest in page['score'].get('rests', ()))):
+        return {}
+    events = [(i, event) for i, event in enumerate(page['events']) if event.get('measureIndex') == bar]
+    if len(events) != 2 or not any(event.get('artificialHarmonicThird') is True for _, event in events):
+        return {}
+    onset = sum(spans[:bar])
+    width, height = page['width'], page['height']
+    members = []
+    for i, event in events:
+        third = event.get('artificialHarmonicThird') is True
+        if (event.get('sourceNoteIndex') != i or i >= len(source_notes)
+                or (event.get('artificialHarmonicFourth') is True) == third
+                or event.get('compoundHarmonicFourth') or event.get('mixedHarmonicQuarter')
+                or event.get('openStringMidi') is not None or event.get('staffIndex') != 0
+                or event.get('staffCount') != 1 or event.get('startBeat') != onset
+                or event.get('durationBeats') != 1 or event.get('durationFallback')
+                or event.get('tiedFromPrevious') or event.get('boundaryTies')
+                or not all(type(event.get(k)) in (int, float) and math.isfinite(event[k])
+                           for k in ('x', 'y'))):
+            return {}
+        note = source_notes[i]
+        if (not _ordinary_compound_quarter(note, 1) or note.get('openStringTouch') is not None
+                or type(note.get('staffStep')) is not int
+                or type(note.get('pageY')) not in (int, float)
+                or not abs(event['y'] - note['pageY'] * height) <= .01):
+            return {}
+        _closed_artificial_spelling(event, note, third)
+        members.append((event, note, third))
+    (upper, hi, hi_third), (lower, lo, lo_third) = sorted(members, key=lambda row: row[0]['y'])
+    if (hi_third or not lo_third or hi['staffStep'] - lo['staffStep'] != 4
+            or hi.get('writtenAccidental', 2) != 2 or lo.get('writtenAccidental') != -1
+            or abs(upper['x'] - lower['x']) > width * .00065):
+        return {}
+    return {i: 'up' for i, _ in events}
+
+
+def _shared_artificial_fourths(page, source_notes):
+    """Two source-owned artificial fourths can share a printed quarter downshaft."""
+    events = page['events']
+    if not any(event.get('artificialHarmonicFourth') is True for event in events):
+        return {}
+    spans = page['measureBeats']
+    starts = list(accumulate(spans, initial=0))
+    attacks = defaultdict(list)
+    source_bars = page.get('score', {}).get('measures', ())
+    terminal_quarter = (len(source_bars) == len(spans) and bool(spans) and spans[-1] == 1
+                        and source_bars[-1].get('cadenceQuarterBeats') == 1)
+    for i, event in enumerate(events):
+        bar, staff, onset = (event.get(k) for k in ('measureIndex', 'staffIndex', 'startBeat'))
+        if (type(bar) is int and 0 <= bar < len(spans)
+                and (spans[bar] == 2 or (terminal_quarter and bar == len(spans) - 1))
+                and type(staff) is int and staff == 0
+                and type(onset) in (int, float) and math.isfinite(onset)):
+            attacks[bar, onset].append((i, event))
+    width, height = page.get('width'), page.get('height')
+    if (type(width) not in (int, float) or not math.isfinite(width) or width <= 0
+            or type(height) not in (int, float) or not math.isfinite(height) or height <= 0):
+        return {}
+    stems = {}
+    for (bar, onset), owners in attacks.items():
+        if (len(owners) != 2 or onset not in (starts[bar], starts[bar] + 1)
+                or onset + 1 > starts[bar + 1]
+                or bar in page.get('printedMeasureContinuations', ())
+                or bar + 1 in page.get('printedMeasureContinuations', ())):
+            continue
+        members = []
+        for i, event in owners:
+            if (i >= len(source_notes) or event.get('sourceNoteIndex') != i
+                    or event.get('artificialHarmonicFourth') is not True
+                    or event.get('artificialHarmonicThird') or event.get('compoundHarmonicFourth')
+                    or event.get('mixedHarmonicQuarter') or event.get('openStringMidi') is not None
+                    or event.get('staffCount') != 1 or event.get('durationBeats') != 1
+                    or event.get('durationFallback') or event.get('tiedFromPrevious')
+                    or not all(type(event.get(k)) in (int, float) and math.isfinite(event[k])
+                               for k in ('x', 'y'))):
+                break
+            note = source_notes[i]
+            if (not _ordinary_compound_quarter(note, -1)
+                    or note.get('harmonicSemitones') != 24 or note.get('openStringTouch') is not None
+                    or any(event.get(k) != note.get(k) for k in ('measureIndex', 'staffIndex', 'staffCount'))
+                    or type(note.get('staffStep')) is not int
+                    or type(note.get('pageY')) not in (int, float)
+                    or not abs(event['y'] - note['pageY'] * height) <= .01
+                    or type(event.get('writtenMidi')) is not int):
+                break
+            members.append((i, event, note))
+        if len(members) != 2:
+            continue
+        (_, upper, hi), (_, lower, lo) = sorted(members, key=lambda x: x[1]['y'])
+        if (abs(upper['x'] - lower['x']) > width * .00065
+                or hi['staffStep'] - lo['staffStep'] not in (4, 5)
+                or upper['writtenMidi'] - lower['writtenMidi'] not in (7, 8, 9)):
+            continue
+        stems.update((i, 'down') for i, _, _ in members)
+    return stems
+
+
+def _independent_open_harmonic_quarters(page, notes, compound):
+    """Validate both complete attacks of a closed mixed harmonic bar before engraving either."""
+    events = page['events']
+    groups = defaultdict(list)
+    for index, event in enumerate(events):
+        if event.get('mixedHarmonicQuarter') is True:
+            groups[event['measureIndex']].append(index)
+    result = {}
+    below = set()
+    for bar, owners in groups.items():
+        spans = page['measureBeats']
+        if (type(bar) is not int or not 0 <= bar < len(spans) or spans[bar] != 2
+                or bar in page.get('printedMeasureContinuations', ())
+                or bar + 1 in page.get('printedMeasureContinuations', ())
+                or len(owners) != 4
+                or any(rest['measureIndex'] == bar for rest in page['score'].get('rests', ()))
+                or any(event['measureIndex'] == bar and index not in owners
+                       for index, event in enumerate(events))):
+            raise ValueError('Mixed harmonics require a complete closed two-quarter bar')
+        onset = ticks(sum(spans[:bar]))
+        first = [i for i in owners if ticks(events[i]['startBeat']) == onset]
+        second = [i for i in owners if ticks(events[i]['startBeat']) == onset + DIVISIONS]
+        if (len(first) != 2 or len(second) != 2
+                or sum(events[i].get('artificialHarmonicThird') is True for i in second) != 1
+                or sum(i in compound for i in second) != 1
+                or any(i in compound or events[i].get('artificialHarmonicThird') is True for i in first)):
+            raise ValueError('Mixed harmonics require two proved attacks on consecutive quarter beats')
+        if (events[first[0]].get('openStringMidi') == events[first[1]].get('openStringMidi')
+                or events[first[0]].get('x') != events[first[1]].get('x')
+                or {events[i]['staffIndex'] for i in owners} != {0}
+                or {events[i]['staffCount'] for i in owners} != {1}):
+            raise ValueError('Mixed harmonic attacks require separate strings on a single staff')
+        below.add(max(first, key=lambda i: events[i]['y']))
+        for i in first:
+            if i >= len(notes):
+                raise ValueError('Open harmonic has no written source')
+            event, note = events[i], notes[i]
+            written, sounding, string = (event.get(k) for k in ('writtenMidi', 'midi', 'openStringMidi'))
+            if (not _ordinary_compound_quarter(note, -1) or event.get('sourceNoteIndex') != i
+                    or any(event.get(k) != note.get(k) for k in ('measureIndex', 'staffIndex', 'staffCount'))
+                    or event.get('clefInferred') or event.get('durationFallback') or event.get('tiedFromPrevious')
+                    or event.get('boundaryTies', 0) or event.get('octaveShift', 0)
+                    or event.get('durationBeats') != 1
+                    or any(type(midi) is not int or not 0 <= midi <= 127 for midi in (written, sounding))
+                    or written != event.get('harmonicTouchMidi') or string not in (55, 62, 69, 76)
+                    or sounding - string != {4: 28, 5: 24, 7: 19, 9: 28}.get(written - string)):
+                raise ValueError('Invalid independent written open-string quarter')
+            diatonic = note['clefBottomDiatonic'] + note['staffStep']
+            sound_step = diatonic + {4: 14, 5: 11, 7: 7, 9: 11}[written - string]
+            result[i] = _harmonic_spelling(diatonic, written), _harmonic_spelling(sound_step, sounding)
+    return result, below
 
 
 def emit_note(measure, duration, voice, event=None, chord=False, stop=False, start=False, flats=False,
               gliss_start=False, gliss_stop=False, slide_start=False, slide_stop=False, fragment_end=None, rest_symbols=(), full_measure=False,
               articulation_flags=0, attack_fragment=True, grace=None, bow_direction=None):
-    fourth = event.get('retainedArtificialFourth') if event else None
-    if fourth:
+    artificial = event.get('retainedArtificialHarmonic') if event else None
+    open_touch = event.get('retainedCompoundOpenHarmonic') if event else None
+    written_harmonic = artificial or open_touch
+    third = event.get('artificialHarmonicThird') is True if event else False
+    fourth_stem = event.get('retainedCompoundFourthStem') if event else None
+    fourth_touch_stem = event.get('retainedCompoundFourthTouchStem') if event else None
+    if written_harmonic:
         if (duration != DIVISIONS or duration != event['end'] - event['start']
-                or chord or stop or start or grace is not None or not attack_fragment
-                or event.get('durationFallback') or event.get('retainedTremolo')):
-            raise ValueError('Artificial fourth requires an isolated written quarter')
+                or chord and not (third or fourth_stem or open_touch) or stop or start or grace is not None
+                or not attack_fragment or event.get('durationFallback') or event.get('retainedTremolo')):
+            raise ValueError('Printed harmonic requires a complete written quarter')
         carrier = element(measure, 'note', **{'print-object': 'no'})
-        _pitch_element(carrier, fourth[2])
+        if chord:
+            element(carrier, 'chord')
+        _pitch_element(carrier, artificial[2] if artificial else open_touch[1])
         element(carrier, 'duration', duration)
         element(carrier, 'voice', voice)
         element(carrier, 'type', 'quarter')
-        _artificial_harmonic_role(carrier, 'sounding-pitch')
+        _harmonic_role(carrier, 'artificial' if artificial else 'natural', 'sounding-pitch')
     node = element(measure, 'note')
-    if fourth:
-        # Full-size cue heads retain the written chord and are silent in MusicXML.
+    if written_harmonic:
+        # The hidden carriers sound; full-size cue notes retain the printed heads.
         element(node, 'cue')
         element(node, 'chord')
     if grace is not None:
         element(node, 'grace', **{('steal-time-previous' if grace['afterGrace'] else 'steal-time-following'): grace['stealPercent']})
-    if chord:
+    if chord and not written_harmonic:
         element(node, 'chord')
     if event is None:
         element(node, 'rest', **({'measure': 'yes'} if full_measure else {}))
@@ -496,7 +754,7 @@ def emit_note(measure, duration, voice, event=None, chord=False, stop=False, sta
                  ('F', 1), ('G', 0), ('G', 1), ('A', 0), ('A', 1), ('B', 0))
         step, alter = names[midi % 12]
         step, alter, octave = event.get('retainedSpelling') or (step, alter, midi // 12 - 1)
-        _pitch_element(node, fourth[0] if fourth else (step, alter, octave))
+        _pitch_element(node, written_harmonic[0] if written_harmonic else (step, alter, octave))
     if grace is None:
         element(node, 'duration', duration)
     for active, kind in ((stop, 'stop'), (start, 'start')):
@@ -531,6 +789,10 @@ def emit_note(measure, duration, voice, event=None, chord=False, stop=False, sta
         mark.text = event['retainedAccidental']
         modification = node.find('time-modification')
         node.insert(list(node).index(modification) if modification is not None else len(node), mark)
+    mixed = event and event.get('mixedHarmonicQuarter') is True
+    printed_stem = 'down' if mixed else fourth_stem or fourth_touch_stem
+    if printed_stem:
+        element(node, 'stem', printed_stem)
     if event and (event.get('retainedTremolo') or {}).get('printedFilled'):
         if event['retainedTremolo'].get('printedStem') in (-1, 1):
             element(node, 'stem', 'down' if event['retainedTremolo']['printedStem'] < 0 else 'up')
@@ -607,17 +869,31 @@ def emit_note(measure, duration, voice, event=None, chord=False, stop=False, sta
                     articulations = element(notation, 'articulations')
                 element(articulations, 'caesura' if kind == 'CAESURA' else 'breath-mark',
                         None if kind == 'CAESURA' else symbol.get('value', 'comma'))
-    if fourth:
+    if open_touch:
+        node.find('type').set('size', 'full')
+        head = ET.Element('notehead', {'filled': 'no'})
+        head.text = 'diamond'
+        notations = node.find('notations')
+        node.insert(list(node).index(notations) if notations is not None else len(node), head)
+        technical = _harmonic_role(node, 'natural', 'touching-pitch')
+        if mixed or fourth_touch_stem and technical.find('fingering') is None:
+            element(technical, 'fingering', '0',
+                    placement='below' if (event.get('mixedHarmonicLowerZero')
+                                          or event.get('retainedCompoundFourthLowerZero')) else 'above')
+    if artificial:
         node.find('type').set('size', 'full')
         _artificial_harmonic_role(node, 'base-pitch')
         touched = element(measure, 'note')
         element(touched, 'cue')
         element(touched, 'chord')
-        _pitch_element(touched, fourth[1])
+        _pitch_element(touched, artificial[1])
         element(touched, 'duration', duration)
         element(touched, 'voice', voice)
         element(touched, 'type', 'quarter', size='full')
-        element(touched, 'notehead', 'diamond')
+        if mixed or fourth_stem:
+            element(touched, 'stem', printed_stem)
+        element(touched, 'notehead', 'diamond',
+                **({'filled': 'no'} if mixed or fourth_stem else {'filled': 'yes'} if third else {}))
         _artificial_harmonic_role(touched, 'touching-pitch')
     return node
 
@@ -723,7 +999,9 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
     printed_beams = []
     continuations = set()
     octave_owned = {}
+    from . import octave_shift_export
     octave_measure_pages = {}
+    printed_octaves = []
     offset = 0
     current_meter, current_key = meter, key_fifths
     for page_index, page in enumerate(document['pages']):
@@ -765,6 +1043,8 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
             barline_styles[row['measureIndex']] = row['style']
         # Source anchors use the unrounded beat clock, separate from bar lengths in ticks.
         measure_starts = list(accumulate(page['measureBeats'], initial=0))
+        for first, last, staff, count, shift, bounds in octave_shift_export.retained(page, continuation_rows):
+            printed_octaves.append((first_bar + first, first_bar + last, staff, count, shift, bounds))
         for index, beats in enumerate(page['measureBeats']):
             length = ticks(beats)
             if length <= 0:
@@ -839,9 +1119,17 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
         written = grace_export.plan(page, ticks)
         paired_tremolos = tremolo_export.retained(page)
         printed_accidentals = spelling_export.printed_accidentals(page)
+        cancelled_sharps = spelling_export.cancellation_sharps(page)
         printed_fingerings = fingering_export.retained(page)
         printed_strings = printed_string_export.retained(page)
         printed_string_count += len(printed_strings)
+        shared_terminal = _terminal_shared_artificial_harmonics(page, source_notes)
+        compound_open, fourth_partners, fourth_touches = _compound_open_harmonics(
+            page, source_notes, shared_terminal)
+        fourth_partners.update(_shared_artificial_fourths(page, source_notes))
+        fourth_partners.update(shared_terminal)
+        independent_open, lower_zeros = _independent_open_harmonic_quarters(page, source_notes, compound_open)
+        compound_open.update(independent_open)
         for note_index, n in enumerate(page['events']):
             if event_kind(n) == 'PITCHED' and (not isinstance(n['midi'], int) or not 0 <= n['midi'] <= 127):
                 raise ValueError('MusicXML note pitch must be a MIDI integer in 0..127')
@@ -866,15 +1154,36 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
                                retainedPrintedString=printed_strings.get(note_index),
                                retainedVisualSize=visual_size.retained(page, note_index),
                                retainedSpelling=spelling,
-                               retainedAccidental=spelling_export.printed_mark(printed_accidentals, note_index, spelling),
+                               retainedAccidental=spelling_export.printed_mark(printed_accidentals, note_index, spelling, cancelled_sharps),
                                retainedOrnamentFlags=ornament_export.retained(page, note_index),
                                retainedTremolo=paired_tremolos.get(note_index), retainedArpeggio=False, retainedNaturalHarmonic=False))
             owner = n.get('sourceNoteIndex')
-            if n.get('artificialHarmonicFourth') is True:
+            third = n.get('artificialHarmonicThird') is True
+            if third or n.get('artificialHarmonicFourth') is True:
                 source = (source_notes[owner]
                           if type(owner) is int and owner == note_index and 0 <= owner < len(source_notes)
                           else None)
-                events[-1]['retainedArtificialFourth'] = _closed_fourth_spelling(n, source)
+                engraved = _closed_artificial_spelling(n, source, third)
+                events[-1]['retainedArtificialHarmonic'] = engraved
+                if note_index in shared_terminal:
+                    events[-1]['retainedAccidental'] = spelling_export.printed_mark(
+                        printed_accidentals, note_index, engraved[0], cancelled_sharps)
+            if note_index in compound_open:
+                events[-1]['retainedCompoundOpenHarmonic'] = compound_open[note_index]
+            if note_index in fourth_partners:
+                events[-1]['retainedCompoundFourthStem'] = fourth_partners[note_index]
+            if note_index in fourth_touches:
+                stem, lower = fourth_touches[note_index]
+                events[-1]['retainedCompoundFourthTouchStem'] = stem
+                if lower:
+                    events[-1]['retainedCompoundFourthLowerZero'] = True
+            if n.get('mixedHarmonicQuarter') is True:
+                event = events[-1]
+                event['mixedHarmonicQuarter'] = True
+                event['mixedHarmonicLowerZero'] = note_index in lower_zeros
+                engraved_harmonic = event.get('retainedArtificialHarmonic') or event.get('retainedCompoundOpenHarmonic')
+                event['retainedAccidental'] = spelling_export.printed_mark(
+                    printed_accidentals, note_index, engraved_harmonic[0], cancelled_sharps)
             if type(owner) is int and 0 <= owner < len(source_notes):
                 events[-1]['retainedFollowingRest'] = source_notes[owner].get('followingRestBeats', 0)
             if is_grace:
@@ -1100,6 +1409,7 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
         staffs = sorted({n.get('staffIndex', 0) for n in events}
                         | {m['staffIndex'] for m in expressions if m.get('scope') == 'REST'}) or [0]
     open_harmonic_measures = []
+    octave_staff_spans = {}
     for identity in staffs:
         staff, count = identity if full_rests else (identity, None)
         same_staff = lambda row: physical_staff(row) == identity if full_rests else row.get('staffIndex', 0) == staff
@@ -1109,6 +1419,9 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
         element(element(part_list, 'score-part', id=part_id), 'part-name', name)
         part = element(root, 'part', id=part_id)
         notes = sorted((n for n in events if same_staff(n)), key=lambda n: (n['start'], notation_order(n)))
+        staff_spans = [(physical_to_output[first], physical_to_output[last], shift, bounds)
+                       for first, last, owner, staff_count, shift, bounds in printed_octaves
+                       if same_staff({'staffIndex': owner, 'staffCount': staff_count})]
         clef_changes = clef_export.plan(notes)
         emitted_clefs = set()
         silent = [r for r in full_rests if same_staff(r)]
@@ -1454,9 +1767,14 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
                         emit_rest_gap(measure, cursor, b, voice, rest_symbols, literal_edges)
             if bar.get('rightBarline'):
                 element(element(measure, 'barline', location='right'), 'bar-style', bar['rightBarline'])
+        if staff_spans:
+            emitted_measures = part.findall('measure')
+            octave_staff_spans[part] = [(emitted_measures[first:last + 1], shift, bounds)
+                                        for first, last, shift, bounds in staff_spans]
     beam_export.write(printed_beams, rendered_beam_columns)
-    from .octave_shift_export import apply as octave_apply
-    octave_apply(root, octave_owned, octave_measure_pages)
+    if sum(map(len, octave_staff_spans.values())) != len(printed_octaves):
+        raise ValueError('A printed octave span has no unique exported staff')
+    octave_shift_export.apply(root, octave_owned, octave_measure_pages, octave_staff_spans)
     first_score = document['pages'][0].get('score', {})
     known_meter = 'initialMeter' in document or any(
         c.get('measureIndex') == 0 for c in first_score.get('meterChanges', []))

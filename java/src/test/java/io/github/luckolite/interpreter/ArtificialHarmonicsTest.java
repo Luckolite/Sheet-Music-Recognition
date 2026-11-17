@@ -303,6 +303,62 @@ public class ArtificialHarmonicsTest {
     }
 
     @Test
+    public void ledgerDiamondRecordedAsAWholeHeadUsesTheStoppedSixteenthShaft() {
+        final int ty = Y - 30;
+        for (int y = ty - 14; y <= ty + 14; y++)
+            for (int x = X - 14; x <= X + 14; x++) {
+                double r = Math.abs(x - X) / 12d + Math.abs(y - ty + 2) / 10d;
+                if (r >= .25 && r <= 1) gray[y * W + x] = 0;
+            }
+        for (int y = Y - 7; y <= Y + 7; y++)
+            for (int x = X - 11; x <= X + 11; x++)
+                if (Math.pow((x - X) / 11d, 2) + Math.pow((y - Y) / 7d, 2) <= 1)
+                    gray[y * W + x] = 0;
+        for (int y = 65; y <= Y; y++)
+            Arrays.fill(gray, y * W + X + 11, y * W + X + 14, (byte) 0);
+        for (int y : new int[] {65, 73, ty + 7, ty + 8})
+            Arrays.fill(gray, y * W + X - 24, y * W + X + 26, (byte) 0);
+        var stopped = beamedStopped().withStemDirection(1);
+        var whole = new ScoreNoteEvent(0, X / (float) W, 3, 0, 1, ty / (float) H,
+                false, 0, 0, ScoreNoteEvent.ACCIDENTAL_FROM_KEY, ScoreNoteEvent.DURATION_WHOLE)
+                .withClef(ScoreNoteEvent.CLEF_TREBLE);
+        var notes = List.of(stopped, whole);
+        var bar = List.of(new MeasureRegion(0, 1, 0, 1));
+        var staffs = List.of(new PlayingTechniqueDetector.Staff(80, 160, G, 0, 1));
+        assertEquals(notes, apply(notes));
+        assertEquals(List.of(stopped.withOctaveShift(2)),
+                ArtificialHarmonics.apply(null, gray, gray.clone(), W, H, bar, notes, staffs));
+
+        var filled = gray.clone();
+        for (int y = ty - 6; y <= ty + 6; y++)
+            Arrays.fill(filled, y * W + X - 6, y * W + X + 7, (byte) 0);
+        assertEquals(notes, ArtificialHarmonics.apply(null, gray, filled, W, H, bar, notes, staffs));
+        var cutShaft = gray.clone();
+        for (int y = ty + 16; y <= ty + 22; y++)
+            Arrays.fill(cutShaft, y * W + X + 8, y * W + X + 17, (byte) 255);
+        assertEquals(notes, ArtificialHarmonics.apply(null, gray, cutShaft, W, H, bar, notes, staffs));
+    }
+
+    @Test
+    public void aProvenThirdHookOccupiesTheCounterOnlyWithASolidInterior() throws Exception {
+        int center = Y - 30, shaft = X + 10, tip = center - 43;
+        for (int row = center - 2; row <= center + 2; row++)
+            for (int col = X - 3; col <= shaft; col++) gray[row * W + col] = 0;
+        assertTrue(beamOccupiesCounter(center, shaft, tip));
+        assertFalse(beamOccupiesCounter(center, shaft, tip - 16));
+        for (int row : new int[] {center - 2, center - 1, center + 2})
+            for (int col = X - 3; col <= X + 3; col++) gray[row * W + col] = (byte) 255;
+        assertFalse(beamOccupiesCounter(center, shaft, tip));
+    }
+
+    private boolean beamOccupiesCounter(int y, int shaft, int tip) throws ReflectiveOperationException {
+        var judge = ArtificialHarmonics.class.getDeclaredMethod("beamOccupiesTouchCounter",
+                byte[].class, int.class, int.class, int.class, int.class, float.class, int.class, int.class);
+        judge.setAccessible(true);
+        return (boolean) judge.invoke(null, gray, W, H, X, y, G, shaft, tip);
+    }
+
+    @Test
     public void missingRawImageDoesNotChangeNotes() {
         var notes = List.of(note(0, Y));
         assertEquals(notes, ArtificialHarmonics.apply(null, W, H, List.of(), notes, List.of()));

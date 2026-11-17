@@ -216,6 +216,7 @@ final class PrintedSlurPageCapture {
         var statuses =
                 new EnumMap<PrintedSlurOwners.Status, Integer>(PrintedSlurOwners.Status.class);
         int ordinal = 0;
+        int literalOrdinal = 0;
         int markOrdinal = 0;
         int shortRailOrdinal = 0;
         int jointOrdinal = 0;
@@ -243,11 +244,23 @@ final class PrintedSlurPageCapture {
                             frame.track(),
                             null,
                             hints);
-            if (raw.limitReached())
+            if (raw.requiredLimitReached())
                 return new Result(ScoreSlurSource.empty(noteCount), statuses, true);
-            for (var bow : raw.bows()) {
+            var frameBows = new ArrayList<>(raw.bows());
+            if (raw.optionalLimitReached() && sourceNotes != null)
+                frameBows.addAll(octaveSlursInLocalWindows(
+                        gray, labels, width, height, frame, sourceNotes, hints, raw.bows()));
+            var complete = sourceNotes != null
+                    ? PrintedLiteralOctaveSlurs.capture(
+                            gray, labels, width, height, frame, sourceNotes, hints, frameBows)
+                    : List.<PrintedSlurContours.Bow>of();
+            frameBows.addAll(complete);
+            for (var bow : frameBows) {
+                boolean literal = complete.contains(bow);
                 String id =
-                        raw.jointBows().contains(bow)
+                        literal
+                                ? "printed-page-" + physicalPage + "-literal-octave-arc-" + literalOrdinal++
+                                : raw.jointBows().contains(bow)
                                 ? "printed-page-" + physicalPage + "-joint-arc-" + jointOrdinal++
                                 : raw.shortRailBows().contains(bow)
                                         ? "printed-page-"
@@ -268,8 +281,10 @@ final class PrintedSlurPageCapture {
                                                                 + physicalPage
                                                                 + "-arc-"
                                                                 + ordinal++;
-                var bound =
-                        PrintedSlurOwners.bind(
+                var bound = literal
+                        ? PrintedSlurOwners.literalOctaveBinding(
+                                id, physicalPage, bow, frame.heads(), gray, width, height, frame.track())
+                        : PrintedSlurOwners.bind(
                                 id,
                                 physicalPage,
                                 bow,
@@ -283,7 +298,7 @@ final class PrintedSlurPageCapture {
                         && beam.ownsLedger(
                                 bow, bound.span().orElseThrow(), frame.heads(), frame.track()))
                     continue;
-                if (admitJoins) {
+                if (admitJoins && !literal) {
                     if (pieces.size() == 4096) {
                         pieces.clear();
                         admitJoins = false;
@@ -454,6 +469,101 @@ final class PrintedSlurPageCapture {
                 statuses,
                 false,
                 declined, pageEdges);
+    }
+
+    /** Recover complete ordinary contours in bounded windows after optional wide work refuses. */
+    private static List<PrintedSlurContours.Bow> octaveSlursInLocalWindows(
+            byte[] gray, byte[] labels, int width, int height,
+            Frame<? extends PrintedSlurOwners.Location> frame, List<ScoreNoteEvent> notes,
+            PrintedSlurContours.HeadEvidence hints, List<PrintedSlurContours.Bow> retained) {
+        if (frame.heads().size() > 512) return List.of();
+        var upperHeads = upperOctaveHeads(frame, notes);
+        var rescued = new ArrayList<PrintedSlurContours.Bow>();
+        long remainingPixels = 640_000;
+        for (int i = 1; i < upperHeads.size(); i++) {
+            var a = upperHeads.get(i - 1);
+            var b = upperHeads.get(i);
+            if (notes.get(a.owner()).measureIndex() != notes.get(b.owner()).measureIndex()) continue;
+            float gap = frame.track().at((a.x() + b.x()) * .5f)[1];
+            if (b.x() - a.x() < gap * 1.55f || b.x() - a.x() > gap * 3.35f
+                    || Math.abs(b.y() - a.y()) > gap * 1.65f
+                    || retained.stream().anyMatch(bow -> bow.above()
+                            && bow.start().x() <= a.x() + gap * .75f
+                            && bow.end().x() >= b.x() - gap * .75f
+                            && Math.abs(bow.start().y() - a.y()) <= gap * 2f)) continue;
+            int left = Math.max(frame.left(), Math.round(a.x() - gap * 1.6f));
+            int right = Math.min(frame.right(), Math.round(b.x() + gap * 1.6f));
+            int top = Math.max(frame.top(), Math.round(Math.min(a.y(), b.y()) - gap * 4.15f));
+            int bottom = Math.min(frame.bottom(), Math.round(Math.max(a.y(), b.y()) + gap * 1.45f));
+            if (left >= right || top >= bottom
+                    || !inkAboveMidpoint(gray, width, a, b, gap, top, bottom)) continue;
+            remainingPixels -= (long) (right - left + 1) * (bottom - top + 1);
+            if (remainingPixels < 0) return List.of();
+            var local = PrintedSlurContours.find(
+                    gray, labels, width, height, left, top, right, bottom, frame.track(), null, hints);
+            if (local.limitReached()) return List.of();
+            var candidates = local.bows().stream()
+                    .filter(bow -> bow.above() && !bow.asymmetric()
+                            && Math.abs(bow.start().x() - a.x()) <= gap * .77f
+                            && Math.abs(bow.end().x() - b.x()) <= gap * .77f
+                            && a.y() - bow.start().y() >= gap * .32f
+                            && a.y() - bow.start().y() <= gap * 1.4f
+                            && b.y() - bow.end().y() >= gap * .32f
+                            && b.y() - bow.end().y() <= gap * 1.4f)
+                    .toList();
+            if (candidates.size() != 1) continue;
+            var bow = candidates.get(0);
+            if (local.shortRailBows().contains(bow) || local.jointBows().contains(bow)) continue;
+            var binding = PrintedSlurOwners.bind(
+                    "local-octave-slur", 0, bow, frame.heads(), gray, width, height, frame.track());
+            if (binding.span().isPresent()
+                    && binding.span().orElseThrow().start().noteIndex() == a.owner()
+                    && binding.span().orElseThrow().end().noteIndex() == b.owner())
+                rescued.add(bow);
+        }
+        return rescued;
+    }
+
+    static List<PrintedSlurOwners.Location> upperOctaveHeads(
+            Frame<? extends PrintedSlurOwners.Location> frame, List<ScoreNoteEvent> notes) {
+        if (frame.heads().size() > 512) return List.of();
+        var upperHeads = new ArrayList<PrintedSlurOwners.Location>();
+        for (var high : frame.heads()) {
+            var upper = notes.get(high.owner());
+            if (!ordinaryOctaveSlurHead(upper) || high.grace()) continue;
+            float gap = frame.track().at(high.x())[1];
+            int peers = 0;
+            for (var low : frame.heads()) {
+                var lower = notes.get(low.owner());
+                if (!low.grace() && ordinaryOctaveSlurHead(lower)
+                        && lower.measureIndex() == upper.measureIndex()
+                        && lower.staffStep() == upper.staffStep() - 7
+                        && Math.abs(high.x() - low.x()) <= gap * .18f
+                        && low.y() - high.y() >= gap * 3.15f
+                        && low.y() - high.y() <= gap * 3.85f) peers++;
+            }
+            if (peers == 1) upperHeads.add(high);
+        }
+        upperHeads.sort(Comparator.comparingDouble(PrintedSlurOwners.Location::x));
+        return upperHeads;
+    }
+
+    private static boolean ordinaryOctaveSlurHead(ScoreNoteEvent note) {
+        return note.kind() == ScoreNoteEvent.Kind.PITCHED
+                && note.visualSize() == ScoreNoteEvent.VisualSize.FULL && note.staffCount() == 1
+                && note.stemDirection() == -1 && note.beamCount() == 2 && !note.crossStaffBeam();
+    }
+
+    private static boolean inkAboveMidpoint(
+            byte[] gray, int width, PrintedSlurOwners.Location a, PrintedSlurOwners.Location b,
+            float gap, int top, int bottom) {
+        int x = Math.round((a.x() + b.x()) * .5f);
+        float middle = (a.y() + b.y()) * .5f;
+        int low = Math.max(top, Math.round(middle - gap * 2.8f));
+        int high = Math.min(bottom, Math.round(middle - gap * .48f));
+        for (int y = low; y <= high; y++)
+            if ((gray[y * width + x] & 255) < 154) return true;
+        return false;
     }
 
     private static void addCompactStemBows(

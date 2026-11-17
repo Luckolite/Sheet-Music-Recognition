@@ -10,6 +10,57 @@ import static org.junit.Assert.*;
 public class SplitHeaderClefRecognitionTest {
     private static final int W = 600, H = 320;
 
+    @Test
+    public void openingTrebleNeedsItsPrintedLoopAndConnectedWaist() throws Exception {
+        assertNotNull(splitWaist(true, true));
+        assertNull(splitWaist(false, true));
+        assertNull(splitWaist(true, false));
+    }
+
+    private static Object splitWaist(boolean closedLoop, boolean connected) throws Exception {
+        var raw = new byte[W * H];
+        Arrays.fill(raw, (byte) 255);
+        for (int yy = 71; yy <= 109; yy++)
+            for (int xx = 45; xx <= 65; xx++) {
+                double r = Math.pow((xx - 55) / 10., 2) + Math.pow((yy - 90) / 18., 2);
+                if (r >= .45 && r <= 1) raw[yy * W + xx] = 0;
+            }
+        if (!closedLoop)
+            for (int yy = 71; yy <= 109; yy++)
+                Arrays.fill(raw, yy * W + 44, yy * W + 54, (byte) 255);
+        for (int yy = 116; yy <= 162; yy++)
+            for (int xx = 24; xx <= 75; xx++)
+                if (Math.pow((xx - 50) / 26., 2) + Math.pow((yy - 139) / 23., 2) <= 1)
+                    raw[yy * W + xx] = 0;
+        for (int yy = 141; yy <= 194; yy++)
+            Arrays.fill(raw, yy * W + 50, yy * W + 59, (byte) 0);
+        for (int yy = 190; yy <= 194; yy++)
+            Arrays.fill(raw, yy * W + 37, yy * W + 62, (byte) 0);
+        if (connected)
+            for (int yy = 104; yy <= 123; yy++)
+                Arrays.fill(raw, yy * W + 51, yy * W + 60, (byte) 0);
+        for (int y = 100; y <= 164; y += 16)
+            Arrays.fill(raw, y * W + 13, y * W + 221, (byte) 0);
+        var o = OmrScoreInterpreter.class;
+        var component = Class.forName(o.getName() + "$Component");
+        var candidate = Class.forName(o.getName() + "$AccidentalCandidate");
+        var staff = Class.forName(o.getName() + "$Staff");
+        var make = component.getDeclaredConstructors()[0];
+        var model = candidate.getDeclaredConstructors()[0];
+        var frame = staff.getDeclaredConstructor(float.class, float.class, float.class);
+        var read = o.getDeclaredMethod("openingTrebleWithSplitWaist", List.class, byte[].class,
+                int.class, int.class, staff, float.class, component);
+        for (var m : List.of(make, model, frame, read)) m.setAccessible(true);
+        var high = make.newInstance(310, 45, 65, 71, 109, 55f, 90f);
+        var waist = make.newInstance(770, 24, 75, 116, 162, 50f, 139f);
+        var low = make.newInstance(590, 37, 62, 141, 194, 53f, 168f);
+        var rival = make.newInstance(675, 145, 179, 86, 161, 163f, 127f);
+        var pieces = List.of(model.newInstance(high, OmrMeasurePostProcessor.SYMBOL),
+                model.newInstance(waist, OmrMeasurePostProcessor.SYMBOL),
+                model.newInstance(low, OmrMeasurePostProcessor.CLEF_OR_KEY));
+        return read.invoke(null, pieces, raw, W, H, frame.newInstance(100f, 164f, 16f), 202f, rival);
+    }
+
     private int read(
             boolean track,
             int lowerLeft,

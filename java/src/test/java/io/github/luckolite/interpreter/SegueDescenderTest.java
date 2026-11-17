@@ -26,6 +26,28 @@ public final class SegueDescenderTest {
     }
 
     @Test
+    public void largeStaffCaptionKeepsTheOriginalInkThreshold() {
+        var notes = notes();
+        int width = 1170, height = 455;
+        var wideStaff = new PlayingTechniqueDetector.Staff(182, 286, 26, 0, 1);
+        var template = printedCaption();
+        byte[] paper = new byte[width * height];
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                int stock = template[(y * HEIGHT / height) * WIDTH + x * WIDTH / width] & 255;
+                paper[y * width + x] = (byte) (stock == 0 ? 165 : 255);
+            }
+        }
+        assertEquals(notes.subList(0, 12), FingeringAnnotationFilter.apply(
+                List.of(CAPTION), List.of(wideStaff), List.of(BAR), notes, paper, width, height));
+
+        for (int pixel = 0; pixel < paper.length; pixel++)
+            if ((paper[pixel] & 255) == 165) paper[pixel] = (byte) 166;
+        assertEquals(notes, FingeringAnnotationFilter.apply(
+                List.of(CAPTION), List.of(wideStaff), List.of(BAR), notes, paper, width, height));
+    }
+
+    @Test
     public void aCompetingPrintedStemOrMissingDescenderKeepsTheHead() {
         var notes = notes();
         var shaft = printedCaption();

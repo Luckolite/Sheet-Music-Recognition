@@ -42,6 +42,24 @@ public final class EighthTripletsBeforeSixteenthsTest {
     }
 
     @Test
+    public void preservesVerifiedTripletsInThePreviousBarAndStillAppliesTheTransition() {
+        var original = fixture(4);
+        var testedNotes = new ArrayList<>(original.score().notes());
+        for (int i = 0; i < 12; i++) testedNotes.set(i, testedNotes.get(i).withTupletRatio(3, 2));
+        var owners = java.util.stream.IntStream.range(0, testedNotes.size()).boxed().toList();
+        var prior = original.score().withNotes(testedNotes, owners);
+        var result = EighthTripletsBeforeSixteenths.capture(prior, original.ink(), WIDTH, HEIGHT).score();
+        assertEquals(testedNotes.subList(0, 12), result.notes().subList(0, 12));
+        assertEquals(6, result.notes().subList(12, 26).stream()
+                .filter(n -> n.tupletDivisor() == 3 && n.tupletNormalNotes() == 2).count());
+
+        testedNotes.set(0, testedNotes.get(0).withTupletRatio(5, 4));
+        var unsupported = original.score().withNotes(testedNotes, owners);
+        assertSame(unsupported, EighthTripletsBeforeSixteenths.capture(
+                unsupported, original.ink(), WIDTH, HEIGHT).score());
+    }
+
+    @Test
     public void requiresSeparateTripletGroupsAndOwnedSecondaryBeams() {
         var joined = fixture(4);
         var erased = fixture(4);

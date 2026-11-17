@@ -515,6 +515,23 @@ final class PrintedQuarterDyadAccidentals {
         return matches;
     }
 
+    /** The complete isolated flat occupies the left shoulder of a reconstructed head. */
+    static boolean isolatedFlat(byte[] gray, int width, int height, float x, float y, float gap) {
+        int left = Math.round(x - 2f * gap), right = Math.round(x - .58f * gap);
+        int top = Math.round(y - 2.3f * gap), bottom = Math.round(y + .97f * gap);
+        if (left < 0 || right >= width || top < 0 || bottom >= height) return false;
+        int w = right - left + 1, h = bottom - top + 1;
+        var ink = new byte[w * h];
+        for (int yy = 0; yy < h; yy++)
+            for (int xx = 0; xx < w; xx++)
+                ink[yy * w + xx] = (byte) ((gray[(top + yy) * width + left + xx] & 255) < 155 ? 0 : 255);
+        for (int start = 0; start <= Math.round(.25f * gap); start++)
+            for (int end = start + Math.round(.55f * gap);
+                    end < w && end <= start + Math.round(1.1f * gap); end++)
+                if (flatGlyph(ink, w, h, start, end, y + .14f * gap - top, gap) != null) return true;
+        return false;
+    }
+
     private static Ink flatGlyph(byte[] semantic, int w, int h, int left, int right,
             float center, float gap) {
         int top = Math.max(0, Math.round(center - gap * 2.15f));

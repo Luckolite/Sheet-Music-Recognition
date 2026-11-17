@@ -973,6 +973,13 @@ final class TripletRhythmDetector {
                                         numeral.top(),
                                         numeral.bottom(),
                                         gap * .25f);
+                if (!bracket && first.staffCount() == 1 && first.beamCount() == 2
+                        && first.stemDirection() == 1
+                        && Math.abs((numeral.left() + numeral.right()) * .5f - x2) <= gap * .23f
+                        && (numeral.top() + numeral.bottom()) * .5f - b.top() * height >= gap * 2.25f
+                        && (numeral.top() + numeral.bottom()) * .5f - b.top() * height <= gap * 3f
+                        && fingeringAtOpposedBeamBoundary(gray, width, height, gap, region,
+                                numeral, result, groups, i, virtualStart, first)) continue;
                 // A shared numeral can fit two consecutive windows under one primary beam.
                 // Prefer the window independently bounded by the secondary beam, while
                 // preserving explicit brackets and groups without a proved alternative.
@@ -1117,6 +1124,13 @@ final class TripletRhythmDetector {
                                     && lastHead.stemDirection() == stem
                                     && Math.abs(numeralX - x2) <= gap * .46f
                                     && stem * (middleHead.pageY() * height - numeralY) > gap * 2.4f;
+                    boolean pairedClosingFinger = first.beamCount() == 2 && stem == -1
+                            && middleHead.stemDirection() == stem && middleHead.beamCount() == 2
+                            && lastHead.stemDirection() == stem && lastHead.beamCount() == 2
+                            && Math.abs(numeralX - x2) <= gap * .80f && numeralY > y2 + gap * 2.4f
+                            && x1 - region.left() * width < gap * 1.60f
+                            && pairedStaffJoinedFingering(gray, width, height, gap,
+                                    numeral, measures, first.measureIndex());
                     boolean fingering = false;
                     for (int adjacent : new int[] {i - 1, i + 3}) {
                         if (adjacent < 0 || adjacent >= groups.size()) continue;
@@ -1164,28 +1178,27 @@ final class TripletRhythmDetector {
                                                         c.top() * height,
                                                         xx,
                                                         fourth.top() * height))
+                                || pairedClosingFinger && adjacent == i + 3
+                                        && extra.beamCount() == 2 && extra.stemDirection() == stem
+                                        && extra.tupletDivisor() == 1 && extra.augmentationDots() == 0
+                                        && pairedFingeringRails(gray, width, height, gap,
+                                                new float[] {x1, x2, x3, xx},
+                                                new float[] {a.top() * height, b.top() * height,
+                                                        c.top() * height, fourth.top() * height})
                                 || alignedOnBeamSide
                                         && extra.beamCount() == 2
                                         && extra.augmentationDots() == 0
                                         && extra.stemDirection() == stem
                                         && extra.tupletDivisor() == 1
                                         && (extra.articulations() & NoteOrnament.GRACE) == 0
-                                        && fingerSequence(
-                                                gray,
-                                                width,
-                                                height,
-                                                numeral,
-                                                gap,
-                                                stem,
-                                                -stem,
-                                                x1,
-                                                a.top() * height,
-                                                x2,
-                                                b.top() * height,
-                                                x3,
-                                                c.top() * height,
-                                                xx,
-                                                fourth.top() * height)) {
+                                        && (fingerSequence(
+                                                        gray, width, height, numeral, gap, stem, -stem,
+                                                        x1, a.top() * height, x2, b.top() * height,
+                                                        x3, c.top() * height, xx, fourth.top() * height)
+                                                || openingFingerParenthesis(gray, width, height,
+                                                        numeral.left(), numeral.top(), numeral.bottom(), gap)
+                                                        && SeparateBeamGroups.connected(gray, width, height,
+                                                                leftX, leftY, rightX, rightY, gap, -stem))) {
                             fingering = true;
                             break;
                         }
@@ -3123,6 +3136,13 @@ final class TripletRhythmDetector {
             float ax =
                     (region.left() + a.positionInMeasure() * (region.right() - region.left()))
                             * width;
+            if (first.staffCount() == 1 && a.staffCount() == 1
+                    && first.beamCount() == 2
+                    && Math.abs((glyph.top() + glyph.bottom()) * .5f - first.pageY() * height)
+                            > gap * 3.8f
+                    && foreignNumeralEndpoint(gray, width, height, ax, a.pageY() * height,
+                            a.stemDirection(), gap, glyph.left(), glyph.top(), glyph.right(),
+                            glyph.bottom(), ownDistance)) return true;
             if (ax >= numeralX || numeralX - ax > gap * 26) continue;
             for (var b : heads) {
                 if (b.measureIndex() != a.measureIndex()
@@ -3154,6 +3174,28 @@ final class TripletRhythmDetector {
             }
         }
         return false;
+    }
+
+    /** A detached digit can be close to the preceding beam tip or the following notehead. */
+    static boolean foreignNumeralEndpoint(byte[] gray, int width, int height, float x, float y,
+            int stem, float gap, int left, int top, int right, int bottom, float ownDistance) {
+        float numeralX = (left + right) * .5f;
+        float numeralY = (top + bottom) * .5f;
+        if (Math.abs(numeralX - x) > gap * .8f
+                || Math.abs(numeralY - y) > gap * 5.4f) return false;
+        var shafts = PrintedBeamShafts.at(
+                gray, width, height, x, y, gap, new PrintedBeamShafts.Budget(30_000));
+        if (shafts.size() != 1 || shafts.get(0).direction() != -stem) return false;
+        var shaft = shafts.get(0);
+        boolean beyondBeam = (numeralY - y) * shaft.direction() > 0;
+        float ownerX = beyondBeam ? (shaft.left() + shaft.right()) * .5f : x;
+        float distance = shaft.direction() > 0
+                ? (beyondBeam ? top - shaft.endY() : y - bottom)
+                : (beyondBeam ? shaft.endY() - bottom : top - y);
+        return Math.abs(numeralX - ownerX) <= gap * .38f
+                && distance >= gap * .16f
+                && distance <= gap * (beyondBeam ? .95f : 1.25f)
+                && distance + gap * .25f < ownDistance;
     }
 
     private static boolean ownsNumeral(
@@ -4320,6 +4362,244 @@ final class TripletRhythmDetector {
     }
 
     /** Opposite-side digits follow individual heads even when a curved staff crosses the beam. */
+    static boolean openingFingerParenthesis(byte[] gray, int width, int height,
+            int digitLeft, int digitTop, int digitBottom, float gap) {
+        int left = digitLeft - Math.round(gap * .68f);
+        int top = digitTop - Math.round(gap * .45f);
+        int bottom = digitBottom + Math.round(gap * .45f);
+        if (left < 0 || top < 0 || bottom >= height || digitLeft >= width) return false;
+        var ink = RawNumeralComponents.capture(
+                gray, width, height, left, top, digitLeft - 1, bottom, 165, () -> {}, () -> {});
+        for (var curve : ink.components()) {
+            int w = curve.right - curve.left + 1, h = curve.bottom - curve.top + 1;
+            if (curve.left <= left || curve.right >= digitLeft - 1
+                    || w < gap * .20f || w > gap * .55f
+                    || h < gap * 1.2f || h > gap * 1.9f
+                    || digitLeft - curve.right > gap * .23f
+                    || curve.top >= digitTop - 1 || curve.bottom <= digitBottom + 1
+                    || curve.size() > h * gap * .22f) continue;
+            float[] centers = new float[3];
+            int[] counts = new int[3];
+            for (int i = 0; i < curve.size(); i++) {
+                int pixel = curve.pixel(i);
+                int band = Math.min(2, (pixel / width - curve.top) * 3 / h);
+                centers[band] += pixel % width - curve.left;
+                counts[band]++;
+            }
+            if (counts[0] == 0 || counts[1] == 0 || counts[2] == 0) continue;
+            float first = centers[0] / counts[0], middle = centers[1] / counts[1];
+            float last = centers[2] / counts[2];
+            if ((first + last) * .5f - middle >= gap * .09f
+                    && Math.abs(first - last) < gap * .32f) return true;
+        }
+        return false;
+    }
+
+    private static boolean pairedStaffJoinedFingering(
+            byte[] gray, int width, int height, float gap, Glyph digit, List<MeasureRegion> measures, int measure) {
+        if (gap < 8 || gap > 24 || measure <= 0
+                || !staffJoinedFingeringParenthesis(gray, width, height, gap, digit, true)) return false;
+        var now = measures.get(measure);
+        var previous = measures.get(measure - 1);
+        float boundary = previous.right() * width;
+        if (Math.abs((previous.bottom() - now.bottom()) * height) > gap * .35f
+                || Math.abs(now.left() * width - boundary) > gap * 1.55f) return false;
+        int left = Math.max((int) Math.ceil(previous.left() * width), Math.round(boundary - gap * 11));
+        int right = Math.round(boundary - gap * .75f);
+        int top = digit.top() - Math.round(gap * .2f);
+        int bottom = digit.bottom() + Math.round(gap * .2f);
+        if (left < 0 || right >= width || top < 0 || bottom >= height
+                || left >= right || (long) (right-left+1)*(bottom-top+1) > 16_384) return false;
+        var window = RawNumeralComponents.capture(
+                gray, width, height, left, top, right, bottom, 139, () -> {}, () -> {});
+        int matched = 0;
+        for (var glyph : window.components()) {
+            int glyphHeight = glyph.bottom - glyph.top + 1;
+            if (glyph.left <= left || glyph.right >= right || glyph.top <= top || glyph.bottom >= bottom
+                    || glyphHeight < gap * .85f || glyphHeight > gap * 1.42f
+                    || Math.abs(glyph.top - digit.top()) > gap * .20f
+                    || !repeatFingeringDigit(gray, width, gap, digit, glyph)) continue;
+            if (staffJoinedFingeringParenthesis(gray, width, height, gap,
+                    new Glyph(glyph.left, glyph.top, glyph.right, glyph.bottom), false)) matched++;
+        }
+        return matched == 1;
+    }
+
+    private static boolean repeatFingeringDigit(byte[] gray, int width, float gap,
+            Glyph close, RawNumeralComponents.Component open) {
+        if (Math.abs((close.right() - close.left()) - (open.right - open.left)) > gap * .20f
+                || Math.abs((close.bottom() - close.top()) - (open.bottom - open.top)) > gap * .16f) return false;
+        int shift = Math.round((close.left() + close.right() - open.left - open.right) * .5f);
+        int yShift = close.top() - open.top;
+        int left = Math.min(open.left, close.left() - shift);
+        int right = Math.max(open.right, close.right() - shift);
+        int bottom = Math.max(open.bottom, close.bottom() - yShift);
+        for (int offset = -1; offset <= 1; offset++) {
+            int same = 0, union = 0;
+            for (int y = open.top; y <= bottom; y++) for (int x = left; x <= right; x++) {
+                boolean a = x >= open.left && x <= open.right && y <= open.bottom
+                        && (gray[y * width + x] & 255) < 139;
+                int xx = x + shift + offset, yy = y + yShift;
+                boolean b = xx >= close.left() && xx <= close.right() && yy <= close.bottom()
+                        && (gray[yy * width + xx] & 255) < 139;
+                if (a || b) union++;
+                if (a && b) same++;
+            }
+            if (union > 0 && same >= union * .80f) return true;
+        }
+        return false;
+    }
+
+    /** Follow the visible remainder of a parenthesis below the independently visible staff rule. */
+    private static boolean staffJoinedFingeringParenthesis(
+            byte[] gray, int width, int height, float gap, Glyph digit, boolean closing) {
+        return staffJoinedFingeringParenthesis(gray, width, height, gap, digit, closing, 139);
+    }
+
+    private static boolean staffJoinedFingeringParenthesis(
+            byte[] gray, int width, int height, float gap, Glyph digit, boolean closing, int threshold) {
+        int edge = closing ? digit.right() : digit.left();
+        int reach = Math.round(gap * 1.02f);
+        int left = closing ? edge + 1 : edge - reach;
+        int right = closing ? edge + reach : edge - 1;
+        int ruleStart = digit.top() - Math.round(gap * .72f),
+                ruleEnd = digit.top() - Math.round(gap * .17f);
+        int bottom = digit.bottom() + Math.round(gap * .72f);
+        int shaft = -1;
+        if (ruleStart < 0 || bottom >= height || left - reach < 0 || right + reach >= width)
+            return false;
+        for (int y = ruleStart; y <= ruleEnd; y++) {
+            int ink = 0;
+            for (int x = left - reach; x <= right + reach; x++)
+                if ((gray[y * width + x] & 255) < 139) ink++;
+            if (ink >= (right - left + 2 * reach + 1) * .84f) shaft = y;
+        }
+        if (shaft < 0) return false;
+        var window = RawNumeralComponents.capture(
+                gray, width, height, left, shaft + 1, right, bottom, threshold, () -> {}, () -> {});
+        for (var curve : window.components()) {
+            int h = curve.bottom - curve.top + 1, w = curve.right - curve.left + 1;
+            if (curve.top > shaft + 2 || curve.bottom <= digit.bottom() + 2
+                    || curve.left <= left || curve.right >= right || curve.bottom >= bottom
+                    || h < gap * 1.32f || h > gap * 2.25f || w < gap * .23f || w > gap * .65f
+                    || curve.size() > h * gap * .27f) continue;
+            float[] centers = new float[3];
+            int[] counts = new int[3];
+            for (int i = 0; i < curve.size(); i++) {
+                int pixel = curve.pixel(i);
+                int band = Math.min(2, (pixel / width - curve.top) * 3 / h);
+                centers[band] += pixel % width - curve.left;
+                counts[band]++;
+            }
+            if (counts[0] == 0 || counts[1] == 0 || counts[2] == 0) continue;
+            float first = centers[0] / counts[0], middle = centers[1] / counts[1], last = centers[2] / counts[2];
+            float bend = middle - (first + last) * .5f;
+            if ((closing ? bend : -bend) >= gap * .09f && Math.abs(first - last) < gap * .30f) return true;
+        }
+        return false;
+    }
+
+    static boolean pairedFingeringsWithinBar(
+            byte[] gray, int width, int height, MeasureRegion bar, List<ScoreNoteEvent> heads,
+            int first, int second) {
+        float gap = (bar.bottom() - bar.top()) * height / 8.2f;
+        if (gap < 10 || gap > 25) return false;
+        float staffBottom = bar.bottom() * height - gap * 2.1f;
+        var opening = parenthesizedThree(gray, width, height, bar, heads, first, staffBottom, gap, false);
+        if (opening == null) return false;
+        var closing = parenthesizedThree(gray, width, height, bar, heads, second, staffBottom, gap, true);
+        if (closing == null || Math.abs(opening.top - closing.top) > gap * .25f
+                || closing.left - opening.right < gap * 7 || closing.left - opening.right > gap * 16)
+            return false;
+        return repeatFingeringDigit(gray, width, gap,
+                new Glyph(closing.left, closing.top, closing.right, closing.bottom), opening);
+    }
+
+    private static RawNumeralComponents.Component parenthesizedThree(
+            byte[] gray, int width, int height, MeasureRegion bar, List<ScoreNoteEvent> heads, int first,
+            float staffBottom, float gap, boolean closing) {
+        float barLeft = bar.left() * width, length = (bar.right() - bar.left()) * width;
+        float x = barLeft + length * heads.get(first + 1).positionInMeasure();
+        int left = Math.round(x - gap * .90f), right = Math.round(x + gap * .90f);
+        int top = Math.round(staffBottom + gap * .16f), bottom = Math.round(staffBottom + gap * 1.90f);
+        if (left < 0 || right >= width || top < 0 || bottom >= height) return null;
+        var scan = RawNumeralComponents.capture(gray, width, height, left, top, right, bottom, 139, () -> {}, () -> {});
+        RawNumeralComponents.Component result = null;
+        for (var component : scan.components()) {
+            int h = component.bottom - component.top + 1;
+            if (component.left <= left || component.right >= right || component.top <= top
+                    || component.bottom >= bottom || h < gap * .86f || h > gap * 1.42f
+                    || Math.abs((component.left + component.right) * .5f - x) > gap * .54f
+                    || !isIsolatedThree(component, width)) continue;
+            var glyph = new Glyph(component.left, component.top, component.right, component.bottom);
+            // A weak original-pixel join at the staff can split the darkest curve core.
+            if (!staffJoinedFingeringParenthesis(gray, width, height, gap, glyph, closing, 165)) continue;
+            int before = Math.round(barLeft + length * heads.get(first).positionInMeasure() - gap * .3f);
+            int after = Math.round(barLeft + length * heads.get(first + 2).positionInMeasure() + gap * .3f);
+            if (bracketArm(gray, width, height, before, glyph.left() - 2,
+                        glyph.top(), glyph.bottom(), gap * .25f)
+                    && bracketArm(gray, width, height, glyph.right() + 2, after,
+                        glyph.top(), glyph.bottom(), gap * .25f))
+                return null;
+            if (result != null) return null;
+            result = component;
+        }
+        return result;
+    }
+
+    private static boolean pairedFingeringRails(
+            byte[] gray, int width, int height, float gap, float[] xs, float[] ys) {
+        var budget = new PrintedBeamShafts.Budget(60_000);
+        PrintedBeamShafts.Shaft last = null;
+        for (int i = 0; i < xs.length; i++) {
+            var choices = PrintedBeamShafts.at(gray, width, height, xs[i], ys[i], gap, budget);
+            if (choices.size() != 1 || choices.get(0).direction() != 1) return false;
+            var next = choices.get(0);
+            if (last != null && !WrappedEighthTriplets.matchesBeamRails(gray, width, height, last, next, gap, 2))
+                return false;
+            last = next;
+        }
+        return true;
+    }
+
+    private static boolean fingeringAtOpposedBeamBoundary(byte[] gray, int width, int height, float gap,
+            MeasureRegion region, Glyph numeral, List<ScoreNoteEvent> notes, List<Onset> groups,
+            int position, int virtualStart, ScoreNoteEvent first) {
+        if (position < 2 || position + 3 >= groups.size()) return false;
+        var budget = new PrintedBeamShafts.Budget(45_000);
+        PrintedBeamShafts.Shaft previous = null;
+        float precedingX = 0;
+        for (int slot = 0; slot < 6; slot++) {
+            Onset onset = matching(groups.get(position - 2 + slot), notes, first);
+            if (onset == null || onset.indices().size() != 1 || onset.indices().get(0) >= virtualStart)
+                return false;
+            var note = notes.get(onset.indices().get(0));
+            int direction = slot < 4 ? 1 : -1;
+            if (note.measureIndex() != first.measureIndex() || note.stemDirection() != direction
+                    || note.beamCount() != 2 || note.augmentationDots() != 0
+                    || note.tupletDivisor() != 1 || note.unbeamedDurationBeats() != 0
+                    || note.leadingRestBeats() != 0 || note.followingRestBeats() != 0
+                    || (note.articulations() & NoteOrnament.GRACE) != 0) return false;
+            float x = (region.left() + onset.position() * (region.right() - region.left())) * width;
+            float y = note.pageY() * height;
+            var axes = PrintedBeamShafts.at(gray, width, height, x, y, gap, budget);
+            if (axes.size() != 1 || axes.get(0).direction() != -direction) return false;
+            var current = axes.get(0);
+            if (previous != null && slot != 4 && !FingeringAnnotationFilter.pairedBeamRails(
+                    gray, width, height, previous, current, gap)) return false;
+            previous = current;
+            if (slot == 2) precedingX = x;
+        }
+        int left = Math.max(0, Math.round(precedingX - gap * .80f));
+        int right = Math.min(width - 1, Math.round(precedingX + gap * .80f));
+        int top = Math.max(0, Math.round(numeral.top() + gap * .37f));
+        int bottom = Math.min(height - 1, Math.round(numeral.bottom() + gap * 1.16f));
+        var digits = RawNumeralComponents.capture(gray, width, height, left, top, right, bottom,
+                () -> {}, () -> {});
+        return digits.components().stream().anyMatch(digit -> digit.left > left && digit.right < right
+                && digit.top > top && digit.bottom < bottom && fingerOne(gray, width, digit));
+    }
+
     private static boolean fingerSequence(
             byte[] gray,
             int width,
@@ -4473,6 +4753,10 @@ final class TripletRhythmDetector {
                 && topBar < glyphWidth * .68f
                 && upperLeft >= Math.max(2, Math.round(area * .10f))
                 && lowerLeft <= Math.max(2, Math.round(area * .16f));
+    }
+
+    static boolean fingerTwo(byte[] gray, int width, RawNumeralComponents.Component glyph) {
+        return looksLikeTwo(gray, width, glyph.size(), glyph.left, glyph.right, glyph.top, glyph.bottom);
     }
 
     private static boolean looksLikeTwo(

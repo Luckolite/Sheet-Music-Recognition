@@ -56,6 +56,53 @@ public final class CrossedDottedOctaveSpanTest {
         assertEquals(0, (int) shifts(erasedHook, 79, 212, 246).get(2));
     }
 
+    @Test
+    public void onlyTheOwnedAccidentalCarryStopsWhenThePrintedOctaveEnds() {
+        var explicit = note(79).withWrittenAccidental(ScoreNoteEvent.ACCIDENTAL_SHARP);
+        var within = note(240).withWrittenAccidental(ScoreNoteEvent.ACCIDENTAL_SHARP);
+        var after = note(306).withWrittenAccidental(ScoreNoteEvent.ACCIDENTAL_SHARP);
+        var renewed = note(335).withWrittenAccidental(ScoreNoteEvent.ACCIDENTAL_SHARP);
+        var notes = List.of(explicit, within, after, renewed);
+        var carries = List.of(new OctaveAccidentalCarry(explicit, within),
+                new OctaveAccidentalCarry(explicit, after));
+        var page = engraving();
+        var region = List.of(new MeasureRegion(0, 1, 0, 1));
+        var result = OctaveMarkDetector.apply(List.of(), STAFFS, region, notes, page, W, H,
+                new java.util.ArrayList<>(), carries);
+        assertEquals(List.of(1, 1, 0, 0), result.stream().map(ScoreNoteEvent::octaveShift).toList());
+        assertEquals(List.of(1, 1, ScoreNoteEvent.ACCIDENTAL_FROM_KEY, 1),
+                result.stream().map(ScoreNoteEvent::writtenAccidental).toList());
+
+        box(page, 267, 79, 282, 108, 255);
+        assertEquals(notes, OctaveMarkDetector.apply(List.of(), STAFFS, region, notes, page, W, H,
+                new java.util.ArrayList<>(), carries));
+    }
+
+    @Test
+    public void pairedWrittenOctaveKeepsBothAccidentalsAtTheOctaveBoundary() {
+        var firstLow = carryNote(.2f, 3);
+        var firstHigh = carryNote(.3f, 10);
+        var nextLow = carryNote(.6f, 3);
+        var nextHigh = carryNote(.6015f, 10);
+        var source = List.of(firstLow, firstHigh, nextLow, nextHigh);
+        var assigned = new java.util.ArrayList<>(source);
+        assigned.set(0, firstLow.withOctaveShift(1));
+        assigned.set(1, firstHigh.withOctaveShift(1));
+        var carries = List.of(new OctaveAccidentalCarry(firstLow, nextLow),
+                new OctaveAccidentalCarry(firstHigh, nextHigh));
+        var ranges = new boolean[] {true, true, false, false};
+        OctaveAccidentalCarry.clearAtRangeBoundary(source, assigned, ranges, carries);
+        assertEquals(List.of(1, 1, 1, 1), assigned.stream().map(ScoreNoteEvent::writtenAccidental).toList());
+        OctaveAccidentalCarry.clearAtRangeBoundary(source, assigned, ranges, List.of(carries.get(0)));
+        assertEquals(List.of(1, 1, ScoreNoteEvent.ACCIDENTAL_FROM_KEY, 1),
+                assigned.stream().map(ScoreNoteEvent::writtenAccidental).toList());
+    }
+
+    private static ScoreNoteEvent carryNote(float x, int step) {
+        return new ScoreNoteEvent(0, x, step, 0, 1, .70f - step * .02f, false)
+                .withStemDirection(-1).withWrittenAccidental(ScoreNoteEvent.ACCIDENTAL_SHARP);
+    }
+
     private static byte[] endingSlurEngraving() {
         var raw = new byte[W * H];
         Arrays.fill(raw, (byte) 255);
@@ -75,6 +122,50 @@ public final class CrossedDottedOctaveSpanTest {
     }
 
 
+
+    @Test
+    public void broadShallowSlurAndJoinedTerminalStillBoundTheRibbon() throws Exception {
+        var page = shallowSlurEngraving();
+        assertTrue(crossedClosure(page));
+        assertEquals(List.of(0, 1, 1, 0), shifts(page));
+        box(page, 270, 80, 300, 111, 255);
+        assertFalse(crossedClosure(page));
+
+        page = shallowSlurEngraving();
+        box(page, 103, 60, 151, 77, 255);
+        assertFalse(crossedClosure(page));
+    }
+
+    private static boolean crossedClosure(byte[] source) throws Exception {
+        var detector = OctaveMarkDetector.class;
+        var box = Class.forName(detector.getName() + "$InkBox");
+        var constructor = box.getDeclaredConstructor(int.class, int.class, int.class, int.class, int.class);
+        constructor.setAccessible(true);
+        var numeral = constructor.newInstance(41, 70, 61, 94, 0);
+        var method = detector.getDeclaredMethod(
+                "dottedRibbonAcrossSlur", byte[].class, int.class, int.class, box, float.class);
+        method.setAccessible(true);
+        return method.invoke(null, source, W, H, numeral, 16f) != null;
+    }
+
+    private static byte[] shallowSlurEngraving() {
+        var raw = new byte[W * H];
+        Arrays.fill(raw, (byte) 255);
+        box(raw, 41, 70, 61, 94, 0);
+        box(raw, 47, 73, 55, 79, 255);
+        box(raw, 46, 84, 55, 90, 255);
+        for (int x = 65; x <= 101; x += 9) box(raw, x, 75, x + 5, 79, 0);
+        for (int y = 67; y <= 83; y++) {
+            int x = 92 + Math.round((y - 67) * 2.8f);
+            box(raw, x, y, x + (y <= 71 ? 13 : 5), y, 0);
+        }
+        box(raw, 112, 75, 135, 79, 0);
+        for (int x = 138; x <= 273; x += 9) box(raw, x, 75, x + 5, 79, 0);
+        box(raw, 276, 78, 279, 84, 0);
+        box(raw, 276, 88, 279, 92, 0);
+        box(raw, 276, 96, 279, 100, 0);
+        return raw;
+    }
 
     private static List<Integer> shifts(byte[] raw) {
         return shifts(raw, 79, 240, 306);

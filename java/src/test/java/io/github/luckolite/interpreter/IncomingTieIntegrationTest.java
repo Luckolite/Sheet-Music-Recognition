@@ -100,9 +100,7 @@ public class IncomingTieIntegrationTest {
     @SuppressWarnings("unchecked")
     List<ScoreNoteEvent> resolved(List<Object> notes) throws Exception {
         var marked = marked(notes);
-        var m = OmrScoreInterpreter.class.getDeclaredMethod("applyAccidentalState", List.class);
-        m.setAccessible(true);
-        var result = (List<Object>) m.invoke(null, marked);
+        var result = AccidentalStateTestSupport.apply(marked);
         var out = new ArrayList<ScoreNoteEvent>();
         for (Object n : result) out.add(read(n));
         return out;

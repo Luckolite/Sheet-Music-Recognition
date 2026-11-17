@@ -90,6 +90,69 @@ public class ObservedLedgerSlurOriginalsTest {
         }
     }
 
+    private static final class DescendingLedgerPair {
+        private static final int WIDTH = 210, HEIGHT = 230, GAP = 16;
+        private static final int LEDGER = 80;
+        private final byte[] ink = new byte[WIDTH * HEIGHT];
+        private final StaffPitchTrack track = StaffPitchTrack.fromVerifiedSamples(
+                List.of(new float[] {0, 160, GAP}, new float[] {WIDTH - 1, 160, GAP}));
+        private final List<PrintedSlurOwners.GeometryHead> heads = List.of(
+                new PrintedSlurOwners.GeometryHead(0, 80, LEDGER - 8, 0, 1),
+                new PrintedSlurOwners.GeometryHead(1, 114, LEDGER, 0, 1));
+        private final List<ScoreNoteEvent> notes = List.of(note(0, 11), note(1, 10));
+
+        DescendingLedgerPair() {
+            Arrays.fill(ink, (byte) 255);
+            for (var head : heads) {
+                for (int y = (int) head.y() - 9; y <= head.y() + 9; y++)
+                    for (int x = (int) head.x() - 11; x <= head.x() + 11; x++)
+                        if (Math.pow((x - head.x()) / 11., 2) + Math.pow((y - head.y()) / 9., 2) <= 1)
+                            ink[y * WIDTH + x] = 0;
+            }
+            for (int y = LEDGER - 1; y <= LEDGER + 1; y++)
+                Arrays.fill(ink, y * WIDTH + 67, y * WIDTH + 119, (byte) 0);
+        }
+
+        private ScoreNoteEvent note(int index, int step) {
+            var head = heads.get(index);
+            return new ScoreNoteEvent(0, head.x() / WIDTH, step, 0, 1, head.y() / HEIGHT,
+                    false, 0, 1, ScoreNoteEvent.ACCIDENTAL_FROM_KEY, 0).withStemDirection(-1);
+        }
+
+        boolean owns(boolean independentBow) {
+            var points = new ArrayList<PrintedSlurContours.Point>();
+            for (int x = 79; x <= 111; x++) {
+                int y = x >= 105 ? LEDGER - (x - 105) : LEDGER;
+                if (independentBow && x >= 91 && x <= 103) {
+                    y += 7;
+                    ink[y * WIDTH + x] = 0;
+                }
+                points.add(new PrintedSlurContours.Point(x, y));
+            }
+            var bow = new PrintedSlurContours.Bow(points, false, .28f, .06f);
+            var span = new ScoreSlurPages.Span("contact", new ScoreSlurPages.Anchor(0, 0),
+                    new ScoreSlurPages.Anchor(0, 1), ScoreSlurSpan.Placement.BELOW,
+                    ScoreSlurSpan.LineType.SOLID,
+                    List.of(new ScoreSlurSpan.ArcEvidence(0, .38f, .35f, .53f, .32f)));
+            return new ObservedStemBeam(notes, ink, WIDTH, HEIGHT).ownsLedger(bow, span, heads, track);
+        }
+    }
+
+    @Test
+    public void theLowerLedgerAndFacingHeadOwnTheJoinedInk() {
+        assertTrue(new DescendingLedgerPair().owns(false));
+    }
+
+    @Test
+    public void independentInkBelowTheLedgerLosesItsLedgerClaim() {
+        assertFalse(new DescendingLedgerPair().owns(true));
+        var erased = new DescendingLedgerPair();
+        for (int y = 76; y <= 84; y++)
+            Arrays.fill(erased.ink, y * DescendingLedgerPair.WIDTH + 94,
+                    y * DescendingLedgerPair.WIDTH + 101, (byte) 255);
+        assertFalse(erased.owns(false));
+    }
+
     @Test
     public void horizontalLedgerWithAnOwnedDownstrokeRejectsAnAttachedRibbon() {
         var staff = new Staff();

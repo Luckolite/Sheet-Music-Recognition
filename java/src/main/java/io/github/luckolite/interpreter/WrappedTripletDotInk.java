@@ -125,6 +125,37 @@ final class WrappedTripletDotInk {
         return false;
     }
 
+    /** A low flat bowl can reach the dot window while its full spine remains optically owned. */
+    static boolean labelledFlatOwns(byte[] labels, byte[] gray, int width, int height,
+            Center core, float noteX, float noteY, float gap) {
+        if (core == null || labels == null || gray == null
+                || labels.length != gray.length || gray.length != (long) width * height
+                || core.x() < 0 || core.x() >= width || core.y() < 0 || core.y() >= height) return false;
+        float before = noteX - core.x(), below = core.y() - noteY;
+        if (before < gap * 1.38f || before > gap * 1.95f || below < gap * .40f || below > gap * .78f
+                || labels[core.y() * width + core.x()] != OmrMeasurePostProcessor.CLEF_OR_KEY
+                || !PrintedFlatGlyph.matchesOwnedInk(labels, gray, width, height, noteX, noteY, gap))
+            return false;
+        int left = core.x() - Math.round(gap * .46f);
+        int top = core.y() - Math.round(gap * 1.75f);
+        for (int spine = left; spine + 1 < core.x(); spine++) {
+            int rows = 0;
+            for (int y = top; y <= core.y(); y++)
+                if (ownedInk(labels, gray, width, spine, y) && ownedInk(labels, gray, width, spine + 1, y))
+                    rows++;
+            if (rows < (core.y() - top + 1) * .94f) continue;
+            int joined = 0;
+            for (int x = spine; x <= core.x(); x++) if (ownedInk(labels, gray, width, x, core.y())) joined++;
+            if (joined == core.x() - spine + 1) return true;
+        }
+        return false;
+    }
+
+    private static boolean ownedInk(byte[] labels, byte[] gray, int width, int x, int y) {
+        int offset = y * width + x;
+        return labels[offset] == OmrMeasurePostProcessor.CLEF_OR_KEY && (gray[offset] & 255) < 155;
+    }
+
     private static boolean flatSpine(byte[] gray, int width, int x, int top, int bottom) {
         return count(gray, width, x, x + 1, top, bottom, 155) >= 2 * (bottom - top + 1) * .96f;
     }

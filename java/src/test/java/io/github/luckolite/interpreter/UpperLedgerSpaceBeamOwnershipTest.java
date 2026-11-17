@@ -96,6 +96,86 @@ public class UpperLedgerSpaceBeamOwnershipTest {
         assertFalse(admitted(labels, gray, gray, XS, heights, 0, shift, 142));
     }
 
+    @Test
+    public void closedDoubleRailOwnsFilledTerminalWithFourShortInnerRules() throws Exception {
+        int[] centers = {53, 92};
+        int[] heights = {62, 46};
+        var page = ink(centers, heights, 1);
+        paint(page, centers[0] - 10, 142, centers[1] - 8, 147, (byte) 0);
+        paint(page, centers[0] - 10, 154, centers[1] - 8, 159, (byte) 0);
+        paint(page, centers[1] - 14, 45, centers[1] - 11, 47, (byte) 255);
+        paint(page, centers[1] + 11, 45, centers[1] + 14, 47, (byte) 255);
+        assertTrue(admitted(page, page, centers, heights, 1, "closedDoubleRailUpperLedger"));
+
+        var missingRail = page.clone();
+        paint(missingRail, 61, 140, 72, 150, (byte) 255);
+        assertFalse(admitted(page, missingRail, centers, heights, 1, "closedDoubleRailUpperLedger"));
+        var missingLedger = page.clone();
+        paint(missingLedger, 78, 77, 106, 79, (byte) 255);
+        assertFalse(admitted(missingLedger, page, centers, heights, 1, "closedDoubleRailUpperLedger"));
+    }
+
+    private static boolean admitted(byte[] gray, byte[] raw, int[] centers,
+            int[] heights, int ownerIndex, String gate) throws Exception {
+        return admitted(new byte[gray.length], gray, raw, centers, heights, ownerIndex, 0, 0, gate);
+    }
+
+    @Test
+    public void tallerFilledUpperSpaceUsesItsInteriorAndBothOpticalLinks() throws Exception {
+        int[] heights = {54, 70, 86};
+        byte[] image = ink(XS, heights, 0);
+        paint(image, 54, 43, 57, 45, (byte) 0);
+        paint(image, 48, 63, 51, 64, (byte) 0);
+        assertTrue(admitted(new byte[image.length], image, image, XS, heights, 0, 0, 0,
+                "upperLedgerHeadOnSingleRail", true));
+        var hollow = image.clone();
+        paint(hollow, 47, 50, 57, 56, (byte) 255);
+        assertFalse(admitted(new byte[image.length], image, hollow, XS, heights, 0, 0, 0,
+                "upperLedgerHeadOnSingleRail", true));
+        var missingLink = image.clone();
+        paint(missingLink, 58, 150, 69, 166, (byte) 255);
+        assertFalse(admitted(new byte[image.length], missingLink, image, XS, heights, 0, 0, 0,
+                "upperLedgerHeadOnSingleRail", true));
+    }
+
+    @Test
+    public void openingOfADoubleBeamOwnsAHighFilledSpaceBelowTheBoundary() throws Exception {
+        int[] heights = {62, 48, 62};
+        var page = ink(XS, heights, 1);
+        // No on-head ledger and no rail crossing the left group break.
+        paint(page, 71, 45, 75, 51, (byte) 255);
+        paint(page, 95, 45, 99, 51, (byte) 255);
+        paint(page, 59, 151, 73, 162, (byte) 255);
+        for (int rule = 62; rule <= 110; rule += 16)
+            paint(page, 75, rule - 1, 95, rule + 1, (byte) 0);
+        paint(page, 75, 142, 109, 147, (byte) 0);
+        assertTrue(admitted(page, page, XS, heights, 1, "upperSpaceAtDoubleBeamEdge"));
+
+        var missingRail = page.clone();
+        paint(missingRail, 91, 140, 101, 150, (byte) 255);
+        assertFalse(admitted(page, missingRail, XS, heights, 1, "upperSpaceAtDoubleBeamEdge"));
+        var missingLedger = page.clone();
+        paint(missingLedger, 73, 75, 98, 81, (byte) 255);
+        assertFalse(admitted(missingLedger, page, XS, heights, 1, "upperSpaceAtDoubleBeamEdge"));
+    }
+
+    @Test
+    public void terminalHighFilledSpaceRequiresTwoIncomingPairsAndADistinctNextGroup() throws Exception {
+        int[] centers = {38, 70, 104, 143};
+        int[] heights = {61, 69, 53, 64};
+        var page = ink(centers, heights, 2);
+        paint(page, 106, 151, 125, 164, (byte) 255);
+        paint(page, 28, 142, 96, 147, (byte) 0);
+        assertTrue(admitted(page, page, centers, heights, 2, "upperSpaceAtDoubleBeamEdge"));
+        var noEarlierPair = page.clone();
+        paint(noEarlierPair, 42, 141, 53, 149, (byte) 255);
+        assertFalse(admitted(noEarlierPair, page, centers, heights, 2, "upperSpaceAtDoubleBeamEdge"));
+        var joinedNext = page.clone();
+        paint(joinedNext, 94, 142, 135, 147, (byte) 0);
+        paint(joinedNext, 94, 155, 135, 159, (byte) 0);
+        assertFalse(admitted(page, joinedNext, centers, heights, 2, "upperSpaceAtDoubleBeamEdge"));
+    }
+
     private static byte[] ink(int[] heights, int owner) {
         return ink(XS, heights, owner);
     }
@@ -118,7 +198,7 @@ public class UpperLedgerSpaceBeamOwnershipTest {
                 paint(gray, x - half, rule - 1, x + half, rule + 1, (byte) 0);
             }
         }
-        paint(gray, centers[0] - 10, 155, centers[2] - 8, 159, (byte) 0);
+        paint(gray, centers[0] - 10, 155, centers[centers.length - 1] - 8, 159, (byte) 0);
         return gray;
     }
 
@@ -139,6 +219,18 @@ public class UpperLedgerSpaceBeamOwnershipTest {
 
     private static boolean admitted(byte[] labels, byte[] gray, byte[] raw, int[] centers,
             int[] heights, int ownerIndex, int shift, float precedingBottom) throws Exception {
+        return admitted(labels, gray, raw, centers, heights, ownerIndex, shift, precedingBottom,
+                "upperLedgerHeadOnSingleRail");
+    }
+
+    private static boolean admitted(byte[] labels, byte[] gray, byte[] raw, int[] centers,
+            int[] heights, int ownerIndex, int shift, float precedingBottom, String gate) throws Exception {
+        return admitted(labels, gray, raw, centers, heights, ownerIndex, shift, precedingBottom, gate, false);
+    }
+
+    private static boolean admitted(byte[] labels, byte[] gray, byte[] raw, int[] centers,
+            int[] heights, int ownerIndex, int shift, float precedingBottom, String gate,
+            boolean tallerApex) throws Exception {
         var outer = OmrScoreInterpreter.class;
         var component = Class.forName(outer.getName() + "$Component");
         var staff = Class.forName(outer.getName() + "$Staff");
@@ -159,8 +251,8 @@ public class UpperLedgerSpaceBeamOwnershipTest {
                             310,
                             centers[i] - 10,
                             centers[i] + 10,
-                            heights[i] - 9,
-                            heights[i] + 9,
+                            heights[i] - (tallerApex && i == ownerIndex ? 11 : 9),
+                            heights[i] + (tallerApex && i == ownerIndex ? 10 : 9),
                             (float) centers[i],
                             (float) heights[i]);
         var staffShape = staff.getDeclaredConstructor(float.class, float.class, float.class);
@@ -172,7 +264,7 @@ public class UpperLedgerSpaceBeamOwnershipTest {
                         : staffShape.newInstance(precedingBottom - 4 * GAP, precedingBottom, GAP);
         var probe =
                 outer.getDeclaredMethod(
-                        "upperLedgerHeadOnSingleRail",
+                        gate,
                         byte[].class,
                         byte[].class,
                         byte[].class,

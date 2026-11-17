@@ -278,6 +278,22 @@ final class PrintedSlurOwners {
                 end = List.of(new Candidate(b, 0));
             }
         }
+        if ((start.isEmpty() || end.isEmpty() || ambiguous(start) || ambiguous(end))
+                && bow.above() && bow.bendInGaps() >= .38f && bow.bendInGaps() <= 1.25f
+                && bow.rmsInGaps() < .075f
+                && bow.end().x() - bow.start().x() >= gap * 1.85f
+                && bow.end().x() - bow.start().x() <= gap * 5.60f) {
+            var a = rearOctaveContourOwner(bow.start(), true, heads, gray, width, height, track);
+            var b = rearOctaveContourOwner(bow.end(), false, heads, gray, width, height, track);
+            if (a != null && b != null && b.x() - a.x() >= gap * 1.55f
+                    && b.x() - a.x() <= gap * 4.85f
+                    && (start.isEmpty() || start.stream().anyMatch(x -> x.head().owner() == a.owner()))
+                    && (end.isEmpty() || end.stream().anyMatch(x -> x.head().owner() == b.owner()))
+                    && !followsParallelBeam(bow, gray, width, height, gap)) {
+                start = List.of(new Candidate(a, 0, true));
+                end = List.of(new Candidate(b, 0, true));
+            }
+        }
         if (start.isEmpty()) return new Binding(Status.NO_START_OWNER, Optional.empty());
         if (end.isEmpty() && !ambiguous(start) && start.get(0).head().grace())
             end =
@@ -306,6 +322,26 @@ final class PrintedSlurOwners {
         if (a.owner() == b.owner()) return new Binding(Status.SAME_OWNER, Optional.empty());
         if (a.staffIndex() != b.staffIndex() || a.staffCount() != b.staffCount())
             return new Binding(Status.DIFFERENT_LANES, Optional.empty());
+        return geometryBinding(id, page, bow, a, b, width, height);
+    }
+
+    static Binding literalOctaveBinding(
+            String id, int page, PrintedSlurContours.Bow bow,
+            List<? extends Location> heads, byte[] gray, int width, int height, StaffPitchTrack track) {
+        var existing = bind(id, page, bow, heads, gray, width, height, track);
+        if (existing.span().isPresent()) return existing;
+        var a = rearOctaveContourOwner(bow.start(), true, heads, gray, width, height, track);
+        var b = rearOctaveContourOwner(bow.end(), false, heads, gray, width, height, track);
+        if (a == null || b == null || a.x() >= b.x()
+                || a.staffIndex() != b.staffIndex() || a.staffCount() != b.staffCount()
+                || followsParallelBeam(bow, gray, width, height, track.at(a.x())[1]))
+            return new Binding(Status.NO_START_OWNER, Optional.empty());
+        return geometryBinding(id, page, bow, a, b, width, height);
+    }
+
+    private static Binding geometryBinding(
+            String id, int page, PrintedSlurContours.Bow bow, Location a, Location b,
+            int width, int height) {
         var span =
                 new ScoreSlurPages.Span(
                         id,
@@ -443,6 +479,59 @@ final class PrintedSlurOwners {
 
     private static boolean ambiguous(List<Candidate> values) {
         return values.size() > 1 && values.get(1).distance() - values.get(0).distance() < .2;
+    }
+
+    /** The exterior ends of the bow face the two upper heads of independently printed octaves. */
+    private static Location rearOctaveContourOwner(
+            PrintedSlurContours.Point cap,
+            boolean first,
+            List<? extends Location> heads,
+            byte[] gray,
+            int width,
+            int height,
+            StaffPitchTrack track) {
+        float gap = track.at(cap.x())[1];
+        Location matched = null;
+        for (var upper : heads) {
+            float dx = (upper.x() - cap.x()) * (first ? 1 : -1);
+            float clearance = upper.y() - cap.y();
+            if (upper.grace() || upper.staffCount() != 1 || dx < -gap * .30f || dx > gap * .77f
+                    || clearance < gap * .32f || clearance > gap * 1.38f
+                    || !headBody(gray, width, height, upper, gap)) continue;
+            int count = 0;
+            for (var lower : heads) {
+                float spread = lower.y() - upper.y();
+                if (lower.grace() || lower.staffIndex() != upper.staffIndex()
+                        || lower.staffCount() != upper.staffCount()
+                        || Math.abs(lower.x() - upper.x()) > gap * .18f
+                        || spread < gap * 3.15f || spread > gap * 3.85f
+                        || !headBody(gray, width, height, lower, gap)
+                        || (!stemReaches(gray, width, height, upper, lower, gap, -1)
+                                && !sameObservedDownshaft(gray, width, height, upper, lower, gap)))
+                    continue;
+                count++;
+            }
+            if (count == 1) {
+                if (matched != null) return null;
+                matched = upper;
+            }
+        }
+        return matched;
+    }
+
+    /** Compare the printed column and tip directly when the head-center offset is at its edge. */
+    private static boolean sameObservedDownshaft(
+            byte[] gray, int width, int height, Location upper, Location lower, float gap) {
+        var budget = new PrintedBeamShafts.Budget(75_000);
+        var top = PrintedBeamShafts.at(gray, width, height, upper.x(), upper.y(), gap, budget);
+        var bottom = PrintedBeamShafts.at(gray, width, height, lower.x(), lower.y(), gap, budget);
+        if (top.size() != 1 || bottom.size() != 1) return false;
+        var a = top.get(0);
+        var b = bottom.get(0);
+        return a.direction() == 1 && b.direction() == 1
+                && Math.max(a.left(), b.left()) <= Math.min(a.right(), b.right())
+                && Math.abs(a.endY() - b.endY()) <= gap * .13f
+                && Math.min(a.endY(), b.endY()) - lower.y() >= gap * 1.85f;
     }
 
     /** A curve outside an aligned chord owns its facing outer head. */
