@@ -24,6 +24,21 @@ public class ExtendedTabTest {
     }
 
     @Test
+    public void delimitedTuningsMatchTheStaffWithoutBorrowingTheNextLine() {
+        assertEquals(
+                List.of(62, 57, 55, 50, 45, 38),
+                TabTuning.parse("Tuning: D2, A2, D3, G3, A3, D4", 6));
+        assertEquals(
+                List.of(64, 59, 55, 50, 45, 40, 35),
+                TabTuning.parse("Tuning: B1-E2-A2-D3-G3-B3-E4", 7));
+        assertEquals(
+                List.of(64, 59, 55, 50, 45, 40),
+                TabTuning.parse("Tuning: B E A D G B E\nTuning: E A D G B E", 6));
+        assertTrue(TabTuning.parse("Tuning: E A D G B\nE Major", 6).isEmpty());
+        assertTrue(TabTuning.parse("Tuning: F# B E A D G B E", 7).isEmpty());
+    }
+
+    @Test
     public void malformedOrWrongCountIsNotGuessed() {
         for (String s :
                 List.of(

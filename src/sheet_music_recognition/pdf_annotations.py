@@ -5,15 +5,14 @@ import ctypes
 import re
 from functools import lru_cache
 
-_TOKEN = re.compile(r"-(?:[12]|(?i:full))|(?i:full|whammy|w/bar|bar|upstroke|downstroke|strum up|strum down)|-?(?:1 1/2|1/4|1/2|3/4|1\u00bd|[\u00bc\u00bd\u00be])|[\uE846\uE847]|<[0-9]{1,2}>|\([0-9]{1,2}\)|(?<![0-9])[0-9]{1,2}[bB][0-9]{1,2}(?:[rR][0-9]{1,2})?~*|(?<![0-9])(?:[0-9]{1,2}|[xX])(?:[/\\hHpP][0-9]{1,2})+~*|(?<![0-9])[0-9]{1,3}(?![0-9])~*|[xXHPT=]|[\uE1E7\uE241\uE243\uE245\uE4E3-\uE4E8\uE4A2\uEAB2\uE080-\uE089\uECA5\uECA6\uECB7]")
+_TOKEN = re.compile(r"-(?:[12]|(?i:full))|(?i:full|whammy|w/bar|bar|upstroke|downstroke|strum up|strum down)|-?(?:1 1/2|1/4|1/2|3/4|1\u00bd|[\u00bc\u00bd\u00be])|[\uE846\uE847]|<[0-9]{1,2}>|\([0-9]{1,2}\)|(?<![0-9])[0-9]{1,2}[bB][0-9]{1,2}(?:[rR][0-9]{1,2})?~*|(?<![0-9])(?:[0-9]{1,2}|[xX])(?:[/\\hHpP][0-9]{1,2})+~*|(?<![0-9])[0-9]{1,3}(?![0-9])~*|[xXHPT=]|[\uE1E7\uE241\uE243\uE245\uE4E3-\uE4E8\uE4A2\uEAB2\uE080-\uE089\uECA3-\uECA8\uECB7]")
 
-_TUNING_HEADER = re.compile(r"^\s*tuning\s*[:=]?[^\r\n]+", re.IGNORECASE | re.MULTILINE)
+_TUNING_HEADER = re.compile(r"^[^\S\r\n]*tuning\b[^\r\n]+", re.IGNORECASE | re.MULTILINE)
 _FONT_SUBSET_PREFIX = re.compile(rb"^[A-Z]{6}\+")
 
 
 def _tuning_header(text):
-    match = _TUNING_HEADER.search(text)
-    return match.group().strip() if match else ""
+    return "\n".join(match.group().strip() for match in _TUNING_HEADER.finditer(text))
 
 
 def tuning_header(page):
