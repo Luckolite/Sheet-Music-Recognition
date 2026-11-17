@@ -50,7 +50,7 @@ java -jar google-java-format-1.24.0-all-deps.jar --aosp --skip-sorting-imports -
 
 ## Maintainers
 
-Full GitHub releases and their PyPI packages use the same three-part version.
+Full GitHub releases and their PyPI packages use the same three-part version. Before tagging, check the exact version on PyPI, including yanked files. A yanked wheel still reserves its filename.
 For a PyPI-only update, append a fourth component to the latest full release,
 for example `0.1.5.1` after `v0.1.5`, and increment it for later updates on
 that release. Update both package and runtime versions before dispatching the
