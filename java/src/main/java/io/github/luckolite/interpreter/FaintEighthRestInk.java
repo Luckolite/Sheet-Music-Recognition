@@ -4,6 +4,12 @@ package io.github.luckolite.interpreter;
 
 /** Independent literal endpoint/anatomy material. Never source/frame/owner authority. */
 final class FaintEighthRestInk {
+    private static final java.lang.invoke.VarHandle GRAY_WORDS =
+            java.lang.invoke.MethodHandles.byteArrayViewVarHandle(
+                    long[].class, java.nio.ByteOrder.nativeOrder());
+    private static final long HIGH_BITS = 0x8080808080808080L;
+    private static final long BRIGHT_BIAS = 0x0101010101010101L * (230 - 128);
+
     private FaintEighthRestInk() {}
 
     static final class Proof {
@@ -143,10 +149,7 @@ final class FaintEighthRestInk {
             int height,
             int x,
             int y,
-            int radius,
-            FaintQuarterRestInk.Budget quarterBudget) {
-        FaintQuarterRestInk.charge(quarterBudget, 1, 0);
-
+            int radius) {
         int at = y * width + x, value = raw[at] & 255;
         if (value < 170) return true;
         if (value >= 230 || x < radius || x + radius >= width || y < radius || y + radius >= height)
@@ -445,12 +448,28 @@ final class FaintEighthRestInk {
             for (int y = 0; y < h; y++) {
                 FaintQuarterRestInk.charge(quarterBudget, 1, 0);
                 if (!rules[first + y]) {
-                    FaintQuarterRestInk.charge(quarterBudget, 1, 0);
-                    for (int x = 0; x < w; x++) {
+                    int row = first + y, output = y * w;
+                    if (quarterBudget.tryPrepayLocal(1L + 2L * w)) {
+                        int column = left, end = left + w;
+                        for (; column <= end - Long.BYTES; column += Long.BYTES) {
+                            long word = (long) GRAY_WORDS.get(raw, row * width + column);
+                            if ((((word | HIGH_BITS) - BRIGHT_BIAS) & word & HIGH_BITS) == HIGH_BITS)
+                                continue;
+                            for (int sample = column; sample < column + Long.BYTES; sample++)
+                                if (foreground(raw, width, height, sample, row, radius))
+                                    points[output + sample - left] = 1;
+                        }
+                        for (; column < end; column++)
+                            if (foreground(raw, width, height, column, row, radius))
+                                points[output + column - left] = 1;
+                    } else {
                         FaintQuarterRestInk.charge(quarterBudget, 1, 0);
-                        if (foreground(
-                                raw, width, height, left + x, first + y, radius, quarterBudget))
-                            points[y * w + x] = 1;
+                        for (int x = 0; x < w; x++) {
+                            FaintQuarterRestInk.charge(quarterBudget, 1, 0);
+                            FaintQuarterRestInk.charge(quarterBudget, 1, 0);
+                            if (foreground(raw, width, height, left + x, row, radius))
+                                points[output + x] = 1;
+                        }
                     }
                 }
             }

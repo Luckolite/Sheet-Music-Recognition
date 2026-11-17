@@ -262,9 +262,22 @@ final class CompactQuarterRestContour {
         }
 
         if (count == 0) return false;
-        int paper = 0, seen = tones[0], target = (count * 3 + 3) / 4;
-        {
+        int paper = 0, target = (count * 3 + 3) / 4;
+        if (quarterBudget != null && quarterBudget.canPrepayLocal(256)) {
+            if (target > 0 && (gray[firstRow * width + paperLeft] & 255) >= 128) {
+                int lowerCount = count;
+                for (paper = 255; paper > 0; paper--) {
+                    lowerCount -= tones[paper];
+                    if (lowerCount < target) break;
+                }
+            } else {
+                int seen = tones[0];
+                while (seen < target && paper < 255) seen += tones[++paper];
+            }
+            quarterBudget.tryPrepayLocal(1L + paper);
+        } else {
             if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
+            int seen = tones[0];
             while (seen < target && paper < 255) {
                 if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
                 seen += tones[++paper];

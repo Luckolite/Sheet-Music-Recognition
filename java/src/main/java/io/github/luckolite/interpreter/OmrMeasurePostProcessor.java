@@ -1186,10 +1186,29 @@ final class OmrMeasurePostProcessor {
     static float estimateStaffSlope(byte[] labels, int width, int height) {
         // Sampling alternate rows biases thin rules toward horizontal. Keep every
         // row, and reuse only staff pixels while testing candidate angles.
-        int count = 0;
-        for (int y = 0; y < height; y++)
-            for (int x = 0; x < width; x += 3) if (labels[y * width + x] == STAFF) count++;
+        int count = 0, activeColumns = 0;
+        boolean bounded = width > 0 && width <= (1 << 20) && height > 0 && height <= (1 << 20);
+        boolean separated = bounded;
+        boolean[] sampledColumns = separated ? new boolean[(width + 2) / 3] : null;
+        long flatScore = 0;
+        for (int y = 0, row = 0; y < height; y++, row += width) {
+            int rowCount = 0;
+            for (int x = 0, column = 0; x < width; x += 3, column++) {
+                if (labels[row + x] != STAFF) continue;
+                rowCount++;
+                if (separated) {
+                    if (!sampledColumns[column]) {
+                        sampledColumns[column] = true;
+                        activeColumns++;
+                    }
+                    if (y > 0 && labels[row - width + x] == STAFF) separated = false;
+                }
+            }
+            count += rowCount;
+            flatScore += (long) rowCount * rowCount;
+        }
         if (count == 0) return 0f;
+        if (separated && (long) count * activeColumns <= flatScore * 1.05) return 0f;
         int[] xs = new int[count], ys = new int[count];
         int index = 0;
         for (int y = 0; y < height; y++)
@@ -1201,7 +1220,8 @@ final class OmrMeasurePostProcessor {
         float bestSlope = 0f;
         float centerX = width / 2f;
         int[] projection = new int[height];
-        long horizontalScore = staffProjectionScore(xs, ys, height, centerX, 0f, projection);
+        long horizontalScore = bounded ? flatScore
+                : staffProjectionScore(xs, ys, height, centerX, 0f, projection);
         long bestScore = horizontalScore;
         // Camera angles and book gutters can exceed the old roughly three-degree range.
         for (int step = -24; step <= 24; step++) {
@@ -2605,34 +2625,24 @@ final class OmrMeasurePostProcessor {
                 last = Math.min(height - 1, bottom + Math.round(gap * .2f));
         int w = right - left + 1, h = last - first + 1;
         if (w < 5 || h < 10) return List.of();
-        boolean[] seen = new boolean[w * h];
+        int stride = w + 2;
+        byte[] paper = MeterCounterFlood.paperMask(gray, width, left, first, w, h);
         int[] queue = new int[w * h];
+        int[] rows = new int[h];
         List<float[]> counters = new ArrayList<>();
-        for (int seed = 0; seed < seen.length; seed++) {
-            if (seen[seed] || (gray[(first + seed / w) * width + left + seed % w] & 255) <= 160)
-                continue;
-            int read = 0, write = 0;
-            queue[write++] = seed;
-            seen[seed] = true;
+        for (int seed = stride + 1, end = (h + 1) * stride; seed < end; seed++) {
+            if (paper[seed] == 0) continue;
+            int write = MeterCounterFlood.drain(paper, queue, stride, seed);
+            if (write < gap * gap * .05f || write > gap * gap * .4f) continue;
             int minX = w, maxX = -1, minY = h, maxY = -1;
-            int[] rows = new int[h];
-            while (read < write) {
-                int at = queue[read++], x = at % w, y = at / w;
+            Arrays.fill(rows, 0);
+            for (int index = 0; index < write; index++) {
+                int at = queue[index], x = at % stride - 1, y = at / stride - 1;
                 rows[y]++;
                 minX = Math.min(minX, x);
                 maxX = Math.max(maxX, x);
                 minY = Math.min(minY, y);
                 maxY = Math.max(maxY, y);
-                for (int dy = -1; dy <= 1; dy++)
-                    for (int dx = -1; dx <= 1; dx++) {
-                        int xx = x + dx, yy = y + dy;
-                        if (xx < 0 || xx >= w || yy < 0 || yy >= h) continue;
-                        int next = yy * w + xx;
-                        if (!seen[next] && (gray[(first + yy) * width + left + xx] & 255) > 160) {
-                            seen[next] = true;
-                            queue[write++] = next;
-                        }
-                    }
             }
             int cw = maxX - minX + 1, ch = maxY - minY + 1;
             // A staff rule can clip the top of the four's counter. Its surviving
@@ -2645,8 +2655,6 @@ final class OmrMeasurePostProcessor {
                     || maxX == w - 1
                     || minY == 0
                     || maxY == h - 1
-                    || write < gap * gap * .05f
-                    || write > gap * gap * .4f
                     || cw < gap * .2f
                     || cw > gap
                     || (ch < gap * .2f && !clipped)

@@ -18,7 +18,12 @@ final class StaffPitchTrack {
     private static final class RuleProjection {
         private static final int INITIAL_CACHE_CELLS = 16384;
         private static final int RETRY_CACHE_CELLS = 131072;
+        private static final java.lang.invoke.VarHandle GRAY_WORDS =
+                java.lang.invoke.MethodHandles.byteArrayViewVarHandle(
+                        long[].class, java.nio.ByteOrder.LITTLE_ENDIAN);
+        private static final long HIGH_BITS = 0x8080808080808080L;
         char[] prefix, storage;
+        long[] masks, maskStorage;
         int readyFrom = Integer.MAX_VALUE, readyTo = -1;
         int[] strength, semanticShifts;
         float[] fitScratch;
@@ -28,6 +33,7 @@ final class StaffPitchTrack {
         void reset() {
             prepared = false;
             prefix = null;
+            masks = null;
             readyFrom = Integer.MAX_VALUE;
             readyTo = -1;
         }
@@ -46,9 +52,21 @@ final class StaffPitchTrack {
         }
 
         void enableCache() {
-            if (cells == 0 || prefix != null) return;
+            if (cells == 0 || hasCache()) return;
+            int leftColumns = excludedFrom <= excludedTo ? excludedFrom - 1 : 0;
+            int rightStart = excludedFrom <= excludedTo ? excludedTo : 0;
+            if (leftColumns <= Long.SIZE && stride - 1 - rightStart <= Long.SIZE) {
+                int words = (cells / stride) * 2;
+                if (maskStorage == null || maskStorage.length < words) maskStorage = new long[words];
+                masks = maskStorage;
+                return;
+            }
             if (storage == null || storage.length < cells) storage = new char[cells];
             prefix = storage;
+        }
+
+        boolean hasCache() {
+            return prefix != null || masks != null;
         }
 
         void accumulate(byte[] gray, int width, int start, int end, int shift, int top,
@@ -56,6 +74,17 @@ final class StaffPitchTrack {
             if (start > end) return;
             int first = start + shift - firstRow, last = end + shift - firstRow;
             ensureRows(gray, width, first, last, flankOffset, threshold);
+            if (masks != null) {
+                int column = from - left;
+                boolean onLeft = excludedFrom <= excludedTo && column < excludedFrom - 1;
+                int startBit = column - (onLeft || excludedFrom > excludedTo ? 0 : excludedTo);
+                int bitCount = to - from + 1;
+                long mask = (-1L >>> (Long.SIZE - bitCount)) << startBit;
+                for (int row = start - top, word = first * 2 + (onLeft ? 0 : 1);
+                        row <= end - top; row++, word += 2)
+                    strength[row] += Long.bitCount(masks[word] & mask);
+                return;
+            }
             int base = first * stride;
             int fromIndex = base + from - left, toIndex = base + to - left + 1;
             for (int row = start - top, lastRow = end - top; row <= lastRow;
@@ -68,6 +97,11 @@ final class StaffPitchTrack {
                 int flankOffset, int threshold, int[] strength) {
             int first = start - firstRow, last = end - firstRow;
             ensureRows(gray, width, first, last, flankOffset, threshold);
+            if (masks != null) {
+                for (int row = start - top, word = first * 2; row <= end - top; row++, word += 2)
+                    strength[row] = Long.bitCount(masks[word]) + Long.bitCount(masks[word + 1]);
+                return;
+            }
             // Each side starts at zero, so its end already holds the full count.
             int leftEnd = excludedFrom <= excludedTo ? excludedFrom - 1 : 0;
             int rightEnd = stride - 1;
@@ -95,6 +129,17 @@ final class StaffPitchTrack {
         private void populate(byte[] gray, int width, int first, int last, int flankOffset,
                 int threshold) {
             int at = (firstRow + first) * width + left;
+            if (masks != null) {
+                int leftColumns = excludedFrom <= excludedTo ? excludedFrom - 1 : 0;
+                int rightStart = excludedFrom <= excludedTo ? excludedTo : 0;
+                for (int row = first, word = first * 2; row <= last;
+                        row++, word += 2, at += width) {
+                    masks[word] = contrastMask(gray, at, leftColumns, flankOffset, threshold);
+                    masks[word + 1] = contrastMask(
+                            gray, at + rightStart, stride - 1 - rightStart, flankOffset, threshold);
+                }
+                return;
+            }
             for (int row = first, base = first * stride; row <= last;
                     row++, base += stride, at += width) {
                 int pixel = at;
@@ -120,6 +165,35 @@ final class StaffPitchTrack {
                         && (gray[at + flankOffset] & 255) >= ink + 12) count++;
                 prefix[out] = (char) count;
             }
+        }
+
+        private static long contrastMask(
+                byte[] gray, int at, int columns, int flankOffset, int threshold) {
+            long mask = 0;
+            int column = 0;
+            if (threshold >= 127 && threshold < 255) {
+                long bias = 0x0101010101010101L * (threshold + 1 - 128);
+                for (; column <= columns - Long.BYTES; column += Long.BYTES, at += Long.BYTES) {
+                    long word = (long) GRAY_WORDS.get(gray, at);
+                    long candidates = HIGH_BITS & ~(((word | HIGH_BITS) - bias) & word);
+                    while (candidates != 0) {
+                        int offset = Long.numberOfTrailingZeros(candidates) / Byte.SIZE;
+                        int pixel = at + offset;
+                        int ink = (int) (word >>> (offset * Byte.SIZE)) & 255;
+                        if ((gray[pixel - flankOffset] & 255) >= ink + 12
+                                && (gray[pixel + flankOffset] & 255) >= ink + 12)
+                            mask |= 1L << (column + offset);
+                        candidates &= candidates - 1;
+                    }
+                }
+            }
+            for (; column < columns; column++, at++) {
+                int ink = gray[at] & 255;
+                if (ink <= threshold
+                        && (gray[at - flankOffset] & 255) >= ink + 12
+                        && (gray[at + flankOffset] & 255) >= ink + 12) mask |= 1L << column;
+            }
+            return mask;
         }
     }
 
@@ -1071,7 +1145,7 @@ final class StaffPitchTrack {
         // Keep the first large horizontal scan direct. A tilted retry can reuse its cache
         // across the remaining slopes.
         if (projection != null && slope != 0) projection.enableCache();
-        boolean cached = projection != null && projection.prefix != null;
+        boolean cached = projection != null && projection.hasCache();
         if (cached && slope == 0) {
             projection.projectHorizontal(gray, width, firstScanY, lastScanY, top, flankOffset,
                     inkThreshold, strength);

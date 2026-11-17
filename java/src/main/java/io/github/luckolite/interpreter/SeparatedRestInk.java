@@ -256,8 +256,25 @@ final class SeparatedRestInk {
                         eligible = b < rows - 1 && !(r - l + 1 > maximumWidth)
                                 && !(b - seedRow + 1 > maximumHeight);
                     }
+                    if (crossingRows == null) {
+                        int leftColumn = Math.max(0, x - 1), rightColumn = Math.min(span - 1, x + 1);
+                        int firstRow = Math.max(0, row - 1), lastRow = Math.min(rows - 1, row + 1);
+                        int nextBase = firstRow * span + leftColumn;
+                        int raster = rasterBase + firstRow * width + leftColumn;
+                        for (int neighbor = firstRow; neighbor <= lastRow;
+                                neighbor++, nextBase += span, raster += width) {
+                            int packed = neighbor << columnBits;
+                            for (int column = leftColumn, next = nextBase, at = raster;
+                                    column <= rightColumn; column++, next++, at++) {
+                                if (visited[next] != 0) continue;
+                                visited[next] = 1;
+                                if ((gray[at] & 255) < 170) queue[count++] = packed | column;
+                            }
+                        }
+                        continue;
+                    }
                     for (int direction = -1; direction <= 1; direction++) {
-                        int neighborRow = crossingRows == null || direction == 0 ? row + direction
+                        int neighborRow = direction == 0 ? row
                                 : crossingRows[row * 2 + (direction > 0 ? 1 : 0)];
                         if (neighborRow < 0 || neighborRow >= rows) continue;
                         int targetRow = neighborRow * span;

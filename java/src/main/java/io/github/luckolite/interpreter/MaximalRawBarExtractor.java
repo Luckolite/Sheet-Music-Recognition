@@ -667,7 +667,10 @@ final class MaximalRawBarExtractor {
                 offsets[column] = slope * (lane.left + column - mid);
             }
             java.util.Arrays.fill(widths, 0);
-            java.util.Arrays.fill(firstRun, 0);
+            for (int index = 0; index < activeCount; index++) {
+                int column = activeColumns[index];
+                firstRun[column] = runTops[column * runCapacity] << 16;
+            }
             if (joined) java.util.Arrays.fill(firstSplit, 0);
             int remainingCount = activeCount;
             System.arraycopy(activeColumns, 0, remainingColumns, 0, activeCount);
@@ -700,13 +703,21 @@ final class MaximalRawBarExtractor {
                     // A centered raw cross-section is one contiguous body, not a sum of nearby ink.
                     int runBase = at * runCapacity;
                     // Rounded rows are nondecreasing as the intercept advances.
-                    int lo = firstRun[at], firstRow = y - radius, lastRow = y + radius;
+                    int cursor = firstRun[at], lo = cursor & 0xffff;
+                    int firstRow = y - radius, lastRow = y + radius;
                     int firstOffset = firstRow - spanTop, lastOffset = lastRow - spanTop;
-                    while (lo < runCount && runTops[runBase + lo] < firstOffset) lo++;
-                    // Later intercepts cannot bring a finished column back into range.
-                    if (lo == runCount) continue;
+                    int nextTop = cursor >>> 16;
+                    if (nextTop < firstOffset) {
+                        do {
+                            lo++;
+                        } while (lo < runCount && runTops[runBase + lo] < firstOffset);
+                        // Later intercepts cannot bring a finished column back into range.
+                        if (lo == runCount) continue;
+                        nextTop = runTops[runBase + lo];
+                        firstRun[at] = (nextTop << 16) | lo;
+                    }
                     remainingColumns[nextCount++] = at;
-                    firstRun[at] = lo;
+                    if (nextTop > lastOffset) continue;
                     int best = 0, bestTop = -1, bestBottom = -1, bestDistance = Integer.MAX_VALUE;
                     boolean tie = false;
                     for (int k = lo; k < runCount && runTops[runBase + k] <= lastOffset; k++) {

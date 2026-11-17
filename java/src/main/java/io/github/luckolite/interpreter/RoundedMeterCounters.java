@@ -17,21 +17,21 @@ final class RoundedMeterCounters {
                 last = Math.min(height - 1, Math.round(bottom + gap * .2f));
         int w = right - left + 1, h = last - first + 1;
         if (w < 5 || h < 10) return false;
-        boolean[] seen = new boolean[w * h];
+        int stride = w + 2;
+        byte[] paper = MeterCounterFlood.paperMask(gray, width, left, first, w, h);
         int[] queue = new int[w * h];
+        int[] rows = new int[h], leftEdges = new int[h], rightEdges = new int[h];
         var pockets = new ArrayList<Pocket>();
-        for (int seed = 0; seed < seen.length; seed++) {
-            if (seen[seed] || (gray[(first + seed / w) * width + left + seed % w] & 255) <= 160)
-                continue;
-            int read = 0, write = 1;
-            queue[0] = seed;
-            seen[seed] = true;
+        for (int seed = stride + 1, end = (h + 1) * stride; seed < end; seed++) {
+            if (paper[seed] == 0) continue;
+            int write = MeterCounterFlood.drain(paper, queue, stride, seed);
+            if (write < gap * gap * .06f || write > gap * gap * .65f) continue;
             int minX = w, maxX = -1, minY = h, maxY = -1;
-            int[] rows = new int[h], leftEdges = new int[h], rightEdges = new int[h];
+            Arrays.fill(rows, 0);
             Arrays.fill(leftEdges, w);
             Arrays.fill(rightEdges, -1);
-            while (read < write) {
-                int at = queue[read++], x = at % w, y = at / w;
+            for (int index = 0; index < write; index++) {
+                int at = queue[index], x = at % stride - 1, y = at / stride - 1;
                 rows[y]++;
                 leftEdges[y] = Math.min(leftEdges[y], x);
                 rightEdges[y] = Math.max(rightEdges[y], x);
@@ -39,16 +39,6 @@ final class RoundedMeterCounters {
                 maxX = Math.max(maxX, x);
                 minY = Math.min(minY, y);
                 maxY = Math.max(maxY, y);
-                for (int dy = -1; dy <= 1; dy++)
-                    for (int dx = -1; dx <= 1; dx++) {
-                        int xx = x + dx, yy = y + dy;
-                        if (xx < 0 || xx >= w || yy < 0 || yy >= h) continue;
-                        int n = yy * w + xx;
-                        if (!seen[n] && (gray[(first + yy) * width + left + xx] & 255) > 160) {
-                            seen[n] = true;
-                            queue[write++] = n;
-                        }
-                    }
             }
             int cw = maxX - minX + 1, ch = maxY - minY + 1;
             if (minX == 0
@@ -58,9 +48,7 @@ final class RoundedMeterCounters {
                     || cw < gap * .2f
                     || cw > gap * 1.1f
                     || ch < gap * .25f
-                    || ch > gap * .9f
-                    || write < gap * gap * .06f
-                    || write > gap * gap * .65f) continue;
+                    || ch > gap * .9f) continue;
             int peak = 0;
             for (int y = minY + 1; y < maxY; y++) peak = Math.max(peak, rows[y]);
             // A barline beside a wavy stroke encloses pockets with one straight edge.

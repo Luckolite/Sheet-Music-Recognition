@@ -8,6 +8,11 @@ import java.util.regex.Pattern;
 /** Six- and seven-string numeric tablature. Frets are absolute semitone offsets, never key-signature steps. */
 public final class TablatureDecoder {
     private static final int[] ROW_THRESHOLDS = {180, 200, 220, 235, 245, 248};
+    private static final java.lang.invoke.VarHandle GRAY_WORDS =
+            java.lang.invoke.MethodHandles.byteArrayViewVarHandle(
+                    long[].class, java.nio.ByteOrder.nativeOrder());
+    private static final long HIGH_BITS = 0x8080808080808080L;
+    private static final long PAPER_BIAS = 0x0101010101010101L * (248 - 128);
     private static final Pattern PLAIN_FRET = Pattern.compile("[0-9]{1,2}|[xX]");
     public record Fret(
             float x,
@@ -190,9 +195,14 @@ public final class TablatureDecoder {
         for (int threshold : ROW_THRESHOLDS) result[threshold] = new int[h];
         int[] histogram = new int[248];
         for (int y = 0; y < h; y++) {
-            Arrays.fill(histogram, 0);
             int end = (y + 1) * w;
-            for (int index = y * w; index < end; index++) {
+            int index = y * w;
+            for (; index <= end - Long.BYTES && allAboveProjectionThreshold(gray, index);
+                    index += Long.BYTES) {}
+            while (index < end && (gray[index] & 255) >= histogram.length) index++;
+            if (index == end) continue;
+            Arrays.fill(histogram, 0);
+            for (; index < end; index++) {
                 int value = gray[index] & 255;
                 if (value < histogram.length) histogram[value]++;
             }
@@ -203,6 +213,11 @@ public final class TablatureDecoder {
             }
         }
         return result;
+    }
+
+    private static boolean allAboveProjectionThreshold(byte[] gray, int index) {
+        long word = (long) GRAY_WORDS.get(gray, index);
+        return (((word | HIGH_BITS) - PAPER_BIAS) & word & HIGH_BITS) == HIGH_BITS;
     }
 
     private record StaffBand(float top, float gap, int strings, int threshold) {}

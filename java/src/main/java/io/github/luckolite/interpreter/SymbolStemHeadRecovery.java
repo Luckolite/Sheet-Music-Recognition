@@ -269,7 +269,7 @@ final class SymbolStemHeadRecovery {
 
     private static final class ShaftSpan {
         private int middleRow, firstRow, step, total;
-        private float requiredRaw, requiredSemantic;
+        private int requiredRaw, requiredSemantic;
         private int nextColumn;
         private int witness = -1;
 
@@ -284,8 +284,8 @@ final class SymbolStemHeadRecovery {
             middleRow = middle * width;
             firstRow = (y + direction * firstDistance) * width;
             step = direction * width;
-            requiredRaw = total * .85f;
-            requiredSemantic = total * .5f;
+            requiredRaw = (int) Math.ceil(total * .85f);
+            requiredSemantic = (int) Math.ceil(total * .5f);
             nextColumn = 0;
             witness = -1;
             return true;
@@ -301,18 +301,31 @@ final class SymbolStemHeadRecovery {
             for (; nextColumn <= right; nextColumn++) {
                 int middle = middleRow + nextColumn;
                 if (labels[middle] != 1 || (gray[middle] & 255) >= 205) continue;
-                int raw = 0, semantic = 0;
-                for (int at = firstRow + nextColumn, remaining = total;
-                        remaining > 0; remaining--, at += step) {
-                    if ((gray[at] & 255) < 205) raw++;
-                    if (labels[at] == 1) semantic++;
-                }
-                if (raw >= requiredRaw && semantic >= requiredSemantic) {
+                if (supportsShaft(labels, gray, firstRow + nextColumn)) {
                     witness = nextColumn++;
                     return true;
                 }
             }
             return false;
+        }
+
+        private boolean supportsShaft(byte[] labels, byte[] gray, int at) {
+            int raw = 0, semantic = 0;
+            int remaining = total;
+            while (remaining >= 8) {
+                for (int samples = 0; samples < 8; samples++, at += step) {
+                    if ((gray[at] & 255) < 205) raw++;
+                    if (labels[at] == 1) semantic++;
+                }
+                remaining -= 8;
+                if (raw + remaining < requiredRaw || semantic + remaining < requiredSemantic)
+                    return false;
+            }
+            for (; remaining > 0; remaining--, at += step) {
+                if ((gray[at] & 255) < 205) raw++;
+                if (labels[at] == 1) semantic++;
+            }
+            return raw >= requiredRaw && semantic >= requiredSemantic;
         }
     }
 }
