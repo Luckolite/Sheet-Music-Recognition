@@ -882,6 +882,21 @@ final class PrintedTupletBeamOwner {
                 || lastX - firstX < gap * (compactPair ? 1.15f : 2)
                 || lastX - firstX > gap * 26) return Float.POSITIVE_INFINITY;
         int travel = -stemDirection;
+        // A tip moves at most six gaps from its head. Accepted pairs are at most
+        // three gaps apart vertically, so bracket extrapolation needs under half a gap.
+        // Leave a full gap for rounding and extrapolation before rejecting distant systems.
+        if (quarterBudget == null
+                && firstY >= 0 && firstY < height && lastY >= 0 && lastY < height
+                && numeralTop >= 0 && numeralTop <= numeralBottom && numeralBottom < height) {
+            double low = Math.min(firstY, lastY) - (travel < 0 ? 7.0 : 1.0) * gap;
+            double high = Math.max(firstY, lastY) + (travel > 0 ? 7.0 : 1.0) * gap;
+            double maximum = (compactPair ? 2.7 : 1.8) * gap + 1;
+            double overlap = joined ? (numeralBottom - numeralTop + 1) * .45 + 1 : 0;
+            if (travel > 0
+                    ? numeralTop < low - overlap || numeralTop > high + maximum
+                    : numeralBottom < low - maximum || numeralBottom > high + overlap)
+                return Float.POSITIVE_INFINITY;
+        }
         List<Tip> first =
                 tips(gray, width, height, firstX, firstY, gap, stemDirection, 1, quarterBudget);
         List<Tip> last =

@@ -5241,15 +5241,17 @@ final class TripletRhythmDetector {
             float firstY,
             float gap,
             java.util.function.Predicate<Glyph> ownership) {
+        // Both passes probe the same columns at the same rounded rows.
+        int[] probes = new int[512];
         Glyph plain =
                 bracketedCurveThreePass(
                         gray, width, height, left, right, top, firstX, lastX, firstY, gap,
-                        ownership, false);
+                        ownership, false, probes);
         return plain != null
                 ? plain
                 : bracketedCurveThreePass(
                         gray, width, height, left, right, top, firstX, lastX, firstY, gap,
-                        ownership, true);
+                        ownership, true, probes);
     }
 
     private static Glyph bracketedCurveThreePass(
@@ -5264,27 +5266,47 @@ final class TripletRhythmDetector {
             float firstY,
             float gap,
             java.util.function.Predicate<Glyph> ownership,
-            boolean occluded) {
+            boolean occluded,
+            int[] probes) {
         int center = (left + right) / 2, span = right - left + 1;
+        int radius = Math.round(gap * .4f);
+        float maximumInk = Math.max(3, gap * .35f);
+        float requiredHits = span * .94f, requiredThin = span * .90f;
         for (int cy = Math.round(top + gap * .7f);
                 cy <= Math.min(firstY - 1, top + gap * 2.3f);
                 cy++) {
+            slopeCandidate:
             for (int angle = -10; angle <= 10; angle++) {
                 float slope = angle * .05f;
                 int hits = 0, thin = 0;
                 for (int x = left; x <= right; x++) {
                     int y = Math.round(cy + slope * (x - center));
-                    if (y < 2 || y >= height - 2) continue;
-                    if (dark(gray, width, x, y - 1)
-                            || dark(gray, width, x, y)
-                            || dark(gray, width, x, y + 1)) hits++;
-                    int ink = 0;
-                    for (int yy = Math.max(0, y - Math.round(gap * .4f));
-                            yy <= Math.min(height - 1, y + Math.round(gap * .4f));
-                            yy++) if (dark(gray, width, x, yy)) ink++;
-                    if (ink <= Math.max(3, gap * .35f)) thin++;
+                    if (y >= 2 && y < height - 2) {
+                        int pixel = y * width + x;
+                        int key = (pixel + 1) << 2;
+                        int slot = (pixel ^ (pixel >>> 9)) & (probes.length - 1);
+                        int probe = probes[slot];
+                        if ((probe & ~3) != key) {
+                            probe = key;
+                            if (dark(gray, width, x, y - 1)
+                                    || dark(gray, width, x, y)
+                                    || dark(gray, width, x, y + 1)) probe |= 1;
+                            // Additional pixels cannot make an overfull column thin.
+                            int ink = 0, lastY = Math.min(height - 1, y + radius);
+                            for (int yy = Math.max(0, y - radius); yy <= lastY; yy++) {
+                                if (dark(gray, width, x, yy) && ++ink > maximumInk) break;
+                            }
+                            if (ink <= maximumInk) probe |= 2;
+                            probes[slot] = probe;
+                        }
+                        hits += probe & 1;
+                        thin += (probe >>> 1) & 1;
+                    }
+                    // A later column can contribute at most one vote to either threshold.
+                    int remaining = right - x;
+                    if (hits + remaining < requiredHits || thin + remaining < requiredThin)
+                        continue slopeCandidate;
                 }
-                if (hits < span * .94f || thin < span * .90f) continue;
                 int cut =
                         (int)
                                         Math.floor(
