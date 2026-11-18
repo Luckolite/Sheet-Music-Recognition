@@ -4644,8 +4644,16 @@ final class SixteenthRestDetector {
         int firstShaft = 0, nextShaft = 0;
         int[] shafts = pair ? new int[right < left ? 0 : Math.min(right - left + 1,
                 (int) Math.ceil(gap * .9f) + 1)] : null;
+        // Every qualifying window needs this much ink, even before masked rows
+        // and faded-ink contrast are checked.
+        int minInk = (int) Math.ceil(Math.ceil(gap * .65f) * .9f);
         for (int x = left; x <= right; x++) {
             boolean contrast = faded && pair && x >= flank && x + flank < width;
+            int cutoff = contrast ? 185 : 125;
+            int possibleInk = 0;
+            for (int y = minY; y <= maxY && possibleInk < minInk; y++)
+                if ((gray[y * width + x] & 255) < cutoff) possibleInk++;
+            if (possibleInk < minInk) continue;
             int ink = 0, total = 0, oldest = 0;
             for (int y = minY; y <= maxY; y++) {
                 int previous = y - minY >= span ? rows[oldest] : 0;

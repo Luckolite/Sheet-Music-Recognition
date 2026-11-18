@@ -538,47 +538,6 @@ final class ScoreDynamicsDetector {
         return detectDirectionCore(words, staffs, measures, notes, gray, width, height, gray, true);
     }
 
-    private static int collectDirectionComponent(
-            long[] ink, int width, int height, int origin, int[] queue,
-            int[] bounds) {
-        int n = 1;
-        queue[0] = origin;
-        ink[origin >>> 6] &= ~(1L << origin);
-        int left = width, right = 0, top = height, bottom = 0;
-        for (int start = 0; start < n; start++) {
-            int at = queue[start], y = at / width, x = at - y * width;
-            left = Math.min(left, x);
-            right = Math.max(right, x);
-            top = Math.min(top, y);
-            bottom = Math.max(bottom, y);
-            int above = Math.min(y, 2), below = Math.min(height - 1 - y, 2);
-            int first = at - above * width, last = at + below * width;
-            int before = x > 0 ? 1 : 0, after = x + 1 < width ? 1 : 0;
-            for (int center = first; center <= last; center += width) {
-                int lo = center - before, hi = center + after;
-                int word = lo >>> 6, lastWord = hi >>> 6;
-                // A three-pixel horizontal neighborhood can straddle two packed words.
-                long mask = -1L << lo;
-                for (; word <= lastWord; word++) {
-                    if (word == lastWord) mask &= -1L >>> (63 - (hi & 63));
-                    long neighbors = ink[word] & mask;
-                    ink[word] ^= neighbors;
-                    while (neighbors != 0) {
-                        queue[n++] = (word << 6) + Long.numberOfTrailingZeros(neighbors);
-                        neighbors &= neighbors - 1;
-                    }
-                    mask = -1L;
-                }
-                if (center == last) break;
-            }
-        }
-        bounds[0] = left;
-        bounds[1] = right;
-        bounds[2] = top;
-        bounds[3] = bottom;
-        return n;
-    }
-
     private static int nextDirectionInk(byte[] gray, int start) {
         int p = start;
         while (p <= gray.length - Long.BYTES) {
@@ -705,10 +664,8 @@ final class ScoreDynamicsDetector {
         if (gray != null && gray.length == width * height) {
             boolean originalRaster = gray == ownershipGray;
             int firstInk = nextDirectionInk(gray, 0);
-            long[] ink = firstInk < gray.length ? PackedGrayInk.classify(gray, 0, gray.length, 145) : new long[0];
-            int inkCount = 0;
-            for (long word : ink) inkCount += Long.bitCount(word);
-            int[] queue = new int[inkCount];
+            var components = new PackedInkFlood(gray, width, height, 145, 2, firstInk);
+            int[] queue = components.queue;
             var completeFaint =
                     paperProposals && originalRaster
                             ? new CompleteFaintHairpinArms.Page(gray, width, height, staffs)
@@ -721,15 +678,9 @@ final class ScoreDynamicsDetector {
                     originalRaster
                             ? new CompleteOpposedHairpinPair.Collector(gray, width, height)
                             : null;
-            int[] bounds = new int[4];
-            for (int word = firstInk >>> 6; word < ink.length;) {
-                if (ink[word] == 0) {
-                    word++;
-                    continue;
-                }
-                int p = (word << 6) + Long.numberOfTrailingZeros(ink[word]);
-                int n = collectDirectionComponent(ink, width, height, p, queue, bounds);
-                int left = bounds[0], right = bounds[1], top = bounds[2], bottom = bounds[3];
+            int n;
+            while ((n = components.next()) != 0) {
+                int left = components.left, right = components.right, top = components.top, bottom = components.bottom;
                 int w = right - left + 1, h = bottom - top + 1;
                 var owner = directionFloors.componentOwner(top, bottom);
                 if (owner == null

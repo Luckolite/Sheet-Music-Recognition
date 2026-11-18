@@ -145,7 +145,7 @@ final class PortableNoteOrnaments {
                 anchors.stream()
                         .map(n -> new NoteSlideDetector.Head(n.x, n.y, n.gap, n.staff, n.measure))
                         .toList();
-        // Share only preparation; the two detectors own separate mutable working rasters.
+        // The wave scan reads the prepared raster before the slide scan removes ledger lines.
         byte[] sharedClean =
                 gray != null && gray.length == (long) w * h && slideHeads.size() >= 2
                         ? NoteSlideDetector.removeStaffLines(gray, w, h, slideStaffs)
@@ -154,7 +154,7 @@ final class PortableNoteOrnaments {
                 sharedClean == null
                         ? WaveGlissDetector.detect(gray, w, h, slideStaffs, slideHeads)
                         : WaveGlissDetector.detectWithRemovedStaffLines(
-                                w, h, slideHeads, sharedClean.clone()))
+                                w, h, slideHeads, sharedClean))
             if (notes.get(gliss.sourceIndex()).kind() == ScoreNoteEvent.Kind.PITCHED
                     && notes.get(gliss.targetIndex()).kind() == ScoreNoteEvent.Kind.PITCHED
                     && marks[gliss.sourceIndex()] == 0

@@ -1513,6 +1513,12 @@ final class StaffPitchTrack {
         // Preserve scalar short-circuit reads for partial or malformed rasters.
         int wordEnd = flank >= 0 && start >= flank && end >= start && end <= (long) gray.length - flank
                 ? end - Long.BYTES : -1;
+        // Equal pixels on the upper flank cannot contribute to local contrast.
+        if (length >= 32 && start >= 0 && start <= wordEnd) {
+            int firstDifference = Arrays.mismatch(gray, start, end, gray, start - flank, end - flank);
+            if (firstDifference < 0) return 0;
+            at += firstDifference;
+        }
         for (; at >= 0 && at <= wordEnd; at += Long.BYTES) {
             long center = (long) RuleProjection.GRAY_WORDS.get(gray, at);
             long above = (long) RuleProjection.GRAY_WORDS.get(gray, at - flank);

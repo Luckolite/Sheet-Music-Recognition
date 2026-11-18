@@ -32,38 +32,22 @@ final class WaveGlissDetector {
     /** Consumes an owned raster: flood traversal replaces its ink with white. */
     static List<Link> detectWithRemovedStaffLines(
             int width, int height, List<NoteSlideDetector.Head> heads, byte[] clean) {
-        int[] queue = new int[clean.length];
+        var components = new PackedInkFlood(clean, width, height, 150, 1, 0);
+        int[] queue = components.queue;
         List<Link> result = new ArrayList<>();
-        for (int origin = 0; origin < clean.length; origin++) {
-            if ((clean[origin] & 255) >= 150) continue;
-            int count = 1, read = 0;
-            queue[0] = origin;
-            clean[origin] = (byte) 255;
-            int left = width, right = 0, top = height, bottom = 0;
+        int count;
+        while ((count = components.next()) != 0) {
+            int left = components.left, right = components.right, top = components.top, bottom = components.bottom;
+            if (count < 16 || right - left < 8 || bottom - top < 6) continue;
             double sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0;
-            while (read < count) {
-                int at = queue[read++], x = at % width, y = at / width;
-                left = Math.min(left, x);
-                right = Math.max(right, x);
-                top = Math.min(top, y);
-                bottom = Math.max(bottom, y);
+            for (int i = 0; i < count; i++) {
+                int pixel = queue[i], y = pixel / width, x = pixel - y * width;
                 sx += x;
                 sy += y;
                 sxx += (double) x * x;
                 syy += (double) y * y;
                 sxy += (double) x * y;
-                for (int dy = -1; dy <= 1; dy++)
-                    for (int dx = -1; dx <= 1; dx++) {
-                        int xx = x + dx, yy = y + dy;
-                        if (xx < 0 || xx >= width || yy < 0 || yy >= height) continue;
-                        int next = yy * width + xx;
-                        if ((clean[next] & 255) < 150) {
-                            clean[next] = (byte) 255;
-                            queue[count++] = next;
-                        }
-                    }
             }
-            if (count < 16 || right - left < 8 || bottom - top < 6) continue;
             double cx = sx / count,
                     cy = sy / count,
                     vx = sxx / count - cx * cx,

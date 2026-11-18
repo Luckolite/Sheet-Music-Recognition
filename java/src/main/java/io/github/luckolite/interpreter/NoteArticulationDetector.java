@@ -4158,62 +4158,68 @@ final class NoteArticulationDetector {
 
     /** Recover detached dark bodies when photographed paper joined the raw component.
      * Original components and all later shape, notation and ownership proofs remain in force. */
+    /** Retains ordered glyph pixels only while their bounds can still fit a printed mark. */
+    private static final class BoundedPaperComponents {
+        private final long[] ink;
+        private final int width, height;
+        private final GlyphFloodScratch scratch;
+        private int word, left, right, top, bottom;
+
+        BoundedPaperComponents(byte[] paper, int width, int height, int cutoff, GlyphFloodScratch scratch) {
+            this.width = width;
+            this.height = height;
+            this.scratch = scratch;
+            ink = PackedGrayInk.classify(paper, 0, paper.length, cutoff);
+        }
+
+        int next(int minimum) {
+            while (word < ink.length) {
+                if (ink[word] == 0) {
+                    word++;
+                    continue;
+                }
+                int seed = (word << 6) + Long.numberOfTrailingZeros(ink[word]);
+                ink[word] &= ink[word] - 1;
+                scratch.queue[0] = seed;
+                left = right = seed % width;
+                top = bottom = seed / width;
+                int read = 0, size = 1;
+                while (read < size) {
+                    int at = scratch.queue[read++], y = at / width, x = at - y * width;
+                    left = Math.min(left, x);
+                    right = Math.max(right, x);
+                    top = Math.min(top, y);
+                    bottom = Math.max(bottom, y);
+                    size = appendGlyphNeighbors(ink, width, height, x, y, scratch, size);
+                    if (right - left > width * .025f || bottom - top > height * .018f) {
+                        discardComponent(ink, width, height, scratch, read, size);
+                        size = 0;
+                        break;
+                    }
+                }
+                if (size >= minimum) return size;
+            }
+            return 0;
+        }
+    }
+
     private static List<Glyph> paperGlyphs(
             byte[] gray, byte[] normalized, int width, int height,
             GlyphFloodScratch scratch) {
-        int[] queue = scratch.queue;
-        boolean[] seen = scratch.clearSeen(normalized.length);
+        var components = new BoundedPaperComponents(normalized, width, height, 200, scratch);
         List<Glyph> result = new ArrayList<>();
-        for (int seed = 0; seed < normalized.length; seed++) {
-            if (seen[seed] || (normalized[seed] & 255) >= 200) continue;
-            int read = 0, size = 1;
-            queue[0] = seed;
-            seen[seed] = true;
-            int left = seed % width, right = left, top = seed / width, bottom = top;
-            while (read < size) {
-                int at = queue[read++], x = at % width, y = at / width;
-                left = Math.min(left, x);
-                right = Math.max(right, x);
-                top = Math.min(top, y);
-                bottom = Math.max(bottom, y);
-                for (int dy = -1; dy <= 1; dy++)
-                    for (int dx = -1; dx <= 1; dx++) {
-                        int nx = x + dx, ny = y + dy;
-                        if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
-                        int next = ny * width + nx;
-                        if (!seen[next] && (normalized[next] & 255) < 200) {
-                            seen[next] = true;
-                            if (size == queue.length) queue = scratch.grow(size);
-                            queue[size++] = next;
-                        }
-                    }
-            }
-            if (size < 3 || right - left > width * .025f || bottom - top > height * .018f) continue;
-            Glyph glyph =
-                    new Glyph(left, top, right, bottom, size, java.util.Arrays.copyOf(queue, size));
-            // This additional path needs shaded paper and an original dark seed.
-            int padding = Math.max(3, Math.max(right - left + 1, bottom - top + 1) / 2);
-            int[] histogram = new int[256];
-            int samples = 0;
-            for (int y = Math.max(0, top - padding);
-                    y <= Math.min(height - 1, bottom + padding);
-                    y++)
-                for (int x = Math.max(0, left - padding);
-                        x <= Math.min(width - 1, right + padding);
-                        x++) {
-                    histogram[gray[y * width + x] & 255]++;
-                    samples++;
-                }
-            int total = 0, paper = 255;
-            for (int tone = 0; tone < 256; tone++)
-                if ((total += histogram[tone]) >= Math.ceil(samples * .75)) {
-                    paper = tone;
-                    break;
-                }
-            if (paper < 96 || paper >= 185) continue;
+        int size;
+        while ((size = components.next(3)) != 0) {
+            int[] queue = scratch.queue;
+            int left = components.left, right = components.right, top = components.top, bottom = components.bottom;
+            // Only originally dark ink can establish the additional shaded-paper proposal.
             int dark = 0;
-            for (int pixel : glyph.pixels) if ((gray[pixel] & 255) < 155) dark++;
+            for (int i = 0; i < size && dark < 3; i++)
+                if ((gray[queue[i]] & 255) < 155) dark++;
             if (dark < 3) continue;
+            int padding = Math.max(3, Math.max(right - left + 1, bottom - top + 1) / 2);
+            if (!accentPaperTone(gray, width, height, left, top, right, bottom, padding, 185)) continue;
+            Glyph glyph = new Glyph(left, top, right, bottom, size, Arrays.copyOf(queue, size));
             result.add(glyph);
         }
         return result;
@@ -6012,46 +6018,21 @@ final class NoteArticulationDetector {
             byte[] gray, byte[] paper, byte[] seedInk, int width, int height, float gap,
             GlyphFloodScratch scratch) {
         List<Glyph> accents = new ArrayList<>(), peaks = new ArrayList<>();
-        int[] queue = scratch.queue;
-        boolean[] seen = scratch.clearSeen(paper.length);
-        for (int seed = 0; seed < paper.length; seed++) {
-            if (seen[seed] || (paper[seed] & 255) >= 185) continue;
-            int take = 0,
-                    size = 1,
-                    left = seed % width,
-                    right = left,
-                    top = seed / width,
-                    bottom = top,
-                    dark = 0,
-                    softDark = 0;
-            queue[0] = seed;
-            seen[seed] = true;
-            while (take < size) {
-                int at = queue[take++], y = at / width, row = y * width, x = at - row;
+        var components = new BoundedPaperComponents(paper, width, height, 185, scratch);
+        int size;
+        while ((size = components.next(8)) != 0) {
+            int[] queue = scratch.queue;
+            int left = components.left, right = components.right, top = components.top, bottom = components.bottom;
+            int dark = 0, softDark = 0;
+            int required = Math.max(3, Math.round(size * .18f) - 1);
+            for (int i = 0; i < size && (dark < required || softDark < required); i++) {
+                int at = queue[i];
                 if ((seedInk[at] & 255) < 200) dark++;
                 if ((paper[at] & 255) < 155) softDark++;
-                left = Math.min(left, x);
-                right = Math.max(right, x);
-                top = Math.min(top, y);
-                bottom = Math.max(bottom, y);
-                int first = Math.max(row, at - 1), last = Math.min(row + width - 1, at + 1);
-                for (int ny = Math.max(0, y - 1), delta = (ny - y) * width;
-                        ny <= Math.min(height - 1, y + 1); ny++, delta += width) {
-                    for (int next = first + delta, limit = last + delta; next <= limit; next++) {
-                        if (!seen[next] && (paper[next] & 255) < 185) {
-                            seen[next] = true;
-                            if (size == queue.length) queue = scratch.grow(size);
-                            queue[size++] = next;
-                        }
-                    }
-                }
             }
-            if (size < 8
-                    || softDark < Math.max(3, Math.round(size * .18f) - 1)
-                    || right - left > width * .025f
-                    || bottom - top > height * .018f) continue;
+            if (softDark < required) continue;
             boolean accent = OpenChevron.matches(queue, width, left, top, right, bottom, size);
-            if (dark < Math.max(3, Math.round(size * .18f) - 1)
+            if (dark < required
                     && (!accent
                             || !connectedStrongSeedStroke(
                                     queue, size, width, left, top, right, bottom, seedInk, gap)))
@@ -6075,8 +6056,13 @@ final class NoteArticulationDetector {
 
     private static boolean accentPaperTone(
             byte[] gray, int width, int height, Glyph glyph, int pad, int upperTone) {
-        int left = Math.max(0, glyph.left - pad), right = Math.min(width - 1, glyph.right + pad);
-        int top = Math.max(0, glyph.top - pad), bottom = Math.min(height - 1, glyph.bottom + pad);
+        return accentPaperTone(gray, width, height, glyph.left, glyph.top, glyph.right, glyph.bottom, pad, upperTone);
+    }
+
+    private static boolean accentPaperTone(byte[] gray, int width, int height,
+            int bodyLeft, int bodyTop, int bodyRight, int bodyBottom, int pad, int upperTone) {
+        int left = Math.max(0, bodyLeft - pad), right = Math.min(width - 1, bodyRight + pad);
+        int top = Math.max(0, bodyTop - pad), bottom = Math.min(height - 1, bodyBottom + pad);
         int samples = (right - left + 1) * (bottom - top + 1);
         if (samples == 0) return false;
         int rank = samples - samples / 4;
