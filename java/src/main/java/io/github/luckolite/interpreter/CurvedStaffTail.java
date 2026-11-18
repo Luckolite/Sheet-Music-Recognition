@@ -32,7 +32,7 @@ final class CurvedStaffTail {
             for (int gs = -4; gs <= 6; gs++) {
                 float candidateGap = gap * (1 + gs * .025f);
                 for (int y = Math.round(reference - gap * .45f); y <= reference + gap * .45f; y++) {
-                    float score = rules(gray, width, height, sx, y, candidateGap);
+                    float score = rules(gray, width, height, sx, y, candidateGap, 0);
                     if (score < 5000) continue;
                     score -= Math.abs(y - reference) * 3 + Math.abs(candidateGap - gap) * 8;
                     if (score > best) {
@@ -70,7 +70,7 @@ final class CurvedStaffTail {
             best = -1;
             float next = tracked;
             for (int y = Math.round(tracked) - 3; y <= Math.round(tracked) + 3; y++) {
-                float score = rules(gray, width, height, x, y, spacing);
+                float score = rules(gray, width, height, x, y, spacing, 1);
                 if (score < 4000) continue;
                 score -= Math.abs(y - tracked) * 3;
                 if (score > best) {
@@ -95,7 +95,8 @@ final class CurvedStaffTail {
         return null;
     }
 
-    private static float rules(byte[] gray, int w, int h, int x, float bottom, float gap) {
+    private static float rules(
+            byte[] gray, int w, int h, int x, float bottom, float gap, int allowedMisses) {
         int count = 0, total = 0, flank = Math.max(2, Math.round(gap * .32f));
         for (int line = 0; line < 5; line++) {
             int row = Math.round(bottom - line * gap), best = 0;
@@ -116,6 +117,7 @@ final class CurvedStaffTail {
                 best = Math.max(best, contrast);
             }
             if (best >= 60) count++;
+            else if (--allowedMisses < 0) return 0;
             total += Math.min(200, best);
         }
         return count * 1000 + total;
@@ -125,29 +127,30 @@ final class CurvedStaffTail {
         int top = Math.round(bottom - 4 * gap), last = Math.round(bottom), hit = 0, spaces = 0;
         int radius = Math.max(1, Math.round(gap * .20f)), flank = radius + 3;
         if (top - gap < 0 || last + gap >= h || x < flank || x + flank >= w) return false;
-        for (int y = top; y <= last; y++) {
+        int rows = last - top + 1;
+        int remainingMisses = rows <= 4096 ? (rows + 9) / 10 : Integer.MAX_VALUE;
+        for (int y = top, at = top * w + x; y <= last; y++, at += w) {
             float phase = (bottom - y) / gap;
             if (Math.abs(phase - Math.round(phase)) < .22f) continue;
             spaces++;
-            int ink = 255;
-            for (int dx = -radius; dx <= radius; dx++)
-                ink = Math.min(ink, gray[y * w + x + dx] & 255);
-            if (ink < 170
-                    && (gray[y * w + x - flank] & 255) > ink + 16
-                    && (gray[y * w + x + flank] & 255) > ink + 16) hit++;
+            if (contrastedRuleInk(gray, at, radius, flank)) hit++;
+            else if (--remainingMisses < 0) return false;
         }
         if (spaces < 8 || hit < spaces * .9f) return false;
         int outside = 0, samples = 0;
-        for (int d = Math.max(3, Math.round(gap * .35f)); d <= gap; d++)
-            for (int y : new int[] {top - d, last + d}) {
-                samples++;
-                int ink = 255;
-                for (int dx = -radius; dx <= radius; dx++)
-                    ink = Math.min(ink, gray[y * w + x + dx] & 255);
-                if (ink < 170
-                        && (gray[y * w + x - flank] & 255) > ink + 16
-                        && (gray[y * w + x + flank] & 255) > ink + 16) outside++;
-            }
+        for (int d = Math.max(3, Math.round(gap * .35f)); d <= gap; d++) {
+            samples += 2;
+            if (contrastedRuleInk(gray, (top - d) * w + x, radius, flank)) outside++;
+            if (contrastedRuleInk(gray, (last + d) * w + x, radius, flank)) outside++;
+        }
         return outside <= samples * .15f;
+    }
+
+    private static boolean contrastedRuleInk(byte[] gray, int center, int radius, int flank) {
+        int ink = 255;
+        for (int at = center - radius, end = center + radius; at <= end; at++)
+            ink = Math.min(ink, gray[at] & 255);
+        return ink < 170 && (gray[center - flank] & 255) > ink + 16
+                && (gray[center + flank] & 255) > ink + 16;
     }
 }

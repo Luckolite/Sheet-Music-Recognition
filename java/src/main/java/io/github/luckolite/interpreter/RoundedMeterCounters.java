@@ -18,6 +18,7 @@ final class RoundedMeterCounters {
         int w = right - left + 1, h = last - first + 1;
         if (w < 5 || h < 10) return false;
         int stride = w + 2;
+        if (!MeterCounterFlood.canEnclosePaper(gray, width, left, first, w, h)) return false;
         byte[] paper = MeterCounterFlood.paperMask(gray, width, left, first, w, h);
         int[] queue = new int[w * h];
         int[] rows = new int[h], leftEdges = new int[h], rightEdges = new int[h];

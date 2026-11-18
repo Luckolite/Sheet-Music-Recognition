@@ -1183,6 +1183,18 @@ final class OmrMeasurePostProcessor {
         return columns;
     }
 
+    private static final byte[] EMPTY_LABELS = new byte[1024];
+
+    private static boolean emptyLabelRow(byte[] labels, int row, int width) {
+        for (int x = 0; x < width;) {
+            int span = Math.min(width - x, EMPTY_LABELS.length);
+            if (!Arrays.equals(labels, row + x, row + x + span, EMPTY_LABELS, 0, span))
+                return false;
+            x += span;
+        }
+        return true;
+    }
+
     static float estimateStaffSlope(byte[] labels, int width, int height) {
         // Sampling alternate rows biases thin rules toward horizontal. Keep every
         // row, and reuse only staff pixels while testing candidate angles.
@@ -1190,8 +1202,10 @@ final class OmrMeasurePostProcessor {
         boolean bounded = width > 0 && width <= (1 << 20) && height > 0 && height <= (1 << 20);
         boolean separated = bounded;
         boolean[] sampledColumns = separated ? new boolean[(width + 2) / 3] : null;
+        boolean checkEmptyRows = bounded && width >= 64 && (long) width * height <= labels.length;
         long flatScore = 0;
         for (int y = 0, row = 0; y < height; y++, row += width) {
+            if (checkEmptyRows && emptyLabelRow(labels, row, width)) continue;
             int rowCount = 0;
             for (int x = 0, column = 0; x < width; x += 3, column++) {
                 if (labels[row + x] != STAFF) continue;
@@ -1211,12 +1225,14 @@ final class OmrMeasurePostProcessor {
         if (separated && (long) count * activeColumns <= flatScore * 1.05) return 0f;
         int[] xs = new int[count], ys = new int[count];
         int index = 0;
-        for (int y = 0; y < height; y++)
+        for (int y = 0, row = 0; y < height; y++, row += width) {
+            if (checkEmptyRows && emptyLabelRow(labels, row, width)) continue;
             for (int x = 0; x < width; x += 3)
-                if (labels[y * width + x] == STAFF) {
+                if (labels[row + x] == STAFF) {
                     xs[index] = x;
                     ys[index++] = y;
                 }
+        }
         float bestSlope = 0f;
         float centerX = width / 2f;
         int[] projection = new int[height];
@@ -2161,35 +2177,40 @@ final class OmrMeasurePostProcessor {
         int separation = Math.max(2, Math.round(gap * .35f)),
                 radius = Math.max(1, Math.round(gap * .08f));
         int search = Math.max(1, Math.round(gap * 1.3f)), best = 0;
+        int left = Math.max(0, centerX - reach), right = Math.min(width - 1, centerX + reach);
+        int leftEnd = Math.min(right, centerX - skip), rightStart = Math.max(left, centerX + skip);
+        int samples = Math.max(0, leftEnd - left + 1) + Math.max(0, right - rightStart + 1);
+        if (samples == 0) return 0;
+        int required = (int) ((11L * samples + 19) / 20);
+        int[] centers = new int[5];
+        int minimumRow = height, maximumRow = -1;
+        for (int line = 0; line < centers.length; line++) {
+            centers[line] = Math.round(rows[line] + shift);
+            minimumRow = Math.min(minimumRow, centers[line]);
+            maximumRow = Math.max(maximumRow, centers[line]);
+        }
+        int cacheStart = Math.max(0, minimumRow - search);
+        int cacheEnd = Math.min(height - 1, maximumRow + search);
+        int cacheLength = cacheEnd - cacheStart + 1;
+        int[] rowCounts = cacheLength > 0 && cacheLength <= 1024 ? new int[cacheLength] : null;
+        int separationPixels = separation * width;
         double bestScore = -1;
         for (int delta = -search; delta <= search; delta++) {
             double minimum = 1, total = 0;
             for (int line = 0; line < 5; line++) {
-                int y = Math.round(rows[line] + shift) + delta, ink = 0, samples = 0;
+                int y = centers[line] + delta;
                 if (y - separation - radius < 0 || y + separation + radius >= height) {
                     minimum = 0;
                     break;
                 }
-                for (int x = Math.max(0, centerX - reach);
-                        x <= Math.min(width - 1, centerX + reach);
-                        x++) {
-                    if (Math.abs(x - centerX) < skip) continue;
-                    samples++;
-                    boolean found = false;
-                    for (int dy = -radius; dy <= radius; dy++) {
-                        int at = y + dy;
-                        int paper =
-                                ((gray[(at - separation) * width + x] & 255)
-                                                + (gray[(at + separation) * width + x] & 255))
-                                        / 2;
-                        if (paper - (gray[at * width + x] & 255) >= 20) {
-                            found = true;
-                            break;
-                        }
-                    }
-                    if (found) ink++;
+                int ink = rowCounts == null ? -1 : rowCounts[y - cacheStart] - 1;
+                if (ink < 0) {
+                    ink = printedRuleCoverage(gray, width, (y - radius) * width,
+                            (y + radius) * width, separationPixels, left, leftEnd,
+                            rightStart, right, samples - required);
+                    if (rowCounts != null) rowCounts[y - cacheStart] = ink + 1;
                 }
-                double coverage = samples == 0 ? 0 : ink / (double) samples;
+                double coverage = ink / (double) samples;
                 minimum = Math.min(minimum, coverage);
                 // A later line cannot raise the minimum coverage of this candidate.
                 if (minimum < .55) break;
@@ -2203,6 +2224,29 @@ final class OmrMeasurePostProcessor {
             }
         }
         return best;
+    }
+
+    private static int printedRuleCoverage(
+            byte[] gray, int width, int firstRow, int lastRow, int separation,
+            int left, int leftEnd, int rightStart, int right, int misses) {
+        int ink = 0;
+        for (int x = left <= leftEnd ? left : rightStart; x <= right; x++) {
+            if (x == leftEnd + 1 && x < rightStart) x = rightStart;
+            if (x > right) break;
+            boolean found = false;
+            for (int at = firstRow + x, end = lastRow + x; at <= end; at += width) {
+                int value = gray[at] & 255;
+                if (value <= 235
+                        && (gray[at - separation] & 255) + (gray[at + separation] & 255)
+                                >= (value + 20) * 2) {
+                    found = true;
+                    break;
+                }
+            }
+            if (found) ink++;
+            else if (--misses < 0) return 0;
+        }
+        return ink;
     }
 
     /** A note stem can be tall in the semantic mask, but unlike a barline it does not form a
@@ -2626,6 +2670,7 @@ final class OmrMeasurePostProcessor {
         int w = right - left + 1, h = last - first + 1;
         if (w < 5 || h < 10) return List.of();
         int stride = w + 2;
+        if (!MeterCounterFlood.canEnclosePaper(gray, width, left, first, w, h)) return List.of();
         byte[] paper = MeterCounterFlood.paperMask(gray, width, left, first, w, h);
         int[] queue = new int[w * h];
         int[] rows = new int[h];

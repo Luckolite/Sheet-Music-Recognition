@@ -347,6 +347,9 @@ final class StaffPitchTrack {
         if (last <= first) return null;
         List<float[]> samples = new ArrayList<>();
         byte[] local = new byte[stripWidth * (last - first)];
+        int[] symbolStrength = subtle ? new int[last - first] : null;
+        int contrastFlank = Math.max(2, Math.round(gap * .32f));
+        byte[] contrasted = null;
         // Sample between the broad windows too: beams can obscure one rule
         // across several windows while clear intervening ink still proves a curve.
         for (int strip = 0; strip < 13; strip++) {
@@ -365,31 +368,35 @@ final class StaffPitchTrack {
             // threshold. Project only locally contrasted strokes in that case;
             // still validate every proposed rule against the original pixels.
             byte[] projection = local;
-            if (subtle
-                    || needsContrast(
+            if (subtle) {
+                int flankOffset = contrastFlank * stripWidth;
+                for (int y = contrastFlank, row = flankOffset; y < symbolStrength.length - contrastFlank;
+                        y++, row += stripWidth) {
+                    int count = 0;
+                    for (int at = row, end = row + stripWidth; at < end; at++)
+                        if (isContrastedStaffPixel(local, at, flankOffset, 225)) count++;
+                    symbolStrength[y] = count;
+                }
+            } else if (needsContrast(
                             local,
                             stripWidth,
                             last - first,
                             stripWidth * .5f,
                             bottom - first,
                             gap)) {
-                projection = new byte[local.length];
+                if (contrasted == null) contrasted = new byte[local.length];
+                projection = contrasted;
                 Arrays.fill(projection, (byte) 255);
-                int flank = Math.max(2, Math.round(gap * .32f));
+                int flank = contrastFlank;
                 for (int y = flank; y < last - first - flank; y++)
                     for (int x = 0; x < stripWidth; x++) {
                         int at = y * stripWidth + x, ink = local[at] & 255;
-                        if (ink <= (subtle ? 225 : 170)
+                        if (ink <= 170
                                 && (local[at - flank * stripWidth] & 255) >= ink + 12
                                 && (local[at + flank * stripWidth] & 255) >= ink + 12)
-                            projection[at] = subtle ? 0 : local[at];
+                            projection[at] = local[at];
                     }
             }
-            int[] symbolStrength = subtle ? new int[last - first] : null;
-            if (subtle)
-                for (int y = 0; y < symbolStrength.length; y++)
-                    for (int x = 0; x < stripWidth; x++)
-                        if ((projection[y * stripWidth + x] & 255) < 170) symbolStrength[y]++;
             var candidates =
                     subtle
                             ? RawStaffLineDetector.detectFromStrength(
@@ -1385,6 +1392,7 @@ final class StaffPitchTrack {
         int covered = 0;
         int flankOffset = flank * width, lastFlankRow = height - 1 - flank;
         int thick = Math.max(2, Math.round(gap * .25f));
+        boolean horizontal = slope == 0f && Float.isFinite(x);
         for (int side = 0; side < 2; side++) {
             int first = Math.max(0, side == 0 ? left : headRight + exclusion + 1);
             int last = Math.min(width - 1, side == 0 ? headLeft - exclusion - 1 : right);
@@ -1395,6 +1403,10 @@ final class StaffPitchTrack {
             for (int line = 0; line < 5; line++) {
                 int inkColumns = 0, labelColumns = 0;
                 float lineCenter = base - line * gap;
+                int fixedCenter = Math.round(lineCenter);
+                int fixedRow = fixedCenter * width;
+                boolean probeCenter = horizontal && band >= 0
+                        && fixedCenter >= flank && fixedCenter <= lastFlankRow;
                 for (int xx = first; xx <= last; xx++) {
                     int remaining = last - xx + 1;
                     if (labelColumns + remaining < requiredLabels
@@ -1402,19 +1414,21 @@ final class StaffPitchTrack {
                                     && inkColumns + remaining < requiredInk)) return false;
                     // Once a quorum is met, only the remaining kind of evidence matters.
                     boolean ink = inkColumns >= requiredInk, label = labelColumns >= requiredLabels;
-                    int center = Math.round(lineCenter + (xx - x) * slope);
+                    int center = horizontal ? fixedCenter : Math.round(lineCenter + (xx - x) * slope);
                     int start = Math.max(flank, center - band);
                     int end = Math.min(lastFlankRow, center + band);
-                    for (int yy = start, pixel = start * width + xx;
-                            yy <= end; yy++, pixel += width) {
-                        if (!ink) {
-                            int value = gray[pixel] & 255;
-                            ink = value <= inkThreshold
-                                    && (gray[pixel - flankOffset] & 255) >= value + 12
-                                    && (gray[pixel + flankOffset] & 255) >= value + 12;
+                    if (probeCenter) {
+                        int pixel = fixedRow + xx;
+                        if (!ink) ink = isContrastedStaffPixel(gray, pixel, flankOffset, inkThreshold);
+                        if (!label) label = labels[pixel] == 4;
+                    }
+                    if (!ink || !label) {
+                        for (int yy = start, pixel = start * width + xx;
+                                yy <= end; yy++, pixel += width) {
+                            if (!ink) ink = isContrastedStaffPixel(gray, pixel, flankOffset, inkThreshold);
+                            if (!label && labels[pixel] == 4) label = true;
+                            if (ink && label) break;
                         }
-                        if (!label && labels[pixel] == 4) label = true;
-                        if (ink && label) break;
                     }
                     if (ink) inkColumns++;
                     if (label) labelColumns++;
@@ -1443,6 +1457,12 @@ final class StaffPitchTrack {
             }
         }
         return true;
+    }
+
+    private static boolean isContrastedStaffPixel(byte[] gray, int pixel, int flank, int threshold) {
+        int value = gray[pixel] & 255;
+        return value <= threshold && (gray[pixel - flank] & 255) >= value + 12
+                && (gray[pixel + flank] & 255) >= value + 12;
     }
 
     private static float median(List<Float> values) {

@@ -571,6 +571,11 @@ final class MaximalRawBarExtractor {
         // be omitted from the logical work total.
         long work = 0;
         if (cells > workBudget / 2) return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), 0);
+        var membership =
+                joined && staffPixels.size() <= cells
+                        ? new RawStaffBarPartition.LaneStaffPixels(
+                                staffPixels, width, lane.left, spanTop, laneWidth, spanHeight)
+                        : null;
         // Runs are separated by at least one light row. The scratch reserve bounds the
         // span to less than 65536 rows, so endpoints can store offsets from spanTop.
         int runCapacity = (spanHeight + 1) / 2;
@@ -595,7 +600,8 @@ final class MaximalRawBarExtractor {
                     return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), work);
                 work++;
                 boolean rawInk = (gray[pixel] & 255) < DARK_LIMIT;
-                boolean staffInk = rawInk && staffPixels != null && staffPixels.contains(pixel);
+                boolean staffInk = rawInk && staffPixels != null
+                        && (membership == null ? staffPixels.contains(pixel) : membership.contains(y, x));
                 if (rawInk && (joined || !staffInk)) {
                     if (!inRun) {
                         if (work >= workBudget)
@@ -655,7 +661,7 @@ final class MaximalRawBarExtractor {
         int maxSectionWidth = joined ? 2 * maxWidth : maxWidth;
         int[] firstSplit = joined ? new int[laneWidth] : null;
         long[] remaining = joined ? new long[1] : null;
-        var partitionScratch = joined ? new RawStaffBarPartition.Scratch() : null;
+        var partitionScratch = joined ? new RawStaffBarPartition.Scratch(membership) : null;
         ProjectedCaps projectedCaps = null;
         // Enumerate all raw intercepts over the entire lane for every already-supported slope.
         for (int tick = -13; tick <= 13; tick++) {

@@ -71,6 +71,7 @@ final class RawStaffBarPartition {
             int fromColumn, int endColumn, Scratch workspace) {
         boolean any = false;
         boolean[] columnContact = workspace.columnContact;
+        LaneStaffPixels membership = workspace.membership;
         // Distinct finite strokes must never constrain one another's width through
         // an intervening staff-only column. Such a column is UNKNOWN as bar ink.
         for (int i = fromColumn; i < endColumn; i++)
@@ -84,7 +85,7 @@ final class RawStaffBarPartition {
                 int x = firstX + i;
                 for (int y = top[i], pixel = y * pageWidth + x;
                         y <= bottom[i]; y++, pixel += pageWidth) {
-                    if (staff.contains(pixel)) contact = true;
+                    if (membership == null ? staff.contains(pixel) : membership.contains(y, x)) contact = true;
                     else exposed = true;
                     if (exposed && contact) break;
                 }
@@ -118,7 +119,7 @@ final class RawStaffBarPartition {
                     workspace.segment = scratch = new SegmentScratch(len, reason != null);
                 scratch.reset();
                 ok = applyOne(scratch, widths, top, bottom, len, from, columnContact,
-                        firstX + from, pageWidth, gap, cap, staff, budget);
+                        firstX + from, pageWidth, gap, cap, staff, membership, budget);
                 if (ok && scratch.coowned && excludeStaffMembers != null)
                     Arrays.fill(excludeStaffMembers, from, to, true);
             }
@@ -157,8 +158,38 @@ final class RawStaffBarPartition {
 
     /** One discovery owns this storage for all of its joined intercepts. */
     static final class Scratch {
+        private final LaneStaffPixels membership;
         private boolean[] columnContact;
         private SegmentScratch segment;
+
+        Scratch() {
+            this(null);
+        }
+
+        Scratch(LaneStaffPixels membership) {
+            this.membership = membership;
+        }
+    }
+
+    static final class LaneStaffPixels {
+        private final byte[] pixels;
+        private final int left, top, width;
+
+        LaneStaffPixels(Set<Integer> staff, int pageWidth, int left, int top, int width, int height) {
+            this.left = left;
+            this.top = top;
+            this.width = width;
+            pixels = new byte[width * height];
+            for (Integer pixel : staff) {
+                if (pixel == null || pixel < 0) continue;
+                int x = pixel % pageWidth - left, y = pixel / pageWidth - top;
+                if (x >= 0 && x < width && y >= 0 && y < height) pixels[y * width + x] = 1;
+            }
+        }
+
+        boolean contains(int y, int x) {
+            return pixels[(y - top) * width + x - left] != 0;
+        }
     }
 
     private static final class SegmentScratch {
@@ -186,7 +217,7 @@ final class RawStaffBarPartition {
             SegmentScratch scratch, int[] inputWidths, int[] inputTop, int[] inputBottom,
             int n, int from, boolean[] columnContact,
             int firstX, int pageWidth, int gap, int cap,
-            Set<Integer> staff, long[] budget) {
+            Set<Integer> staff, LaneStaffPixels membership, long[] budget) {
         int[] widths = scratch.widths;
         StringBuilder reason = scratch.reason;
         int min = Math.max(3, (int) Math.ceil(.2 * gap));
@@ -223,7 +254,7 @@ final class RawStaffBarPartition {
                 bodyBottom = -1;
                 int x = firstX + i;
                 for (int y = a, pixel = y * pageWidth + x; y <= b; y++, pixel += pageWidth) {
-                    if (staff.contains(pixel)) {
+                    if (membership == null ? staff.contains(pixel) : membership.contains(y, x)) {
                         if (y < firstStaff) firstStaff = y;
                         lastStaff = y;
                     } else {
