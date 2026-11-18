@@ -155,10 +155,20 @@ public class TupletRuleEdgesTest {
     }
 
     @Test
+    public void fullyRemovedStaffRuleNeedsOnlyOneNumeralSearch() {
+        var gray = image(false, 100);
+        box(gray, 60, 115, 195, 115, 100);
+        var normal = TupletNumeralInk.window(gray, W, H, 100, 150, 96, 96, 12, 165);
+        assertFalse(normal.hasRuleEdges());
+        assertArrayEquals(normal.pixels(), window(gray).pixels());
+    }
+
+    @Test
     public void legacyMaskRemainsSeparateFromTheAdditiveRetry() {
         var g = image(false, 100);
         rule(g, 165, 100);
         var old = TupletNumeralInk.window(g, W, H, 100, 150, 96, 96, 12, 165);
+        assertTrue(old.hasRuleEdges());
         assertEquals(255, at(old, 123, 165));
         assertEquals(0, at(window(g), 123, 165));
     }

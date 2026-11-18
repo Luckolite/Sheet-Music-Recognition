@@ -8,6 +8,34 @@ import static org.junit.Assert.*;
 
 /** Original staff endings with a note inside the percentile-trimmed margin. */
 public class PrintedStaffEndTest {
+    @Test
+    public void railEvidenceMatchesFullEvidenceAcrossClippedSlopingStaffs() {
+        int width = 160, height = 70;
+        byte[] gray = new byte[width * height];
+        Random random = new Random(789612);
+        for (int top : new int[] {-13, 9, 40}) {
+            for (int painted : new int[] {3, 4, 5}) {
+                Arrays.fill(gray, (byte) 224);
+                PrintedStaffAdmission.Rules rules = (line, x) -> top + line * 7 + x * .08f;
+                for (int x = 0; x < width; x++)
+                    for (int line = 0; line < painted; line++) {
+                        int y = Math.round(rules.y(line, x));
+                        if (y >= 0 && y < height && random.nextInt(9) != 0)
+                            gray[y * width + x] = 24;
+                    }
+                for (int start : new int[] {-9, 18, 90, 172}) {
+                    int end = start + 80;
+                    var full = PrintedStaffAdmission.evidence(gray, width, height, start, end, 7, rules);
+                    var rails = PrintedStaffAdmission.railEvidence(gray, width, height, start, end, 7, rules);
+                    assertEquals(full.columns(), rails.columns());
+                    assertEquals(full.alignedColumns(), rails.alignedColumns());
+                    assertEquals(full.longestRun(), rails.longestRun());
+                    assertEquals(full.minimumRun(), rails.minimumRun());
+                }
+            }
+        }
+    }
+
     private void check(float slope, boolean faded, boolean stray) {
         int w = 2048, h = 320, top = 110, gap = 14, end = 1900;
         byte[] gray = new byte[w * h], labels = new byte[w * h];

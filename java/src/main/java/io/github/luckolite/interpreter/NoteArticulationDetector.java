@@ -1758,11 +1758,12 @@ final class NoteArticulationDetector {
         float paperGap = raw ? medianArticulationGap(notes) : Float.NaN;
         RestPaperTone.Estimate paperEstimate =
                 RestPaperTone.estimate(raw ? gray : null, width, height, paperGap);
-        byte[] strongPaper = paperEstimate == null ? gray : paperEstimate.normalize(340f);
+        RestPaperTone.PaperPlanes planes = paperEstimate == null ? null : paperEstimate.articulationPlanes();
+        byte[] strongPaper = planes == null ? gray : planes.strong();
         SoftMarks softMarks =
-                paperEstimate == null
+                planes == null
                         ? new SoftMarks(List.of(), List.of())
-                        : softShadedDirectionBodies(gray, paperEstimate.normalize(220f), strongPaper,
+                        : softShadedDirectionBodies(gray, planes.soft(), strongPaper,
                                 width, height, paperGap, seen, scratch);
         if (strongPaper != gray)
             faintAccents.addAll(shadedAccentGlyphs(gray, strongPaper, width, height, seen, scratch));

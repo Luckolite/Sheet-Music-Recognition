@@ -111,11 +111,23 @@ final class TupletNumeralInk {
         int ww = right - left + 1, hh = bottom - top + 1;
         if (ww < 3 || hh < 3) return null;
         int[] histogram = new int[256];
-        for (int y = top; y <= bottom; y++) {
-            int offset = y * w;
-            for (int x = left; x <= right; x++) histogram[gray[offset + x] & 255]++;
+        for (int y = 0; y < hh;) {
+            int offset = (top + y) * w + left;
+            int repeat = matchingRows(gray, offset, ww, w, hh - y);
+            for (int x = offset; x < offset + ww; x++) histogram[gray[x] & 255] += repeat;
+            y += repeat;
         }
         return new Crop(gray, w, left, top, ww, hh, percentile(histogram, ww * hh, .85f) - 22, gap, histogram);
+    }
+
+    private static int matchingRows(byte[] gray, int offset, int width, int stride, int remaining) {
+        int count = 1;
+        while (count < remaining) {
+            int next = offset + count * stride;
+            if (!java.util.Arrays.equals(gray, offset, offset + width, gray, next, next + width)) break;
+            count++;
+        }
+        return count;
     }
 
     record Crop(byte[] gray, int sourceWidth, int left, int top, int width, int height,
@@ -145,20 +157,27 @@ final class TupletNumeralInk {
         int[] occupancy = new int[hh];
         int firstLevelRow = hh - 1;
         boolean anyInk = false, possibleEdges = false;
-        for (int y = 0, source = top * w + left, target = 0;
-                y < hh; y++, source += w, target += ww) {
+        for (int y = 0; y < hh;) {
+            int source = (top + y) * w + left, target = y * ww;
+            int repeat = matchingRows(gray, source, ww, w, hh - y);
             int inkCount = 0;
             for (int x = 0; x < ww; x++) {
                 boolean ink = (gray[source + x] & 255) <= threshold;
                 pixels[target + x] = ink ? 0 : (byte) 255;
                 if (ink) inkCount++;
             }
-            occupancy[y] = inkCount;
+            for (int filled = 1; filled < repeat;) {
+                int copy = Math.min(filled, repeat - filled);
+                System.arraycopy(pixels, target, pixels, target + filled * ww, copy * ww);
+                filled += copy;
+            }
+            java.util.Arrays.fill(occupancy, y, y + repeat, inkCount);
             anyInk |= inkCount != 0;
-            if (y > 0 && firstLevelRow == hh - 1 && inkCount >= minimum)
-                firstLevelRow = y;
-            if (y >= firstEdgeRow && y < endEdgeRow && inkCount >= edgeMinimum)
+            if (y + repeat > 1 && firstLevelRow == hh - 1 && inkCount >= minimum)
+                firstLevelRow = Math.max(1, y);
+            if (y + repeat > firstEdgeRow && Math.max(y, firstEdgeRow) < endEdgeRow && inkCount >= edgeMinimum)
                 possibleEdges = true;
+            y += repeat;
         }
         if (!anyInk) return new Window(pixels, ww, hh, left, top, possibleEdges);
         byte[] original = ruleEdges && possibleEdges ? pixels.clone() : null;
@@ -179,10 +198,15 @@ final class TupletNumeralInk {
                         crossing |= 1;
                     if (crossing == 0)
                         for (int at = above + ww + x; at < below; at += ww) pixels[at] = (byte) 255;
-            }
+                }
             }
             y = end;
         }
+        // Both passes erase level rules using the same original mask. Only an edge
+        // erasure still visible after that step could change the sloped-rule input.
+        if (!ruleEdges && possibleEdges)
+            possibleEdges = levelRuleEdges(pixels, original == null ? pixels : original,
+                    ww, hh, maxEdgeStroke, occupancy, true);
         removeSlopedRulesWithThickness(pixels, ww, hh, maxEdgeStroke);
         return new Window(pixels, ww, hh, left, top, possibleEdges);
     }
@@ -193,11 +217,17 @@ final class TupletNumeralInk {
 
     private static void removeLevelRuleEdges(
             byte[] pixels, byte[] original, int w, int h, int max, int[] occupancy) {
+        levelRuleEdges(pixels, original, w, h, max, occupancy, false);
+    }
+
+    private static boolean levelRuleEdges(byte[] pixels, byte[] original, int w, int h,
+            int max, int[] occupancy, boolean checkOnly) {
         int first = max + 2, end = h - max - 2;
-        if (first >= end || w <= 2) return;
+        if (first >= end || w <= 2) return false;
         float minimumInk = w * .90f;
         int nonThinLimit = w - (int) Math.ceil(w * .82f);
         int[] firstPixels = new int[w], lastPixels = new int[w];
+        boolean changed = false;
         candidate: for (int cy = first; cy < end; cy++) {
             if (occupancy[cy] < minimumInk) continue;
             int nonThin = w - occupancy[cy], row = cy * w;
@@ -223,10 +253,16 @@ final class TupletNumeralInk {
                 boolean continuation = false;
                 for (int dx = -1; dx <= 1 && !continuation; dx++)
                     continuation = original[above + dx] == 0 || original[below + dx] == 0;
-                if (!continuation)
-                    for (int at = start; at <= stop; at += w) pixels[at] = (byte) 255;
+                if (continuation) continue;
+                for (int at = start; at <= stop; at += w) {
+                    if (pixels[at] != 0) continue;
+                    if (checkOnly) return true;
+                    pixels[at] = (byte) 255;
+                    changed = true;
+                }
             }
         }
+        return changed;
     }
 
     private static void removeSlopedRules(byte[] pixels, int w, int h, float gap) {

@@ -562,6 +562,13 @@ final class MaximalRawBarExtractor {
             if (lastEnd >= 0) transitions[lastEnd * words + word] ^= bit;
         }
 
+        void toggle(int column, int start, int end) {
+            long bit = 1L << column;
+            int word = column >>> 6;
+            transitions[start * words + word] ^= bit;
+            transitions[end * words + word] ^= bit;
+        }
+
         int collect(int row) {
             int count = 0;
             int base = row * words;
@@ -577,6 +584,247 @@ final class MaximalRawBarExtractor {
     private static boolean equalRuns(char[] runs, int left, int right, int count) {
         for (int i = 0; i < count; i++) if (runs[left + i] != runs[right + i]) return false;
         return true;
+    }
+
+    /** Ordered intervals of center rows yielding identical section geometry and work.
+     * Stable rounded slopes translate each interval intact into the intercept sweep. */
+    private static final class SectionPlan {
+        final int spanTop, firstCenter, centerCount;
+        final int[] profile, cursor;
+        final long[] charges;
+        private long work;
+        private int size;
+        private char[] rows, tops, widths;
+        private int[] costs;
+
+        private SectionPlan(ColumnSections sections, int intercepts, int groups) {
+            spanTop = sections.spanTop;
+            firstCenter = spanTop + sections.radius;
+            centerCount = sections.spanBottom - spanTop + 1 - 2 * sections.radius;
+            profile = new int[sections.runCounts.length];
+            cursor = new int[profile.length];
+            charges = new long[intercepts + 1];
+            int capacity = Math.max(16, groups * 8);
+            rows = new char[capacity];
+            tops = new char[capacity];
+            widths = new char[capacity];
+            costs = new int[capacity];
+        }
+
+        static SectionPlan prepare(ColumnSections sections, boolean[] sameAsLeft, int[] active,
+                int count, int intercepts, long availableWork) {
+            int groups = 0;
+            for (int i = 0; i < count; i++) if (!sameAsLeft[active[i]]) groups++;
+            int centers = sections.spanBottom - sections.spanTop + 1 - 2 * sections.radius;
+            // Amortize construction over repeated columns; bound speculative work on tight budgets.
+            long allowance = availableWork / 8;
+            if (groups == 0 || groups * 3 > count || centers <= 0 || allowance < (long) groups * centers)
+                return null;
+            var plan = new SectionPlan(sections, intercepts, groups);
+            for (int i = 0; i < count; i++) {
+                int col = active[i];
+                if (sameAsLeft[col]) {
+                    plan.profile[col] = plan.profile[col - 1];
+                    continue;
+                }
+                plan.profile[col] = plan.size;
+                sections.firstRun[col] = sections.runTops[col * sections.runCapacity] << 16;
+                for (int row = 0; row < centers; row++) {
+                    if (allowance == 0) return null;
+                    long cost = sections.select(col, plan.firstCenter + row, --allowance);
+                    if (cost < 0) return null;
+                    allowance -= cost;
+                    int top = sections.width == 0 ? 0 : sections.top - sections.spanTop;
+                    if (row == 0 || plan.costs[plan.size - 1] != cost
+                            || plan.widths[plan.size - 1] != sections.width || plan.tops[plan.size - 1] != top)
+                        plan.add(row, (int) cost, top, sections.width);
+                }
+                plan.add(centers, 0, 0, 0);
+            }
+            return plan;
+        }
+
+        private void add(int row, int cost, int top, int width) {
+            if (size == rows.length) {
+                rows = java.util.Arrays.copyOf(rows, size * 2);
+                tops = java.util.Arrays.copyOf(tops, size * 2);
+                widths = java.util.Arrays.copyOf(widths, size * 2);
+                costs = java.util.Arrays.copyOf(costs, size * 2);
+            }
+            rows[size] = (char) row;
+            tops[size] = (char) top;
+            widths[size] = (char) width;
+            costs[size++] = cost;
+        }
+
+        void reset() {
+            java.util.Arrays.fill(charges, 0);
+            java.util.Arrays.fill(cursor, -1);
+            work = 0;
+        }
+
+        void schedule(int column, int copies, int shift, int laneLeft,
+                RawStaffBarPartition.LaneStaffPixels staff, InterceptColumns sweep) {
+            int base = profile[column];
+            cursor[column] = base;
+            for (int i = base; rows[i] < centerCount; i++) {
+                int start = Math.max(0, rows[i] + shift);
+                int end = Math.min(charges.length - 1, rows[i + 1] + shift);
+                if (start >= charges.length - 1) break;
+                if (start >= end) continue;
+                long cost = costs[i];
+                if (widths[i] == 1 && staff != null && staff.contains(spanTop + tops[i], laneLeft + column))
+                    cost++;
+                else if (widths[i] > 0)
+                    sweep.toggle(column, start, end);
+                // Each repeat and each intercept still consumes its original logical work.
+                charges[start] += cost * copies;
+                charges[end] -= cost * copies;
+            }
+        }
+
+        long advance(int intercept) {
+            work += charges[intercept];
+            return work;
+        }
+
+        void read(int column, int y, ColumnSections sections) {
+            int row = y - firstCenter, i = cursor[column];
+            while (rows[i + 1] <= row) i++;
+            cursor[column] = i;
+            sections.width = widths[i];
+            sections.top = spanTop + tops[i];
+            sections.bottom = sections.top + sections.width - 1;
+        }
+    }
+
+    private static final class ColumnSections {
+        private final int spanTop, spanBottom, radius, maxWidth, maxSectionWidth, runCapacity;
+        private final int[] runCounts, firstRun, staffSplitCounts, firstSplit;
+        private final char[] runTops, runBottoms, staffSplitRuns;
+        private int width, top, bottom;
+
+        ColumnSections(int laneWidth, int spanTop, int spanBottom, int radius, int maxWidth, boolean joined) {
+            this.spanTop = spanTop;
+            this.spanBottom = spanBottom;
+            this.radius = radius;
+            this.maxWidth = maxWidth;
+            maxSectionWidth = joined ? 2 * maxWidth : maxWidth;
+            runCapacity = (spanBottom - spanTop + 2) / 2;
+            int slots = laneWidth * runCapacity;
+            runTops = new char[slots];
+            runBottoms = new char[slots];
+            runCounts = new int[laneWidth];
+            firstRun = new int[laneWidth];
+            staffSplitRuns = joined ? new char[2 * slots] : null;
+            staffSplitCounts = joined ? new int[laneWidth] : null;
+            firstSplit = joined ? new int[laneWidth] : null;
+        }
+
+        void reset(int[] active, int count) {
+            for (int i = 0; i < count; i++) {
+                int col = active[i];
+                firstRun[col] = runTops[col * runCapacity] << 16;
+            }
+            if (firstSplit != null) java.util.Arrays.fill(firstSplit, 0);
+        }
+
+        long select(int at, int y, long workBudget) {
+            width = 0;
+            int runCount = runCounts[at];
+            if (y + radius > spanBottom) return 0;
+            if (y - radius < spanTop) return 0;
+            // A centered raw cross-section is one contiguous body, not a sum of nearby ink.
+            int runBase = at * runCapacity;
+            // Rounded rows are nondecreasing as the intercept advances.
+            int cursor = firstRun[at], lo = cursor & 0xffff;
+            int firstRow = y - radius, lastRow = y + radius;
+            int firstOffset = firstRow - spanTop, lastOffset = lastRow - spanTop;
+            int nextTop = cursor >>> 16;
+            if (nextTop < firstOffset) {
+                do {
+                    lo++;
+                } while (lo < runCount && runTops[runBase + lo] < firstOffset);
+                // Later intercepts cannot bring a finished column back into range.
+                if (lo == runCount) return 0;
+                nextTop = runTops[runBase + lo];
+                firstRun[at] = (nextTop << 16) | lo;
+            }
+            if (nextTop > lastOffset) return 0;
+            long work = 0;
+            int best = 0, bestTop = -1, bestBottom = -1, bestDistance = Integer.MAX_VALUE;
+            boolean tie = false;
+            for (int k = lo; k < runCount && runTops[runBase + k] <= lastOffset; k++) {
+                int t = spanTop + runTops[runBase + k], b = spanTop + runBottoms[runBase + k];
+                int charge = b <= lastRow ? 2 : 1;
+                if (charge > workBudget - work)
+                    return -1;
+                work += charge;
+                // Never accept a clipped slice of a neighboring raw stroke. A candidate
+                // axis must contain a complete vertical cross-section at each x. When an
+                // independently witnessed staff core joins several bars into one raw run,
+                // use only complete nonstaff sub-runs inside this same axis window.
+                int top = t, bottom = b;
+                if (b > lastRow) {
+                    if (staffSplitRuns == null) continue;
+                    int selectedTop = -1,
+                            selectedBottom = -1,
+                            selectedDistance = Integer.MAX_VALUE;
+                    boolean splitTie = false;
+                    int splitBase = 2 * runBase;
+                    int splitEnd = staffSplitCounts[at];
+                    int splitWork = splitEnd / 2;
+                    if (splitWork > workBudget - work)
+                        return -1;
+                    work += splitWork;
+                    int segment = firstSplit[at];
+                    while (segment < splitEnd && staffSplitRuns[splitBase + segment] < firstOffset) segment += 2;
+                    firstSplit[at] = segment;
+                    for (; segment < splitEnd; segment += 2) {
+                        int st = spanTop + staffSplitRuns[splitBase + segment];
+                        int sb = spanTop + staffSplitRuns[splitBase + segment + 1];
+                        // Split intervals are ordered and disjoint.
+                        if (sb > lastRow) break;
+                        int sn = sb - st + 1;
+                        if (sn < 1 || sn > maxWidth) continue;
+                        int sd = Math.abs((st + sb) / 2 - y);
+                        if (sd < selectedDistance) {
+                            selectedTop = st;
+                            selectedBottom = sb;
+                            selectedDistance = sd;
+                            splitTie = false;
+                        } else if (sd == selectedDistance
+                                && (st != selectedTop || sb != selectedBottom))
+                            splitTie = true;
+                    }
+                    if (splitTie || selectedTop < 0) continue;
+                    top = selectedTop;
+                    bottom = selectedBottom;
+                }
+                int n = bottom - top + 1;
+                if (charge == 1) {
+                    if (work >= workBudget)
+                        return -1;
+                    work++;
+                }
+                if (n < 1 || n > maxSectionWidth) continue;
+                int distance = Math.abs((top + bottom) / 2 - y);
+                if (distance < bestDistance) {
+                    best = n;
+                    bestTop = top;
+                    bestBottom = bottom;
+                    bestDistance = distance;
+                    tie = false;
+                } else if (distance == bestDistance
+                        && (top != bestTop || bottom != bestBottom)) tie = true;
+            }
+            if (!tie) {
+                width = best;
+                top = bestTop;
+                bottom = bestBottom;
+            }
+            return work;
+        }
     }
 
     private static Discovery discoverInternal(
@@ -634,13 +882,11 @@ final class MaximalRawBarExtractor {
                         : null;
         // Runs are separated by at least one light row. The scratch reserve bounds the
         // span to less than 65536 rows, so endpoints can store offsets from spanTop.
-        int runCapacity = (spanHeight + 1) / 2;
-        int runSlots = laneWidth * runCapacity;
-        char[] runTops = new char[runSlots];
-        char[] runBottoms = new char[runSlots];
-        int[] runCounts = new int[laneWidth];
-        char[] staffSplitRuns = joined ? new char[2 * runSlots] : null;
-        int[] staffSplitCounts = joined ? new int[laneWidth] : null;
+        var sections = new ColumnSections(laneWidth, spanTop, spanBottom, radius, maxWidth, joined);
+        int runCapacity = sections.runCapacity;
+        char[] runTops = sections.runTops, runBottoms = sections.runBottoms;
+        int[] runCounts = sections.runCounts, staffSplitCounts = sections.staffSplitCounts;
+        char[] staffSplitRuns = sections.staffSplitRuns;
         int[] activeColumns = new int[laneWidth];
         int activeCount = 0;
         for (int x = lane.left; x <= lane.right; x++) {
@@ -712,10 +958,7 @@ final class MaximalRawBarExtractor {
         List<IndexedBody> rawCandidates = new ArrayList<>();
         int[] widths = new int[laneWidth], tops = new int[laneWidth], bottoms = new int[laneWidth];
         double[] offsets = new double[laneWidth];
-        int[] firstRun = new int[laneWidth];
         var sweep = new InterceptColumns(laneWidth, lane.bottom - lane.top + 1);
-        int maxSectionWidth = joined ? 2 * maxWidth : maxWidth;
-        int[] firstSplit = joined ? new int[laneWidth] : null;
         long[] remaining = joined ? new long[1] : null;
         var partitionScratch = joined ? new RawStaffBarPartition.Scratch(membership) : null;
         boolean[] sameAsLeft = new boolean[laneWidth];
@@ -732,6 +975,8 @@ final class MaximalRawBarExtractor {
         // Outside this margin every integral intercept preserves the same rounded offset.
         // Half-even ties and values close enough to round onto a tie stay independent.
         double roundingMargin = Math.ulp((double) height + laneWidth + 1);
+        var plan = SectionPlan.prepare(sections, sameAsLeft, activeColumns, activeCount,
+                lane.bottom - lane.top + 1, workBudget - work);
         ProjectedCaps projectedCaps = null;
         // Enumerate all raw intercepts over the entire lane for every already-supported slope.
         for (int tick = -13; tick <= 13; tick++) {
@@ -743,134 +988,54 @@ final class MaximalRawBarExtractor {
                 offsets[column] = slope * (lane.left + column - mid);
             }
             java.util.Arrays.fill(widths, 0);
-            for (int index = 0; index < activeCount; index++) {
-                int column = activeColumns[index];
-                firstRun[column] = runTops[column * runCapacity] << 16;
-            }
-            if (joined) java.util.Arrays.fill(firstSplit, 0);
+            sections.reset(activeColumns, activeCount);
             sweep.reset();
-            int representative = -1, previousShift = Integer.MIN_VALUE;
-            for (int index = 0; index < activeCount; index++) {
-                int column = activeColumns[index];
+            if (plan != null) plan.reset();
+            for (int index = 0; index < activeCount;) {
+                int column = activeColumns[index++], end = column + 1;
                 int rounded = (int) Math.rint(offsets[column]);
                 boolean stable = .5 - Math.abs(offsets[column] - rounded) > roundingMargin;
-                if (sameAsLeft[column] && stable && rounded == previousShift) {
-                    sectionEnd[representative] = column + 1;
-                    continue;
-                }
-                representative = column;
-                sectionEnd[column] = column + 1;
-                previousShift = stable ? rounded : Integer.MIN_VALUE;
+                while (stable && index < activeCount && sameAsLeft[activeColumns[index]]
+                        && .5 - Math.abs(offsets[activeColumns[index]] - rounded) > roundingMargin)
+                    end = activeColumns[index++] + 1;
+                sectionEnd[column] = end;
                 int shift = spanTop - lane.top - rounded;
-                sweep.include(column, runTops, column * runCapacity, runCounts[column], shift, radius);
+                if (plan != null && stable)
+                    plan.schedule(column, end - column, shift + radius, lane.left, membership, sweep);
+                else
+                    sweep.include(column, runTops, column * runCapacity, runCounts[column], shift, radius);
             }
             int clearFrom = 0, clearTo = 0;
             for (int intercept = lane.top; intercept <= lane.bottom; intercept++) {
                 if (laneWidth > workBudget - work)
                     return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), work);
                 work += laneWidth;
+                if (plan != null) {
+                    long charge = plan.advance(intercept - lane.top);
+                    if (charge > workBudget - work)
+                        return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), workBudget);
+                    work += charge;
+                }
                 java.util.Arrays.fill(widths, clearFrom, clearTo, 0);
                 int firstSection = lane.right + 1, lastSection = lane.left - 1;
                 int removedStaff = 0;
                 int possible = sweep.collect(intercept - lane.top);
                 for (int index = 0; index < possible; index++) {
                     int at = sweep.columns[index];
-                    int runCount = runCounts[at];
                     int y = (int) Math.rint(intercept + offsets[at]);
-                    if (y + radius > spanBottom) continue;
-                    if (y - radius < spanTop) continue;
-                    // A centered raw cross-section is one contiguous body, not a sum of nearby ink.
-                    int runBase = at * runCapacity;
-                    // Rounded rows are nondecreasing as the intercept advances.
-                    int cursor = firstRun[at], lo = cursor & 0xffff;
-                    int firstRow = y - radius, lastRow = y + radius;
-                    int firstOffset = firstRow - spanTop, lastOffset = lastRow - spanTop;
-                    int nextTop = cursor >>> 16;
-                    if (nextTop < firstOffset) {
-                        do {
-                            lo++;
-                        } while (lo < runCount && runTops[runBase + lo] < firstOffset);
-                        // Later intercepts cannot bring a finished column back into range.
-                        if (lo == runCount) continue;
-                        nextTop = runTops[runBase + lo];
-                        firstRun[at] = (nextTop << 16) | lo;
-                    }
-                    if (nextTop > lastOffset) continue;
-                    long sectionStart = work;
-                    int best = 0, bestTop = -1, bestBottom = -1, bestDistance = Integer.MAX_VALUE;
-                    boolean tie = false;
-                    for (int k = lo; k < runCount && runTops[runBase + k] <= lastOffset; k++) {
-                        int t = spanTop + runTops[runBase + k], b = spanTop + runBottoms[runBase + k];
-                        int charge = b <= lastRow ? 2 : 1;
-                        if (charge > workBudget - work)
-                            return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), workBudget);
-                        work += charge;
-                        // Never accept a clipped slice of a neighboring raw stroke. A candidate
-                        // axis must contain a complete vertical cross-section at each x. When an
-                        // independently witnessed staff core joins several bars into one raw run,
-                        // use only complete nonstaff sub-runs inside this same axis window.
-                        int top = t, bottom = b;
-                        if (b > lastRow) {
-                            if (!joined) continue;
-                            int selectedTop = -1,
-                                    selectedBottom = -1,
-                                    selectedDistance = Integer.MAX_VALUE;
-                            boolean splitTie = false;
-                            int splitBase = 2 * runBase;
-                            int splitEnd = staffSplitCounts[at];
-                            int splitWork = splitEnd / 2;
-                            if (splitWork > workBudget - work)
-                                return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), workBudget);
-                            work += splitWork;
-                            int segment = firstSplit[at];
-                            while (segment < splitEnd && staffSplitRuns[splitBase + segment] < firstOffset) segment += 2;
-                            firstSplit[at] = segment;
-                            for (; segment < splitEnd; segment += 2) {
-                                int st = spanTop + staffSplitRuns[splitBase + segment];
-                                int sb = spanTop + staffSplitRuns[splitBase + segment + 1];
-                                // Split intervals are ordered and disjoint.
-                                if (sb > lastRow) break;
-                                int sn = sb - st + 1;
-                                if (sn < minWidth || sn > maxWidth) continue;
-                                int sd = Math.abs((st + sb) / 2 - y);
-                                if (sd < selectedDistance) {
-                                    selectedTop = st;
-                                    selectedBottom = sb;
-                                    selectedDistance = sd;
-                                    splitTie = false;
-                                } else if (sd == selectedDistance
-                                        && (st != selectedTop || sb != selectedBottom))
-                                    splitTie = true;
-                            }
-                            if (splitTie || selectedTop < 0) continue;
-                            top = selectedTop;
-                            bottom = selectedBottom;
-                        }
-                        int n = bottom - top + 1;
-                        if (charge == 1) {
-                            if (work >= workBudget)
-                                return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), work);
-                            work++;
-                        }
-                        if (n < minWidth || n > maxSectionWidth) continue;
-                        int distance = Math.abs((top + bottom) / 2 - y);
-                        if (distance < bestDistance) {
-                            best = n;
-                            bestTop = top;
-                            bestBottom = bottom;
-                            bestDistance = distance;
-                            tie = false;
-                        } else if (distance == bestDistance
-                                && (top != bestTop || bottom != bestBottom)) tie = true;
-                    }
                     int end = sectionEnd[at];
-                    // Identical raw and split intervals at the same sampled row select the same section.
-                    // Each omitted column still consumes its original search budget.
-                    long repeatedWork = (end - at - 1) * (work - sectionStart);
-                    if (repeatedWork > workBudget - work)
-                        return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), workBudget);
-                    work += repeatedWork;
-                    if (!tie && best >= minWidth) {
+                    if (plan != null && plan.cursor[at] >= 0) {
+                        plan.read(at, y, sections);
+                    } else {
+                        long cost = sections.select(at, y, workBudget - work);
+                        if (cost < 0) return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), workBudget);
+                        long groupWork = cost * (end - at);
+                        if (groupWork > workBudget - work)
+                            return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), workBudget);
+                        work += groupWork;
+                    }
+                    int best = sections.width, bestTop = sections.top, bestBottom = sections.bottom;
+                    if (best >= minWidth) {
                         if (best == 1 && membership != null && membership.contains(bestTop, lane.left + at)) {
                             removedStaff += end - at;
                             continue;

@@ -11,6 +11,28 @@ import org.junit.Test;
 /** Original shading rasters compare the prior arithmetic and array ownership. */
 public final class PaperToneCoordinateParityTest {
     @Test
+    public void pairedArticulationPlanesMatchIndependentNormalizations() {
+        Random random = new Random(3891601);
+        for (int width : new int[] {31, 101, 257, 16385}) {
+            int height = width > 16384 ? 3 : 104;
+            for (int style = 0; style < 3; style++) {
+                byte[] gray = new byte[width * height];
+                for (int i = 0; i < gray.length; i++) {
+                    int x = i % width, y = i / width;
+                    int tone = style == 0 ? 183 : (width < 41 || x < width / 2) ? 141 + y / 5 : 239 + style;
+                    gray[i] = (byte) (random.nextInt(8) == 0 ? random.nextInt(100) : tone);
+                }
+                var estimate = RestPaperTone.estimate(gray, width, height, 10.25f);
+                org.junit.Assert.assertNotNull(estimate);
+                var planes = estimate.articulationPlanes();
+                org.junit.Assert.assertArrayEquals(estimate.normalize(340f), planes.strong());
+                org.junit.Assert.assertArrayEquals(estimate.normalize(220f), planes.soft());
+                org.junit.Assert.assertNotSame(planes.strong(), planes.soft());
+            }
+        }
+    }
+
+    @Test
     public void originalShadingBoundariesKeepBytesAndInputIdentity() throws Exception {
         Random random = new Random(0x6b91f37aL);
         int changed = 0, identity = 0;

@@ -41,6 +41,17 @@ final class PrintedStaffAdmission {
 
     static Evidence evidence(
             byte[] gray, int width, int height, int left, int right, float gap, Rules rules) {
+        return evidence(gray, width, height, left, right, gap, rules, true);
+    }
+
+    static Evidence railEvidence(
+            byte[] gray, int width, int height, int left, int right, float gap, Rules rules) {
+        return evidence(gray, width, height, left, right, gap, rules, false);
+    }
+
+    private static Evidence evidence(
+            byte[] gray, int width, int height, int left, int right, float gap, Rules rules,
+            boolean sampleBackground) {
         if (gray == null
                 || width < 1
                 || height < 1
@@ -57,6 +68,7 @@ final class PrintedStaffAdmission {
             int support = 0;
             float previous = 0;
             for (int line = 0; line < 5; line++) {
+                if (!sampleBackground && (support >= 4 || support + 5 - line < 4)) break;
                 float position = rules.y(line, x);
                 if (support < 4 && support + 5 - line >= 4) {
                     int center = Math.round(position);
@@ -72,7 +84,7 @@ final class PrintedStaffAdmission {
                         }
                     }
                 }
-                if (line != 0) {
+                if (sampleBackground && line != 0) {
                     float distance = position - previous;
                     for (float phase : BACKGROUND_PHASES) {
                         int y = Math.round(previous + phase * distance);

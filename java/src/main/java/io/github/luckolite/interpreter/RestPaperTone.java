@@ -75,6 +75,14 @@ final class RestPaperTone {
                             ? null : new HorizontalGrid(width, tile, columns, rows, paper));
         }
 
+        PaperPlanes articulationPlanes() {
+            if (horizontal == null) return new PaperPlanes(normalize(340f), normalize(220f));
+            byte[] soft = gray.clone();
+            byte[] strong = interpolate(gray, width, height, tile, columns, rows, paper,
+                    horizontal, 340f, soft);
+            return new PaperPlanes(strong, soft);
+        }
+
         byte[] normalize(float paperLevel) {
             HorizontalGrid grid = horizontal;
             if (uniformTone != 0) {
@@ -84,9 +92,11 @@ final class RestPaperTone {
                 if (width <= 16384 && paperLevel >= 120 && paperLevel <= 340)
                     grid = new HorizontalGrid(width, tile, columns, rows, paper);
             }
-            return interpolate(gray, width, height, tile, columns, rows, paper, grid, paperLevel);
+            return interpolate(gray, width, height, tile, columns, rows, paper, grid, paperLevel, null);
         }
     }
+
+    record PaperPlanes(byte[] strong, byte[] soft) {}
 
     private static byte[] normalizeUniform(
             byte[] gray, int tone, float paperLevel, boolean exactBlend) {
@@ -166,7 +176,7 @@ final class RestPaperTone {
 
     private static byte[] interpolate(
             byte[] gray, int width, int height, int tile, int columns, int rows, int[] paper,
-            HorizontalGrid horizontal, float paperLevel) {
+            HorizontalGrid horizontal, float paperLevel, byte[] soft) {
         byte[] result = gray.clone();
         // Keep general rounding for levels outside the supported normalization range.
         if (horizontal == null || !(paperLevel >= 120 && paperLevel <= 340))
@@ -204,8 +214,11 @@ final class RestPaperTone {
             if (fy == 0) {
                 for (int x = start, pixel = offset + start; x < end; x++, pixel++) {
                     float tone = upperRow[x];
-                    if (tone < 240)
-                        result[pixel] = normalizedPixel(scaledInk[gray[pixel] & 255], tone);
+                    if (tone < 240) {
+                        int ink = gray[pixel] & 255;
+                        result[pixel] = normalizedPixel(scaledInk[ink], tone);
+                        if (soft != null) soft[pixel] = normalizedPixel(ink * 220f, tone);
+                    }
                 }
                 continue;
             }
@@ -214,8 +227,11 @@ final class RestPaperTone {
             for (int x = start, pixel = offset + start; x < end; x++, pixel++) {
                 float upper = upperRow[x], lower = lowerTones[x];
                 float tone = upper * upperWeight + lower * fy;
-                if (tone < 240)
-                    result[pixel] = normalizedPixel(scaledInk[gray[pixel] & 255], tone);
+                if (tone < 240) {
+                    int ink = gray[pixel] & 255;
+                    result[pixel] = normalizedPixel(scaledInk[ink], tone);
+                    if (soft != null) soft[pixel] = normalizedPixel(ink * 220f, tone);
+                }
             }
         }
         return result;

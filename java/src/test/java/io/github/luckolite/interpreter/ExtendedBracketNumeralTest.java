@@ -84,6 +84,19 @@ public class ExtendedBracketNumeralTest {
     }
 
     @Test
+    public void lowerNumeralMustBeDetachedFromTheNoteBand() throws Exception {
+        byte[] original = ink(false, false, false), gray = new byte[original.length];
+        Arrays.fill(gray, (byte) 255);
+        for (int y = 0; y < 22; y++)
+            System.arraycopy(original, (140 + y) * 500 + 284, gray, (131 + y) * 500 + 284, 12);
+        gray[110 * 500 + 285] = 0;
+        assertNotNull(find(gray, true, true));
+        // The attachment touches the first eligible row diagonally.
+        gray[130 * 500 + 283] = 0;
+        assertNull(find(gray, true, true));
+    }
+
+    @Test
     public void missingLeftArmAbstains() throws Exception {
         assertNull(find(ink(false, true, false), false, true));
     }

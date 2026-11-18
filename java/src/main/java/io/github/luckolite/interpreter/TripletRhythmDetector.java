@@ -3602,6 +3602,7 @@ final class TripletRhythmDetector {
             java.util.function.Predicate<Glyph> ownership,
             java.util.function.Predicate<Glyph> physicalGroupContext,
             PrintedTupletBeamOwner.LiteralProof literal) {
+        boolean[] fourCandidate = number == 3 ? new boolean[1] : null;
         Glyph normal =
                 findPrintedNumeral(
                         gray,
@@ -3617,7 +3618,7 @@ final class TripletRhythmDetector {
                         headY,
                         number,
                         boundedSecondary,
-                        ownership);
+                        ownership, 8, glyph -> false, fourCandidate);
         if (normal != null
                 && TupletNumeralInk.hasGlyphContrast(
                         gray,
@@ -3635,7 +3636,7 @@ final class TripletRhythmDetector {
         // Photometric retries may remove a four's pale crossbar. Keep the complete
         // original component and its unchanged physical ownership authoritative.
         Glyph originalFour =
-                number == 3
+                number == 3 && (normal != null || fourCandidate[0])
                         ? findPrintedNumeral(
                                 gray,
                                 width,
@@ -3973,6 +3974,27 @@ final class TripletRhythmDetector {
             java.util.function.Predicate<Glyph> ownership,
             float searchGaps,
             java.util.function.Predicate<Glyph> extendedOwnership) {
+        return findPrintedNumeral(gray, width, height, firstX, lastX, firstY, lastY, gap,
+                shortNotes, headX, headY, number, boundedSecondary, ownership, searchGaps, extendedOwnership, null);
+    }
+
+    private static Glyph findPrintedNumeral(
+            byte[] gray,
+            int width,
+            int height,
+            float firstX,
+            float lastX,
+            float firstY,
+            float lastY,
+            float gap,
+            boolean shortNotes,
+            float headX,
+            float headY,
+            int number,
+            boolean boundedSecondary,
+            java.util.function.Predicate<Glyph> ownership,
+            float searchGaps,
+            java.util.function.Predicate<Glyph> extendedOwnership, boolean[] fourCandidate) {
         float centerX = (firstX + lastX) * .5f;
         // Numerals align with the beam/stems, which can sit to one side of the
         // oval centres. Include that offset without clipping an italic 3.
@@ -4004,9 +4026,14 @@ final class TripletRhythmDetector {
         var flood = new NumeralRuns(gray, rasterStart, width, localWidth, localHeight, firstOrigin);
         int firstSeedRow = firstOrigin / localWidth;
         int firstSeedColumn = firstOrigin - firstSeedRow * localWidth;
-        for (int seedY = firstSeedRow, row = firstSeedRow * localWidth,
-                raster = rasterStart + firstSeedRow * width; seedY < localHeight;
-                seedY++, row += localWidth, raster += width) {
+        int lowerGuard = Math.max(top, Math.min(bottom, (int) Math.floor(lowerNumeralLimit))) - top;
+        for (int seedY = firstSeedRow; seedY < localHeight; seedY++) {
+            if (seedY < lowerGuard && top + seedY >= upperNumeralLimit) {
+                // This middle band cannot own a numeral. Flood its last row so an
+                // attached stroke cannot be rediscovered as a detached lower glyph.
+                seedY = lowerGuard;
+            }
+            int row = seedY * localWidth, raster = rasterStart + seedY * width;
             for (int seedX = seedY == firstSeedRow ? firstSeedColumn : 0;
                     seedX < localWidth; seedX++) {
                 int origin = row + seedX;
@@ -4051,6 +4078,9 @@ final class TripletRhythmDetector {
                                 || headX > maxX + gap * .1f
                                 || headY < minY - gap * .1f
                                 || headY > maxY + gap * .1f)) continue;
+                // Three and four use identical windows, connectivity, size and head bounds.
+                // A complete three scan with no such component also rules out a raw four.
+                if (fourCandidate != null) fourCandidate[0] = true;
                 if (!(number == 2
                         ? looksLikeTwo(gray, width, count, minX, maxX, minY, maxY)
                         : number == 4
