@@ -10,6 +10,16 @@ and font notices are retained in [NOTICE](../NOTICE),
 Model lineage, evaluation and checksums are documented separately in
 [the model card](../models/MODEL_CARD.md) and `models/artifacts.json`.
 
+## App and desktop optimization port
+
+Music Sheets app source `cddbd144d0d9ee40de9003832da9c0f283f74a93` carries the
+verified standalone optimization batch through `acfd8bc8b0df85c14326223153453b1f07338309`.
+The app and worker share staff geometry and raster work for barlines, rests,
+ties, tremolos, articulations, and tuplets. Android uses portable packed byte
+reads on API 26. The app and worker retain their existing OCR paths,
+recognition 159, Guide 308, and audio 106. The regression additions are original
+procedural geometry.
+
 ## Source map
 
 Recognition 136 repairs complete clef and signature roles, physical staff expression ownership, phrase contours and complete beam/voice clocks. New source helpers are explicitly included in the Android/desktop selection. Original procedural and existing OFL font regressions contain no private score material. Guide 299, audio 101 and model weights/layouts are unchanged. See [asymmetric phrase arches](asymmetric-phrase-arches.md) for the added analytic geometry family.
