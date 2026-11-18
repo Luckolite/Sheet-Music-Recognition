@@ -43,11 +43,14 @@ def _bright_paper(pixels):
     last = pixels.size - 1
     quantile_rank = last * .1
     median_rank = last * .5
+    below_median = np.count_nonzero(pixels < 250)
+    # This count also bounds the number below 240 on mostly white pages.
+    if below_median <= int(quantile_rank):
+        return True
+    if below_median > np.ceil(median_rank):
+        return False
     below_quantile = np.count_nonzero(pixels < 240)
     if below_quantile > np.ceil(quantile_rank):
-        return False
-    below_median = np.count_nonzero(pixels < 250)
-    if below_median > np.ceil(median_rank):
         return False
     if below_quantile <= int(quantile_rank) and below_median <= int(median_rank):
         return True
@@ -149,6 +152,8 @@ class PaperBackgroundWhitening:
         # Classes 1 through 5 are the model's notation classes. Require existing ink
         # and protect the antialiased edges around already dark strokes.
         candidates = cv2.inRange(gray, MIN_FADED_TONE, MAX_FADED_TONE - 1)
+        if not cv2.countNonZero(candidates):
+            return gray
         eligible = cv2.inRange(labels, 1, 5)
         cv2.bitwise_and(candidates, eligible, dst=candidates)
         if cv2.countNonZero(candidates) == 0:
@@ -156,17 +161,28 @@ class PaperBackgroundWhitening:
         core = cv2.erode(gray, _INK_KERNEL)
         cv2.inRange(core, MIN_FADED_TONE, 255, dst=eligible)
         cv2.bitwise_and(candidates, eligible, dst=candidates)
-        if cv2.countNonZero(candidates) == 0:
+        x, y, width, height = cv2.boundingRect(candidates)
+        if width == 0:
             return gray
-        candidates = candidates != 0
+        region = np.s_[y:y + height, x:x + width]
+        source = gray[region]
+        candidates = candidates[region] != 0
+        core = core[region]
         if paper is None:
-            paper = cv2.morphologyEx(gray, cv2.MORPH_CLOSE, kernel)
-        tones = gray[candidates].astype(np.int16)
+            # Closing depends on one dilation and one erosion around each pixel.
+            pad_y, pad_x = kernel.shape
+            top, left = max(0, y - pad_y), max(0, x - pad_x)
+            field = cv2.morphologyEx(gray[top:y + height + pad_y, left:x + width + pad_x],
+                                     cv2.MORPH_CLOSE, kernel)
+            paper = field[y - top:y - top + height, x - left:x - left + width]
+        else:
+            paper = paper[region]
+        tones = source[candidates].astype(np.int16)
         gain = np.minimum(core[candidates].astype(np.int16) - MIN_FADED_TONE + 1,
                           np.minimum(MAX_FADED_TONE - tones, (255 - tones) // 2))
         gain[paper[candidates].astype(np.int16) - tones < MIN_PAPER_CONTRAST] = 0
         if not gain.any():
             return gray
         output = gray if in_place else gray.copy()
-        output[candidates] = tones - gain
+        output[region][candidates] = tones - gain
         return output

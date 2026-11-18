@@ -88,6 +88,20 @@ class WhiteningTest(unittest.TestCase):
         np.testing.assert_array_equal(gray, before)
         np.testing.assert_array_equal(labels, before_labels)
 
+    def test_single_faded_pixel_uses_paper_outside_its_label(self):
+        owner = PaperBackgroundWhitening('missing-model.onnx')
+        for y, x in ((0, 0), (31, 42), (63, 95)):
+            with self.subTest(y=y, x=x):
+                gray = np.full((64, 96), 255, np.uint8)
+                gray[max(0, y - 2):y + 3, max(0, x - 2):x + 3] = 180
+                labels = np.zeros_like(gray)
+                labels[y, x] = 4
+                expected = gray.copy()
+                expected[y, x] = 143
+                result = owner.correct(gray, labels)
+                np.testing.assert_array_equal(result.decoder_gray, expected)
+                self.assertEqual(gray[y, x], 180)
+
     def test_polishes_remaining_faded_ink_after_whitening(self):
         owner = PaperBackgroundWhitening()
         owner._inference = lambda features: (np.full(features.shape[1:], .8, np.float32),

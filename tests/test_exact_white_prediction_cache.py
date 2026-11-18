@@ -57,6 +57,21 @@ def original_prediction(owner, gray):
 
 
 class ExactWhitePredictionCacheTest(unittest.TestCase):
+    def test_arena_reused_after_invalid_prediction_and_padded_tiles(self):
+        gray = np.full((127, 910), 255, np.uint8)
+        gray[:, 400:405] = 0
+        owner = make_reader()
+        runtime = owner.runtime
+        runtime.input = np.empty((1, 3, 320, 320), np.float32)
+        runtime.tensor = lambda index: (lambda: (runtime.input if index == 0 else runtime.output).view())
+        runtime.set_tensor = runtime.get_tensor = lambda *args: self.fail("Unexpected tensor copy")
+        invoke = runtime.invoke
+        runtime.invoke = lambda: runtime.output.fill(256)
+        with self.assertRaisesRegex(ValueError, "outside 0..5"):
+            owner.predict(gray)
+        runtime.invoke = invoke
+        np.testing.assert_array_equal(original_prediction(make_reader(), gray), owner.predict(gray))
+
     def assert_original(self, gray, known=True, stateful=False):
         before = gray.copy()
         baseline, candidate = make_reader(known, stateful), make_reader(known, stateful)
@@ -86,6 +101,25 @@ class ExactWhitePredictionCacheTest(unittest.TestCase):
         first_calls = candidate.runtime.calls
         np.testing.assert_array_equal(expected, candidate.predict(gray))
         self.assertEqual(first_calls * 2, candidate.runtime.calls, "Prediction cache must be local to one page call")
+
+    def test_default_edge_masks_preserve_ties_at_overlapping_tail_tiles(self):
+        for height, width in ((127, 99), (319, 321), (321, 319), (513, 705), (896, 1091)):
+            with self.subTest(height=height, width=width):
+                gray = np.arange(height * width, dtype=np.uint8).reshape(height, width)[:, ::-1]
+                original, optimized = make_reader(False, True), make_reader(False, True)
+                optimized.edge = reader._tile_edges()
+                np.testing.assert_array_equal(original_prediction(original, gray), optimized.predict(gray))
+                self.assertEqual(original.runtime.calls, optimized.runtime.calls)
+
+    def test_repeated_ink_requires_every_pixel_to_match(self):
+        gray = np.full((320, 896), 255, np.uint8)
+        gray[16::48] = 0
+        # The sample grid misses this pixel, and only the second tile contains it.
+        gray[3, 330] = 8
+        baseline, cached = self.assert_original(gray)
+        self.assertEqual((4, 3), (baseline.runtime.calls, cached.runtime.calls))
+        baseline, custom = self.assert_original(gray, known=False, stateful=True)
+        self.assertEqual((4, 4), (baseline.runtime.calls, custom.runtime.calls))
 
     def test_nearly_white_pixels_do_not_reuse_a_different_tensor(self):
         gray = np.full((705, 705), 254, np.uint8)

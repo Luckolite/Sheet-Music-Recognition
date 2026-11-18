@@ -9,6 +9,7 @@ import os
 import struct
 import subprocess
 import tempfile
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from functools import lru_cache
@@ -42,6 +43,67 @@ def _tile_edges():
     edges = np.minimum.outer(distance, distance).astype(np.uint8)
     edges.setflags(write=False)
     return edges
+
+
+def _axis_confidence(size, starts, axis):
+    length = min(size, len(axis))
+    best = np.zeros(size, dtype=np.uint8)
+    for start in starts:
+        span = best[start:start + length]
+        np.maximum(span, axis[:length], out=span)
+    return best
+
+
+def _tile_windows(height, width, weights, rows, columns):
+    ch, cw = min(320, height), min(320, width)
+    edge = weights[:ch, :cw]
+    if weights is _tile_edges():
+        if len(rows) == len(columns) == 1:
+            yield (rows[0], columns[0]), True
+            return
+        # For a rectangular grid the best edge distance is the minimum
+        # of the best horizontal and vertical distances at each pixel.
+        axis = weights.max(axis=0)
+        vertical = _axis_confidence(height, (row.start for row in rows), axis)
+        horizontal = _axis_confidence(width, (col.start for col in columns), axis)
+        previous = None
+        for row in rows:
+            row_weights = vertical[row]
+            row_key = row_weights.tobytes()
+            if row_key != previous:
+                masks = {}
+                previous = row_key
+            for column in columns:
+                column_weights = horizontal[column]
+                key = column_weights.tobytes()
+                mask = masks.get(key)
+                if mask is None:
+                    mask = edge >= np.minimum.outer(row_weights, column_weights)
+                    masks[key] = mask
+                # All tied winners write in the original traversal order.
+                yield (row, column), mask
+        return
+
+    confidence = np.zeros((height, width), dtype=np.uint8)
+    wins = np.empty((ch, cw), dtype=bool)
+    for row in rows:
+        for column in columns:
+            local = confidence[row, column]
+            np.greater_equal(edge, local, out=wins)
+            np.copyto(local, edge, where=wins, casting="unsafe")
+            yield (row, column), wins
+
+
+def _repeated_tile_samples(gray, rows, columns):
+    counts = Counter()
+    for row in rows:
+        for column in columns:
+            sample = gray[row, column][::16, ::16].tobytes()
+            # Flat samples cannot distinguish strokes from blank paper.
+            if sample.count(sample[:1]) < len(sample):
+                counts[sample] += 1
+    # Each retained input and byte-label pair costs at most 200 KiB.
+    return {sample: None for sample, count in counts.most_common(64) if count > 1}
 
 
 def grayscale(image, width=2048):
@@ -155,6 +217,7 @@ class Interpreter:
         if self.output["shape"].tolist() != [1, 320, 320] or self.output["dtype"] != np.int64:
             raise ValueError("Expected int64 class IDs [1,320,320]")
         self.edge = _tile_edges()
+        self._threads = threads
         self.ocr = None
         self.paper_whitening = PaperBackgroundWhitening(threads=threads)
 
@@ -179,44 +242,65 @@ class Interpreter:
         if not width or not height or gray.size > 20_000_000:
             raise ValueError("Invalid image dimensions")
         labels = np.zeros_like(gray)
-        confidence = np.zeros_like(gray)
         white_prediction = None
         ch, cw = min(320, height), min(320, width)
-        edge = self.edge[:ch, :cw]
-        wins = np.empty((ch, cw), dtype=bool)
+        rows = [slice(top, top + ch) for top in tile_starts(height)]
         columns = [slice(left, left + cw) for left in tile_starts(width)]
-        tensor = np.empty((1, 3, 320, 320), dtype=np.float32)
-        if height < 320 or width < 320:
-            tensor.fill(255)
-        tensor_pixels = tensor[0, :, :ch, :cw]
+        bundled = getattr(self, "model_sha256", None) == MODEL_SHA256
+        tensor_view = getattr(self.runtime, "tensor", None) if bundled else None
+        if tensor_view is None:
+            staging = np.empty((1, 3, 320, 320), dtype=np.float32)
+            if ch < 320 or cw < 320:
+                staging.fill(255)
+        else:
+            input_buffer = tensor_view(self.input["index"])
+            output_buffer = tensor_view(self.output["index"])
         # Only the reviewed bundled graph has the deterministic-output contract.
         # Custom models keep one inference call per tile, including stateful models.
-        reuse_white = getattr(self, "model_sha256", None) == MODEL_SHA256
-        for top in tile_starts(height):
-            rows = slice(top, top + ch)
-            for column in columns:
-                region = rows, column
-                tile = gray[region]
-                # The fixed padding is white too, so only inspect source pixels.
-                exact_white = reuse_white and tile.min() == 255
-                if exact_white and white_prediction is not None:
-                    prediction = white_prediction
-                else:
-                    tensor_pixels[...] = tile
+        reuse_predictions = (height > ch or width > cw) and bundled
+        repeated = _repeated_tile_samples(gray, rows, columns) if reuse_predictions else {}
+        for region, wins in _tile_windows(height, width, self.edge, rows, columns):
+            tile = gray[region]
+            # The fixed padding is white too, so only inspect source pixels.
+            exact_white = reuse_predictions and tile.min() == 255
+            pixels = None
+            cached = white_prediction if exact_white else None
+            if repeated and not exact_white:
+                sample = tile[::16, ::16].tobytes()
+                if sample in repeated:
+                    pixels = np.ascontiguousarray(tile).tobytes()
+                    entry = repeated[sample]
+                    if entry is not None and pixels == entry[0]:
+                        cached = entry[1]
+            if cached is not None:
+                prediction = cached
+            else:
+                if pixels is not None:
+                    tile = np.frombuffer(pixels, dtype=np.uint8).reshape(tile.shape)
+                tensor = staging if tensor_view is None else input_buffer()
+                if tensor_view is not None and (ch < 320 or cw < 320):
+                    tensor.fill(255)
+                tensor[0, :, :ch, :cw] = tile
+                if tensor_view is None:
                     self.runtime.set_tensor(self.input["index"], tensor)
-                    self.runtime.invoke()
-                    prediction = self.runtime.get_tensor(self.output["index"])[0]
-                    if prediction.min() < 0 or prediction.max() > 5:
-                        raise ValueError("Model returned classes outside 0..5")
-                    if exact_white:
-                        # Cache owned, validated labels in the destination dtype.
-                        white_prediction = prediction.astype(np.uint8)
-                        prediction = white_prediction
-                tile_confidence = confidence[region]
-                np.greater_equal(edge, tile_confidence, out=wins)
-                # Validated class IDs and the tile's maximum edge weight (160) fit in uint8.
-                np.copyto(labels[region], prediction[:ch, :cw], where=wins, casting="unsafe")
-                np.copyto(tile_confidence, edge, where=wins, casting="unsafe")
+                # TFLite may move its arena during invoke. Hold only the getter across calls.
+                del tensor
+                self.runtime.invoke()
+                prediction = (self.runtime.get_tensor(self.output["index"])
+                              if tensor_view is None else output_buffer())[0]
+                if prediction.min() < 0 or prediction.max() > 5:
+                    del prediction
+                    raise ValueError("Model returned classes outside 0..5")
+                if exact_white:
+                    # Cache owned, validated labels in the destination dtype.
+                    white_prediction = prediction.astype(np.uint8)
+                    prediction = white_prediction
+                elif pixels is not None:
+                    # Only complete input equality authorizes prediction reuse.
+                    prediction = prediction.astype(np.uint8)
+                    repeated[sample] = pixels, prediction
+            np.copyto(labels[region], prediction[:ch, :cw], where=wins, casting="unsafe")
+            del prediction
         return labels
 
     def interpret(self, image, *, meter=(4, 4), key_fifths=0, width=2048, annotations=None,
@@ -244,7 +328,7 @@ class Interpreter:
         from .ocr import LocalOcr, page_annotations
 
         if self.ocr is None:
-            self.ocr = LocalOcr()
+            self.ocr = LocalOcr(threads=self._threads)
         words = self.ocr.words(gray)
         if annotations is None:
             return page_annotations(words, [])
@@ -262,26 +346,29 @@ class Interpreter:
                 annotations = ocr.result()
         return _PreparedPage(gray, labels, annotations, corrected)
 
-    def _decode_page(self, prepared, meter, key_fifths, page_index, instrument):
+    def _decode_page(self, prepared, meter, key_fifths, page_index, instrument, *, run_decoder=None):
         gray, labels, annotations, corrected = prepared
         numerator, denominator = meter
         with tempfile.TemporaryDirectory(prefix="sheet-music-recognition-") as folder:
             page = Path(folder) / "page.page.gz"
             output = Path(folder) / "score.json"
             write_page(page, labels, gray, annotations)
-            command = [java_executable(), "-Xmx1g", "-jar", str(self.jar), str(page), str(output),
-                       str(numerator), str(denominator), str(key_fifths)]
+            arguments = [str(page), str(output), str(numerator), str(denominator), str(key_fifths)]
             if corrected.changed:
                 decoder_raster = Path(folder) / "decoder.gray"
                 decoder_raster.write_bytes(memoryview(np.ascontiguousarray(corrected.decoder_gray)))
-                command.extend(["--decoder-gray", str(decoder_raster)])
+                arguments.extend(["--decoder-gray", str(decoder_raster)])
             if page_index is not None:
-                command.extend(["--page-index", str(page_index)])
+                arguments.extend(["--page-index", str(page_index)])
             if instrument is not None:
-                command.extend(["--instrument", instrument])
-            run = subprocess.run(command, capture_output=True, text=True)
-            if run.returncode:
-                raise RuntimeError("Decoder failed: " + run.stderr.strip())
+                arguments.extend(["--instrument", instrument])
+            if run_decoder is None:
+                command = [java_executable(), "-Xmx1g", "-jar", str(self.jar), *arguments]
+                run = subprocess.run(command, capture_output=True, text=True)
+                if run.returncode:
+                    raise RuntimeError("Decoder failed: " + run.stderr.strip())
+            else:
+                run_decoder(arguments)
             result = json.loads(output.read_text(encoding="utf-8"))
         result["paperWhitening"] = dict(policy=RASTER_POLICY, modelSha256=PAPER_FIELD_SHA256,
                                        segmentationRasterSha256=corrected.raw_sha256,

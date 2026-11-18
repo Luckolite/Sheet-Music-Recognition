@@ -43,7 +43,7 @@ class TypedFrontendCliTests(unittest.TestCase):
         self.output = self.folder/'decoded.json'
         # The real interpret method runs; only unavailable inference and its resize input are supplied.
         self.engine = reader.Interpreter.__new__(reader.Interpreter)
-        self.engine.jar = Path('unused-isolated-fixture.jar')
+        self.engine.jar = os.pathsep.join((str(self.backend), CORE))
         self.engine.model_sha256 = 'original-synthetic-no-model-used'
         self.engine.ocr = None
         self.engine.paper_whitening = reader.PaperBackgroundWhitening()
@@ -101,7 +101,11 @@ class TypedFrontendCliTests(unittest.TestCase):
         finally:
             pdf.close()
         self.annotations.write_text('[{},{}]',encoding='utf-8')
-        value=self.invoke('--pages','2,6')
+        with patch.object(subprocess, 'Popen', wraps=subprocess.Popen) as started:
+            value = self.invoke('--pages', '2,6')
+        workers = [call for call in started.call_args_list
+                   if 'io.github.luckolite.interpreter.DocumentPageDecoder' in call.args[0]]
+        self.assertEqual(1, len(workers))
         self.assertEqual([2,6],[p['sourcePage'] for p in value['pages']])
         self.assertEqual([1,5],[p['score']['slurSource']['candidates'][0]['start']['pageIndex']
                               for p in value['pages']])
@@ -198,7 +202,7 @@ class TypedFrontendCliTests(unittest.TestCase):
         ocr_started = Event()
         whitening_done = Event()
         gray = np.full((8, 8), 255, dtype=np.uint8)
-        words = [{'text': 'più', 'left': .1, 'top': .1, 'right': .2, 'bottom': .2}]
+        words = [{'text': 'piÃ¹', 'left': .1, 'top': .1, 'right': .2, 'bottom': .2}]
 
         def read_annotations(image, supplied):
             self.assertIs(image, gray)

@@ -3,6 +3,12 @@
 """Shared image and PDF document recognition for the Python API and CLI."""
 import hashlib
 import io
+import locale
+import struct
+import subprocess
+import tempfile
+from contextlib import contextmanager, suppress
+from functools import partial
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -10,6 +16,49 @@ from PIL import Image
 
 from .boundary_ties import resolve_boundary_ties
 from .clock_context import bind_document
+
+
+@contextmanager
+def _document_page_decoder(engine):
+    from .reader import Interpreter
+    from .runtime import java_executable
+
+    decode = engine._decode_page
+    if getattr(decode, "__func__", None) is not Interpreter._decode_page:
+        yield decode
+        return
+
+    command = [java_executable(), "-Xmx1g", "-cp", str(engine.jar),
+               "io.github.luckolite.interpreter.DocumentPageDecoder"]
+    # A file keeps JVM diagnostics available even if an error exceeds pipe capacity.
+    with tempfile.TemporaryFile() as errors, subprocess.Popen(
+            command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=errors) as process:
+        def run_page(arguments):
+            packet = bytearray([len(arguments)])
+            for argument in arguments:
+                encoded = argument.encode("utf-8")
+                packet.extend(struct.pack(">I", len(encoded)))
+                packet.extend(encoded)
+            try:
+                process.stdin.write(packet)
+                process.stdin.flush()
+                ack = process.stdout.read(1)
+            except BrokenPipeError:
+                ack = b""
+            if ack == b"\x01":
+                return
+            if ack:
+                raise RuntimeError("Unexpected document decoder response")
+            process.wait()
+            errors.seek(0)
+            message = errors.read().decode(locale.getpreferredencoding(False), errors="replace")
+            raise RuntimeError("Decoder failed: " + (message.strip() or f"exit {process.returncode}"))
+
+        try:
+            yield partial(decode, run_decoder=run_page)
+        finally:
+            with suppress(BrokenPipeError):
+                process.stdin.close()
 
 
 def interpret_document(engine, source, *, pages=None, meter=(4, 4), bpm=120,
@@ -108,11 +157,12 @@ def interpret_document(engine, source, *, pages=None, meter=(4, 4), bpm=120,
                     return render(number, index, lambda image, supplied: engine._prepare_page(image, width, supplied))
 
                 prepared = prepare(selected[0], 0)
-                with ThreadPoolExecutor(max_workers=1, thread_name_prefix="score-decoder") as worker:
+                with _document_page_decoder(engine) as decode, ThreadPoolExecutor(
+                        max_workers=1, thread_name_prefix="score-decoder") as worker:
                     for index, number in enumerate(selected):
                         engine._validate_decode_context(meter, key, number - 1, instrument)
                         pending = worker.submit(
-                            engine._decode_page, prepared, meter, key, number - 1, instrument)
+                            decode, prepared, meter, key, number - 1, instrument)
                         try:
                             if index + 1 < selected_count:
                                 prepared = prepare(selected[index + 1], index + 1)

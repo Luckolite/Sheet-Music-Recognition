@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Bundled, offline OCR for raster score text and scanned tablature frets."""
 
+import os
 import re
 from itertools import repeat
 
@@ -78,7 +79,7 @@ def page_annotations(words, tab_words):
 
 
 class LocalOcr:
-    def __init__(self):
+    def __init__(self, threads=2):
         try:
             from rapidocr import RapidOCR
         except ImportError as error:
@@ -86,7 +87,9 @@ class LocalOcr:
                 "Recognition dependencies are missing. Run: "
                 "pip install --upgrade score-reader"
             ) from error
-        self.engine = RapidOCR()
+        self.engine = RapidOCR(params={
+            "EngineConfig.onnxruntime.intra_op_num_threads": min(threads, os.cpu_count() or 1),
+        })
 
     def words(self, gray):
         """Return decoder words in normalized page coordinates."""
