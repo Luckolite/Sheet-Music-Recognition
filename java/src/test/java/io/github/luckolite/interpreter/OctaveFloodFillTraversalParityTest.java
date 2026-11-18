@@ -31,11 +31,26 @@ public final class OctaveFloodFillTraversalParityTest {
                             int.class,
                             float.class,
                             boolean.class,
-                            scratch);
+                            scratch, BitSet.class);
             DETECT.setAccessible(true);
         } catch (Exception e) {
             throw new ExceptionInInitializerError(e);
         }
+    }
+
+    @Test public void packedInkMatchesUnsignedThresholdAtEveryAlignment() throws Exception {
+        var runs = Class.forName(OctaveMarkDetector.class.getName() + "$WordInkRuns");
+        var classify = runs.getDeclaredMethod("classify", byte[].class, int.class, int.class);
+        classify.setAccessible(true);
+        byte[] tones = new byte[280];
+        for (int i = 0; i < tones.length; i++) tones[i] = (byte) (i * 103);
+        for (int offset = 0; offset < 8; offset++)
+            for (int size : new int[] {0, 1, 7, 8, 9, 63, 64, 65, 256}) {
+                var expected = new BitSet(size);
+                for (int i = 0; i < size; i++)
+                    if ((tones[offset + i] & 255) < 165) expected.set(i);
+                assertEquals(expected, classify.invoke(null, tones, offset, size));
+            }
     }
 
     static void rect(Drawing d, int left, int right, int top, int bottom, int ink) {
@@ -75,8 +90,11 @@ public final class OctaveFloodFillTraversalParityTest {
 
     private static List<?> detect(Drawing d, Object scratch) throws Exception {
         // Below-staff placement keeps the legacy counter proof under test.
+        BitSet visitedInk = new BitSet();
+        for (int i = 0; i < (d.bottom - d.top + 1) * d.width; i++)
+            if ((d.gray[d.top * d.width + i] & 255) < 165) visitedInk.set(i);
         return (List<?>) DETECT.invoke(null, d.gray, d.width, d.height, d.top, d.bottom, d.gap,
-                true, scratch);
+                true, scratch, visitedInk);
     }
 
     private static String hex(byte[] bytes) {

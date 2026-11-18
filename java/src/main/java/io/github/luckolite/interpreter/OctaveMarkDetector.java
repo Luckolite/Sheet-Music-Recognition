@@ -879,12 +879,15 @@ final class OctaveMarkDetector {
         int[] histogram = new int[256];
         for (int top = 0; top < height; top += tile)
             for (int left = 0; left < width; left += tile) {
-                java.util.Arrays.fill(histogram, 0);
                 int bottom = Math.min(height, top + tile), right = Math.min(width, left + tile);
+                int pixels = (bottom - top) * (right - left);
+                int target = (pixels * 85 + 99) / 100;
+                if (hasBrightBackground(gray, width, top, bottom, left, right, pixels - target + 1))
+                    continue;
+                java.util.Arrays.fill(histogram, 0);
                 for (int y = top; y < bottom; y++)
                     for (int x = left; x < right; x++) histogram[gray[y * width + x] & 255]++;
-                int target = ((bottom - top) * (right - left) * 85 + 99) / 100,
-                        total = 0,
+                int total = 0,
                         background = 255;
                 for (int value = 0; value < 256; value++) {
                     total += histogram[value];
@@ -905,6 +908,20 @@ final class OctaveMarkDetector {
                                 (byte) Math.min(255, (gray[y * width + x] & 255) + shift);
             }
         return result;
+    }
+
+    private static boolean hasBrightBackground(
+            byte[] gray, int width, int top, int bottom, int left, int right, int required) {
+        // Enough pixels at or above 189 prove that the 85th percentile needs no shift.
+        // Limit the probe on shaded tiles, which still use the exact histogram.
+        int end = top + (bottom - top + 3) / 4;
+        for (int y = top; y < end; y++) {
+            int row = y * width;
+            for (int i = row + left; i < row + right; i++)
+                if ((gray[i] & 255) >= 189) required--;
+            if (required <= 0) return true;
+        }
+        return false;
     }
 
     private record InkBox(int left, int top, int right, int bottom, int area) {}
@@ -965,7 +982,6 @@ final class OctaveMarkDetector {
         List<PlayingTechniqueDetector.Word> words = new ArrayList<>();
         if (gray == null || gray.length != width * height) return words;
         if (!alreadyContrasted) gray = contrastedInk(gray, width, height);
-        var visited = new java.util.BitSet();
         var flood = new WordInkRuns();
         var holeScan = new HoleScanScratch();
         var closedMarks = new ArrayList<BareOctaveMark>();
@@ -991,12 +1007,14 @@ final class OctaveMarkDetector {
                 int h = bottom - top + 1;
                 int bandSize = width * h, bandOffset = top * width;
                 float minimumArea = Math.max(4, gap * gap * .025f);
-                visited.clear();
+                var bandInk = WordInkRuns.classify(gray, bandOffset, bandSize);
+                // Glyph traversal consumes its copy. The counter flood uses the original ink mask.
+                var remaining = (java.util.BitSet) bandInk.clone();
                 List<InkBox> boxes = new ArrayList<>();
                 List<InkBox> shortFragments = new ArrayList<>();
-                for (int origin = 0; origin < bandSize; origin++) {
-                    if ((gray[bandOffset + origin] & 255) >= 165 || visited.get(origin)) continue;
-                    flood.first(gray, visited, bandOffset, width, origin);
+                for (int origin = remaining.nextSetBit(0); origin >= 0;
+                        origin = remaining.nextSetBit(origin + 1)) {
+                    flood.first(remaining, width, origin);
                     int count = 0, left = width, right = -1, y1 = origin / width, y2 = y1;
                     while (flood.size > 0) {
                         int index = --flood.size;
@@ -1009,9 +1027,9 @@ final class OctaveMarkDetector {
                         int from = Math.max(rowStart, start - 1);
                         int to = Math.min(rowStart + width - 1, end + 1);
                         if (rowStart != 0)
-                            flood.overlap(gray, visited, bandOffset, width, from - width, to - width);
+                            flood.overlap(remaining, width, from - width, to - width);
                         if (rowStart + width < bandSize)
-                            flood.overlap(gray, visited, bandOffset, width, from + width, to + width);
+                            flood.overlap(remaining, width, from + width, to + width);
                     }
                     if (count >= minimumArea
                             && y2 - y1 + 1 >= 2
@@ -1042,7 +1060,7 @@ final class OctaveMarkDetector {
                 boxes.sort(Comparator.comparingInt(InkBox::left));
                 boolean[] used = new boolean[boxes.size()];
                 int componentCount = boxes.size();
-                var attachedBoxes = attachedEightBoxes(gray, width, height, top, bottom, gap, below, holeScan);
+                var attachedBoxes = attachedEightBoxes(gray, width, height, top, bottom, gap, below, holeScan, bandInk);
                 var componentBoxes = attachedBoxes.isEmpty()
                         ? java.util.Set.<InkBox>of()
                         : new java.util.HashSet<>(boxes);
@@ -1394,48 +1412,42 @@ final class OctaveMarkDetector {
         int[] starts = new int[128];
         int[] ends = new int[128];
         int size;
+        private static final java.lang.invoke.VarHandle PIXEL_WORDS =
+                java.lang.invoke.MethodHandles.byteArrayViewVarHandle(
+                        long[].class, java.nio.ByteOrder.LITTLE_ENDIAN);
+        private static final long HIGH_BITS = 0x8080808080808080L;
         private static final long INK_BIAS = 0x0101010101010101L * (165 - 128);
 
-        void first(byte[] gray, java.util.BitSet visited, int offset, int width, int origin) {
-            int rowEnd = origin - origin % width + width;
-            enqueue(gray, visited, offset, origin, origin, rowEnd);
+        static java.util.BitSet classify(byte[] gray, int offset, int size) {
+            long[] words = new long[(int) ((size + 63L) >>> 6)];
+            int p = 0;
+            for (; p <= size - Long.BYTES; p += Long.BYTES) {
+                long tone = (long) PIXEL_WORDS.get(gray, offset + p);
+                long dark = ~(((tone | HIGH_BITS) - INK_BIAS) & tone) & HIGH_BITS;
+                // Gather the eight comparison bits in pixel order.
+                words[p >>> 6] |= (((dark >>> 7) * 0x0102040810204080L) >>> 56) << p;
+            }
+            for (; p < size; p++)
+                if ((gray[offset + p] & 255) < 165) words[p >>> 6] |= 1L << p;
+            return java.util.BitSet.valueOf(words);
         }
 
-        void overlap(byte[] gray, java.util.BitSet visited, int offset, int width, int from, int to) {
+        void first(java.util.BitSet remaining, int width, int origin) {
+            enqueue(remaining, origin, origin, origin - origin % width + width);
+        }
+
+        void overlap(java.util.BitSet remaining, int width, int from, int to) {
             int rowStart = from - from % width, rowEnd = rowStart + width;
-            for (int at = from; at <= to; at++) {
-                if ((gray[offset + at] & 255) >= 165 || visited.get(at)) continue;
-                int first = at;
-                if (first - rowStart >= Long.BYTES && (gray[offset + first - 1] & 255) < 165
-                        && darkInkWord(gray, offset + first - Long.BYTES)) {
-                    int floor = Math.max(rowStart, visited.previousSetBit(first - 1) + 1);
-                    while (first - floor >= Long.BYTES && darkInkWord(gray, offset + first - Long.BYTES))
-                        first -= Long.BYTES;
-                }
-                while (first > rowStart && (gray[offset + first - 1] & 255) < 165
-                        && !visited.get(first - 1)) first--;
-                at = enqueue(gray, visited, offset, first, at, rowEnd);
+            for (int at = remaining.nextSetBit(from); at >= 0 && at <= to;
+                    at = remaining.nextSetBit(at + 1)) {
+                int first = Math.max(rowStart, remaining.previousClearBit(at - 1) + 1);
+                at = enqueue(remaining, first, at, rowEnd);
             }
         }
 
-        private static boolean darkInkWord(byte[] gray, int offset) {
-            long tone = (long) PAPER_WORDS.get(gray, offset);
-            return (((tone | PAPER_HIGH_BITS) - INK_BIAS) & tone & PAPER_HIGH_BITS) == 0;
-        }
-
-        private int enqueue(byte[] gray, java.util.BitSet visited, int offset,
-                int first, int seed, int rowEnd) {
-            int last = seed;
-            if (rowEnd - last > Long.BYTES && (gray[offset + last + 1] & 255) < 165
-                    && darkInkWord(gray, offset + last + 1)) {
-                int seen = visited.nextSetBit(last + 1);
-                int ceiling = seen < 0 ? rowEnd : Math.min(rowEnd, seen);
-                while (ceiling - last > Long.BYTES && darkInkWord(gray, offset + last + 1))
-                    last += Long.BYTES;
-            }
-            while (last + 1 < rowEnd && (gray[offset + last + 1] & 255) < 165
-                    && !visited.get(last + 1)) last++;
-            visited.set(first, last + 1);
+        private int enqueue(java.util.BitSet remaining, int first, int seed, int rowEnd) {
+            int last = Math.min(rowEnd, remaining.nextClearBit(seed)) - 1;
+            remaining.clear(first, last + 1);
             if (size == starts.length) {
                 starts = java.util.Arrays.copyOf(starts, size * 2);
                 ends = java.util.Arrays.copyOf(ends, size * 2);
@@ -1998,53 +2010,72 @@ final class OctaveMarkDetector {
     }
 
     private static final class HoleScanScratch {
-        boolean[] seen = new boolean[0];
         int[] queue = new int[256];
-
-        void reset(int size) {
-            if (seen.length < size) seen = new boolean[size];
-            else java.util.Arrays.fill(seen, 0, size, false);
-        }
+        int[] leftInk = new int[0], rightInk = new int[0];
     }
 
     private static List<InkBox> attachedEightBoxes(
-            byte[] gray, int w, int h, int top, int bottom, float gap, boolean below, HoleScanScratch scratch) {
+            byte[] gray, int w, int h, int top, int bottom, float gap, boolean below, HoleScanScratch scratch, java.util.BitSet unavailable) {
         // Every component in a strip this narrow touches a side.
         if (w <= 2) return List.of();
         int band = bottom - top + 1;
-        int sizeLimit = w * band, bandOffset = top * w;
-        scratch.reset(sizeLimit);
-        boolean[] seen = scratch.seen;
+        if (scratch.leftInk.length < band) {
+            scratch.leftInk = new int[band];
+            scratch.rightInk = new int[band];
+        }
+        // The band mask contains all original dark pixels. Read the
+        // original row limits before reusing those bits for visited paper runs.
+        int[] leftInk = scratch.leftInk, rightInk = scratch.rightInk;
+        int nextInk = unavailable.nextSetBit(0);
+        for (int y = 0; y < band; y++) {
+            int base = y * w, end = base + w;
+            if (nextInk >= 0 && nextInk < end) {
+                leftInk[y] = nextInk - base;
+                rightInk[y] = unavailable.previousSetBit(end - 1) - base;
+                nextInk = unavailable.nextSetBit(end);
+            } else {
+                leftInk[y] = w;
+                rightInk[y] = -1;
+            }
+        }
         var holes = new ArrayList<InkBox>();
         float minimumArea = gap * gap * .015f, maximumArea = gap * gap * .65f;
-        for (int seed = 0; seed < sizeLimit; seed++) {
-            if (seen[seed] || (gray[bandOffset + seed] & 255) < 165) continue;
-            int y0 = seed / w;
-            int size = enqueuePaperRun(gray, bandOffset, w, y0 * w, seed, 0, scratch);
-            int pixels = 0, x0 = w, x1 = -1, y1 = y0;
-            for (int take = 0; take < size; take += 2) {
-                int first = scratch.queue[take], last = scratch.queue[take + 1];
-                int y = first / w, row = y * w, left = first - row, right = last - row;
-                pixels += last - first + 1;
-                x0 = Math.min(x0, left);
-                x1 = Math.max(x1, right);
-                y1 = Math.max(y1, y);
-                for (int direction = -1; direction <= 1; direction += 2) {
-                    int nextY = y + direction;
-                    if (nextY < 0 || nextY >= band) continue;
-                    int nextRow = row + direction * w;
-                    for (int next = nextRow + left; next <= nextRow + right; next++) {
-                        if (seen[next] || (gray[bandOffset + next] & 255) < 165) continue;
-                        size = enqueuePaperRun(gray, bandOffset, w, nextRow, next, size, scratch);
-                        next = scratch.queue[size - 1];
+        for (int y0 = 0; y0 < band; y0++) {
+            if (rightInk[y0] - leftInk[y0] < 2) continue;
+            int base = y0 * w;
+            for (int seed = unavailable.nextClearBit(base + leftInk[y0] + 1); seed < base + rightInk[y0];
+                    seed = unavailable.nextClearBit(seed + 1)) {
+                boolean open = false;
+                int size = enqueuePaperRun(unavailable, seed, 0, scratch);
+                int pixels = 0, x0 = w, x1 = -1, y1 = y0;
+                for (int take = 0; take < size; take += 2) {
+                    int first = scratch.queue[take], last = scratch.queue[take + 1];
+                    int y = first / w, row = y * w, left = first - row, right = last - row;
+                    pixels += last - first + 1;
+                    x0 = Math.min(x0, left);
+                    x1 = Math.max(x1, right);
+                    y1 = Math.max(y1, y);
+                    for (int direction = -1; direction <= 1; direction += 2) {
+                        int nextY = y + direction;
+                        if (nextY < 0 || nextY >= band) continue;
+                        int nextRow = row + direction * w;
+                        if (left < leftInk[nextY] || right > rightInk[nextY]) open = true;
+                        int firstNeighbor = Math.max(left, leftInk[nextY] + 1);
+                        int lastNeighbor = Math.min(right, rightInk[nextY] - 1);
+                        if (firstNeighbor > lastNeighbor) continue;
+                        for (int next = unavailable.nextClearBit(nextRow + firstNeighbor);
+                                next <= nextRow + lastNeighbor;
+                                next = unavailable.nextClearBit(scratch.queue[size - 1] + 1)) {
+                            size = enqueuePaperRun(unavailable, next, size, scratch);
+                        }
                     }
                 }
+                if (!open && y0 > 0 && y1 < band - 1
+                        && pixels >= minimumArea
+                        && pixels <= maximumArea
+                        && x1 - x0 < gap
+                        && y1 - y0 < gap) holes.add(new InkBox(x0, top + y0, x1, top + y1, pixels));
             }
-            if (x0 > 0 && x1 < w - 1 && y0 > 0 && y1 < band - 1
-                    && pixels >= minimumArea
-                    && pixels <= maximumArea
-                    && x1 - x0 < gap
-                    && y1 - y0 < gap) holes.add(new InkBox(x0, top + y0, x1, top + y1, pixels));
         }
         if (holes.size() < 2) return List.of();
         var result = new ArrayList<InkBox>();
@@ -2080,30 +2111,13 @@ final class OctaveMarkDetector {
         return result;
     }
 
-    private static final java.lang.invoke.VarHandle PAPER_WORDS =
-            java.lang.invoke.MethodHandles.byteArrayViewVarHandle(
-                    long[].class, java.nio.ByteOrder.nativeOrder());
-    private static final long PAPER_HIGH_BITS = 0x8080808080808080L;
-    private static final long PAPER_BIAS = 0x0101010101010101L * (165 - 128);
-
-    private static boolean paperWord(byte[] gray, int offset) {
-        long tones = (long) PAPER_WORDS.get(gray, offset);
-        return (((tones | PAPER_HIGH_BITS) - PAPER_BIAS) & tones & PAPER_HIGH_BITS)
-                == PAPER_HIGH_BITS;
-    }
-
     private static int enqueuePaperRun(
-            byte[] gray, int bandOffset, int width, int row, int seed, int size, HoleScanScratch scratch) {
-        int first = seed, last = seed;
-        int end = row + width;
-        // A discovered run is marked in full, so an unmarked seed cannot share a run with it.
-        while (first - row >= Long.BYTES && paperWord(gray, bandOffset + first - Long.BYTES))
-            first -= Long.BYTES;
-        while (end - last > Long.BYTES && paperWord(gray, bandOffset + last + 1))
-            last += Long.BYTES;
-        while (first > row && (gray[bandOffset + first - 1] & 255) >= 165) first--;
-        while (last + 1 < end && (gray[bandOffset + last + 1] & 255) >= 165) last++;
-        java.util.Arrays.fill(scratch.seen, first, last + 1, true);
+            java.util.BitSet unavailable, int seed, int size, HoleScanScratch scratch) {
+        // Seeds lie strictly between two ink pixels. An entire paper run is claimed
+        // at once, so both neighboring set bits are its original ink boundaries.
+        int first = unavailable.previousSetBit(seed - 1) + 1;
+        int last = unavailable.nextSetBit(seed + 1) - 1;
+        unavailable.set(first, last + 1);
         if (size == scratch.queue.length)
             scratch.queue = java.util.Arrays.copyOf(scratch.queue, Math.multiplyExact(size, 2));
         scratch.queue[size] = first;

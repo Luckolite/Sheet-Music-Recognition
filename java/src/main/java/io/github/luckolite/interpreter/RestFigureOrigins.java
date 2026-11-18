@@ -277,12 +277,8 @@ final class RestFigureOrigins {
                 if (canonicalSource == null) {
                     canonicalSource = source.originalGray;
                     canonicalFlat = new byte[flat.length];
-                    for (int yy = 0; yy < bandHeight; yy++)
-                        for (int xx = 0; xx < w; xx++) {
-                            int sy = Math.round(actualBottoms[xx] + (first + yy - staffBottom));
-                            canonicalFlat[yy * w + xx] =
-                                    sy >= 0 && sy < h ? canonicalSource[sy * w + xx] : (byte) 255;
-                        }
+                    StaffBandRows.rectify(canonicalSource, w, h, first, staffBottom,
+                            actualBottoms, canonicalFlat);
                 }
                 if (canonicalSource != source.originalGray) continue;
                 originalFlat = canonicalFlat;
