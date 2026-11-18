@@ -365,8 +365,10 @@ public final class SheetInterpreter {
         var clockPartSource =
                 ScorePartProducerSource.capture(
                         sourceAnnotations, tabSourceGray, width, height, measures);
-        var score = OmrScoreInterpreter.analyze(
+        var staffMeasures = List.copyOf(measures);
+        var pageAnalysis = OmrScoreInterpreter.analyzePage(
                 labels, gray, width, height, measures, annotationGray, rejectedLedgerRows);
+        var score = pageAnalysis.score();
         var clockAnalysis = score;
         score =
                 RecognizedMultiRestProjection.apply(
@@ -380,7 +382,7 @@ public final class SheetInterpreter {
                 TripletRhythmDetector.withRests(
                         noteOwners, score.rests(), measures, gray, width, height);
         var notes = rhythm.notes();
-        var physicalStaffs = OmrScoreInterpreter.techniqueStaffs(labels, gray, width, height, measures);
+        var physicalStaffs = pageAnalysis.physicalStaffs();
         var staffs = ScoreDynamicsDetector.alignStaffs(physicalStaffs, notes, height);
         // Thin octave dashes can fade in the paper-corrected note raster.
         var printedOctaveSpans = new java.util.ArrayList<OctaveMarkDetector.StaffSpan>();
@@ -965,8 +967,11 @@ public final class SheetInterpreter {
                 labels, gray, width, height, finalInterpretation);
         var touches = OpenStringHarmonics.capture(
                 labels, annotationGray, gray, width, height, pitched, words);
-        var cadences = PrintedCadenceDurations.captureWithRejectedLedgerRows(
-                touches, labels, gray, width, height, rejectedLedgerRows, annotationGray);
+        var cadences = ocr == null && rejectedLedgerRows.isEmpty() && staffMeasures.equals(touches.measures())
+                ? PrintedCadenceDurations.captureWithStaffs(
+                        touches, labels, gray, width, height, physicalStaffs, annotationGray)
+                : PrintedCadenceDurations.captureWithRejectedLedgerRows(
+                        touches, labels, gray, width, height, rejectedLedgerRows, annotationGray);
         cadences = ClosedLedgerHalfDyad.capture(cadences, annotationGray, width, height);
         var provedSharpOwners = new java.util.ArrayList<>(accidentalTriplets.sharpOwners());
         provedSharpOwners.addAll(sharpTails.printedSharpOwners(clockAnalysis.notes(), measures, width, height));

@@ -30,10 +30,8 @@ class ExactWhitePredictionPackingTest(unittest.TestCase):
                     self.assertEqual(np.float32, buffers[0].dtype)
                     self.assertTrue(buffers[0].flags.c_contiguous)
                 np.testing.assert_array_equal(expected, actual)
-                if pattern == 'white':
+                if pattern in ('white', 'almost-white'):
                     self.assertEqual(1, candidate.runtime.calls)
-                elif pattern == 'almost-white':
-                    self.assertEqual(16, candidate.runtime.calls)
 
     def test_unknown_model_fingerprint_preserves_stateful_invocations(self):
         gray = np.full((705, 705), 255, np.uint8)

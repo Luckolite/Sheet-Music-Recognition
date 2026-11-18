@@ -4,6 +4,7 @@
 package io.github.luckolite.interpreter;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertSame;
 
 import java.util.Arrays;
@@ -26,6 +27,20 @@ public final class UpperLedgerStaffOverlapTest {
     public UpperLedgerStaffOverlapTest() {
         Arrays.fill(gray, (byte) 255);
         drawStaff(BOTTOM);
+    }
+
+    @Test
+    public void physicallyDetectedStaffSurvivesAnEmptyMeasureFrame() {
+        var labels = new byte[WIDTH * HEIGHT];
+        for (int i = 0; i < labels.length; i++)
+            if (gray[i] == 0) labels[i] = OmrMeasurePostProcessor.STAFF;
+
+        var expected = OmrScoreInterpreter.techniqueStaffs(labels, gray, WIDTH, HEIGHT, List.of());
+        assertFalse(expected.isEmpty());
+        var page = OmrScoreInterpreter.analyzePage(
+                labels, gray, WIDTH, HEIGHT, List.of(), gray, List.of());
+        assertEquals(expected, page.physicalStaffs());
+        assertEquals(List.of(), page.score().notes());
     }
 
     @Test

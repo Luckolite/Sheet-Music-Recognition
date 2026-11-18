@@ -1200,8 +1200,7 @@ final class OmrMeasurePostProcessor {
         // row, and reuse only staff pixels while testing candidate angles.
         int count = 0, activeColumns = 0;
         boolean bounded = width > 0 && width <= (1 << 20) && height > 0 && height <= (1 << 20);
-        boolean separated = bounded;
-        boolean[] sampledColumns = separated ? new boolean[(width + 2) / 3] : null;
+        int[] columnCounts = bounded ? new int[(width + 2) / 3] : null;
         boolean checkEmptyRows = bounded && width >= 64 && (long) width * height <= labels.length;
         long flatScore = 0;
         for (int y = 0, row = 0; y < height; y++, row += width) {
@@ -1210,40 +1209,58 @@ final class OmrMeasurePostProcessor {
             for (int x = 0, column = 0; x < width; x += 3, column++) {
                 if (labels[row + x] != STAFF) continue;
                 rowCount++;
-                if (separated) {
-                    if (!sampledColumns[column]) {
-                        sampledColumns[column] = true;
-                        activeColumns++;
-                    }
-                    if (y > 0 && labels[row - width + x] == STAFF) separated = false;
-                }
+                if (bounded && columnCounts[column]++ == 0) activeColumns++;
             }
             count += rowCount;
             flatScore += (long) rowCount * rowCount;
         }
         if (count == 0) return 0f;
-        if (separated && (long) count * activeColumns <= flatScore * 1.05) return 0f;
-        int[] xs = new int[count], ys = new int[count];
+        // A sampled column contributes at most one pixel to a retained projected row.
+        // Adjacent input rows are one unit apart. On positive half-integers in this
+        // bounded range, the rounding interval extends at least as far below the
+        // upper boundary as the lower one, so projection cannot merge those rows.
+        // For row zero, a float displacement above y + .5 is at least one ULP above it.
+        if (bounded && ((long) count * activeColumns <= flatScore * 1.05
+                || cannotBeatFlatThreshold(columnCounts, activeColumns, flatScore * 1.05))) return 0f;
+        // Group repeated x coordinates so the angle sweep translates each column once.
+        boolean grouped = bounded && activeColumns <= count / 4;
+        int[] xs = new int[grouped ? activeColumns : count], ys = new int[count];
+        int[] columnEnds = grouped ? new int[activeColumns] : null;
+        if (grouped) {
+            int start = 0, group = 0;
+            for (int col = 0; col < columnCounts.length; col++) {
+                int size = columnCounts[col];
+                if (size > 0) {
+                    columnCounts[col] = start;
+                    start += size;
+                    xs[group] = col * 3;
+                    columnEnds[group++] = start;
+                }
+            }
+        }
         int index = 0;
         for (int y = 0, row = 0; y < height; y++, row += width) {
             if (checkEmptyRows && emptyLabelRow(labels, row, width)) continue;
-            for (int x = 0; x < width; x += 3)
+            for (int x = 0, col = 0; x < width; x += 3, col++)
                 if (labels[row + x] == STAFF) {
-                    xs[index] = x;
-                    ys[index++] = y;
+                    if (grouped) ys[columnCounts[col]++] = y;
+                    else {
+                        xs[index] = x;
+                        ys[index++] = y;
+                    }
                 }
         }
         float bestSlope = 0f;
         float centerX = width / 2f;
         int[] projection = new int[height];
         long horizontalScore = bounded ? flatScore
-                : staffProjectionScore(xs, ys, height, centerX, 0f, projection);
+                : staffProjectionScore(xs, ys, height, centerX, 0f, projection, columnEnds);
         long bestScore = horizontalScore;
         // Camera angles and book gutters can exceed the old roughly three-degree range.
         for (int step = -24; step <= 24; step++) {
             if (step == 0) continue; // Horizontal score was computed above.
             float slope = step * 0.006f;
-            long score = staffProjectionScore(xs, ys, height, centerX, slope, projection);
+            long score = staffProjectionScore(xs, ys, height, centerX, slope, projection, columnEnds);
             if (score > bestScore) {
                 bestScore = score;
                 bestSlope = slope;
@@ -1255,13 +1272,29 @@ final class OmrMeasurePostProcessor {
         for (int step = -5; step <= 5; step++) {
             if (step == 0) continue; // The coarse winner was already scored.
             float slope = coarseSlope + step * .0006f;
-            long score = staffProjectionScore(xs, ys, height, centerX, slope, projection);
+            long score = staffProjectionScore(xs, ys, height, centerX, slope, projection, columnEnds);
             if (score > bestScore) {
                 bestScore = score;
                 bestSlope = slope;
             }
         }
         return bestScore > horizontalScore * 1.05 ? bestSlope : 0f;
+    }
+
+    private static boolean cannotBeatFlatThreshold(int[] columns, int active, double threshold) {
+        int depth = 0;
+        for (int count : columns) depth = Math.max(depth, count);
+        int[] depths = new int[depth + 1];
+        for (int count : columns) depths[count]++;
+        // Two columns can coincide on at most the smaller of their pixel counts.
+        // Nest all columns' rows to reach that upper bound for every pair at once.
+        long upper = 0;
+        for (int level = 1; level <= depth; level++) {
+            upper += (long) active * active;
+            if (upper > threshold) return false;
+            active -= depths[level];
+        }
+        return true;
     }
 
     private static long staffProjectionScore(
@@ -1277,11 +1310,33 @@ final class OmrMeasurePostProcessor {
     }
 
     private static long staffProjectionScore(
-            int[] xs, int[] ys, int height, float centerX, float slope, int[] projection) {
+            int[] xs, int[] ys, int height, float centerX, float slope, int[] projection, int[] columnEnds) {
         Arrays.fill(projection, 0);
-        for (int i = 0; i < xs.length; i++) {
-            int row = Math.round(ys[i] - slope * (xs[i] - centerX));
-            if (row >= 0 && row < height) projection[row]++;
+        if (columnEnds != null) {
+            int i = 0;
+            for (int column = 0; column < columnEnds.length; column++) {
+                float displacement = slope * (xs[column] - centerX);
+                int shift = Math.round(-displacement);
+                double residual = Math.abs((double) displacement + shift);
+                // At an exact half the translated integers are still exactly representable.
+                // Otherwise allow for rounding the subtraction anywhere in this column.
+                if (residual == .5 || .5 - residual > .5 * Math.ulp(height + Math.abs(displacement))) {
+                    for (; i < columnEnds[column]; i++) {
+                        int row = ys[i] + shift;
+                        if (row >= 0 && row < height) projection[row]++;
+                    }
+                } else {
+                    for (; i < columnEnds[column]; i++) {
+                        int row = Math.round(ys[i] - displacement);
+                        if (row >= 0 && row < height) projection[row]++;
+                    }
+                }
+            }
+        } else {
+            for (int i = 0; i < xs.length; i++) {
+                int row = Math.round(ys[i] - slope * (xs[i] - centerX));
+                if (row >= 0 && row < height) projection[row]++;
+            }
         }
         long score = 0;
         for (int value : projection) score += (long) value * value;

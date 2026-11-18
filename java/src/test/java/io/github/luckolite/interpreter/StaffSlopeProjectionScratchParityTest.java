@@ -45,6 +45,25 @@ public final class StaffSlopeProjectionScratchParityTest {
     }
 
     @Test
+    public void shortLowerSystemKeepsLevelRulesAndDetectsEitherTilt() {
+        int width = 500, height = 260;
+        for (float slope : new float[]{0f, -.048f, .036f}) {
+            byte[] labels = new byte[width * height];
+            for (int x = 0; x < width; x++) {
+                for (int system = 0; system < 2; system++) {
+                    if (system == 1 && x > width / 2) continue;
+                    for (int line = 0; line < 5; line++) {
+                        int y = Math.round(42 + system * 112 + line * 9 + slope * (x - width / 2f));
+                        for (int thickness = 0; thickness < 3; thickness++)
+                            labels[(y + thickness) * width + x] = OmrMeasurePostProcessor.STAFF;
+                    }
+                }
+            }
+            assertEquals(slope, OmrMeasurePostProcessor.estimateStaffSlope(labels, width, height), .00001f);
+        }
+    }
+
+    @Test
     public void everyAngleDecisionAndCallerRasterMatchesReleasedGolden() throws Exception {
         MessageDigest digest = MessageDigest.getInstance("SHA-256");
         ByteBuffer word = ByteBuffer.allocate(4);

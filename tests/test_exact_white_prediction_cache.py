@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Original tensors exercise cache ownership and custom-model compatibility."""
 import unittest
+from unittest.mock import patch
 import numpy as np
 from sheet_music_recognition import reader
 
@@ -117,14 +118,36 @@ class ExactWhitePredictionCacheTest(unittest.TestCase):
         # The sample grid misses this pixel, and only the second tile contains it.
         gray[3, 330] = 8
         baseline, cached = self.assert_original(gray)
-        self.assertEqual((4, 3), (baseline.runtime.calls, cached.runtime.calls))
+        self.assertEqual((4, 2), (baseline.runtime.calls, cached.runtime.calls))
         baseline, custom = self.assert_original(gray, known=False, stateful=True)
         self.assertEqual((4, 4), (baseline.runtime.calls, custom.runtime.calls))
 
-    def test_nearly_white_pixels_do_not_reuse_a_different_tensor(self):
-        gray = np.full((705, 705), 254, np.uint8)
+    def test_tinted_paper_with_thin_rules_between_sample_points(self):
+        gray = np.full((320, 896), 254, np.uint8)
+        gray[7::32] = 37
         baseline, candidate = self.assert_original(gray)
-        self.assertEqual(baseline.runtime.calls, candidate.runtime.calls)
+        self.assertEqual((4, 1), (baseline.runtime.calls, candidate.runtime.calls))
+
+    def test_checksum_collision_compares_original_pixels(self):
+        gray = np.full((127, 896), 255, np.uint8)
+        gray[3, 390] = 254
+        with patch.object(reader.zlib, "crc32", return_value=0):
+            baseline, candidate = self.assert_original(gray[:, ::-1])
+        self.assertGreater(candidate.runtime.calls, 1)
+        self.assertLessEqual(candidate.runtime.calls, baseline.runtime.calls)
+
+    def test_tile_cache_releases_finished_predictions_and_keeps_nearby_reuses(self):
+        keys = [1, 2, 2, 3, 3, 1, 4, 4]
+        retained = set()
+        hits = []
+        for index, (key, keep) in enumerate(reader._tile_cache_plan(keys, capacity=1)):
+            if key in retained:
+                hits.append(index)
+            retained.discard(key)
+            if keep:
+                retained.add(key)
+            self.assertLessEqual(len(retained), 1)
+        self.assertEqual([2, 4, 7], hits)
 
     def test_custom_stateful_model_keeps_one_invocation_per_tile(self):
         gray = np.full((705, 705), 255, np.uint8)

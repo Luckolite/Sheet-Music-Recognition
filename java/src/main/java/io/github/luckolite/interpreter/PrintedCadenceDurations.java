@@ -20,6 +20,13 @@ final class PrintedCadenceDurations {
         if (score.notes().isEmpty()) return score;
         var staffs = OmrScoreInterpreter.techniqueStaffs(
                 labels, gray, width, height, score.measures(), rejectedLedgerRows);
+        return captureWithStaffs(score, labels, gray, width, height, staffs, annotationGray);
+    }
+
+    static ScorePageInterpretation captureWithStaffs(
+            ScorePageInterpretation score, byte[] labels, byte[] gray, int width, int height,
+            List<PlayingTechniqueDetector.Staff> staffs, byte[] annotationGray) {
+        if (score.notes().isEmpty()) return score;
         score = terminalHarmonicQuarter(score, labels, gray, width, height, staffs);
         return capture(score, labels, gray, width, height, staffs, annotationGray);
     }

@@ -9,6 +9,7 @@ import os
 import struct
 import subprocess
 import tempfile
+import zlib
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
@@ -94,16 +95,42 @@ def _tile_windows(height, width, weights, rows, columns):
             yield (row, column), wins
 
 
-def _repeated_tile_samples(gray, rows, columns):
-    counts = Counter()
-    for row in rows:
-        for column in columns:
-            sample = gray[row, column][::16, ::16].tobytes()
-            # Flat samples cannot distinguish strokes from blank paper.
-            if sample.count(sample[:1]) < len(sample):
-                counts[sample] += 1
-    # Each retained input and byte-label pair costs at most 200 KiB.
-    return {sample: None for sample, count in counts.most_common(64) if count > 1}
+def _repeated_tile_plan(gray, rows, columns):
+    # Identical tiles must match on the sample grid. Check every pixel of candidate pairs
+    # before reuse, including thin staff rules and marks between sample points.
+    samples = [hash(gray[row, column][::16, ::16].tobytes())
+               for row in rows for column in columns]
+    frequency = Counter(samples)
+    positions = ((row, column) for row in rows for column in columns)
+    keys = [zlib.crc32(np.ascontiguousarray(gray[row, column])) if frequency[sample] > 1 else None
+            for sample, (row, column) in zip(samples, positions)]
+    return _tile_cache_plan(keys)
+
+
+def _tile_cache_plan(keys, capacity=64):
+    """Retain as many successive exact-tile reuse opportunities as fit in memory."""
+    keep = bytearray(len(keys))
+    # Find the next request for each key before choosing which predictions to hold.
+    following = {}
+    next_use = [None] * len(keys)
+    for index in range(len(keys) - 1, -1, -1):
+        key = keys[index]
+        if key is not None:
+            next_use[index] = following.get(key)
+            following[key] = index
+    active = {}
+    for index, (key, end) in enumerate(zip(keys, next_use)):
+        active.pop(key, None)
+        if end is None:
+            continue
+        keep[index] = 1
+        active[key] = (end, index)
+        if len(active) > capacity:
+            # Dropping the interval that ends last leaves room for the most later hits.
+            victim = max(active, key=active.get)
+            _, start = active.pop(victim)
+            keep[start] = 0
+    return zip(keys, keep)
 
 
 def grayscale(image, width=2048):
@@ -242,7 +269,6 @@ class Interpreter:
         if not width or not height or gray.size > 20_000_000:
             raise ValueError("Invalid image dimensions")
         labels = np.zeros_like(gray)
-        white_prediction = None
         ch, cw = min(320, height), min(320, width)
         rows = [slice(top, top + ch) for top in tile_starts(height)]
         columns = [slice(left, left + cw) for left in tile_starts(width)]
@@ -258,25 +284,25 @@ class Interpreter:
         # Only the reviewed bundled graph has the deterministic-output contract.
         # Custom models keep one inference call per tile, including stateful models.
         reuse_predictions = (height > ch or width > cw) and bundled
-        repeated = _repeated_tile_samples(gray, rows, columns) if reuse_predictions else {}
+        plan = _repeated_tile_plan(gray, rows, columns) if reuse_predictions else None
+        repeated = {}
         for region, wins in _tile_windows(height, width, self.edge, rows, columns):
             tile = gray[region]
-            # The fixed padding is white too, so only inspect source pixels.
-            exact_white = reuse_predictions and tile.min() == 255
-            pixels = None
-            cached = white_prediction if exact_white else None
-            if repeated and not exact_white:
-                sample = tile[::16, ::16].tobytes()
-                if sample in repeated:
-                    pixels = np.ascontiguousarray(tile).tobytes()
-                    entry = repeated[sample]
-                    if entry is not None and pixels == entry[0]:
-                        cached = entry[1]
+            cached = pixels = None
+            if plan is not None:
+                key, keep = next(plan)
+                entry = repeated.pop(key, None)
+                if entry is not None and np.array_equal(tile, entry[0]):
+                    cached = entry[1]
+                    if keep:
+                        repeated[key] = entry
+                elif keep:
+                    pixels = tile.copy(order="C")
             if cached is not None:
                 prediction = cached
             else:
                 if pixels is not None:
-                    tile = np.frombuffer(pixels, dtype=np.uint8).reshape(tile.shape)
+                    tile = pixels
                 tensor = staging if tensor_view is None else input_buffer()
                 if tensor_view is not None and (ch < 320 or cw < 320):
                     tensor.fill(255)
@@ -291,14 +317,10 @@ class Interpreter:
                 if prediction.min() < 0 or prediction.max() > 5:
                     del prediction
                     raise ValueError("Model returned classes outside 0..5")
-                if exact_white:
-                    # Cache owned, validated labels in the destination dtype.
-                    white_prediction = prediction.astype(np.uint8)
-                    prediction = white_prediction
-                elif pixels is not None:
+                if pixels is not None:
                     # Only complete input equality authorizes prediction reuse.
                     prediction = prediction.astype(np.uint8)
-                    repeated[sample] = pixels, prediction
+                    repeated[key] = pixels, prediction
             np.copyto(labels[region], prediction[:ch, :cw], where=wins, casting="unsafe")
             del prediction
         return labels

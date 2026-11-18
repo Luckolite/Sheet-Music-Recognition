@@ -35,6 +35,10 @@ final class OmrScoreInterpreter {
             List<MeasureRegion> rejectedLedgerRows) {
         List<Staff> staffs = findStaffs(labels, gray, width, height, measures);
         removeRejectedLedgerStaffs(staffs, rejectedLedgerRows, measures, height);
+        return techniqueGeometry(staffs);
+    }
+
+    private static List<PlayingTechniqueDetector.Staff> techniqueGeometry(List<Staff> staffs) {
         List<PlayingTechniqueDetector.Staff> result = new ArrayList<>();
         for (Staff staff : staffs)
             result.add(
@@ -79,6 +83,21 @@ final class OmrScoreInterpreter {
                 new RawCourtesyBudget(64_000_000L, 16L * 1024 * 1024), rejectedLedgerRows);
     }
 
+    record PageAnalysis(Analysis score, List<PlayingTechniqueDetector.Staff> physicalStaffs) {}
+
+    // SheetInterpreter has already validated the page raster. Capture the unfiltered
+    // staff lanes before pitch analysis removes rejected ledger rows or refines them.
+    static PageAnalysis analyzePage(
+            byte[] labels, byte[] gray, int width, int height, List<MeasureRegion> measures,
+            byte[] annotationGray, List<MeasureRegion> rejectedLedgerRows) {
+        var staffs = findStaffs(labels, gray, width, height, measures);
+        var physicalStaffs = techniqueGeometry(staffs);
+        var score = measures.isEmpty() ? new Analysis(List.of(), List.of())
+                : analyzeDetectedStaffs(labels, gray, width, height, measures, annotationGray,
+                        new RawCourtesyBudget(64_000_000L, 16L * 1024 * 1024), rejectedLedgerRows, staffs);
+        return new PageAnalysis(score, physicalStaffs);
+    }
+
     private static Analysis analyze(
             byte[] labels, byte[] gray, int width, int height, List<MeasureRegion> measures,
             RawCourtesyBudget rawCourtesy) {
@@ -105,7 +124,14 @@ final class OmrScoreInterpreter {
                 || height <= 0
                 || measures == null
                 || measures.isEmpty()) return new Analysis(List.of(), List.of());
-        List<Staff> staffs = findStaffs(labels, gray, width, height, measures);
+        return analyzeDetectedStaffs(labels, gray, width, height, measures, annotationGray, rawCourtesy,
+                rejectedLedgerRows, findStaffs(labels, gray, width, height, measures));
+    }
+
+    private static Analysis analyzeDetectedStaffs(
+            byte[] labels, byte[] gray, int width, int height, List<MeasureRegion> measures,
+            byte[] annotationGray, RawCourtesyBudget rawCourtesy, List<MeasureRegion> rejectedLedgerRows,
+            List<Staff> staffs) {
         removeRejectedLedgerStaffs(staffs, rejectedLedgerRows, measures, height);
         if (staffs.isEmpty())
             return new Analysis(
