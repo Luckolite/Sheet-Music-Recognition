@@ -3,7 +3,6 @@
 package io.github.luckolite.interpreter;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 
 /** Complete semantic components propose crops only; no numeral value or meter is inferred. */
@@ -25,38 +24,9 @@ final class MeterComponentSeeds {
                 || hints == null
                 || hints.isEmpty()) return List.of();
         var result = new ArrayList<MeterChangeDetector.Crop>();
-        boolean[] visited = new boolean[labels.length];
-        int[] stack = new int[Math.min(256, labels.length)];
-        for (int seed = 0; seed < labels.length; seed++) {
-            if (visited[seed] || labels[seed] != OmrMeasurePostProcessor.SYMBOL) continue;
-            int size = 1;
-            stack[0] = seed;
-            visited[seed] = true;
-            int left = w, right = -1, top = h, bottom = -1;
-            while (size > 0) {
-                int at = stack[--size], x = at % w, y = at / w;
-                left = Math.min(left, x);
-                right = Math.max(right, x);
-                top = Math.min(top, y);
-                bottom = Math.max(bottom, y);
-                for (int dy = -1; dy <= 1; dy++)
-                    for (int dx = -1; dx <= 1; dx++) {
-                        int xx = x + dx, yy = y + dy;
-                        if (xx < 0 || xx >= w || yy < 0 || yy >= h) continue;
-                        int next = yy * w + xx;
-                        if (visited[next] || labels[next] != OmrMeasurePostProcessor.SYMBOL)
-                            continue;
-                        visited[next] = true;
-                        if (size == stack.length)
-                            stack =
-                                    Arrays.copyOf(
-                                            stack,
-                                            (int) Math.min(labels.length, stack.length * 2L));
-                        stack[size++] = next;
-                    }
-            }
-            Body body = new Body(left, right, top, bottom);
-            if (left < 1 || right >= w - 1 || top < 1 || bottom >= h - 1) continue;
+        new PrintedInkComponents().scanSymbols(labels, w, h, (left, top, right, bottom, count) -> {
+            if (left == 0 || right == w || top == 0 || bottom == h) return true;
+            Body body = new Body(left, right - 1, top, bottom - 1);
             MeterChangeDetector.Crop agreed = null;
             boolean conflict = false;
             for (var hint : hints) {
@@ -71,7 +41,8 @@ final class MeterComponentSeeds {
                 agreed = crop;
             }
             if (!conflict && agreed != null && !result.contains(agreed)) result.add(agreed);
-        }
+            return true;
+        });
         return List.copyOf(result);
     }
 

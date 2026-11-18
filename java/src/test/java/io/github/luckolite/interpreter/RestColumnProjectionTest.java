@@ -51,4 +51,20 @@ public class RestColumnProjectionTest {
             else assertArrayEquals(expected, counts);
         }
     }
+
+    @Test public void repeatedInkRunsCrossWordBoundaryAndEndOnLastPixel() {
+        int width = 128, height = 3;
+        byte[] gray = new byte[width * height];
+        Arrays.fill(gray, (byte) 170);
+        for (int y = 0; y < height; y++)
+            Arrays.fill(gray, y * width + 63, (y + 1) * width, (byte) (169 - y));
+        int[] dark = new int[height], longest = new int[height];
+        var projection = new RestColumnProjection(gray, width, height, dark);
+        for (int y : new int[] {2, 0, 1}) projection.readRow(y, longest);
+        assertArrayEquals(new int[] {65, 65, 65}, dark);
+        assertArrayEquals(dark, longest);
+        int[] expected = new int[width];
+        Arrays.fill(expected, 63, width, 2);
+        assertArrayEquals(expected, projection.restBandCounts(0, 2, new boolean[] {false, true, false}));
+    }
 }

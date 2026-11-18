@@ -11,6 +11,25 @@ import static org.junit.Assert.*;
 public class PhotometricRestOriginPreservationTest {
     private static final int W = ProjectionCallerScene.W, H = ProjectionCallerScene.H;
 
+    @Test
+    public void contrastViewsRespectToneBoundariesAndExcludePartialRowBorders() {
+        int width = 19, height = 7;
+        byte[] gray = new byte[width * height];
+        Arrays.fill(gray, (byte) 255);
+        int[] tones = {170, 169, 170, 184, 185, 204, 205, 255, 0, 185, 170, 204, 184, 185, 170};
+        int start = 3 * width + 2;
+        for (int i = 0; i < tones.length; i++) gray[start + i] = (byte) tones[i];
+        var views = SixteenthRestDetector.contrastedRestInk(gray, width, height, 5);
+        for (int i = 0; i < tones.length; i++) {
+            boolean interior = i > 0 && i < tones.length - 1;
+            int ink = tones[i];
+            assertEquals(interior && ink >= 170 && ink < 185 ? 169 : ink,
+                    views.ordinary()[start + i] & 255);
+            assertEquals(interior && ink >= 170 && ink < 205 ? 169 : ink,
+                    views.faint()[start + i] & 255);
+        }
+    }
+
     private static List<SixteenthRestDetector.Staff> staffs() {
         return List.of(new SixteenthRestDetector.Staff(70, 134, 16, 0, 1));
     }

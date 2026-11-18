@@ -538,44 +538,6 @@ final class ScoreDynamicsDetector {
         return detectDirectionCore(words, staffs, measures, notes, gray, width, height, gray, true);
     }
 
-    private static int collectDirectionComponent(
-            byte[] gray, int width, int height, int origin, boolean[] seen, int[] queue,
-            int[] bounds) {
-        int n = 1;
-        queue[0] = origin;
-        seen[origin] = true;
-        int left = width, right = 0, top = height, bottom = 0;
-        for (int start = 0; start < n; start++) {
-            int at = queue[start], y = at / width, x = at - y * width;
-            left = Math.min(left, x);
-            right = Math.max(right, x);
-            top = Math.min(top, y);
-            bottom = Math.max(bottom, y);
-            int above = Math.min(y, 2), below = Math.min(height - 1 - y, 2);
-            int first = at - above * width, last = at + below * width;
-            boolean hasLeft = x > 0, hasRight = x + 1 < width;
-            for (int center = first; center <= last; center += width) {
-                if (hasLeft) n = appendDirectionInk(gray, seen, queue, n, center - 1);
-                n = appendDirectionInk(gray, seen, queue, n, center);
-                if (hasRight) n = appendDirectionInk(gray, seen, queue, n, center + 1);
-                if (center == last) break;
-            }
-        }
-        bounds[0] = left;
-        bounds[1] = right;
-        bounds[2] = top;
-        bounds[3] = bottom;
-        return n;
-    }
-
-    private static int appendDirectionInk(
-            byte[] gray, boolean[] seen, int[] queue, int size, int pixel) {
-        if (seen[pixel] || (gray[pixel] & 255) >= 145) return size;
-        seen[pixel] = true;
-        queue[size] = pixel;
-        return size + 1;
-    }
-
     private static int nextDirectionInk(byte[] gray, int start) {
         int p = start;
         while (p <= gray.length - Long.BYTES) {
@@ -702,8 +664,8 @@ final class ScoreDynamicsDetector {
         if (gray != null && gray.length == width * height) {
             boolean originalRaster = gray == ownershipGray;
             int firstInk = nextDirectionInk(gray, 0);
-            boolean[] seen = firstInk < gray.length ? new boolean[gray.length] : null;
-            int[] queue = seen != null ? new int[gray.length] : null;
+            var components = new PackedInkFlood(gray, width, height, 145, 2, firstInk);
+            int[] queue = components.queue;
             var completeFaint =
                     paperProposals && originalRaster
                             ? new CompleteFaintHairpinArms.Page(gray, width, height, staffs)
@@ -716,15 +678,9 @@ final class ScoreDynamicsDetector {
                     originalRaster
                             ? new CompleteOpposedHairpinPair.Collector(gray, width, height)
                             : null;
-            int[] bounds = new int[4];
-            for (int p = firstInk; p < gray.length; p++) {
-                if ((gray[p] & 255) >= 145) {
-                    p = nextDirectionInk(gray, p + 1);
-                    if (p == gray.length) break;
-                }
-                if (seen[p]) continue;
-                int n = collectDirectionComponent(gray, width, height, p, seen, queue, bounds);
-                int left = bounds[0], right = bounds[1], top = bounds[2], bottom = bounds[3];
+            int n;
+            while ((n = components.next()) != 0) {
+                int left = components.left, right = components.right, top = components.top, bottom = components.bottom;
                 int w = right - left + 1, h = bottom - top + 1;
                 var owner = directionFloors.componentOwner(top, bottom);
                 if (owner == null

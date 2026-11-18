@@ -31,6 +31,19 @@ public class TieShoulderWindowTest {
     }
 
     @Test
+    public void uniformPaleRulesExcludeOnlyTheSpansTheyCover() {
+        int row = 40 * WIDTH;
+        for (int tone : new int[] {81, 165, 205, 225}) {
+            Arrays.fill(gray, row + 15, row + 96, (byte) tone);
+            assertTrue(window().excludes(15, 95));
+            assertFalse(window().excludes(14, 96));
+            // A one-level change can expose ink at a different adaptive cutoff.
+            gray[row + 15] = gray[row + 95] = (byte) (tone - 1);
+            assertFalse(window().excludes(15, 95));
+        }
+    }
+
+    @Test
     public void palestEligiblePixelCanKeepEachShoulderAlive() {
         int a = 24, b = 100;
         gray[40 * WIDTH + a] = gray[40 * WIDTH + b] = (byte) 225;

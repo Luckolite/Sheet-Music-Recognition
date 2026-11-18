@@ -149,6 +149,60 @@ class ExactWhitePredictionCacheTest(unittest.TestCase):
             self.assertLessEqual(len(retained), 1)
         self.assertEqual([2, 4, 7], hits)
 
+    def test_sparse_pairs_preserve_extreme_context_and_tile_order(self):
+        def engine(enable):
+            result = make_reader()
+            result.edge = reader._tile_edges()
+            result._sparse_pairs_enabled = enable
+            runtime = result.runtime
+            groups = (np.arange(320) // 8) * 8
+            low, high = np.maximum(0, groups - 78), np.minimum(319, groups + 85)
+
+            def local_prediction():
+                runtime.calls += 1
+                pixels = runtime.input[0, 0]
+                values = pixels.copy()
+                for y in (low, high):
+                    for x in (low, high):
+                        values += pixels[np.ix_(y, x)]
+                runtime.output[0] = (values + runtime.pattern) % 6
+
+            runtime.invoke = local_prediction
+            return result
+
+        gray = np.full((320, 2403), 255, np.uint8)
+        for i in range(10):
+            y = 3 + i if i % 2 == 0 else 307 - i
+            x = 192 * i + 151
+            gray[y:y + 4, x:x + 7] = 20 + i
+        original, paired = engine(False), engine(True)
+        expected = original.predict(gray)
+        self.assertTrue(np.array_equal(expected, paired.predict(gray)))
+        self.assertLess(paired.runtime.calls, original.runtime.calls)
+        first_page_calls = paired.runtime.calls
+        gray[3, 151] += 1
+        self.assertTrue(np.array_equal(original.predict(gray), paired.predict(gray)))
+        self.assertEqual(first_page_calls - 1, paired.runtime.calls - first_page_calls)
+
+    def test_sparse_pair_limits_and_white_reference_cost(self):
+        gray = np.full((320, 320 * 34), 160, np.uint8)
+        regions = [(slice(0, 320), slice(i * 320, (i + 1) * 320)) for i in range(34)]
+        for index, row in ((31, 0), (32, 319)):
+            tile = gray[regions[index]]
+            tile.fill(255)
+            tile[row, 160] = 0
+        decisions = [(None, False)] * len(regions)
+        # These regions are in separate scheduling windows.
+        self.assertEqual(({}, set()), reader._sparse_pairs(gray, regions, decisions))
+        gray[regions[30]] = gray[regions[32]]
+        # One pair alone cannot pay for an additional white reference inference.
+        self.assertEqual(({}, set()), reader._sparse_pairs(gray, regions, decisions))
+        gray[regions[0]] = 255
+        pairs, white = reader._sparse_pairs(gray, regions, decisions)
+        self.assertEqual([30], list(pairs))
+        self.assertEqual(31, pairs[30][0])
+        self.assertEqual({0}, white)
+
     def test_custom_stateful_model_keeps_one_invocation_per_tile(self):
         gray = np.full((705, 705), 255, np.uint8)
         baseline, candidate = self.assert_original(gray, known=False, stateful=True)

@@ -2,8 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.github.luckolite.interpreter;
 
-import java.util.Arrays;
-
 /** Source-only shaft direction for serialization; never selects a rhythmic or performance voice. */
 final class PrintedStemMetadata {
     private PrintedStemMetadata() {}
@@ -51,6 +49,7 @@ final class PrintedStemMetadata {
         int margin = Math.max(2, Math.round(gap * .22f)),
                 flank = Math.max(3, Math.round(gap * .4f));
         int start = Math.max(2, Math.round(gap * .25f)), length = Math.round(gap * 2.25f);
+        int radius = Math.max(4, Math.round(gap * .65f)), half = Math.max(2, Math.round(gap * .3f));
         for (int origin = edge - margin; origin <= edge + margin; origin++) {
             int hits = 0, narrow = 0, total = 0, blank = 0;
             boolean disconnected = false;
@@ -61,25 +60,23 @@ final class PrintedStemMetadata {
                     disconnected = true;
                     break;
                 }
-                int radius = Math.max(4, Math.round(gap * .65f)),
-                        half = Math.max(2, Math.round(gap * .3f));
-                int[] values = new int[(radius * 2 + 1) * (half * 2 + 1)];
-                int n = 0;
-                for (int yy = Math.max(0, row - half); yy <= Math.min(h - 1, row + half); yy++)
-                    for (int xx = Math.max(0, x - radius); xx <= Math.min(w - 1, x + radius); xx++)
-                        values[n++] = gray[yy * w + xx] & 255;
-                Arrays.sort(values, 0, n);
-                int paper = values[(n - 1) * 85 / 100], core = 255;
-                for (int xx = x - 1; xx <= x + 1; xx++)
-                    core = Math.min(core, gray[row * w + xx] & 255);
+                int core = Math.min(gray[row * w + x] & 255,
+                        Math.min(gray[row * w + x - 1] & 255, gray[row * w + x + 1] & 255));
+                int left = Math.max(0, x - radius), right = Math.min(w - 1, x + radius);
+                int top = Math.max(0, row - half), bottom = Math.min(h - 1, row + half);
+                int samples = (right - left + 1) * (bottom - top + 1);
+                int needed = samples - (int) ((samples - 1L) * 85 / 100);
                 total++;
-                boolean ink = paper - core >= 24;
-                if (ink) {
+                if (core <= 231 && paperAtLeast(gray, w, left, right, top, bottom, needed, core + 24)) {
                     hits++;
                     blank = 0;
-                    int l = gray[row * w + x - flank] & 255, r = gray[row * w + x + flank] & 255;
-                    int contrast = Math.max(16, Math.round((paper - core) * .3f));
-                    if (l - core >= contrast && r - core >= contrast) narrow++;
+                    int side = Math.min(gray[row * w + x - flank] & 255, gray[row * w + x + flank] & 255) - core;
+                    if (side >= 16) {
+                        // Smallest integer delta with round(delta * .3f) > side.
+                        int tooBright = core + (10 * side + 7) / 3;
+                        if (tooBright > 255 || !paperAtLeast(gray, w, left, right, top, bottom, needed, tooBright))
+                            narrow++;
+                    }
                 } else if (++blank > Math.max(1, Math.round(gap * .12f))) {
                     disconnected = true;
                     break;
@@ -89,6 +86,17 @@ final class PrintedStemMetadata {
                     && total >= gap * 1.9f
                     && hits >= total * .92f
                     && narrow >= total * .6f) return true;
+        }
+        return false;
+    }
+
+    /** The 85th percentile reaches the cutoff iff enough samples reach it. */
+    private static boolean paperAtLeast(byte[] gray, int width, int left, int right,
+            int top, int bottom, int needed, int cutoff) {
+        for (int y = top; y <= bottom; y++) {
+            int end = y * width + right;
+            for (int p = y * width + left; p <= end; p++)
+                if ((gray[p] & 255) >= cutoff && --needed == 0) return true;
         }
         return false;
     }

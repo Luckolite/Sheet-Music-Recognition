@@ -13,7 +13,7 @@ public class BarlineThresholdMembershipTest {
     record Fixture(byte[] gray,int width,int height,int column,int top,int bottom,float gap,int outline) {}
     static Method method;
     static boolean detect(Fixture f)throws Exception {
-        return (boolean)method.invoke(null,f.gray,f.width,f.height,f.column,f.top,f.bottom,f.gap,f.outline);
+        return (boolean)method.invoke(null,f.gray,f.width,f.height,f.column,f.column,f.top,f.bottom,f.gap,f.outline);
     }
     static Fixture fixture(int n) {
         int w=220,h=180,col=n%7==0?2:n%7==1?218:94;
@@ -33,12 +33,19 @@ public class BarlineThresholdMembershipTest {
     }
     @Test public void clippedGrayNoisyAndPrintedHeadComponentsStayExact() throws Exception {
         Class<?> c=Class.forName("io.github.luckolite.interpreter.ClosedHeadBarlineGuard");
-        method=c.getDeclaredMethod("attachedAt",byte[].class,int.class,int.class,int.class,int.class,int.class,float.class,int.class);
+        method=c.getDeclaredMethod("attachedInRange",byte[].class,int.class,int.class,int.class,int.class,int.class,int.class,float.class,int.class);
         method.setAccessible(true);
         var hash=MessageDigest.getInstance("SHA-256");int positives=0;
         for(int n=0;n<128;n++) {
             Fixture f=fixture(n);byte[] original=f.gray.clone();
             boolean found=detect(f);hash.update((byte)(found?1:0));if(found)positives++;
+            int first = Math.max(0, f.column - 4), last = Math.min(f.width - 1, f.column + 4);
+            boolean individual = false;
+            for (int x = first; x <= last; x++)
+                individual |= (boolean) method.invoke(null, f.gray, f.width, f.height,
+                        x, x, f.top, f.bottom, f.gap, f.outline);
+            assertEquals(individual, method.invoke(null, f.gray, f.width, f.height,
+                    first, last, f.top, f.bottom, f.gap, f.outline));
             assertArrayEquals("Flood fill must not modify the source page",original,f.gray);
         }
         // Captured from the previous decoder on original generated geometry.

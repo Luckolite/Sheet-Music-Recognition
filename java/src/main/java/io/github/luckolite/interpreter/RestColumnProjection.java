@@ -10,6 +10,8 @@ final class RestColumnProjection {
     private final int width;
     private final int[] rowDark, columns;
     private final int[][] rowRuns;
+    private long[] rowBits, lastBits;
+    private int lastRead = -1, lastMaximum;
     private int[] scratch = new int[16];
     private int priorTop, priorBottom = -1;
     private boolean[] priorMask;
@@ -20,6 +22,8 @@ final class RestColumnProjection {
         this.width = width;
         this.rowDark = rowDark;
         columns = new int[width];
+        rowBits = new long[(int) ((width + 63L) >>> 6)];
+        lastBits = new long[rowBits.length];
         rowRuns = new int[height][];
     }
 
@@ -60,25 +64,47 @@ final class RestColumnProjection {
     }
 
     void readRow(int y, int[] rowLongest) {
-        int count = 0, maximum = 0, used = 0, row = y * width;
-        for (int x = 0; x < width; ) {
-            while (x < width && (gray[row + x] & 255) >= 170) x++;
-            if (x == width) break;
-            int start = x++;
-            while (x < width && (gray[row + x] & 255) < 170) x++;
-            if (scratch.length - used < 2) scratch = Arrays.copyOf(scratch, scratch.length * 2);
-            // A singleton needs one slot. Longer runs use a complemented start and an exclusive end.
-            if (x == start + 1) scratch[used++] = start;
-            else {
-                scratch[used++] = ~start;
-                scratch[used++] = x;
+        PackedGrayInk.fill(gray, y * width, width, 170, rowBits, 0);
+        if (lastRead >= 0 && Arrays.equals(rowBits, lastBits)) {
+            rowDark[y] = rowDark[lastRead];
+            rowLongest[y] = lastMaximum;
+            rowRuns[y] = rowRuns[lastRead];
+            return;
+        }
+        int count = 0, maximum = 0, used = 0, start = -1;
+        long carry = 0;
+        // Each change of ink state opens or closes a run. A final zero word
+        // closes a run ending exactly on the right edge of a full word.
+        for (int word = 0; word <= rowBits.length; word++) {
+            long bits = word < rowBits.length ? rowBits[word] : 0;
+            long changes = bits ^ ((bits << 1) | carry);
+            carry = bits >>> 63;
+            while (changes != 0) {
+                int x = (word << 6) + Long.numberOfTrailingZeros(changes);
+                changes &= changes - 1;
+                if (start < 0) {
+                    start = x;
+                    continue;
+                }
+                if (scratch.length - used < 2) scratch = Arrays.copyOf(scratch, scratch.length * 2);
+                if (x == start + 1) scratch[used++] = start;
+                else {
+                    scratch[used++] = ~start;
+                    scratch[used++] = x;
+                }
+                count += x - start;
+                maximum = Math.max(maximum, x - start);
+                start = -1;
             }
-            count += x - start;
-            maximum = Math.max(maximum, x - start);
         }
         rowDark[y] = count;
         rowLongest[y] = maximum;
-        if (used > 0) rowRuns[y] = Arrays.copyOf(scratch, used);
+        rowRuns[y] = used == 0 ? null : Arrays.copyOf(scratch, used);
+        long[] prior = lastBits;
+        lastBits = rowBits;
+        rowBits = prior;
+        lastRead = y;
+        lastMaximum = maximum;
     }
 
     private void updateRow(int y, int delta) {

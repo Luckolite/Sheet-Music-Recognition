@@ -19,7 +19,7 @@ from typing import NamedTuple
 
 import numpy as np
 from PIL import ExifTags, Image, ImageOps
-from .runtime import java_executable
+from .runtime import inference_interpreter, java_executable
 from .whitening import PaperBackgroundWhitening, WhiteningResult, MODEL_SHA256 as PAPER_FIELD_SHA256, RASTER_POLICY
 
 MODEL_SHA256 = "92ab7c34c27cb704d95f0cde247b3611d1563fdf1c114b9f9817abb18a7b6a93"
@@ -105,6 +105,57 @@ def _repeated_tile_plan(gray, rows, columns):
     keys = [zlib.crc32(np.ascontiguousarray(gray[row, column])) if frequency[sample] > 1 else None
             for sample, (row, column) in zip(samples, positions)]
     return _tile_cache_plan(keys)
+
+
+def _affected_interval(ink):
+    occupied = np.flatnonzero(ink)
+    if not occupied.size:
+        return None
+    # The reviewed model's three pooling levels align outputs in groups of eight.
+    # For a group starting at x, the input range is [x - 78, x + 85], inclusive,
+    # including the dilated convolutions at the deepest level.
+    first = max(0, (int(occupied[0]) - 85 + 7) // 8)
+    last = min(39, (int(occupied[-1]) + 78) // 8)
+    return slice(first * 8, (last + 1) * 8)
+
+
+def _sparse_pairs(gray, regions, decisions):
+    """Pair single-use tiles whose nonwhite pixels affect disjoint output rectangles."""
+    frequencies = Counter(key for key, _ in decisions if key is not None)
+    pairs = {}
+    white = set()
+    # A group of 32 leaves at most 16 later predictions (1.56 MiB) in flight.
+    for start in range(0, len(regions), 32):
+        available = []
+        for index in range(start, min(start + 32, len(regions))):
+            key, _ = decisions[index]
+            tile = gray[regions[index]]
+            if key is not None and frequencies[key] > 1:
+                if tile[0, 0] == 255 and tile.min() == 255:
+                    white.add(index)
+                continue
+            ink = tile != 255
+            rows = _affected_interval(ink.any(axis=1))
+            if rows is None:
+                white.add(index)
+                continue
+            columns = _affected_interval(ink.any(axis=0))
+            if rows == columns == slice(0, 320):
+                continue
+            bounds = rows, columns
+            for slot, (earlier, other) in enumerate(available):
+                y, x = other
+                if (y.stop <= rows.start or rows.stop <= y.start or
+                        x.stop <= columns.start or columns.stop <= x.start):
+                    pairs[earlier] = index, other, bounds
+                    available.pop(slot)
+                    break
+            else:
+                available.append((index, bounds))
+    # A white reference costs one invocation unless the page already requires it.
+    if len(pairs) < (1 if white else 2):
+        return {}, set()
+    return pairs, white
 
 
 def _tile_cache_plan(keys, capacity=64):
@@ -231,11 +282,8 @@ class Interpreter:
         self.model_sha256 = digest.hexdigest()
         if model_path is None and self.model_sha256 != MODEL_SHA256:
             raise ValueError("Bundled model checksum mismatch")
-        try:
-            import tensorflow as tf
-        except ImportError as error:
-            raise RuntimeError("Recognition dependencies are missing. Run: pip install --upgrade score-reader") from error
-        self.runtime = tf.lite.Interpreter(model_path=str(path), num_threads=threads)
+        interpreter = inference_interpreter(bundled=model_path is None)
+        self.runtime = interpreter(model_path=str(path), num_threads=threads)
         self.runtime.allocate_tensors()
         self.input = self.runtime.get_input_details()[0]
         self.output = self.runtime.get_output_details()[0]
@@ -244,6 +292,9 @@ class Interpreter:
         if self.output["shape"].tolist() != [1, 320, 320] or self.output["dtype"] != np.int64:
             raise ValueError("Expected int64 class IDs [1,320,320]")
         self.edge = _tile_edges()
+        # Pairing relies on the spatial support of this exact graph.
+        self._sparse_pairs_enabled = model_path is None and self.model_sha256 == (
+            "92ab7c34c27cb704d95f0cde247b3611d1563fdf1c114b9f9817abb18a7b6a93")
         self._threads = threads
         self.ocr = None
         self.paper_whitening = PaperBackgroundWhitening(threads=threads)
@@ -286,11 +337,32 @@ class Interpreter:
         reuse_predictions = (height > ch or width > cw) and bundled
         plan = _repeated_tile_plan(gray, rows, columns) if reuse_predictions else None
         repeated = {}
-        for region, wins in _tile_windows(height, width, self.edge, rows, columns):
+        pairs, blank_tiles = {}, set()
+        later = {}
+        paper = None
+        if (plan is not None and ch == cw == 320 and len(rows) * len(columns) >= 3
+                and getattr(self, "_sparse_pairs_enabled", False)):
+            regions = [(r, c) for r in rows for c in columns]
+            decisions = list(plan)
+            pairs, blank_tiles = _sparse_pairs(gray, regions, decisions)
+            plan = iter(decisions)
+            if pairs:
+                paper = getattr(self, "_white_prediction", None)
+                if paper is None:
+                    paper = Interpreter.predict(self, np.full((320, 320), 255, np.uint8))
+                    paper.setflags(write=False)
+                    self._white_prediction = paper
+        for index, (region, wins) in enumerate(_tile_windows(height, width, self.edge, rows, columns)):
             tile = gray[region]
             cached = pixels = None
             if plan is not None:
                 key, keep = next(plan)
+                cached = later.pop(index, None)
+                if cached is None and index in blank_tiles:
+                    cached = paper
+                if cached is not None:
+                    np.copyto(labels[region], cached, where=wins)
+                    continue
                 entry = repeated.pop(key, None)
                 if entry is not None and np.array_equal(tile, entry[0]):
                     cached = entry[1]
@@ -303,6 +375,10 @@ class Interpreter:
             else:
                 if pixels is not None:
                     tile = pixels
+                pair = pairs.get(index)
+                if pair is not None:
+                    partner, first_box, second_box = pair
+                    tile = np.minimum(tile, gray[regions[partner]])
                 tensor = staging if tensor_view is None else input_buffer()
                 if tensor_view is not None and (ch < 320 or cw < 320):
                     tensor.fill(255)
@@ -317,6 +393,13 @@ class Interpreter:
                 if prediction.min() < 0 or prediction.max() > 5:
                     del prediction
                     raise ValueError("Model returned classes outside 0..5")
+                if pair is not None:
+                    next_tile = paper.copy()
+                    next_tile[second_box] = prediction[second_box]
+                    later[partner] = next_tile
+                    first_tile = paper.copy()
+                    first_tile[first_box] = prediction[first_box]
+                    prediction = first_tile
                 if pixels is not None:
                     # Only complete input equality authorizes prediction reuse.
                     prediction = prediction.astype(np.uint8)
@@ -349,9 +432,12 @@ class Interpreter:
     def _read_annotations(self, gray, annotations):
         from .ocr import LocalOcr, page_annotations
 
-        if self.ocr is None:
-            self.ocr = LocalOcr(threads=self._threads)
-        words = self.ocr.words(gray)
+        if gray[0, 0] == 255 and gray.min() == 255:
+            words = []
+        else:
+            if self.ocr is None:
+                self.ocr = LocalOcr(threads=self._threads)
+            words = self.ocr.words(gray)
         if annotations is None:
             return page_annotations(words, [])
         return dict(page_annotations(words, annotations["tabWords"]), **annotations)

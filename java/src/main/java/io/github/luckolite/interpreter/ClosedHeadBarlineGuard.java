@@ -62,12 +62,20 @@ final class ClosedHeadBarlineGuard {
         if (gray == null || gray.length != (long) width * height || gap < 6 || !Float.isFinite(gap))
             return false;
         int halo = Math.max(1, Math.round(gap * .12f));
-        for (int actual = Math.max(0, column - halo);
-                actual <= Math.min(width - 1, column + halo);
-                actual++)
-            if (attachedAt(gray, width, height, actual, staffTop, staffBottom, gap, 150)
-                    || attachedAt(gray, width, height, actual, staffTop, staffBottom, gap, 120))
+        int first = Math.max(0, column - halo), last = Math.min(width - 1, column + halo);
+        int reach = Math.round(gap * 1.8f);
+        int headHeight = Math.min(height - 1, staffBottom + Math.round(gap * 1.5f))
+                - Math.max(0, staffTop - Math.round(gap * 1.5f)) + 1;
+        long cropWidth = Math.min(width - 1L, (long) last + reach) - Math.max(0L, (long) first - reach) + 1;
+        // Keep large uncached allocations bounded by the original single-column crop.
+        boolean share = cropWidth * headHeight <= MAX_CACHED_PIXELS;
+        for (int start = first, end; start <= last; start = end + 1) {
+            end = share ? last : start;
+            if (attachedInRange(gray, width, height, start, end, staffTop, staffBottom, gap, 150)
+                    || attachedInRange(gray, width, height, start, end, staffTop, staffBottom, gap, 120))
                 return true;
+            start = end;
+        }
         return filledBulge(gray, width, height, column, staffTop, staffBottom, gap);
     }
 
@@ -148,17 +156,18 @@ final class ClosedHeadBarlineGuard {
         return false;
     }
 
-    private static boolean attachedAt(
+    private static boolean attachedInRange(
             byte[] gray,
             int width,
             int height,
-            int column,
+            int firstColumn, int lastColumn,
             int staffTop,
             int staffBottom,
             float gap,
             int outline) {
-        int left = Math.max(0, column - Math.round(gap * 1.8f)),
-                right = Math.min(width - 1, column + Math.round(gap * 1.8f));
+        int reach = Math.round(gap * 1.8f);
+        int left = Math.max(0, firstColumn - reach),
+                right = Math.min(width - 1, lastColumn + reach);
         int top = Math.max(0, staffTop - Math.round(gap * 1.5f)),
                 bottom = Math.min(height - 1, staffBottom + Math.round(gap * 1.5f));
         int w = right - left + 1, h = bottom - top + 1;
@@ -181,11 +190,21 @@ final class ClosedHeadBarlineGuard {
             int sourceRow = (top + y) * width + left, localRow = y * w;
             for (int x = 0; x < w; x++) seen[localRow + x] = (gray[sourceRow + x] & 255) <= outline;
         }
-        for (int seed = 0; seed < pixels; seed++) {
+        // An enclosed head has a row run bounded by ink on both sides, no
+        // wider than the head, with at least one pixel at or below its median.
+        for (int seed = w; seed < pixels - w; seed++) {
             if (seen[seed]) continue;
+            int row = seed / w, rowStart = row * w, rowEnd = rowStart + w;
+            int first = seed;
+            while (seed + 1 < rowEnd && !seen[seed + 1]) seed++;
+            if (first == rowStart || seed + 1 == rowEnd || seed - first + 1 > gap * 1.6f) continue;
+            int source = (top + row) * width + left - rowStart;
+            int interior = first;
+            while (interior <= seed && (gray[source + interior] & 255) > 205) interior++;
+            if (interior > seed) continue;
             int read = 0, end = 1;
-            queue[0] = seed;
-            seen[seed] = true;
+            queue[0] = interior;
+            seen[interior] = true;
             int minX = w, maxX = 0, minY = h, maxY = 0;
             while (read < end) {
                 int p = queue[read++], x = p % w, y = p / w;
@@ -222,7 +241,11 @@ final class ClosedHeadBarlineGuard {
                     || ph > gap * 1.1f
                     || end < pw * ph * .45f) continue;
             float cx = left + (minX + maxX) * .5f, cy = top + (minY + maxY) * .5f;
-            if (Math.abs(cx - column) < gap * .25f || Math.abs(cx - column) > gap * 1.15f) continue;
+            // Touching a crop edge disqualifies the component. An enclosed
+            // component is identical in every wider crop that contains it.
+            int startColumn = Math.max(firstColumn, left + maxX - reach + 1);
+            int endColumn = Math.min(lastColumn, left + minX + reach - 1);
+            if (startColumn > endColumn) continue;
             int[] shades = new int[end];
             for (int i = 0; i < end; i++)
                 shades[i] = gray[(top + queue[i] / w) * width + left + queue[i] % w] & 255;
@@ -256,22 +279,25 @@ final class ClosedHeadBarlineGuard {
                             (rowLeft[e] + rowLeft[ph - 1 - e]) * .5f - rowLeft[m],
                             rowRight[m] - (rowRight[e] + rowRight[ph - 1 - e]) * .5f)
                     < .5f) continue;
-            int edge = cx < column ? left + maxX + 1 : left + minX - 1;
-            if (Math.abs(edge - column) > Math.max(4, gap * .32f)) continue;
-            int connected = 0, total = 0;
-            for (int y = Math.max(0, Math.round(cy - gap * .25f));
-                    y <= Math.min(height - 1, Math.round(cy + gap * .25f));
-                    y++) {
-                total++;
-                boolean path = true;
-                for (int x = Math.min(edge, column); x <= Math.max(edge, column); x++)
-                    if ((gray[y * width + x] & 255) > 170) {
-                        path = false;
-                        break;
-                    }
-                if (path) connected++;
+            for (int column = startColumn; column <= endColumn; column++) {
+                if (Math.abs(cx - column) < gap * .25f || Math.abs(cx - column) > gap * 1.15f) continue;
+                int edge = cx < column ? left + maxX + 1 : left + minX - 1;
+                if (Math.abs(edge - column) > Math.max(4, gap * .32f)) continue;
+                int connected = 0, total = 0;
+                for (int y = Math.max(0, Math.round(cy - gap * .25f));
+                        y <= Math.min(height - 1, Math.round(cy + gap * .25f));
+                        y++) {
+                    total++;
+                    boolean path = true;
+                    for (int x = Math.min(edge, column); x <= Math.max(edge, column); x++)
+                        if ((gray[y * width + x] & 255) > 170) {
+                            path = false;
+                            break;
+                        }
+                    if (path) connected++;
+                }
+                if (connected >= Math.max(2, total * .35f)) return true;
             }
-            if (connected >= Math.max(2, total * .35f)) return true;
         }
         return false;
     }

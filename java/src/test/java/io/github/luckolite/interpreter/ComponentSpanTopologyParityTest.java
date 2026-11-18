@@ -69,6 +69,23 @@ public final class ComponentSpanTopologyParityTest {
     }
 
     @org.junit.Test
+    public void packedLabelRunsStopAtTheRequestedRowEdges() {
+        int width = 67;
+        byte[] labels = new byte[width * 3];
+        Arrays.fill(labels, (byte) 3);
+        labels[63] = labels[130] = 2;
+        var ink = PackedGrayInk.matchingLabels(labels, (byte) 3);
+        org.junit.Assert.assertEquals(width, ink.nextGap(64, width));
+        org.junit.Assert.assertEquals(width, ink.runStart(129, width));
+        ink.removeRun(62, 128);
+        org.junit.Assert.assertEquals(129, ink.nextInk(62, 129));
+        org.junit.Assert.assertEquals(129, ink.nextInk(63, 130));
+        ink.remove(129);
+        org.junit.Assert.assertEquals(131, ink.nextInk(64, labels.length));
+        org.junit.Assert.assertEquals(131, ink.runStart(133, width));
+        org.junit.Assert.assertNull(PackedGrayInk.matchingLabels(labels, (byte) 4));
+    }
+    @org.junit.Test
     public void exhaustiveAndRandomTopologyKeepsGoldenComponentFields() throws Exception {
         digest = MessageDigest.getInstance("SHA-256");
         cases = components = 0;

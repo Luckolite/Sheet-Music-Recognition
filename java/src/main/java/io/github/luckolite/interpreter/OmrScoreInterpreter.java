@@ -13694,16 +13694,14 @@ final class OmrScoreInterpreter {
         if (membership != null && !membership.bindInput(labels, rawGray, width, height))
             membership = null;
         List<Component> result = new ArrayList<>();
-        int firstTarget = 0;
-        while (firstTarget < labels.length && labels[firstTarget] != target) firstTarget++;
-        if (firstTarget == labels.length) return result;
-        boolean[] visited = new boolean[labels.length];
+        var remaining = PackedGrayInk.matchingLabels(labels, target);
+        if (remaining == null) return result;
         int[] stack = new int[Math.min(labels.length, 256)];
-        for (int origin = firstTarget; origin < labels.length; origin++) {
-            if (labels[origin] != target || visited[origin]) continue;
+        for (int origin = remaining.nextInk(0, labels.length); origin < labels.length;
+                origin = remaining.nextInk(origin + 1, labels.length)) {
             int stackSize = 0;
             stack[stackSize++] = origin;
-            visited[origin] = true;
+            remaining.remove(origin);
             int area = 0, minX = width, minY = height, maxX = 0, maxY = 0;
             long sumX = 0, sumY = 0;
             List<int[]> acceptedRuns = origins == null ? null : new ArrayList<>();
@@ -13711,13 +13709,10 @@ final class OmrScoreInterpreter {
             while (stackSize > 0) {
                 int current = stack[--stackSize];
                 int y = current / width, row = y * width, x = current - row;
-                int left = x, right = x;
-                while (left > 0 && !visited[row + left - 1] && labels[row + left - 1] == target)
-                    left--;
-                while (right + 1 < width
-                        && !visited[row + right + 1]
-                        && labels[row + right + 1] == target) right++;
-                java.util.Arrays.fill(visited, row + left, row + right + 1, true);
+                int left = remaining.runStart(current, row) - row;
+                int end = remaining.nextGap(current + 1, row + width);
+                int right = end - row - 1;
+                remaining.removeRun(row + left, end - 1);
                 int count = right - left + 1;
                 if (acceptedRuns != null) acceptedRuns.add(new int[] {y, left, right});
                 if (memberRuns != null) memberRuns.add(y, left, right);
@@ -13733,10 +13728,9 @@ final class OmrScoreInterpreter {
                     int ny = y + dy;
                     if (ny < 0 || ny >= height) continue;
                     int nextRow = ny * width;
-                    for (int nx = first; nx <= last; nx++) {
-                        int next = nextRow + nx;
-                        if (visited[next] || labels[next] != target) continue;
-                        visited[next] = true;
+                    int neighborEnd = nextRow + last + 1;
+                    for (int next = remaining.nextInk(nextRow + first, neighborEnd); next < neighborEnd;) {
+                        remaining.remove(next);
                         if (stackSize == stack.length) {
                             int capacity;
                             if (stack.length < 65536)
@@ -13750,10 +13744,9 @@ final class OmrScoreInterpreter {
                         }
                         stack[stackSize++] = next;
                         // One queued seed covers this as-yet-unvisited horizontal run.
-                        while (nx < last && !visited[next + 1] && labels[next + 1] == target) {
-                            nx++;
-                            next++;
-                        }
+                        int stop = remaining.nextGap(next + 1, neighborEnd);
+                        if (stop == neighborEnd) break;
+                        next = remaining.nextInk(stop + 1, neighborEnd);
                     }
                 }
             }
@@ -37800,14 +37793,10 @@ final class OmrScoreInterpreter {
             lineTop = track[0] - 4 * gap;
         }
         int span = Math.round(gap * 2), firstOffset = Math.round(gap);
-        int[] leftShift = new int[span], rightShift = new int[span];
-        if (track != null)
-            for (int i = 0; i < span; i++) {
-                int dx = firstOffset + i;
-                leftShift[i] = Math.round(staff.pitchTrack.at(x - dx)[0] - track[0]);
-                rightShift[i] = Math.round(staff.pitchTrack.at(x + dx)[0] - track[0]);
-            }
-        int bands = 0, strongBands = 0, run = 0, staffRows = 0;
+        int[] leftShift = null, rightShift = null;
+        int minimumBand = Math.max(3, Math.round(gap * .30f));
+        int strongBand = Math.max(3, (int) Math.ceil(gap * .30f));
+        int bands = 0, strongBands = 0, run = 0;
         int provedRuleBands = 0, numeralRuleBands = 0;
         for (int y = top; y <= bottom + 1; y++) {
             boolean ink =
@@ -37818,205 +37807,211 @@ final class OmrScoreInterpreter {
                             && labels[y * width + x] != OmrMeasurePostProcessor.NOTEHEAD;
             if (ink) {
                 run++;
-                int leftInk = 0, rightInk = 0;
-                for (int i = 0; i < span; i++) {
-                    int dx = firstOffset + i;
-                    if (x - dx >= 0
-                            && bandRuleInk(
-                                    gray,
-                                    width,
-                                    height,
-                                    x - dx,
-                                    y + leftShift[i],
-                                    threshold,
-                                    track != null)) leftInk++;
-                    if (x + dx < width
-                            && bandRuleInk(
-                                    gray,
-                                    width,
-                                    height,
-                                    x + dx,
-                                    y + rightShift[i],
-                                    threshold,
-                                    track != null)) rightInk++;
+                continue;
+            }
+            int first = y - run;
+            int length = run;
+            run = 0;
+            if (length < minimumBand
+                    || !bandReachesInnerProbe(gray, width, height, x, stemwardX, first, y - 1, rootThreshold))
+                continue;
+            // Thick antialiased staff lines are not beams. Preserve thicker real beams
+            // crossing a staff, where most of the band extends beyond the staff ink.
+            float bandCenter = y - (length + 1) * .5f;
+            boolean onStaff = false;
+            for (int line = 0; line < 5; line++)
+                if (Math.abs(bandCenter - (lineTop + line * gap)) <= gap * .3f) onStaff = true;
+            int staffRows = 0;
+            if (onStaff && length <= gap * .55f) {
+                if (track != null && leftShift == null) {
+                    leftShift = new int[span];
+                    rightShift = new int[span];
+                    for (int i = 0; i < span; i++) {
+                        int dx = firstOffset + i;
+                        leftShift[i] = Math.round(staff.pitchTrack.at(x - dx)[0] - track[0]);
+                        rightShift[i] = Math.round(staff.pitchTrack.at(x + dx)[0] - track[0]);
+                    }
                 }
-                if (leftInk >= span * .85f && rightInk >= span * .85f) staffRows++;
-            } else {
-                // Thick antialiased staff lines are not beams. Preserve thicker real beams
-                // crossing a staff, where most of the band extends beyond the staff ink.
-                float bandCenter = y - (run + 1) * .5f;
-                boolean onStaff = false;
-                for (int line = 0; line < 5; line++)
-                    if (Math.abs(bandCenter - (lineTop + line * gap)) <= gap * .3f) onStaff = true;
-                // The middle of a long beam also has ink on both sides. Suppress it only
-                // where an actual staff line runs; horizontal shape alone loses inner eighths.
-                boolean onlyStaff =
-                        onStaff
-                                && (staffRows == run || (staffRows >= 3 && staffRows + 1 == run))
-                                && run <= gap * .55f;
-                if (!onlyStaff
-                        && onStaff
-                        && staffRows >= 3
-                        && staffRows + 2 >= run
-                        && run <= gap * .45f
-                        && thinAtInnerProbe(
-                                gray, width, height, stemwardX, y - run, y - 1, gap, threshold))
-                    onlyStaff = true;
-                if (!onlyStaff
-                        && onStaff
-                        && staffRows >= 2
-                        && staffRows + 3 >= run
-                        && run <= gap * .45f
-                        && ((run <= gap * .35f
-                                        && thinAtInnerProbe(
-                                                gray, width, height, stemwardX, y - run, y - 1, gap,
-                                                threshold)
-                                        && BeamRuleLocalSlope.find(
-                                                        gray,
-                                                        width,
-                                                        height,
-                                                        x,
-                                                        lineTop,
-                                                        gap,
-                                                        threshold,
-                                                        bandCenter)
-                                                != null)
-                                || LocalPrintedStaffBand.matches(
-                                        gray, width, height, x, lineTop, gap, threshold, y - run,
-                                        y - 1))
-                        && !finiteBeamOverRule(
-                                gray, width, height, x, y - run, y - 1, staff, threshold))
-                    onlyStaff = true;
-                boolean locallyAlignedRule = false;
-                if (!onlyStaff && onStaff && run <= gap * .55f) {
-                    Float slope =
-                            BeamRuleLocalSlope.find(
-                                    gray, width, height, x, lineTop, gap, threshold, bandCenter);
-                    if (slope != null && Math.abs(slope) * span >= 1) {
-                        int alignedRows = 0;
-                        for (int row = y - run; row < y; row++) {
-                            int leftInk = 0, rightInk = 0;
-                            for (int i = 0; i < span; i++) {
-                                int dx = firstOffset + i;
-                                if (bandRuleInk(
+                for (int row = first; row < y; row++) {
+                    int leftInk = 0, rightInk = 0;
+                    for (int i = 0; i < span; i++) {
+                        int dx = firstOffset + i;
+                        if (x - dx >= 0
+                                && bandRuleInk(
                                         gray,
                                         width,
                                         height,
                                         x - dx,
-                                        row - Math.round(slope * dx),
+                                        leftShift == null ? row : row + leftShift[i],
                                         threshold,
-                                        true)) leftInk++;
-                                if (bandRuleInk(
+                                        track != null)) leftInk++;
+                        if (x + dx < width
+                                && bandRuleInk(
                                         gray,
                                         width,
                                         height,
                                         x + dx,
-                                        row + Math.round(slope * dx),
+                                        rightShift == null ? row : row + rightShift[i],
                                         threshold,
-                                        true)) rightInk++;
-                            }
-                            if (leftInk >= span * .85f && rightInk >= span * .85f) alignedRows++;
-                        }
-                        locallyAlignedRule =
-                                alignedRows == run || (alignedRows >= 3 && alignedRows + 1 == run);
-                        if (locallyAlignedRule) onlyStaff = true;
+                                        track != null)) rightInk++;
                     }
+                    if (leftInk >= span * .85f && rightInk >= span * .85f) staffRows++;
                 }
-                if (onlyStaff
-                        && (locallyAlignedRule || run >= Math.ceil(gap * .30f))
-                        && finiteBeamOverRule(
-                                gray, width, height, x, y - run, y - 1, staff, threshold))
-                    onlyStaff = false;
-                // Partial occlusions can break continuous slope witnesses. Three independently
-                // sampled rules still prove the fringe through phase and ink-mass agreement.
-                if (!onlyStaff
-                        && onStaff
-                        && run >= 3
-                        && run <= Math.ceil(gap * .35f)
-                        && LocalPrintedStaffBand.matchesBeyondStem(
-                                gray,
-                                width,
-                                height,
-                                x,
-                                lineTop,
-                                gap,
-                                threshold,
-                                y - run,
-                                y - 1,
-                                0,
-                                staff.pitchTrack)
-                        && (run <= gap * .35f
-                                || LocalPrintedStaffBand.matchesRoundedBeyondStem(
-                                        gray,
-                                        width,
-                                        height,
-                                        x,
-                                        lineTop,
-                                        gap,
-                                        threshold,
-                                        y - run,
-                                        y - 1,
-                                        0,
-                                        staff.pitchTrack))
-                        && !finiteBeamOverRule(
-                                gray, width, height, x, y - run, y - 1, staff, threshold))
-                    onlyStaff = true;
-                boolean provedRuleBand =
-                        !onlyStaff
-                                && onStaff
-                                && run >= 3
-                                && run <= gap * .55f
-                                && PrintedRuleInkOwnership.matches(
-                                        gray,
-                                        width,
-                                        height,
-                                        x,
-                                        y - run,
-                                        y - 1,
-                                        lineTop,
-                                        gap,
-                                        0,
-                                        staff.pitchTrack)
-                                && !finiteBeamOverRule(
-                                        gray, width, height, x, y - run, y - 1, staff, threshold);
-                provedRuleBand =
-                        provedRuleBand
-                                || (!onlyStaff
-                                        && onStaff
-                                        && run >= 3
-                                        && run <= Math.ceil(gap * .35f)
-                                        && CompleteStaffRuleBeamBand.matches(
-                                                gray, width, height, x, lineTop, gap, threshold,
-                                                y - run, y - 1)
-                                        && !finiteBeamOverRule(
-                                                gray, width, height, x, y - run, y - 1, staff,
-                                                threshold));
-                boolean rooted =
-                        run >= 3
-                                && bandReachesInnerProbe(
-                                        gray,
-                                        width,
-                                        height,
-                                        x,
-                                        stemwardX,
-                                        y - run,
-                                        y - 1,
-                                        rootThreshold);
-                if (run >= Math.max(3, Math.round(gap * .30f)) && !onlyStaff && rooted) bands++;
-                if (run >= Math.max(3, Math.ceil(gap * .30f)) && !onlyStaff && rooted)
-                    strongBands++;
-                if (provedRuleBand && run >= Math.max(3, Math.ceil(gap * .30f)) && rooted)
-                    provedRuleBands++;
-                if (!provedRuleBand
-                        && !onlyStaff
-                        && rooted
-                        && run >= Math.max(3, Math.ceil(gap * .30f))
-                        && TupletNumeralBeamBand.matches(
-                                gray, width, height, x, y - run, y - 1, top, bottom, lineTop, gap,
-                                threshold)) numeralRuleBands++;
-                run = 0;
-                staffRows = 0;
             }
+            // The middle of a long beam also has ink on both sides. Suppress it only
+            // where an actual staff line runs; horizontal shape alone loses inner eighths.
+            boolean onlyStaff =
+                    onStaff
+                            && (staffRows == length || (staffRows >= 3 && staffRows + 1 == length))
+                            && length <= gap * .55f;
+            if (!onlyStaff
+                    && onStaff
+                    && staffRows >= 3
+                    && staffRows + 2 >= length
+                    && length <= gap * .45f
+                    && thinAtInnerProbe(
+                            gray, width, height, stemwardX, y - length, y - 1, gap, threshold))
+                onlyStaff = true;
+            if (!onlyStaff
+                    && onStaff
+                    && staffRows >= 2
+                    && staffRows + 3 >= length
+                    && length <= gap * .45f
+                    && ((length <= gap * .35f
+                                    && thinAtInnerProbe(
+                                            gray, width, height, stemwardX, y - length, y - 1, gap,
+                                            threshold)
+                                    && BeamRuleLocalSlope.find(
+                                                    gray,
+                                                    width,
+                                                    height,
+                                                    x,
+                                                    lineTop,
+                                                    gap,
+                                                    threshold,
+                                                    bandCenter)
+                                            != null)
+                            || LocalPrintedStaffBand.matches(
+                                    gray, width, height, x, lineTop, gap, threshold, y - length,
+                                    y - 1))
+                    && !finiteBeamOverRule(
+                            gray, width, height, x, y - length, y - 1, staff, threshold))
+                onlyStaff = true;
+            boolean locallyAlignedRule = false;
+            if (!onlyStaff && onStaff && length <= gap * .55f) {
+                Float slope =
+                        BeamRuleLocalSlope.find(
+                                gray, width, height, x, lineTop, gap, threshold, bandCenter);
+                if (slope != null && Math.abs(slope) * span >= 1) {
+                    int alignedRows = 0;
+                    for (int row = y - length; row < y; row++) {
+                        int leftInk = 0, rightInk = 0;
+                        for (int i = 0; i < span; i++) {
+                            int dx = firstOffset + i;
+                            if (bandRuleInk(
+                                    gray,
+                                    width,
+                                    height,
+                                    x - dx,
+                                    row - Math.round(slope * dx),
+                                    threshold,
+                                    true)) leftInk++;
+                            if (bandRuleInk(
+                                    gray,
+                                    width,
+                                    height,
+                                    x + dx,
+                                    row + Math.round(slope * dx),
+                                    threshold,
+                                    true)) rightInk++;
+                        }
+                        if (leftInk >= span * .85f && rightInk >= span * .85f) alignedRows++;
+                    }
+                    locallyAlignedRule =
+                            alignedRows == length || (alignedRows >= 3 && alignedRows + 1 == length);
+                    if (locallyAlignedRule) onlyStaff = true;
+                }
+            }
+            if (onlyStaff
+                    && (locallyAlignedRule || length >= Math.ceil(gap * .30f))
+                    && finiteBeamOverRule(
+                            gray, width, height, x, y - length, y - 1, staff, threshold))
+                onlyStaff = false;
+            // Partial occlusions can break continuous slope witnesses. Three independently
+            // sampled rules still prove the fringe through phase and ink-mass agreement.
+            if (!onlyStaff
+                    && onStaff
+                    && length >= 3
+                    && length <= Math.ceil(gap * .35f)
+                    && LocalPrintedStaffBand.matchesBeyondStem(
+                            gray,
+                            width,
+                            height,
+                            x,
+                            lineTop,
+                            gap,
+                            threshold,
+                            y - length,
+                            y - 1,
+                            0,
+                            staff.pitchTrack)
+                    && (length <= gap * .35f
+                            || LocalPrintedStaffBand.matchesRoundedBeyondStem(
+                                    gray,
+                                    width,
+                                    height,
+                                    x,
+                                    lineTop,
+                                    gap,
+                                    threshold,
+                                    y - length,
+                                    y - 1,
+                                    0,
+                                    staff.pitchTrack))
+                    && !finiteBeamOverRule(
+                            gray, width, height, x, y - length, y - 1, staff, threshold))
+                onlyStaff = true;
+            boolean provedRuleBand =
+                    !onlyStaff
+                            && onStaff
+                            && length >= 3
+                            && length <= gap * .55f
+                            && PrintedRuleInkOwnership.matches(
+                                    gray,
+                                    width,
+                                    height,
+                                    x,
+                                    y - length,
+                                    y - 1,
+                                    lineTop,
+                                    gap,
+                                    0,
+                                    staff.pitchTrack)
+                            && !finiteBeamOverRule(
+                                    gray, width, height, x, y - length, y - 1, staff, threshold);
+            provedRuleBand =
+                    provedRuleBand
+                            || (!onlyStaff
+                                    && onStaff
+                                    && length >= 3
+                                    && length <= Math.ceil(gap * .35f)
+                                    && CompleteStaffRuleBeamBand.matches(
+                                            gray, width, height, x, lineTop, gap, threshold,
+                                            y - length, y - 1)
+                                    && !finiteBeamOverRule(
+                                            gray, width, height, x, y - length, y - 1, staff,
+                                            threshold));
+            if (!onlyStaff) bands++;
+            if (length >= strongBand && !onlyStaff)
+                strongBands++;
+            if (provedRuleBand && length >= strongBand)
+                provedRuleBands++;
+            if (!provedRuleBand
+                    && !onlyStaff
+                    && length >= strongBand
+                    && TupletNumeralBeamBand.matches(
+                            gray, width, height, x, y - length, y - 1, top, bottom, lineTop, gap,
+                            threshold)) numeralRuleBands++;
         }
         // Preserve a single narrow flag. Adding a second beam needs the full
         // thickness threshold so a thinner slur terminal cannot shorten the note.
@@ -38210,29 +38205,36 @@ final class OmrScoreInterpreter {
         if (fromX == toX) return true;
         int distance = Math.abs(toX - fromX), direction = Integer.signum(toX - fromX);
         int top = Math.max(1, firstY - distance), bottom = Math.min(height - 2, lastY + distance);
+        int low = Math.max(top, firstY + 1), high = Math.min(bottom, lastY - 1);
+        if (low > high) return false;
         boolean[] reachable = new boolean[bottom - top + 1];
-        for (int y = Math.max(top, firstY + 1); y <= Math.min(bottom, lastY - 1); y++)
-            reachable[y - top] = true;
+        java.util.Arrays.fill(reachable, low - top, high - top + 1, true);
         for (int step = 1; step <= distance; step++) {
             int x = fromX + direction * step;
             if (x < 1 || x >= width - 1) return false;
-            boolean[] next = new boolean[reachable.length];
-            boolean any = false;
-            for (int y = top; y <= bottom; y++) {
+            int first = Math.max(top, low - 1), last = Math.min(bottom, high + 1);
+            low = last + 1;
+            high = first - 1;
+            // A path moves by at most one row. Save the old upper neighbor before
+            // overwriting it so gaps in the reachable set survive each step.
+            boolean upper = false;
+            for (int y = first; y <= last; y++) {
                 int i = y - top;
-                if (!reachable[i]
-                        && (i == 0 || !reachable[i - 1])
-                        && (i + 1 == reachable.length || !reachable[i + 1])) continue;
-                boolean solid = true;
-                for (int dy = -1; dy <= 1; dy++)
-                    for (int dx = -1; dx <= 1; dx++)
-                        if ((gray[(y + dy) * width + x + dx] & 255) >= threshold) solid = false;
-                if (!solid) continue;
-                next[i] = true;
-                any = true;
+                boolean current = reachable[i];
+                boolean connected = upper || current || (y < last && reachable[i + 1]);
+                upper = current;
+                for (int dy = -1; connected && dy <= 1; dy++) {
+                    int p = (y + dy) * width + x;
+                    connected = (gray[p - 1] & 255) < threshold
+                            && (gray[p] & 255) < threshold && (gray[p + 1] & 255) < threshold;
+                }
+                reachable[i] = connected;
+                if (connected) {
+                    low = Math.min(low, y);
+                    high = y;
+                }
             }
-            if (!any) return false;
-            reachable = next;
+            if (low > high) return false;
         }
         return true;
     }

@@ -6,13 +6,17 @@ import java.awt.*;
 import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
+import java.util.Collections;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 
 public final class MeterFontMatcher {
     public record Reading(String text, float topScore, float bottomScore) {}
+    private record FontKey(String glyphs, int size) {}
 
     private final MeterGlyphMatcher matcher;
 
@@ -21,9 +25,20 @@ public final class MeterFontMatcher {
     }
 
     private MeterFontMatcher(Font font) {
+        // Reuse small numeral masks across numerator, denominator and crop retries.
+        var masks = Collections.synchronizedMap(new LinkedHashMap<FontKey, MeterGlyphMatcher.Glyph>(
+                256, .75f, true) {
+            @Override
+            protected boolean removeEldestEntry(Map.Entry<FontKey, MeterGlyphMatcher.Glyph> eldest) {
+                return size() > 512;
+            }
+        });
         matcher =
                 new MeterGlyphMatcher(
                         (glyphs, size) -> {
+                            var key = new FontKey(glyphs, size);
+                            var cached = masks.get(key);
+                            if (cached != null) return cached;
                             Font scaled = font.deriveFont((float) size);
                             BufferedImage scratch =
                                     new BufferedImage(1, 1, BufferedImage.TYPE_BYTE_GRAY);
@@ -55,7 +70,9 @@ public final class MeterFontMatcher {
                                     shape[dest + x] = (row[x] & 255) < 150;
                             }
 
-                            return new MeterGlyphMatcher.Glyph(gw, gh, shape);
+                            var result = new MeterGlyphMatcher.Glyph(gw, gh, shape);
+                            if (shape.length <= 4096) masks.put(key, result);
+                            return result;
                         });
     }
 

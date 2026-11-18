@@ -33,6 +33,15 @@ public class WaveGlissDetectorTest {
     }
 
     @Test
+    public void preparedRasterRetainsItsInkForTheFollowingSlideScan() {
+        byte[] prepared = ribbon(0);
+        byte[] original = prepared.clone();
+        assertEquals(List.of(new WaveGlissDetector.Link(0, 1)),
+                WaveGlissDetector.detectWithRemovedStaffLines(W, H, HEADS, prepared));
+        assertArrayEquals(original, prepared);
+    }
+
+    @Test
     public void alternatingRibbonBindsOnlyItsConsecutiveEndpoints() {
         assertEquals(
                 List.of(new WaveGlissDetector.Link(0, 1)),

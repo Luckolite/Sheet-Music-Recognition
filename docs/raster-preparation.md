@@ -30,7 +30,7 @@ The app now also precomputes tile-edge ownership scores instead of repeating the
 same arithmetic for each overlapping tile. This matches the standalone reader's
 existing precomputed `edge` array. Its dedicated PC-owned Android runtime uses up
 to four CPU inference threads when available; phones/tablets retain two. The
-standalone CLI already exposes `--threads` (default two), so no CLI default is
-changed. A repeated two/four-thread Android benchmark verified identical class
+standalone reader defaults to two CPU threads. Use `--threads` or the Python
+`threads` argument to override it. A repeated two/four-thread Android benchmark verified identical class
 arrays across eight generated tiles; this is scheduling optimization, not a new
 model or an accuracy claim.

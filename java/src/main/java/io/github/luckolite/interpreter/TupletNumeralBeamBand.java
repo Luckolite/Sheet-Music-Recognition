@@ -153,33 +153,37 @@ final class TupletNumeralBeamBand {
     private static Rule rule(
             byte[] gray, int width, int height, int x, float edge, float gap, int level) {
         int near = Math.round(gap * 1.8f), far = Math.round(gap * 2.8f);
+        int samples = far - near + 1;
+        int allowedMisses = samples - (int) Math.ceil(samples * .88f);
         int thin = Math.max(2, (int) Math.floor(gap * .24f));
         for (int slopeIndex = 0; slopeIndex <= 12; slopeIndex++) {
             float slope =
                     slopeIndex == 0
                             ? 0
                             : (slopeIndex + 1) / 2 * .025f * (slopeIndex % 2 == 1 ? 1 : -1);
+            centers:
             for (int cy = Math.round(edge - gap * .4f); cy <= Math.round(edge + gap * .4f); cy++) {
-                int[] hits = new int[2];
                 int ruleFirst = Integer.MAX_VALUE, ruleLast = -1;
-                for (int side = -1; side <= 1; side += 2)
+                for (int side = -1; side <= 1; side += 2) {
+                    int misses = 0;
                     for (int dx = near; dx <= far; dx++) {
-                        int xx = x + side * dx, y = cy + Math.round(slope * side * dx);
-                        if (y < thin + 1
-                                || y + thin + 1 >= height
-                                || !dark(gray, width, xx, y, level)) continue;
-                        int first = y, last = y;
-                        while (first > y - thin && dark(gray, width, xx, first - 1, level)) first--;
-                        while (last < y + thin && dark(gray, width, xx, last + 1, level)) last++;
-                        if (last - first + 1 > thin) continue;
-                        hits[(side + 1) / 2]++;
-                        ruleFirst = Math.min(ruleFirst, first - Math.round(slope * side * dx));
-                        ruleLast = Math.max(ruleLast, last - Math.round(slope * side * dx));
+                        int shift = Math.round(slope * side * dx);
+                        int xx = x + side * dx, y = cy + shift;
+                        if (y >= thin + 1 && y + thin + 1 < height && dark(gray, width, xx, y, level)) {
+                            int first = y, last = y;
+                            while (first > y - thin && dark(gray, width, xx, first - 1, level)) first--;
+                            while (last < y + thin && dark(gray, width, xx, last + 1, level)) last++;
+                            if (last - first + 1 <= thin) {
+                                ruleFirst = Math.min(ruleFirst, first - shift);
+                                ruleLast = Math.max(ruleLast, last - shift);
+                                if (ruleLast - ruleFirst + 1 > thin + 1) continue centers;
+                                continue;
+                            }
+                        }
+                        if (++misses > allowedMisses) continue centers;
                     }
-                if (hits[0] >= (far - near + 1) * .88f
-                        && hits[1] >= (far - near + 1) * .88f
-                        && ruleLast - ruleFirst + 1 <= thin + 1)
-                    return new Rule(cy, ruleFirst, ruleLast, slope);
+                }
+                return new Rule(cy, ruleFirst, ruleLast, slope);
             }
         }
         return null;

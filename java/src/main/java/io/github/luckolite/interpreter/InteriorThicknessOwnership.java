@@ -13,6 +13,16 @@ final class InteriorThicknessOwnership {
   private static final int MAX_PIXELS=16_777_216, MAX_LOCAL=262_144;
   private static final long MAX_WORK=70_000_000L;
   private static final double SQRT2=Math.sqrt(2.0);
+  private static final int CONTOUR_SAMPLES = 72;
+  private static final double[] CONTOUR_COS = new double[CONTOUR_SAMPLES];
+  private static final double[] CONTOUR_SIN = new double[CONTOUR_SAMPLES];
+  static {
+    for (int k = 0; k < CONTOUR_SAMPLES; k++) {
+      double angle = 2 * Math.PI * k / CONTOUR_SAMPLES;
+      CONTOUR_COS[k] = Math.cos(angle);
+      CONTOUR_SIN[k] = Math.sin(angle);
+    }
+  }
   private record Seed(double x,double y,double radius) {}
   private record Fit(double cx,double cy,double a,double b,double angle,int left,int top,int right,int bottom,double score) {}
   private static final class Budget {long used;boolean exhausted;boolean add(long n){if(n<0||used>MAX_WORK-n){exhausted=true;return false;}used+=n;return true;}}
@@ -278,6 +288,57 @@ final class InteriorThicknessOwnership {
     return merged;
   }
 
+  /** The same ellipse is scored at 25 integer translations. Keep its exact pixel runs. */
+  private static final class EllipseInterior {
+    final int width, height;
+    final double centerX, centerY;
+    int[] runs;
+    int used, pixels;
+
+    EllipseInterior(int left, int right, int top, int bottom, double cx, double cy,
+                    double co, double si, double a, double b) {
+      width = right - left + 1;
+      height = bottom - top + 1;
+      centerX = cx - left;
+      centerY = cy - top;
+      runs = new int[3 * height];
+      for (int y = top; y <= bottom; y++) {
+        int start = -1;
+        for (int x = left; x <= right; x++) {
+          double X = (x - cx) * co + (y - cy) * si;
+          double Y = -(x - cx) * si + (y - cy) * co;
+          if (X * X / (a * a) + Y * Y / (b * b) <= .70) {
+            if (start < 0) start = x;
+          } else if (start >= 0) {
+            add(y - top, start - left, x - left);
+            start = -1;
+          }
+        }
+        if (start >= 0) add(y - top, start - left, width);
+      }
+    }
+
+    private void add(int row, int first, int end) {
+      if (used == runs.length) runs = Arrays.copyOf(runs, 2 * used);
+      runs[used++] = row;
+      runs[used++] = first;
+      runs[used++] = end;
+      pixels += end - first;
+    }
+
+    int occupied(int[] prefix, int stride, int rows, int left, int top) {
+      int total = 0;
+      for (int i = 0; i < used; i += 3) {
+        int y = top + runs[i];
+        if (y < 0 || y >= rows) continue;
+        int first = Math.max(0, left + runs[i + 1]);
+        int end = Math.min(stride - 1, left + runs[i + 2]);
+        if (first < end) total += prefix[y * stride + end] - prefix[y * stride + first];
+      }
+      return total;
+    }
+  }
+
   private static Fit fit(Seed seed,boolean[] exact,int localW,int localH,int ox,int oy,byte[] gray,byte[] labels,int w,int h,int paper,float gap,Budget budget){
     double sx=0,sy=0,sxx=0,syy=0,sxy=0;int count=0;double radius=gap*.95,r2=radius*radius;
     for(int ly=1;ly<localH-1;ly++)for(int lx=1;lx<localW-1;lx++){
@@ -288,16 +349,40 @@ final class InteriorThicknessOwnership {
     double theta=.5*Math.atan2(2*cov,vx-vy),disc=Math.sqrt(Math.max(0,(vx-vy)*(vx-vy)+4*cov*cov));
     double major=2*Math.sqrt(Math.max(.01,(vx+vy+disc)/2)),minor=2*Math.sqrt(Math.max(.01,(vx+vy-disc)/2));
     if(major<gap*.55||major>gap*1.4||minor<gap*.35||minor>gap*.9)return null;
+    EllipseInterior[] interiors = new EllipseInterior[125];
+    int stride = localW + 1;
+    int[] prefix = new int[stride * localH];
+    for (int y = 0; y < localH; y++) {
+      int dark = 0;
+      for (int x = 0; x < localW; x++) {
+        if (exact[y * localW + x] && (gray[(oy + y) * w + ox + x] & 255) <= paper - 25) dark++;
+        prefix[y * stride + x + 1] = dark;
+      }
+    }
     Fit best=null;double bestScore=-1;
     for(int dy=-2;dy<=2;dy++)for(int dx=-2;dx<=2;dx++)for(int da=-2;da<=2;da++)for(int db=-2;db<=2;db++)for(int dt=-2;dt<=2;dt++){
       if(!budget.add(1))return null;double a=major+da*.5,b=minor+db*.5,angle=theta+Math.toRadians(dt*5);if(a/b<1.15||a/b>3.1)continue;double co=Math.cos(angle),si=Math.sin(angle),cx=mx+dx,cy=my+dy;
       double rx=Math.sqrt(a*a*co*co+b*b*si*si),ry=Math.sqrt(a*a*si*si+b*b*co*co);int l=(int)Math.floor(cx-rx),r=(int)Math.ceil(cx+rx),t=(int)Math.floor(cy-ry),bt=(int)Math.ceil(cy+ry);
       if(l<1||r>=w-1||t<1||bt>=h-1||r-l>2.8*gap||bt-t>2*gap)continue;
-      int inside=0,occupied=0;for(int y=t;y<=bt;y++)for(int x=l;x<=r;x++){if(!budget.add(1))return null;double X=(x-cx)*co+(y-cy)*si,Y=-(x-cx)*si+(y-cy)*co,q=X*X/(a*a)+Y*Y/(b*b);if(q<=.70){inside++;if(exactAt(exact,localW,localH,ox,oy,x,y)&&(gray[y*w+x]&255)<=paper-25)occupied++;}}
+      int boxWidth = r - l + 1, boxHeight = bt - t + 1;
+      if (!budget.add((long) boxWidth * boxHeight)) {
+        // The original pixel-by-pixel scan consumes the entire remaining allowance.
+        budget.used = MAX_WORK;
+        return null;
+      }
+      int shape = ((da + 2) * 5 + db + 2) * 5 + dt + 2;
+      EllipseInterior interior = interiors[shape];
+      if (interior == null || interior.width != boxWidth || interior.height != boxHeight
+              || interior.centerX != cx - l || interior.centerY != cy - t) {
+        interior = new EllipseInterior(l, r, t, bt, cx, cy, co, si, a, b);
+        interiors[shape] = interior;
+      }
+      int inside = interior.pixels;
+      int occupied = interior.occupied(prefix, stride, localH, l - ox, t - oy);
       if(inside<8)continue;double fill=occupied/(double)inside;if(fill<.78)continue;
-      int supported=0,samples=72;for(int k=0;k<samples;k++){if(!budget.add(1))return null;double z=2*Math.PI*k/samples,X=a*Math.cos(z),Y=b*Math.sin(z),x0=cx+X*co-Y*si,y0=cy+X*si+Y*co;boolean hit=false;int ix=(int)Math.round(x0),iy=(int)Math.round(y0);for(int yy=iy-1;yy<=iy+1&&!hit;yy++)for(int xx=ix-1;xx<=ix+1;xx++){if(!budget.add(1))return null;if(xx<0||xx>=w||yy<0||yy>=h)continue;if(exactAt(exact,localW,localH,ox,oy,xx,yy)&&(gray[yy*w+xx]&255)<=paper-25){hit=true;break;}}if(hit)supported++;}
+      int supported=0,samples=CONTOUR_SAMPLES;for(int k=0;k<samples;k++){if(!budget.add(1))return null;double X=a*CONTOUR_COS[k],Y=b*CONTOUR_SIN[k],x0=cx+X*co-Y*si,y0=cy+X*si+Y*co;boolean hit=false;int ix=(int)Math.round(x0),iy=(int)Math.round(y0);for(int yy=iy-1;yy<=iy+1&&!hit;yy++)for(int xx=ix-1;xx<=ix+1;xx++){if(!budget.add(1))return null;if(xx<0||xx>=w||yy<0||yy>=h)continue;if(exactAt(exact,localW,localH,ox,oy,xx,yy)&&(gray[yy*w+xx]&255)<=paper-25){hit=true;break;}}if(hit)supported++;}
       double contour=supported/(double)samples;if(contour<.82)continue;
-      int outsideHits=0;for(int k=0;k<samples;k++){if(!budget.add(1))return null;double z=2*Math.PI*k/samples,X=a*1.22*Math.cos(z),Y=b*1.22*Math.sin(z),px=cx+X*co-Y*si,py=cy+X*si+Y*co;int ix=(int)Math.round(px),iy=(int)Math.round(py);boolean hit=false;for(int yy=iy-1;yy<=iy+1&&!hit;yy++)for(int xx=ix-1;xx<=ix+1;xx++){if(!budget.add(1))return null;if(xx<0||xx>=w||yy<0||yy>=h)continue;if(exactAt(exact,localW,localH,ox,oy,xx,yy)){hit=true;break;}}if(hit)outsideHits++;}
+      int outsideHits=0;for(int k=0;k<samples;k++){if(!budget.add(1))return null;double X=a*1.22*CONTOUR_COS[k],Y=b*1.22*CONTOUR_SIN[k],px=cx+X*co-Y*si,py=cy+X*si+Y*co;int ix=(int)Math.round(px),iy=(int)Math.round(py);boolean hit=false;for(int yy=iy-1;yy<=iy+1&&!hit;yy++)for(int xx=ix-1;xx<=ix+1;xx++){if(!budget.add(1))return null;if(xx<0||xx>=w||yy<0||yy>=h)continue;if(exactAt(exact,localW,localH,ox,oy,xx,yy)){hit=true;break;}}if(hit)outsideHits++;}
       double outside=outsideHits/(double)samples;if(outside>.30)continue;double score=.45*contour+.35*fill+.20*(1-outside);Fit f=new Fit(cx,cy,a,b,angle,l,t,r,bt,score);if(score>bestScore){best=f;bestScore=score;}
     }
     return best;

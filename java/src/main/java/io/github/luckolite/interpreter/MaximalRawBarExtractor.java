@@ -699,13 +699,23 @@ final class MaximalRawBarExtractor {
             return work;
         }
 
-        void read(int column, int y, ColumnSections sections) {
-            int row = y - firstCenter, i = cursor[column];
-            while (rows[i + 1] <= row) i++;
-            cursor[column] = i;
-            sections.width = widths[i];
-            sections.top = spanTop + tops[i];
-            sections.bottom = sections.top + sections.width - 1;
+        /** Scheduled columns are already positive, staff-filtered, and charged.
+         * Copy their exact geometry into the working row in column order. */
+        void writeSections(int[] columns, int count, int intercept, double[] offsets, int[] sectionEnd,
+                int[] rowWidths, int[] rowTops, int[] rowBottoms) {
+            for (int j = 0; j < count; j++) {
+                int column = columns[j], end = sectionEnd[column];
+                int row = (int) Math.rint(intercept + offsets[column]) - firstCenter;
+                int i = cursor[column];
+                while (rows[i + 1] <= row) i++;
+                cursor[column] = i;
+                int width = widths[i], top = spanTop + tops[i], bottom = top + width - 1;
+                for (int x = column; x < end; x++) {
+                    rowWidths[x] = width;
+                    rowTops[x] = top;
+                    rowBottoms[x] = bottom;
+                }
+            }
         }
     }
 
@@ -1026,32 +1036,38 @@ final class MaximalRawBarExtractor {
                 int firstSection = lane.right + 1, lastSection = lane.left - 1;
                 int removedStaff = 0;
                 int possible = sweep.collect(intercept - lane.top);
-                for (int index = 0; index < possible; index++) {
-                    int at = sweep.columns[index];
-                    int y = (int) Math.rint(intercept + offsets[at]);
-                    int end = sectionEnd[at];
-                    if (plan != null) {
-                        plan.read(at, y, sections);
-                    } else {
+                if (possible == 0) {
+                    clearFrom = clearTo = 0;
+                    continue;
+                }
+                if (plan != null) {
+                    plan.writeSections(sweep.columns, possible, intercept, offsets, sectionEnd, widths, tops, bottoms);
+                    firstSection = lane.left + sweep.columns[0];
+                    lastSection = lane.left + sectionEnd[sweep.columns[possible - 1]] - 1;
+                } else {
+                    for (int index = 0; index < possible; index++) {
+                        int at = sweep.columns[index];
+                        int y = (int) Math.rint(intercept + offsets[at]);
+                        int end = sectionEnd[at];
                         long cost = sections.select(at, y, workBudget - work);
                         if (cost < 0) return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), workBudget);
                         long groupWork = cost * (end - at);
                         if (groupWork > workBudget - work)
                             return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), workBudget);
                         work += groupWork;
-                    }
-                    int best = sections.width, bestTop = sections.top, bestBottom = sections.bottom;
-                    if (best >= minWidth) {
-                        if (best == 1 && membership != null && membership.contains(bestTop, lane.left + at)) {
-                            removedStaff += end - at;
-                            continue;
-                        }
-                        if (firstSection > lane.right) firstSection = lane.left + at;
-                        lastSection = lane.left + end - 1;
-                        for (int column = at; column < end; column++) {
-                            widths[column] = best;
-                            tops[column] = bestTop;
-                            bottoms[column] = bestBottom;
+                        int best = sections.width, bestTop = sections.top, bestBottom = sections.bottom;
+                        if (best >= minWidth) {
+                            if (best == 1 && membership != null && membership.contains(bestTop, lane.left + at)) {
+                                removedStaff += end - at;
+                                continue;
+                            }
+                            if (firstSection > lane.right) firstSection = lane.left + at;
+                            lastSection = lane.left + end - 1;
+                            for (int column = at; column < end; column++) {
+                                widths[column] = best;
+                                tops[column] = bestTop;
+                                bottoms[column] = bestBottom;
+                            }
                         }
                     }
                 }

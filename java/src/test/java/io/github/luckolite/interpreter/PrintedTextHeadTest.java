@@ -97,6 +97,29 @@ public class PrintedTextHeadTest {
     }
 
     @Test
+    public void cleanedHeadersRetainTheExactGeometrySourceAcrossBothPasses() {
+        for (boolean textChangesGeometry : new boolean[] {false, true}) {
+            var page = new Page();
+            if (textChangesGeometry) page.eight();
+            else page.lettering();
+            byte[] text = page.geometry(), header = page.clean();
+            assertNotSame(page.labels, header);
+            assertEquals(textChangesGeometry, text != page.labels);
+            var expected = OmrMeasurePostProcessor.process(text, page.gray, page.w, page.h, header);
+            var origins = new SelectedMeasureOrigins();
+            var actual = NativeDecoderStages.geometry(page.labels, page.gray, page.w, page.h, origins);
+            assertArrayEquals(header, actual.labels());
+            assertEquals(expected, actual.measures());
+            assertFalse(expected.isEmpty());
+            for (MeasureRegion region : actual.measures()) {
+                var source = origins.origin(region, actual.labels(), page.gray, page.w, page.h);
+                assertNotNull(source);
+                assertArrayEquals(text, source.labels);
+                assertEquals(!textChangesGeometry, page.labels == source.labels);
+            }
+        }
+    }
+    @Test
     public void uprightTwoCounterTextIsRemoved() {
         var p = new Page();
         p.eight();

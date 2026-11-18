@@ -7,7 +7,8 @@ complete upstream notices if you redistribute them as part of a larger applicati
 
 | Component | Role | Upstream license information |
 |---|---|---|
-| TensorFlow 2.15.1 / LiteRT-compatible inference | Python inference | [Apache-2.0](https://github.com/tensorflow/tensorflow/blob/v2.15.1/LICENSE); its distributions carry dependency notices |
+| Google AI Edge LiteRT 2.3.0 | Bundled-model CPU inference on Windows x64 | Apache-2.0; the [Python distribution](https://pypi.org/project/ai-edge-litert/2.3.0/) includes its license |
+| TensorFlow 2.15.1 | Custom models and the default inference engine on other platforms | [Apache-2.0](https://github.com/tensorflow/tensorflow/blob/v2.15.1/LICENSE); its distributions carry dependency notices |
 | NumPy 1.26.x | Pixel arrays | [BSD-3-Clause and bundled-component notices](https://github.com/numpy/numpy/blob/v1.26.4/LICENSE.txt); binary wheels include additional library licenses |
 | Pillow | Image I/O | [MIT-CMU](https://github.com/python-pillow/Pillow/blob/main/LICENSE) for the verified 12.2.0 build, plus codec/dependency notices in binary distributions |
 | pypdfium2 4.x / PDFium | Optional PDF rasterization | [Apache-2.0 OR BSD-3-Clause, plus PDFium third-party notices](https://github.com/pypdfium2-team/pypdfium2/tree/main/LICENSES) |

@@ -235,6 +235,11 @@ final class CompactQuarterRestContour {
                                         32L * 1 + 8L * (Math.max(0L, (long) (256))))
                         ? new int[256]
                         : null);
+        // This upper bound includes masked rows. Once more than a quarter of even
+        // that many samples are white, the 75th percentile is fixed at 255.
+        long maxSamples = Math.max(0L, (long) lastRow - firstRow + 1) * paperWidth;
+        int whiteQuota = maxSamples <= (Integer.MAX_VALUE - 3) / 3
+                ? (int) (maxSamples / 4 + 1) : Integer.MAX_VALUE;
         int count = 0;
         {
             if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
@@ -248,7 +253,8 @@ final class CompactQuarterRestContour {
                     // Every pixel in this span is visited. Keep individual charges for
                     // parent budgets and for a local refusal at the original pixel.
                     if (quarterBudget == null || quarterBudget.tryPrepayLocal(1L + paperWidth)) {
-                        for (int at = first; at < end; at++) tones[gray[at] & 255]++;
+                        if (tones[255] < whiteQuota)
+                            for (int at = first; at < end; at++) tones[gray[at] & 255]++;
                     } else {
                         FaintQuarterRestInk.charge(quarterBudget, 1, 0);
                         for (int at = first; at < end; at++) {

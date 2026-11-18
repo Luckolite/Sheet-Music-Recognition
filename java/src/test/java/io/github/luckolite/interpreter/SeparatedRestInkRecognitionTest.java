@@ -104,4 +104,28 @@ public class SeparatedRestInkRecognitionTest {
         rests(gray, List.of());
         assertArrayEquals(before, gray);
     }
+
+    @Test
+    public void wideMaskedBodiesKeepPixelOrderAcrossBothWordBoundaries() {
+        var scratch = new SeparatedRestInk.Scratch();
+        int[] reference = null;
+        for (int shift : new int[] {0, 32, 96, 0}) {
+            int width = shift == 0 ? 64 : 154;
+            byte[] gray = new byte[width * 70];
+            java.util.Arrays.fill(gray, (byte) 255);
+            boolean[] line = new boolean[70];
+            line[23] = line[24] = line[41] = true;
+            for (int y = 9; y < 53; y++) {
+                int left = 20 + shift + y % 4;
+                java.util.Arrays.fill(gray, y * width + left, y * width + left + 21, (byte) 169);
+            }
+            var bodies = SeparatedRestInk.find(gray, width, 70, 0, width - 1, 0, 69, line, 26, scratch);
+            assertEquals(1, bodies.size());
+            var pixels = bodies.get(0).pixels().clone();
+            for (int i = 0; i < pixels.length; i++)
+                pixels[i] = (pixels[i] / width) * 64 + pixels[i] % width - shift;
+            if (reference == null) reference = pixels;
+            else org.junit.Assert.assertArrayEquals(reference, pixels);
+        }
+    }
 }
