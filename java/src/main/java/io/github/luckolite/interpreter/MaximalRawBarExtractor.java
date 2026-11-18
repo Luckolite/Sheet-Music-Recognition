@@ -574,6 +574,11 @@ final class MaximalRawBarExtractor {
         }
     }
 
+    private static boolean equalRuns(char[] runs, int left, int right, int count) {
+        for (int i = 0; i < count; i++) if (runs[left + i] != runs[right + i]) return false;
+        return true;
+    }
+
     private static Discovery discoverInternal(
             byte[] gray,
             int width,
@@ -713,6 +718,20 @@ final class MaximalRawBarExtractor {
         int[] firstSplit = joined ? new int[laneWidth] : null;
         long[] remaining = joined ? new long[1] : null;
         var partitionScratch = joined ? new RawStaffBarPartition.Scratch(membership) : null;
+        boolean[] sameAsLeft = new boolean[laneWidth];
+        for (int i = 1; i < activeCount; i++) {
+            int column = activeColumns[i], count = runCounts[column];
+            if (activeColumns[i - 1] != column - 1 || runCounts[column - 1] != count) continue;
+            int base = column * runCapacity, previous = base - runCapacity;
+            sameAsLeft[column] = equalRuns(runTops, previous, base, count)
+                    && equalRuns(runBottoms, previous, base, count)
+                    && (!joined || (staffSplitCounts[column] == staffSplitCounts[column - 1]
+                            && equalRuns(staffSplitRuns, 2 * previous, 2 * base, staffSplitCounts[column])));
+        }
+        int[] sectionEnd = new int[laneWidth];
+        // Outside this margin every integral intercept preserves the same rounded offset.
+        // Half-even ties and values close enough to round onto a tie stay independent.
+        double roundingMargin = Math.ulp((double) height + laneWidth + 1);
         ProjectedCaps projectedCaps = null;
         // Enumerate all raw intercepts over the entire lane for every already-supported slope.
         for (int tick = -13; tick <= 13; tick++) {
@@ -730,9 +749,19 @@ final class MaximalRawBarExtractor {
             }
             if (joined) java.util.Arrays.fill(firstSplit, 0);
             sweep.reset();
+            int representative = -1, previousShift = Integer.MIN_VALUE;
             for (int index = 0; index < activeCount; index++) {
                 int column = activeColumns[index];
-                int shift = spanTop - lane.top - (int) Math.rint(offsets[column]);
+                int rounded = (int) Math.rint(offsets[column]);
+                boolean stable = .5 - Math.abs(offsets[column] - rounded) > roundingMargin;
+                if (sameAsLeft[column] && stable && rounded == previousShift) {
+                    sectionEnd[representative] = column + 1;
+                    continue;
+                }
+                representative = column;
+                sectionEnd[column] = column + 1;
+                previousShift = stable ? rounded : Integer.MIN_VALUE;
+                int shift = spanTop - lane.top - rounded;
                 sweep.include(column, runTops, column * runCapacity, runCounts[column], shift, radius);
             }
             int clearFrom = 0, clearTo = 0;
@@ -742,6 +771,7 @@ final class MaximalRawBarExtractor {
                 work += laneWidth;
                 java.util.Arrays.fill(widths, clearFrom, clearTo, 0);
                 int firstSection = lane.right + 1, lastSection = lane.left - 1;
+                int removedStaff = 0;
                 int possible = sweep.collect(intercept - lane.top);
                 for (int index = 0; index < possible; index++) {
                     int at = sweep.columns[index];
@@ -766,6 +796,7 @@ final class MaximalRawBarExtractor {
                         firstRun[at] = (nextTop << 16) | lo;
                     }
                     if (nextTop > lastOffset) continue;
+                    long sectionStart = work;
                     int best = 0, bestTop = -1, bestBottom = -1, bestDistance = Integer.MAX_VALUE;
                     boolean tie = false;
                     for (int k = lo; k < runCount && runTops[runBase + k] <= lastOffset; k++) {
@@ -832,14 +863,31 @@ final class MaximalRawBarExtractor {
                         } else if (distance == bestDistance
                                 && (top != bestTop || bottom != bestBottom)) tie = true;
                     }
+                    int end = sectionEnd[at];
+                    // Identical raw and split intervals at the same sampled row select the same section.
+                    // Each omitted column still consumes its original search budget.
+                    long repeatedWork = (end - at - 1) * (work - sectionStart);
+                    if (repeatedWork > workBudget - work)
+                        return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), workBudget);
+                    work += repeatedWork;
                     if (!tie && best >= minWidth) {
+                        if (best == 1 && membership != null && membership.contains(bestTop, lane.left + at)) {
+                            removedStaff += end - at;
+                            continue;
+                        }
                         if (firstSection > lane.right) firstSection = lane.left + at;
-                        lastSection = lane.left + at;
-                        widths[at] = best;
-                        tops[at] = bestTop;
-                        bottoms[at] = bestBottom;
+                        lastSection = lane.left + end - 1;
+                        for (int column = at; column < end; column++) {
+                            widths[column] = best;
+                            tops[column] = bestTop;
+                            bottoms[column] = bestBottom;
+                        }
                     }
                 }
+                // The partition would charge one pixel per staff-only section before removing it.
+                if (removedStaff > workBudget - work)
+                    return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), workBudget);
+                work += removedStaff;
                 if (firstSection > lastSection) {
                     clearFrom = clearTo = 0;
                     continue;

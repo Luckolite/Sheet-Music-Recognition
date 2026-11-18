@@ -1671,6 +1671,7 @@ final class NoteArticulationDetector {
                 java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
         SlurEndpointAccents.Work accentWork = new SlurEndpointAccents.Work();
         List<Anchor> accentFrames = null;
+        int sizeEligibleDarkPixels = 0;
         for (int p = 0; p < labels.length; p++) {
             if (seen[p] || !ink(labels, gray, p, raw)) continue;
             int start = 0, end = 1;
@@ -1697,8 +1698,10 @@ final class NoteArticulationDetector {
                     }
                 }
             }
+            boolean oversized = right - left > width * .025f || bottom - top > height * .018f;
+            if (!oversized) sizeEligibleDarkPixels += end;
             if (end < 3) continue;
-            if (right - left > width * .025f || bottom - top > height * .018f) {
+            if (oversized) {
                 if (raw && end <= SlurEndpointDots.MAX_PIXELS) {
                     int[] component = Arrays.copyOf(queue, end);
                     if (accentWork.use(end))
@@ -1747,9 +1750,11 @@ final class NoteArticulationDetector {
             glyphs.add(
                     new Glyph(left, top, right, bottom, end, java.util.Arrays.copyOf(queue, end)));
         }
-        List<Glyph> faintAccents =
-                new ArrayList<>(
-                        raw ? faintAccentGlyphs(gray, width, height, seen, scratch) : List.of());
+        // Every accepted faint accent contains at least three dark pixels. Lightening
+        // the threshold can join components or enlarge them, but cannot shrink them.
+        List<Glyph> faintAccents = raw && sizeEligibleDarkPixels >= 3
+                ? rawFaintAccents(gray, width, height, seen, scratch, glyphs, joinedOwners)
+                : new ArrayList<>();
         float paperGap = raw ? medianArticulationGap(notes) : Float.NaN;
         RestPaperTone.Estimate paperEstimate =
                 RestPaperTone.estimate(raw ? gray : null, width, height, paperGap);
@@ -6165,6 +6170,41 @@ final class NoteArticulationDetector {
             }
         }
         return result;
+    }
+
+    private static List<Glyph> rawFaintAccents(
+            byte[] gray, int width, int height, boolean[] seen, GlyphFloodScratch scratch,
+            List<Glyph> glyphs, java.util.IdentityHashMap<Glyph, Integer> joinedOwners) {
+        if (hasFaintOnlyInk(gray)) return faintAccentGlyphs(gray, width, height, seen, scratch);
+
+        // Both thresholds selected identical pixels. Reuse whole dark components in
+        // flood order. Partitioned marks came from a component outside the size cap.
+        List<Glyph> accents = new ArrayList<>();
+        for (Glyph g : glyphs) {
+            if (g.count < 8 || joinedOwners.containsKey(g)) continue;
+            if (OpenChevron.matches(g.pixels, width, g.left, g.top, g.right, g.bottom)) {
+                accents.add(new Glyph(g.left, g.top, g.right, g.bottom, g.count, g.pixels.clone()));
+            }
+        }
+        return accents;
+    }
+
+    private static boolean hasFaintOnlyInk(byte[] gray) {
+        long low = SeedToneWords.BYTE_ONES * (155 - 128);
+        long high = SeedToneWords.BYTE_ONES * (185 - 128);
+        int p = 0;
+        for (; p <= gray.length - Long.BYTES; p += Long.BYTES) {
+            long word = (long) SeedToneWords.GRAY.get(gray, p);
+            // Set each high bit before subtracting so comparisons cannot borrow across bytes.
+            long biased = word | SeedToneWords.HIGH_BITS;
+            if ((((biased - low) ^ (biased - high)) & word & SeedToneWords.HIGH_BITS) != 0)
+                return true;
+        }
+        for (; p < gray.length; p++) {
+            int shade = gray[p] & 255;
+            if (shade >= 155 && shade < 185) return true;
+        }
+        return false;
     }
 
     private static final class SeedToneWords {

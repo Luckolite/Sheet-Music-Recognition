@@ -40117,6 +40117,11 @@ final class OmrScoreInterpreter {
         boolean sharedClearances = deepest <= inner && ((long) inner - deepest) % step == 0;
         float maximumCoarseSpan = gap * maximumSpan;
         int firstCoarseSpan = Math.round(gap * 1.6f);
+        int reach = (int) Math.ceil(maximumCoarseSpan + gap * 2 + 4);
+        int inward = Math.round(gap * 1.4f);
+        int minX = Math.max(0, note.head.minX - (outgoing ? inward : reach));
+        int maxX = Math.min(width - 1, note.head.maxX + (outgoing ? reach : inward));
+        var window = TieShoulderWindow.create(labels, gray, width, height, note.head.centerY, gap, side, minX, maxX);
         for (int band = 0; band < 3; band++) {
             int initial = band == 0 ? step : band == 1 ? inner : deepest;
             float lastClearance = initial == step ? gap * 1.8f : 0;
@@ -40127,11 +40132,14 @@ final class OmrScoreInterpreter {
                 int near = outgoing ? note.head.maxX + clearance : note.head.minX - clearance;
                 int room = outgoing ? width - 1 - near : near;
                 if (near < 0 || near >= width) continue;
+                if (window != null && window.excludesShorterSpans(near,
+                        Math.min(room, (int) maximumCoarseSpan), outgoing)) continue;
                 for (int span = firstCoarseSpan;
                         span <= maximumCoarseSpan && span <= room; span += step) {
                     int left = outgoing ? near : near - span;
                     int right = outgoing ? near + span : near;
                     if (left < 0 || right >= width) continue;
+                    if (window != null && window.excludes(left, right)) continue;
                     if (hasContinuousTieArc(
                             labels,
                             gray,
@@ -40156,9 +40164,11 @@ final class OmrScoreInterpreter {
             int near = outgoing ? note.head.maxX + clearance : note.head.minX - clearance;
             if (near < 0 || near >= width) continue;
             int maximum = Math.min(spanEnd, outgoing ? width - 1 - near : near);
+            if (window != null && window.excludesShorterSpans(near, maximum, outgoing)) continue;
             for (int span = miniatureFirst; span <= maximum; span++) {
                 int left = outgoing ? near : near - span;
                 int right = outgoing ? near + span : near;
+                if (window != null && window.excludes(left, right)) continue;
                 if (hasContinuousTieArc(
                         labels, gray, width, height, left, right, note.head.centerY, gap,
                         null, outgoing ? 205 : 225, side, true, false, null, witness)) return true;
@@ -40170,9 +40180,11 @@ final class OmrScoreInterpreter {
             for (int left = Math.round(note.head.centerX); left < note.head.maxX; left++) {
                 if (left < 0 || left >= width) continue;
                 int maximum = Math.min(firstCoarseSpan - 1, width - 1 - left);
+                if (window != null && window.excludesShorterSpans(left, maximum, true)) continue;
                 for (int span = miniatureFirst; span <= maximum; span++) {
                     int right = left + span;
                     if (right < note.head.maxX + gap * .35f) continue;
+                    if (window != null && window.excludes(left, right)) continue;
                     if (hasContinuousTieArc(
                             labels,
                             gray,
@@ -40235,22 +40247,34 @@ final class OmrScoreInterpreter {
         if (faintShoulders
                 && ShadedCompactTieRidge.proved(
                         labels, gray, width, height, left, right, centerY, gap)) return true;
-        if (hasContinuousTieArc(
+        var window = TieShoulderWindow.create(labels, gray, width, height, centerY, gap, 0, left, right);
+        int step = Math.max(1, Math.round(gap * .1f));
+        int shoulderCount = faintShoulders ? 4 : (int) Math.ceil(gap * .75f / step);
+        int clearanceStep = right - left < gap * 2.5f ? 1 : Math.max(1, Math.round(gap * .1f));
+        int clearanceCount = Math.round(gap * 1.4f / clearanceStep);
+        int longStep = Math.max(1, Math.round(gap * .2f));
+        if (window != null) {
+            int maxInset = shoulderCount * step;
+            if (faintShoulders && right - left < gap * 5)
+                maxInset = Math.max(maxInset, clearanceCount * clearanceStep);
+            if (right - left >= gap * 5) maxInset = Math.max(maxInset, 5 * longStep);
+            if (window.excludesInsets(maxInset)) return false;
+        }
+        if ((window == null || !window.excludes(left, right)) && hasContinuousTieArc(
                 labels, gray, width, height, left, right, centerY, gap, null, 165, 0, false, false,
                 frame)) return true;
         // Compact ties leave small gaps beside the heads. Sample both shoulders
         // finely enough to retain the whole returning curve, even at small sizes.
         // Faint ink is allowed only between heads: under a head it can belong
         // to the tail of an unrelated slur. The faint path still requires a dark core.
-        int step = Math.max(1, Math.round(gap * .1f));
         // Under-head shoulders can be asymmetric. Keep the raw, dark curve
         // proof while allowing either end to return before the head center.
-        int shoulderCount = faintShoulders ? 4 : (int) Math.ceil(gap * .75f / step);
         for (int first = 0; first <= shoulderCount; first++)
             for (int last = 0; last <= shoulderCount; last++) {
                 if (first == 0 && last == 0) continue;
                 int a = left + first * step, b = right - last * step;
                 if (b - a < gap) continue;
+                if (window != null && window.excludes(a, b)) continue;
                 if (hasContinuousTieArc(
                                 labels, gray, width, height, a, b, centerY, gap, null, 165, 0,
                                 false, false, frame)
@@ -40264,8 +40288,6 @@ final class OmrScoreInterpreter {
         // curve inside the head edges and require a substantial remaining span.
         if (faintShoulders && right - left < gap * 5) {
             // Retain the original ink proof before accepting faint tapered endpoints.
-            int clearanceStep = right - left < gap * 2.5f ? 1 : Math.max(1, Math.round(gap * .1f));
-            int clearanceCount = Math.round(gap * 1.4f / clearanceStep);
             // Insets can hide dark shoulders; faded ends need the same complete dark-core proof.
             for (int faintInk : new int[] {165, 205, 225})
                 for (int first = 0; first <= clearanceCount; first++)
@@ -40277,17 +40299,18 @@ final class OmrScoreInterpreter {
                                 < Math.max(
                                         gap * (right - left < gap * 2.5f ? .6f : .9f),
                                         (right - left) * .45f)) continue;
+                        if (window != null && window.excludes(a, b)) continue;
                         if (hasContinuousTieArc(
                                 labels, gray, width, height, a, b, centerY, gap, null, faintInk, 0,
                                 true, false, frame)) return true;
                     }
         }
         // Keep short-arc limits and require a dark core within the complete curve.
-        int longStep = Math.max(1, Math.round(gap * .2f));
         if (right - left >= gap * 5)
             for (int first = 0; first <= 5; first++)
                 for (int last = 0; last <= 5; last++) {
                     int a = left + first * longStep, b = right - last * longStep;
+                    if (window != null && window.excludes(a, b)) continue;
                     if (hasContinuousTieArc(
                             labels, gray, width, height, a, b, centerY, gap, null, 205, 0, false,
                             false, frame)) return true;
@@ -40614,16 +40637,24 @@ final class OmrScoreInterpreter {
             if (sample == 0 || x != sampleColumns[sample - 1]) distinctColumns++;
             sampleBases[sample] = (distinctColumns - 1) * TIE_PROBE_SLOTS;
         }
-        if (!flatProfile && (requiredSide == -1 || requiredSide == 1)
+        int searchSide = requiredSide;
+        if (!flatProfile && requiredSide >= -1 && requiredSide <= 1
                 && gap > 0 && gap <= 64 && centerY >= 0 && centerY < height
                 && left >= 0 && left < right && right < width && sampleColumns[49] < width
                 && labels != null && labels.length == gray.length) {
-            // Every parabolic ordinate lies between the head and 3 gaps on this side.
-            // Compact shapes reach at most 1.6 gaps. Include the full ink-probe radius.
-            float far = centerY + requiredSide * gap * (compact ? 1.61f : 3f);
-            int top = Math.max(0, Math.round(Math.min(centerY, far)) - radius - 1);
-            int bottom = Math.min(height - 1, Math.round(Math.max(centerY, far)) + radius + 1);
-            if (!straightRows.canSupplyVisibleVotes(labels, sampleColumns, top, bottom)) return false;
+            // Include the entire parabolic grid on each requested side and its ink-probe radius.
+            float depth = gap * (compact ? 1.61f : 3f);
+            int center = Math.round(centerY);
+            boolean above = requiredSide <= 0 && straightRows.canSupplyVisibleVotes(labels, sampleColumns,
+                    Math.max(0, Math.round(centerY - depth) - radius - 1),
+                    Math.min(height - 1, center + radius + 1));
+            boolean below = requiredSide >= 0 && straightRows.canSupplyVisibleVotes(labels, sampleColumns,
+                    Math.max(0, center - radius - 1),
+                    Math.min(height - 1, Math.round(centerY + depth) + radius + 1));
+            if (!above && !below) return false;
+            // Keep the original side constraint for any independent strict-contrast retry.
+            if (!above) searchSide = 1;
+            else if (!below) searchSide = -1;
         }
         // Cache ordered probes by physical column and row, with separate banks for
         // the two sides. Short spans may sample the same column multiple times.
@@ -40639,8 +40670,8 @@ final class OmrScoreInterpreter {
         boolean countNonStrong = requireStrongInk || longArc;
         // Keep the original grid: fractional sampling can move across rasterized ink.
         // Short arcs get an additional finer pass after those candidates fail.
-        scratch.oneSide[0] = requiredSide;
-        int[] sides = requiredSide == 0 ? BOTH_TIE_SIDES : scratch.oneSide;
+        scratch.oneSide[0] = searchSide;
+        int[] sides = searchSide == 0 ? BOTH_TIE_SIDES : scratch.oneSide;
         Boolean strictProof = strictContrast ? Boolean.TRUE : null;
         int gridCount = span < gap * 2 ? 2 : 1;
         for (int grid = 0; grid < gridCount; grid++)

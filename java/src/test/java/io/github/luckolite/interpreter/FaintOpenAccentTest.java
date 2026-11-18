@@ -39,6 +39,25 @@ public class FaintOpenAccentTest {
     }
 
     @Test
+    public void detachedDarkAccentSurvivesBothThresholdPaths() {
+        int width = 1100, height = 820;
+        byte[] gray = new byte[width * height], labels = new byte[gray.length];
+        Arrays.fill(gray, (byte) 255);
+        for (int x = 0; x < 25; x++) {
+            double rise = 5 * x / 24.0;
+            for (int y = 0; y < 13; y++) {
+                if (Math.abs(y - (1 + rise)) <= 1.25 || Math.abs(y - (11 - rise)) <= 1.25)
+                    gray[(100 + y) * width + 100 + x] = (byte) 154;
+            }
+        }
+        var notes = List.of(new NoteArticulationDetector.Anchor(112, 150, 16, 0));
+        int[] dark = NoteArticulationDetector.detect(labels, gray, width, height, notes);
+        assertTrue((dark[0] & NoteArticulation.ACCENT) != 0);
+        gray[width - 1] = (byte) 155;
+        assertArrayEquals(dark, NoteArticulationDetector.detect(labels, gray, width, height, notes));
+    }
+
+    @Test
     public void paleJoiningArmsRestoreAccent() {
         assertTrue((detect(false, false, false, false, false) & NoteArticulation.ACCENT) != 0);
     }
