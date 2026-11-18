@@ -167,6 +167,16 @@ final class StaffPitchTrack {
             }
         }
 
+        // Four unsigned pixels occupy separate 16-bit lanes. A guard bit prevents
+        // subtraction in one lane from borrowing from its neighbor.
+        private static long contrastPairs(long ink, long upper, long lower) {
+            long pixels = 0x00ff00ff00ff00ffL;
+            long guard = 0x8000800080008000L;
+            long required = (ink & pixels) + 0x000c000c000c000cL;
+            return (((upper & pixels) | guard) - required)
+                    & (((lower & pixels) | guard) - required) & guard;
+        }
+
         private static long contrastMask(
                 byte[] gray, int at, int columns, int flankOffset, int threshold) {
             long mask = 0;
@@ -176,6 +186,16 @@ final class StaffPitchTrack {
                 for (; column <= columns - Long.BYTES; column += Long.BYTES, at += Long.BYTES) {
                     long word = (long) GRAY_WORDS.get(gray, at);
                     long candidates = HIGH_BITS & ~(((word | HIGH_BITS) - bias) & word);
+                    if ((candidates & (candidates - 1)) != 0) {
+                        long upper = (long) GRAY_WORDS.get(gray, at - flankOffset);
+                        long lower = (long) GRAY_WORDS.get(gray, at + flankOffset);
+                        long even = contrastPairs(word, upper, lower);
+                        long odd = contrastPairs(word >>> 8, upper >>> 8, lower >>> 8);
+                        long kept = candidates & ((even >>> 8) | odd);
+                        // Pack the high bit of each byte into its original column position.
+                        mask |= (((kept >>> 7) * 0x0102040810204080L) >>> 56) << column;
+                        continue;
+                    }
                     while (candidates != 0) {
                         int offset = Long.numberOfTrailingZeros(candidates) / Byte.SIZE;
                         int pixel = at + offset;
@@ -327,41 +347,37 @@ final class StaffPitchTrack {
             boolean subtle,
             boolean measures) {
         if (gray == null || gap < 3) return null;
+
+        int stripWidth = Math.min(width, Math.max(80, Math.round(gap * 10)));
+        boolean validFrame = width > 0 && height > 0 && gray.length == (long) width * height
+                && Float.isFinite(top) && Float.isFinite(bottom) && Float.isFinite(gap)
+                && top >= 0 && bottom < height && bottom > top;
+        int minimumSamples = subtle ? 6 : 4;
+        float minimumSpan = width * (subtle ? .6f : .36f);
+        float lastCenter = stripLeft(width, stripWidth, 12) + stripWidth * .5f;
+        float firstCenter = stripLeft(width, stripWidth, 0) + stripWidth * .5f;
+        if (validFrame && lastCenter - firstCenter < minimumSpan) return null;
         if (!subtle && straightRules(gray, width, height, bottom, gap, true)) return null;
         boolean broadlyStraight = straightRules(gray, width, height, bottom, gap);
-        int stripWidth = Math.min(width, Math.max(80, Math.round(gap * 10)));
-        // Full-width windows all have the same sample x; their span cannot reach
-        // the positive coverage required below. Keep invalid inputs on their old path.
-        if (stripWidth == width
-                && width > 0
-                && height > 0
-                && gray.length == (long) width * height
-                && Float.isFinite(top)
-                && Float.isFinite(bottom)
-                && Float.isFinite(gap)
-                && top >= 0
-                && bottom < height
-                && bottom > top) return null;
         int first = Math.max(0, Math.round(top - gap * 6)),
                 last = Math.min(height, Math.round(bottom + gap * 6));
         if (last <= first) return null;
         List<float[]> samples = new ArrayList<>();
-        byte[] local = new byte[stripWidth * (last - first)];
+        byte[] local = subtle ? null : new byte[stripWidth * (last - first)];
         int[] symbolStrength = subtle ? new int[last - first] : null;
         int contrastFlank = Math.max(2, Math.round(gap * .32f));
         byte[] contrasted = null;
+        int previousLeft = -1;
         // Sample between the broad windows too: beams can obscure one rule
         // across several windows while clear intervening ink still proves a curve.
         for (int strip = 0; strip < 13; strip++) {
-            int left =
-                    Math.max(
-                            0,
-                            Math.min(
-                                    width - stripWidth,
-                                    Math.round(width * (.15f + strip * .06f) - stripWidth * .5f)));
-            for (int y = first; y < last; y++)
-                System.arraycopy(
-                        gray, y * width + left, local, (y - first) * stripWidth, stripWidth);
+            int left = stripLeft(width, stripWidth, strip);
+            float center = left + stripWidth * .5f;
+            // Later geometry checks can only discard points or shorten their span.
+            if (validFrame && (samples.size() + 13 - strip < minimumSamples
+                    || samples.isEmpty() && lastCenter - center < minimumSpan))
+                return null;
+            if (!subtle) copyStrip(gray, width, first, last, left, local, stripWidth);
             RawStaffLineDetector.StaffLines best = null;
             float distance = Float.MAX_VALUE;
             // A shaded photograph can put the paper itself below the fixed ink
@@ -369,14 +385,21 @@ final class StaffPitchTrack {
             // still validate every proposed rule against the original pixels.
             byte[] projection = local;
             if (subtle) {
-                int flankOffset = contrastFlank * stripWidth;
-                for (int y = contrastFlank, row = flankOffset; y < symbolStrength.length - contrastFlank;
-                        y++, row += stripWidth) {
-                    int count = 0;
-                    for (int at = row, end = row + stripWidth; at < end; at++)
-                        if (isContrastedStaffPixel(local, at, flankOffset, 225)) count++;
-                    symbolStrength[y] = count;
+                int delta = left - previousLeft;
+                boolean sliding = previousLeft >= 0 && 2L * delta < stripWidth;
+                if (!sliding || delta != 0) {
+                    int flankOffset = contrastFlank * width;
+                    for (int y = contrastFlank; y < symbolStrength.length - contrastFlank; y++) {
+                        int start = (first + y) * width + left;
+                        if (sliding) {
+                            symbolStrength[y] += contrastCount(gray, start + stripWidth - delta, delta, flankOffset)
+                                    - contrastCount(gray, start - delta, delta, flankOffset);
+                        } else {
+                            symbolStrength[y] = contrastCount(gray, start, stripWidth, flankOffset);
+                        }
+                    }
                 }
+                previousLeft = left;
             } else if (needsContrast(
                             local,
                             stripWidth,
@@ -416,13 +439,9 @@ final class StaffPitchTrack {
                 // Broad straight-rule evidence anchors the physical staff phase.
                 // A locally shifted group must be unambiguous before replacing
                 // it; nearby tilted groups can safely keep their existing track.
-                if (!completeRules(
-                        local,
-                        stripWidth,
-                        last - first,
-                        lines,
-                        subtle || broadlyStraight && d > gap * .6f,
-                        subtle ? 225 : 170)) continue;
+                if (!completeRules(gray, stripWidth, last - first, lines,
+                        subtle || broadlyStraight && d > gap * .6f, subtle ? 225 : 170,
+                        first * width + left, width)) continue;
                 // Incomplete semantic stripes can compress or widen the seed's
                 // spacing. A complete raw group may recalibrate that seed only
                 // while its outer rule remains close to the same physical staff.
@@ -435,7 +454,7 @@ final class StaffPitchTrack {
             }
             if (best != null)
                 samples.add(
-                        new float[] {left + stripWidth * .5f, best.bottom() + first, best.gap()});
+                        new float[] {center, best.bottom() + first, best.gap()});
         }
         if (samples.size() < 4) return null;
         List<Float> gaps = new ArrayList<>();
@@ -679,53 +698,63 @@ final class StaffPitchTrack {
             RawStaffLineDetector.StaffLines lines,
             boolean requireUnambiguousPhase,
             int threshold) {
+        return completeRules(gray, width, height, lines, requireUnambiguousPhase, threshold, 0, width);
+    }
+
+    private static boolean completeRules(byte[] gray, int width, int height,
+            RawStaffLineDetector.StaffLines lines, boolean requireUnambiguousPhase,
+            int threshold, int origin, int stride) {
         int radius = Math.max(1, Math.round(lines.gap() * .2f)),
                 flank = Math.max(2, Math.round(lines.gap() * .32f));
         // Six equally spaced rules do not establish which five belong to the
         // staff. A beam extending the group must not shift the sampled phase.
-        for (int outside :
-                requireUnambiguousPhase
-                        ? new int[] {
-                            Math.round(lines.rows()[0] - lines.gap()),
-                            Math.round(lines.bottom() + lines.gap())
-                        }
-                        : new int[0]) {
-            int columns = 0;
-            for (int x = 0; x < width; x++)
-                for (int y = Math.max(flank, outside - radius);
-                        y <= Math.min(height - 1 - flank, outside + radius);
-                        y++) {
-                    int ink = gray[y * width + x] & 255;
-                    if (ink <= threshold
-                            && (gray[(y - flank) * width + x] & 255) >= ink + 12
-                            && (gray[(y + flank) * width + x] & 255) >= ink + 12) {
-                        columns++;
-                        break;
-                    }
-                }
-            if (columns >= width * .6f) return false;
-        }
-        for (int row : lines.rows()) {
-            int columns = 0;
-            for (int x = 0; x < width; x++)
-                for (int y = Math.max(flank, row - radius);
-                        y <= Math.min(height - 1 - flank, row + radius);
-                        y++) {
-                    int ink = gray[y * width + x] & 255;
-                    if (ink <= threshold
-                            && (gray[(y - flank) * width + x] & 255) >= ink + 12
-                            && (gray[(y + flank) * width + x] & 255) >= ink + 12) {
-                        columns++;
-                        break;
-                    }
-                }
-            if (columns < width * .6f) return false;
-        }
+        if (requireUnambiguousPhase
+                && (ruleHasSupport(gray, width, height, Math.round(lines.rows()[0] - lines.gap()),
+                                   radius, flank, threshold, origin, stride)
+                    || ruleHasSupport(gray, width, height, Math.round(lines.bottom() + lines.gap()),
+                                      radius, flank, threshold, origin, stride))) return false;
+        for (int row : lines.rows())
+            if (!ruleHasSupport(gray, width, height, row, radius, flank, threshold, origin, stride)) return false;
         return true;
+    }
+
+    private static boolean ruleHasSupport(byte[] gray, int width, int height, int row,
+                                          int radius, int flank, int threshold, int origin, int stride) {
+        int first = Math.max(flank, row - radius), last = Math.min(height - 1 - flank, row + radius);
+        int count = 0;
+        float required = width * .6f;
+        for (int x = 0; x < width;) {
+            int size = Math.min(Long.SIZE, width - x);
+            long supported = 0;
+            for (int y = first; y <= last; y++)
+                supported |= RuleProjection.contrastMask(gray, origin + y * stride + x, size, flank * stride, threshold);
+            count += Long.bitCount(supported);
+            x += size;
+            if (count >= required) return true;
+            if (count + (width - x) < required) return false;
+        }
+        return count >= required;
     }
 
     boolean activeAt(float x) {
         return x >= tailStart && x <= tailEnd;
+    }
+
+    /** Sample the staff bottom in page order without searching earlier segments again. */
+    float[] columnBottoms(int width) {
+        float[] bottoms = new float[width];
+        int right = 1;
+        for (int x = 0; x < width; x++) {
+            if (x < tailStart || x > tailEnd) {
+                bottoms[x] = tailBottom;
+                continue;
+            }
+            while (right < points.length - 1 && x > points[right][0]) right++;
+            float[] a = points[right - 1], b = points[right];
+            float fraction = (x - a[0]) / (b[0] - a[0]);
+            bottoms[x] = a[1] + fraction * (b[1] - a[1]);
+        }
+        return bottoms;
     }
 
     float[] at(float x) {
@@ -1457,6 +1486,24 @@ final class StaffPitchTrack {
             }
         }
         return true;
+    }
+
+    private static int stripLeft(int width, int stripWidth, int strip) {
+        return Math.max(0, Math.min(width - stripWidth,
+                Math.round(width * (.15f + strip * .06f) - stripWidth * .5f)));
+    }
+
+    private static void copyStrip(byte[] gray, int width, int first, int last, int left,
+                                  byte[] local, int stripWidth) {
+        for (int y = first; y < last; y++)
+            System.arraycopy(gray, y * width + left, local, (y - first) * stripWidth, stripWidth);
+    }
+
+    private static int contrastCount(byte[] gray, int start, int length, int flank) {
+        int count = 0;
+        for (int at = start; at < start + length; at++)
+            if (isContrastedStaffPixel(gray, at, flank, 225)) count++;
+        return count;
     }
 
     private static boolean isContrastedStaffPixel(byte[] gray, int pixel, int flank, int threshold) {

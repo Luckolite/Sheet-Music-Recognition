@@ -10,6 +10,26 @@ import org.junit.Test;
 
 /** Original curved quarter-rest drawings around half-pixel staff translations. */
 public final class RestRectificationRoundingParityTest {
+    @Test public void contiguousSpansFollowPerPixelRoundingAcrossRowBoundaries() {
+        int width = 257, height = 193;
+        byte[] gray = new byte[width * height];
+        new Random(17821).nextBytes(gray);
+        float[] bottoms = new float[width];
+        for (int x = 0; x < width; x++) {
+            float step = 64.5f + (x / 70);
+            bottoms[x] = x % 3 == 0 ? Math.nextDown(step) : step;
+        }
+        bottoms[width - 1] = Float.NaN;
+        int first = 3;
+        byte[] flat = new byte[width * (height + 8)];
+        StaffBandRows.rectify(gray, width, height, first, 67f, bottoms, flat);
+        for (int i = 0; i < flat.length; i++) {
+            int x = i % width;
+            int row = Math.round(bottoms[x] + (first + i / width - 67f));
+            assertEquals(row >= 0 && row < height ? gray[row * width + x] : (byte) 255, flat[i]);
+        }
+    }
+
     private static final int W = CurvedRestRecognitionTest.W, H = CurvedRestRecognitionTest.H;
     private static final List<MeasureRegion> M = CurvedRestRecognitionTest.M;
 

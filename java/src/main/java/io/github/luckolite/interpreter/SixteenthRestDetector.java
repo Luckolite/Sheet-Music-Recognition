@@ -2507,34 +2507,8 @@ final class SixteenthRestDetector {
         byte[] flat = new byte[width * bandHeight];
         float[] originBottoms = null;
         if (width > 0 && height > 0 && gray != null && (long) width * height <= gray.length) {
-            float[] bottoms = new float[width];
-            float minBottom = Float.POSITIVE_INFINITY, maxBottom = Float.NEGATIVE_INFINITY;
-            for (int x = 0; x < width; x++) {
-                float bottom = staff.pitchTrack().at(x)[0];
-                bottoms[x] = bottom;
-                minBottom = Math.min(minBottom, bottom);
-                maxBottom = Math.max(maxBottom, bottom);
-            }
-            originBottoms = bottoms;
-            for (int y = 0; y < bandHeight; y++) {
-                int offset = y * width;
-                float relativeY = first + y - staff.bottom();
-                int row = Math.round(minBottom + relativeY);
-                if (!Float.isNaN(minBottom) && row == Math.round(maxBottom + relativeY)) {
-                    if (row >= 0 && row < height)
-                        System.arraycopy(gray, row * width, flat, offset, width);
-                    else
-                        java.util.Arrays.fill(flat, offset, offset + width, (byte) 255);
-                    continue;
-                }
-                for (int x = 0; x < width; x++) {
-                    int sourceY = Math.round(bottoms[x] + relativeY);
-                    flat[offset + x] =
-                            sourceY >= 0 && sourceY < height
-                                    ? gray[sourceY * width + x]
-                                    : (byte) 255;
-                }
-            }
+            originBottoms = staff.pitchTrack().columnBottoms(width);
+            StaffBandRows.rectify(gray, width, height, first, staff.bottom(), originBottoms, flat);
         } else {
             for (int x = 0; x < width; x++) {
                 float[] local = staff.pitchTrack().at(x);

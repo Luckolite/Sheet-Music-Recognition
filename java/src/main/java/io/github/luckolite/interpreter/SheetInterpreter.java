@@ -327,11 +327,8 @@ public final class SheetInterpreter {
                 TripletRhythmDetector.withRests(
                         noteOwners, score.rests(), measures, gray, width, height);
         var notes = rhythm.notes();
-        var staffs =
-                ScoreDynamicsDetector.alignStaffs(
-                        OmrScoreInterpreter.techniqueStaffs(labels, gray, width, height, measures),
-                        notes,
-                        height);
+        var physicalStaffs = OmrScoreInterpreter.techniqueStaffs(labels, gray, width, height, measures);
+        var staffs = ScoreDynamicsDetector.alignStaffs(physicalStaffs, notes, height);
         var words = annotations.words.stream().map(Word::internal).toList();
         // Thin octave dashes can fade in the paper-corrected note raster.
         notes = OctaveMarkDetector.apply(words, staffs, measures, notes, annotationGray, width, height);
@@ -353,8 +350,11 @@ public final class SheetInterpreter {
                 ornamentWords.addAll(
                         ocr.crossRowPortWords(
                                 annotationGray, width, height, staffs, measures, notes));
+            // Note filtering can change staff ownership. Realign the surviving notes.
+            var ornamentStaffs = ocr == null ? physicalStaffs
+                    : OmrScoreInterpreter.techniqueStaffs(labels, gray, width, height, measures);
             notes =
-                    PortableNoteOrnaments.apply(
+                    PortableNoteOrnaments.applyWithAlignedStaffs(
                             GlyphResources.ornaments(),
                             labels,
                             gray,
@@ -362,7 +362,8 @@ public final class SheetInterpreter {
                             height,
                             measures,
                             notes,
-                            ornamentWords);
+                            ornamentWords,
+                            ScoreDynamicsDetector.alignStaffs(ornamentStaffs, notes, height));
         }
         notes = ArtificialHarmonics.apply(labels, gray, width, height, measures, notes, staffs);
         notes = ScoreTiePitchGuard.apply(notes, score.keyChanges());

@@ -7,6 +7,26 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class StaffPitchTrackTest {
+    @Test public void lastColumnCanCompleteOrDisambiguateFivePrintedRules() {
+        int width = 65, height = 50, gap = 5;
+        byte[] gray = new byte[width * height];
+        Arrays.fill(gray, (byte) 255);
+        int[] rows = {10, 15, 20, 25, 30};
+        var lines = new RawStaffLineDetector.StaffLines(rows, gap);
+        for (int row : rows) {
+            Arrays.fill(gray, row * width, row * width + 38, (byte) 225);
+            gray[row * width + 64] = (byte) 225;
+        }
+        assertTrue(StaffPitchTrack.completePrintedSlurRules(gray, width, height, lines));
+        gray[rows[2] * width + 64] = (byte) 226;
+        assertFalse(StaffPitchTrack.completePrintedSlurRules(gray, width, height, lines));
+        gray[rows[2] * width + 64] = (byte) 225;
+        Arrays.fill(gray, 35 * width, 35 * width + 38, (byte) 225);
+        assertTrue(StaffPitchTrack.completePrintedSlurRules(gray, width, height, lines));
+        gray[35 * width + 64] = (byte) 225;
+        assertFalse(StaffPitchTrack.completePrintedSlurRules(gray, width, height, lines));
+    }
+
     private static float bottom(int x, int width) {
         return 210f - 45f * x * x / (width * (float) width);
     }

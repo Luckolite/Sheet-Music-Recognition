@@ -18,26 +18,30 @@ final class RoundedMeterCounters {
         int w = right - left + 1, h = last - first + 1;
         if (w < 5 || h < 10) return false;
         int stride = w + 2;
-        if (!MeterCounterFlood.canEnclosePaper(gray, width, left, first, w, h)) return false;
+        int firstSeed = MeterCounterFlood.nextRoof(gray, width, left, first, w, h, 0);
+        if (firstSeed < 0) return false;
         byte[] paper = MeterCounterFlood.paperMask(gray, width, left, first, w, h);
-        int[] queue = new int[w * h];
+        var queue = new MeterCounterFlood(w, h);
         int[] rows = new int[h], leftEdges = new int[h], rightEdges = new int[h];
         var pockets = new ArrayList<Pocket>();
-        for (int seed = stride + 1, end = (h + 1) * stride; seed < end; seed++) {
+        for (int seed = firstSeed; seed >= 0;
+                seed = MeterCounterFlood.nextRoof(gray, width, left, first, w, h, seed + 1)) {
             if (paper[seed] == 0) continue;
-            int write = MeterCounterFlood.drain(paper, queue, stride, seed);
+            queue.drain(paper, stride, seed);
+            int write = queue.area;
             if (write < gap * gap * .06f || write > gap * gap * .65f) continue;
             int minX = w, maxX = -1, minY = h, maxY = -1;
             Arrays.fill(rows, 0);
             Arrays.fill(leftEdges, w);
             Arrays.fill(rightEdges, -1);
-            for (int index = 0; index < write; index++) {
-                int at = queue[index], x = at % stride - 1, y = at / stride - 1;
-                rows[y]++;
+            for (int index = 0; index < queue.boundCount; index += 2) {
+                int at = queue.runBounds[index], x = at % stride - 1, y = at / stride - 1;
+                int length = queue.runBounds[index + 1] - at + 1, lastX = x + length - 1;
+                rows[y] += length;
                 leftEdges[y] = Math.min(leftEdges[y], x);
-                rightEdges[y] = Math.max(rightEdges[y], x);
+                rightEdges[y] = Math.max(rightEdges[y], lastX);
                 minX = Math.min(minX, x);
-                maxX = Math.max(maxX, x);
+                maxX = Math.max(maxX, lastX);
                 minY = Math.min(minY, y);
                 maxY = Math.max(maxY, y);
             }
