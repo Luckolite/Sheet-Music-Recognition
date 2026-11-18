@@ -67,8 +67,8 @@ final class PrintedExpressionGlyphs {
             int width,
             int height) {
         var scratch = new ComponentScratch();
-        var result = new ArrayList<>(detect(score, staffs, gray, width, height, 175, scratch));
-        for (var candidate : detect(score, staffs, gray, width, height, 155, scratch)) {
+        var result = new ArrayList<>(detect(score, staffs, gray, width, height, 175, true, scratch));
+        for (var candidate : detect(score, staffs, gray, width, height, 155, false, scratch)) {
             if (MetricModulationText.parse(candidate.text()).isEmpty()) continue;
             boolean overlap = false;
             for (var old : result)
@@ -88,6 +88,7 @@ final class PrintedExpressionGlyphs {
             int width,
             int height,
             int threshold,
+            boolean detectBreaths,
             ComponentScratch scratch) {
         if (gray == null || width < 1 || height < 1 || gray.length != (long) width * height)
             return List.of();
@@ -120,55 +121,46 @@ final class PrintedExpressionGlyphs {
                 // A metric equation may span the barline and its courtesy meter at the system end.
                 int metricRight = above ? Math.min(width, (int) (right * width + gap * 5)) : x1;
                 var parts = components(gray, width, x0, top, metricRight, bottom, threshold, scratch);
-                var notes = new ArrayList<Pulse>();
-                for (var part : parts) {
-                    if (part.height() >= gap * .65f
-                            && part.height() <= gap * 4.2f
-                            && part.width() <= gap * 2.5f) {
-                        var match = pulses.templateMatch(gray, width, part.bounds());
-                        if (match.kind() > 0 && match.score() >= .66f && match.margin() >= .018f) {
-                            double value = Math.scalb(4, -((match.kind() - 1) / 2));
-                            notes.add(new Pulse(part, match.kind(), value));
-                        }
-                    }
-                    if (!above
-                            || part.right > x1
-                            || part.height() < gap * .6f
-                            || part.height() > gap * 1.9f
-                            || part.width() > gap * 1.9f) continue;
-                    var match = breaths.templateMatch(gray, width, part.bounds());
-                    if (match.kind() < 13 || match.score() < .61f) continue;
-                    // A comma embedded in a text line is punctuation, not a pause.
-                    if (parts.stream()
-                            .anyMatch(
-                                    p ->
-                                            p != part
-                                                    && p.height() > gap * .28f
-                                                    && Math.abs(p.cy() - part.cy()) < gap * .8f
-                                                    && Math.min(
-                                                                    Math.abs(p.left - part.right),
-                                                                    Math.abs(part.left - p.right))
-                                                            < gap * .85f)) continue;
-                    if (PrintedDirectionStaff.at(
-                                    List.of(staff),
-                                    score.measures(),
-                                    score.notes(),
-                                    gray,
-                                    width,
-                                    height,
-                                    part.left,
-                                    part.top,
-                                    part.bottom)
-                            == null) continue;
-                    String key = "breath:" + part.left + ":" + part.top;
-                    if (seen.add(key))
-                        result.add(
-                                new Mark(
-                                        match.kind() == 14 ? "breath tick" : "breath comma",
+                if (above && detectBreaths) {
+                    for (var part : parts) {
+                        if (part.right > x1
+                                || part.height() < gap * .6f
+                                || part.height() > gap * 1.9f
+                                || part.width() > gap * 1.9f) continue;
+                        var match = breaths.templateMatch(gray, width, part.bounds());
+                        if (match.kind() < 13 || match.score() < .61f) continue;
+                        // A comma embedded in a text line is punctuation, not a pause.
+                        if (parts.stream()
+                                .anyMatch(
+                                        p ->
+                                                p != part
+                                                        && p.height() > gap * .28f
+                                                        && Math.abs(p.cy() - part.cy()) < gap * .8f
+                                                        && Math.min(
+                                                                        Math.abs(p.left - part.right),
+                                                                        Math.abs(part.left - p.right))
+                                                                < gap * .85f)) continue;
+                        if (PrintedDirectionStaff.at(
+                                        List.of(staff),
+                                        score.measures(),
+                                        score.notes(),
+                                        gray,
+                                        width,
+                                        height,
                                         part.left,
                                         part.top,
-                                        part.right,
-                                        part.bottom));
+                                        part.bottom)
+                                == null) continue;
+                        String key = "breath:" + part.left + ":" + part.top;
+                        if (seen.add(key))
+                            result.add(
+                                    new Mark(
+                                            match.kind() == 14 ? "breath tick" : "breath comma",
+                                            part.left,
+                                            part.top,
+                                            part.right,
+                                            part.bottom));
+                    }
                 }
                 var bands =
                         parts.stream()
@@ -179,11 +171,13 @@ final class PrintedExpressionGlyphs {
                                                         && p.height() < gap * .3f
                                                         && p.width() >= p.height() * 2.5f)
                                 .toList();
+                List<Pulse> notes = null;
                 for (int i = 0; i < bands.size(); i++)
                     for (int j = i + 1; j < bands.size(); j++) {
                         var a = bands.get(i);
                         var b = bands.get(j);
                         if (!equalsBands(a, b, gap)) continue;
+                        if (notes == null) notes = pulseNotes(parts, gray, width, gap);
                         int el = Math.min(a.left, b.left), er = Math.max(a.right, b.right);
                         float ey = (a.cy() + b.cy()) * .5f;
                         Pulse l = null, r = null;
@@ -317,6 +311,22 @@ final class PrintedExpressionGlyphs {
         return new int[] {2, second.right};
     }
 
+    private List<Pulse> pulseNotes(List<Part> parts, byte[] gray, int width, float gap) {
+        var notes = new ArrayList<Pulse>();
+        for (var part : parts) {
+            if (part.height() >= gap * .65f
+                    && part.height() <= gap * 4.2f
+                    && part.width() <= gap * 2.5f) {
+                var match = pulses.templateMatch(gray, width, part.bounds());
+                if (match.kind() > 0 && match.score() >= .66f && match.margin() >= .018f) {
+                    double value = Math.scalb(4, -((match.kind() - 1) / 2));
+                    notes.add(new Pulse(part, match.kind(), value));
+                }
+            }
+        }
+        return notes;
+    }
+
     private static boolean equalsBands(Part a, Part b, float gap) {
         float separation = Math.abs(a.cy() - b.cy());
         return a.width() > gap * .35f
@@ -334,62 +344,69 @@ final class PrintedExpressionGlyphs {
     }
 
     private static final class ComponentScratch {
-        boolean[] seen = new boolean[0];
-        int[] queue = new int[0];
-
-        void reset(int size) {
-            if (seen.length < size) {
-                seen = new boolean[size];
-                queue = new int[size];
-            } else {
-                Arrays.fill(seen, 0, size, false);
-            }
-        }
+        private static final java.lang.invoke.VarHandle WORD =
+                java.lang.invoke.MethodHandles.byteArrayViewVarHandle(
+                        long[].class, java.nio.ByteOrder.nativeOrder());
+        private static final long HIGH = 0x8080808080808080L;
+        byte[] ink = new byte[0];
+        final ShadedComponentRuns runs = new ShadedComponentRuns(128);
     }
 
     private static List<Part> components(
             byte[] gray, int width, int left, int top, int right, int bottom, int threshold,
             ComponentScratch scratch) {
-        int w = right - left, h = bottom - top;
-        int area = w * h;
-        scratch.reset(area);
-        var seen = scratch.seen;
-        var queue = scratch.queue;
-        var result = new ArrayList<Part>();
-        for (int y = 0; y < h; y++)
-            for (int x = 0; x < w; x++) {
-                int seed = y * w + x;
-                if (seen[seed] || (gray[(top + y) * width + left + x] & 255) > threshold) continue;
-                int read = 0, size = 1, minX = x, maxX = x, minY = y, maxY = y;
-                queue[0] = seed;
-                seen[seed] = true;
-                while (read < size) {
-                    int at = queue[read++], px = at % w, py = at / w;
-                    minX = Math.min(minX, px);
-                    maxX = Math.max(maxX, px);
-                    minY = Math.min(minY, py);
-                    maxY = Math.max(maxY, py);
-                    for (int dy = -1; dy <= 1; dy++)
-                        for (int dx = -1; dx <= 1; dx++) {
-                            int nx = px + dx, ny = py + dy;
-                            if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
-                            int next = ny * w + nx;
-                            if (!seen[next]
-                                    && (gray[(top + ny) * width + left + nx] & 255) <= threshold) {
-                                seen[next] = true;
-                                queue[size++] = next;
-                            }
-                        }
-                }
-                if (size >= 3)
-                    result.add(
-                            new Part(
-                                    left + minX,
-                                    top + minY,
-                                    left + maxX + 1,
-                                    top + maxY + 1,
-                                    size));
+        int stride = right - left + 2;
+        int size = stride * (bottom - top + 2);
+        if (scratch.ink.length < size) scratch.ink = new byte[size];
+        byte[] ink = scratch.ink;
+        // Empty margins keep diagonal neighbor scans inside the crop, even on scratch reuse.
+        Arrays.fill(ink, 0, stride, (byte) 0);
+        // Both expression thresholds are in the light half of the unsigned grayscale range.
+        long bias = 0x0101010101010101L * (threshold + 1 - 128);
+        for (int y = top; y < bottom; y++) {
+            int at = (y - top + 1) * stride;
+            ink[at++] = 0;
+            int p = y * width + left, end = y * width + right;
+            int packedEnd = threshold >= 128 && threshold < 255 ? end - Long.BYTES : p - 1;
+            for (; p <= packedEnd; p += Long.BYTES, at += Long.BYTES) {
+                long tone = (long) ComponentScratch.WORD.get(gray, p);
+                long dark = ~(((tone | ComponentScratch.HIGH) - bias) & tone) & ComponentScratch.HIGH;
+                ComponentScratch.WORD.set(ink, at, dark >>> 7);
             }
+            for (; p < end; p++)
+                ink[at++] = (byte) ((gray[p] & 255) <= threshold ? 1 : 0);
+            ink[at] = 0;
+        }
+        Arrays.fill(ink, size - stride, size, (byte) 0);
+        var runs = scratch.runs;
+        var result = new ArrayList<Part>();
+        for (int seed = stride; seed < size - stride; seed++) {
+            if (ink[seed] == 0) {
+                if (seed <= size - Long.BYTES && (long) ComponentScratch.WORD.get(ink, seed) == 0)
+                    seed += Long.BYTES - 1;
+                continue;
+            }
+            int queued = runs.enqueue(ink, seed, 1, (byte) 0, 0);
+            int minX = stride, maxX = 0, minY = seed / stride, maxY = minY, count = 0;
+            for (int i = 0; i < queued; i += 2) {
+                int first = runs.queue[i], last = runs.queue[i + 1];
+                int y = first / stride, x = first - y * stride;
+                minX = Math.min(minX, x);
+                maxX = Math.max(maxX, x + (last - first));
+                maxY = Math.max(maxY, y);
+                count += last - first + 1;
+                for (int offset = -stride; offset <= stride; offset += 2 * stride) {
+                    int end = last + offset + 1;
+                    for (int p = first + offset - 1; p <= end; p++) {
+                        if (ink[p] == 0) continue;
+                        queued = runs.enqueue(ink, p, 1, (byte) 0, queued);
+                        p = runs.queue[queued - 1];
+                    }
+                }
+            }
+            if (count >= 3)
+                result.add(new Part(left + minX - 1, top + minY - 1, left + maxX, top + maxY, count));
+        }
         return result;
     }
 }

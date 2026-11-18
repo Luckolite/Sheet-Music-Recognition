@@ -143,6 +143,24 @@ public final class PrintedExpressionGlyphsTest {
     }
 
     @Test
+    public void faintBridgeBetweenEqualsStrokesStillAllowsMetricRecovery() throws Exception {
+        var image = page();
+        int edge = draw(image, "quarter", 132, 110, 36);
+        equals(image, edge + 8, 130);
+        draw(image, "half", edge + 30, 110, 36);
+        for (int y = 132; y < 137; y++) image.setRGB(edge + 12, y, 0xffa5a5a5);
+        int tone = image.getRGB(edge + 12, 135) & 255;
+        assertTrue(tone > 155 && tone <= 175);
+        draw(image, "breath-tick", 390, 145, 22);
+        var events = detect(image, true).expressiveEvents();
+        assertEquals(2, events.size());
+        assertTrue(events.stream().anyMatch(event -> event.kind() == Kind.BREATH));
+        var metric = events.stream().filter(event -> event.kind() == Kind.METRIC_MODULATION)
+                .findFirst().orElseThrow();
+        assertEquals(2, MetricModulationText.decode(metric.qualifierText()).orElseThrow().ratio(), 0);
+    }
+
+    @Test
     public void flagsAndDotsArePrintedEvidence() throws Exception {
         var event = detect(equation("eighth", "quarter", 36, true), true).expressiveEvents().get(0);
         var pulses = MetricModulationText.decode(event.qualifierText()).orElseThrow();

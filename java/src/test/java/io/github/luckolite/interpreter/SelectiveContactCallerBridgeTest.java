@@ -10,6 +10,28 @@ import org.junit.Test;
 public class SelectiveContactCallerBridgeTest {
     private static final int W = 240, H = 112;
 
+    @Test
+    public void countOnlyDarkPixelsOutsideTheLocalOwnerFootprint() throws Exception {
+        byte[] gray = new byte[37 * 25];
+        for (int i = 0; i < gray.length; i++) gray[i] = (byte) (i * 103);
+        String sha = RasterEvidenceIdentity.hex(
+                java.security.MessageDigest.getInstance("SHA-256").digest(gray));
+        for (int width = 24; width <= 31; width++) {
+            var scope = new SparseStaffContact.Rect(3, 4, 2 + width, 20);
+            var budget = new SparseStaffContact.Budget(100_000, 100_000);
+            var snapshot = SparseStaffContact.Snapshot.capture(gray, 37, 25, sha, scope, budget, budget);
+            var excluded = new BitSet();
+            int expected = 0;
+            for (int y = 4; y <= 20; y++) {
+                for (int x = 3; x < 3 + width; x++) {
+                    if ((x + y) % 3 == 0) excluded.set((y - 4) * width + x - 3);
+                    else if ((gray[y * 37 + x] & 255) < 185) expected++;
+                }
+            }
+            assertEquals(expected, snapshot.countDarkOutside(excluded));
+        }
+    }
+
     private record Fixture(
             byte[] gray,
             byte[] labels,

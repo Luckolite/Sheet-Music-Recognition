@@ -413,34 +413,36 @@ final class NoteArticulationDetector {
                 || gray == null
                 || labels.length != (long) width * height
                 || gray.length != labels.length) return List.of();
-        var seen = new BitSet(gray.length);
-        int[] queue = new int[Math.min(1024, gray.length)];
+        long[] remaining = articulationInk(gray, true);
+        var scratch = new GlyphFloodScratch(gray.length);
+        int[] queue = scratch.queue;
         float maxDotWidth = width * .025f, maxDotHeight = height * .018f;
         List<FermataMark> result = new ArrayList<>();
         for (int seed = 0; seed < gray.length; seed++) {
-            if ((gray[seed] & 255) >= 155 || seen.get(seed)) continue;
+            int word = seed >>> 6;
+            long candidates = remaining[word];
+            if (candidates == 0) {
+                seed = Math.min(gray.length - 1, seed | 63);
+                continue;
+            }
+            seed = (seed & ~63) + Long.numberOfTrailingZeros(candidates);
+            remaining[word] &= candidates - 1;
             int read = 0, size = 1;
             queue[0] = seed;
-            seen.set(seed);
             int left = width, right = 0, top = height, bottom = 0;
             while (read < size) {
+                if ((read & 63) == 0 && (right - left > maxDotWidth || bottom - top > maxDotHeight)) {
+                    discardComponent(remaining, width, height, scratch, read, size);
+                    queue = scratch.queue;
+                    break;
+                }
                 int at = queue[read++], x = at % width, y = at / width;
                 left = Math.min(left, x);
                 right = Math.max(right, x);
                 top = Math.min(top, y);
                 bottom = Math.max(bottom, y);
-                for (int dy = -1; dy <= 1; dy++)
-                    for (int dx = -1; dx <= 1; dx++) {
-                        int nx = x + dx, ny = y + dy;
-                        if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
-                        int next = ny * width + nx;
-                        if ((gray[next] & 255) < 155 && !seen.get(next)) {
-                            seen.set(next);
-                            if (size == queue.length)
-                                queue = Arrays.copyOf(queue, Math.min(gray.length, size * 2));
-                            queue[size++] = next;
-                        }
-                    }
+                size = appendGlyphNeighbors(remaining, width, height, x, y, scratch, size);
+                queue = scratch.queue;
             }
             if (size < 3 || right - left > maxDotWidth || bottom - top > maxDotHeight) continue;
             Glyph dot =
@@ -1622,6 +1624,32 @@ final class NoteArticulationDetector {
                 gray);
     }
 
+    /** Append unvisited eight-connected neighbors in raster order. */
+    private static int appendGlyphNeighbors(long[] remaining, int width, int height, int x, int y,
+            GlyphFloodScratch scratch, int end) {
+        int[] queue = scratch.queue;
+        int firstX = Math.max(0, x - 1), lastX = Math.min(width - 1, x + 1);
+        int lastY = Math.min(height - 1, y + 1);
+        for (int ny = Math.max(0, y - 1); ny <= lastY; ny++) {
+            int row = ny * width;
+            int first = row + firstX, last = row + lastX;
+            int group = first >>> 6, endWord = last >>> 6;
+            long range = -1L << first;
+            for (; group <= endWord; group++, range = -1L) {
+                if (group == endWord) range &= -1L >>> (63 - (last & 63));
+                long hits = remaining[group] & range;
+                remaining[group] &= ~hits;
+                while (hits != 0) {
+                    int next = (group << 6) + Long.numberOfTrailingZeros(hits);
+                    hits &= hits - 1;
+                    if (end == queue.length) queue = scratch.grow(end);
+                    queue[end++] = next;
+                }
+            }
+        }
+        return end;
+    }
+
     private static final class GlyphFloodScratch {
         private final int limit;
         private int[] queue;
@@ -1703,25 +1731,8 @@ final class NoteArticulationDetector {
                 right = Math.max(right, x);
                 top = Math.min(top, y);
                 bottom = Math.max(bottom, y);
-                int firstX = Math.max(0, x - 1), lastX = Math.min(width - 1, x + 1);
-                int lastY = Math.min(height - 1, y + 1);
-                for (int ny = Math.max(0, y - 1); ny <= lastY; ny++) {
-                    int row = ny * width;
-                    int first = row + firstX, last = row + lastX;
-                    int group = first >>> 6, endWord = last >>> 6;
-                    long range = -1L << first;
-                    for (; group <= endWord; group++, range = -1L) {
-                        if (group == endWord) range &= -1L >>> (63 - (last & 63));
-                        long hits = remaining[group] & range;
-                        remaining[group] &= ~hits;
-                        while (hits != 0) {
-                            int next = (group << 6) + Long.numberOfTrailingZeros(hits);
-                            hits &= hits - 1;
-                            if (end == queue.length) queue = scratch.grow(end);
-                            queue[end++] = next;
-                        }
-                    }
-                }
+                end = appendGlyphNeighbors(remaining, width, height, x, y, scratch, end);
+                queue = scratch.queue;
             }
             boolean oversized = right - left > width * .025f || bottom - top > height * .018f;
             if (!oversized) sizeEligibleDarkPixels += end;
