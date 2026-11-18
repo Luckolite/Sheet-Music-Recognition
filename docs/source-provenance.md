@@ -20,6 +20,13 @@ reads on API 26. The app and worker retain their existing OCR paths,
 recognition 159, Guide 308, and audio 106. The regression additions are original
 procedural geometry.
 
+The second reviewed app port is commit `178cfc4718fd515981ed678997f76a983011dca5`,
+corresponding to standalone `a6eb433b4b910793a66892f00179fcba66009fbf`.
+It reuses raster evidence for staff rules, slurs, rests, octave signs, pedals,
+dynamics, and hairpins. The app keeps its existing recognition and guide
+formats and uses portable packed byte loads and stores. The additional
+regressions use original geometry and licensed font fixtures.
+
 ## Source map
 
 Recognition 136 repairs complete clef and signature roles, physical staff expression ownership, phrase contours and complete beam/voice clocks. New source helpers are explicitly included in the Android/desktop selection. Original procedural and existing OFL font regressions contain no private score material. Guide 299, audio 101 and model weights/layouts are unchanged. See [asymmetric phrase arches](asymmetric-phrase-arches.md) for the added analytic geometry family.
