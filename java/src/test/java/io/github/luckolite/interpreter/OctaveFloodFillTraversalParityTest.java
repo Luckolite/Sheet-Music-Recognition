@@ -51,6 +51,19 @@ public final class OctaveFloodFillTraversalParityTest {
                     if ((tones[offset + i] & 255) < 165) expected.set(i);
                 assertEquals(expected, classify.invoke(null, tones, offset, size));
             }
+        // A single near-threshold pixel can disqualify any otherwise bright group.
+        byte[] paper = new byte[128];
+        for (int i = 0; i < paper.length; i++) paper[i] = (byte) (192 + i % 64);
+        for (int i = 0; i < paper.length; i++) {
+            byte original = paper[i];
+            paper[i] = (byte) 164;
+            var expected = new BitSet();
+            expected.set(i);
+            assertEquals(expected, classify.invoke(null, paper, 0, paper.length));
+            paper[i] = (byte) 165;
+            assertEquals(new BitSet(), classify.invoke(null, paper, 0, paper.length));
+            paper[i] = original;
+        }
     }
 
     static void rect(Drawing d, int left, int right, int top, int bottom, int ink) {

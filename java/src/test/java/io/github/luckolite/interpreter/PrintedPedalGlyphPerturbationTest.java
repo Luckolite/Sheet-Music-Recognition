@@ -5,7 +5,9 @@ package io.github.luckolite.interpreter;
 import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
 import java.io.DataInputStream;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import org.junit.Test;
 import static org.junit.Assert.*;
 
@@ -63,6 +65,28 @@ public class PrintedPedalGlyphPerturbationTest {
                 }
             }
         }
+    }
+
+    @Test
+    public void croppedScanCanRestartAfterAVisitorStopsEarly() {
+        var components = new PrintedInkComponents();
+        byte[] gray = new byte[12 * 6];
+        Arrays.fill(gray, (byte) 176);
+        gray[14] = gray[27] = (byte) 175; // Touch at a diagonal.
+        gray[19] = gray[20] = 0;
+        var boxes = new ArrayList<List<Integer>>();
+        assertFalse(components.scan(gray, 12, 1, 1, 11, 5, 175, (l, t, r, b, ink) -> {
+            boxes.add(List.of(l, t, r, b, ink));
+            return false;
+        }));
+        assertEquals(List.of(List.of(2, 1, 4, 3, 2)), boxes);
+        boxes.clear();
+        assertTrue(components.scan(gray, 12, 3, 1, 10, 4, 175, (l, t, r, b, ink) -> {
+            boxes.add(List.of(l, t, r, b, ink));
+            return true;
+        }));
+        assertEquals(List.of(List.of(7, 1, 9, 2, 2),
+                List.of(3, 2, 4, 3, 1)), boxes);
     }
 
     @Test

@@ -20,16 +20,15 @@ final class FaintDynamicGlyphComponents {
 
     record Bounds(int left, int top, int right, int bottom, int pixels) {}
 
-    static List<Bounds> find(byte[] gray, int width, int height, boolean[] seen, int[] queue) {
+    static List<Bounds> find(byte[] gray, int width, int height) {
+        if (!hasFadedTone(gray)) return List.of();
         var result = new ArrayList<Bounds>();
-        if (!hasFadedTone(gray)) {
-            // With no tone between the dark and broad gates, every component is dark.
-            for (int p = 0; p < gray.length; p++) seen[p] = (gray[p] & 255) < 145;
-            Arrays.fill(seen, gray.length, seen.length, false);
-            return result;
+        boolean[] seen = new boolean[gray.length];
+        boolean hasFaintInk = findAt(gray, width, height, seen, 205, .2f, result);
+        if (hasFaintInk) {
+            Arrays.fill(seen, false);
+            findAt(gray, width, height, seen, 185, .65f, result);
         }
-        boolean hasFaintInk = findAt(gray, width, height, seen, queue, 205, .2f, result);
-        if (hasFaintInk) findAt(gray, width, height, seen, queue, 185, .65f, result);
         return result;
     }
 
@@ -52,11 +51,10 @@ final class FaintDynamicGlyphComponents {
             int width,
             int height,
             boolean[] seen,
-            int[] queue,
             int threshold,
             float darkFraction,
             List<Bounds> result) {
-        Arrays.fill(seen, false);
+        int[] queue = new int[Math.min(256, gray.length)];
         boolean hasFaintInk = false;
         boolean narrow = threshold == 185;
         int broadCount = result.size(), firstBroad = 0, firstNarrow = broadCount;
@@ -110,6 +108,8 @@ final class FaintDynamicGlyphComponents {
                     for (int next = neighborFirst + step * width; next <= end; next++) {
                         if (seen[next] || (gray[next] & 255) >= threshold) continue;
                         seen[next] = true;
+                        if (queued == queue.length)
+                            queue = Arrays.copyOf(queue, queued + Math.min(queued, gray.length - queued));
                         queue[queued++] = next;
                         while (next < end && !seen[next + 1] && (gray[next + 1] & 255) < threshold)
                             next++;

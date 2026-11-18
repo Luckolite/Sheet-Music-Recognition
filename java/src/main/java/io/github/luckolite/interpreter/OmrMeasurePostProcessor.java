@@ -120,15 +120,8 @@ final class OmrMeasurePostProcessor {
             byte[] labels, byte[] gray, int width, int height, SelectedMeasureOrigins origins) {
         float slope = estimateStaffSlope(labels, width, height);
         int[] rowStrength = new int[height];
-        int staffPixelCount = 0;
         float centerX = width / 2f;
-        for (int y = 0; y < height; y++)
-            for (int x = 0; x < width; x++)
-                if (labels[y * width + x] == STAFF) {
-                    int deskewedY = Math.round(y - slope * (x - centerX));
-                    if (deskewedY >= 0 && deskewedY < height) rowStrength[deskewedY]++;
-                    staffPixelCount++;
-                }
+        int staffPixelCount = projectStaffLabels(labels, 0, width, height, slope, rowStrength);
         int minimumStrength = Math.max(10, width / 80);
         byte[] semanticGray = gray;
         if (gray != null && slope != 0f) {
@@ -1178,14 +1171,18 @@ final class OmrMeasurePostProcessor {
     }
 
     static float estimateStaffSlope(byte[] labels, int width, int height) {
+        return estimateStaffSlope(labels, 0, width, height);
+    }
+
+    static float estimateStaffSlope(byte[] labels, int offset, int width, int height) {
         // Sampling alternate rows biases thin rules toward horizontal. Keep every
         // row, and reuse only staff pixels while testing candidate angles.
         int count = 0, activeColumns = 0;
         boolean bounded = width > 0 && width <= (1 << 20) && height > 0 && height <= (1 << 20);
         int[] columnCounts = bounded ? new int[(width + 2) / 3] : null;
-        boolean checkEmptyRows = bounded && width >= 64 && (long) width * height <= labels.length;
+        boolean checkEmptyRows = bounded && width >= 64 && (long) width * height <= labels.length - offset;
         long flatScore = 0;
-        for (int y = 0, row = 0; y < height; y++, row += width) {
+        for (int y = 0, row = offset; y < height; y++, row += width) {
             if (checkEmptyRows && emptyLabelRow(labels, row, width)) continue;
             int rowCount = 0;
             for (int x = 0, column = 0; x < width; x += 3, column++) {
@@ -1221,7 +1218,7 @@ final class OmrMeasurePostProcessor {
             }
         }
         int index = 0;
-        for (int y = 0, row = 0; y < height; y++, row += width) {
+        for (int y = 0, row = offset; y < height; y++, row += width) {
             if (checkEmptyRows && emptyLabelRow(labels, row, width)) continue;
             for (int x = 0, col = 0; x < width; x += 3, col++)
                 if (labels[row + x] == STAFF) {
@@ -1804,6 +1801,56 @@ final class OmrMeasurePostProcessor {
                     long[].class, java.nio.ByteOrder.LITTLE_ENDIAN);
     private static final long LABEL_LOW_BITS = 0x7f7f7f7f7f7f7f7fL;
 
+    private static long zeroLabelBytes(long mismatch) {
+        return ~(((mismatch & LABEL_LOW_BITS) + LABEL_LOW_BITS) | mismatch | LABEL_LOW_BITS);
+    }
+
+    static int countStaffLabels(byte[] labels, int at, int end) {
+        int count = 0;
+        for (; at <= end - Long.BYTES; at += Long.BYTES)
+            count += Long.bitCount(staffLabelBits(labels, at));
+        for (; at < end; at++) if (labels[at] == STAFF) count++;
+        return count;
+    }
+
+    private static long staffLabelBits(byte[] labels, int at) {
+        return zeroLabelBytes((long) LABEL_WORDS.get(labels, at) ^ (STAFF * 0x0101010101010101L));
+    }
+
+    /** Project a crop in local y coordinates, counting even the staff pixels projected outside it. */
+    static int projectStaffLabels(byte[] labels, int offset, int width, int height,
+            float slope, int[] projection) {
+        int total = 0;
+        float centerX = width * .5f;
+        boolean horizontal = slope == 0 && height <= (1 << 24);
+        for (int y = 0, row = offset; y < height; y++, row += width) {
+            if (horizontal) {
+                int count = countStaffLabels(labels, row, row + width);
+                projection[y] += count;
+                total += count;
+                continue;
+            }
+            int x = 0;
+            for (; x <= width - Long.BYTES; x += Long.BYTES) {
+                long bits = staffLabelBits(labels, row + x);
+                total += Long.bitCount(bits);
+                while (bits != 0) {
+                    int column = x + Long.numberOfTrailingZeros(bits) / Byte.SIZE;
+                    int target = Math.round(y - slope * (column - centerX));
+                    if (target >= 0 && target < height) projection[target]++;
+                    bits &= bits - 1;
+                }
+            }
+            for (; x < width; x++) {
+                if (labels[row + x] != STAFF) continue;
+                int target = Math.round(y - slope * (x - centerX));
+                if (target >= 0 && target < height) projection[target]++;
+                total++;
+            }
+        }
+        return total;
+    }
+
     private static int[] flatBarlineCoverage(
             byte[] labels, int width, int height, int[] rows, float gap, int left, int right) {
         int[] covered = new int[right - left + 1];
@@ -1818,7 +1865,7 @@ final class OmrMeasurePostProcessor {
                 long labels8 = (long) LABEL_WORDS.get(labels, row + x);
                 // Stem/rest (1) and symbol (5) differ only in bit 2.
                 long mismatch = (labels8 & 0xfbfbfbfbfbfbfbfbL) ^ 0x0101010101010101L;
-                long hits = ~(((mismatch & LABEL_LOW_BITS) + LABEL_LOW_BITS) | mismatch | LABEL_LOW_BITS);
+                long hits = zeroLabelBytes(mismatch);
                 while (hits != 0) {
                     int pos = x + (Long.numberOfTrailingZeros(hits) >>> 3);
                     lastCovered = coverBarlineNeighbors(covered, left, right, lastCovered, pos);

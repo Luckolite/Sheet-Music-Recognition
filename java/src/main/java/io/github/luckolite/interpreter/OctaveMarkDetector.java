@@ -1416,20 +1416,36 @@ final class OctaveMarkDetector {
                 java.lang.invoke.MethodHandles.byteArrayViewVarHandle(
                         long[].class, java.nio.ByteOrder.LITTLE_ENDIAN);
         private static final long HIGH_BITS = 0x8080808080808080L;
+        private static final long BRIGHT_BITS = 0xc0c0c0c0c0c0c0c0L;
         private static final long INK_BIAS = 0x0101010101010101L * (165 - 128);
 
         static java.util.BitSet classify(byte[] gray, int offset, int size) {
             long[] words = new long[(int) ((size + 63L) >>> 6)];
             int p = 0;
-            for (; p <= size - Long.BYTES; p += Long.BYTES) {
-                long tone = (long) PIXEL_WORDS.get(gray, offset + p);
-                long dark = ~(((tone | HIGH_BITS) - INK_BIAS) & tone) & HIGH_BITS;
-                // Gather the eight comparison bits in pixel order.
-                words[p >>> 6] |= (((dark >>> 7) * 0x0102040810204080L) >>> 56) << p;
+            for (int i = 0; p <= size - Long.SIZE; i++, p += Long.SIZE) {
+                int base = offset + p;
+                words[i] = thirtyTwoInkBits(gray, base) | (thirtyTwoInkBits(gray, base + 32) << 32);
             }
+            for (; p <= size - Long.BYTES; p += Long.BYTES)
+                words[p >>> 6] |= inkBits((long) PIXEL_WORDS.get(gray, offset + p)) << p;
             for (; p < size; p++)
                 if ((gray[offset + p] & 255) < 165) words[p >>> 6] |= 1L << p;
             return java.util.BitSet.valueOf(words);
+        }
+
+        private static long thirtyTwoInkBits(byte[] gray, int offset) {
+            long a = (long) PIXEL_WORDS.get(gray, offset);
+            long b = (long) PIXEL_WORDS.get(gray, offset + 8);
+            long c = (long) PIXEL_WORDS.get(gray, offset + 16);
+            long d = (long) PIXEL_WORDS.get(gray, offset + 24);
+            // Every pixel with both high bits set is brighter than the ink cutoff.
+            if ((a & b & c & d & BRIGHT_BITS) == BRIGHT_BITS) return 0;
+            return inkBits(a) | inkBits(b) << 8 | inkBits(c) << 16 | inkBits(d) << 24;
+        }
+
+        private static long inkBits(long tone) {
+            long dark = ~(((tone | HIGH_BITS) - INK_BIAS) & tone) & HIGH_BITS;
+            return ((dark >>> 7) * 0x0102040810204080L) >>> 56;
         }
 
         void first(java.util.BitSet remaining, int width, int origin) {

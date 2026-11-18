@@ -51,6 +51,7 @@ final class PrintedPedalGlyphs {
                 || gray.length != (long) width * height
                 || staffs.size() > 512) return List.of();
         var result = new ArrayList<OwnedMark>();
+        var components = new PrintedInkComponents();
         for (var staff : staffs) {
             float gap = staff.gap();
             if (!Float.isFinite(gap)
@@ -77,7 +78,7 @@ final class PrintedPedalGlyphs {
                     bottom = Math.min(bottom, (int) (other.top() - gap * .6f));
             int x0 = Math.max(0, (int) (left * width - gap * 2)),
                     x1 = Math.min(width, (int) Math.ceil(right * width + gap * 2));
-            for (var mark : detect(gray, width, height, x0, top, x1, bottom, gap))
+            for (var mark : detect(gray, width, height, x0, top, x1, bottom, gap, components))
                 result.add(new OwnedMark(mark, staff));
         }
         return List.copyOf(result);
@@ -92,6 +93,11 @@ final class PrintedPedalGlyphs {
             int right,
             int bottom,
             float gap) {
+        return detect(gray, width, height, left, top, right, bottom, gap, new PrintedInkComponents());
+    }
+
+    private List<Mark> detect(byte[] gray, int width, int height, int left, int top, int right,
+            int bottom, float gap, PrintedInkComponents components) {
         if (gray == null
                 || gray.length != (long) width * height
                 || width < 1
@@ -106,63 +112,55 @@ final class PrintedPedalGlyphs {
                 || top >= bottom) return List.of();
         int w = right - left, h = bottom - top;
         if ((long) w * h > 2000000) return List.of();
-        boolean[] seen = new boolean[w * h];
-        int[] queue = new int[w * h];
         var parts = new ArrayList<Part>();
-        for (int seed = 0; seed < seen.length; seed++) {
-            if (seen[seed] || (gray[(top + seed / w) * width + left + seed % w] & 255) > 175)
-                continue;
-            int take = 0, count = 1, l = w, r = 0, t = h, b = 0;
-            queue[0] = seed;
-            seen[seed] = true;
-            while (take < count) {
-                int n = queue[take++], x = n % w, y = n / w;
-                l = Math.min(l, x);
-                r = Math.max(r, x);
-                t = Math.min(t, y);
-                b = Math.max(b, y);
-                for (int dy = -1; dy <= 1; dy++)
-                    for (int dx = -1; dx <= 1; dx++) {
-                        int xx = x + dx, yy = y + dy;
-                        if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
-                        int k = yy * w + xx;
-                        if (!seen[k] && (gray[(top + yy) * width + left + xx] & 255) <= 175) {
-                            seen[k] = true;
-                            queue[count++] = k;
-                        }
-                    }
-            }
-            if (count >= 2 && r - l < gap * 5 && b - t < gap * 3)
-                parts.add(new Part(left + l, top + t, left + r + 1, top + b + 1, count));
-            if (parts.size() > 4096) return List.of();
-        }
+        boolean complete = components.scan(gray, width, left, top, right, bottom, 175,
+                (l, t, r, b, count) -> {
+                    if (count >= 2 && r - l - 1 < gap * 5 && b - t - 1 < gap * 3)
+                        parts.add(new Part(l, t, r, b, count));
+                    return parts.size() <= 4096;
+                });
+        if (!complete) return List.of();
         var marks = new ArrayList<Mark>();
+        if (parts.isEmpty()) return List.of();
+        float reachX = gap * .65f, reachY = gap * .45f;
+        int maxWidth = 0;
+        for (var part : parts) maxWidth = Math.max(maxWidth, part.r - part.l);
+        // Neighboring left edges can differ by at most one component width plus the gap.
+        // The second bound limits the index to one bucket per part on sparse pages.
+        int bucketWidth = Math.max((int) Math.ceil(maxWidth + (double) reachX),
+                (w + parts.size() - 1) / parts.size());
+        int[] first = new int[(w - 1) / bucketWidth + 1], next = new int[parts.size()];
+        Arrays.fill(first, -1);
+        for (int i = 0; i < parts.size(); i++) {
+            int bucket = (parts.get(i).l - left) / bucketWidth;
+            next[i] = first[bucket];
+            first[bucket] = i;
+        }
+        int[] group = new int[parts.size()];
         boolean[] grouped = new boolean[parts.size()];
         for (int i = 0; i < parts.size(); i++) {
             if (grouped[i]) continue;
-            var group = new ArrayList<Integer>();
-            group.add(i);
+            int size = 1;
+            group[0] = i;
             grouped[i] = true;
-            for (int p = 0; p < group.size(); p++) {
-                var a = parts.get(group.get(p));
-                for (int j = 0; j < parts.size(); j++) {
-                    if (grouped[j]) continue;
-                    var b = parts.get(j);
-                    int dx = Math.max(0, Math.max(a.l - b.r, b.l - a.r)),
-                            dy = Math.max(0, Math.max(a.t - b.b, b.t - a.b));
-                    if (dx <= gap * .65f && dy <= gap * .45f) {
+            int l = width, r = 0, t = height, b = 0;
+            for (int p = 0; p < size; p++) {
+                var a = parts.get(group[p]);
+                l = Math.min(l, a.l);
+                r = Math.max(r, a.r);
+                t = Math.min(t, a.t);
+                b = Math.max(b, a.b);
+                int home = (a.l - left) / bucketWidth;
+                for (int bin = Math.max(0, home - 1); bin <= Math.min(first.length - 1, home + 1); bin++) {
+                    for (int j = first[bin]; j >= 0; j = next[j]) {
+                        if (grouped[j]) continue;
+                        var other = parts.get(j);
+                        if (a.l - other.r > reachX || other.l - a.r > reachX
+                                || a.t - other.b > reachY || other.t - a.b > reachY) continue;
                         grouped[j] = true;
-                        group.add(j);
+                        group[size++] = j;
                     }
                 }
-            }
-            int l = width, r = 0, t = height, b = 0;
-            for (int id : group) {
-                var p = parts.get(id);
-                l = Math.min(l, p.l);
-                r = Math.max(r, p.r);
-                t = Math.min(t, p.t);
-                b = Math.max(b, p.b);
             }
             if (b - t < gap * .8f || b - t > gap * 3 || r - l < gap * .7f || r - l > gap * 5)
                 continue;

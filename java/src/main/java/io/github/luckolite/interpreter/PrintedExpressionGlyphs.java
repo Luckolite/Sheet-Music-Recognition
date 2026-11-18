@@ -66,7 +66,7 @@ final class PrintedExpressionGlyphs {
             byte[] gray,
             int width,
             int height) {
-        var scratch = new ComponentScratch();
+        var scratch = new PrintedInkComponents();
         var result = new ArrayList<>(detect(score, staffs, gray, width, height, 175, true, scratch));
         for (var candidate : detect(score, staffs, gray, width, height, 155, false, scratch)) {
             if (MetricModulationText.parse(candidate.text()).isEmpty()) continue;
@@ -89,7 +89,7 @@ final class PrintedExpressionGlyphs {
             int height,
             int threshold,
             boolean detectBreaths,
-            ComponentScratch scratch) {
+            PrintedInkComponents scratch) {
         if (gray == null || width < 1 || height < 1 || gray.length != (long) width * height)
             return List.of();
         var result = new ArrayList<Mark>();
@@ -120,7 +120,11 @@ final class PrintedExpressionGlyphs {
                 if (x1 <= x0) continue;
                 // A metric equation may span the barline and its courtesy meter at the system end.
                 int metricRight = above ? Math.min(width, (int) (right * width + gap * 5)) : x1;
-                var parts = components(gray, width, x0, top, metricRight, bottom, threshold, scratch);
+                var parts = new ArrayList<Part>();
+                scratch.scan(gray, width, x0, top, metricRight, bottom, threshold, (l, t, r, b, count) -> {
+                    if (count >= 3) parts.add(new Part(l, t, r, b, count));
+                    return true;
+                });
                 if (above && detectBreaths) {
                     for (var part : parts) {
                         if (part.right > x1
@@ -343,70 +347,4 @@ final class PrintedExpressionGlyphs {
                         >= Math.max(a.width(), b.width()) * .8f;
     }
 
-    private static final class ComponentScratch {
-        private static final java.lang.invoke.VarHandle WORD =
-                java.lang.invoke.MethodHandles.byteArrayViewVarHandle(
-                        long[].class, java.nio.ByteOrder.nativeOrder());
-        private static final long HIGH = 0x8080808080808080L;
-        byte[] ink = new byte[0];
-        final ShadedComponentRuns runs = new ShadedComponentRuns(128);
-    }
-
-    private static List<Part> components(
-            byte[] gray, int width, int left, int top, int right, int bottom, int threshold,
-            ComponentScratch scratch) {
-        int stride = right - left + 2;
-        int size = stride * (bottom - top + 2);
-        if (scratch.ink.length < size) scratch.ink = new byte[size];
-        byte[] ink = scratch.ink;
-        // Empty margins keep diagonal neighbor scans inside the crop, even on scratch reuse.
-        Arrays.fill(ink, 0, stride, (byte) 0);
-        // Both expression thresholds are in the light half of the unsigned grayscale range.
-        long bias = 0x0101010101010101L * (threshold + 1 - 128);
-        for (int y = top; y < bottom; y++) {
-            int at = (y - top + 1) * stride;
-            ink[at++] = 0;
-            int p = y * width + left, end = y * width + right;
-            int packedEnd = threshold >= 128 && threshold < 255 ? end - Long.BYTES : p - 1;
-            for (; p <= packedEnd; p += Long.BYTES, at += Long.BYTES) {
-                long tone = (long) ComponentScratch.WORD.get(gray, p);
-                long dark = ~(((tone | ComponentScratch.HIGH) - bias) & tone) & ComponentScratch.HIGH;
-                ComponentScratch.WORD.set(ink, at, dark >>> 7);
-            }
-            for (; p < end; p++)
-                ink[at++] = (byte) ((gray[p] & 255) <= threshold ? 1 : 0);
-            ink[at] = 0;
-        }
-        Arrays.fill(ink, size - stride, size, (byte) 0);
-        var runs = scratch.runs;
-        var result = new ArrayList<Part>();
-        for (int seed = stride; seed < size - stride; seed++) {
-            if (ink[seed] == 0) {
-                if (seed <= size - Long.BYTES && (long) ComponentScratch.WORD.get(ink, seed) == 0)
-                    seed += Long.BYTES - 1;
-                continue;
-            }
-            int queued = runs.enqueue(ink, seed, 1, (byte) 0, 0);
-            int minX = stride, maxX = 0, minY = seed / stride, maxY = minY, count = 0;
-            for (int i = 0; i < queued; i += 2) {
-                int first = runs.queue[i], last = runs.queue[i + 1];
-                int y = first / stride, x = first - y * stride;
-                minX = Math.min(minX, x);
-                maxX = Math.max(maxX, x + (last - first));
-                maxY = Math.max(maxY, y);
-                count += last - first + 1;
-                for (int offset = -stride; offset <= stride; offset += 2 * stride) {
-                    int end = last + offset + 1;
-                    for (int p = first + offset - 1; p <= end; p++) {
-                        if (ink[p] == 0) continue;
-                        queued = runs.enqueue(ink, p, 1, (byte) 0, queued);
-                        p = runs.queue[queued - 1];
-                    }
-                }
-            }
-            if (count >= 3)
-                result.add(new Part(left + minX - 1, top + minY - 1, left + maxX, top + maxY, count));
-        }
-        return result;
-    }
 }
