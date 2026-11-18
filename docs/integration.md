@@ -4,7 +4,7 @@
 
 ## Python
 
-Use `score_reader` with `score-reader` 0.2.1 or later. Existing
+Import `score_reader` from the `score-reader` package. Existing
 `sheet_music_recognition` and `sheet_interpreter` imports still work.
 
 Use `Interpreter.interpret()` to read one image. Pass a Pillow image and reuse one interpreter per worker.

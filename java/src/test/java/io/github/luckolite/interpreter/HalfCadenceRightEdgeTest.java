@@ -35,7 +35,28 @@ public final class HalfCadenceRightEdgeTest {
         assertArrayEquals(new float[] {4, 4, 4}, render(false, true), 0);
     }
 
+    @Test
+    public void inlineMeterAfterDoubleBarCanLeaveAWideInterMeasureGap() {
+        assertArrayEquals(new float[] {4, 2, 3}, render(true, true, true, true), 0);
+    }
+
+    @Test
+    public void inlineMeterRequiresBothClosingRulesOnBothRasterPlanes() {
+        assertArrayEquals(new float[] {4, 4, 3}, render(true, true, true, false), 0);
+        assertArrayEquals(new float[] {4, 4, 3}, render(true, false, true, true), 0);
+    }
+
+    @Test
+    public void inlineMeterStillRequiresAClosedOpeningRule() {
+        assertArrayEquals(new float[] {4, 4, 3}, render(false, true, true, true), 0);
+    }
+
     private static float[] render(boolean leftSplit, boolean secondClosingStroke) {
+        return render(leftSplit, secondClosingStroke, false, true);
+    }
+
+    private static float[] render(
+            boolean leftSplit, boolean secondClosingStroke, boolean inlineMeter, boolean sourceMatches) {
         byte[] gray = new byte[WIDTH * HEIGHT];
         Arrays.fill(gray, (byte) 255);
         for (int y = TOP_RULE; y <= BOTTOM_RULE; y += GAP)
@@ -54,6 +75,27 @@ public final class HalfCadenceRightEdgeTest {
                         30f / HEIGHT, 162f / HEIGHT),
                 new MeasureRegion(32f / WIDTH, 365f / WIDTH, 173f / HEIGHT, 234f / HEIGHT));
         var chord = List.of(halfHead(293, 132, -1), halfHead(294, 88, 4));
+        if (inlineMeter) {
+            measures = List.of(measures.get(0), measures.get(1),
+                    new MeasureRegion(444f / WIDTH, 550f / WIDTH, 30f / HEIGHT, 162f / HEIGHT));
+            var score = new ScorePageInterpretation(measures, chord, 1, List.of(), List.of(),
+                    List.of(new ScoreMeterChange(2, 3, 4)));
+            byte[] source = gray.clone();
+            if (!sourceMatches)
+                for (int y = TOP_RULE; y <= BOTTOM_RULE; y++)
+                    if ((y - TOP_RULE) % GAP != 0)
+                        Arrays.fill(source, y * WIDTH + SECOND_CLOSING_STROKE,
+                                y * WIDTH + SECOND_CLOSING_STROKE + 3, (byte) 255);
+            byte[] labels = new byte[gray.length];
+            for (int y = TOP_RULE; y <= BOTTOM_RULE; y += GAP)
+                Arrays.fill(labels, y * WIDTH + 20, y * WIDTH + SECOND_CLOSING_STROKE + 3,
+                        OmrMeasurePostProcessor.STAFF);
+            float[] beats = {4, 4, 3};
+            PrintedCadenceDurations.apply(
+                    PrintedCadenceDurations.captureWithRejectedLedgerRows(
+                            score, labels, gray, WIDTH, HEIGHT, List.of(), source), beats);
+            return beats;
+        }
         var score = new ScorePageInterpretation(measures, chord);
         var staffs = List.of(new PlayingTechniqueDetector.Staff(TOP_RULE, BOTTOM_RULE, GAP, 0, 1));
         float[] beats = {4, 4, 4};

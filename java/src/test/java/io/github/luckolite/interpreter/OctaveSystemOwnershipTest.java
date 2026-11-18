@@ -90,4 +90,72 @@ public class OctaveSystemOwnershipTest {
         assertEquals(0, notes.get(0).octaveShift());
         assertEquals(-1, notes.get(1).octaveShift());
     }
+
+    @Test
+    public void inlineUpperLedgerAttackOwnsAnOpenRibbon() {
+        assertEquals(List.of(0, 0, 1, 1), openRibbon(0, true));
+    }
+
+    @Test
+    public void openRibbonNeedsItsInlineAttackAndAnUpwardHookKeepsTheLowerOwner() {
+        assertEquals(List.of(-1, 0, 0), openRibbon(0, false));
+        assertEquals(List.of(-1, 0, 0, 0), openRibbon(-12, true));
+    }
+
+    @Test
+    public void printedSharpCanWidenTheUpperOwnersOfAnOpenRibbon() {
+        assertEquals(List.of(0, 0, 1, 1), widenedOpenRibbon(true));
+        assertEquals(List.of(-1, 0, 0, 0), widenedOpenRibbon(false));
+    }
+
+    private List<Integer> widenedOpenRibbon(boolean sharpInk) {
+        var staffs =
+                List.of(
+                        new PlayingTechniqueDetector.Staff(118, 166, 12, 0, 1),
+                        new PlayingTechniqueDetector.Staff(278, 326, 12, 0, 1));
+        var regions =
+                List.of(
+                        new MeasureRegion(0, 1, 100f / H, 180f / H),
+                        new MeasureRegion(0, 1, 255f / H, 337f / H));
+        var notes = List.of(
+                new ScoreNoteEvent(0, 87f / W, 3, 0, 1, 148f / H, false, 0, 0, 2, 1),
+                new ScoreNoteEvent(1, 36f / W, 17, 0, 1, 222f / H, false, 0, 0, 2, 1),
+                new ScoreNoteEvent(1, 64f / W, 10, 0, 1, 266f / H, false, 0, 0, 2, 1),
+                new ScoreNoteEvent(1, 105f / W, 11, 0, 1, 260f / H, false, 0, 0, 1, 1));
+        var gray = page(0);
+        if (sharpInk) {
+            for (int y = 249; y <= 272; y++) gray[y * W + 80] = 0;
+            for (int y = 247; y <= 270; y++) gray[y * W + 86] = 0;
+            for (int x = 76; x <= 91; x++) {
+                int y = 256;
+                gray[y * W + x] = gray[(y + 1) * W + x] = gray[(y + 2) * W + x] = 0;
+                gray[(y + 7) * W + x] = gray[(y + 8) * W + x] = gray[(y + 9) * W + x] = 0;
+            }
+        }
+        if (sharpInk) assertTrue(OmrScoreInterpreter.printedSharpBeforeDyad(gray,W,H,78,105f,260f,12));
+        return OctaveMarkDetector.apply(List.of(), staffs, regions, notes, gray, W, H)
+                .stream().map(ScoreNoteEvent::octaveShift).toList();
+    }
+
+    private List<Integer> openRibbon(int hook, boolean inline) {
+        var staffs =
+                List.of(
+                        new PlayingTechniqueDetector.Staff(118, 166, 12, 0, 1),
+                        new PlayingTechniqueDetector.Staff(278, 326, 12, 0, 1));
+        var regions =
+                List.of(
+                        new MeasureRegion(0, 1, 100f / H, 180f / H),
+                        new MeasureRegion(0, 1, 255f / H, 337f / H));
+        var notes = new java.util.ArrayList<ScoreNoteEvent>();
+        notes.add(new ScoreNoteEvent(0, 87f / W, 3, 0, 1, 148f / H, false, 0, 0, 2, 1));
+        if (inline) {
+            notes.add(new ScoreNoteEvent(1, 42f / W, 17, 0, 1, 222f / H, false, 0, 0, 2, 1));
+        }
+        notes.add(new ScoreNoteEvent(1, 64f / W, 10, 0, 1, 266f / H, false, 0, 0, 2, 1));
+        notes.add(new ScoreNoteEvent(1, 91f / W, 11, 0, 1, 260f / H, false, 0, 0, 2, 1));
+        return OctaveMarkDetector.apply(List.of(), staffs, regions, notes, page(hook), W, H)
+                .stream()
+                .map(ScoreNoteEvent::octaveShift)
+                .toList();
+    }
 }

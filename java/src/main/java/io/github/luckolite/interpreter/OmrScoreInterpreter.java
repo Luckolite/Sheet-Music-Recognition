@@ -5,6 +5,7 @@ package io.github.luckolite.interpreter;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -26,8 +27,16 @@ final class OmrScoreInterpreter {
 
     static List<PlayingTechniqueDetector.Staff> techniqueStaffs(
             byte[] labels, byte[] gray, int width, int height, List<MeasureRegion> measures) {
+        return techniqueStaffs(labels, gray, width, height, measures, List.of());
+    }
+
+    static List<PlayingTechniqueDetector.Staff> techniqueStaffs(
+            byte[] labels, byte[] gray, int width, int height, List<MeasureRegion> measures,
+            List<MeasureRegion> rejectedLedgerRows) {
+        List<Staff> staffs = findStaffs(labels, gray, width, height, measures);
+        removeRejectedLedgerStaffs(staffs, rejectedLedgerRows, measures, height);
         List<PlayingTechniqueDetector.Staff> result = new ArrayList<>();
-        for (Staff staff : findStaffs(labels, gray, width, height, measures))
+        for (Staff staff : staffs)
             result.add(
                     new PlayingTechniqueDetector.Staff(
                             staff.top, staff.bottom, staff.gap, staff.index, staff.count));
@@ -63,6 +72,13 @@ final class OmrScoreInterpreter {
                 new RawCourtesyBudget(64_000_000L, 16L * 1024 * 1024));
     }
 
+    static Analysis analyze(
+            byte[] labels, byte[] gray, int width, int height, List<MeasureRegion> measures,
+            byte[] annotationGray, List<MeasureRegion> rejectedLedgerRows) {
+        return analyze(labels, gray, width, height, measures, annotationGray,
+                new RawCourtesyBudget(64_000_000L, 16L * 1024 * 1024), rejectedLedgerRows);
+    }
+
     private static Analysis analyze(
             byte[] labels, byte[] gray, int width, int height, List<MeasureRegion> measures,
             RawCourtesyBudget rawCourtesy) {
@@ -77,6 +93,12 @@ final class OmrScoreInterpreter {
             List<MeasureRegion> measures,
             byte[] annotationGray,
             RawCourtesyBudget rawCourtesy) {
+        return analyze(labels, gray, width, height, measures, annotationGray, rawCourtesy, List.of());
+    }
+
+    private static Analysis analyze(
+            byte[] labels, byte[] gray, int width, int height, List<MeasureRegion> measures,
+            byte[] annotationGray, RawCourtesyBudget rawCourtesy, List<MeasureRegion> rejectedLedgerRows) {
         if (labels == null
                 || labels.length != width * height
                 || width <= 0
@@ -84,6 +106,7 @@ final class OmrScoreInterpreter {
                 || measures == null
                 || measures.isEmpty()) return new Analysis(List.of(), List.of());
         List<Staff> staffs = findStaffs(labels, gray, width, height, measures);
+        removeRejectedLedgerStaffs(staffs, rejectedLedgerRows, measures, height);
         if (staffs.isEmpty())
             return new Analysis(
                     List.of(),
@@ -125,6 +148,9 @@ final class OmrScoreInterpreter {
             if (exactSplit.size() == 1 && exactSplit.get(0) == original) {
                 var bridged = splitMergedBeamedThird(
                         labels, gray, width, height, original, staffs, rawHeadComponents, memberCollector);
+                if (bridged.isEmpty()) bridged = splitLedgerBridgedBeamedThird(
+                        labels, gray, annotationGray, width, height, original, staffs,
+                        rawHeadComponents, memberCollector);
                 if (!bridged.isEmpty()) exactSplit = bridged;
             }
             physicalSplitCache.put(original, exactSplit);
@@ -668,9 +694,11 @@ final class OmrScoreInterpreter {
                         clefKeyMembers);
         symbolMembers.seal(new ExactComponentMembers.Budget(2L * labels.length + 4096, 4096));
         clefKeyMembers.seal(new ExactComponentMembers.Budget(2L * labels.length + 4096, 4096));
+        var splitAccidentalProofs = new ArrayList<SourceLocalAccidental.SplitAccidental>();
         var originalAccidentalGlyphs = new ArrayList<Object>();
         originalAccidentalGlyphs.addAll(symbolComponents);
         originalAccidentalGlyphs.addAll(clefOrKeyComponents);
+        var printedPortatoOwners = new java.util.HashSet<Component>();
         var writtenAccidentalChoices =
                 new java.util.IdentityHashMap<Object, WrittenAccidentalChoice>();
         clefOrKeyComponents =
@@ -722,6 +750,8 @@ final class OmrScoreInterpreter {
                                 staffs,
                                 headerGlyphs,
                                 rawHeadComponents));
+        notationHeads.removeIf(head -> denseFlatHeaderOwnsHead(labels, gray, annotationGray,
+                width, height, head, staffs, measures, headerGlyphs, rawHeadComponents));
         notationHeads.removeIf(
                 head ->
                         isOwnedHeaderCrossbar(
@@ -1055,13 +1085,41 @@ final class OmrScoreInterpreter {
         rejectedBeamHeads.addAll(
                 reducedPairBorrowedShaftHeads(
                         gray, width, height, heads, staffs, recoveredBeamCapGraces));
-        rejectedBeamHeads.addAll(ownedSlopedBeamFragments(labels, gray, width, height, heads, staffs));
+        rejectedBeamHeads.addAll(ownedSlopedBeamFragments(labels, gray, annotationGray, width, height, heads, staffs));
+        rejectedBeamHeads.addAll(
+                borrowedInnerDoubleRailHeads(labels, gray, annotationGray, width, height, heads, staffs));
+        rejectedBeamHeads.addAll(
+                locallyScaledDoubleRailFragments(gray, width, height, heads, staffs, measures));
+        rejectedBeamHeads.addAll(staffRuleBeamMasks(
+                labels, gray, annotationGray, width, height, heads, staffs));
+        var clippedSingleRailStarts = new java.util.HashSet<Component>();
+        rejectedBeamHeads.addAll(
+                clippedTripletRailAliases(
+                        labels,
+                        gray,
+                        annotationGray,
+                        width,
+                        height,
+                        heads,
+                        staffs,
+                        measures,
+                        clippedSingleRailStarts));
+        rejectedBeamHeads.addAll(
+                leadingSingleRailCapMasks(
+                        labels, gray, annotationGray, width, height, heads, staffs, measures));
+        rejectedBeamHeads.addAll(
+                interiorOpeningRailMasks(
+                        labels, gray, annotationGray, width, height, heads, staffs, measures));
+        rejectedBeamHeads.addAll(trailingSingleRailCapMasks(
+                labels, gray, annotationGray, width, height, heads, staffs, measures));
         rejectedBeamHeads.addAll(filledBeamBandHeads(gray, width, height, heads, staffs));
         rejectedBeamHeads.addAll(terminalBeamShaftEndHeads(
                 labels, gray, annotationGray, width, height, heads, staffs, measures));
 
         var backwardHookFragments =
                 compactBackwardHookFragments(gray, width, height, heads, staffs);
+        backwardHookFragments.putAll(highLedgerHookFragments(
+                gray, annotationGray, width, height, heads, staffs));
         rejectedBeamHeads.addAll(backwardHookFragments.keySet());
         var backwardHookOwners = new java.util.HashSet<>(backwardHookFragments.values());
         var closedBeamEndOwners = new ArrayList<Component>();
@@ -1095,6 +1153,7 @@ final class OmrScoreInterpreter {
         heads.removeAll(inclinedFlagTipHeads(gray, width, height, heads, staffs));
         heads.removeAll(detachedFingeringHeads(gray, width, height, heads, staffs));
         byte[] beamLabels = withoutBeamHeadIslands(labels, width, rejectedBeamHeads);
+        heads.removeAll(ownedDyadRailMasks(gray, width, height, heads, staffs));
         heads.removeAll(entranceStrokeFragments(gray, width, height, heads, staffs));
         var curvedExits = curvedExitHeadFragments(labels, gray, width, height, heads, staffs);
         heads.removeAll(curvedExits.heads());
@@ -1173,6 +1232,9 @@ final class OmrScoreInterpreter {
                 augmentationDotHeads(labels, gray, width, height, dotEvidenceHeads, staffs);
         demotedDotHeads.addAll(
                 articulationDotHeads(labels, gray, width, height, dotEvidenceHeads, staffs));
+        var shaftEndStaccatos = shaftEndStaccatoHeads(
+                labels, gray, annotationGray, width, height, dotEvidenceHeads, staffs, measures);
+        demotedDotHeads.addAll(shaftEndStaccatos.keySet());
         List<Component> accidentalGraces = new ArrayList<>();
         var graceSeeds =
                 joinLocalAccidentalFragments(
@@ -1182,6 +1244,9 @@ final class OmrScoreInterpreter {
                     labels, gray, width, height, head, heads, staffs, measures, graceSeeds))
                 accidentalGraces.add(head);
         demotedDotHeads.removeAll(accidentalGraces);
+        if (!shaftEndStaccatos.isEmpty() && !accidentalGraces.isEmpty())
+            shaftEndStaccatos.keySet().removeAll(accidentalGraces);
+        var shaftEndStaccatoOwners = new java.util.HashSet<>(shaftEndStaccatos.values());
         heads.removeAll(demotedDotHeads);
         List<Component> stemSlashHeads = stemSlashFragments(gray, width, height, heads, staffs);
         heads.removeAll(stemSlashHeads);
@@ -1493,6 +1558,7 @@ final class OmrScoreInterpreter {
                 rawCourtesy);
         var accidentalFragments = new java.util.IdentityHashMap<Object, List<Object>>();
         var rawNaturalGaps = new java.util.IdentityHashMap<Object, Float>();
+        var staffBoundCrosses = new ArrayList<AccidentalCandidate>();
         List<AccidentalCandidate> localAccidentals =
                 new ArrayList<>(
                         joinLocalAccidentalFragments(
@@ -1531,6 +1597,9 @@ final class OmrScoreInterpreter {
         localAccidentals =
                 splitTouchingChordAccidentals(
                         labels, width, height, localAccidentals, heads, staffs);
+        heads.removeAll(
+                doubleSharpArmHeads(
+                        gray, annotationGray, width, height, heads, staffs, localAccidentals));
         // A header key glyph must not act as the local accidental of a grace head.
         List<Component> rejectedAccidentalGraces = new ArrayList<>();
         for (Component head : accidentalGraces)
@@ -1567,6 +1636,7 @@ final class OmrScoreInterpreter {
                                     candidate.component.maxY,
                                     staff.gap))) accidentalInk.add(candidate.component);
         }
+        var dotAccidentalSource = new DotAccidentalSource(labels, annotationGray, localAccidentals);
         List<Component> roundedLedgerGraces =
                 roundedLedgerGraceHeads(labels, gray, width, height, heads, staffs);
         List<Component> bowMarks = new ArrayList<>();
@@ -1695,6 +1765,8 @@ final class OmrScoreInterpreter {
             if (staff == null) continue;
             if (isHeavyRestCount(gray, width, height, head, staff)) continue;
             if (semanticFlagPocketHead(labels, gray, width, height, head, staff, heads)) continue;
+            if (interShaftDoubleBeamAlias(gray, annotationGray, width, height, head, staff, heads))
+                continue;
 
             Component crossHead =
                     recoveredShadedChordHeads.contains(head)
@@ -1731,7 +1803,10 @@ final class OmrScoreInterpreter {
                             && (preceding == null || candidate.bottom > preceding.bottom))
                         preceding = candidate;
                 }
-                if (preceding != null && highSoloLowerStaff(gray, width, height, head, preceding, staff))
+                if (preceding != null
+                        && (highSoloLowerStaff(gray, width, height, head, preceding, staff)
+                                || roundsToHighSoloStaff(
+                                        gray, annotationGray, width, height, head, preceding, staff)))
                     physicalStaff = staff;
             }
             if (physicalStaff == null) physicalStaff = nearestHeadStaff(staffs, head.centerY);
@@ -1805,6 +1880,9 @@ final class OmrScoreInterpreter {
                             head.maxY,
                             head.centerY,
                             physicalStaff.gap)) continue;
+            boolean upperSpaceAtBeamBoundary = physicalStaff != null
+                    && upperSpaceAtDoubleBeamEdge(labels, gray, annotationGray, width, height,
+                            head, physicalStaff, staff, staffs, heads);
             float ledgerClearance = 1.8f;
             // An undersized detached head-like mark near the staff has no shaft to
             // establish notation ownership. Its printed ledger must do so.
@@ -1823,6 +1901,7 @@ final class OmrScoreInterpreter {
                     && (head.centerY < physicalStaff.top - physicalStaff.gap * ledgerClearance
                             || head.centerY
                                     > physicalStaff.bottom + physicalStaff.gap * ledgerClearance)
+                    && !upperSpaceAtBeamBoundary
                     && !ledgerHalfUnisonCache.containsKey(head)
                     && !(sharedLedgerBodies != null && sharedLedgerBodies.containsKey(head))
                     && !(sharedUpperLedgerRails != null && sharedUpperLedgerRails.containsKey(head))
@@ -1836,6 +1915,31 @@ final class OmrScoreInterpreter {
                             roundedLedgerGraces.contains(head),
                             staffs,
                             heads)
+                    && !sharedWideUpperLedgerChord(
+                            labels,
+                            gray,
+                            annotationGray,
+                            width,
+                            height,
+                            head,
+                            physicalStaff,
+                            staff,
+                            staffs,
+                            heads)
+                    && !sharedBeamedUpperOctave(
+                            labels, gray, annotationGray, width, height, head, physicalStaff, staff,
+                            staffs, heads, !rejectedLedgerRows.isEmpty())
+                    && !sharedBeamedUpperSixthLedger(
+                            labels,
+                            gray,
+                            annotationGray,
+                            width,
+                            height,
+                            head,
+                            physicalStaff,
+                            staff,
+                            staffs,
+                            heads)
                     && !filledBeamedDyadLedger(
                             labels,
                             gray,
@@ -1844,6 +1948,23 @@ final class OmrScoreInterpreter {
                             height,
                             head,
                             physicalStaff,
+                            staffs,
+                            heads)
+                    && !closedDoubleRailUpperLedger(
+                            labels, gray, annotationGray, width, height, head, physicalStaff,
+                            staff, staffs, heads)
+                    && !linkedHighLedgerSixth(
+                            labels, gray, annotationGray, width, height, head, physicalStaff,
+                            staff, staffs, heads)
+                    && !upperLedgerHeadOnSingleRail(
+                            labels,
+                            gray,
+                            annotationGray,
+                            width,
+                            height,
+                            head,
+                            physicalStaff,
+                            staff,
                             staffs,
                             heads)
                     && !(recoveredShadedChordHeads.contains(head)
@@ -1879,7 +2000,8 @@ final class OmrScoreInterpreter {
             float localGap = localPitch[1];
             float localBottom =
                     printedLedgerBottom(gray, width, height, head, localPitch[0], localGap);
-            int step = printedPitchStep(gray, width, height, head, localBottom, localGap);
+            int step = upperSpaceAtBeamBoundary ? 17
+                    : printedPitchStep(gray, width, height, head, localBottom, localGap);
             Staff rhythmStaff = beamStaffFrame(staff, localPitch, width);
             int beamCount =
                     unpitched
@@ -1903,6 +2025,12 @@ final class OmrScoreInterpreter {
                                     heads,
                                     staff.count);
             int initialBeamCount = beamCount;
+            if (!unpitched
+                    && staff.count == 1
+                    && beamCount == 3
+                    && !backwardHookOwners.contains(head)
+                    && detachedMarkAboveDoubleBeam(gray, width, height, head, heads, localGap))
+                beamCount = 2;
             if (recoveredSingleBeamHeads.contains(head)) beamCount = Math.max(beamCount, 1);
             boolean transportedBeamConsulted = !unpitched && beamCount < 2;
             int beforeTransportedBeam = beamCount;
@@ -1952,6 +2080,10 @@ final class OmrScoreInterpreter {
                 beamCount = 2;
             if (!unpitched && beamCount < 2 && shortDyadEndOwners.containsKey(head))
                 beamCount = 2;
+            if (!unpitched && beamCount == 1 && staff.count == 1 && physicalStaff != null
+                    && separatedTerminalOctaveRails(
+                            gray, annotationGray, width, height, head, physicalStaff, heads))
+                beamCount = 2;
             int[] tremolo = tremoloStrokeCounts(gray, width, height, head, rhythmStaff, heads);
             beamCount = Math.max(0, beamCount - tremolo[1]);
             if (!unpitched && backwardHookOwners.contains(head)) beamCount = 3;
@@ -1961,6 +2093,10 @@ final class OmrScoreInterpreter {
                                 beamCount,
                                 beamsBeyondTremolo(gray, beamLabels, width, height, head, staff));
             if (flaggedTremolos.containsKey(head)) beamCount = 1;
+            // Keep the measured single rail at the owned start when removing masks changes the
+            // semantic beam count.
+            if (!unpitched && beamCount == 2 && clippedSingleRailStarts.contains(head))
+                beamCount = 1;
             boolean finiteCapFilled = finiteCapFilledHeads.get(head) == staff;
             var admissions = new ArrayList<String>();
             PrintedValueDecision printedValue =
@@ -2084,16 +2220,9 @@ final class OmrScoreInterpreter {
                     && head.maxY - head.minY + 1 <= localGap * .9f) {
                 int[] ownedFlagStem = attachedRawStem(gray, width, height, head, localGap);
                 if (ownedFlagStem != null
-                        && hasCurvedFlag(
-                                labels,
-                                gray,
-                                width,
-                                height,
-                                head,
-                                localGap,
-                                ownedFlagStem[0],
-                                ownedFlagStem[1],
-                                ownedFlagStem[2] < 0)) {
+                        && ownsFlagBesideSustainedHead(
+                                labels, gray, width, height, head, localGap, hollowSlope,
+                                unbeamedDuration, ownedFlagStem)) {
                     unbeamedDuration = 0;
                 }
             }
@@ -2115,16 +2244,9 @@ final class OmrScoreInterpreter {
                 if (ownedFlagStem != null
                         && soleFlagDirection != null
                         && java.util.Arrays.equals(ownedFlagStem, soleFlagDirection)
-                        && hasCurvedFlag(
-                                labels,
-                                gray,
-                                width,
-                                height,
-                                head,
-                                localGap,
-                                ownedFlagStem[0],
-                                ownedFlagStem[1],
-                                ownedFlagStem[2] < 0)) {
+                        && ownsFlagBesideSustainedHead(
+                                labels, gray, width, height, head, localGap, hollowSlope,
+                                unbeamedDuration, ownedFlagStem)) {
                     unbeamedDuration = 0;
                 }
             }
@@ -2212,7 +2334,9 @@ final class OmrScoreInterpreter {
                             unbeamedDuration == ScoreNoteEvent.DURATION_HALF
                                     ? hollowSlope
                                     : Float.NaN,
-                            rhythmStaff.pitchTrack);
+                            rhythmStaff.pitchTrack,
+                            printedPortatoOwners,
+                            beamCount == 2 && unbeamedDuration == 0 ? dotAccidentalSource : null);
             if (augmentationDots > 0
                     && beamCount > 0
                     && hasHollowUnisonToRight(labels, gray, width, height, head, heads, staff.gap))
@@ -2292,6 +2416,21 @@ final class OmrScoreInterpreter {
                                 heads,
                                 gray,
                                 accidentalFragments);
+                if (writtenChoice.accidental() == ScoreNoteEvent.ACCIDENTAL_SHARP
+                        && !writtenChoice.ambiguous()
+                        && writtenChoice.glyph() instanceof Component glyph
+                        && (printedNaturalOnUpperLedger(
+                                gray, width, height, glyph, head, accidentalGap, localBottom)
+                            || naturalBetweenContinuedRules(
+                                    gray, annotationGray, width, height, glyph, head, accidentalGap))) {
+                    writtenChoice = writtenChoice.withAccidental(ScoreNoteEvent.ACCIDENTAL_NATURAL);
+                }
+                boolean priorFingerOwnsFlat = writtenChoice.accidental() == ScoreNoteEvent.ACCIDENTAL_FLAT
+                        && !writtenChoice.ambiguous() && writtenChoice.glyph() instanceof Component glyph
+                        && detachedPriorFingeringLooksLikeFlat(labels, gray, annotationGray,
+                                width, height, glyph, head, accidentalGap, staff, staffs, heads);
+                if (priorFingerOwnsFlat)
+                    writtenChoice = new WrittenAccidentalChoice(ScoreNoteEvent.ACCIDENTAL_FROM_KEY, null, head, 0, 0, false);
                 writtenAccidentalChoices.put(head, writtenChoice);
                 writtenAccidental = writtenChoice.accidental();
                 if (writtenAccidental == ScoreNoteEvent.ACCIDENTAL_NATURAL
@@ -2326,6 +2465,77 @@ final class OmrScoreInterpreter {
                                         gray, width, height, localAccidentals, head, accidentalGap))
                     writtenAccidental = ScoreNoteEvent.ACCIDENTAL_SHARP;
                 if (writtenAccidental == ScoreNoteEvent.ACCIDENTAL_FROM_KEY
+                        && pairedCompactChordSharps(
+                                gray, width, height, localAccidentals, head, heads, accidentalGap))
+                    writtenAccidental = ScoreNoteEvent.ACCIDENTAL_SHARP;
+                boolean typedStackedAccidental = false;
+                if (writtenAccidental == ScoreNoteEvent.ACCIDENTAL_FROM_KEY) {
+                    int stacked =
+                            stackedAccidentalForWideDyad(
+                                    gray,
+                                    annotationGray,
+                                    width,
+                                    height,
+                                    clefOrKeyComponents,
+                                    head,
+                                    heads,
+                                    accidentalGap,
+                                    staff.top,
+                                    false,
+                                    splitAccidentalProofs);
+                    if (stacked != ScoreNoteEvent.ACCIDENTAL_FROM_KEY) {
+                        writtenAccidental = stacked;
+                        typedStackedAccidental = true;
+                    }
+                }
+                // An earlier detector can already have selected the right pitch.
+                // Confirm the separate printed signs without changing that selection.
+                if (!typedStackedAccidental
+                        && (writtenAccidental == ScoreNoteEvent.ACCIDENTAL_SHARP
+                                || writtenAccidental == ScoreNoteEvent.ACCIDENTAL_NATURAL))
+                    stackedAccidentalForWideDyad(
+                            gray,
+                            annotationGray,
+                            width,
+                            height,
+                            clefOrKeyComponents,
+                            head,
+                            heads,
+                            accidentalGap,
+                            staff.top,
+                            false,
+                            splitAccidentalProofs);
+                if (!typedStackedAccidental
+                        && (writtenAccidental == ScoreNoteEvent.ACCIDENTAL_FROM_KEY
+                                || writtenAccidental == ScoreNoteEvent.ACCIDENTAL_FLAT
+                                || writtenAccidental == ScoreNoteEvent.ACCIDENTAL_NATURAL)
+                        && stackedAccidentalForWideDyad(
+                                        gray,
+                                        annotationGray,
+                                        width,
+                                        height,
+                                        clefOrKeyComponents,
+                                        head,
+                                        heads,
+                                        accidentalGap,
+                                        staff.top,
+                                        true,
+                                        splitAccidentalProofs)
+                                == ScoreNoteEvent.ACCIDENTAL_SHARP) {
+                    writtenAccidental = ScoreNoteEvent.ACCIDENTAL_SHARP;
+                    typedStackedAccidental = true;
+                }
+                if (!typedStackedAccidental && staff.count == 1 && beamCount >= 2
+                        && writtenAccidental != ScoreNoteEvent.ACCIDENTAL_DOUBLE_SHARP) {
+                    int stacked = ownedStackedAccidentalsOnBeamedSixth(
+                            gray, annotationGray, width, height, clefOrKeyComponents, head, heads,
+                            accidentalGap, clefKeyMembers, splitAccidentalProofs);
+                    if (stacked != ScoreNoteEvent.ACCIDENTAL_FROM_KEY) {
+                        writtenAccidental = stacked;
+                        typedStackedAccidental = true;
+                    }
+                }
+                if (writtenAccidental == ScoreNoteEvent.ACCIDENTAL_FROM_KEY
                         && rawFlatFromBowl(
                                 gray,
                                 width,
@@ -2338,7 +2548,8 @@ final class OmrScoreInterpreter {
                         && flatBowlUnderBeamedStem(
                                 labels, gray, width, height, localAccidentals, head, accidentalGap))
                     writtenAccidental = ScoreNoteEvent.ACCIDENTAL_FLAT;
-                if ((writtenAccidental == ScoreNoteEvent.ACCIDENTAL_FROM_KEY
+                if (!typedStackedAccidental
+                        && (writtenAccidental == ScoreNoteEvent.ACCIDENTAL_FROM_KEY
                                 || writtenAccidental == ScoreNoteEvent.ACCIDENTAL_FLAT
                                 || writtenAccidental == ScoreNoteEvent.ACCIDENTAL_SHARP)
                         && rawNaturalFromCrossbars(
@@ -2349,13 +2560,9 @@ final class OmrScoreInterpreter {
                                 head,
                                 accidentalGap,
                                 writtenAccidental == ScoreNoteEvent.ACCIDENTAL_FLAT
-                                        ? nearestFlatRightEdge(
-                                                labels,
-                                                width,
-                                                height,
-                                                localAccidentals,
-                                                head,
-                                                accidentalGap)
+                                        ? naturalRecoveryEdge(
+                                                labels, gray, annotationGray, width, height,
+                                                localAccidentals, head, accidentalGap)
                                         : -1))
                     writtenAccidental = ScoreNoteEvent.ACCIDENTAL_NATURAL;
                 if (writtenAccidental == ScoreNoteEvent.ACCIDENTAL_FROM_KEY
@@ -2372,7 +2579,24 @@ final class OmrScoreInterpreter {
                                 heads,
                                 accidentalGap))
                     writtenAccidental = ScoreNoteEvent.ACCIDENTAL_NATURAL;
+                if (writtenAccidental == ScoreNoteEvent.ACCIDENTAL_FROM_KEY && !writtenChoice.ambiguous()) {
+                    var cross = staffBoundDoubleSharp(
+                            labels, gray, annotationGray, width, height, measure, head, localPitch, heads);
+                    if (cross != null) {
+                        staffBoundCrosses.add(cross);
+                        writtenAccidental = ScoreNoteEvent.ACCIDENTAL_DOUBLE_SHARP;
+                    }
+                }
+                if (priorFingerOwnsFlat && writtenAccidental == ScoreNoteEvent.ACCIDENTAL_FLAT)
+                    writtenAccidental = ScoreNoteEvent.ACCIDENTAL_FROM_KEY;
             }
+            if (staff.count == 1 && beamCount >= 2
+                    && writtenAccidental == ScoreNoteEvent.ACCIDENTAL_SHARP
+                    && sharpJoinedUpperLedgerSpace(gray, annotationGray, width, height, head,
+                            localBottom, localGap, step)) step--;
+            if (staff.count == 1 && beamCount > 0
+                    && pairedInnerRulesBelowFilledSpace(gray, annotationGray, width, height, head,
+                            localBottom, localGap, step)) step--;
             ScoreNoteEvent event =
                     new ScoreNoteEvent(
                                     measureIndex,
@@ -2619,7 +2843,7 @@ final class OmrScoreInterpreter {
                     detected.add(new DetectedNote(chord, part, staff.gap));
                 }
         }
-        removeOwnedSharpFragments(detected, writtenAccidentalChoices, gray, width);
+        removeOwnedSharpFragments(detected, writtenAccidentalChoices, labels, gray, width);
         detected = alignDisplacedSeconds(detected, gray, width, height);
         detected = reconcileSingleShaftChords(detected, labels, gray, width, height);
         detected =
@@ -2641,10 +2865,47 @@ final class OmrScoreInterpreter {
         detected =
                 recoverCompactGraceAccidentals(
                         labels, gray, width, height, detected, localAccidentals, heads, staffs);
+        var sharpFragments = sharpFragmentsBesideBeamedSixths(
+                detected, clefOrKeyComponents, clefKeyMembers, gray, annotationGray, width, height);
+        var cancelledSharps = new IdentityHashMap<Component, Component>();
+        var beamedThirdNaturals = naturalHeadsInBeamedThirds(
+                detected, clefOrKeyComponents, clefKeyMembers, gray, annotationGray, width, height,
+                cancelledSharps);
+        sharpFragments.putAll(cancelledSharps);
+        var dividerSharps = dividerJoinedLowerSharps(
+                detected, clefOrKeyComponents, clefKeyMembers, staffs, measures,
+                gray, annotationGray, width, height);
+        sharpFragments.putAll(dividerSharps);
+        var staggeredSharps = staggeredSharpsOnBeamedSixths(
+                detected, clefOrKeyComponents, clefKeyMembers, gray, annotationGray, width, height);
+        sharpFragments.putAll(staggeredSharps);
+        sharpFragments.forEach((head, glyph) -> writtenAccidentalChoices.put(head,
+                new WrittenAccidentalChoice(ScoreNoteEvent.ACCIDENTAL_SHARP, glyph, head, 1, 1, false,
+                        cancelledSharps.containsKey(head))));
+        var flatBowls = flatBowlsUnderBeamedSixths(
+                detected, clefOrKeyComponents, clefKeyMembers, gray, annotationGray, width, height,
+                beamedThirdNaturals);
+        addFlatBowlsOnBeamedThirds(
+                detected, clefOrKeyComponents, clefKeyMembers, gray, annotationGray, width, height, flatBowls);
+        var pairedFlats = joinedFlatBowlsOnBeamedSixths(
+                detected, clefOrKeyComponents, clefKeyMembers, gray, annotationGray, width, height);
+        flatBowls.putAll(pairedFlats);
+        pairedFlats.forEach((head, glyph) -> writtenAccidentalChoices.put(head,
+                new WrittenAccidentalChoice(ScoreNoteEvent.ACCIDENTAL_FLAT, glyph, head, 1, 1, false)));
+        var lowerSharps = recoverLowerSignsOnBeamedThirds(
+                detected, clefKeyMembers, gray, annotationGray, width, height, flatBowls, beamedThirdNaturals);
+        sharpFragments.putAll(lowerSharps);
+        var ownedDyadAccidentals = new IdentityHashMap<>(flatBowls);
+        ownedDyadAccidentals.putAll(lowerSharps);
+        ownedDyadAccidentals.putAll(dividerSharps);
+        ownedDyadAccidentals.putAll(staggeredSharps);
+        ownedDyadAccidentals.putAll(cancelledSharps);
         List<Component> printedAccidentalHeads = new ArrayList<>();
         for (DetectedNote note : detected)
-            if (note.event.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_FROM_KEY)
-                printedAccidentalHeads.add(note.head);
+            if (note.event.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_FROM_KEY
+                    || beamedThirdNaturals.containsKey(note.head)
+                    || sharpFragments.containsKey(note.head)
+                    || flatBowls.containsKey(note.head)) printedAccidentalHeads.add(note.head);
         byte[] tieLabels = tieLabelsWithoutSlurHeads(labels, width, rejectedSlurHeads, heads);
         if (!recoveredShadedChordHeads.isEmpty()) {
             tieLabels = tieLabels.clone();
@@ -2656,6 +2917,7 @@ final class OmrScoreInterpreter {
         var tieInk = CurvedExitInk.withoutOwnedCurves(tieLabels, gray, curvedExits.marks());
         tieLabels = tieInk.labels();
         byte[] tieGray = tieInk.gray();
+        var accidentalCarryOwners = new IdentityHashMap<Component, Component>();
         List<DetectedNote> joined =
                 applyAccidentalState(
                         markTieContinuations(
@@ -2664,7 +2926,9 @@ final class OmrScoreInterpreter {
                                 width,
                                 height,
                                 removeSplitDuplicates(detected),
-                                staffs));
+                                staffs),
+                        beamedThirdNaturals.keySet(), sharpFragments.keySet(), flatBowls.keySet(),
+                        accidentalCarryOwners);
         logHeadCoverage(staffs, rawHeadComponents, headComponents, heads, demotedDotHeads, joined);
         List<ScoreNoteEvent> result = new ArrayList<>(joined.size());
         for (DetectedNote note : joined) result.add(note.event);
@@ -2934,6 +3198,11 @@ final class OmrScoreInterpreter {
                         rawCourtesy);
         List<Component> resolvedHeads =
                 joined.stream().map(n -> n.head).collect(java.util.stream.Collectors.toList());
+        if (gray != null && annotationGray != null && annotationGray.length == gray.length)
+            rests = rests.stream()
+                    .filter(rest -> !printedHeaderOwnsQuarterRest(
+                            rest, measures, staffs, headerAccidentals, gray, annotationGray, width, height))
+                    .toList();
         rests = RestCompetingGlyphs.remove(
                 rests, result, measures, labels, gray, annotationGray, width, height);
         List<ScoreNoteEvent> withRests = new ArrayList<>();
@@ -3205,12 +3474,16 @@ final class OmrScoreInterpreter {
         }
         int[] marks =
                 NoteArticulationDetector.detect(labels, gray, width, height, anchors, annotationGray);
-        for (int i = 0; i < withRests.size(); i++)
-            withRests.set(
-                    i,
-                    withRests
-                            .get(i)
-                            .withArticulations(withRests.get(i).articulations() | marks[i]));
+        for (int i = 0; i < withRests.size(); i++) {
+            var note = withRests.get(i);
+            int marksAtHead = note.articulations() | marks[i];
+            if (shaftEndStaccatoOwners.contains(joined.get(i).head))
+                marksAtHead |= NoteArticulation.STACCATO;
+            if (printedPortatoOwners.contains(joined.get(i).head)
+                    && (marksAtHead & NoteArticulation.TENUTO) != 0)
+                marksAtHead |= NoteArticulation.STACCATO;
+            withRests.set(i, note.withArticulations(marksAtHead));
+        }
         markGraceHeads(labels, gray, width, height, joined, withRests);
         List<CrossStaffBeamDetector.Head> beamHeads = new ArrayList<>();
         for (DetectedNote note : joined)
@@ -3462,6 +3735,15 @@ final class OmrScoreInterpreter {
             }
         for (var ambiguous : ambiguousClockBarRoles) clockBarRoles.remove(ambiguous);
 
+        var visibleHeads = new IdentityHashMap<Component, ScoreNoteEvent>();
+        for (int i = 0; i < joined.size(); i++)
+            visibleHeads.put(joined.get(i).head, voicedNotes.get(i));
+        var accidentalCarries = new ArrayList<OctaveAccidentalCarry>();
+        for (int i = 0; i < joined.size(); i++) {
+            var origin = visibleHeads.get(accidentalCarryOwners.get(joined.get(i).head));
+            if (origin != null)
+                accidentalCarries.add(new OctaveAccidentalCarry(origin, voicedNotes.get(i)));
+        }
         var capturedAnalysis =
                 new Analysis(
                         voicedNotes,
@@ -3497,7 +3779,23 @@ final class OmrScoreInterpreter {
                                                         width,
                                                         height,
                                                         rawNaturalGaps,
-                                                        writtenAccidentalChoices))));
+                                                        writtenAccidentalChoices),
+                                                splitAccidentalProofs,
+                                                verifiedPrintedDoubleSharps(
+                                                        labels,
+                                                        gray,
+                                                        annotationGray,
+                                                        width,
+                                                        height,
+                                                        measures,
+                                                        staffs,
+                                                        localAccidentals,
+                                                        clockFinalHeads,
+                                                        voicedNotes,
+                                                        writtenAccidentalChoices,
+                                                        staffBoundCrosses),
+                                                beamedThirdNaturals, ownedDyadAccidentals),
+                                        accidentalCarries));
         var page =
                 new ScorePageInterpretation(
                         measures,
@@ -4615,6 +4913,75 @@ final class OmrScoreInterpreter {
             }
         }
         return false;
+    }
+
+    /** A verified dense signature can extend well beyond the usual clef-to-flat window. */
+    private static boolean denseFlatHeaderOwnsHead(byte[] labels, byte[] gray, byte[] source,
+            int width, int height, Component head, List<Staff> staffs, List<MeasureRegion> measures,
+            List<Component> glyphs, List<Component> heads) {
+        if (gray == null || source == null || gray.length != (long) width * height
+                || source.length != gray.length || head.centerX > width * .25f) return false;
+        Staff staff = nearestHeadStaff(staffs, head.centerY);
+        if (staff == null) return false;
+        float gap = staff.pitchGap;
+        if (gap < 10 || gap > 25 || head.maxX - head.minX + 1 > gap * .72f
+                || head.maxY - head.minY + 1 > gap * .65f || head.area > gap * gap * .38f)
+            return false;
+        float staffMiddle = (staff.top + staff.bottom) * .5f / height;
+        var first = measures.stream().filter(m -> staffMiddle >= m.top() && staffMiddle <= m.bottom())
+                .min(Comparator.comparingDouble(MeasureRegion::left)).orElse(null);
+        if (first == null || Math.abs(head.centerX - first.left() * width) > gap * 2.7f) return false;
+        var clef = glyphs.stream().filter(c -> c.maxX < head.minX && head.minX - c.maxX >= gap * 4
+                && head.minX - c.maxX <= gap * 8 && completeHeaderTreble(c, staff))
+                .max(Comparator.comparingInt(Component::maxX)).orElse(null);
+        if (clef == null) return false;
+        var possible = glyphs.stream().filter(g -> g.centerX > clef.maxX && g.centerX <= head.maxX
+                && g.centerY >= staff.top - gap * .55f && g.centerY <= staff.bottom + gap * .25f
+                && g.minX >= clef.maxX && g.maxX <= head.maxX + gap * .2f
+                && g.maxY - g.minY + 1 >= gap * 1.25f
+                && g.maxY - g.minY + 1 <= gap * 3.25f
+                && isFlatGlyph(labels, width, height,
+                        new AccidentalCandidate(g, OmrMeasurePostProcessor.CLEF_OR_KEY), gap))
+                .sorted(Comparator.comparingDouble(Component::centerX)).toList();
+        if (possible.size() < 4 || possible.size() > 7) return false;
+        var bowl = possible.get(possible.size() - 1);
+        int left = Math.min(head.minX, bowl.minX), right = Math.max(head.maxX, bowl.maxX);
+        int top = Math.min(head.minY, bowl.minY), bottom = Math.max(head.maxY, bowl.maxY);
+        if (head.minX < bowl.minX + gap * .28f || head.maxX > bowl.maxX + 2
+                || head.minY < bowl.minY + gap * 1.25f || head.maxY > bowl.maxY + 1) return false;
+
+        var attack = heads.stream().filter(n -> n.minX > head.maxX
+                && n.centerY >= staff.top - gap * 3.5f && n.centerY <= staff.bottom + gap * 2
+                && n.area >= gap * gap * .52f && n.maxX - n.minX + 1 >= gap * .85f
+                && n.maxY - n.minY + 1 >= gap * .65f)
+                .min(Comparator.comparingInt(Component::minX)).orElse(null);
+        if (attack == null || attack.minX - right < gap * 1.5f || attack.minX - right > gap * 4.5f)
+            return false;
+        float sample = (right + attack.minX) * .5f;
+        var rules = PrintedDirectionStaff.printedRules(gray, width, height, sample, staff.pitchBottom, gap);
+        var rawRules = PrintedDirectionStaff.printedRules(source, width, height, sample, staff.pitchBottom, gap);
+        if (rules == null || rawRules == null || Math.abs(rawRules[0] - rules[0]) > 1
+                || Math.abs(rawRules[1] - rules[1]) > .5f) return false;
+        int[] flatOrder = {4, 7, 3, 6, 2, 5, 1}; // Treble staff steps from its lowest rule.
+        float previous = clef.maxX;
+        int rawBodies = 0;
+        for (int i = 0; i < possible.size(); i++) {
+            var glyph = possible.get(i);
+            float distance = glyph.centerX - previous;
+            if (distance < gap * .73f || distance > gap * (i == 0 ? 1.82f : 1.52f)) return false;
+            var flat = new AccidentalCandidate(glyph, OmrMeasurePostProcessor.CLEF_OR_KEY);
+            float center = flatPitchCenter(labels, width, flat, gap);
+            if (Math.abs(center - (rules[0] - flatOrder[i] * rules[1] * .5f)) > rules[1] * .30f)
+                return false;
+            previous = glyph.centerX;
+            if (PrintedFlatGlyph.matches(gray, width, height, glyph.minX, glyph.minY,
+                            glyph.maxX, glyph.maxY, gap)
+                    && PrintedFlatGlyph.matches(source, width, height, glyph.minX, glyph.minY,
+                            glyph.maxX, glyph.maxY, gap)) rawBodies++;
+        }
+        return rawBodies >= 3
+                && PrintedFlatGlyph.matches(gray, width, height, left, top, right, bottom, gap)
+                && PrintedFlatGlyph.matches(source, width, height, left, top, right, bottom, gap);
     }
 
     private static float headerInkContrast(byte[] gray, int width, int x, int y, int reach) {
@@ -7741,6 +8108,77 @@ final class OmrScoreInterpreter {
     }
 
     /** Carry both coordinates and bounds from one successful complete raw component. */
+    /** Verify a dense signature whose staff stripe cuts through the sharp crossbars. */
+    private static java.util.Set<AccidentalCandidate> orderedStaffOverlaidHeaderSharps(
+            byte[] labels, byte[] gray, int width, int height, List<AccidentalCandidate> candidates,
+            Component clef, Staff staff, float boundary, float right) {
+        int referenceX = Math.round(boundary + staff.gap * .8f);
+        if (gray == null || staff.pitchTrack == null || referenceX + 2 >= right
+                || referenceX + 2 >= width) return java.util.Set.of();
+        var reference = headerPrintedFrame(staff, referenceX);
+        var rules = PrintedDirectionStaff.printedRules(
+                gray, width, height, referenceX, reference.bottom, reference.gap);
+        if (rules == null || Math.abs(rules[0] - reference.bottom) > staff.gap * .26f
+                || Math.abs(rules[1] - reference.gap) > staff.gap * .08f) return java.util.Set.of();
+        var owners = new ArrayList<AccidentalCandidate>();
+        for (var candidate : candidates) {
+            var c = candidate.component;
+            if (c.minX <= clef.maxX || c.maxX >= boundary
+                    || Math.abs(c.centerY - (staff.top + staff.bottom) * .5f) > staff.gap * 2.75f)
+                continue;
+            if (isNaturalGlyph(labels, width, height, candidate, staff.gap)
+                    || isFlatGlyph(labels, width, height, candidate, staff.gap)) return java.util.Set.of();
+            if (isSharpGlyph(labels, width, height, candidate, staff.gap)) owners.add(candidate);
+        }
+        int size = owners.size();
+        if (size < 5 || size > TREBLE_SHARP_STEPS.length) return java.util.Set.of();
+        owners.sort(Comparator.comparingDouble(c -> c.component.centerX));
+        if (owners.get(0).component.centerX - clef.maxX > staff.gap * 2.2f) return java.util.Set.of();
+        var printed = new ArrayList<SignatureGlyph>();
+        int conflicts = 0;
+        for (var owner : owners) {
+            var c = owner.component;
+            var local = headerPrintedFrame(staff, c.centerX);
+            float y = staffOverlaidSharpPitch(gray, width, height, c, local, reference, referenceX);
+            if (!Float.isFinite(y)) return java.util.Set.of();
+            printed.add(new SignatureGlyph(c.centerX, ScoreNoteEvent.ACCIDENTAL_SHARP, y, c));
+            if (PrintedFlatGlyph.matches(gray, width, height, c.minX, c.minY, c.maxX, c.maxY, staff.gap))
+                conflicts++;
+        }
+        return conflicts == 1 && orderedPrintedSharpPitches(printed, staff)
+                ? java.util.Set.copyOf(owners) : java.util.Set.of();
+    }
+
+    private static float staffOverlaidSharpPitch(
+            byte[] gray, int width, int height, Component c, Staff local, Staff reference,
+            int referenceX) {
+        int w = c.maxX - c.minX + 1, h = c.maxY - c.minY + 1;
+        byte[] ink = new byte[w * h];
+        // Print strokes survive only where darker than the corresponding staff stripe
+        // in the uncovered gap between the header and the first note.
+        for (int y = 0; y < h; y++) {
+            int row = c.minY + y;
+            int step = Math.round((local.bottom - row) / local.gap);
+            int limit = 205;
+            if (step >= 0 && step <= 4
+                    && Math.abs(local.bottom - row - step * local.gap) <= local.gap * .18f) {
+                int sampleY = Math.round(reference.bottom + (row - local.bottom) / local.gap * reference.gap);
+                if (sampleY <= 0 || sampleY >= height - 1) return Float.NaN;
+                int darkest = 255;
+                for (int dy = -1; dy <= 1; dy++)
+                    for (int x = referenceX - 2; x <= referenceX + 2; x++)
+                        darkest = Math.min(darkest, gray[(sampleY + dy) * width + x] & 255);
+                limit = Math.min(limit, darkest - 16);
+            }
+            for (int x = 0; x < w; x++)
+                if ((gray[row * width + c.minX + x] & 255) <= limit)
+                    ink[y * w + x] = OmrMeasurePostProcessor.SYMBOL;
+        }
+        var bounds = new Component(c.area, 0, w - 1, 0, h - 1, c.centerX - c.minX, c.centerY - c.minY);
+        return c.minY + uprightSharpPitchCenter(
+                ink, w, h, new AccidentalCandidate(bounds, OmrMeasurePostProcessor.SYMBOL), local.gap);
+    }
+
     private static SignatureGlyph observedSignatureSharp(
             byte[] gray, int width, int height, AccidentalCandidate candidate, float gap) {
         for (float margin : new float[] {.3f, .45f, .6f}) {
@@ -7904,6 +8342,8 @@ final class OmrScoreInterpreter {
                 if (firstInRow && (clef == null || !completeHeaderClef(clef, staff))) {
                     Component joined =
                             fragmentedHeaderClef(candidates, gray, width, height, staff, boundary);
+                    if (joined == null && measureIndex == 0 && clef != null)
+                        joined = openingTrebleWithSplitWaist(candidates, gray, width, height, staff, boundary, clef);
                     if (joined != null) clef = joined;
                 }
                 if (clef != null) left = clef.maxX + staff.gap * .2f;
@@ -7927,6 +8367,22 @@ final class OmrScoreInterpreter {
                     right = Math.min(right, firstHead - staff.gap * .28f);
                 if (right <= left) continue;
 
+                if (headerAccidentals != null && firstInRow && prior != null
+                        && prior >= 5 && prior <= 7 && clef != null && completeHeaderTreble(clef, staff)
+                        && firstHead - boundary >= staff.gap && firstHead - boundary <= staff.gap * 3) {
+                    // Sample the uncovered staff between the repeated signature and its first head.
+                    var rules = PrintedDirectionStaff.printedRules(
+                            gray, width, height, (boundary + firstHead) * .5f, staff.bottom, staff.gap);
+                    if (rules != null && Math.abs(rules[0] - staff.bottom) <= staff.gap * .26f
+                            && Math.abs(rules[1] - staff.gap) <= staff.gap * .08f) {
+                        var printedStaff = new Staff(rules[0] - 4 * rules[1], rules[0], rules[1]);
+                        var printedHeader = printedHeaderSymbols(gray, width, height, left, right, printedStaff);
+                        retainRepeatedSharpHeaderOwners(
+                                headerAccidentals, candidates, printedHeader, clef, printedStaff,
+                                prior, boundary, firstHead);
+                    }
+                }
+
                 java.util.Set<AccidentalCandidate> corroboratedSharps =
                         orderedRawHeaderSharps(
                                 labels,
@@ -7940,6 +8396,10 @@ final class OmrScoreInterpreter {
                                 firstInRow,
                                 left,
                                 right);
+                if (corroboratedSharps.isEmpty() && firstInRow && clef != null
+                        && completeHeaderTreble(clef, staff))
+                    corroboratedSharps = orderedStaffOverlaidHeaderSharps(
+                            labels, gray, width, height, candidates, clef, staff, boundary, right);
                 List<SignatureGlyph> glyphs = new ArrayList<>();
                 Map<AccidentalCandidate, Float> recognized = new HashMap<>();
                 for (AccidentalCandidate candidate : candidates) {
@@ -8078,7 +8538,7 @@ final class OmrScoreInterpreter {
                         if (!added) break;
                     }
                 }
-                corroboratePrintedSharpHeader(
+                boolean completeSharpBodies = corroboratePrintedSharpHeader(
                         glyphs, rawHeader, clef, staff, firstInRow, left, right);
                 glyphs.sort(Comparator.comparingDouble(SignatureGlyph::x));
 
@@ -8251,8 +8711,9 @@ final class OmrScoreInterpreter {
                         && (cancelledSignature
                                 || repeatedHeader
                                 || signatureHeader
-                                        && orderedSignaturePitches(
-                                                labels, width, height, run, recognized, staff)))
+                                        && (completeSharpBodies && run.size() == rawHeader.size()
+                                                || orderedSignaturePitches(
+                                                        labels, width, height, run, recognized, staff))))
                     for (var entry : recognized.entrySet())
                         if (completeRun.stream()
                                 .anyMatch(
@@ -8280,6 +8741,58 @@ final class OmrScoreInterpreter {
                 result.add(new ScoreKeyChange(measureIndex, bestFifths));
         }
         return List.copyOf(result);
+    }
+
+    /** A signature sharp can have the vertical extent of a quarter rest. */
+    private static boolean printedHeaderOwnsQuarterRest(
+            ScoreRestEvent rest, List<MeasureRegion> measures, List<Staff> staffs, List<Component> signature,
+            byte[] gray, byte[] source, int width, int height) {
+        int m = rest.measureIndex();
+        if (m < 0 || m >= measures.size() || rest.staffIndex() != 0 || rest.staffCount() != 1
+                || rest.kind() != ScoreRestEvent.Kind.LITERAL || rest.durationBeats() != 1
+                || rest.positionInMeasure() > .065f) return false;
+        var measure = measures.get(m);
+        if (m > 0 && measure.top() <= measures.get(m - 1).bottom()) return false;
+        float gap = (measure.bottom() - measure.top()) * height / 8.2f;
+        if (gap < 10 || gap > 25) return false;
+        float x = (measure.left() + rest.positionInMeasure() * (measure.right() - measure.left())) * width;
+        float y = rest.pageY() * height;
+        float halfHeight = rest.pageHeight() * height * .5f;
+        for (var glyph : signature) {
+            if (Math.abs(glyph.centerX - x) > gap * .24f
+                    || Math.abs(glyph.centerY - y) > gap * .43f
+                    || Math.abs(glyph.minY - (y - halfHeight)) > gap * .42f
+                    || Math.abs(glyph.maxY - (y + halfHeight)) > gap * .42f
+                    || glyph.maxX - glyph.minX > gap * 1.4f) continue;
+            int margin = Math.round(gap * .22f);
+            int left = Math.max(0, glyph.minX - margin);
+            int top = Math.max(0, glyph.minY - margin);
+            int right = Math.min(width - 1, glyph.maxX + margin);
+            int bottom = Math.min(height - 1, glyph.maxY + margin);
+            var owner = accidentalReferenceHead(x, y, gap);
+            if (rawSharpInBounds(gray,width,height,owner,gap,left,right,top,bottom,true)
+                    && rawSharpInBounds(source,width,height,owner,gap,left,right,top,bottom,true))
+                return true;
+        }
+        // Some repeated key signatures have one printed body missing from the semantic
+        // owner list. Require the rest's entire body and an independent preceding sharp.
+        var staff = nearestHeadStaff(staffs,y);
+        if (staff == null || Math.abs(staff.gap-gap) > gap * .16f
+                || halfHeight < gap * 1.35f || halfHeight > gap * 1.7f) return false;
+        int left = Math.round(x-gap*.55f), right = Math.round(x+gap*.87f);
+        int top = Math.round(y-halfHeight-gap*.12f), bottom = Math.round(y+halfHeight+gap*.16f);
+        if (left < 0 || right >= width || top < 0 || bottom >= height) return false;
+        var owner = accidentalReferenceHead(x,y,gap);
+        for (var plane : List.of(gray,source)) {
+            if (!rawSharpInBounds(plane,width,height,owner,gap,left,right,top,bottom,true))
+                return false;
+            var symbols = printedHeaderSymbols(plane,width,height,
+                    x-gap*6.4f,x-gap*.42f,staff);
+            if (symbols.stream().noneMatch(glyph -> glyph.accidental == ScoreNoteEvent.ACCIDENTAL_SHARP
+                    && glyph.printedBody != null && x-glyph.x >= gap*.75f && x-glyph.x <= gap*4.25f))
+                return false;
+        }
+        return true;
     }
 
     /** Complete end-of-system courtesy signatures apply at the next row. */
@@ -9303,6 +9816,68 @@ final class OmrScoreInterpreter {
         return best;
     }
 
+    /** A separately labelled treble waist can join its upper loop to its lower curl. */
+    private static Component openingTrebleWithSplitWaist(
+            List<AccidentalCandidate> candidates, byte[] gray, int width, int height,
+            Staff staff, float boundary, Component rival) {
+        if (gray == null) return null;
+        var near = candidates.stream()
+                .filter(c -> c.component.minX >= boundary - staff.gap * 16
+                        && c.component.maxX < rival.minX - staff.gap * .5f
+                        && c.component.maxY >= staff.top - staff.gap
+                        && c.component.minY <= staff.bottom + staff.gap)
+                .toList();
+        Component best = null;
+        for (var candidate : near) {
+            if (candidate.label != OmrMeasurePostProcessor.SYMBOL) continue;
+            var waist = candidate.component;
+            Staff printed = headerPrintedFrame(staff, waist.centerX);
+            float g = printed.gap;
+            int w = waist.maxX - waist.minX + 1;
+            if (g < 10 || g > 26 || w < g * 2f || w > g * 3.8f
+                    || waist.minY < printed.top + g * .35f || waist.minY > printed.top + g * 1.8f
+                    || waist.maxY < printed.bottom - g * .40f || waist.maxY > printed.bottom + g * .22f
+                    || waist.area < g * g * 1.7f) continue;
+            for (var high : near) {
+                if (high == candidate) continue;
+                var upper = high.component;
+                if (upper.minX < waist.minX || upper.maxX > waist.maxX
+                        || upper.minY > printed.top - g * .75f
+                        || upper.maxY < printed.top + g * .30f
+                        || upper.maxY > printed.top + g * .90f
+                        || waist.minY - upper.maxY < 0 || waist.minY - upper.maxY > g * .6f
+                        || upper.area < g * g * 1.05f
+                        || OctaveClefDigit.holes(gray, width, upper.minX, upper.minY,
+                                upper.maxX - upper.minX + 1, upper.maxY - upper.minY + 1) < 1)
+                    continue;
+                for (var low : near) {
+                    if (low.label != OmrMeasurePostProcessor.CLEF_OR_KEY) continue;
+                    var lower = low.component;
+                    if (lower.minX < waist.minX || lower.maxX > waist.maxX
+                            || lower.minY < printed.bottom - g * 1.8f
+                            || lower.minY > waist.maxY - g * .5f
+                            || lower.maxY < printed.bottom + g * 1.25f
+                            || lower.maxY > printed.bottom + g * 2.25f
+                            || lower.area < g * g * 1.8f) continue;
+                    int area = upper.area + waist.area + lower.area;
+                    var clef = new Component(area, waist.minX, waist.maxX, upper.minY, lower.maxY,
+                            (upper.centerX * upper.area + waist.centerX * waist.area
+                                    + lower.centerX * lower.area) / area,
+                            (upper.centerY * upper.area + waist.centerY * waist.area
+                                    + lower.centerY * lower.area) / area);
+                    if (!completeHeaderTreble(clef, staff) || best != null && best.area >= clef.area)
+                        continue;
+                    var ink = RawNumeralComponents.captureLongWindow(gray, width, height,
+                            clef.minX, clef.minY, clef.maxX, clef.maxY, 165);
+                    if (ink.components().stream().anyMatch(body -> body.top <= upper.minY + 2
+                            && body.bottom >= lower.maxY - 2 && body.size() >= clef.area * .8f))
+                        best = clef;
+                }
+            }
+        }
+        return best;
+    }
+
     /**
      * Prefer a complete treble over a later joined accidental cluster, while retaining the existing
      * damaged-clef fallback when no complete glyph survives.
@@ -9336,7 +9911,80 @@ final class OmrScoreInterpreter {
     }
 
     /** Seed an otherwise empty raw header only with the first treble signature sharp. */
-    private static void corroboratePrintedSharpHeader(
+    /**
+     * A repeated signature may preserve its source owners even when one interior
+     * sharp cannot be extracted. Its surviving ordered ink must predate the first attack.
+     */
+    private static void retainRepeatedSharpHeaderOwners(
+            List<Component> headers,
+            List<AccidentalCandidate> candidates,
+            List<SignatureGlyph> raw,
+            Component clef,
+            Staff staff,
+            int priorFifths,
+            float boundary,
+            float firstHead) {
+        if (clef == null || priorFifths < 5 || priorFifths > 7
+                || raw.size() < priorFifths - 1 || raw.size() > priorFifths
+                || !Float.isFinite(firstHead)) return;
+        var run = raw.stream().sorted(Comparator.comparingDouble(SignatureGlyph::x)).toList();
+        if (!firstPrintedHeaderSharp(run.get(0), clef, staff)) return;
+        float gap = staff.gap;
+        if (run.stream().anyMatch(glyph -> glyph.accidental != ScoreNoteEvent.ACCIDENTAL_SHARP
+                || glyph.printedBody == null || glyph.printedBody.minX <= clef.maxX
+                || glyph.printedBody.maxX > Math.min(boundary, firstHead - gap * 1.4f))) return;
+        if (run.size() == priorFifths) {
+            if (!orderedPrintedSharpSubset(run, staff, priorFifths)) return;
+        } else {
+            int matchedOmission = -1;
+            for (int omitted = 1; omitted < priorFifths - 1; omitted++) {
+                if (!orderedPrintedSharpSubset(run, staff, omitted)) continue;
+                if (matchedOmission >= 0) return;
+                matchedOmission = omitted;
+            }
+            if (matchedOmission < 0) return;
+        }
+
+        // Both neighboring printed sharps bind each interior owner to the signature.
+        for (int i = 1; i < run.size() - 1; i++) {
+            var glyph = run.get(i);
+            var body = glyph.printedBody;
+            for (var candidate : candidates) {
+                var part = candidate.component;
+                if (Math.abs(part.centerX - glyph.x) > gap * .22f
+                        || part.minX < body.minX - gap * .15f
+                        || part.maxX > body.maxX + gap * .15f
+                        || part.minY < body.minY - gap * .46f
+                        || part.maxY > body.maxY + gap * .46f) continue;
+                int overlap = Math.min(part.maxY, body.maxY) - Math.max(part.minY, body.minY) + 1;
+                if (overlap >= (part.maxY - part.minY + 1) * .77f) headers.add(part);
+            }
+        }
+    }
+
+    private static final int[] TREBLE_SHARP_STEPS = {0, -3, 1, -2, -5, -1, -4};
+
+    private static boolean orderedPrintedSharpSubset(List<SignatureGlyph> run, Staff staff, int omitted) {
+        int previous = -1;
+        float previousX = 0;
+        for (int i = 0; i < run.size(); i++) {
+            var glyph = run.get(i);
+            int index = i < omitted ? i : i + 1;
+            var frame = headerPrintedFrame(staff, glyph.x);
+            float expected = frame.top - TREBLE_SHARP_STEPS[index] * frame.gap * .5f;
+            if (!Float.isFinite(glyph.pitchY) || Math.abs(glyph.pitchY - expected) > frame.gap * .37f)
+                return false;
+            if (i > 0) {
+                float advance = (glyph.x - previousX) / (index - previous);
+                if (advance < frame.gap * .8f || advance > frame.gap * 1.42f) return false;
+            }
+            previous = index;
+            previousX = glyph.x;
+        }
+        return true;
+    }
+
+    private static boolean corroboratePrintedSharpHeader(
             List<SignatureGlyph> glyphs,
             List<SignatureGlyph> rawHeader,
             Component clef,
@@ -9354,8 +10002,11 @@ final class OmrScoreInterpreter {
                                                     && g.printedBody != null
                                                     && g.printedBody.minX >= left
                                                     && g.printedBody.maxX <= right)
-                    && firstPrintedHeaderSharp(orderedRaw.get(0), clef, staff)
-                    && orderedPrintedSharpPitches(orderedRaw, staff)) {
+                    && firstPrintedHeaderSharp(orderedRaw.get(0), clef, staff)) {
+                boolean orderedCrossbars = orderedPrintedSharpPitches(orderedRaw, staff);
+                boolean completeBodies = !orderedCrossbars
+                        && orderedCompleteSharpBodies(orderedRaw, glyphs, staff);
+                if (!orderedCrossbars && !completeBodies) return false;
                 for (int i = 0; i < glyphs.size(); i++) {
                     var semantic = glyphs.get(i);
                     if (semantic.accidental != ScoreNoteEvent.ACCIDENTAL_FLAT) continue;
@@ -9365,19 +10016,48 @@ final class OmrScoreInterpreter {
                             break;
                         }
                 }
+                return completeBodies;
             }
         }
+        return false;
+    }
+
+    /**
+     * On a dense signature a staff stripe can shift the selected crossbar band. When
+     * every full two-spined sharp body is visible, its center independently proves the
+     * order. Apply this fallback only to one conflicting semantic glyph in that run.
+     */
+    private static boolean orderedCompleteSharpBodies(
+            List<SignatureGlyph> raw, List<SignatureGlyph> semantic, Staff staff) {
+        if (raw.size() < 5 || raw.size() != semantic.size()) return false;
+        var ordered = semantic.stream().sorted(Comparator.comparingDouble(SignatureGlyph::x)).toList();
+        var centered = new ArrayList<SignatureGlyph>();
+        int conflicts = 0;
+        for (int i = 0; i < raw.size(); i++) {
+            var printed = raw.get(i);
+            var candidate = ordered.get(i);
+            var body = printed.printedBody;
+            float gap = headerPrintedFrame(staff, printed.x).gap;
+            float middle = (body.minY + body.maxY) * .5f;
+            if (Math.abs(printed.x - candidate.x) >= gap * .45f
+                    || Math.abs(body.centerY - middle) > gap * .19f
+                    || Math.abs(printed.pitchY - middle) > gap * .47f)
+                return false;
+            if (candidate.accidental == ScoreNoteEvent.ACCIDENTAL_FLAT) conflicts++;
+            else if (candidate.accidental != ScoreNoteEvent.ACCIDENTAL_SHARP) return false;
+            centered.add(new SignatureGlyph(printed.x, printed.accidental, middle, body));
+        }
+        return conflicts == 1 && orderedPrintedSharpSubset(centered, staff, centered.size());
     }
 
     private static boolean orderedPrintedSharpPitches(List<SignatureGlyph> run, Staff staff) {
-        int[] steps = {0, -3, 1, -2, -5, -1, -4};
-        if (run.size() < 2 || run.size() > steps.length) return false;
+        if (run.size() < 2 || run.size() > TREBLE_SHARP_STEPS.length) return false;
         for (int i = 0; i < run.size(); i++) {
             var glyph = run.get(i);
             if (glyph.printedBody == null || !Float.isFinite(glyph.pitchY)) return false;
             Staff frame = headerPrintedFrame(staff, glyph.x);
             int step = Math.round((frame.top - glyph.pitchY) * 2 / frame.gap);
-            if (Math.floorMod(step, 7) != Math.floorMod(steps[i], 7)) return false;
+            if (Math.floorMod(step, 7) != Math.floorMod(TREBLE_SHARP_STEPS[i], 7)) return false;
             if (i > 0
                     && (glyph.x - run.get(i - 1).x < frame.gap * .65f
                             || glyph.x - run.get(i - 1).x > frame.gap * 2.2f)) return false;
@@ -9752,15 +10432,71 @@ final class OmrScoreInterpreter {
 
     /** Returns the start of an exact repeated flat signature after a complete raw treble clef. */
     static int inheritedFlatHeaderStart(
-            byte[] gray,
-            byte[] labels,
-            int width,
-            int height,
-            int staffStart,
-            int signatureEnd,
-            float bottom,
-            float gap,
-            int expectedFlats) {
+            byte[] gray, byte[] labels, int width, int height, int staffStart,
+            int signatureEnd, float bottom, float gap, int expectedFlats) {
+        var clef = inheritedHeaderTreble(
+                gray, labels, width, height, staffStart, signatureEnd, bottom, gap);
+        if (clef == null || clef.maxX + 1 >= signatureEnd) return -1;
+        int start = clef.maxX + 1;
+        var staff = new Staff(bottom - gap * 4, bottom, gap);
+        return countHeaderFlatSpines(
+                        labels, gray, width, height, start, signatureEnd, staff, false, true)
+                        == expectedFlats
+                ? start
+                : -1;
+    }
+
+    static int inheritedSharpHeaderStart(
+            byte[] gray, byte[] labels, int width, int height, int staffStart,
+            int signatureEnd, float bottom, float gap, int expectedSharps) {
+        if (expectedSharps < 2 || expectedSharps > 7) return -1;
+        var clef = inheritedHeaderTreble(
+                gray, labels, width, height, staffStart, signatureEnd, bottom, gap);
+        if (clef == null || clef.maxX + 1 >= signatureEnd) return -1;
+        int start = clef.maxX + 1;
+        var staff = new Staff(bottom - gap * 4, bottom, gap);
+        int top = Math.round(bottom - gap * 6.5f), end = Math.round(bottom + gap * 2.5f);
+        int columns = signatureEnd - start + 1, rows = end - top + 1;
+        byte[] mask = new byte[columns * rows];
+        byte key = OmrMeasurePostProcessor.CLEF_OR_KEY;
+        for (int y = 0; y < rows; y++)
+            for (int x = 0; x < columns; x++) {
+                int pixel = (top + y) * width + start + x;
+                if (labels[pixel] == key && (gray[pixel] & 255) <= 210)
+                    mask[y * columns + x] = key;
+            }
+        var sharps = new ArrayList<SignatureGlyph>();
+        for (var body : findComponents(mask, columns, rows, key)) {
+            if (body.area < gap * gap * .10f) continue;
+            var symbol = new Component(body.area, body.minX + start, body.maxX + start,
+                    body.minY + top, body.maxY + top, body.centerX + start, body.centerY + top);
+            var candidate = new AccidentalCandidate(symbol, key);
+            float center = isSharpGlyph(labels, width, height, candidate, gap)
+                    ? top + sharpPitchCenter(mask, columns, rows, new AccidentalCandidate(body, key), gap)
+                    : Float.NaN;
+            if (!Float.isFinite(center)) {
+                // A staff crossing can truncate a key sharp's semantic spines.
+                // Keep the owned column and measure the intact sharp in the original ink.
+                center = rawSharpPitchInBounds(gray, width, height, symbol, gap,
+                        symbol.minX, symbol.maxX,
+                        Math.max(top, symbol.minY - Math.round(gap * .8f)),
+                        Math.min(end, symbol.maxY + Math.round(gap * .4f)), true, true);
+            }
+            if (!Float.isFinite(center)) return -1;
+            sharps.add(new SignatureGlyph(symbol.centerX, ScoreNoteEvent.ACCIDENTAL_SHARP,
+                    center, symbol));
+        }
+        sharps.sort(Comparator.comparingDouble(SignatureGlyph::x));
+        if (sharps.size() != expectedSharps
+                || sharps.stream().anyMatch(glyph -> glyph.accidental != ScoreNoteEvent.ACCIDENTAL_SHARP)
+                || !firstPrintedHeaderSharp(sharps.get(0), clef, staff)
+                || !orderedPrintedSharpPitches(sharps, staff)) return -1;
+        return start;
+    }
+
+    private static Component inheritedHeaderTreble(
+            byte[] gray, byte[] labels, int width, int height, int staffStart,
+            int signatureEnd, float bottom, float gap) {
         int right = Math.min(signatureEnd, Math.round(staffStart + gap * 4.25f));
         int top = Math.round(bottom - gap * 6.5f), end = Math.round(bottom + gap * 2.5f);
         if (staffStart < 0
@@ -9769,7 +10505,7 @@ final class OmrScoreInterpreter {
                 || signatureEnd >= width
                 || top < 0
                 || end >= height
-                || end <= top) return -1;
+                || end <= top) return null;
         int cropWidth = right - staffStart + 1, cropHeight = end - top + 1;
         byte[] crop = new byte[cropWidth * cropHeight];
         byte target = OmrMeasurePostProcessor.CLEF_OR_KEY;
@@ -9781,7 +10517,7 @@ final class OmrScoreInterpreter {
             }
         }
         var staff = new Staff(bottom - gap * 4, bottom, gap);
-        int start = -1;
+        Component owner = null;
         for (var body : findComponents(crop, cropWidth, cropHeight, target)) {
             if (body.minX > gap * 1.75f || body.maxX == cropWidth - 1) continue;
             var clef =
@@ -9794,24 +10530,10 @@ final class OmrScoreInterpreter {
                             body.centerX + staffStart,
                             body.centerY + top);
             if (!completeHeaderTreble(clef, staff)) continue;
-            if (start >= 0) return -1;
-            start = clef.maxX + 1;
+            if (owner != null) return null;
+            owner = clef;
         }
-        return start >= 0
-                        && start < signatureEnd
-                        && countHeaderFlatSpines(
-                                        labels,
-                                        gray,
-                                        width,
-                                        height,
-                                        start,
-                                        signatureEnd,
-                                        staff,
-                                        false,
-                                        true)
-                                == expectedFlats
-                ? start
-                : -1;
+        return owner;
     }
 
     private static int countHeaderFlatSpines(
@@ -10637,6 +11359,91 @@ final class OmrScoreInterpreter {
         return List.copyOf(result);
     }
 
+    /** Recovers two closely printed third dyads joined only in the coarse head mask. */
+    private static List<Component> splitCompactJoinedThirds(
+            byte[] labels, byte[] gray, int width, int height, Component head, Staff staff) {
+        float gap = staff.gap;
+        int shaftTop = head.minY - Math.round(gap * 1.78f);
+        if (shaftTop < 0) return List.of();
+        var shafts = new ArrayList<Integer>(2);
+        for (int x = head.minX; x <= head.maxX; x++) {
+            if (!darkColumn(gray, width, x, shaftTop, head.minY - 1, .89f)) continue;
+            int first = x;
+            while (x < head.maxX && darkColumn(gray, width, x + 1, shaftTop, head.minY - 1, .89f))
+                x++;
+            int thickness = x - first + 1;
+            if (thickness < 2 || thickness > gap * .28f) return List.of();
+            shafts.add((first + x) / 2);
+        }
+        if (shafts.size() != 2) return List.of();
+        int a = shafts.get(0), b = shafts.get(1);
+        if (b - a < gap * 1.38f || b - a > gap * 1.77f) return List.of();
+        // The upward shafts stand to the right of both filled bodies.
+        int cut = (a + b) / 2 - Math.round(gap * .57f);
+        if (cut <= head.minX || cut >= head.maxX) return List.of();
+        var left =
+                provedFilledChordPieces(
+                        labels,
+                        gray,
+                        width,
+                        height,
+                        horizontalHeadSlice(labels, width, head, head.minX, cut),
+                        staff);
+        var right =
+                provedFilledChordPieces(
+                        labels,
+                        gray,
+                        width,
+                        height,
+                        horizontalHeadSlice(labels, width, head, cut + 1, head.maxX),
+                        staff);
+        if (!sharesCompactUpShaft(gray, width, height, left, a, gap)
+                || !sharesCompactUpShaft(gray, width, height, right, b, gap)) return List.of();
+        var result = new ArrayList<Component>(4);
+        result.addAll(left);
+        result.addAll(right);
+        return List.copyOf(result);
+    }
+
+    private static boolean sharesCompactUpShaft(
+            byte[] gray, int width, int height, List<Component> notes, int column, float gap) {
+        if (notes.size() != 2) return false;
+        var upper = notes.get(0);
+        var lower = notes.get(1);
+        if (lower.centerY - upper.centerY < gap * .8f
+                || lower.centerY - upper.centerY > gap * 1.2f
+                || Math.abs(lower.centerX - upper.centerX) > gap * .17f
+                || column - lower.centerX < gap * .45f
+                || column - lower.centerX > gap * .82f) return false;
+        var shafts =
+                PrintedBeamShafts.at(
+                        gray,
+                        width,
+                        height,
+                        upper.centerX,
+                        upper.centerY,
+                        gap,
+                        new PrintedBeamShafts.Budget(50_000));
+        return shafts.size() == 1
+                && shafts.get(0).direction() == -1
+                && column >= shafts.get(0).left()
+                && column <= shafts.get(0).right()
+                && darkColumn(
+                        gray,
+                        width,
+                        column,
+                        Math.round(upper.centerY),
+                        Math.round(lower.centerY - gap * .16f),
+                        .92f);
+    }
+
+    private static boolean darkColumn(
+            byte[] gray, int width, int x, int top, int bottom, float coverage) {
+        int ink = 0;
+        for (int y = top; y <= bottom; y++) if ((gray[y * width + x] & 255) < 170) ink++;
+        return ink >= (bottom - top + 1) * coverage;
+    }
+
     /**
      * A wide mask may bridge two close chord attacks. Separate only two independently printed
      * shafts whose pieces each contain proved ovals.
@@ -10646,6 +11453,8 @@ final class OmrScoreInterpreter {
         if (gray == null || staff == null) return List.of();
         float gap = staff.gap;
         int w = head.maxX - head.minX + 1, h = head.maxY - head.minY + 1;
+        if (w >= gap * 2.6f && w < gap * 3.2f && h >= gap * 2.2f && h <= gap * 3.05f)
+            return splitCompactJoinedThirds(labels, gray, width, height, head, staff);
         if (w < gap * 3.2f || w > gap * 7 || h < gap * 1.6f || h > gap * 4.4f) return List.of();
         for (int direction : new int[] {-1, 1}) {
             List<Integer> shafts = new ArrayList<>();
@@ -11242,6 +12051,102 @@ final class OmrScoreInterpreter {
                 componentSlice(labels, width, parent, parent.minY, split, lineage),
                 componentSlice(labels, width, parent, split + 1, parent.maxY, lineage));
         return lineage.commit(parts) ? parts : List.of();
+    }
+
+    /** A printed ledger can fill the taper between two beamed heads a third apart. */
+    private static List<Component> splitLedgerBridgedBeamedThird(
+            byte[] labels, byte[] gray, byte[] raw, int width, int height, Component parent,
+            List<Staff> staffs, List<Component> heads, ExactComponentMembers.Collector collector) {
+        if (gray == null || raw == null || gray.length != raw.length) return List.of();
+        var staff = nearestHeadStaff(staffs, parent.centerY);
+        if (staff == null || staff.count != 1) return List.of();
+        float gap = staff.gap;
+        if (gap < 12 || gap > 24 || !compactLedgerThird(parent, gap)
+                || parent.centerY < staff.top - 3.2f * gap || parent.centerY > staff.top - .7f * gap)
+            return List.of();
+        int split = (parent.minY + parent.maxY) / 2;
+        var top = componentSlice(labels, width, parent, parent.minY, split);
+        var bottom = componentSlice(labels, width, parent, split + 1, parent.maxY);
+        if (top == null || bottom == null || !printedFilledOval(gray, width, top, gap)
+                || !printedFilledOval(raw, width, top, gap)) return List.of();
+        var frame = localStaffPitch(labels, gray, width, height, staff, parent);
+        float lowerStep = (frame[0] - bottom.centerY) * 2 / frame[1];
+        float upperStep = (frame[0] - top.centerY) * 2 / frame[1];
+        int step = Math.round(lowerStep);
+        if (step < 9 || step > 13 || (step & 1) == 0
+                || Math.abs(lowerStep - step) > .24f || Math.abs(upperStep - step - 2) > .24f)
+            return List.of();
+        float between = frame[0] - (step + 1) * frame[1] * .5f;
+        float normalized = printedLedgerLine(gray, width, height, parent, between, frame[1], false);
+        float original = printedLedgerLine(raw, width, height, parent, between, frame[1], false);
+        if (!Float.isFinite(normalized) || !Float.isFinite(original)
+                || Math.abs(normalized - original) > .12f * gap
+                || Math.abs(normalized - between) > .18f * gap) return List.of();
+
+        Component before = null, after = null;
+        for (var peer : heads) {
+            float dx = peer.centerX - parent.centerX;
+            if (Math.abs(dx) < gap * 1.8f || Math.abs(dx) > gap * 3.1f
+                    || Math.abs(peer.centerY - parent.centerY) > gap * 1.16f
+                    || !compactLedgerThird(peer, gap)
+                    || nearestHeadStaff(staffs, peer.centerY) != staff) continue;
+            if (dx < 0) {
+                if (before != null) return List.of();
+                before = peer;
+            } else {
+                if (after != null) return List.of();
+                after = peer;
+            }
+        }
+        if (before == null || after == null
+                || !ownsThreeBeamedThirdColumns(labels, gray, width, height, before, top, bottom, after, gap)
+                || !ownsThreeBeamedThirdColumns(labels, raw, width, height, before, top, bottom, after, gap))
+            return List.of();
+        if (collector == null) return List.of(top, bottom);
+        var lineage = collector.beginSplit(parent, labels, width);
+        if (lineage == null) return List.of();
+        var parts = List.of(
+                componentSlice(labels, width, parent, parent.minY, split, lineage),
+                componentSlice(labels, width, parent, split + 1, parent.maxY, lineage));
+        return lineage.commit(parts) ? parts : List.of();
+    }
+
+    private static boolean compactLedgerThird(Component parent, float gap) {
+        float w = parent.maxX - parent.minX + 1;
+        float h = parent.maxY - parent.minY + 1;
+        return w >= gap * 1.18f && w <= gap * 1.60f && h >= gap * 1.87f
+                && h <= gap * 2.29f && parent.area >= w * h * .70f;
+    }
+
+    private static boolean ownsThreeBeamedThirdColumns(
+            byte[] labels, byte[] plane, int width, int height, Component before, Component upper,
+            Component lower, Component after, float gap) {
+        var budget = new PrintedBeamShafts.Budget(60_000);
+        var left = beamedThirdColumn(labels, plane, width, height, before, gap, budget);
+        var right = beamedThirdColumn(labels, plane, width, height, after, gap, budget);
+        var shaft = beamedThirdShaft(plane, width, height, upper, lower, gap, budget);
+        return left != null && shaft != null && right != null
+                && WrappedEighthTriplets.matchesBeamRails(plane, width, height, left, shaft, gap, 2)
+                && WrappedEighthTriplets.matchesBeamRails(plane, width, height, shaft, right, gap, 2);
+    }
+
+    private static PrintedBeamShafts.Shaft beamedThirdColumn(
+            byte[] labels, byte[] plane, int width, int height, Component parent, float gap,
+            PrintedBeamShafts.Budget budget) {
+        int cut = (parent.minY + parent.maxY) / 2;
+        return beamedThirdShaft(plane, width, height,
+                componentSlice(labels, width, parent, parent.minY, cut),
+                componentSlice(labels, width, parent, cut + 1, parent.maxY), gap, budget);
+    }
+
+    private static PrintedBeamShafts.Shaft beamedThirdShaft(
+            byte[] plane, int width, int height, Component upper, Component lower, float gap,
+            PrintedBeamShafts.Budget budget) {
+        var axis = sharedFilledThirdShaft(plane, width, height, upper, lower, gap, false);
+        if (axis == null) return null;
+        var shaft = downShaft(plane, width, height, upper, gap, budget);
+        return shaft != null && Math.abs(axis[0] - shaft.left()) <= 2
+                && Math.abs(axis[1] - shaft.endY()) <= 2 ? shaft : null;
     }
 
     private record LinkedThird(Component parent, int[] axis) {}
@@ -11980,6 +12885,31 @@ final class OmrScoreInterpreter {
         staffs.sort(Comparator.comparingDouble(staff -> staff.top));
         assignSystemPositions(staffs, measures, height);
         return staffs;
+    }
+
+    private static void removeRejectedLedgerStaffs(
+            List<Staff> staffs, List<MeasureRegion> rejected,
+            List<MeasureRegion> measures, int height) {
+        if (rejected.isEmpty()) return;
+        boolean changed = false;
+        for (int i = staffs.size() - 2; i >= 0; i--) {
+            var upper = staffs.get(i);
+            var lower = staffs.get(i + 1);
+            float gap = upper.gap;
+            float separation = lower.bottom - upper.bottom;
+            if (upper.bottom - lower.top < gap * .7f
+                    || separation < gap * 1.2f || separation > gap * 3.9f) continue;
+            for (var removed : rejected) {
+                if (Math.abs(removed.top() * height - (upper.top - gap * 2.1f)) <= gap * .4f
+                        && Math.abs(removed.bottom() * height - (upper.bottom + gap * 2.1f))
+                                <= gap * .4f) {
+                    staffs.remove(i);
+                    changed = true;
+                    break;
+                }
+            }
+        }
+        if (changed) assignSystemPositions(staffs, measures, height);
     }
 
     /** A compressed semantic alias can overlap a complete page-scale staff and steal its notes. */
@@ -12930,12 +13860,26 @@ final class OmrScoreInterpreter {
         return nearest;
     }
 
+    private static boolean roundsToHighSoloStaff(byte[] gray, byte[] raw, int width, int height,
+            Component head, Staff upper, Staff lower) {
+        float distance = lower.top - head.centerY;
+        float maximum = lower.gap * 6.75f;
+        return distance > maximum && distance <= maximum + 1
+                && highSoloLowerStaff(gray, width, height, head, upper, lower, 1)
+                && highSoloLowerStaff(raw, width, height, head, upper, lower, 1);
+    }
+
     private static boolean highSoloLowerStaff(
             byte[] gray, int width, int height, Component head, Staff upper, Staff lower) {
+        return highSoloLowerStaff(gray, width, height, head, upper, lower, 0);
+    }
+
+    private static boolean highSoloLowerStaff(byte[] gray, int width, int height,
+            Component head, Staff upper, Staff lower, float rounding) {
         // A long shaft and its short rules can identify the following solo staff.
         if (gray != null && upper.count == 1 && lower.count == 1
                 && lower.top - head.centerY >= lower.gap * 4.5f
-                && lower.top - head.centerY <= lower.gap * 6.75f
+                && lower.top - head.centerY <= lower.gap * 6.75f + rounding
                 && head.centerY - upper.bottom >= upper.gap * 4.5f
                 && printedFilledOval(gray, width, head, lower.gap)) {
             int[] raw = attachedRawStem(gray, width, height, head, lower.gap);
@@ -13769,6 +14713,840 @@ final class OmrScoreInterpreter {
                 return false;
         }
         return true;
+    }
+
+    /** Short ledgers below a filled opening head can disambiguate its upper space. */
+    private static boolean upperSpaceAtDoubleBeamEdge(byte[] labels, byte[] gray, byte[] raw,
+            int width, int height, Component head, Staff physical, Staff owner,
+            List<Staff> staffs, List<Component> heads) {
+        float gap = physical.pitchGap;
+        float position = (physical.pitchBottom - head.centerY) * 2 / gap;
+        boolean terminal = position >= 17 && position <= 17.38f;
+        if (gray == null || raw == null || raw.length != gray.length || owner.count != 1
+                || gap < 12 || gap > 26 || (!terminal && (position <= 17.5f || position > 17.78f))
+                || Math.abs(physical.pitchBottom - owner.pitchBottom) > gap
+                || competingPrintedCore(labels, gray, width, height, head, physical, staffs)) return false;
+        Component left = null, right = null, earlier = null;
+        for (var peer : heads) {
+            float dx = peer.centerX - head.centerX, dy = peer.centerY - head.centerY;
+            boolean prior = terminal && dx >= -gap * 4.65f && dx <= -gap * 3.7f
+                    && dy >= gap * .4f && dy <= gap * .95f;
+            float minimumSeparation = terminal && dx > 0 ? .65f : .85f;
+            if ((!prior && (Math.abs(dx) < gap * 1.62f || Math.abs(dx) > gap * 2.56f
+                            || dy < gap * minimumSeparation || dy > gap * 1.39f))
+                    || staffForHead(labels, gray, width, height, staffs, peer) != owner
+                    || !hasHeadLedgerSupport(labels, gray, width, height, peer, physical, false, staffs))
+                continue;
+            if (prior) {
+                if (earlier != null) return false;
+                earlier = peer;
+            } else if (dx < 0) {
+                if (left != null) return false;
+                left = peer;
+            } else {
+                if (right != null) return false;
+                right = peer;
+            }
+        }
+        return left != null && right != null && (!terminal || earlier != null)
+                && upperSpaceLedgerBoundaryInk(gray, width, height, earlier, left, head, right, physical)
+                && upperSpaceLedgerBoundaryInk(raw, width, height, earlier, left, head, right, physical);
+    }
+
+    private static boolean upperSpaceLedgerBoundaryInk(byte[] gray, int width, int height,
+            Component earlier, Component left, Component head, Component right, Staff staff) {
+        float gap = staff.pitchGap;
+        if (!FilledSparseBeamHead.completeInterior(gray, width, height, head.centerX, head.centerY, gap))
+            return false;
+        var budget = new PrintedBeamShafts.Budget(32_000);
+        var before = downShaft(gray, width, height, left, gap, budget);
+        var shaft = downShaft(gray, width, height, head, gap, budget);
+        var after = downShaft(gray, width, height, right, gap, budget);
+        if (before == null || shaft == null || after == null
+                || Math.abs(shaft.left() - head.minX) > gap * .24f
+                || shaft.endY() < staff.top + gap * 1.8f) return false;
+        boolean leftLink = FingeringAnnotationFilter.pairedBeamRails(gray, width, height, before, shaft, gap);
+        boolean rightLink = FingeringAnnotationFilter.pairedBeamRails(gray, width, height, shaft, after, gap);
+        if (earlier != null) {
+            var start = downShaft(gray, width, height, earlier, gap, budget);
+            if (!leftLink || rightLink || start == null
+                    || !FingeringAnnotationFilter.pairedBeamRails(gray, width, height, start, before, gap))
+                return false;
+        } else if (leftLink || !rightLink) {
+            return false;
+        }
+        if (Float.isFinite(printedLedgerLine(
+                gray, width, height, head, staff.top - 5 * gap, gap, false))) return false;
+        for (int rule = 1; rule <= 4; rule++) {
+            if (!shortUpperSpaceLedger(gray, width, height, head, shaft.left(),
+                    staff.top - rule * gap, gap, rule == 4)) return false;
+        }
+        return true;
+    }
+
+    /** Four short ledger rules and a closed double rail identify a high filled terminal head. */
+    private static boolean closedDoubleRailUpperLedger(
+            byte[] labels, byte[] gray, byte[] raw, int width, int height, Component head,
+            Staff physical, Staff owner, List<Staff> staffs, List<Component> heads) {
+        float gap = physical.pitchGap;
+        float position = (physical.pitchBottom - head.centerY) * 2 / gap;
+        if (raw == null || owner.count != 1 || gap < 12 || gap > 26
+                || Math.abs(physical.pitchBottom - owner.pitchBottom) > gap
+                || Math.abs(position - 18) > .30f
+                || !filledBeamEndpointCore(gray, width, height, head, gap)
+                || !filledBeamEndpointCore(raw, width, height, head, gap)
+                || competingPrintedCore(labels, gray, width, height, head, physical, staffs))
+            return false;
+        int[] shaft = attachedRawStem(gray, width, height, head, gap, 2, 170);
+        int[] rawShaft = attachedRawStem(raw, width, height, head, gap, 2, 170);
+        if (shaft == null || shaft[2] != 1 || !sameDownwardLedgerShaft(shaft, rawShaft)
+                || Math.abs(head.minX - shaft[0]) > gap * .22f
+                || shaft[1] < physical.top + gap * 1.8f
+                || shaft[1] > physical.bottom + gap * .5f) return false;
+        for (int rule = 1; rule <= 4; rule++) {
+            float y = physical.top - rule * gap;
+            if (!shortUpperSpaceLedger(gray, width, height, head, shaft[0], y, gap, false)
+                    || !shortUpperSpaceLedger(raw, width, height, head, rawShaft[0], y, gap, false))
+                return false;
+        }
+        Component previous = null;
+        for (var peer : heads) {
+            float dx = head.centerX - peer.centerX;
+            if (dx < gap * 1.8f || dx > gap * 3.15f
+                    || Math.abs(peer.centerY - head.centerY) > gap * 1.7f
+                    || !filledBeamEndpointCore(gray, width, height, peer, gap)
+                    || !filledBeamEndpointCore(raw, width, height, peer, gap)
+                    || staffForHead(labels, gray, width, height, staffs, peer) != owner
+                    || !hasHeadLedgerSupport(labels, gray, width, height, peer, physical, false, staffs))
+                continue;
+            if (previous != null) return false;
+            previous = peer;
+        }
+        if (previous == null) return false;
+        int[] incoming = attachedRawStem(gray, width, height, previous, gap, 2, 170);
+        int[] rawIncoming = attachedRawStem(raw, width, height, previous, gap, 2, 170);
+        return incoming != null && incoming[2] == 1 && sameDownwardLedgerShaft(incoming, rawIncoming)
+                && LinkedFilledThirds.ends(gray, width, gap, incoming, shaft)
+                && LinkedFilledThirds.ends(raw, width, gap, rawIncoming, rawShaft);
+    }
+
+    /** A filled sixth on the fifth ledger can meet another dyad's rules on the beam side. */
+    private static boolean linkedHighLedgerSixth(
+            byte[] labels, byte[] gray, byte[] raw, int width, int height, Component head,
+            Staff physical, Staff owner, List<Staff> staffs, List<Component> heads) {
+        float gap = physical.pitchGap;
+        float ledgerY = physical.pitchBottom - gap * 9;
+        if (raw == null || owner.count != 1 || gap < 12 || gap > 26
+                || Math.abs(physical.pitchBottom - owner.pitchBottom) > gap
+                || Math.abs(head.centerY - ledgerY) > gap * .19f
+                || !FilledSparseBeamHead.completeInterior(gray, width, height, head.centerX, head.centerY, gap)
+                || !FilledSparseBeamHead.completeInterior(raw, width, height, head.centerX, head.centerY, gap)
+                || competingPrintedCore(labels, gray, width, height, head, physical, staffs)) return false;
+        float normalized = printedLedgerLine(gray, width, height, head, ledgerY, gap, true);
+        float original = printedLedgerLine(raw, width, height, head, ledgerY, gap, true);
+        if (!Float.isFinite(normalized) || !Float.isFinite(original)
+                || Math.abs(normalized - original) > gap * .12f) return false;
+        var budget = new PrintedBeamShafts.Budget(200_000);
+        var shaft = downShaft(gray, width, height, head, gap, budget);
+        var printed = downShaft(raw, width, height, head, gap, budget);
+        if (!overlappingDownShafts(shaft, printed)
+                || Math.abs(shaft.left() - head.minX) > gap * .22f
+                || shaft.endY() < physical.top + gap * 1.8f
+                || shaft.endY() > physical.bottom + gap * .6f) return false;
+
+        Component lower = null, following = null, distant = null;
+        boolean ordinaryLower = false, ambiguousDistant = false;
+        for (var peer : heads) {
+            float dx = (peer.centerX - head.centerX) / gap;
+            float step = (physical.pitchBottom - peer.centerY) * 2 / gap;
+            boolean same = Math.abs(dx) <= .2f && Math.abs(step - 13) <= .40f;
+            boolean near = dx >= 1.60f && dx <= 2.45f && Math.abs(step - 13) <= 2.3f;
+            boolean far = dx > 2.45f && dx <= 4.75f && Math.abs(step - 13) <= 2.3f;
+            if ((!same && !near && !far) || staffForHead(labels, gray, width, height, staffs, peer) != owner)
+                continue;
+            boolean ordinary = filledBeamEndpointCore(gray, width, height, peer, gap)
+                    && filledBeamEndpointCore(raw, width, height, peer, gap);
+            if (!ordinary && (!same
+                    || !FilledSparseBeamHead.completeInterior(gray, width, height, peer.centerX, peer.centerY, gap)
+                    || !FilledSparseBeamHead.completeInterior(raw, width, height, peer.centerX, peer.centerY, gap)))
+                continue;
+            if (same) {
+                if (lower != null) return false;
+                lower = peer;
+                ordinaryLower = ordinary;
+            } else if (near) {
+                if (following != null) return false;
+                following = peer;
+            } else {
+                if (distant != null) ambiguousDistant = true;
+                distant = peer;
+            }
+        }
+        boolean extended = following == null;
+        if (extended && !ambiguousDistant) following = distant;
+        if (!extended && !ordinaryLower) return false;
+        if (lower == null || following == null
+                || !overlappingDownShafts(shaft, downShaft(gray, width, height, lower, gap, budget))
+                || !overlappingDownShafts(printed, downShaft(raw, width, height, lower, gap, budget))) return false;
+        int witnessed = 0;
+        for (int step = 10; step < 18; step += 2) {
+            float row = physical.pitchBottom - step * gap * .5f;
+            if (row >= lower.minY - gap * .16f && row <= lower.maxY + gap * .16f) continue;
+            if (!finiteStemsideLedger(gray, width, height, head.centerX, shaft.left(), row, gap)
+                    || !finiteStemsideLedger(raw, width, height, head.centerX, printed.left(), row, gap))
+                return false;
+            witnessed++;
+        }
+        var next = downShaft(gray, width, height, following, gap, budget);
+        var nextPrinted = downShaft(raw, width, height, following, gap, budget);
+        if (witnessed < 2 || budget.refused() || !overlappingDownShafts(next, nextPrinted)) return false;
+        if (!extended)
+            return WrappedEighthTriplets.matchesBeamRails(gray, width, height, shaft, next, gap, 2)
+                    && WrappedEighthTriplets.matchesBeamRails(raw, width, height, printed, nextPrinted, gap, 2);
+        var track = physical.pitchTrack;
+        if (track == null) {
+            track = StaffPitchTrack.linear(width, physical.pitchBottom, gap, physical.pitchSlope);
+            int middle = (shaft.right() + next.left()) / 2;
+            var estimated = track.at(middle);
+            int confirmed = 0, tolerance = Math.round(gap * .12f);
+            for (int i = 0; i < 5; i++) {
+                int rule = Math.round(estimated[0] - i * estimated[1]);
+                for (int y = rule - tolerance; y <= rule + tolerance; y++) {
+                    if (FlagRootStaffRule.matches(gray, width, height, y, middle, gap, 165)
+                            && FlagRootStaffRule.matches(raw, width, height, y, middle, gap, 165)) {
+                        confirmed++;
+                        break;
+                    }
+                }
+            }
+            if (confirmed < 3) return false;
+        }
+        return WrappedEighthTriplets.matchesExactlyTwoBeamRails(gray, width, height, shaft, next, gap, track)
+                && WrappedEighthTriplets.matchesExactlyTwoBeamRails(raw, width, height, printed, nextPrinted, gap, track);
+    }
+
+    private static boolean overlappingDownShafts(
+            PrintedBeamShafts.Shaft one, PrintedBeamShafts.Shaft two) {
+        return one != null && two != null && one.left() <= two.right() && two.left() <= one.right()
+                && Math.abs(one.endY() - two.endY()) <= 2;
+    }
+
+    /** Short rules and a single rail can establish a filled upper-ledger head together. */
+    private static boolean upperLedgerHeadOnSingleRail(
+            byte[] labels,
+            byte[] gray,
+            byte[] raw,
+            int width,
+            int height,
+            Component head,
+            Staff physical,
+            Staff owner,
+            List<Staff> staffs,
+            List<Component> heads) {
+        if (raw == null || owner.count != 1) return false;
+        if (Math.abs(physical.pitchBottom - owner.pitchBottom) > physical.pitchGap) {
+            physical = lowerStaffForLedgerRail(labels, gray, raw, width, height, head, physical, owner);
+            if (physical == null) return false;
+        }
+        float gap = physical.pitchGap;
+        if (gap < 12
+                || gap > 26
+                || Math.abs(physical.pitchBottom - owner.pitchBottom) > gap
+                || competingPrintedCore(labels, gray, width, height, head, owner, staffs))
+            return false;
+        float position = (physical.pitchBottom - head.centerY) / (gap * .5f);
+        int step = Math.round(position);
+        boolean onLine = step % 2 == 0;
+        if (step < 13 || step > (onLine ? 20 : 17) || Math.abs(position - step) > .49f)
+            return false;
+        if (!(filledBeamEndpointCore(gray, width, height, head, gap)
+                        && filledBeamEndpointCore(raw, width, height, head, gap))
+                && !(step == 17
+                        && FilledSparseBeamHead.completeInterior(
+                                gray, width, height, head.centerX, head.centerY, gap)
+                        && FilledSparseBeamHead.completeInterior(
+                                raw, width, height, head.centerX, head.centerY, gap))) return false;
+        if (onLine
+                && (!completeUpperLedgerBody(gray, width, height, head, gap)
+                        || !completeUpperLedgerBody(raw, width, height, head, gap))) return false;
+        var budget = new PrintedBeamShafts.Budget(200_000);
+        var first = downShaft(gray, width, height, head, gap, budget);
+        if (first == null
+                || Math.abs(first.left() - head.minX) > gap * .25f
+                || first.endY() < physical.top + gap * 1.8f
+                || first.endY() > physical.bottom + gap * .7f) return false;
+        for (int ledger = 10; ledger <= step; ledger += 2) {
+            float row = physical.pitchBottom - ledger * gap * .5f;
+            boolean touchesBody = ledger >= step - 1;
+            if (ledger == step
+                    && (!Float.isFinite(
+                                    printedLedgerLine(gray, width, height, head, row, gap, true))
+                            || !Float.isFinite(
+                                    printedLedgerLine(raw, width, height, head, row, gap, true))))
+                return false;
+            if (!shortUpperSpaceLedger(
+                            gray, width, height, head, first.left(), row, gap, touchesBody)
+                    || !shortUpperSpaceLedger(
+                            raw, width, height, head, first.left(), row, gap, touchesBody))
+                return false;
+        }
+        Component before = null, after = null, later = null;
+        for (var peer : heads) {
+            float dx = peer.centerX - head.centerX;
+            // Allow a one-pixel endpoint rounding error before checking both physical rails.
+            if (dx < -gap * 2.8f - 1
+                    || dx > gap * 5.2f
+                    || Math.abs(dx) < gap * 1.4f
+                    || Math.abs(peer.centerY - head.centerY) > gap * 2.9f
+                    || !filledBeamEndpointCore(gray, width, height, peer, gap)
+                    || staffForHead(labels, gray, width, height, staffs, peer) != owner
+                    || !hasHeadLedgerSupport(
+                            labels, gray, width, height, peer, owner, false, staffs)) continue;
+            if (dx < 0) {
+                if (before == null || peer.centerX > before.centerX) before = peer;
+            } else if (after == null || peer.centerX < after.centerX) {
+                later = after;
+                after = peer;
+            } else if (later == null || peer.centerX < later.centerX) later = peer;
+        }
+        if (after == null || after.centerX - head.centerX > gap * 2.8f) return false;
+        var next = downShaft(gray, width, height, after, gap, budget);
+        if (!singleRailOnBothPlanes(gray, raw, width, height, first, next, gap)) return false;
+        if (before != null
+                && singleRailOnBothPlanes(
+                        gray,
+                        raw,
+                        width,
+                        height,
+                        downShaft(gray, width, height, before, gap, budget),
+                        first,
+                        gap)) return true;
+        if (later == null
+                || later.centerX - after.centerX < gap * 1.4f
+                || later.centerX - after.centerX > gap * 2.8f) return false;
+        return singleRailOnBothPlanes(
+                gray,
+                raw,
+                width,
+                height,
+                next,
+                downShaft(gray, width, height, later, gap, budget),
+                gap);
+    }
+
+    private static Staff lowerStaffForLedgerRail(
+            byte[] labels, byte[] gray, byte[] raw, int width, int height,
+            Component head, Staff previous, Staff owner) {
+        // The competing frame ends well above this head. The assigned lower staff needs
+        // its own local five-line evidence on both planes before validating the ledger rail.
+        float gap = owner.pitchGap;
+        if (gap < 12 || gap > 26
+                || previous.bottom + previous.pitchGap * 3 > head.centerY
+                || owner.top <= head.centerY) return null;
+        float bottom = owner.pitchBottom + owner.pitchSlope * (head.centerX - width * .5f);
+        float[] normalized = StaffPitchTrack.localPrintedRules(labels, gray, width, height,
+                head.centerX, head.minX, head.maxX, bottom, gap);
+        float[] source = StaffPitchTrack.localPrintedRules(labels, raw, width, height,
+                head.centerX, head.minX, head.maxX, bottom, gap);
+        if (normalized == null || source == null
+                || Math.abs(normalized[0] - source[0]) > gap * .06f
+                || Math.abs(normalized[1] - source[1]) > gap * .04f) return null;
+        return new Staff(normalized[0] - normalized[1] * 4, normalized[0], normalized[1]);
+    }
+
+    private static boolean singleRailOnBothPlanes(
+            byte[] gray,
+            byte[] raw,
+            int width,
+            int height,
+            PrintedBeamShafts.Shaft left,
+            PrintedBeamShafts.Shaft right,
+            float gap) {
+        return left != null
+                && right != null
+                && WrappedEighthTriplets.matchesRailBridge(
+                        gray, width, height, left, right, gap, true)
+                && WrappedEighthTriplets.matchesRailBridge(
+                        raw, width, height, left, right, gap, true);
+    }
+
+    private static PrintedBeamShafts.Shaft downShaft(
+            byte[] gray,
+            int width,
+            int height,
+            Component head,
+            float gap,
+            PrintedBeamShafts.Budget budget) {
+        var shafts =
+                PrintedBeamShafts.at(gray, width, height, head.centerX, head.centerY, gap, budget);
+        return shafts.size() == 1 && shafts.get(0).direction() == 1 ? shafts.get(0) : null;
+    }
+
+    private static boolean shortUpperSpaceLedger(
+            byte[] gray,
+            int width,
+            int height,
+            Component head,
+            int shaftX,
+            float expected,
+            float gap,
+            boolean touchesBody) {
+        int left = shaftX + Math.round(gap * .28f);
+        int right = Math.round(head.centerX + gap * .45f);
+        int flank = Math.round(gap * .42f);
+        int radius = Math.round(gap * .20f);
+        int mid = Math.round(expected);
+        if (left < 0
+                || right >= width
+                || right - left + 1 < gap * .70f
+                || mid - radius - flank < 0
+                || mid + radius + flank >= height) return false;
+        for (int y = mid - radius; y <= mid + radius; y++) {
+            if ((gray[y * width + shaftX] & 255) >= 165
+                    || !shortLedgerRule(gray, width, y, head, gap)) continue;
+            int along = 0, clear = 0;
+            for (int x = left; x <= right; x++) {
+                if ((gray[y * width + x] & 255) < 165) along++;
+                if ((gray[(y + flank) * width + x] & 255) >= 210
+                        && (touchesBody || (gray[(y - flank) * width + x] & 255) >= 210)) clear++;
+            }
+            int count = right - left + 1;
+            if (along >= count * .90f && clear >= count * .86f) return true;
+        }
+        return false;
+    }
+
+    /** A high chord sixth can cover two inner ledger rules with its lower head. */
+    private static boolean sharedWideUpperLedgerChord(
+            byte[] labels,
+            byte[] gray,
+            byte[] raw,
+            int width,
+            int height,
+            Component head,
+            Staff physical,
+            Staff owner,
+            List<Staff> staffs,
+            List<Component> heads) {
+        float gap = physical.pitchGap;
+        if (raw == null
+                || owner.count != 1
+                || gap < 12
+                || gap > 26
+                || Math.abs(physical.pitchBottom - owner.pitchBottom) > gap
+                || head.centerY > physical.top - gap * 3.8f) return false;
+        float position = (physical.pitchBottom - head.centerY) / (gap * .5f);
+        int upperStep = Math.round(position);
+        if (upperStep < 16
+                || upperStep > 20
+                || upperStep % 2 != 0
+                || Math.abs(position - upperStep) > .34f
+                || !filledBeamEndpointCore(gray, width, height, head, gap)
+                || !filledBeamEndpointCore(raw, width, height, head, gap)
+                || !hasLedgerInk(gray, width, height, head, gap, false)
+                || !hasLedgerInk(raw, width, height, head, gap, false)
+                || competingPrintedCore(labels, gray, width, height, head, physical, staffs))
+            return false;
+        int[] shaft = attachedRawStem(gray, width, height, head, gap, 2, 170);
+        int[] printedShaft = attachedRawStem(raw, width, height, head, gap, 2, 170);
+        if (shaft == null
+                || shaft[2] != 1
+                || !sameDownwardLedgerShaft(shaft, printedShaft)
+                || Math.abs(shaft[0] - head.minX) > gap * .22f
+                || shaft[1] < physical.top + gap * 1.8f
+                || shaft[1] > physical.bottom + gap * .6f) return false;
+
+        Component lower = null;
+        for (var peer : heads) {
+            float lowerPosition = (physical.pitchBottom - peer.centerY) / (gap * .5f);
+            if (Math.abs(peer.centerX - head.centerX) > gap * .2f
+                    || Math.abs(lowerPosition - (upperStep - 5)) > .40f
+                    || !filledBeamEndpointCore(gray, width, height, peer, gap)
+                    || !filledBeamEndpointCore(raw, width, height, peer, gap)
+                    || staffForHead(labels, gray, width, height, staffs, peer) != owner
+                    || !sameDownwardLedgerShaft(
+                            shaft, attachedRawStem(gray, width, height, peer, gap, 2, 170))
+                    || !sameDownwardLedgerShaft(
+                            printedShaft, attachedRawStem(raw, width, height, peer, gap, 2, 170)))
+                continue;
+            if (lower != null) return false;
+            lower = peer;
+        }
+        if (lower == null) return false;
+        int witnessed = 0;
+        int highestLedger = (upperStep - 8) / 2;
+        for (int rule = 1; rule < highestLedger; rule++) {
+            float row = physical.top - rule * gap;
+            if (row >= lower.minY - gap * .16f && row <= lower.maxY + gap * .16f) continue;
+            if (!finiteStemsideLedger(gray, width, height, head.centerX, shaft[0], row, gap)
+                    || !finiteStemsideLedger(
+                            raw, width, height, head.centerX, printedShaft[0], row, gap))
+                return false;
+            witnessed++;
+        }
+        return witnessed >= 2
+                && (shaft[1] >= physical.top + gap * 2.2f
+                        || shorterLedgerSixthHasBeamBoundary(
+                                labels, gray, raw, width, height, head, physical, owner, staffs, heads)
+                        || upperStep == 20 && widelySpacedLedgerSixthAfterBarline(
+                                labels, gray, raw, width, height, head, physical, owner, staffs, heads));
+    }
+
+    /** The highest head of a short shared stem can begin a widely spaced beamed group. */
+    private static boolean widelySpacedLedgerSixthAfterBarline(
+            byte[] labels, byte[] gray, byte[] raw, int width, int height, Component head,
+            Staff physical, Staff owner, List<Staff> staffs, List<Component> heads) {
+        float gap = physical.pitchGap;
+        Component before = null;
+        Component after = null;
+        for (var peer : heads) {
+            float dx = peer.centerX - head.centerX;
+            if ((dx < 0 ? dx > -gap * 3.8f || dx < -gap * 6.0f
+                        : dx < gap * 3.2f || dx > gap * 4.6f)
+                    || Math.abs((physical.pitchBottom - peer.centerY) * 2 / gap - 19) > .38f
+                    || !filledBeamEndpointCore(gray, width, height, peer, gap)
+                    || !filledBeamEndpointCore(raw, width, height, peer, gap)
+                    || staffForHead(labels, gray, width, height, staffs, peer) != owner) continue;
+            if (dx < 0 && (before == null || peer.centerX > before.centerX)) before = peer;
+            if (dx > 0 && (after == null || peer.centerX < after.centerX)) after = peer;
+        }
+        if (before == null || after == null
+                || !rightDoubleRailsAfterBarline(gray, width, height, before, head, after, physical)
+                || !rightDoubleRailsAfterBarline(raw, width, height, before, head, after, physical))
+            return false;
+
+        float ledgerY = physical.pitchBottom - 10 * gap;
+        float normalized = printedLedgerLine(gray, width, height, head, ledgerY, gap, true);
+        float original = printedLedgerLine(raw, width, height, head, ledgerY, gap, true);
+        return Float.isFinite(normalized) && Float.isFinite(original)
+                && Math.abs(normalized - original) <= .12f * gap;
+    }
+
+    private static boolean rightDoubleRailsAfterBarline(
+            byte[] gray, int width, int height, Component before, Component head,
+            Component after, Staff staff) {
+        float gap = staff.pitchGap;
+        var budget = new PrintedBeamShafts.Budget(100_000);
+        var left = downShaft(gray, width, height, before, gap, budget);
+        var shaft = downShaft(gray, width, height, head, gap, budget);
+        var right = downShaft(gray, width, height, after, gap, budget);
+        if (left == null || shaft == null || right == null
+                || !WrappedEighthTriplets.matchesBeamRails(gray, width, height, shaft, right, gap, 2)
+                || WrappedEighthTriplets.matchesBeamRails(gray, width, height, left, shaft, gap, 2))
+            return false;
+        int from = Math.max(left.right() + Math.round(gap), (int) Math.ceil(shaft.left() - gap * 3.4f));
+        int to = (int) Math.floor(shaft.left() - gap * 1.2f);
+        int top = Math.round(staff.top), bottom = Math.round(staff.bottom);
+        if (top < 0 || bottom >= height) return false;
+        for (int x = from; x <= to; x++)
+            if (OmrMeasurePostProcessor.verticalRuleAt(gray, width, x, top, bottom, gap)) return true;
+        return false;
+    }
+
+    /** At a beam group edge, both paper planes can establish the shorter shared stem. */
+    private static boolean shorterLedgerSixthHasBeamBoundary(
+            byte[] labels, byte[] gray, byte[] raw, int width, int height, Component head,
+            Staff physical, Staff owner, List<Staff> staffs, List<Component> heads) {
+        float gap = physical.pitchGap;
+        Component before = null, after = null;
+        for (var peer : heads) {
+            float dx = peer.centerX - head.centerX;
+            if (Math.abs(dx) < gap * 1.55f
+                    || Math.abs(dx) > gap * 2.8f
+                    || Math.abs(peer.centerY - head.centerY) > gap * 1.45f
+                    || !filledBeamEndpointCore(gray, width, height, peer, gap)
+                    || !filledBeamEndpointCore(raw, width, height, peer, gap)
+                    || staffForHead(labels, gray, width, height, staffs, peer) != owner) continue;
+            if (dx < 0 && (before == null || peer.centerX > before.centerX)) before = peer;
+            if (dx > 0 && (after == null || peer.centerX < after.centerX)) after = peer;
+        }
+        return before != null && after != null
+                && ((separatedDownstemDoubleBeam(gray, width, height, before, head, after, physical)
+                        && separatedDownstemDoubleBeam(raw, width, height, before, head, after, physical))
+                        || (separatedDownstemDoubleBeam(gray, width, height, after, head, before, physical)
+                                && separatedDownstemDoubleBeam(raw, width, height, after, head, before, physical)));
+    }
+
+    /** A shared octave shaft and both adjacent double beams retain a high note crossed by long ledgers. */
+    private static boolean sharedBeamedUpperOctave(
+            byte[] labels, byte[] gray, byte[] raw, int width, int height, Component head,
+            Staff physical, Staff owner, List<Staff> staffs, List<Component> heads,
+            boolean legacyJoinedSupport) {
+        float gap = physical.pitchGap;
+        if (raw == null || owner.count != 1
+                || gap < 12 || gap > 26
+                || Math.abs(physical.pitchBottom - owner.pitchBottom) > gap
+                || !filledBeamEndpointCore(gray, width, height, head, gap)
+                || !filledBeamEndpointCore(raw, width, height, head, gap)
+                || !hasLedgerInk(gray, width, height, head, gap, false)
+                || !hasLedgerInk(raw, width, height, head, gap, false)) return false;
+        float phase = (physical.pitchBottom - head.centerY) / (gap * .5f);
+        int step = Math.round(phase);
+        if (step < 16 || step > 20 || (step & 1) != 0 || Math.abs(phase - step) > .36f) return false;
+        int[] shaft = attachedRawStem(gray, width, height, head, gap, 2, 170);
+        int[] rawShaft = attachedRawStem(raw, width, height, head, gap, 2, 170);
+        if (shaft == null || shaft[2] != 1 || !sameDownwardLedgerShaft(shaft, rawShaft)
+                || Math.abs(shaft[0] - head.minX) > gap * .24f
+                || shaft[1] < physical.top + gap * 1.8f || shaft[1] > physical.bottom + gap * .6f)
+            return false;
+        int ledgers = (step - 8) / 2;
+        if (!highSoloStaffLedgerShaft(gray, width, height, head, physical, shaft, ledgers)
+                || !highSoloStaffLedgerShaft(raw, width, height, head, physical, rawShaft, ledgers))
+            return false;
+
+        Component lower = null, before = null, after = null;
+        for (Component peer : heads) {
+            float dx = peer.centerX - head.centerX, dy = peer.centerY - head.centerY;
+            if (Math.abs(dx) <= gap * .22f && Math.abs(dy - gap * 3.5f) <= gap * .22f
+                    && FilledSparseBeamHead.completeInterior(
+                            gray, width, height, peer.centerX, peer.centerY, gap)
+                    && FilledSparseBeamHead.completeInterior(
+                            raw, width, height, peer.centerX, peer.centerY, gap)
+                    && sameDownwardLedgerShaft(
+                            shaft, attachedRawStem(gray, width, height, peer, gap, 2, 170))
+                    && sameDownwardLedgerShaft(
+                            rawShaft, attachedRawStem(raw, width, height, peer, gap, 2, 170))) {
+                if (lower != null) return false;
+                lower = peer;
+            } else if (Math.abs(dx) >= gap * 1.4f && Math.abs(dx) <= gap * 2.8f
+                    && Math.abs(dy) <= gap * 2.1f) {
+                if (dx < 0 && (before == null || peer.centerX > before.centerX)) before = peer;
+                if (dx > 0 && (after == null || peer.centerX < after.centerX)) after = peer;
+            }
+        }
+        if (lower == null || before == null || after == null) return false;
+        if (legacyJoinedSupport
+                && doubleBeamOnBothSides(gray, width, height, before, head, after, gap)
+                && doubleBeamOnBothSides(raw, width, height, before, head, after, gap)) return true;
+        return !competingPrintedCore(labels, gray, width, height, head, physical, staffs)
+                && separatedDownstemDoubleBeam(gray, width, height, before, head, after, physical)
+                && separatedDownstemDoubleBeam(raw, width, height, before, head, after, physical);
+    }
+
+    /** The outside shaft remains separate from the two connected shafts at a double-beam edge. */
+    private static boolean separatedDownstemDoubleBeam(
+            byte[] plane, int width, int height,
+            Component outside, Component head, Component inside, Staff staff) {
+        float gap = staff.pitchGap;
+        var budget = new PrintedBeamShafts.Budget(100_000);
+        var unconnected = downShaft(plane, width, height, outside, gap, budget);
+        var middle = downShaft(plane, width, height, head, gap, budget);
+        var connected = downShaft(plane, width, height, inside, gap, budget);
+        if (unconnected == null || middle == null || connected == null) return false;
+        boolean first = outside.centerX < head.centerX;
+        if (!WrappedEighthTriplets.matchesBeamRails(plane, width, height,
+                        first ? middle : connected, first ? connected : middle, gap, 2)
+                || WrappedEighthTriplets.matchesBeamRails(plane, width, height,
+                        first ? unconnected : middle, first ? middle : unconnected, gap, 2)) return false;
+        var left = first ? unconnected : middle;
+        var right = first ? middle : unconnected;
+        int margin = Math.round(gap * .5f);
+        int begin = left.right() + margin, finish = right.left() - margin;
+        int top = Math.round(Math.min(left.endY(), right.endY()) - gap * 1.2f);
+        int bottom = Math.round(Math.max(left.endY(), right.endY()) + gap * .45f);
+        if (begin < 0 || finish >= width || top < 0 || bottom >= height
+                || finish - begin + 1 < gap * .60f) return false;
+        int clearColumns = 0;
+        for (int x = begin; x <= finish; x++) {
+            int offStaff = 0, clear = 0;
+            for (int y = top; y <= bottom; y++) {
+                float line = (staff.pitchBottom - y) / gap;
+                if (line > -.22f && line < 4.22f && Math.abs(line - Math.round(line)) < .22f)
+                    continue;
+                offStaff++;
+                if ((plane[y * width + x] & 255) >= 205) clear++;
+            }
+            if (offStaff >= gap && clear >= offStaff * .93f) clearColumns++;
+        }
+        return clearColumns >= Math.ceil(gap * .60f);
+    }
+
+    /** Promote a filled terminal octave only when both planes give it two leftward rails. */
+    private static boolean separatedTerminalOctaveRails(
+            byte[] gray, byte[] raw, int width, int height,
+            Component head, Staff physical, List<Component> heads) {
+        float gap = physical.pitchGap;
+        if (raw == null || gap < 12 || gap > 24
+                || head.centerY < physical.top - gap * 7
+                || head.centerY > physical.top - gap * 1.1f
+                || !filledBeamEndpointCore(gray, width, height, head, gap)
+                || !filledBeamEndpointCore(raw, width, height, head, gap)) return false;
+        var shaft = attachedRawStem(gray, width, height, head, gap, 2, 170);
+        var printed = attachedRawStem(raw, width, height, head, gap, 2, 170);
+        if (shaft == null || shaft[2] != 1 || !sameDownwardLedgerShaft(shaft, printed))
+            return false;
+        Component mate = null;
+        for (var peer : heads) {
+            if (Math.abs(peer.centerX - head.centerX) > gap * .22f
+                    || Math.abs(Math.abs(peer.centerY - head.centerY) - gap * 3.5f) > gap * .25f
+                    || !filledBeamEndpointCore(gray, width, height, peer, gap)
+                    || !filledBeamEndpointCore(raw, width, height, peer, gap)
+                    || !sameDownwardLedgerShaft(
+                            shaft, attachedRawStem(gray, width, height, peer, gap, 2, 170))
+                    || !sameDownwardLedgerShaft(
+                            printed, attachedRawStem(raw, width, height, peer, gap, 2, 170))) continue;
+            if (mate != null) return false;
+            mate = peer;
+        }
+        if (mate == null) return false;
+        var upper = head.centerY < mate.centerY ? head : mate;
+        float step = (physical.pitchBottom - upper.centerY) / (gap * .5f);
+        if (step < 17.5f || step > 21.3f || Math.abs(step - Math.round(step)) > .35f)
+            return false;
+        Component before = null, after = null;
+        for (var peer : heads) {
+            float dx = peer.centerX - upper.centerX;
+            if (Math.abs(dx) < gap * 1.50f || Math.abs(dx) > gap * 2.65f
+                    || Math.abs(peer.centerY - upper.centerY) > gap * 2.0f
+                    || !filledBeamEndpointCore(gray, width, height, peer, gap)
+                    || !filledBeamEndpointCore(raw, width, height, peer, gap)) continue;
+            if (dx < 0 && (before == null || before.centerX < peer.centerX)) before = peer;
+            if (dx > 0 && (after == null || after.centerX > peer.centerX)) after = peer;
+        }
+        return before != null && after != null
+                && separatedDownstemDoubleBeam(gray, width, height, after, upper, before, physical)
+                && separatedDownstemDoubleBeam(raw, width, height, after, upper, before, physical);
+    }
+
+    private static boolean doubleBeamOnBothSides(
+            byte[] plane, int width, int height, Component a, Component b, Component c, float gap) {
+        var budget = new PrintedBeamShafts.Budget(200_000);
+        var left = downShaft(plane, width, height, a, gap, budget);
+        var middle = downShaft(plane, width, height, b, gap, budget);
+        var right = downShaft(plane, width, height, c, gap, budget);
+        return left != null && middle != null && right != null
+                && WrappedEighthTriplets.matchesBeamRails(plane, width, height, left, middle, gap, 2)
+                && WrappedEighthTriplets.matchesBeamRails(plane, width, height, middle, right, gap, 2);
+    }
+
+
+    private static boolean sameDownwardLedgerShaft(int[] own, int[] other) {
+        return other != null
+                && other[2] == 1
+                && Math.abs(own[0] - other[0]) <= 2
+                && Math.abs(own[1] - other[1]) <= 2;
+    }
+
+    /** A connected downward sixth can carry abbreviated ledgers near the two head outlines. */
+    private static boolean sharedBeamedUpperSixthLedger(
+            byte[] labels,
+            byte[] gray,
+            byte[] raw,
+            int width,
+            int height,
+            Component head,
+            Staff physical,
+            Staff owner,
+            List<Staff> staffs,
+            List<Component> heads) {
+        float gap = physical.pitchGap;
+        float position = (physical.pitchBottom - head.centerY) * 2 / gap;
+        int step = Math.round(position);
+        boolean highSpace = step == 19;
+        if (raw == null
+                || owner.count != 1
+                || gap < 12
+                || gap > 26
+                || (!highSpace && (step < 12 || step > 15))
+                || Math.abs(position - step) > (highSpace ? .48f : .35f)
+                || Math.abs(physical.pitchBottom - owner.pitchBottom) > gap
+                || !filledBeamEndpointCore(gray, width, height, head, gap)
+                || !filledBeamEndpointCore(raw, width, height, head, gap)
+                || competingPrintedCore(labels, gray, width, height, head, physical, staffs))
+            return false;
+
+        int[] own = attachedRawStem(gray, width, height, head, gap, 2, 170);
+        int[] printed = attachedRawStem(raw, width, height, head, gap, 2, 170);
+        if (own == null
+                || own[2] != 1
+                || !sameDownwardLedgerShaft(own, printed)
+                || Math.abs(own[0] - head.minX) > gap * .22f
+                || own[1] < physical.top + gap * (highSpace ? 2.1f : 2.2f)
+                || own[1] > physical.bottom + gap * .6f) return false;
+
+        Component lower = null;
+        for (var peer : heads) {
+            float lowerPosition = (physical.pitchBottom - peer.centerY) * 2 / gap;
+            if (Math.abs(peer.centerX - head.centerX) > gap * .20f
+                    || Math.abs(lowerPosition - (step - 5)) > .36f
+                    || !filledBeamEndpointCore(gray, width, height, peer, gap)
+                    || !filledBeamEndpointCore(raw, width, height, peer, gap)
+                    || staffForHead(labels, gray, width, height, staffs, peer) != owner
+                    || !sameDownwardLedgerShaft(
+                            own, attachedRawStem(gray, width, height, peer, gap, 2, 170))
+                    || !sameDownwardLedgerShaft(
+                            printed, attachedRawStem(raw, width, height, peer, gap, 2, 170)))
+                continue;
+            if (lower != null) return false;
+            lower = peer;
+        }
+        if (lower == null) return false;
+
+        for (int ledger = 10; ledger <= step; ledger += 2) {
+            float row = physical.pitchBottom - ledger * gap * .5f;
+            Component onLedger = ledger == step ? head : ledger == step - 5 ? lower : null;
+            if (onLedger != null) {
+                // At a high sixth the lower head's ledger can meet the preceding
+                // chord's rule. The matching peaks on both flanks still identify its row.
+                float corrected = printedLedgerLine(gray, width, height, onLedger, row, gap, !highSpace);
+                float source = printedLedgerLine(raw, width, height, onLedger, row, gap, !highSpace);
+                if (!Float.isFinite(corrected)
+                        || !Float.isFinite(source)
+                        || Math.abs(corrected - source) > gap * .12f) return false;
+                continue;
+            }
+            boolean touchesHead = ledger == step - 1;
+            if (!shortUpperSpaceLedger(gray, width, height, head, own[0], row, gap, touchesHead)
+                    || !shortUpperSpaceLedger(
+                            raw, width, height, head, printed[0], row, gap, touchesHead))
+                return false;
+        }
+
+        var budget = new PrintedBeamShafts.Budget(200_000);
+        var shaft = downShaft(gray, width, height, head, gap, budget);
+        var rawShaft = downShaft(raw, width, height, head, gap, budget);
+        if (shaft == null
+                || rawShaft == null
+                || Math.abs(shaft.left() - own[0]) > 2
+                || Math.abs(rawShaft.left() - printed[0]) > 2
+                || Math.abs(shaft.endY() - own[1]) > 2
+                || Math.abs(rawShaft.endY() - printed[1]) > 2) return false;
+        // Far above the staff, follow the lower head into the previous column's
+        // double rail. Its filled body stays distinct from the upper ledger ends.
+        float neighborY = highSpace ? lower.centerY : head.centerY;
+        for (var peer : heads) {
+            float dx = peer.centerX - head.centerX;
+            if (highSpace && dx >= 0
+                    || Math.abs(dx) < gap * 1.5f
+                    || Math.abs(dx) > gap * 2.4f
+                    || Math.abs(peer.centerY - neighborY) > gap * (highSpace ? 1.2f : 1.6f)
+                    || staffForHead(labels, gray, width, height, staffs, peer) != owner
+                    || !filledBeamEndpointCore(gray, width, height, peer, gap)
+                    || !filledBeamEndpointCore(raw, width, height, peer, gap)) continue;
+            var other = downShaft(gray, width, height, peer, gap, budget);
+            var rawOther = downShaft(raw, width, height, peer, gap, budget);
+            if (other == null
+                    || rawOther == null
+                    || Math.abs(other.left() - rawOther.left()) > 2
+                    || Math.abs(other.endY() - rawOther.endY()) > 2) continue;
+            if (WrappedEighthTriplets.matchesBeamRails(
+                            gray,
+                            width,
+                            height,
+                            dx < 0 ? other : shaft,
+                            dx < 0 ? shaft : other,
+                            gap,
+                            2)
+                    && WrappedEighthTriplets.matchesBeamRails(
+                            raw,
+                            width,
+                            height,
+                            dx < 0 ? rawOther : rawShaft,
+                            dx < 0 ? rawShaft : rawOther,
+                            gap,
+                            2)) return true;
+        }
+        return false;
     }
 
     /** A compact downstem chord can have ledgers aligned to its shaft rather than the oval rim. */
@@ -15506,6 +17284,43 @@ final class OmrScoreInterpreter {
             }
         }
         return rejected;
+    }
+
+
+    private static Map<Component, Component> highLedgerHookFragments(
+            byte[] gray, byte[] original, int width, int height, List<Component> heads, List<Staff> staffs) {
+        Map<Component, Component> owned = new java.util.IdentityHashMap<>();
+        if (gray == null || original == null) return owned;
+        for (var fragment : heads) {
+            var staff = nearestHeadStaff(staffs, fragment.centerY);
+            if (staff == null || staff.count != 1) continue;
+            float gap = staff.gap, offset = fragment.centerY - staff.top;
+            if (gap < 10 || gap > 27 || offset < gap * .16f || offset > gap * .63f
+                    || fragment.area > gap * gap * .38f
+                    || fragment.maxX - fragment.minX + 1 > gap * .97f
+                    || fragment.maxY - fragment.minY + 1 > gap * .76f) continue;
+            var following = new ArrayList<Component>();
+            var previous = new ArrayList<Component>();
+            for (var note : heads) {
+                if (note.area < gap * gap * .80f || note.maxX - note.minX + 1 < gap) continue;
+                float advance = note.centerX - fragment.centerX, depth = fragment.centerY - note.centerY;
+                if (depth < gap * 3.1f || depth > gap * 4.15f) continue;
+                if (advance >= gap * .98f && advance <= gap * 1.22f) following.add(note);
+                if (advance >= -gap * 4.35f && advance <= -gap * 3.9f) previous.add(note);
+            }
+            if (following.size() != 1 || previous.size() != 1) continue;
+            var owner = following.get(0);
+            var peer = previous.get(0);
+            if (Math.abs(owner.centerY - peer.centerY) > gap * .22f) continue;
+            if (OwnedTertiaryBeamlets.ownsHighLedgerHookOnStaffLine(
+                            gray, width, height, fragment.centerX, fragment.centerY,
+                            owner.centerX, owner.centerY, peer.centerX, peer.centerY, gap, staff.top)
+                    && OwnedTertiaryBeamlets.ownsHighLedgerHookOnStaffLine(
+                            original, width, height, fragment.centerX, fragment.centerY,
+                            owner.centerX, owner.centerY, peer.centerX, peer.centerY, gap, staff.top))
+                owned.put(fragment, owner);
+        }
+        return owned;
     }
 
     private static Map<Component, Component> compactBackwardHookFragments(
@@ -18123,6 +19938,113 @@ final class OmrScoreInterpreter {
         return reference;
     }
 
+    /** A detached dot can be centered on the end of a long downstem far from its notehead. */
+    private static Map<Component, Component> shaftEndStaccatoHeads(
+            byte[] labels, byte[] gray, byte[] source, int width, int height,
+            List<Component> heads, List<Staff> staffs, List<MeasureRegion> measures) {
+        if (gray == null || source == null || gray.length != source.length) return Map.of();
+        var result = new java.util.IdentityHashMap<Component, Component>();
+        var budget = new PrintedBeamShafts.Budget(650_000);
+        for (Component dot : heads) {
+            Staff staff = nearestHeadStaff(staffs, dot.centerY);
+            if (staff == null || staff.count != 1 || staff.gap < 10 || staff.gap > 25) continue;
+            float gap = staff.gap;
+            int horizontal = dot.maxX - dot.minX + 1, vertical = dot.maxY - dot.minY + 1;
+            if (horizontal < gap * .32f || horizontal > gap * .66f
+                    || vertical < gap * .32f || vertical > gap * .66f
+                    || dot.area > gap * gap * .27f
+                    || !rawRoundArticulationDot(labels, gray, width, height, dot, gap)
+                    || !rawRoundArticulationDot(labels, source, width, height, dot, gap)) continue;
+            int region = containingMeasureForStaff(
+                    measures, dot.centerX / width, dot.centerY / height, staff, height);
+            if (region < 0) continue;
+            Component winner = null;
+            for (Component head : heads) {
+                float distance = dot.centerY - head.centerY;
+                if (head == dot || distance < gap * 4.35f || distance > gap * 5.55f
+                        || Math.abs(dot.centerX - head.centerX) > gap * .9f
+                        || nearestHeadStaff(staffs, head.centerY) != staff
+                        || containingMeasureForStaff(
+                                measures, head.centerX / width, head.centerY / height, staff, height) != region
+                        || !filledBeamEndpointCore(source, width, height, head, gap)) continue;
+                int[] tip = matchingStaccatoShaft(gray, source, width, height, head, gap, budget);
+                if (tip == null || Math.abs(tip[0] - dot.centerX) > gap * .2f
+                        || dot.centerY - tip[1] < gap * .55f || dot.centerY - tip[1] > gap * .94f)
+                    continue;
+                if (!staccatoAfterOwnedBeam(
+                        gray, source, width, height, heads, staff, head, tip, gap, budget)) continue;
+                if (winner != null) {
+                    winner = null;
+                    break;
+                }
+                winner = head;
+            }
+            if (winner != null) result.put(dot, winner);
+        }
+        return budget.refused() ? Map.of() : result;
+    }
+
+    private static int[] matchingStaccatoShaft(
+            byte[] gray, byte[] source, int width, int height, Component head,
+            float gap, PrintedBeamShafts.Budget budget) {
+        var corrected = PrintedBeamShafts.at(gray, width, height, head.centerX, head.centerY, gap, budget);
+        if (corrected.size() != 1 || corrected.get(0).direction() != 1) return null;
+        var raw = PrintedBeamShafts.at(source, width, height, head.centerX, head.centerY, gap, budget);
+        if (raw.size() != 1 || !corrected.get(0).equals(raw.get(0))) return null;
+        var shaft = raw.get(0);
+        return new int[] {(shaft.left() + shaft.right()) / 2, shaft.endY(), 1};
+    }
+
+    private static boolean staccatoAfterOwnedBeam(
+            byte[] gray, byte[] source, int width, int height, List<Component> heads,
+            Staff staff, Component owner, int[] end, float gap, PrintedBeamShafts.Budget budget) {
+        int connected = 0;
+        for (var previous : heads) {
+            float separation = owner.centerX - previous.centerX;
+            if (separation < gap * 1.55f || separation > gap * 2.55f
+                    || Math.abs(previous.centerY - owner.centerY) > gap * 1.45f
+                    || previous.centerY < staff.top - gap * 2.2f
+                    || previous.centerY > staff.bottom
+                    || !filledBeamEndpointCore(source, width, height, previous, gap)) continue;
+            int[] start = matchingStaccatoShaft(gray, source, width, height, previous, gap, budget);
+            if (start == null) continue;
+            int span = end[0] - start[0];
+            if (span < gap * 1.55f || span > gap * 2.6f) continue;
+            float slope = (end[1] - start[1]) / (float) span;
+            if (Math.abs(slope) < .10f || Math.abs(slope) > .45f) continue;
+            for (int depth = Math.round(gap * .2f); depth <= Math.round(gap * .42f); depth++) {
+                int margin = Math.max(2, Math.round(gap * .22f));
+                int left = start[0] + margin, right = end[0] - margin;
+                if (continuousBeamRail(gray, width, height, start, slope, left, right, depth)
+                        && continuousBeamRail(source, width, height, start, slope, left, right, depth)
+                        && beamEndsOnPaper(gray, source, width, height, end, gap, slope, depth)) {
+                    connected++;
+                    break;
+                }
+            }
+        }
+        return connected == 1;
+    }
+
+    private static boolean beamEndsOnPaper(
+            byte[] gray, byte[] source, int width, int height,
+            int[] tip, float gap, float slope, int depth) {
+        int clear = 0;
+        for (int offset = Math.round(gap * .25f); offset <= Math.round(gap * .8f); offset++) {
+            int x = tip[0] + offset;
+            int y = Math.round(tip[1] + slope * offset) - depth;
+            if (x >= width || y < 1 || y >= height - 1) return false;
+            boolean blank = true;
+            for (int d = -1; d <= 1; d++) {
+                int pixel = (y + d) * width + x;
+                if ((gray[pixel] & 255) < 185 || (source[pixel] & 255) < 185) blank = false;
+            }
+            clear = blank ? clear + 1 : 0;
+            if (clear >= Math.max(3, Math.round(gap * .25f))) return true;
+        }
+        return false;
+    }
+
     /** A small isolated dot above/below a full head is an articulation, not another pitch. */
     private static List<Component> articulationDotHeads(
             byte[] labels,
@@ -19034,6 +20956,167 @@ final class OmrScoreInterpreter {
                         && fadedEnclosed >= Math.max(8, Math.round(w * h * .025f));
     }
 
+    /** A two-plane compact cross must belong to a single, independently stemmed note. */
+    private static java.util.Set<Object> verifiedPrintedDoubleSharps(
+            byte[] labels,
+            byte[] gray,
+            byte[] source,
+            int width,
+            int height,
+            List<MeasureRegion> measures,
+            List<Staff> staffs,
+            List<AccidentalCandidate> accidentals,
+            List<Component> heads,
+            List<ScoreNoteEvent> notes,
+            Map<Object, WrittenAccidentalChoice> choices,
+            List<AccidentalCandidate> staffBoundCrosses) {
+        var result =
+                java.util.Collections.newSetFromMap(
+                        new java.util.IdentityHashMap<Object, Boolean>());
+        if (labels == null
+                || gray == null
+                || source == null
+                || labels.length != gray.length
+                || gray.length != (long) width * height
+                || source.length != gray.length
+                || heads.size() != notes.size()) return result;
+        if (!staffBoundCrosses.isEmpty()) {
+            accidentals = new ArrayList<>(accidentals);
+            accidentals.addAll(staffBoundCrosses);
+        }
+        for (int i = 0; i < notes.size(); i++) {
+            var note = notes.get(i);
+            var head = heads.get(i);
+            if (head == null
+                    || note.kind() != ScoreNoteEvent.Kind.PITCHED
+                    || note.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_DOUBLE_SHARP
+                    || note.visualSize() != ScoreNoteEvent.VisualSize.FULL
+                    || note.stemDirection() == 0
+                    || note.crossStaffBeam()
+                    || note.harmonicSemitones() != 0
+                    || note.tiedFromPrevious()
+                    || note.measureIndex() < 0
+                    || note.measureIndex() >= measures.size()) continue;
+            var staff = nearestHeadStaff(staffs, head.centerY);
+            if (staff == null) continue;
+            float gap = staff.gap;
+            if (head.maxX - head.minX + 1 < .85f * gap
+                    || head.area < .55f * gap * gap
+                    || attachedRawStem(gray, width, height, head, gap) == null
+                    || attachedRawStem(source, width, height, head, gap) == null) continue;
+            float left = measures.get(note.measureIndex()).left() * width;
+            Component owned = null;
+            var matchingCrops = new ArrayList<Component>();
+            for (var accidental : accidentals) {
+                var cross = accidental.component;
+                if (cross.minX < Math.max(0, left)
+                        || cross.minY < 0
+                        || cross.maxX >= width
+                        || cross.maxY >= height
+                        || !doubleSharpBesideHead(cross, head, gap)
+                        || !DoubleSharpGlyph.matchesRaw(
+                                gray,
+                                width,
+                                height,
+                                cross.minX,
+                                cross.minY,
+                                cross.maxX,
+                                cross.maxY,
+                                gap)
+                        || !DoubleSharpGlyph.matchesRaw(
+                                source,
+                                width,
+                                height,
+                                cross.minX,
+                                cross.minY,
+                                cross.maxX,
+                                cross.maxY,
+                                gap)
+                        || !hasDoubleSharpGlyphSupport(labels, gray, source, width, cross, gap))
+                    continue;
+                matchingCrops.add(cross);
+                if (owned == null || doubleSharpCropArea(cross) > doubleSharpCropArea(owned))
+                    owned = cross;
+            }
+            if (owned == null) continue;
+            var outer = doubleSharpBounds(owned);
+            boolean conflictingCrops = false;
+            for (var crop : matchingCrops) {
+                if (crop != owned
+                        && !sameDoubleSharpInk(owned, crop)
+                        && !DoubleSharpGlyph.sameNestedInk(
+                                gray, source, width, height, outer, doubleSharpBounds(crop), gap)) {
+                    conflictingCrops = true;
+                    break;
+                }
+            }
+            if (conflictingCrops) continue;
+            var pick = choices.get(head);
+            // The ordinary picker can see several labelled unions of one complete cross.
+            if (pick == null
+                    || pick.head() != head
+                    || pick.ambiguous()
+                            && (pick.accidental() != ScoreNoteEvent.ACCIDENTAL_DOUBLE_SHARP
+                                    || !(pick.glyph() instanceof Component chosen)
+                                    || (!sameDoubleSharpInk(chosen, owned)
+                                            && !matchingCrops.contains(chosen)))) continue;
+            boolean unique = true;
+            for (int j = 0; j < notes.size(); j++) {
+                if (j == i || heads.get(j) == null) continue;
+                var other = notes.get(j);
+                if (other.kind() == ScoreNoteEvent.Kind.PITCHED
+                        && other.measureIndex() == note.measureIndex()
+                        && other.staffIndex() == note.staffIndex()
+                        && doubleSharpBesideHead(owned, heads.get(j), gap)) {
+                    unique = false;
+                    break;
+                }
+            }
+            if (unique) result.add(head);
+        }
+        return result;
+    }
+
+    private static boolean doubleSharpBesideHead(Component cross, Component head, float gap) {
+        float distance = head.minX - cross.maxX;
+        return distance >= .12f * gap
+                && distance <= 1.35f * gap
+                && Math.abs((cross.minY + cross.maxY) * .5f - head.centerY) <= .35f * gap;
+    }
+
+    private static DoubleSharpGlyph.Crop doubleSharpBounds(Component crop) {
+        return new DoubleSharpGlyph.Crop(crop.minX, crop.minY, crop.maxX, crop.maxY);
+    }
+
+    private static int doubleSharpCropArea(Component crop) {
+        return (crop.maxX - crop.minX + 1) * (crop.maxY - crop.minY + 1);
+    }
+
+    private static boolean sameDoubleSharpInk(Component first, Component second) {
+        int x = Math.min(first.maxX, second.maxX) - Math.max(first.minX, second.minX) + 1;
+        int y = Math.min(first.maxY, second.maxY) - Math.max(first.minY, second.minY) + 1;
+        return x > 0
+                && y > 0
+                && x * y
+                        >= .75f * Math.max(doubleSharpCropArea(first), doubleSharpCropArea(second));
+    }
+
+    private static boolean hasDoubleSharpGlyphSupport(
+            byte[] labels, byte[] gray, byte[] source, int width, Component cross, float gap) {
+        int members = 0;
+        for (int y = cross.minY; y <= cross.maxY; y++) {
+            for (int x = cross.minX; x <= cross.maxX; x++) {
+                int index = y * width + x;
+                byte label = labels[index];
+                if ((label == OmrMeasurePostProcessor.CLEF_OR_KEY
+                                || label == OmrMeasurePostProcessor.SYMBOL)
+                        && (gray[index] & 255) < 155
+                        && (source[index] & 255) < 155) members++;
+            }
+        }
+        return members >= .28f * gap * gap;
+    }
+
     private static java.util.Set<Object> verifiedNaturalUnions(
             byte[] labels,
             byte[] gray,
@@ -19394,6 +21477,32 @@ final class OmrScoreInterpreter {
         return false;
     }
 
+    static boolean printedSharpBeforeDyad(
+            byte[] gray, int width, int height, int seam, float x, float y, float gap) {
+        int left = seam - Math.round(gap * .3f);
+        int right = Math.min(seam + Math.round(gap * 1.3f), Math.round(x - gap * .72f));
+        int top = Math.round(y - gap * 1.55f), bottom = Math.round(y + gap * 1.8f);
+        if (left < 0 || right <= left || right >= width || top < 0 || bottom >= height)
+            return false;
+        var upperHead = accidentalReferenceHead(x, y, gap);
+        return rawSharpInBounds(
+                gray, width, height, upperHead, gap, left, right, top, bottom, true, true);
+    }
+
+
+    // A fitted terminal dyad can have staggered sharps with overlapping outer envelopes.
+    // Its beam and seam independently bound these two pitch-local crops.
+    static boolean printedTerminalDyadSharp(
+            byte[] gray, int width, int height, float x, float y, float gap, boolean lower) {
+        int left = Math.round(x - gap * 2.4f);
+        int right = Math.round(x - gap * (lower ? 1.14f : .86f));
+        int top = Math.round(y - gap * 1.55f), bottom = Math.round(y + gap * 1.35f);
+        if (left < 0 || right >= width || left >= right || top < 0 || bottom >= height)
+            return false;
+        return rawSharpInBounds(gray, width, height, accidentalReferenceHead(x, y, gap), gap,
+                left, right, top, bottom, false);
+    }
+
     private static boolean rawSharpInBounds(
             byte[] gray,
             int width,
@@ -19410,6 +21519,22 @@ final class OmrScoreInterpreter {
     }
 
     private static boolean rawSharpInBounds(
+            byte[] gray,
+            int width,
+            int height,
+            Component head,
+            float gap,
+            int left,
+            int right,
+            int top,
+            int bottom,
+            boolean checkEdges,
+            boolean pairedCrossbars) {
+        return Float.isFinite(rawSharpPitchInBounds(
+                gray, width, height, head, gap, left, right, top, bottom, checkEdges, pairedCrossbars));
+    }
+
+    private static float rawSharpPitchInBounds(
             byte[] gray,
             int width,
             int height,
@@ -19483,7 +21608,7 @@ final class OmrScoreInterpreter {
                             new AccidentalCandidate(glyph, OmrMeasurePostProcessor.CLEF_OR_KEY),
                             gap);
             if (Float.isFinite(center) && Math.abs(center + top - head.centerY) < gap * .4f)
-                return true;
+                return top + center;
         }
         // Preserve the ordinary faint-ink proof before trying stronger paired-bar closing.
         for (int faintPass = 0; checkEdges && faintPass < (pairedCrossbars ? 2 : 1); faintPass++) {
@@ -19509,11 +21634,11 @@ final class OmrScoreInterpreter {
                                             glyph, OmrMeasurePostProcessor.CLEF_OR_KEY),
                                     gap);
                     if (Float.isFinite(center) && Math.abs(center + top - head.centerY) < gap * .4f)
-                        return true;
+                        return top + center;
                 }
             }
         }
-        return false;
+        return Float.NaN;
     }
 
     /**
@@ -19521,6 +21646,82 @@ final class OmrScoreInterpreter {
      * natural from both its accidental seed and the joined candidate, with an independent
      * full-sized following note as crop anchor.
      */
+    /** Suppress a notehead label on the upper-right arm of a separately owned double sharp. */
+    private static List<Component> doubleSharpArmHeads(
+            byte[] gray,
+            byte[] source,
+            int width,
+            int height,
+            List<Component> heads,
+            List<Staff> staffs,
+            List<AccidentalCandidate> accidentals) {
+        List<Component> result = new ArrayList<>();
+        if (gray == null
+                || source == null
+                || gray.length != (long) width * height
+                || source.length != gray.length) return result;
+        for (var arm : heads) {
+            var staff = nearestHeadStaff(staffs, arm.centerY);
+            if (staff == null) continue;
+            float gap = staff.gap;
+            if (arm.area > gap * gap * .38f
+                    || arm.maxX - arm.minX + 1 > gap * .8f
+                    || arm.maxY - arm.minY + 1 > gap * .8f) continue;
+            for (var accidental : accidentals) {
+                var shape = accidental.component;
+                if (accidental.label != 0
+                        || arm.minX < shape.minX
+                        || arm.maxX > shape.maxX + Math.round(gap * .10f)
+                        || arm.minY < shape.minY - Math.round(gap * .10f)
+                        || arm.maxY > shape.maxY
+                        || arm.centerX < shape.centerX + gap * .14f
+                        || arm.centerY > shape.centerY - gap * .20f) continue;
+                if (!DoubleSharpGlyph.matchesRaw(
+                                gray,
+                                width,
+                                height,
+                                shape.minX,
+                                shape.minY,
+                                shape.maxX,
+                                shape.maxY,
+                                gap)
+                        || !DoubleSharpGlyph.matchesRaw(
+                                source,
+                                width,
+                                height,
+                                shape.minX,
+                                shape.minY,
+                                shape.maxX,
+                                shape.maxY,
+                                gap)
+                        || attachedRawStem(gray, width, height, arm, gap) != null
+                        || attachedRawStem(source, width, height, arm, gap) != null) continue;
+                Component owner = null;
+                for (var head : heads) {
+                    if (head == arm
+                            || head.minX - shape.maxX < gap * .12f
+                            || head.minX - shape.maxX > gap * .95f
+                            || Math.abs(head.centerY - shape.centerY) > gap * .35f
+                            || head.area < gap * gap * .58f
+                            || head.maxX - head.minX + 1 < gap * .88f
+                            || nearestHeadStaff(staffs, head.centerY) != staff
+                            || attachedRawStem(gray, width, height, head, gap) == null
+                            || attachedRawStem(source, width, height, head, gap) == null) continue;
+                    if (owner != null) {
+                        owner = null;
+                        break;
+                    }
+                    owner = head;
+                }
+                if (owner != null) {
+                    result.add(arm);
+                    break;
+                }
+            }
+        }
+        return result;
+    }
+
     private static List<Component> naturalCrossbarHeads(
             byte[] gray,
             int width,
@@ -19608,6 +21809,18 @@ final class OmrScoreInterpreter {
                     && Math.abs(flatPitchCenter(labels, width, candidate, gap) - head.centerY)
                             < gap * .45f) right = Math.max(right, candidate.component.maxX);
         return right;
+    }
+
+    /** A complete flat must not supply the replacement natural's own pixels. */
+    private static int naturalRecoveryEdge(
+            byte[] labels, byte[] gray, byte[] source, int width, int height,
+            List<AccidentalCandidate> candidates, Component head, float gap) {
+        int edge = nearestFlatRightEdge(labels, width, height, candidates, head, gap);
+        if (edge < 0) return edge;
+        return PrintedFlatGlyph.matchesOwnedInk(labels, gray, width, height, head.centerX, head.centerY, gap)
+                        && PrintedFlatGlyph.matchesOwnedInk(labels, source, width, height, head.centerX, head.centerY, gap)
+                ? edge + 1
+                : edge;
     }
 
     /** A cancellation natural printed before a new flat must not override that flat. */
@@ -20393,6 +22606,82 @@ final class OmrScoreInterpreter {
         return false;
     }
 
+    /** Isolate a compact cross when neighboring staff stripes join it to other symbol ink. */
+    private static AccidentalCandidate staffBoundDoubleSharp(
+            byte[] labels, byte[] gray, byte[] source, int width, int height,
+            MeasureRegion measure, Component head, float[] staffPitch, List<Component> heads) {
+        if (gray == null || source == null || gray.length != source.length) return null;
+        float gap = staffPitch[1], staffBottom = staffPitch[0];
+        float position = (staffBottom - head.centerY) / gap;
+        int space = (int) Math.floor(position);
+        if (space < 0 || space > 3 || Math.abs(position - space - .5f) > .13f
+                || head.area < gap * gap * .55f || head.maxX - head.minX + 1 < gap * .85f)
+            return null;
+        int left = Math.max((int) Math.ceil(measure.left() * width),
+                head.minX - Math.round(gap * 1.55f));
+        int right = head.minX - Math.max(2, Math.round(gap * .12f));
+        int w = right - left + 1;
+        if (left < 0 || right >= width || w < gap * .95f) return null;
+        float lower = staffBottom - space * gap, upper = lower - gap;
+        if (!darkRuleOverCross(gray, source, width, height, left, right, upper, gap)
+                || !darkRuleOverCross(gray, source, width, height, left, right, lower, gap))
+            return null;
+
+        for (float margin : new float[] {.12f, .08f}) {
+            int top = Math.round(upper + margin * gap), bottom = Math.round(lower - margin * gap);
+            if (top < 0 || bottom >= height || top >= bottom) continue;
+            int h = bottom - top + 1;
+            byte[] ink = new byte[w * h];
+            for (int y = top; y <= bottom; y++) {
+                for (int x = left; x <= right; x++) {
+                    int at = y * width + x;
+                    if ((labels[at] == OmrMeasurePostProcessor.SYMBOL
+                                    || labels[at] == OmrMeasurePostProcessor.CLEF_OR_KEY)
+                            && (gray[at] & 255) < 155 && (source[at] & 255) < 155)
+                        ink[(y - top) * w + x - left] = 1;
+                }
+            }
+            Component owned = null;
+            for (var part : findComponents(ink, w, h, (byte) 1)) {
+                if (!DoubleSharpGlyph.matches(ink, w, h, part.minX, part.minY,
+                        part.maxX, part.maxY, (byte) 1, gap)) continue;
+                var cross = new Component(part.area, left + part.minX, left + part.maxX,
+                        top + part.minY, top + part.maxY, left + part.centerX, top + part.centerY);
+                if (!doubleSharpBesideHead(cross, head, gap)
+                        || !DoubleSharpGlyph.matchesRaw(
+                                gray, width, height, cross.minX, cross.minY, cross.maxX, cross.maxY, gap)
+                        || !DoubleSharpGlyph.matchesRaw(
+                                source, width, height, cross.minX, cross.minY, cross.maxX, cross.maxY, gap))
+                    continue;
+                if (owned != null) return null;
+                owned = cross;
+            }
+            if (owned == null) continue;
+            for (var other : heads)
+                if (other != head && doubleSharpBesideHead(owned, other, gap)) return null;
+            if (attachedRawStem(gray, width, height, head, gap) != null
+                    && attachedRawStem(source, width, height, head, gap) != null)
+                return new AccidentalCandidate(owned, OmrMeasurePostProcessor.SYMBOL);
+        }
+        return null;
+    }
+
+    private static boolean darkRuleOverCross(
+            byte[] gray, byte[] source, int width, int height, int left, int right, float y, float gap) {
+        int reach = Math.max(1, Math.round(gap * .14f));
+        int required = (int) Math.ceil((right - left + 1) * .90f);
+        for (int row = Math.max(0, Math.round(y) - reach);
+                row <= Math.min(height - 1, Math.round(y) + reach); row++) {
+            int count = 0;
+            for (int x = left; x <= right; x++) {
+                int at = row * width + x;
+                if ((gray[at] & 255) < 155 && (source[at] & 255) < 155) count++;
+            }
+            if (count >= required) return true;
+        }
+        return false;
+    }
+
     private static boolean rawCompactDoubleSharp(
             byte[] labels,
             byte[] gray,
@@ -20572,6 +22861,29 @@ final class OmrScoreInterpreter {
         return false;
     }
 
+    private static boolean flatFragmentOnRomanStrings(
+            byte[] gray,
+            int width,
+            int height,
+            Component glyph,
+            Component head,
+            List<Component> heads,
+            float gap) {
+        if (gray == null || heads == null) return false;
+        var fragment =
+                new PrintedRomanStrings.Box(glyph.minX, glyph.minY, glyph.maxX + 1, glyph.maxY + 1);
+        for (var other : heads) {
+            if (head.centerX - other.centerX < gap * 2.1f
+                    || head.centerX - other.centerX > gap * 3.55f
+                    || Math.abs(other.centerX - glyph.centerX) > gap * .65f
+                    || other.centerY - glyph.maxY < gap * .85f
+                    || other.centerY - glyph.maxY > gap * 2.3f) continue;
+            if (PrintedRomanStrings.ownsAccidentalFragment(
+                    gray, width, height, fragment, other.centerX, other.centerY, gap)) return true;
+        }
+        return false;
+    }
+
     /** Reuse the existing grace font scale only after physical grace ownership is proved. */
     private static List<DetectedNote> recoverCompactGraceAccidentals(
             byte[] labels,
@@ -20673,20 +22985,42 @@ final class OmrScoreInterpreter {
         private final Object glyph, head;
         private final int glyphAlternatives, headAlternatives;
         private final boolean ambiguous;
+        private final boolean naturalPrefix;
 
         private WrittenAccidentalChoice(
                 int accidental,
                 Object glyph,
                 Object head,
-                List<?> glyphAlternatives,
-                List<?> headAlternatives,
+                int glyphAlternatives,
+                int headAlternatives,
                 boolean ambiguous) {
+            this(accidental, glyph, head, glyphAlternatives, headAlternatives, ambiguous, false);
+        }
+
+        private WrittenAccidentalChoice(
+                int accidental,
+                Object glyph,
+                Object head,
+                int glyphAlternatives,
+                int headAlternatives,
+                boolean ambiguous,
+                boolean naturalPrefix) {
             this.accidental = accidental;
             this.glyph = glyph;
             this.head = head;
-            this.glyphAlternatives = glyphAlternatives.size();
-            this.headAlternatives = headAlternatives == null ? 0 : headAlternatives.size();
+            this.glyphAlternatives = glyphAlternatives;
+            this.headAlternatives = headAlternatives;
             this.ambiguous = ambiguous;
+            this.naturalPrefix = naturalPrefix;
+        }
+
+        private WrittenAccidentalChoice withAccidental(int value) {
+            return new WrittenAccidentalChoice(value, glyph, head, glyphAlternatives, headAlternatives,
+                    ambiguous, naturalPrefix && value == ScoreNoteEvent.ACCIDENTAL_SHARP);
+        }
+
+        boolean naturalPrefix() {
+            return naturalPrefix;
         }
 
         int accidental() {
@@ -20753,6 +23087,7 @@ final class OmrScoreInterpreter {
     private static void removeOwnedSharpFragments(
             List<DetectedNote> notes,
             java.util.IdentityHashMap<Object, WrittenAccidentalChoice> choices,
+            byte[] labels,
             byte[] gray,
             int width) {
         if (gray == null) return;
@@ -20767,26 +23102,45 @@ final class OmrScoreInterpreter {
                 var head = candidate.head;
                 float gap = candidate.staffGap;
                 var event = candidate.event;
+                boolean halfProposal = event.unbeamedDurationBeats() == ScoreNoteEvent.DURATION_HALF
+                        && event.stemDirection() == 0;
                 if (head == note.head
                         || event.kind() != ScoreNoteEvent.Kind.PITCHED
                         || event.measureIndex() != note.event.measureIndex()
                         || event.staffIndex() != note.event.staffIndex()
                         || event.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_FROM_KEY
                         || event.beamCount() != 0
-                        || event.unbeamedDurationBeats() != 4
-                        || head.area > gap * gap * .55f
-                        || head.maxX >= note.head.minX
+                        || (!halfProposal
+                                && event.unbeamedDurationBeats() != ScoreNoteEvent.DURATION_WHOLE)
+                        || head.area > gap * gap * (halfProposal ? .65f : .55f)
+                        || head.maxX >= note.head.minX + (halfProposal ? gap * .125f : 0)
                         || head.centerX < sharp.minX || head.centerX > sharp.maxX
                         || head.centerY < sharp.minY || head.centerY > sharp.maxY
                         || head.minX < sharp.minX - gap * .65f
-                        || head.maxX > sharp.maxX + gap * .2f
+                        || head.maxX > sharp.maxX + gap * (halfProposal ? .4f : .2f)
                         || head.minY < sharp.minY - gap * .2f
                         || head.maxY > sharp.maxY + gap * .2f
-                        || sharpFragmentHasOutsideBody(gray, width, head, sharp, gap)) continue;
+                        || sharpFragmentHasOutsideBody(gray, width, head, sharp, gap)
+                        || (halfProposal && !hasOnlyAccidentalHeadMask(labels, width, head)))
+                    continue;
                 rejected.add(head);
             }
         }
         notes.removeIf(note -> rejected.contains(note.head));
+    }
+
+    private static boolean hasOnlyAccidentalHeadMask(byte[] labels, int width, Component fragment) {
+        // A recovered half can include adjacent shaft or staff pixels in its proposal.
+        // Require the accidental mask to account for the component area without any notehead.
+        int accidental = 0;
+        for (int y = fragment.minY; y <= fragment.maxY; y++) {
+            for (int x = fragment.minX; x <= fragment.maxX; x++) {
+                byte label = labels[y * width + x];
+                if (label == OmrMeasurePostProcessor.NOTEHEAD) return false;
+                if (label == OmrMeasurePostProcessor.CLEF_OR_KEY) accidental++;
+            }
+        }
+        return accidental >= fragment.area;
     }
 
     private static boolean sharpFragmentHasOutsideBody(
@@ -20874,8 +23228,18 @@ final class OmrScoreInterpreter {
                                                                     : ScoreNoteEvent
                                                                             .ACCIDENTAL_FROM_KEY;
             if (accidental == ScoreNoteEvent.ACCIDENTAL_FROM_KEY) continue;
+            if (accidental == ScoreNoteEvent.ACCIDENTAL_SHARP
+                    && candidate.label == 0
+                    && joinsNaturalToHeadAndStaff(
+                            labels, gray, width, height, candidates, head, gap, glyph,
+                            accidentalFragments.get(glyph))) continue;
             if (accidental == ScoreNoteEvent.ACCIDENTAL_FLAT
                     && flatFragmentOnOwnedShaft(gray, width, height, glyph, head, heads, gap))
+                continue;
+            if (accidental == ScoreNoteEvent.ACCIDENTAL_FLAT
+                    && horizontal > gap * 1.7f
+                    && candidate.label == OmrMeasurePostProcessor.SYMBOL
+                    && flatFragmentOnRomanStrings(gray, width, height, glyph, head, heads, gap))
                 continue;
             if (accidental == ScoreNoteEvent.ACCIDENTAL_FLAT
                     && (containsCompleteNatural(labels, width, height, candidate, candidates, gap)
@@ -20918,10 +23282,21 @@ final class OmrScoreInterpreter {
                             && Math.abs(other.centerY - pitchCenter) + gap * .12f
                                     < Math.abs(head.centerY - pitchCenter)) otherOwner = true;
                     if (horizontal > gap * 1.35f
-                            && !sharedAccidentalChordShaft(labels, width, height, head, other, gap)
                             && other.centerX > glyph.maxX + gap * .2f
                             && other.centerX < head.minX - gap * .3f
-                            && Math.abs(other.centerY - head.centerY) < gap * 2) otherOwner = true;
+                            && Math.abs(other.centerY - head.centerY) < gap * 2
+                            && (!sharedAccidentalChordShaft(labels, width, height, head, other, gap)
+                                    || accidental == ScoreNoteEvent.ACCIDENTAL_SHARP
+                                            && sharpOwnedByEarlierCompactDyad(
+                                                    gray,
+                                                    width,
+                                                    height,
+                                                    head,
+                                                    other,
+                                                    heads,
+                                                    glyph,
+                                                    pitchCenter,
+                                                    gap))) otherOwner = true;
                 }
                 if (otherOwner) continue;
                 if (horizontal > gap * 1.35f
@@ -20962,7 +23337,14 @@ final class OmrScoreInterpreter {
                 bestDistance = horizontal;
                 ambiguous = false;
             } else if (horizontal == bestDistance && candidate != best) {
-                if (accidental != ScoreNoteEvent.ACCIDENTAL_SHARP
+                AccidentalCandidate sourceNatural =
+                        accidental == bestAccidental && accidental == ScoreNoteEvent.ACCIDENTAL_NATURAL
+                                ? naturalBeforeSameBoundsStaffFragment(
+                                        labels, gray, width, best, candidate, gap, accidentalFragments)
+                                : null;
+                if (sourceNatural != null) {
+                    best = sourceNatural;
+                } else if (accidental != ScoreNoteEvent.ACCIDENTAL_SHARP
                         || bestAccidental != accidental
                         || !sameSharpSource(best, candidate, accidentalFragments)) {
                     ambiguous = true;
@@ -20988,9 +23370,1895 @@ final class OmrScoreInterpreter {
                 best == null ? ScoreNoteEvent.ACCIDENTAL_FROM_KEY : bestAccidental,
                 best == null ? null : best.component,
                 head,
-                candidates,
-                heads,
+                candidates.size(),
+                heads == null ? 0 : heads.size(),
                 ambiguous);
+    }
+
+    /** A narrow upper-ledger natural can share a semantic island with the entering slur. */
+    private static boolean printedNaturalOnUpperLedger(
+            byte[] gray, int width, int height, Component glyph, Component head,
+            float gap, float staffBottom) {
+        float firstLine = staffBottom - 4 * gap;
+        int span = glyph.maxX - glyph.minX + 1;
+        int depth = glyph.maxY - glyph.minY + 1;
+        float advance = head.minX - glyph.maxX;
+        if (gray == null || !Float.isFinite(firstLine) || gap < 9 || gap > 27
+                || firstLine - head.centerY < gap * 1.30f
+                || span < gap * .76f || span > gap * 1.12f
+                || depth < gap * 2.56f || depth > gap * 3.24f
+                || glyph.area < span * depth * .45f
+                || advance < gap * .25f || advance > gap * .98f
+                || Math.abs(glyph.centerY - head.centerY) > gap * .23f) return false;
+
+        if (provesOwnedLedgerNatural(gray, width, height, glyph, head, gap, firstLine)) return true;
+        for (int side : new int[] {1, -1}) {
+            var lines = PrintedDirectionStaff.printedRules(
+                    gray, width, height, head.centerX + side * gap * .6f, staffBottom, gap);
+            if (lines == null || Math.abs(lines[0] - staffBottom) > gap * .25f
+                    || Math.abs(lines[1] - gap) > gap * .07f) continue;
+            float printedGap = Math.round(lines[1]);
+            if (provesOwnedLedgerNatural(
+                    gray, width, height, glyph, head, printedGap, lines[0] - 4 * printedGap)) return true;
+        }
+        return false;
+    }
+
+    private static boolean provesOwnedLedgerNatural(
+            byte[] gray, int width, int height, Component glyph, Component head, float gap, float firstLine) {
+        var component = new AccidentalCandidate(glyph, OmrMeasurePostProcessor.SYMBOL);
+        if (Float.isFinite(printedSignatureSharp(gray, width, height, component, gap, true))) return false;
+        for (int dx = -1; dx <= 1; dx++)
+            for (int dy = -2; dy <= 2; dy++)
+                if (provesNaturalMeterInk(gray, width, height, glyph.minX + dx, glyph.maxX + dx,
+                        head.centerY + dy, gap, Math.round(firstLine))) return true;
+        return false;
+    }
+
+    /** A fused mask can join two chords even though their raw upward shafts are distinct. */
+    private static boolean sharpOwnedByEarlierCompactDyad(
+            byte[] gray,
+            int width,
+            int height,
+            Component head,
+            Component earlier,
+            List<Component> heads,
+            Component sharp,
+            float pitchCenter,
+            float gap) {
+        float spacing = head.centerX - earlier.centerX;
+        float glyphGap = earlier.minX - sharp.maxX;
+        float earlyError = Math.abs(pitchCenter - earlier.centerY);
+        if (gray == null
+                || spacing < gap * 1.38f
+                || spacing > gap * 1.77f
+                || glyphGap < gap * .1f
+                || glyphGap > gap * 1.3f
+                || earlyError > gap * .24f
+                || earlyError + gap * .08f >= Math.abs(pitchCenter - head.centerY)) return false;
+
+        var budget = new PrintedBeamShafts.Budget(60_000);
+        var previous =
+                PrintedBeamShafts.at(
+                        gray, width, height, earlier.centerX, earlier.centerY, gap, budget);
+        if (previous.size() != 1 || previous.get(0).direction() != -1) return false;
+        Component partner = null;
+        for (Component other : heads) {
+            float pitchSpace = head.centerY - other.centerY;
+            if (Math.abs(head.centerX - other.centerX) > gap * .17f
+                    || pitchSpace < gap * .8f
+                    || pitchSpace > gap * 1.2f) continue;
+            if (partner != null) return false;
+            partner = other;
+        }
+        if (partner == null) return false;
+        var current =
+                PrintedBeamShafts.at(
+                        gray, width, height, partner.centerX, partner.centerY, gap, budget);
+        if (current.size() != 1 || current.get(0).direction() != -1) return false;
+        var before = previous.get(0);
+        var after = current.get(0);
+        int column = (after.left() + after.right()) / 2;
+        return after.left() - before.right() >= gap * 1.25f
+                && Math.abs(after.endY() - before.endY()) <= gap * .42f
+                && column - head.centerX >= gap * .46f
+                && column - head.centerX <= gap * .82f
+                && darkColumn(
+                        gray,
+                        width,
+                        column,
+                        Math.round(partner.centerY),
+                        Math.round(head.centerY - gap * .16f),
+                        .92f);
+    }
+
+    /** Separate the two staggered sharps in a shared symbol box. */
+    /** Classifies the separate signs in a shared accidental component. */
+    private static int stackedAccidentalForWideDyad(
+            byte[] gray,
+            byte[] source,
+            int width,
+            int height,
+            List<Component> glyphs,
+            Component head,
+            List<Component> heads,
+            float gap,
+            float staffTop) {
+        return stackedAccidentalForWideDyad(
+                gray, source, width, height, glyphs, head, heads, gap, staffTop, false);
+    }
+
+    private static int stackedAccidentalForWideDyad(
+            byte[] gray,
+            byte[] source,
+            int width,
+            int height,
+            List<Component> glyphs,
+            Component head,
+            List<Component> heads,
+            float gap,
+            float staffTop,
+            boolean crossesStaff) {
+        return stackedAccidentalForWideDyad(
+                gray,
+                source,
+                width,
+                height,
+                glyphs,
+                head,
+                heads,
+                gap,
+                staffTop,
+                crossesStaff,
+                null);
+    }
+
+    private static int stackedAccidentalForWideDyad(
+            byte[] gray,
+            byte[] source,
+            int width,
+            int height,
+            List<Component> glyphs,
+            Component head,
+            List<Component> heads,
+            float gap,
+            float staffTop,
+            boolean crossesStaff,
+            List<SourceLocalAccidental.SplitAccidental> splitProofs) {
+        if (gray == null
+                || source == null
+                || width <= 0
+                || height <= 0
+                || (long) width * height != gray.length
+                || gray.length != source.length
+                || !Float.isFinite(gap + staffTop)
+                || gap < 12
+                || gap > 24
+                || !stackedAccidentalHeadBand(head.centerY, staffTop, gap, crossesStaff))
+            return ScoreNoteEvent.ACCIDENTAL_FROM_KEY;
+        for (var glyph : glyphs) {
+            int span = glyph.maxX - glyph.minX + 1;
+            int depth = glyph.maxY - glyph.minY + 1;
+            float clear = head.minX - glyph.maxX;
+            if (span < gap * .88f
+                    || span > gap * 1.22f
+                    || depth < gap * 4.8f
+                    || depth > gap * 6.1f
+                    || clear < gap * .08f
+                    || clear > gap * .30f
+                    || Math.abs(glyph.centerY - head.centerY)
+                            > gap * (crossesStaff ? 1.70f : 1.60f)) continue;
+            float filledHeadGap = gap + (crossesStaff ? 1f : .5f);
+            if (!filledBeamEndpointCore(gray, width, height, head, filledHeadGap))
+                return ScoreNoteEvent.ACCIDENTAL_FROM_KEY;
+            int[] shaft = attachedRawStem(gray, width, height, head, gap, 2, 170);
+            if (shaft == null || shaft[2] != 1) return ScoreNoteEvent.ACCIDENTAL_FROM_KEY;
+            Component peer = null;
+            for (var other : heads) {
+                float separation = Math.abs(other.centerY - head.centerY);
+                float otherClear = other.minX - glyph.maxX;
+                if (!stackedAccidentalHeadBand(other.centerY, staffTop, gap, crossesStaff)
+                        || crossesStaff && (head.centerY < staffTop) == (other.centerY < staffTop)
+                        || Math.abs(other.centerX - head.centerX) > gap * .17f
+                        || separation < gap * 2.38f
+                        || separation > gap * 2.88f
+                        || otherClear < gap * .08f
+                        || otherClear > gap * .30f
+                        || !filledBeamEndpointCore(gray, width, height, other, filledHeadGap)
+                        || !sameDownwardLedgerShaft(
+                                shaft, attachedRawStem(gray, width, height, other, gap, 2, 170)))
+                    continue;
+                if (peer != null) return ScoreNoteEvent.ACCIDENTAL_FROM_KEY;
+                peer = other;
+            }
+            if (peer == null) continue;
+            float top = Math.min(head.centerY, peer.centerY),
+                    bottom = Math.max(head.centerY, peer.centerY);
+            if (Math.abs(glyph.centerY - (top + bottom) * .5f) > gap * .35f
+                    || top - glyph.minY < gap * 1.0f
+                    || top - glyph.minY > gap * 1.65f
+                    || glyph.maxY - bottom < gap * 1.0f
+                    || glyph.maxY - bottom > gap * 1.72f) continue;
+            if (crossesStaff
+                    && (!FlagRootStaffRule.matches(
+                                    source,
+                                    width,
+                                    height,
+                                    Math.round(bottom),
+                                    Math.round(glyph.centerX),
+                                    gap,
+                                    165)
+                            || !FlagRootStaffRule.matches(
+                                    source,
+                                    width,
+                                    height,
+                                    Math.round(bottom - gap),
+                                    Math.round(glyph.centerX),
+                                    gap,
+                                    165))) continue;
+            var strips = splitProofs == null ? null : new SourceLocalAccidental.AccidentalStrips[2];
+            int upper =
+                    stackedAccidentalCrossbars(
+                            gray, source, width, height, glyph, top, gap, crossesStaff, strips, 0);
+            int lower =
+                    stackedAccidentalCrossbars(
+                            gray,
+                            source,
+                            width,
+                            height,
+                            glyph,
+                            bottom,
+                            gap,
+                            crossesStaff,
+                            strips,
+                            1);
+            if (crossesStaff
+                    && (upper != ScoreNoteEvent.ACCIDENTAL_SHARP
+                            || lower != ScoreNoteEvent.ACCIDENTAL_SHARP)) continue;
+            if (upper != ScoreNoteEvent.ACCIDENTAL_FROM_KEY
+                    && lower != ScoreNoteEvent.ACCIDENTAL_FROM_KEY
+                    && (upper == ScoreNoteEvent.ACCIDENTAL_SHARP
+                            || lower == ScoreNoteEvent.ACCIDENTAL_SHARP)) {
+                boolean first = head.centerY < peer.centerY;
+                if (strips != null
+                        && strips[0] != null
+                        && strips[1] != null
+                        && soleStackedAccidentalGlyph(glyphs, glyph, gap))
+                    splitProofs.add(
+                            new SourceLocalAccidental.SplitAccidental(
+                                    glyph,
+                                    first ? head : peer,
+                                    first ? peer : head,
+                                    strips[0],
+                                    strips[1]));
+                return first ? upper : lower;
+            }
+        }
+        return ScoreNoteEvent.ACCIDENTAL_FROM_KEY;
+    }
+
+    /** The same connected glyph can contain two signs on an up- or down-stem beamed sixth. */
+    private static int ownedStackedAccidentalsOnBeamedSixth(
+            byte[] gray, byte[] source, int width, int height, List<Component> glyphs,
+            Component head, List<Component> heads, float gap, ExactComponentMembers.Collector members,
+            List<SourceLocalAccidental.SplitAccidental> proofs) {
+        int unknown = ScoreNoteEvent.ACCIDENTAL_FROM_KEY;
+        if (source == null || gray.length != (long) width * height || source.length != gray.length
+                || !Float.isFinite(gap) || gap < 12 || gap > 24) return unknown;
+        SourceLocalAccidental.SplitAccidental accepted = null;
+        for (var glyph : glyphs) {
+            int wide = glyph.maxX - glyph.minX + 1;
+            int tall = glyph.maxY - glyph.minY + 1;
+            float clear = head.minX - glyph.maxX;
+            boolean wider = wide > gap * 1.23f;
+            if (wide < gap * .82f || wide > gap * 1.53f || tall < gap * 4.65f || tall > gap * 6.15f
+                    || clear < 0 || clear > gap * .33f
+                    || Math.abs(glyph.centerY - head.centerY) > gap * 1.78f) continue;
+            Component peer = null;
+            for (var other : heads) {
+                float dy = Math.abs(other.centerY - head.centerY), otherClear = other.minX - glyph.maxX;
+                if (dy < gap * 2.36f || dy > gap * 2.86f
+                        || Math.abs(other.centerX - head.centerX) > gap * .16f
+                        || otherClear < 0 || otherClear > gap * .33f
+                        || Math.abs(glyph.centerY - (head.centerY + other.centerY) * .5f) > gap * .42f)
+                    continue;
+                if (peer != null) return unknown;
+                peer = other;
+            }
+            if (peer == null || !sameAccidentalDyadShaft(gray, width, height, head, peer, gap)
+                    || !sameAccidentalDyadShaft(source, width, height, head, peer, gap)) continue;
+            var up = head.centerY < peer.centerY ? head : peer;
+            var low = up == head ? peer : head;
+            if (up.centerY - glyph.minY < gap * .65f || glyph.maxY - low.centerY < gap * 1.05f
+                    || up.centerY - glyph.minY > gap * 1.65f
+                    || glyph.maxY - low.centerY > gap * 1.90f) continue;
+            var strips = new SourceLocalAccidental.AccidentalStrips[2];
+            int a = coveredStackedAccidental(gray, source, width, height, glyph, up, gap, strips, 0);
+            if (a != ScoreNoteEvent.ACCIDENTAL_SHARP) continue;
+            int b = coveredStackedAccidental(gray, source, width, height, glyph, low, gap, strips, 1);
+            if (b == unknown && croppedLowerNaturalOfStack(gray, source, width, height, glyph, low, gap, strips))
+                b = ScoreNoteEvent.ACCIDENTAL_NATURAL;
+            if (wider && b == ScoreNoteEvent.ACCIDENTAL_SHARP
+                    && lowerNaturalTailOfStack(gray, source, width, height, gap, strips[1])) {
+                var ink = strips[1];
+                b = ScoreNoteEvent.ACCIDENTAL_NATURAL;
+                strips[1] = new SourceLocalAccidental.AccidentalStrips(
+                        b, ink.left(), ink.right(), ink.rise(), ink.topFirst(), ink.topLast(),
+                        ink.bottomFirst(), ink.bottomLast());
+            }
+            if (b == unknown || wider && b != ScoreNoteEvent.ACCIDENTAL_NATURAL
+                    || strips[0].bottom() >= strips[1].top()
+                    || strips[0].right() >= up.minX || strips[1].right() >= low.minX) continue;
+            var footprint = members.producerFootprint(
+                    glyph, new ExactComponentMembers.Budget(16_384, 65_536));
+            if (footprint == null || footprint.originalIdentity() != glyph
+                    || footprint.parentIdentity() != null) continue;
+            var labeledPixels = new java.util.HashSet<Integer>();
+            for (int pixel : footprint.pixels()) labeledPixels.add(pixel);
+            if (!strips[0].represented(labeledPixels, width) || !strips[1].represented(labeledPixels, width))
+                continue;
+            if (accepted != null) return unknown;
+            accepted = new SourceLocalAccidental.SplitAccidental(glyph, up, low, strips[0], strips[1]);
+        }
+        if (accepted == null) return unknown;
+        var pair = accepted;
+        if (proofs.stream().noneMatch(found -> found.parent() == pair.parent())) proofs.add(pair);
+        return pair.upper() == head ? pair.upperInk().kind() : pair.lowerInk().kind();
+    }
+
+    /** A joined upper sign can extend the lower natural's apparent left or right spine. */
+    private static boolean lowerNaturalTailOfStack(
+            byte[] gray, byte[] raw, int width, int height, float gap,
+            SourceLocalAccidental.AccidentalStrips sign) {
+        int first = Math.round(gap * .38f), last = Math.round(gap * .85f);
+        int xLeft = sign.left() + 1, xRight = sign.right() - 1;
+        float axis = (xLeft + xRight) * .5f;
+        int leftBase = sign.bottomLast() + Math.round(-sign.rise() * .1f * (xLeft - axis));
+        int rightBase = sign.bottomLast() + Math.round(-sign.rise() * .1f * (xRight - axis));
+        if (xLeft < 1 || xRight >= width - 1 || Math.min(leftBase, rightBase) + first < 0
+                || Math.max(leftBase, rightBase) + last >= height) return false;
+        int common = 0, minimum = Math.max(3, Math.round(gap * .31f));
+        for (int i = first; i <= last; i++) {
+            int leftY = leftBase + i, rightY = rightBase + i;
+            if (FlagRootStaffRule.matches(gray, width, height, leftY, Math.round(axis), gap, 165)
+                    && FlagRootStaffRule.matches(raw, width, height, leftY, Math.round(axis), gap, 165))
+                continue;
+            boolean leftPaper = true, rightInk = false;
+            for (int dx = -1; dx <= 1; dx++) {
+                int pixel = leftY * width + xLeft + dx;
+                leftPaper &= (gray[pixel] & 255) > 180 && (raw[pixel] & 255) > 180;
+                rightInk |= bothPlanesInk(gray, raw, width, xRight + dx, rightY);
+            }
+            common = leftPaper && rightInk ? common + 1 : 0;
+            if (common >= minimum) return true;
+        }
+        return false;
+    }
+
+    /** A lower natural can have narrower strokes than the sharp joined above it. */
+    private static boolean croppedLowerNaturalOfStack(
+            byte[] gray, byte[] raw, int width, int height, Component parent, Component lower,
+            float gap, SourceLocalAccidental.AccidentalStrips[] strips) {
+        int maxX = Math.min(parent.maxX, lower.minX - 1);
+        int minWidth = Math.round(gap * .44f);
+        for (int left = parent.minX + 1; left <= parent.minX + Math.round(gap * .40f); left++) {
+            for (int right = left + minWidth; right <= maxX && right - left <= gap * .81f; right++) {
+                var slice = new Component(parent.area, left, right, parent.minY, parent.maxY,
+                        (left + right) * .5f, parent.centerY);
+                strips[1] = null;
+                if (coveredStackedAccidental(gray, raw, width, height, slice, lower, gap, strips, 1)
+                        == ScoreNoteEvent.ACCIDENTAL_NATURAL) return true;
+            }
+        }
+        return false;
+    }
+
+    private static int coveredStackedAccidental(
+            byte[] gray, byte[] raw, int width, int height, Component glyph, Component note, float gap,
+            SourceLocalAccidental.AccidentalStrips[] strips, int index) {
+        int plain = stackedAccidentalCrossbars(gray, raw, width, height, glyph,
+                note.centerY, gap, false, strips, index);
+        int unknown = ScoreNoteEvent.ACCIDENTAL_FROM_KEY;
+        if (plain == unknown) return unknown;
+        int withoutRules = stackedAccidentalCrossbars(gray, raw, width, height, glyph,
+                note.centerY, gap, true, null, 0);
+        return withoutRules == unknown || withoutRules == plain ? plain : unknown;
+    }
+
+    private static boolean sameAccidentalDyadShaft(
+            byte[] gray, int width, int height, Component head, Component peer, float gap) {
+        if (!filledBeamEndpointCore(gray, width, height, head, gap)
+                || !filledBeamEndpointCore(gray, width, height, peer, gap)) return false;
+        var a = attachedRawStem(gray, width, height, head, gap, 2, 170);
+        var b = attachedRawStem(gray, width, height, peer, gap, 2, 170);
+        return a != null && b != null && a[2] == b[2]
+                && Math.abs(a[0] - b[0]) <= 2 && Math.abs(a[1] - b[1]) <= 2;
+    }
+
+    private static Map<Component, Component> naturalHeadsInBeamedThirds(
+            List<DetectedNote> notes, List<Component> glyphs, ExactComponentMembers.Collector members,
+            byte[] gray, byte[] raw, int width, int height, Map<Component, Component> sharpFragments) {
+        Map<Component, Component> recovered = new IdentityHashMap<>();
+        if (raw == null || raw.length != gray.length || gray.length != (long) width * height) return recovered;
+        for (int start = 0; start < notes.size(); ) {
+            var a = notes.get(start);
+            var first = a.event;
+            int end = start + 1;
+            while (end < notes.size() && sharesAccidentalAttack(a, notes.get(end))) end++;
+            if (end == start + 2) {
+                var b = notes.get(start + 1);
+                float gap = a.staffGap;
+                boolean beamed = first.staffCount() == 1 && first.beamCount() >= 2 && b.event.beamCount() >= 2
+                        && first.kind() == ScoreNoteEvent.Kind.PITCHED
+                        && b.event.kind() == ScoreNoteEvent.Kind.PITCHED
+                        && ((first.articulations() | b.event.articulations()) & NoteOrnament.GRACE) == 0;
+                var upper = a.head.centerY < b.head.centerY ? a : b;
+                var lower = upper == a ? b : a;
+                int interval = upper.event.staffStep() - lower.event.staffStep();
+                float separation = lower.head.centerY - upper.head.centerY;
+                if (beamed && interval == 5 && separation >= gap * 2.32f && separation <= gap * 2.76f
+                        && lower.event.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_NATURAL
+                        && upper.event.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_FROM_KEY) {
+                    var glyph = upperNaturalOverSeparateNatural(
+                            glyphs, members, gray, raw, width, height, upper.head, lower.head, gap);
+                    if (glyph != null) recovered.put(upper.head, glyph);
+                } else if (beamed && interval == 2 && separation >= gap * .90f && separation <= gap * 1.20f) {
+                    if (lower.event.visualSize() == ScoreNoteEvent.VisualSize.FULL
+                            && upper.event.visualSize() == ScoreNoteEvent.VisualSize.FULL
+                            && lower.event.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_FROM_KEY
+                            && upper.event.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_FROM_KEY)
+                        recoverCancelledSharpInThird(glyphs, members, lower.head, upper.head,
+                                gray, raw, width, height, gap, recovered, sharpFragments);
+                    for (int index = start; index < end; index++) {
+                        var note = notes.get(index);
+                        var peer = index == start ? b : a;
+                        int accidental = note.event.writtenAccidental();
+                        if (accidental == ScoreNoteEvent.ACCIDENTAL_FROM_KEY
+                                || accidental == ScoreNoteEvent.ACCIDENTAL_SHARP) {
+                            var glyph = naturalInBeamedThird(
+                                        glyphs, members, note.head, peer.head,
+                                        peer.event.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_NATURAL,
+                                        gray, raw, width, height, gap);
+                            if (glyph == null && accidental == ScoreNoteEvent.ACCIDENTAL_FROM_KEY
+                                    && peer.event.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_SHARP
+                                    && note.head.centerY > peer.head.centerY)
+                                glyph = lowerNaturalBesideCompactUpperSharp(glyphs, members, note.head,
+                                        peer.head, gray, raw, width, height, gap);
+                            if (glyph != null) recovered.put(note.head, glyph);
+                        }
+                    }
+                }
+            }
+            start = end;
+        }
+        return recovered;
+    }
+
+    /** Two original natural signs can overlap in height while retaining separate source members. */
+    private static Component upperNaturalOverSeparateNatural(
+            List<Component> glyphs, ExactComponentMembers.Collector members,
+            byte[] gray, byte[] raw, int width, int height, Component upper, Component lower, float gap) {
+        if (gap < 12 || gap > 24) return null;
+        var budget = new ExactComponentMembers.Budget(16_384, 65_536);
+        Component lowerNatural = null;
+        for (var glyph : glyphs) {
+            if (!compactSeparateNatural(glyph, lower, gap)) continue;
+            var footprint = members.producerFootprint(glyph, budget);
+            if (footprint == null || footprint.originalIdentity() != glyph || footprint.parentIdentity() != null
+                    || !lowerNaturalInJoinedSigns(gray, width, height, glyph, lower, upper, gap)
+                    || !lowerNaturalInJoinedSigns(raw, width, height, glyph, lower, upper, gap)) continue;
+            if (lowerNatural != null) return null;
+            lowerNatural = glyph;
+        }
+        if (lowerNatural == null || !sameAccidentalDyadShaft(gray, width, height, upper, lower, gap)
+                || !sameAccidentalDyadShaft(raw, width, height, upper, lower, gap)) return null;
+        Component upperNatural = null;
+        for (var glyph : glyphs) {
+            if (!compactSeparateNatural(glyph, upper, gap)
+                    || glyph.maxY - lowerNatural.minY > gap * .58f
+                    || Math.abs(glyph.centerX - lowerNatural.centerX) > gap * .40f
+                    || coveredStackedAccidental(gray, raw, width, height, glyph, lower, gap, null, 0)
+                            == ScoreNoteEvent.ACCIDENTAL_NATURAL) continue;
+            var footprint = members.producerFootprint(glyph, budget);
+            if (footprint == null || footprint.originalIdentity() != glyph || footprint.parentIdentity() != null)
+                continue;
+            var strips = new SourceLocalAccidental.AccidentalStrips[1];
+            if (coveredStackedAccidental(gray, raw, width, height, glyph, upper, gap, strips, 0)
+                    != ScoreNoteEvent.ACCIDENTAL_NATURAL) continue;
+            var pixels = new java.util.HashSet<Integer>();
+            for (int pixel : footprint.pixels()) pixels.add(pixel);
+            if (!strips[0].represented(pixels, width)) continue;
+            if (upperNatural != null) return null;
+            upperNatural = glyph;
+        }
+        return upperNatural;
+    }
+
+    private static boolean compactSeparateNatural(Component glyph, Component head, float gap) {
+        int width = glyph.maxX - glyph.minX + 1, height = glyph.maxY - glyph.minY + 1;
+        int clearance = head.minX - glyph.maxX;
+        return width >= gap * .70f && width <= gap * 1.14f
+                && height >= gap * 2.55f && height <= gap * 3.27f
+                && clearance >= 1 && clearance <= gap * .50f
+                && Math.abs(glyph.centerY - head.centerY) <= gap * .25f;
+    }
+
+    /** A cancellation natural and its sharp can touch at the upper note of a tightly spaced third. */
+    private static void recoverCancelledSharpInThird(
+            List<Component> glyphs, ExactComponentMembers.Collector members,
+            Component lower, Component upper, byte[] gray, byte[] raw, int width, int height, float gap,
+            Map<Component, Component> naturals, Map<Component, Component> sharps) {
+        if (gap < 13 || gap > 22 || Math.abs(upper.centerX - lower.centerX) > gap * .18f) return;
+        Component natural = null, compound = null;
+        for (var cluster : glyphs) {
+            int span = cluster.maxX - cluster.minX + 1, tall = cluster.maxY - cluster.minY + 1;
+            if (span < gap * 1.85f || span > gap * 2.35f || tall < gap * 2.55f || tall > gap * 3.20f
+                    || cluster.maxX - upper.minX < -gap * .23f || cluster.maxX - upper.minX > gap * .25f
+                    || Math.abs(cluster.centerY - upper.centerY) > gap * .24f) continue;
+            var ownership = members.producerFootprint(cluster, new ExactComponentMembers.Budget(8192, 32768));
+            if (ownership == null || ownership.originalIdentity() != cluster || ownership.parentIdentity() != null)
+                continue;
+            for (var left : glyphs) {
+                int clearance = cluster.minX - left.maxX;
+                int leftWidth = left.maxX - left.minX + 1;
+                int leftHeight = left.maxY - left.minY + 1;
+                if (clearance < 1 || clearance > gap * .34f
+                        || leftWidth < gap * .85f || leftWidth > gap * 1.14f
+                        || leftHeight < gap * 2.55f || leftHeight > gap * 3.16f
+                        || Math.abs(left.centerY - lower.centerY) > gap * .23f) continue;
+                var footprint = members.producerFootprint(left, new ExactComponentMembers.Budget(8192, 32768));
+                if (footprint == null || footprint.originalIdentity() != left || footprint.parentIdentity() != null)
+                    continue;
+                if (!ownsCancelledSharpInThird(gray, width, height, lower, upper, left, cluster, gap)
+                        || !ownsCancelledSharpInThird(raw, width, height, lower, upper, left, cluster, gap))
+                    continue;
+                if (compound != null) return;
+                natural = left;
+                compound = cluster;
+            }
+        }
+        if (compound != null) {
+            naturals.put(lower, natural);
+            sharps.put(upper, compound);
+        }
+    }
+
+    private static boolean ownsCancelledSharpInThird(
+            byte[] plane, int width, int height, Component lower, Component upper,
+            Component natural, Component compound, float gap) {
+        if (!sameAccidentalDyadShaft(plane, width, height, lower, upper, gap)) return false;
+        int prefixLeft = compound.minX - Math.round(gap * .19f);
+        int prefixRight = prefixLeft + Math.round(gap * .82f);
+        int lowerLeft = natural.minX - Math.round(gap * .13f);
+        int lowerRight = lowerLeft + Math.round(gap * .76f);
+        int sharpLeft = compound.minX + Math.round(gap * .79f);
+        int sharpRight = Math.min(upper.minX - 1, compound.maxX - Math.round(gap * .13f));
+        int sharpTop = compound.minY - Math.round(gap * .25f);
+        int lowerBottom = natural.maxY - Math.round(gap * .25f);
+        if (lowerLeft < 0 || sharpRight >= width || sharpRight - sharpLeft < gap * .72f
+                || sharpTop < 0 || lowerBottom >= height || compound.maxY >= height) return false;
+        var lowerSeed = new Component(1, lowerLeft, lowerRight, natural.minY, lowerBottom,
+                (lowerLeft + lowerRight) * .5f, (natural.minY + lowerBottom) * .5f);
+        var prefix = new Component(1, prefixLeft, prefixRight, compound.minY, compound.maxY,
+                (prefixLeft + prefixRight) * .5f, (compound.minY + compound.maxY) * .5f);
+        return cancellationNaturalAtAperture(plane, width, height, lowerSeed, lower, upper, gap, 0)
+                && cancellationNaturalAtAperture(plane, width, height, prefix, upper, lower, gap, 1)
+                && rawSharpInBounds(plane, width, height, upper, gap,
+                        sharpLeft, sharpRight, sharpTop, compound.maxY, false, true)
+                && !rawSharpInBounds(plane, width, height, lower, gap,
+                        sharpLeft, sharpRight, sharpTop, compound.maxY, false, true);
+    }
+
+    /** The semantic edge can include an extra row or column beside the two optical spines. */
+    private static boolean cancellationNaturalAtAperture(
+            byte[] plane,
+            int width,
+            int height,
+            Component seed,
+            Component owner,
+            Component competing,
+            float gap,
+            int horizontalInset) {
+        if (lowerNaturalInJoinedSigns(plane, width, height, seed, owner, competing, gap)) return true;
+        var inset = new Component(
+                1, seed.minX + horizontalInset, seed.maxX + horizontalInset,
+                seed.minY + 1, seed.maxY, seed.centerX + horizontalInset, seed.centerY + .5f);
+        return lowerNaturalInJoinedSigns(plane, width, height, inset, owner, competing, gap);
+    }
+
+    private static Map<Component, Component> sharpFragmentsBesideBeamedSixths(
+            List<DetectedNote> notes, List<Component> glyphs, ExactComponentMembers.Collector members,
+            byte[] gray, byte[] raw, int width, int height) {
+        Map<Component, Component> recovered = new IdentityHashMap<>();
+        if (raw == null || raw.length != gray.length || gray.length != (long) width * height) return recovered;
+        for (int start = 0; start < notes.size(); ) {
+            var first = notes.get(start);
+            int end = start + 1;
+            while (end < notes.size() && sharesAccidentalAttack(first, notes.get(end))) end++;
+            if (end == start + 2) {
+                var second = notes.get(start + 1);
+                var upper = first.head.centerY < second.head.centerY ? first : second;
+                var lower = upper == first ? second : first;
+                float gap = upper.staffGap;
+                float dy = lower.head.centerY - upper.head.centerY;
+                if (gap >= 12 && gap <= 24 && upper.event.staffCount() == 1
+                        && upper.event.kind() == ScoreNoteEvent.Kind.PITCHED
+                        && lower.event.kind() == ScoreNoteEvent.Kind.PITCHED
+                        && upper.event.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_FROM_KEY
+                        && Math.min(upper.event.beamCount(), lower.event.beamCount()) >= 2
+                        && ((upper.event.articulations() | lower.event.articulations()) & NoteOrnament.GRACE) == 0
+                        && upper.event.staffStep() - lower.event.staffStep() == 5
+                        && dy >= gap * 2.32f && dy <= gap * 2.72f) {
+                    var glyph = sharpFragmentBesideUpperHead(glyphs, members, upper.head, lower.head,
+                            gray, raw, width, height, gap);
+                    if (glyph != null) recovered.put(upper.head, glyph);
+                }
+            }
+            start = end;
+        }
+        return recovered;
+    }
+
+    /** A compact semantic fragment at the upper oval still needs both crossed stems in the source. */
+    private static Component sharpFragmentBesideUpperHead(
+            List<Component> glyphs, ExactComponentMembers.Collector members, Component upper, Component lower,
+            byte[] gray, byte[] raw, int width, int height, float gap) {
+        Component found = null;
+        for (var glyph : glyphs) {
+            float right = upper.centerX - glyph.maxX;
+            int wide = glyph.maxX - glyph.minX + 1, tall = glyph.maxY - glyph.minY + 1;
+            if (right < gap * .56f || right > gap * .81f || glyph.maxX >= upper.minX
+                    || wide < gap * .50f || wide > gap * .82f || tall < gap * .75f || tall > gap * 1.15f
+                    || glyph.area < gap * gap * .23f || glyph.area > gap * gap * .43f
+                    || upper.centerY - glyph.centerY < gap * .27f
+                    || upper.centerY - glyph.centerY > gap * .62f) continue;
+            var footprint = members.producerFootprint(glyph, new ExactComponentMembers.Budget(8_192, 32_768));
+            if (footprint == null || footprint.originalIdentity() != glyph
+                    || footprint.parentIdentity() != null
+                    || !sameAccidentalDyadShaft(gray, width, height, upper, lower, gap)
+                    || !sameAccidentalDyadShaft(raw, width, height, upper, lower, gap)) continue;
+            int seam = glyph.minX + Math.round(gap * .125f);
+            if (!printedSharpBeforeDyad(gray, width, height, seam, upper.centerX, upper.centerY, gap)
+                    || !printedSharpBeforeDyad(raw, width, height, seam, upper.centerX, upper.centerY, gap)
+                    || printedSharpBeforeDyad(raw, width, height, seam, lower.centerX, lower.centerY, gap))
+                continue;
+            if (found != null) return null;
+            found = glyph;
+        }
+        return found;
+    }
+
+    /** Both sharps in a staggered sixth need their own pitch-local ink on a shared parent. */
+    private static Map<Component, Component> staggeredSharpsOnBeamedSixths(
+            List<DetectedNote> notes, List<Component> glyphs, ExactComponentMembers.Collector members,
+            byte[] gray, byte[] raw, int width, int height) {
+        var recovered = new IdentityHashMap<Component, Component>();
+        if (raw == null || raw.length != gray.length || gray.length != (long) width * height)
+            return recovered;
+        for (int i = 0; i + 1 < notes.size(); i++) {
+            var a = notes.get(i);
+            var b = notes.get(i + 1);
+            if (!sharesDividerDyadAttack(a, b)
+                    || i > 0 && sharesDividerDyadAttack(a, notes.get(i - 1))
+                    || i + 2 < notes.size() && sharesDividerDyadAttack(a, notes.get(i + 2))) continue;
+            var upper = a.head.centerY < b.head.centerY ? a : b;
+            var lower = upper == a ? b : a;
+            float gap = lower.staffGap;
+            float distance = lower.head.centerY - upper.head.centerY;
+            if (gap < 12 || gap > 24 || lower.event.staffCount() != 1
+                    || upper.event.beamCount() != 2 || lower.event.beamCount() != 2
+                    || upper.event.kind() != ScoreNoteEvent.Kind.PITCHED
+                    || lower.event.kind() != ScoreNoteEvent.Kind.PITCHED
+                    || upper.event.visualSize() != ScoreNoteEvent.VisualSize.FULL
+                    || lower.event.visualSize() != ScoreNoteEvent.VisualSize.FULL
+                    || ((upper.event.articulations() | lower.event.articulations()) & NoteOrnament.GRACE) != 0
+                    || upper.event.staffStep() - lower.event.staffStep() != 5
+                    || distance < gap * 2.44f || distance > gap * 2.74f) continue;
+            var glyph = staggeredSharpBody(glyphs, members, gray, raw, width, height, upper.head, lower.head, gap);
+            if (glyph != null) {
+                recovered.put(upper.head, glyph);
+                recovered.put(lower.head, glyph);
+            }
+        }
+        return recovered;
+    }
+
+    private static Component staggeredSharpBody(
+            List<Component> glyphs, ExactComponentMembers.Collector members, byte[] gray,
+            byte[] raw, int width, int height, Component upper, Component lower, float gap) {
+        Component owner = null;
+        for (var glyph : glyphs) {
+            int clearance = Math.min(upper.minX, lower.minX) - glyph.maxX;
+            int wide = glyph.maxX - glyph.minX + 1, tall = glyph.maxY - glyph.minY + 1;
+            if (clearance < 1 || clearance > .28f * gap || wide < 1.98f * gap || wide > 2.33f * gap
+                    || tall < 5.18f * gap || tall > 5.85f * gap
+                    || glyph.area < 3.22f * gap * gap || glyph.area > 4.16f * gap * gap
+                    || upper.centerY - glyph.minY < 1.25f * gap || upper.centerY - glyph.minY > 1.75f * gap
+                    || glyph.maxY - lower.centerY < 1.17f * gap || glyph.maxY - lower.centerY > 1.68f * gap)
+                continue;
+            var footprint = members.producerFootprint(glyph, new ExactComponentMembers.Budget(8192, 32768));
+            if (footprint == null || footprint.originalIdentity() != glyph || footprint.parentIdentity() != null
+                    || !sameAccidentalDyadShaft(gray, width, height, upper, lower, gap)
+                    || !sameAccidentalDyadShaft(raw, width, height, upper, lower, gap)) continue;
+            int left = glyph.minX + Math.round(.56f * gap), right = glyph.maxX - Math.round(.25f * gap);
+            int top = Math.round(upper.centerY - 1.65f * gap), bottom = Math.round(upper.centerY + 1.36f * gap);
+            if (left < 0 || right >= width || top < 0 || bottom >= height) continue;
+            var signs = new SourceLocalAccidental.AccidentalStrips[1];
+            if (coveredStackedAccidental(gray, raw, width, height, glyph, lower, gap, signs, 0)
+                            != ScoreNoteEvent.ACCIDENTAL_SHARP
+                    || signs[0].top() <= bottom || signs[0].right() >= left + .39f * gap)
+                continue;
+            var pixels = new java.util.HashSet<Integer>();
+            for (int pixel : footprint.pixels()) pixels.add(pixel);
+            if (!signs[0].represented(pixels, width)
+                    || !ownedStaggeredUpperSharp(gray, width, height, upper, gap,
+                            left, right, top, bottom, footprint.pixels())
+                    || !ownedStaggeredUpperSharp(raw, width, height, upper, gap,
+                            left, right, top, bottom, footprint.pixels())) continue;
+            if (owner != null) return null;
+            owner = glyph;
+        }
+        return owner;
+    }
+
+    private static boolean ownedStaggeredUpperSharp(
+            byte[] plane, int width, int height, Component upper, float gap,
+            int left, int right, int top, int bottom, int[] pixels) {
+        float pitch = rawSharpPitchInBounds(
+                plane, width, height, upper, gap, left, right, top, bottom, false, false);
+        if (!Float.isFinite(pitch) || Math.abs(pitch - upper.centerY) > .20f * gap) return false;
+        int w = right - left + 1, h = bottom - top + 1;
+        if (w < 1.16f * gap || w > 1.52f * gap || h < 2.8f * gap || h > 3.2f * gap) return false;
+        var clipped = new byte[w * h];
+        java.util.Arrays.fill(clipped, (byte) 255);
+        for (int pixel : pixels) {
+            int x = pixel % width - left, y = pixel / width - top;
+            if (x >= 0 && x < w && y >= 0 && y < h) clipped[y * w + x] = plane[pixel];
+        }
+        var local = accidentalReferenceHead(upper.centerX - left, upper.centerY - top, gap);
+        float owned = rawSharpPitchInBounds(clipped, w, h, local, gap, 0, w - 1, 0, h - 1, false, false);
+        return Math.abs(owned + top - upper.centerY) <= .20f * gap && Math.abs(owned + top - pitch) <= 2;
+    }
+
+    /** Separate a first lower sharp from the divider and shared shaft that clip its label. */
+    private static Map<Component, Component> dividerJoinedLowerSharps(
+            List<DetectedNote> notes, List<Component> glyphs, ExactComponentMembers.Collector members,
+            List<Staff> staffs, List<MeasureRegion> measures, byte[] gray, byte[] source,
+            int width, int height) {
+        var recovered = new IdentityHashMap<Component, Component>();
+        if (source == null || source.length != gray.length || gray.length != (long) width * height)
+            return recovered;
+        int previous = -1;
+        for (int i = 0; i + 1 < notes.size(); i++) {
+            var a = notes.get(i);
+            int bar = a.event.measureIndex();
+            if (bar == previous) continue;
+            previous = bar;
+            var b = notes.get(i + 1);
+            if (bar <= 0 || bar >= measures.size() || !sharesDividerDyadAttack(a, b)
+                    || i + 2 < notes.size() && sharesDividerDyadAttack(a, notes.get(i + 2))) continue;
+            var lower = a.head.centerY > b.head.centerY ? a : b;
+            var upper = lower == a ? b : a;
+            if (lower.event.staffCount() != 1 || lower.event.beamCount() != 2
+                    || upper.event.beamCount() != 2 || upper.event.staffStep() - lower.event.staffStep() != 5
+                    || lower.event.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_FROM_KEY
+                    || upper.event.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_FROM_KEY
+                    || lower.event.kind() != ScoreNoteEvent.Kind.PITCHED
+                    || upper.event.kind() != ScoreNoteEvent.Kind.PITCHED
+                    || lower.event.visualSize() != ScoreNoteEvent.VisualSize.FULL
+                    || upper.event.visualSize() != ScoreNoteEvent.VisualSize.FULL
+                    || ((lower.event.articulations() | upper.event.articulations()) & NoteOrnament.GRACE) != 0)
+                continue;
+            var staff = nearestHeadStaff(staffs, lower.head.centerY);
+            if (staff == null || nearestHeadStaff(staffs, upper.head.centerY) != staff) continue;
+            float gap = staff.gap;
+            var region = measures.get(bar);
+            var last = measures.get(bar - 1);
+            float seam = width * (last.right() + region.left()) * .5f;
+            float distance = lower.head.centerX - seam;
+            if (gap < 10 || gap > 24 || Math.abs(last.top() - region.top()) * height > .35f * gap
+                    || region.left() - last.right() < 0 || (region.left() - last.right()) * width > 1.35f * gap
+                    || distance < 1.85f * gap || distance > 2.32f * gap) continue;
+            Component owner = null;
+            for (var glyph : glyphs) {
+                int inkWidth = glyph.maxX - glyph.minX + 1, inkHeight = glyph.maxY - glyph.minY + 1;
+                if (Math.abs(glyph.minX - seam) > .28f * gap
+                        || lower.head.minX - glyph.maxX < 1
+                        || lower.head.minX - glyph.maxX > .35f * gap
+                        || Math.abs(glyph.centerY - lower.head.centerY) > .24f * gap
+                        || inkWidth < 1.32f * gap || inkWidth > 1.75f * gap
+                        || inkHeight < 2.75f * gap || inkHeight > 3.35f * gap
+                        || glyph.area < 1.95f * gap * gap || glyph.area > 2.90f * gap * gap)
+                    continue;
+                var footprint = members.producerFootprint(glyph, new ExactComponentMembers.Budget(8192, 32768));
+                if (footprint == null || footprint.originalIdentity() != glyph || footprint.parentIdentity() != null)
+                    continue;
+                if (owner != null) {
+                    owner = null;
+                    break;
+                }
+                owner = glyph;
+            }
+            if (owner != null && dividerSharpPitch(
+                    gray, source, width, height, lower.head, upper.head, seam, staff))
+                recovered.put(lower.head, owner);
+        }
+        return recovered;
+    }
+
+    private static boolean sharesDividerDyadAttack(DetectedNote a, DetectedNote b) {
+        return a.event.measureIndex() == b.event.measureIndex()
+                && a.event.staffIndex() == b.event.staffIndex()
+                && Math.abs(a.head.centerX - b.head.centerX) <= a.staffGap * .17f;
+    }
+
+    private static boolean dividerSharpPitch(
+            byte[] gray, byte[] source, int width, int height, Component lower, Component upper,
+            float seam, Staff staff) {
+        float gap = staff.gap;
+        if (!sameAccidentalDyadShaft(gray, width, height, lower, upper, gap)
+                || !sameAccidentalDyadShaft(source, width, height, lower, upper, gap)) return false;
+        int[] shaft = attachedRawStem(gray, width, height, lower, gap, 2, 170);
+        int[] rawShaft = attachedRawStem(source, width, height, lower, gap, 2, 170);
+        if (shaft[2] != 1 || rawShaft[2] != 1 || Math.abs(shaft[0] - rawShaft[0]) > 1) return false;
+        var track = staff.pitchTrack;
+        float[] line = track == null ? new float[]{staff.pitchBottom, staff.pitchGap} : track.at(seam);
+        if (line[0] - 4 * line[1] < 0 || line[0] >= height || !Float.isFinite(line[0])
+                || !Float.isFinite(line[1]) || line[1] <= 0) return false;
+        var frame = new PlayingTechniqueDetector.Staff(line[0] - 4 * line[1], line[0], line[1], 0, 1);
+        int divider = PrintedCadenceDurations.boundaryColumn(gray, width, frame, seam, true, false);
+        if (divider < 0 || Math.abs(divider - seam) > .16f * gap
+                || divider != PrintedCadenceDurations.boundaryColumn(source, width, frame, seam, true, false))
+            return false;
+        int left = divider + Math.round(gap * .31f);
+        int right = Math.min(shaft[0], rawShaft[0]) - Math.round(gap * .18f);
+        int top = Math.round(lower.centerY - gap * 1.78f), bottom = Math.round(lower.centerY + gap * 1.92f);
+        if (left < 0 || right >= width || top < 0 || bottom >= height
+                || right - left + 1 < .76f * gap || right - left + 1 > 1.13f * gap) return false;
+        float a = rawSharpPitchInBounds(gray, width, height, lower, gap, left, right, top, bottom, false, false);
+        float b = rawSharpPitchInBounds(source, width, height, lower, gap, left, right, top, bottom, false, false);
+        return Math.abs(a - lower.centerY) <= .20f * gap && Math.abs(b - lower.centerY) <= .20f * gap
+                && Math.abs(a - b) <= 1
+                && !rawSharpInBounds(gray, width, height, upper, gap, left, right, top, bottom, false)
+                && !rawSharpInBounds(source, width, height, upper, gap, left, right, top, bottom, false);
+    }
+
+    private static Map<Component, Component> flatBowlsUnderBeamedSixths(
+            List<DetectedNote> notes, List<Component> glyphs, ExactComponentMembers.Collector members,
+            byte[] gray, byte[] raw, int width, int height, Map<Component, Component> provedNaturals) {
+        Map<Component, Component> recovered = new IdentityHashMap<>();
+        if (raw == null || raw.length != gray.length || gray.length != (long) width * height) return recovered;
+        for (int start = 0; start < notes.size(); ) {
+            var first = notes.get(start);
+            int end = start + 1;
+            while (end < notes.size() && sharesAccidentalAttack(first, notes.get(end))) end++;
+            if (end == start + 2) {
+                var second = notes.get(start + 1);
+                var upper = first.head.centerY < second.head.centerY ? first : second;
+                var lower = upper == first ? second : first;
+                float gap = lower.staffGap;
+                float distance = lower.head.centerY - upper.head.centerY;
+                int current = lower.event.writtenAccidental();
+                if (gap >= 12 && gap <= 24 && lower.event.staffCount() == 1
+                        && upper.event.kind() == ScoreNoteEvent.Kind.PITCHED
+                        && lower.event.kind() == ScoreNoteEvent.Kind.PITCHED
+                        && (current == ScoreNoteEvent.ACCIDENTAL_FROM_KEY
+                                || current == ScoreNoteEvent.ACCIDENTAL_NATURAL)
+                        && Math.min(upper.event.beamCount(), lower.event.beamCount()) >= 2
+                        && ((upper.event.articulations() | lower.event.articulations()) & NoteOrnament.GRACE) == 0
+                        && upper.event.staffStep() - lower.event.staffStep() == 5
+                        && distance >= gap * 2.32f && distance <= gap * 2.78f) {
+                    var glyph = flatBowlBesideLowerHead(glyphs, members, lower.head, upper.head, gray, raw,
+                            width, height, gap);
+                    if (glyph == null) {
+                        glyph = flatBelowJoinedNatural(glyphs, members, gray, raw, width, height,
+                                upper.head, lower.head, gap);
+                        if (glyph != null) {
+                            recovered.put(lower.head, glyph);
+                            provedNaturals.put(upper.head, glyph);
+                        }
+                    } else {
+                        recovered.put(lower.head, glyph);
+                        int prior = upper.event.writtenAccidental();
+                        if ((prior == ScoreNoteEvent.ACCIDENTAL_SHARP
+                                        || prior == ScoreNoteEvent.ACCIDENTAL_FROM_KEY)
+                                && upperNaturalAboveFlat(
+                                        gray, raw, width, height, glyph, upper.head, lower.head, gap, members))
+                            provedNaturals.put(upper.head, glyph);
+                    }
+                }
+            }
+            start = end;
+        }
+        return recovered;
+    }
+
+    /** A single model component may connect two physically separate flats beside a shared shaft. */
+    private static Map<Component, Component> joinedFlatBowlsOnBeamedSixths(
+            List<DetectedNote> notes, List<Component> glyphs, ExactComponentMembers.Collector members,
+            byte[] gray, byte[] raw, int width, int height) {
+        var recovered = new IdentityHashMap<Component, Component>();
+        if (raw == null || raw.length != gray.length || gray.length != (long) width * height)
+            return recovered;
+        for (int i = 0; i + 1 < notes.size(); i++) {
+            var a = notes.get(i);
+            var b = notes.get(i + 1);
+            if (!sharesDividerDyadAttack(a, b)
+                    || i > 0 && sharesDividerDyadAttack(a, notes.get(i - 1))
+                    || i + 2 < notes.size() && sharesDividerDyadAttack(a, notes.get(i + 2))) continue;
+            var up = a.head.centerY < b.head.centerY ? a : b;
+            var low = up == a ? b : a;
+            float gap = low.staffGap;
+            float distance = low.head.centerY - up.head.centerY;
+            if (gap < 12 || gap > 24 || low.event.staffCount() != 1
+                    || up.event.kind() != ScoreNoteEvent.Kind.PITCHED
+                    || low.event.kind() != ScoreNoteEvent.Kind.PITCHED
+                    || up.event.visualSize() != ScoreNoteEvent.VisualSize.FULL
+                    || low.event.visualSize() != ScoreNoteEvent.VisualSize.FULL
+                    || up.event.beamCount() != 2 || low.event.beamCount() != 2
+                    || up.event.staffStep() - low.event.staffStep() != 5
+                    || distance < gap * 2.63f || distance > gap * 2.84f
+                    || up.event.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_FLAT
+                            && low.event.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_FLAT
+                    || ((up.event.articulations() | low.event.articulations()) & NoteOrnament.GRACE) != 0)
+                continue;
+            var owner = pairedFlatBody(glyphs, members, gray, raw, width, height, up.head, low.head, gap);
+            if (owner != null) {
+                recovered.put(up.head, owner);
+                recovered.put(low.head, owner);
+            }
+        }
+        return recovered;
+    }
+
+    private static Component pairedFlatBody(
+            List<Component> glyphs, ExactComponentMembers.Collector members,
+            byte[] gray, byte[] raw, int width, int height, Component upper, Component lower, float gap) {
+        Component accepted = null;
+        for (var glyph : glyphs) {
+            int clear = Math.min(upper.minX, lower.minX) - glyph.maxX;
+            int wide = glyph.maxX - glyph.minX + 1, tall = glyph.maxY - glyph.minY + 1;
+            if (clear < 1 || clear > .34f * gap || wide < .95f * gap || wide > 1.23f * gap
+                    || tall < 4.65f * gap || tall > 5.42f * gap
+                    || glyph.area < 1.90f * gap * gap || glyph.area > 2.70f * gap * gap
+                    || upper.centerY - glyph.minY < 1.30f * gap || upper.centerY - glyph.minY > 1.84f * gap
+                    || glyph.maxY - lower.centerY < .58f * gap || glyph.maxY - lower.centerY > .99f * gap)
+                continue;
+            var proof = members.producerFootprint(glyph, new ExactComponentMembers.Budget(8192, 32768));
+            if (proof == null || proof.originalIdentity() != glyph || proof.parentIdentity() != null
+                    || !sameAccidentalDyadShaft(gray, width, height, upper, lower, gap)
+                    || !sameAccidentalDyadShaft(raw, width, height, upper, lower, gap)) continue;
+            if (!twoFlatShapes(gray, width, height, glyph, proof.pixels(), upper, lower, gap)
+                    || !twoFlatShapes(raw, width, height, glyph, proof.pixels(), upper, lower, gap)) continue;
+            if (accepted != null) return null;
+            accepted = glyph;
+        }
+        return accepted;
+    }
+
+    private static boolean twoFlatShapes(
+            byte[] image, int width, int height, Component glyph, int[] pixels,
+            Component upper, Component lower, float gap) {
+        int topUpper = Math.round(upper.centerY - 1.80f * gap);
+        int bottomUpper = Math.round(upper.centerY + .85f * gap);
+        int topLower = Math.round(lower.centerY - 1.80f * gap);
+        int bottomLower = Math.round(lower.centerY + .85f * gap);
+        if (bottomUpper >= topLower || topUpper < 0 || bottomLower >= height) return false;
+        int pad = Math.round(2 * gap);
+        int x0 = Math.max(0, glyph.minX - pad), y0 = Math.max(0, topUpper - pad);
+        int w = Math.min(width - 1, glyph.maxX + pad) - x0 + 1;
+        int h = Math.min(height - 1, bottomLower + pad) - y0 + 1;
+        var local = new byte[w * h];
+        java.util.Arrays.fill(local, (byte) 255);
+        for (int index : pixels) {
+            int x = index % width - x0, y = index / width - y0;
+            if (x < 0 || x >= w || y < 0 || y >= h) return false;
+            local[y * w + x] = image[index];
+        }
+        return PrintedFlatGlyph.matches(local, w, h, Math.round(upper.centerX - 1.85f * gap) - x0,
+                        topUpper - y0, Math.round(upper.centerX - .72f * gap) - x0, bottomUpper - y0, gap)
+                && PrintedFlatGlyph.matches(local, w, h, Math.round(lower.centerX - 1.85f * gap) - x0,
+                        topLower - y0, Math.round(lower.centerX - .72f * gap) - x0, bottomLower - y0, gap);
+    }
+
+    private static boolean upperNaturalAboveFlat(
+            byte[] gray, byte[] raw, int width, int height, Component glyph, Component upper,
+            Component lower, float gap, ExactComponentMembers.Collector members) {
+        var proof = new SourceLocalAccidental.AccidentalStrips[1];
+        if (coveredStackedAccidental(gray, raw, width, height, glyph, upper, gap, proof, 0)
+                != ScoreNoteEvent.ACCIDENTAL_NATURAL
+                || proof[0].bottom() >= lower.centerY - gap * 1.12f) return false;
+        var footprint = members.producerFootprint(glyph, new ExactComponentMembers.Budget(8192, 32768));
+        if (footprint == null || footprint.originalIdentity() != glyph || footprint.parentIdentity() != null)
+            return false;
+        var pixels = new java.util.HashSet<Integer>();
+        for (int pixel : footprint.pixels()) pixels.add(pixel);
+        return proof[0].represented(pixels, width);
+    }
+
+    private static Component flatBowlBesideLowerHead(
+            List<Component> glyphs, ExactComponentMembers.Collector members, Component lower, Component upper,
+            byte[] gray, byte[] raw, int width, int height, float gap) {
+        Component found = null;
+        int top = Math.round(lower.centerY - gap * 1.24f), bottom = Math.round(lower.centerY + gap * .78f);
+        int left = Math.round(lower.centerX - gap * 1.88f), right = Math.round(lower.centerX - gap * .70f);
+        if (top < 0 || left < 0 || bottom >= height || right >= width) return null;
+        int span = right - left + 1;
+        for (var glyph : glyphs) {
+            if (glyph.minX > left + gap * .60f || glyph.maxX < right - gap * .25f
+                    || glyph.maxX >= lower.minX || glyph.maxY < bottom - gap * .32f
+                    || glyph.minY > top || glyph.maxX - glyph.minX + 1 > gap * 1.28f) continue;
+            var footprint = members.producerFootprint(glyph, new ExactComponentMembers.Budget(8192, 32768));
+            if (footprint == null || footprint.originalIdentity() != glyph || footprint.parentIdentity() != null)
+                continue;
+            boolean[] own = new boolean[span * (bottom - top + 1)];
+            for (int pixel : footprint.pixels()) {
+                int x = pixel % width, y = pixel / width;
+                if (x >= left && x <= right && y >= top && y <= bottom)
+                    own[(y - top) * span + x - left] = true;
+            }
+            boolean flat = false;
+            for (int x = Math.round(lower.centerX - gap * 1.75f);
+                    x <= Math.round(lower.centerX - gap * 1.35f); x++) {
+                int edge = Math.min(Math.round(lower.centerX - gap * .76f), x + Math.round(gap * .87f));
+                if (edge - x < gap * .56f) continue;
+                if (flatSpineCounterAndTaper(gray, width, lower.centerY, gap, x, edge, own, span, left, top)
+                        && flatSpineCounterAndTaper(raw, width, lower.centerY, gap, x, edge, own, span, left, top)) {
+                    flat = true;
+                    break;
+                }
+            }
+            if (!flat || !sameAccidentalDyadShaft(gray, width, height, lower, upper, gap)
+                    || !sameAccidentalDyadShaft(raw, width, height, lower, upper, gap)) continue;
+            if (found != null) return null;
+            found = glyph;
+        }
+        return found;
+    }
+
+    /** Keep the lower flat independent of the upper natural's descending right spine. */
+    private static Component flatBelowJoinedNatural(
+            List<Component> glyphs, ExactComponentMembers.Collector members,
+            byte[] gray, byte[] raw, int width, int height, Component upper, Component lower, float gap) {
+        Component found = null;
+        int left = Math.round(lower.centerX - gap * 2.06f);
+        int right = Math.round(lower.centerX - gap * 1.29f);
+        int top = Math.round(lower.centerY - gap * 1.70f);
+        int bottom = Math.round(lower.centerY + gap * .81f);
+        int pad = Math.round(2 * gap);
+        if (left - pad < 0 || right + pad >= width || top - pad < 0 || bottom + pad >= height)
+            return null;
+        int x0 = left - pad, y0 = top - pad;
+        int w = right + pad - x0 + 1, h = bottom + pad - y0 + 1;
+        for (var glyph : glyphs) {
+            int wide = glyph.maxX - glyph.minX + 1, tall = glyph.maxY - glyph.minY + 1;
+            int bodyClearance = Math.min(upper.minX, lower.minX) - glyph.maxX;
+            if (wide < gap * .96f || wide > gap * 1.24f || tall < gap * 4.56f || tall > gap * 5.10f
+                    || glyph.area < gap * gap * 2.20f || glyph.area > gap * gap * 2.85f
+                    || bodyClearance < 1 || bodyClearance > gap * .30f
+                    || glyph.minX < left || glyph.minX > left + gap * .30f
+                    || glyph.maxX - right < gap * .30f || glyph.maxX - right > gap * .55f
+                    || upper.centerY - glyph.minY < gap * 1.26f || upper.centerY - glyph.minY > gap * 1.70f
+                    || glyph.maxY - lower.centerY < gap * .54f || glyph.maxY - lower.centerY > gap * .84f) continue;
+            var footprint = members.producerFootprint(glyph, new ExactComponentMembers.Budget(8192, 32768));
+            if (footprint == null || footprint.originalIdentity() != glyph || footprint.parentIdentity() != null
+                    || !sameAccidentalDyadShaft(gray, width, height, upper, lower, gap)
+                    || !sameAccidentalDyadShaft(raw, width, height, upper, lower, gap)
+                    || !upperNaturalAboveFlat(gray, raw, width, height, glyph, upper, lower, gap, members))
+                continue;
+            var normalized = new byte[w * h];
+            var original = new byte[w * h];
+            java.util.Arrays.fill(normalized, (byte) 255);
+            java.util.Arrays.fill(original, (byte) 255);
+            for (int pixel : footprint.pixels()) {
+                int x = pixel % width, y = pixel / width;
+                if (x < left || x > right || y < y0 || y >= y0 + h) continue;
+                int at = (y - y0) * w + x - x0;
+                normalized[at] = gray[pixel];
+                original[at] = raw[pixel];
+            }
+            if (!PrintedFlatGlyph.matches(normalized, w, h, left - x0, top - y0,
+                            right - x0, bottom - y0, gap)
+                    || !PrintedFlatGlyph.matches(original, w, h, left - x0, top - y0,
+                            right - x0, bottom - y0, gap)) continue;
+            if (found != null) return null;
+            found = glyph;
+        }
+        return found;
+    }
+
+    /** The lower bowl surrounds paper and then curves back into the left spine. */
+    private static boolean flatSpineCounterAndTaper(
+            byte[] image, int width, float y, float gap, int spine, int edge,
+            boolean[] members, int span, int left, int top) {
+        return flatSpineCounterAndTaper(image, width, y, gap, spine, edge, members, span, left, top, edge, 3);
+    }
+
+    private static boolean flatSpineCounterAndTaper(
+            byte[] image, int width, float y, float gap, int spine, int edge,
+            boolean[] members, int span, int left, int top, int clearUntil, int counterMinimum) {
+        int stem = 0, counter = 0, taper = 0, innermost = edge;
+        int total = 0;
+        for (int row = Math.round(y - gap * 1.14f); row <= Math.round(y - gap * .52f); row++) {
+            int at = row * width;
+            int member = (row - top) * span - left;
+            int side = 0, right = 0;
+            for (int col = spine; col <= edge; col++) {
+                if ((image[at + col] & 255) >= 165) continue;
+                if (col <= spine + 2) side++;
+                else if (col >= spine + 4 && col <= clearUntil && members[member + col]) right++;
+            }
+            if (side >= 2 && right == 0) stem++;
+        }
+        if (stem < 3) return false;
+        for (int row = Math.round(y - gap * .27f); row <= Math.round(y + gap * .21f); row++) {
+            int at = row * width;
+            int member = (row - top) * span - left;
+            int side = 0;
+            for (int col = spine; col <= spine + 2; col++)
+                if ((image[at + col] & 255) < 165) side++;
+            if (side < 2) continue;
+            for (int col = spine + 5; col < edge - 2; col++) {
+                if ((image[at + col] & 255) < 165 || (image[at + col + 1] & 255) < 165
+                        || (image[at + col + 2] & 255) < 165) continue;
+                int right = 0, last = col;
+                for (int x = col + 3; x <= edge; x++) {
+                    if (!members[member + x] || (image[at + x] & 255) >= 165) continue;
+                    right++;
+                    last = x;
+                }
+                if (right < 2) continue;
+                counter++;
+                total += last;
+                break;
+            }
+        }
+        if (counter < counterMinimum) return false;
+        for (int row = Math.round(y + gap * .30f); row <= Math.round(y + gap * .68f); row++) {
+            int at = row * width;
+            int member = (row - top) * span - left;
+            int count = 0, last = spine;
+            for (int col = spine - 1; col <= edge; col++) {
+                if (!members[member + col] || (image[at + col] & 255) >= 165) continue;
+                count++;
+                last = col;
+            }
+            if (count <= 4 || last == edge) continue;
+            taper++;
+            innermost = Math.min(innermost, last);
+        }
+        return taper >= 2 && total / (float) counter - innermost >= gap * .19f;
+    }
+
+    private static void addFlatBowlsOnBeamedThirds(
+            List<DetectedNote> notes, List<Component> glyphs, ExactComponentMembers.Collector members,
+            byte[] gray, byte[] raw, int width, int height, Map<Component, Component> recovered) {
+        if (raw == null || raw.length != gray.length || gray.length != (long) width * height) return;
+        for (int start = 0; start < notes.size(); ) {
+            var first = notes.get(start);
+            int end = start + 1;
+            while (end < notes.size() && sharesAccidentalAttack(first, notes.get(end))) end++;
+            if (end == start + 2) {
+                var second = notes.get(start + 1);
+                var upper = first.head.centerY < second.head.centerY ? first : second;
+                var lower = upper == first ? second : first;
+                float gap = lower.staffGap;
+                float separation = lower.head.centerY - upper.head.centerY;
+                if (gap >= 12 && gap <= 24 && lower.event.staffCount() == 1
+                        && upper.event.kind() == ScoreNoteEvent.Kind.PITCHED
+                        && lower.event.kind() == ScoreNoteEvent.Kind.PITCHED
+                        && Math.min(upper.event.beamCount(), lower.event.beamCount()) >= 2
+                        && ((upper.event.articulations() | lower.event.articulations()) & NoteOrnament.GRACE) == 0
+                        && upper.event.staffStep() - lower.event.staffStep() == 2
+                        && separation >= gap * .94f && separation <= gap * 1.22f) {
+                    compactDyadFlats(glyphs, members, upper, lower, gray, raw, width, height, gap, recovered);
+                }
+            }
+            start = end;
+        }
+    }
+
+    private static void compactDyadFlats(
+            List<Component> glyphs, ExactComponentMembers.Collector members, DetectedNote upper,
+            DetectedNote lower, byte[] gray, byte[] raw, int width, int height, float gap,
+            Map<Component, Component> recovered) {
+        Component glyph = null;
+        boolean lowerFlat = false;
+        float x = upper.head.centerX, y = upper.head.centerY;
+        int x0 = Math.round(x - gap * 2.3f), x1 = Math.round(x - gap * .70f);
+        int y0 = Math.round(y - gap * 1.24f), y1 = Math.round(lower.head.centerY + gap * .78f);
+        if (x0 < 0 || y0 < 0 || x1 >= width || y1 >= height) return;
+        int span = x1 - x0 + 1;
+        for (var candidate : glyphs) {
+            int w = candidate.maxX - candidate.minX + 1, h = candidate.maxY - candidate.minY + 1;
+            if (w < gap * 1.18f || w > gap * 1.80f || h < gap * 2.9f || h > gap * 4.5f
+                    || x - candidate.maxX < gap * .51f || x - candidate.maxX > gap * .91f
+                    || candidate.minX > x - gap * 1.72f || candidate.minX < x0 - 2
+                    || Math.abs(candidate.centerY - (upper.head.centerY + lower.head.centerY) * .5f)
+                            > gap * .52f) continue;
+            var footprint = members.producerFootprint(candidate, new ExactComponentMembers.Budget(8192, 32768));
+            if (footprint == null || footprint.originalIdentity() != candidate
+                    || footprint.parentIdentity() != null) continue;
+            boolean[] owned = new boolean[span * (y1 - y0 + 1)];
+            for (int pixel : footprint.pixels()) {
+                int xx = pixel % width, yy = pixel / width;
+                if (xx >= x0 && xx <= x1 && yy >= y0 && yy <= y1)
+                    owned[(yy - y0) * span + xx - x0] = true;
+            }
+            int upperSpine = compactFlatSpine(gray, raw, width, upper.head, gap, owned, span, x0, y0,
+                    Math.round(x - gap * 1.72f), Math.round(x - gap * 1.26f), false);
+            if (upperSpine < 0) continue;
+            if (glyph != null) return;
+            glyph = candidate;
+            lowerFlat = compactFlatSpine(gray, raw, width, lower.head, gap, owned, span, x0, y0,
+                    Math.round(x - gap * 2.18f), upperSpine - Math.round(gap * .48f), true) >= 0;
+        }
+        if (glyph == null) return;
+        if (mayRecoverCompactFlat(upper.event)) recovered.put(upper.head, glyph);
+        if (lowerFlat && mayRecoverCompactFlat(lower.event)) recovered.put(lower.head, glyph);
+    }
+
+    private static boolean mayRecoverCompactFlat(ScoreNoteEvent note) {
+        return note.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_FROM_KEY
+                || note.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_NATURAL;
+    }
+
+    private static int compactFlatSpine(
+            byte[] gray, byte[] raw, int width, Component head, float gap, boolean[] members,
+            int span, int left, int top, int first, int last, boolean staggeredLeft) {
+        for (int x = first; x <= last; x++) {
+            int edge = Math.min(Math.round(head.centerX - gap * .76f), x + Math.round(gap * .87f));
+            if (edge - x < gap * .56f) continue;
+            int clearUntil = staggeredLeft ? Math.min(edge, x + Math.round(gap * .36f)) : edge;
+            if (flatSpineCounterAndTaper(gray, width, head.centerY, gap, x, edge, members, span, left, top,
+                            clearUntil, 2)
+                    && flatSpineCounterAndTaper(raw, width, head.centerY, gap, x, edge, members, span, left, top,
+                            clearUntil, 2)) return x;
+        }
+        return -1;
+    }
+
+    private static Map<Component, Component> recoverLowerSignsOnBeamedThirds(
+            List<DetectedNote> notes, ExactComponentMembers.Collector members,
+            byte[] gray, byte[] raw, int width, int height, Map<Component, Component> flats,
+            Map<Component, Component> naturals) {
+        Map<Component, Component> sharps = new IdentityHashMap<>();
+        if (raw == null || raw.length != gray.length || gray.length != (long) width * height) return sharps;
+        for (int start = 0; start < notes.size(); ) {
+            var first = notes.get(start);
+            int end = start + 1;
+            while (end < notes.size() && sharesAccidentalAttack(first, notes.get(end))) end++;
+            if (end == start + 2) {
+                var second = notes.get(start + 1);
+                var upper = first.head.centerY < second.head.centerY ? first : second;
+                var lower = upper == first ? second : first;
+                Component upperFlat = flats.get(upper.head), upperNatural = naturals.get(upper.head);
+                float gap = lower.staffGap;
+                float distance = lower.head.centerY - upper.head.centerY;
+                if (gap >= 12 && gap <= 24 && upper.event.staffStep() - lower.event.staffStep() == 2
+                        && distance >= gap * .94f && distance <= gap * 1.22f
+                        && !flats.containsKey(lower.head) && !naturals.containsKey(lower.head)) {
+                    int current = lower.event.writtenAccidental();
+                    if (upperFlat != null && upperNatural == null
+                            && (current == ScoreNoteEvent.ACCIDENTAL_FROM_KEY
+                                    || current == ScoreNoteEvent.ACCIDENTAL_SHARP)
+                            && ownedLeftCrossbars(gray, raw, width, height, members, upperFlat, lower.head, gap,
+                                    ScoreNoteEvent.ACCIDENTAL_NATURAL))
+                        naturals.put(lower.head, upperFlat);
+                    if (upperNatural != null && upperFlat == null) {
+                        if (current == ScoreNoteEvent.ACCIDENTAL_FROM_KEY
+                                && ownedLeftCrossbars(gray, raw, width, height, members, upperNatural, lower.head,
+                                        gap, ScoreNoteEvent.ACCIDENTAL_SHARP)) sharps.put(lower.head, upperNatural);
+                        else if ((current == ScoreNoteEvent.ACCIDENTAL_SHARP
+                                        || current == ScoreNoteEvent.ACCIDENTAL_FROM_KEY)
+                                && naturalFromOwnedCrossbarsWithoutStaff(gray, raw, width, height, members,
+                                        upperNatural, lower.head, gap)) naturals.put(lower.head, upperNatural);
+                    }
+                }
+            }
+            start = end;
+        }
+        return sharps;
+    }
+
+    /** The surrounding staff rule can run through the short upper-right natural tail. */
+    private static boolean naturalFromOwnedCrossbarsWithoutStaff(
+            byte[] gray, byte[] raw, int width, int height, ExactComponentMembers.Collector members,
+            Component joint, Component lower, float gap) {
+        int jointWidth = joint.maxX - joint.minX + 1;
+        int jointHeight = joint.maxY - joint.minY + 1;
+        if (jointWidth < gap * 1.25f || jointWidth > gap * 1.64f
+                || jointHeight < gap * 3.46f || jointHeight > gap * 4.38f
+                || lower.centerX - joint.minX < gap * 1.85f
+                || lower.centerX - joint.minX > gap * 2.32f
+                || lower.centerY - joint.minY < gap * 2.45f
+                || lower.centerY - joint.minY > gap * 2.92f) return false;
+        var footprint = members.producerFootprint(joint, new ExactComponentMembers.Budget(8192, 32768));
+        if (footprint == null || footprint.originalIdentity() != joint || footprint.parentIdentity() != null)
+            return false;
+        int padX = Math.round(gap * 2.8f), padY = Math.round(gap * 1.8f);
+        int x0 = Math.max(0, joint.minX - padX), y0 = Math.max(0, joint.minY - padY);
+        int w = Math.min(width, joint.maxX + padX + 1) - x0;
+        int h = Math.min(height, joint.maxY + padY + 1) - y0;
+        byte[] shape = new byte[w * h], original = new byte[w * h];
+        java.util.Arrays.fill(shape, (byte) 255);
+        for (int y = 0; y < h; y++) System.arraycopy(raw, (y0 + y) * width + x0, original, y * w, w);
+        for (int pixel : footprint.pixels()) shape[(pixel / width - y0) * w + pixel % width - x0] = gray[pixel];
+        var owner = new Component(lower.area, lower.minX - x0, lower.maxX - x0,
+                lower.minY - y0, lower.maxY - y0, lower.centerX - x0, lower.centerY - y0);
+        int from = joint.minX - x0, edge = Math.min(joint.maxX, joint.minX + Math.round(gap * .89f)) - x0;
+        int minWidth = Math.round(gap * .44f);
+        for (int left = from; left <= from + Math.round(gap * .14f); left++) {
+            for (int right = left + minWidth; right <= edge; right++) {
+                var slice = new Component(joint.area, left, right, joint.minY - y0, joint.maxY - y0,
+                        (left + right) * .5f, joint.centerY - y0);
+                if (coveredStackedAccidental(shape, original, w, h, slice, owner, gap, null, 0)
+                        == ScoreNoteEvent.ACCIDENTAL_NATURAL) return true;
+            }
+        }
+        return false;
+    }
+
+    /** The two bars of the left-hand sign must both belong to the original joint label. */
+    private static boolean ownedLeftCrossbars(
+            byte[] gray, byte[] raw, int width, int height, ExactComponentMembers.Collector members,
+            Component joint, Component lower, float gap, int kind) {
+        int jointWidth = joint.maxX - joint.minX + 1;
+        int jointHeight = joint.maxY - joint.minY + 1;
+        if (jointWidth < gap * 1.25f || jointWidth > gap * 1.78f
+                || jointHeight < gap * 3.3f || jointHeight > gap * 4.36f
+                || lower.centerX - joint.minX < gap * 1.85f
+                || lower.centerX - joint.minX > gap * 2.45f
+                || lower.centerY - joint.minY < gap * 2.22f
+                || lower.centerY - joint.minY > gap * 2.87f) return false;
+        var footprint = members.producerFootprint(joint, new ExactComponentMembers.Budget(8192, 32768));
+        if (footprint == null || footprint.originalIdentity() != joint || footprint.parentIdentity() != null)
+            return false;
+        var pixels = new java.util.HashSet<Integer>();
+        for (int at : footprint.pixels()) pixels.add(at);
+        int maxX = Math.min(joint.maxX, joint.minX + Math.round(gap * .84f));
+        int minWidth = Math.round(gap * .44f);
+        for (int left = joint.minX; left <= joint.minX + Math.round(gap * .14f); left++) {
+            for (int right = left + minWidth; right <= maxX; right++) {
+                var slice = new Component(joint.area, left, right, joint.minY, joint.maxY,
+                        (left + right) * .5f, joint.centerY);
+                var strips = new SourceLocalAccidental.AccidentalStrips[1];
+                int observed = coveredStackedAccidental(gray, raw, width, height, slice, lower, gap, strips, 0);
+                if (observed == kind && strips[0].represented(pixels, width)) return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean sharesAccidentalAttack(DetectedNote a, DetectedNote b) {
+        return a.event.measureIndex() == b.event.measureIndex()
+                && a.event.staffIndex() == b.event.staffIndex()
+                && Math.abs(a.head.centerX - b.head.centerX) <= a.staffGap * .08f;
+    }
+
+    /** Recover two open spines on the exact glyph members as well as in both source images. */
+    private static Component naturalInBeamedThird(
+            List<Component> glyphs, ExactComponentMembers.Collector members, Component head, Component peer,
+            boolean peerHasNatural, byte[] gray, byte[] raw, int width, int height, float gap) {
+        if (gap < 12 || gap > 24) return null;
+        Component found = null;
+        for (var glyph : glyphs) {
+            int glyphWidth = glyph.maxX - glyph.minX + 1;
+            int glyphHeight = glyph.maxY - glyph.minY + 1;
+            float clear = head.centerX - glyph.maxX;
+            boolean joined = glyphWidth >= gap * 1.12f && glyphHeight >= gap * 3.15f;
+            boolean besideNatural = peerHasNatural && glyphHeight >= gap * 1.9f
+                    && glyphHeight <= gap * 2.65f && glyphWidth >= gap * .55f;
+            if ((!joined && !besideNatural) || glyphWidth > gap * 1.75f || glyphHeight > gap * 4.5f
+                    || clear < gap * .52f || clear > gap * .89f
+                    || Math.abs(head.centerY - glyph.centerY) > gap * 1.05f) continue;
+            var footprint = members.producerFootprint(glyph, new ExactComponentMembers.Budget(16_384, 65_536));
+            if (footprint == null || footprint.originalIdentity() != glyph
+                    || footprint.parentIdentity() != null) continue;
+            int x0 = glyph.minX - Math.round(gap), x1 = Math.max(glyph.maxX, head.maxX) + 1;
+            int y0 = Math.round(head.centerY - gap * 2), y1 = Math.round(head.centerY + gap * 2) + 1;
+            if (x0 < 0 || y0 < 0 || x1 > width || y1 > height) continue;
+            int w = x1 - x0, h = y1 - y0;
+            byte[] shape = new byte[w * h];
+            java.util.Arrays.fill(shape, (byte) 255);
+            for (int pixel : footprint.pixels()) {
+                int x = pixel % width - x0, y = pixel / width - y0;
+                if (x >= 0 && x < w && y >= 0 && y < h) shape[y * w + x] = gray[pixel];
+            }
+            var localHead = new Component(head.area, head.minX - x0, head.maxX - x0,
+                    head.minY - y0, head.maxY - y0, head.centerX - x0, head.centerY - y0);
+            if (!ownedNaturalSpines(gray, raw, width, height, glyph, head, peer, gap, shape,
+                    w, h, x0, y0, localHead)) continue;
+            if (found != null) return null;
+            found = glyph;
+        }
+        return found;
+    }
+
+    /** The lower sign of a cramped third may sit to the left of a separate upper sharp. */
+    private static Component lowerNaturalBesideCompactUpperSharp(
+            List<Component> glyphs, ExactComponentMembers.Collector members,
+            Component lower, Component upper, byte[] gray, byte[] raw,
+            int width, int height, float gap) {
+        Component found = null;
+        for (var cluster : glyphs) {
+            int span = cluster.maxX - cluster.minX + 1;
+            int tall = cluster.maxY - cluster.minY + 1;
+            float clear = lower.centerX - cluster.maxX;
+            if (span < gap * 1.9f || span > gap * 2.3f
+                    || tall < gap * 3.4f || tall > gap * 4.25f
+                    || clear < gap * 1.55f || clear > gap * 2.15f
+                    || lower.centerY - cluster.centerY < gap * .30f
+                    || lower.centerY - cluster.centerY > gap * .78f) continue;
+            var footprint = members.producerFootprint(cluster, new ExactComponentMembers.Budget(16_384, 65_536));
+            if (footprint == null || footprint.originalIdentity() != cluster
+                    || footprint.parentIdentity() != null
+                    || !sameAccidentalDyadShaft(gray, width, height, lower, upper, gap)
+                    || !sameAccidentalDyadShaft(raw, width, height, lower, upper, gap)) continue;
+            boolean adjacent = glyphs.stream().anyMatch(mark -> mark.minX > cluster.maxX
+                    && mark.minX - cluster.maxX <= gap * .25f && mark.maxX < upper.minX
+                    && (mark.maxX - mark.minX + 1) >= gap * .78f
+                    && (mark.maxX - mark.minX + 1) <= gap * 1.28f
+                    && Math.abs(mark.centerY - upper.centerY) <= gap * .28f);
+            if (!adjacent) continue;
+            int left = cluster.minX, right = left + Math.round(gap * .88f);
+            int top = Math.round(lower.centerY - gap * 1.94f);
+            int bottom = Math.min(cluster.maxY + 1, Math.round(lower.centerY + gap * 1.46f));
+            if (top < 0 || bottom >= height || top >= bottom) continue;
+            var seed = new Component(1, left, right, top, bottom, (left + right) * .5f, (top + bottom) * .5f);
+            if (!lowerNaturalInJoinedSigns(gray, width, height, seed, lower, upper, gap)
+                    || !lowerNaturalInJoinedSigns(raw, width, height, seed, lower, upper, gap)) continue;
+            if (found != null) return null;
+            found = cluster;
+        }
+        return found;
+    }
+
+    private static boolean lowerNaturalInJoinedSigns(
+            byte[] plane, int width, int height, Component seed, Component lower, Component upper, float gap) {
+        return offsetNaturalBetweenContinuedRules(plane, width, height, seed, lower, gap, 0)
+                && rawNaturalAtSeed(plane, width, height, seed, lower, gap, 0, 180)
+                && !offsetNaturalBetweenContinuedRules(plane, width, height, seed, upper, gap, 0);
+    }
+
+    private static boolean ownedNaturalSpines(
+            byte[] gray, byte[] raw, int width, int height, Component glyph, Component head,
+            Component peer, float gap, byte[] shape, int w, int h, int x0, int y0, Component localHead) {
+        int minWidth = Math.round(gap * .48f), maxWidth = Math.round(gap * .84f);
+        int rightLimit = Math.min(glyph.maxX, Math.round(Math.min(head.minX, peer.minX) - gap * .15f));
+        for (int left = glyph.minX; left + minWidth <= rightLimit; left++) {
+            for (int right = left + minWidth; right <= glyph.maxX && right - left <= maxWidth; right++) {
+                float center = (left + right) * .5f;
+                var seed = new Component(1, left, right, glyph.minY, glyph.maxY, center, head.centerY);
+                var local = new Component(1, left - x0, right - x0, glyph.minY - y0, glyph.maxY - y0,
+                        center - x0, head.centerY - y0);
+                if (rawNaturalAtSeed(shape, w, h, local, localHead, gap, 0, 180)
+                        && rawNaturalAtSeed(gray, width, height, seed, head, gap, 0, 180)
+                        && rawNaturalAtSeed(raw, width, height, seed, head, gap, 0, 180)
+                        && !rawNaturalAtSeed(raw, width, height, seed, peer, gap, 0, 180)) return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean soleStackedAccidentalGlyph(
+            List<Component> glyphs, Component selected, float gap) {
+        for (var other : glyphs) {
+            if (other == selected) continue;
+            int w = other.maxX - other.minX + 1, h = other.maxY - other.minY + 1;
+            if (w >= gap * .88f
+                    && w <= gap * 1.22f
+                    && h >= gap * 4.8f
+                    && h <= gap * 6.1f
+                    && Math.abs(other.maxX - selected.maxX) <= gap * .23f
+                    && Math.abs(other.centerY - selected.centerY) <= gap * .70f) return false;
+        }
+        return true;
+    }
+
+    private static boolean stackedAccidentalHeadBand(
+            float y, float staffTop, float gap, boolean crossesStaff) {
+        if (!crossesStaff) return y <= staffTop - gap * .20f;
+        float relative = (y - staffTop) / gap;
+        return relative >= -1.80f && relative <= -1.25f || relative >= .70f && relative <= 1.30f;
+    }
+
+    private static int stackedAccidentalCrossbars(
+            byte[] gray,
+            byte[] source,
+            int width,
+            int height,
+            Component glyph,
+            float headY,
+            float gap,
+            boolean crossesStaff,
+            SourceLocalAccidental.AccidentalStrips[] strips,
+            int ownerIndex) {
+        int center = Math.round(headY);
+        int reach = Math.round(gap * .88f);
+        int margin = Math.max(2, Math.round(gap * .18f));
+        int tail = Math.max(3, Math.round(gap * .26f));
+        int absentTail = Math.max(1, Math.round(gap * .12f));
+        int slant = (glyph.maxX - glyph.minX + 3) / 4;
+        if (glyph.minX < 0
+                || glyph.maxX >= width
+                || center - reach - slant - tail < 0
+                || center + reach + slant + tail >= height)
+            return ScoreNoteEvent.ACCIDENTAL_FROM_KEY;
+        boolean[] staffRows = crossesStaff ? new boolean[reach * 2 + 1] : null;
+        if (staffRows != null) {
+            int x = Math.round(glyph.centerX);
+            for (int index = 0; index < staffRows.length; index++)
+                staffRows[index] =
+                        FlagRootStaffRule.matches(
+                                source, width, height, center - reach + index, x, gap, 165);
+        }
+        int detected = ScoreNoteEvent.ACCIDENTAL_FROM_KEY;
+        for (int y = center - margin; y <= center + margin; y++) {
+            int[] stems = new int[4];
+            int count = 0;
+            for (int x = glyph.minX; x <= glyph.maxX; x++) {
+                if (!bothPlanesInk(gray, source, width, x, y)) continue;
+                int start = x;
+                while (x < glyph.maxX && bothPlanesInk(gray, source, width, x + 1, y)) x++;
+                if (x == start) continue;
+                if (count == 4 || x - start + 1 > gap * .42f) {
+                    count = 0;
+                    break;
+                }
+                stems[count++] = start;
+                stems[count++] = x;
+            }
+            if (count != 4 || stems[2] - stems[1] < gap * .18f || stems[2] - stems[1] > gap * .57f)
+                continue;
+            float midpoint = (stems[0] + stems[3]) * .5f;
+            int xLeft = (stems[0] + stems[1]) / 2;
+            int xRight = (stems[2] + stems[3]) / 2;
+            for (int rise = 1; rise <= 5; rise++) {
+                int[] first =
+                        stackedAccidentalRisingBand(
+                                gray,
+                                source,
+                                width,
+                                stems[0],
+                                stems[3],
+                                center - reach,
+                                center - margin,
+                                rise,
+                                staffRows,
+                                center - reach);
+                int[] second =
+                        stackedAccidentalRisingBand(
+                                gray,
+                                source,
+                                width,
+                                stems[0],
+                                stems[3],
+                                center + margin,
+                                center + reach,
+                                rise,
+                                staffRows,
+                                center - reach);
+                if (first == null || second == null) continue;
+                int leftShift = Math.round(-rise * .1f * (xLeft - midpoint));
+                int rightShift = Math.round(-rise * .1f * (xRight - midpoint));
+                int upLeft =
+                        stackedAccidentalTail(
+                                gray, source, width, xLeft, first[0] + leftShift, -1, tail);
+                int upRight =
+                        stackedAccidentalTail(
+                                gray, source, width, xRight, first[0] + rightShift, -1, tail);
+                int downLeft =
+                        stackedAccidentalTail(
+                                gray, source, width, xLeft, second[1] + leftShift, 1, tail);
+                int downRight =
+                        stackedAccidentalTail(
+                                gray, source, width, xRight, second[1] + rightShift, 1, tail);
+                int next;
+                if (upLeft == tail && upRight == tail && downLeft == tail && downRight == tail)
+                    next = ScoreNoteEvent.ACCIDENTAL_SHARP;
+                else if (upLeft == tail
+                        && downRight == tail
+                        && upRight <= absentTail
+                        && downLeft <= absentTail) next = ScoreNoteEvent.ACCIDENTAL_NATURAL;
+                else continue;
+                if (detected != ScoreNoteEvent.ACCIDENTAL_FROM_KEY && detected != next)
+                    return ScoreNoteEvent.ACCIDENTAL_FROM_KEY;
+                if (strips != null && strips[ownerIndex] == null)
+                    strips[ownerIndex] =
+                            new SourceLocalAccidental.AccidentalStrips(
+                                    next, stems[0], stems[3], rise, first[0], first[1], second[0],
+                                    second[1]);
+                detected = next;
+            }
+        }
+        return detected;
+    }
+
+    private static int[] stackedAccidentalRisingBand(
+            byte[] gray,
+            byte[] source,
+            int width,
+            int left,
+            int right,
+            int first,
+            int last,
+            int rise,
+            boolean[] staffRows,
+            int staffOrigin) {
+        int start = -1;
+        int[] band = null;
+        float midpoint = (left + right) * .5f;
+        for (int y = first; y <= last + 1; y++) {
+            boolean bridge = y <= last && (staffRows == null || !staffRows[y - staffOrigin]);
+            if (bridge)
+                for (int x = left; x <= right; x++) {
+                    int row = Math.round(y - rise * .1f * (x - midpoint));
+                    if (!bothPlanesInk(gray, source, width, x, row)) {
+                        bridge = false;
+                        break;
+                    }
+                }
+            if (bridge && start < 0) start = y;
+            if (!bridge && start >= 0) {
+                if (y - start >= 2) {
+                    if (band != null) return null;
+                    band = new int[] {start, y - 1};
+                }
+                start = -1;
+            }
+        }
+        return band;
+    }
+
+    private static int stackedAccidentalTail(
+            byte[] gray, byte[] source, int width, int x, int start, int direction, int length) {
+        for (int distance = 1; distance <= length; distance++) {
+            int row = start + distance * direction;
+            if (!bothPlanesInk(gray, source, width, x - 1, row)
+                    && !bothPlanesInk(gray, source, width, x, row)
+                    && !bothPlanesInk(gray, source, width, x + 1, row)) return distance - 1;
+        }
+        return length;
+    }
+
+    private static boolean bothPlanesInk(byte[] gray, byte[] source, int width, int x, int y) {
+        int index = y * width + x;
+        return (gray[index] & 255) <= 165 && (source[index] & 255) <= 165;
+    }
+
+
+
+    private static boolean pairedCompactChordSharps(
+            byte[] gray,
+            int width,
+            int height,
+            List<AccidentalCandidate> candidates,
+            Component head,
+            List<Component> heads,
+            float gap) {
+        if (gray == null || gap < 9 || gap > 25) return false;
+        for (AccidentalCandidate candidate : candidates) {
+            var box = candidate.component;
+            if (candidate.label != OmrMeasurePostProcessor.CLEF_OR_KEY
+                    || box.maxX - box.minX < gap * 1.68f
+                    || box.maxX - box.minX > gap * 2.04f
+                    || box.maxY - box.minY < gap * 2.85f
+                    || box.maxY - box.minY > gap * 3.30f
+                    || box.maxX > head.minX
+                    || head.minX - box.maxX > gap * .22f
+                    || Math.abs(box.centerY - head.centerY) > gap * .75f) continue;
+            Component peer = null;
+            for (var other : heads) {
+                float separation = Math.abs(other.centerY - head.centerY);
+                if (Math.abs(other.centerX - head.centerX) > gap * .17f
+                        || separation < gap * .92f
+                        || separation > gap * 1.22f) continue;
+                if (peer != null) return false;
+                peer = other;
+            }
+            if (peer == null) continue;
+            var lower = head.centerY > peer.centerY ? head : peer;
+            var upper = lower == head ? peer : head;
+            int left = box.minX + Math.round(gap * .18f);
+            int divider = (box.minX + box.maxX + 2) / 2;
+            int right = Math.min(box.maxX, Math.round(upper.minX - gap * .12f));
+            int upperTop = Math.round(upper.centerY - gap * 1.37f);
+            int upperBottom = Math.round(upper.centerY + gap * 1.61f);
+            int lowerTop = Math.round(lower.centerY - gap * 1.51f);
+            int lowerBottom = Math.round(lower.centerY + gap * 1.02f);
+            int tipTop = Math.round(lower.centerY + gap * .66f);
+            if (upperTop < 0
+                    || upperBottom >= height
+                    || lowerTop < 0
+                    || lowerBottom >= height
+                    || left >= divider
+                    || divider >= right
+                    || !separateSharpTails(gray, width, left, divider, tipTop, lowerBottom, gap))
+                continue;
+            var budget = new PrintedBeamShafts.Budget(35_000);
+            var a =
+                    PrintedBeamShafts.at(
+                            gray, width, height, upper.centerX, upper.centerY, gap, budget);
+            var b =
+                    PrintedBeamShafts.at(
+                            gray, width, height, lower.centerX, lower.centerY, gap, budget);
+            if (a.size() != 1
+                    || b.size() != 1
+                    || a.get(0).direction() != -1
+                    || b.get(0).direction() != -1
+                    || Math.max(a.get(0).left(), b.get(0).left())
+                            > Math.min(a.get(0).right(), b.get(0).right())
+                    || Math.abs(a.get(0).endY() - b.get(0).endY()) > gap * .18f) continue;
+            // The lower crossbars touch the preceding stem. Verify their two free tails
+            // before allowing that connected crop. The upper sign must pass the full proof.
+            if (rawSharpInBounds(
+                            gray,
+                            width,
+                            height,
+                            upper,
+                            gap,
+                            divider + 1,
+                            right,
+                            upperTop,
+                            upperBottom,
+                            true,
+                            true)
+                    && rawSharpInBounds(
+                            gray,
+                            width,
+                            height,
+                            lower,
+                            gap,
+                            left,
+                            divider,
+                            lowerTop,
+                            lowerBottom,
+                            false)) return true;
+        }
+        return false;
+    }
+
+    private static boolean separateSharpTails(
+            byte[] gray, int width, int left, int right, int top, int bottom, float gap) {
+        int previousEnd = -1;
+        int stems = 0;
+        for (int x = left; x <= right; x++) {
+            if (!darkColumn(gray, width, x, top, bottom, .84f)) continue;
+            int start = x;
+            while (x < right && darkColumn(gray, width, x + 1, top, bottom, .84f)) x++;
+            if (x - start + 1 < 2 || x - start + 1 > gap * .29f) return false;
+            if (++stems == 2
+                    && (start - previousEnd < gap * .17f || start - previousEnd > gap * .46f))
+                return false;
+            previousEnd = x;
+        }
+        return stems == 2;
+    }
+
+    /** A detached digit over a neighboring beamed attack has its own non-accidental owner. */
+    private static boolean detachedPriorFingeringLooksLikeFlat(
+            byte[] labels, byte[] gray, byte[] raw, int width, int height,
+            Component digit, Component head, float gap, Staff owner,
+            List<Staff> staffs, List<Component> heads) {
+        if (gray == null || raw == null || gray.length != raw.length || owner.count != 1
+                || gap < 11 || gap > 24) return false;
+        int glyphWidth = digit.maxX - digit.minX + 1, glyphHeight = digit.maxY - digit.minY + 1;
+        float clearance = head.minX - digit.maxX;
+        if (glyphWidth < gap * .48f || glyphWidth > gap * .84f
+                || glyphHeight < gap * .95f || glyphHeight > gap * 1.36f
+                || clearance < gap * .94f || clearance > gap * 1.65f
+                || Math.abs(head.centerY - digit.maxY) > gap * .28f) return false;
+        Component previous = null;
+        for (var peer : heads) {
+            float dx = head.centerX - peer.centerX, dy = peer.centerY - digit.maxY;
+            if (dx < gap * 1.85f || dx > gap * 2.8f || dy < gap * .76f || dy > gap * 1.27f
+                    || Math.abs(peer.centerX - digit.centerX) > gap * .22f
+                    || staffForHead(labels, gray, width, height, staffs, peer) != owner
+                    || !filledBeamEndpointCore(gray, width, height, peer, gap)
+                    || !filledBeamEndpointCore(raw, width, height, peer, gap)) continue;
+            if (previous != null) return false;
+            previous = peer;
+        }
+        return previous != null
+                && detachedOneOverOwnedBeam(gray, width, height, digit, previous, head, gap)
+                && detachedOneOverOwnedBeam(raw, width, height, digit, previous, head, gap);
+    }
+
+    private static boolean detachedOneOverOwnedBeam(
+            byte[] gray, int width, int height, Component sign, Component previous, Component head, float gap) {
+        int margin = 2;
+        int left = Math.max(0, sign.minX - margin), right = Math.min(width - 1, sign.maxX + margin);
+        int top = Math.max(0, sign.minY - margin), bottom = Math.min(height - 1, sign.maxY + margin);
+        var digits = RawNumeralComponents.capture(gray, width, height, left, top, right, bottom,
+                () -> {}, () -> {});
+        if (digits.components().size() != 1) return false;
+        var one = digits.components().get(0);
+        if (one.left <= left || one.right >= right || one.top <= top || one.bottom >= bottom
+                || !TripletRhythmDetector.fingerOne(gray, width, one)) return false;
+        int h = one.bottom - one.top + 1, w = one.right - one.left + 1;
+        // A flat's bowl expands before the foot; the numeral has a slender lower middle.
+        for (int y = one.top + Math.round(h * .47f); y <= one.top + Math.round(h * .72f); y++) {
+            int ink = 0;
+            for (int x = one.left; x <= one.right; x++)
+                if ((gray[y * width + x] & 255) <= 165) ink++;
+            if (ink > w * .67f) return false;
+        }
+        var budget = new PrintedBeamShafts.Budget(28_000);
+        var a = downShaft(gray, width, height, previous, gap, budget);
+        var b = downShaft(gray, width, height, head, gap, budget);
+        return a != null && b != null
+                && WrappedEighthTriplets.matchesRailBridge(gray, width, height, a, b, gap, true);
+    }
+
+    /** Separate an offset natural from staff rules that continue on both sides of its sign. */
+    private static boolean naturalBetweenContinuedRules(
+            byte[] gray, byte[] raw, int width, int height, Component seed, Component head, float gap) {
+        if (gray == null || raw == null || raw.length != gray.length || gap < 10 || gap > 25)
+            return false;
+        int glyphWidth = seed.maxX - seed.minX + 1, glyphHeight = seed.maxY - seed.minY + 1;
+        float clearance = head.minX - seed.maxX;
+        if (glyphWidth < gap * .72f || glyphWidth > gap * 1.20f
+                || glyphHeight < gap * 2.35f || glyphHeight > gap * 3.25f
+                || clearance < 0 || clearance > gap * .65f
+                || Math.abs(seed.centerY - head.centerY) > gap * .35f) return false;
+        for (int lowerExtension : new int[] {0, Math.round(gap * .36f)}) {
+            if (offsetNaturalBetweenContinuedRules(gray, width, height, seed, head, gap, lowerExtension)
+                    && offsetNaturalBetweenContinuedRules(raw, width, height, seed, head, gap, lowerExtension))
+                return true;
+        }
+        return false;
+    }
+
+    private static boolean offsetNaturalBetweenContinuedRules(
+            byte[] gray, int width, int height, Component seed, Component head, float gap, int lowerExtension) {
+        int reach = Math.round(gap * .75f);
+        if (seed.minX < reach || seed.maxX + reach >= width) return false;
+        int w = seed.maxX - seed.minX + 1;
+        // A labeled sign can end on the lower rule while its right spine continues below it.
+        int bottom = Math.min(height - 1, seed.maxY + lowerExtension);
+        int h = bottom - seed.minY + 1;
+        byte[] isolated = new byte[w * h];
+        int separatedRules = 0;
+        boolean continuing = false;
+        int area = 0, minX = w, maxX = -1, minY = h, maxY = -1;
+        int[] columnInk = new int[w];
+        for (int row = 0; row < h; row++) {
+            int y = seed.minY + row;
+            int leftInk = 0, rightInk = 0;
+            for (int n = 1; n <= reach; n++) {
+                if ((gray[y * width + seed.minX - n] & 255) < 155) leftInk++;
+                if ((gray[y * width + seed.maxX + n] & 255) < 155) rightInk++;
+            }
+            boolean rule = leftInk >= reach * .82f && rightInk >= reach * .82f;
+            if (rule && !continuing) separatedRules++;
+            continuing = rule;
+            if (rule) continue;
+            for (int col = 0; col < w; col++) {
+                if ((gray[y * width + seed.minX + col] & 255) >= 155) continue;
+                isolated[row * w + col] = OmrMeasurePostProcessor.SYMBOL;
+                area++;
+                columnInk[col]++;
+                minX = Math.min(minX, col);
+                maxX = Math.max(maxX, col);
+                minY = Math.min(minY, row);
+                maxY = Math.max(maxY, row);
+            }
+        }
+        if (separatedRules < 2 || area == 0) return false;
+        // One pale edge column can include a few short staff/spine antialias fragments.
+        for (int fringe : new int[] {-1, minX, maxX}) {
+            if (fringe >= 0 && columnInk[fringe] > gap * .55f) continue;
+            int left = minX + (fringe == minX ? 1 : 0), right = maxX - (fringe == maxX ? 1 : 0);
+            int size = area - (fringe < 0 ? 0 : columnInk[fringe]);
+            if (right < left) continue;
+            var glyph = new Component(size, left, right, minY, maxY, 0, 0);
+            float pitch = naturalGlyphPitchCore(isolated, w, h,
+                    new AccidentalCandidate(glyph, OmrMeasurePostProcessor.SYMBOL), gap, true);
+            if (Float.isFinite(pitch) && Math.abs(seed.minY + pitch - head.centerY) <= gap * .34f)
+                return true;
+        }
+        return false;
     }
 
     /** Keep the complete natural's source when a staff fragment extends its right edge. */
@@ -21049,6 +25317,164 @@ final class OmrScoreInterpreter {
             if (dark == bridge && staff * 2 >= bridge) return true;
         }
         return false;
+    }
+
+    /**
+     * A natural can absorb a staff island and the edge of the next head. The resulting wider
+     * candidate resembles a sharp and sits closer to the head than the intact sign.
+     */
+    private static boolean joinsNaturalToHeadAndStaff(
+            byte[] labels,
+            byte[] gray,
+            int width,
+            int height,
+            List<AccidentalCandidate> candidates,
+            Component head,
+            float gap,
+            Component joined,
+            List<Object> parents) {
+        if (gray == null
+                || parents == null
+                || parents.size() < 3
+                || joined.maxX < head.minX
+                || joined.maxX > head.minX + gap * .25f) return false;
+        AccidentalCandidate natural = null;
+        for (var candidate : candidates) {
+            var glyph = candidate.component;
+            float clearance = head.minX - glyph.maxX;
+            if (candidate.label != OmrMeasurePostProcessor.CLEF_OR_KEY
+                    || glyph.minX != joined.minX
+                    || glyph.minY != joined.minY
+                    || glyph.maxY != joined.maxY
+                    || clearance <= 0
+                    || clearance > gap * .65f
+                    || Math.abs(glyph.centerY - head.centerY) > gap * .35f
+                    || parents.stream().noneMatch(parent -> parent == glyph)
+                    || !isNaturalGlyph(labels, width, height, candidate, gap)
+                    || !naturalInOriginalInk(labels, gray, width, candidate, gap)) continue;
+            if (natural != null) return false;
+            natural = candidate;
+        }
+        if (natural == null) return false;
+
+        boolean foundHead = false, foundStaff = false;
+        for (Object parent : parents) {
+            var piece = (Component) parent;
+            if (piece == natural.component) continue;
+            if (piece.area * 8 > natural.component.area
+                    || piece.maxX - piece.minX + 1 > gap * .45f
+                    || piece.maxY - piece.minY + 1 > gap * .26f) return false;
+            if (noteheadTouchesFragment(labels, gray, width, piece, head, gap)) {
+                foundHead = true;
+            } else if (staffOwnsAccidentalFragment(labels, gray, width, piece, joined, gap)) {
+                foundStaff = true;
+            } else {
+                return false;
+            }
+        }
+        return foundHead && foundStaff;
+    }
+
+    private static boolean naturalInOriginalInk(
+            byte[] labels, byte[] gray, int width, AccidentalCandidate source, float gap) {
+        Component glyph = source.component;
+        int w = glyph.maxX - glyph.minX + 1, h = glyph.maxY - glyph.minY + 1;
+        if (w > gap * 1.8f || h > gap * 3.7f) return false;
+        byte[] ink = new byte[w * h];
+        int count = 0;
+        for (int y = 0; y < h; y++) {
+            int row = (glyph.minY + y) * width + glyph.minX;
+            for (int x = 0; x < w; x++) {
+                if (labels[row + x] == source.label && (gray[row + x] & 255) < 225) {
+                    ink[y * w + x] = source.label;
+                    count++;
+                }
+            }
+        }
+        var local = new Component(
+                count, 0, w - 1, 0, h - 1, glyph.centerX - glyph.minX, glyph.centerY - glyph.minY);
+        return count * 5 >= glyph.area * 4
+                && isNaturalGlyphCore(ink, w, h, new AccidentalCandidate(local, source.label), gap);
+    }
+
+    private static boolean noteheadTouchesFragment(
+            byte[] labels, byte[] gray, int width, Component piece, Component head, float gap) {
+        int reach = Math.max(1, Math.round(gap * .20f));
+        if (piece.minX >= head.minX
+                || piece.maxX < head.minX - reach
+                || Math.abs(piece.centerY - head.centerY) > gap * .35f) return false;
+        int joinedRows = 0;
+        for (int y = Math.max(piece.minY, head.minY); y <= Math.min(piece.maxY, head.maxY); y++) {
+            int row = y * width;
+            for (int x = Math.max(piece.minX, piece.maxX - 1); x <= piece.maxX; x++) {
+                if (labels[row + x] != OmrMeasurePostProcessor.SYMBOL
+                        || (gray[row + x] & 255) >= 225) continue;
+                for (int right = x + 1; right <= Math.min(head.maxX, piece.maxX + reach); right++) {
+                    if ((gray[row + right] & 255) >= 225) break;
+                    if (right >= head.minX
+                            && labels[row + right] == OmrMeasurePostProcessor.NOTEHEAD) {
+                        joinedRows++;
+                        break;
+                    }
+                }
+                break;
+            }
+        }
+        return joinedRows >= 2;
+    }
+
+    private static boolean staffOwnsAccidentalFragment(
+            byte[] labels, byte[] gray, int width, Component piece, Component joined, float gap) {
+        int radius = Math.round(gap);
+        int left = Math.max(0, joined.minX - radius), right = Math.min(width - 1, joined.maxX + radius);
+        if (joined.minX - left < radius || right - joined.maxX < radius) return false;
+        for (int y = piece.minY; y <= piece.maxY; y++) {
+            int dark = 0, leftStaff = 0, rightStaff = 0;
+            for (int x = left; x <= right; x++) {
+                int pixel = y * width + x;
+                if ((gray[pixel] & 255) >= 225) continue;
+                dark++;
+                if (labels[pixel] != OmrMeasurePostProcessor.STAFF) continue;
+                if (x < joined.minX) leftStaff++;
+                if (x > joined.maxX) rightStaff++;
+            }
+            if (dark * 10 >= (right - left + 1) * 9
+                    && leftStaff * 2 >= radius
+                    && rightStaff * 2 >= radius) return true;
+        }
+        return false;
+    }
+
+    /** A staff island inside the same box does not give the same natural a second owner. */
+    private static AccidentalCandidate naturalBeforeSameBoundsStaffFragment(
+            byte[] labels,
+            byte[] gray,
+            int width,
+            AccidentalCandidate first,
+            AccidentalCandidate second,
+            float gap,
+            Map<Object, List<Object>> fragments) {
+        var a = first.component;
+        var b = second.component;
+        if (gray == null
+                || first.label != OmrMeasurePostProcessor.CLEF_OR_KEY
+                || second.label != first.label
+                || a.minX != b.minX || a.maxX != b.maxX
+                || a.minY != b.minY || a.maxY != b.maxY
+                || a.area == b.area) return null;
+        var original = a.area < b.area ? first : second;
+        var merged = original == first ? b : a;
+        var parents = fragments.get(merged);
+        if (parents == null || parents.size() != 2) return null;
+        int source = parents.get(0) == original.component ? 0
+                : parents.get(1) == original.component ? 1 : -1;
+        if (source < 0) return null;
+        var island = (Component) parents.get(1 - source);
+        return island.maxY - island.minY + 1 <= gap * .20f
+                        && island.area * 16 <= original.component.area
+                        && staffOwnsAccidentalFragment(labels, gray, width, island, merged, gap)
+                        && naturalInOriginalInk(labels, gray, width, original, gap)
+                ? original : null;
     }
 
     /** A raw join with unchanged bounds can retain the original sharp's source owner. */
@@ -21678,7 +26104,8 @@ final class OmrScoreInterpreter {
                                         leftSpine,
                                         rightSpine,
                                         radius)
-                        || Math.min(rightTop - leftTop, rightBottom - leftBottom) < gap * .45f))
+                        || Math.min(rightTop - leftTop, rightBottom - leftBottom)
+                                        < Math.floor(gap * .45f)))
             return Float.NaN;
         int endpointOffset = Math.max(1, Math.round(glyphHeight * .05f));
         if (rightTop - leftTop < endpointOffset || rightBottom - leftBottom < endpointOffset)
@@ -22365,6 +26792,15 @@ final class OmrScoreInterpreter {
             boolean calibrateFrame) {
         float position = (bottom - head.centerY) / (gap * .5f);
         int original = Math.round(position);
+        int ledger = original & ~1;
+        if (gray != null
+                && gap >= 10
+                && gap <= 24
+                && ledger >= 12
+                && position - ledger >= .34f
+                && position - ledger <= .66f
+                && upperSpaceAtLedgerBoundary(gray, width, height, head, bottom, gap, ledger))
+            return ledger + 1;
         if (gray != null && gap >= 8 && (original >= 10 || original <= -2)) {
             int inward = original < 0 ? 1 : -1;
             if (original % 2 != 0 && filledBeamEndpointCore(gray, width, height, head, gap)) {
@@ -22590,7 +27026,216 @@ final class OmrScoreInterpreter {
             if (agreed != Integer.MIN_VALUE && agreed != pitch) return original;
             agreed = pitch;
         }
-        return maxY - minY <= gap * .04f ? agreed : original;
+        if (maxY - minY > gap * .04f) return original;
+        if (original >= 13 && original % 2 == 1 && agreed == original - 1
+                && preservesUpperLedgerSpace(gray, width, height, head.centerX, head.centerY,
+                        maxY, bottom, gap, agreed)) return original;
+        return agreed;
+    }
+
+    /** Two short rules below a solid head fix the pitch on either side of a rounding boundary. */
+    private static boolean upperSpaceAtLedgerBoundary(
+            byte[] gray,
+            int width,
+            int height,
+            Component head,
+            float bottom,
+            float gap,
+            int ledger) {
+        float hint = bottom - ledger * gap * .5f;
+        float first = compactLedgerBand(gray, width, height, head.centerX, hint, gap, true);
+        if (!Float.isFinite(first) || Math.abs(first - hint) > .32f * gap) return false;
+        float second = compactLedgerBand(gray, width, height, head.centerX, hint + gap, gap, true);
+        float spacing = second - first;
+        float above = first - head.centerY;
+        if (!Float.isFinite(second)
+                || spacing < .80f * gap
+                || spacing > 1.14f * gap
+                || above < .37f * spacing
+                || above > .67f * spacing) return false;
+        return filledBeamEndpointCore(gray, width, height, head, gap)
+                && !Float.isFinite(
+                        printedLedgerLine(gray, width, height, head, head.centerY, gap, true))
+                && !Float.isFinite(
+                        printedLedgerLine(gray, width, height, head, hint - gap, gap, true));
+    }
+
+    /** A lower staff-space oval may contain a thin row from its first ledger. */
+    private static boolean pairedInnerRulesBelowFilledSpace(
+            byte[] gray, byte[] raw, int width, int height, Component head,
+            float bottom, float gap, int step) {
+        if (raw == null || gray == null || raw.length != gray.length
+                || gap < 12 || gap > 24 || step < 14 || step > 18 || step % 2 != 0
+                || head.maxY - head.minY + 1 > gap * 1.36f
+                || head.maxX - head.minX + 1 > gap * 1.75f) return false;
+        float phase = step - (bottom - head.centerY) * 2 / gap;
+        if (phase < .35f || phase > .50f) return false;
+        int[] shaft = attachedRawStem(gray, width, height, head, gap, 2, 170);
+        int[] source = attachedRawStem(raw, width, height, head, gap, 2, 170);
+        return shaft != null && shaft[2] == 1 && sameDownwardLedgerShaft(shaft, source)
+                && Math.abs(shaft[0] - head.minX) <= gap * .25f
+                && shaft[1] > bottom - gap * 2.75f
+                && innerRulesBelowFilledSpace(gray, width, height, head, bottom, gap, step, shaft[0])
+                && innerRulesBelowFilledSpace(raw, width, height, head, bottom, gap, step, source[0]);
+    }
+
+    private static boolean innerRulesBelowFilledSpace(
+            byte[] gray, int width, int height, Component head,
+            float bottom, float gap, int step, int shaft) {
+        if (!FilledSparseBeamHead.completeInterior(gray, width, height, head.centerX, head.centerY, gap))
+            return false;
+        float suspectedLine = bottom - step * gap * .5f;
+        if (Float.isFinite(printedLedgerLine(gray, width, height, head, suspectedLine, gap, false))
+                || Float.isFinite(printedLedgerLine(gray, width, height, head, head.centerY, gap, true)))
+            return false;
+        float first = printedLedgerLine(gray, width, height, head, suspectedLine + gap, gap, false);
+        float second = printedLedgerLine(gray, width, height, head, suspectedLine + 2 * gap, gap, false);
+        if (!Float.isFinite(first) || !Float.isFinite(second)
+                || first < head.maxY - 1
+                || !shortLedgerRule(gray, width, Math.round(first), head, gap)
+                || Math.abs(second - first - gap) > gap * .16f
+                || first - head.centerY < gap * .50f || first - head.centerY > gap * .70f)
+            return false;
+        return finiteStemsideLedger(gray, width, height, head.centerX, shaft, second, gap)
+                && finiteStemsideLedger(gray, width, height, head.centerX, shaft, second + gap, gap);
+    }
+
+    /** Read a filled upper space where its lower ledger meets the preceding sharp. */
+    private static boolean sharpJoinedUpperLedgerSpace(
+            byte[] gray, byte[] source, int width, int height, Component head, float bottom, float gap, int step) {
+        if (source == null || source.length != gray.length || gap < 10 || gap > 24
+                || step < 16 || step % 2 != 0) return false;
+        float offset = step - (bottom - head.centerY) / (gap * .5f);
+        if (offset < .30f || offset > .50f) return false;
+        return sharpJoinedUpperLedgerSpaceIn(gray, width, height, head, bottom, gap, step)
+                && sharpJoinedUpperLedgerSpaceIn(source, width, height, head, bottom, gap, step);
+    }
+
+    private static boolean sharpJoinedUpperLedgerSpaceIn(
+            byte[] gray, int width, int height, Component head, float bottom, float gap, int step) {
+        float hint = bottom - (step - 2) * gap * .5f;
+        float second = compactLedgerBand(gray, width, height, head.centerX, hint + gap, gap, true);
+        if (!Float.isFinite(second)) return false;
+        int seam = Math.round(head.centerX - gap * 1.5f);
+        if (!printedSharpBeforeDyad(gray, width, height, seam, head.centerX, head.centerY, gap)) return false;
+        float first = compactLedgerBand(gray, width, height, head.centerX, hint, gap, true, true);
+        float spacing = second - first, above = first - head.centerY;
+        if (!Float.isFinite(first) || Math.abs(first - hint) > gap * .32f
+                || spacing < gap * .80f || spacing > gap * 1.21f
+                || above < spacing * .37f || above > spacing * .67f) return false;
+        // The attached ledger can contribute the bottom rows of the semantic notehead.
+        var body = new Component(head.area, head.minX, head.maxX, head.minY,
+                Math.min(head.maxY, Math.round(first - gap * .14f)), head.centerX, head.centerY);
+        return filledBeamEndpointCore(gray, width, height, body, gap)
+                && !Float.isFinite(printedLedgerLine(gray, width, height, head, head.centerY, gap, true))
+                && !Float.isFinite(printedLedgerLine(gray, width, height, head, hint - gap, gap, true));
+    }
+
+    /** A close ledger can survive the oval opening and pull its centroid down. */
+    static boolean preservesUpperLedgerSpace(byte[] gray, int width, int height, float x, float headY,
+            float openedY, float staffBottom, float gap, int lineStep) {
+        if (gray == null || gray.length != (long) width * height || width < 1 || height < 1
+                || !Float.isFinite(x + headY + openedY + staffBottom + gap)
+                || gap < 9 || gap > 30 || lineStep < 12 || lineStep % 2 != 0) return false;
+        float lineHint = staffBottom - lineStep * gap * .5f;
+        float first = compactLedgerBand(gray, width, height, x, lineHint, gap);
+        float second = compactLedgerBand(gray, width, height, x, lineHint + gap, gap);
+        if (!Float.isFinite(first) || !Float.isFinite(second)) return false;
+        float spacing = second - first;
+        return spacing >= gap * .82f && spacing <= gap * 1.15f
+                && first - openedY >= spacing * .34f
+                && first - headY <= spacing * .70f;
+    }
+
+    private static float compactLedgerBand(
+            byte[] gray, int width, int height, float headX, float centerY, float gap) {
+        return compactLedgerBand(gray, width, height, headX, centerY, gap, false);
+    }
+
+    private static float compactLedgerBand(
+            byte[] gray,
+            int width,
+            int height,
+            float headX,
+            float centerY,
+            float gap,
+            boolean verifySeparatedEnds) {
+        return compactLedgerBand(gray, width, height, headX, centerY, gap, verifySeparatedEnds, false);
+    }
+
+    private static float compactLedgerBand(
+            byte[] gray, int width, int height, float headX, float centerY, float gap,
+            boolean verifySeparatedEnds, boolean joinedSharpOnLeft) {
+        int x = Math.round(headX), y = Math.round(centerY);
+        int span = Math.round(gap * .81f), reach = Math.round(gap * .43f);
+        int flank = Math.round(gap * 1.13f), margin = Math.round(gap * .40f);
+        if (x - flank - 1 < 0 || x + flank + 1 >= width
+                || y - reach - margin < 0 || y + reach + margin >= height) return Float.NaN;
+        int top = -1, bottom = -1;
+        for (int row = y - reach; row <= y + reach; row++) {
+            int dark = 0;
+            for (int col = x - span; col <= x + span; col++) {
+                if ((gray[row * width + col] & 255) < 155) dark++;
+            }
+            if (dark < (2 * span + 1) * .91f) continue;
+            if (bottom >= 0 && row != bottom + 1) return Float.NaN;
+            if (top < 0) top = row;
+            bottom = row;
+        }
+        if (top < 0 || bottom - top + 1 > gap * .40f || top == y - reach || bottom == y + reach)
+            return Float.NaN;
+        int row = (top + bottom) / 2;
+        for (int side : new int[] {-1, 1}) {
+            if (side < 0 && joinedSharpOnLeft) continue;
+            int outside = x + side * flank;
+            int paper = 0;
+            for (int yy = row - 1; yy <= row + 1; yy++) {
+                for (int col = outside - 1; col <= outside + 1; col++) {
+                    if ((gray[yy * width + col] & 255) > 180) paper++;
+                }
+            }
+            if (paper < 7
+                    && (!verifySeparatedEnds
+                            || !paperBeforeNeighboringInk(
+                                    gray,
+                                    width,
+                                    x + side * (span - 1),
+                                    outside,
+                                    top,
+                                    bottom,
+                                    side,
+                                    Math.max(2, Math.round(gap * .14f))))) return Float.NaN;
+        }
+        int paperBelow = 0;
+        for (int col = x - span; col <= x + span; col++) {
+            if ((gray[(row + margin) * width + col] & 255) > 180) paperBelow++;
+        }
+        return paperBelow >= (2 * span + 1) * .74f ? (top + bottom) * .5f : Float.NaN;
+    }
+
+    /** The short rule must end before separate ink in its outer aperture. */
+    private static boolean paperBeforeNeighboringInk(
+            byte[] gray,
+            int width,
+            int start,
+            int end,
+            int top,
+            int bottom,
+            int side,
+            int required) {
+        int clear = 0;
+        for (int x = start; (end - x) * side >= 0; x += side) {
+            boolean paper = true;
+            for (int y = top; y <= bottom; y++) {
+                if ((gray[y * width + x] & 255) <= 180) {
+                    paper = false;
+                    break;
+                }
+            }
+            clear = paper ? clear + 1 : 0;
+            if (clear == required) return true;
+        }
+        return false;
     }
 
     private static float[] localStaffPitch(
@@ -23214,6 +27859,52 @@ final class OmrScoreInterpreter {
             List<Component> neighboringHeads,
             float sustainedSlope,
             StaffPitchTrack sustainedTrack) {
+        return countAugmentationDots(
+                candidates,
+                head,
+                gap,
+                gray,
+                width,
+                height,
+                hollowHead,
+                excluded,
+                neighboringHeads,
+                sustainedSlope,
+                sustainedTrack,
+                null);
+    }
+
+    private static int countAugmentationDots(
+            List<Component> candidates,
+            Component head,
+            float gap,
+            byte[] gray,
+            int width,
+            int height,
+            boolean hollowHead,
+            List<Component> excluded,
+            List<Component> neighboringHeads,
+            float sustainedSlope,
+            StaffPitchTrack sustainedTrack,
+            java.util.Set<Component> portatoOwners) {
+        return countAugmentationDots(candidates, head, gap, gray, width, height, hollowHead,
+                excluded, neighboringHeads, sustainedSlope, sustainedTrack, portatoOwners, null);
+    }
+
+    private static int countAugmentationDots(
+            List<Component> candidates,
+            Component head,
+            float gap,
+            byte[] gray,
+            int width,
+            int height,
+            boolean hollowHead,
+            List<Component> excluded,
+            List<Component> neighboringHeads,
+            float sustainedSlope,
+            StaffPitchTrack sustainedTrack,
+            java.util.Set<Component> portatoOwners,
+            DotAccidentalSource accidentalSource) {
         // Semantic boundaries can cut a tiny round island out of a slur, stem
         // or ledger line. When the page is available, require an isolated raw
         // ink component; the model's artificial boundary is not a printed dot.
@@ -23288,6 +27979,10 @@ final class OmrScoreInterpreter {
             // engraving offset). A detached bowing/staccato mark near the next note is not a dot.
             if (Math.abs(dot.centerY - head.centerY) > gap * .65f) continue;
             if (staccatoAtNextHead(dot, head, neighboringHeads, gap)) continue;
+            if (!hollowHead
+                    && gray != null
+                    && leftSideOfFollowingTouchDiamond(
+                            gray, width, height, head, dot, neighboringHeads, gap)) continue;
             if (dotWidth < Math.max(1f, gap * .10f)
                     || dotHeight < Math.max(1f, gap * .10f)
                     || dotWidth > gap * .68f
@@ -23318,25 +28013,43 @@ final class OmrScoreInterpreter {
                     duplicate = true;
                     break;
                 }
-            if (!duplicate && !graceOwnedDot(gray, width, height, head, dot, gap, neighboringHeads))
+            if (!duplicate
+                    && !graceOwnedDot(gray, width, height, head, dot, gap, neighboringHeads)
+                    && (accidentalSource == null || !followingFlatBowlOwnsDot(
+                            accidentalSource, gray, width, height, dot, gap, neighboringHeads)))
                 aligned.add(dot);
         }
         aligned.sort(Comparator.comparingDouble(Component::centerX));
         if (aligned.isEmpty()) return 0;
         Component first = aligned.get(0);
         if (first.centerX - head.maxX > gap * 1.55f) return 0;
-        if (aligned.size() == 1)
-            return !hollowHead
-                            && gray != null
-                            && adjacentDescendingStaccato(
-                                    gray, width, height, head, first, neighboringHeads, gap)
-                    ? 0
-                    : 1;
+        if (aligned.size() == 1) {
+            if (hollowHead || gray == null) return 1;
+            if (adjacentDescendingStaccato(gray, width, height, head, first, neighboringHeads, gap)
+                    || adjacentAscendingStaccato(
+                            gray, width, height, head, first, neighboringHeads, gap)
+                    || followingDetachedStaccatoInDoubleBeams(
+                            gray, width, height, head, first, neighboringHeads, gap)
+                    || adjacentShortStepStaccatoRun(
+                            gray, width, height, head, first, neighboringHeads, gap)
+                    || followingFingeringTwoOwnsDot(
+                            gray, width, height, head, first, neighboringHeads, gap)
+                    || (accidentalSource != null && followingFingeringThreeOwnsDot(
+                            gray, accidentalSource.original, width, height, head, first, neighboringHeads, gap)))
+                return 0;
+            var owners =
+                    nextOctaveOwnsPortatoDot(
+                            gray, width, height, head, first, neighboringHeads, gap);
+            if (owners.isEmpty()) return 1;
+            if (portatoOwners != null) portatoOwners.addAll(owners);
+            return 0;
+        }
         Component second = aligned.get(1);
         float spacing = second.centerX - first.centerX;
-        boolean doubleDot = spacing >= gap * .18f
-                && spacing <= gap * 1.45f
-                && Math.abs(second.centerY - first.centerY) <= gap * .40f;
+        boolean doubleDot =
+                spacing >= gap * .18f
+                        && spacing <= gap * 1.45f
+                        && Math.abs(second.centerY - first.centerY) <= gap * .40f;
         if (doubleDot
                 && !hollowHead
                 && gray != null
@@ -23348,6 +28061,417 @@ final class OmrScoreInterpreter {
                                 gray, width, height, head, first, second, neighboringHeads, gap)))
             return 1;
         return doubleDot ? 2 : 1;
+    }
+
+    private record DotAccidentalSource(byte[] labels, byte[] original, List<AccidentalCandidate> candidates) {}
+
+    /** A broken semantic spine can leave the following flat's bowl eligible as a dot. */
+    private static boolean followingFlatBowlOwnsDot(
+            DotAccidentalSource source, byte[] gray, int width, int height,
+            Component dot, float gap, List<Component> heads) {
+        if (source.original == null || source.original.length != (long) width * height || gray == null)
+            return false;
+        int owned = 0;
+        int samples = (dot.maxX - dot.minX + 1) * (dot.maxY - dot.minY + 1);
+        for (int y = dot.minY; y <= dot.maxY; y++)
+            for (int x = dot.minX; x <= dot.maxX; x++)
+                if (source.labels[y * width + x] == OmrMeasurePostProcessor.CLEF_OR_KEY) owned++;
+        if (owned * 2 <= samples) return false;
+        for (var seed : source.candidates) {
+            var bowl = seed.component;
+            if (seed.label != OmrMeasurePostProcessor.CLEF_OR_KEY
+                    || dot.minX < bowl.minX || dot.maxX > bowl.maxX
+                    || dot.minY < bowl.minY || dot.maxY > bowl.maxY) continue;
+            for (var head : heads) {
+                if (bowl.maxX >= head.minX || head.minX - bowl.maxX > gap * .55f
+                        || Math.abs(head.centerY - dot.centerY) > gap * .34f) continue;
+                var candidate = List.of(seed);
+                if (rawFlatFromBowl(gray, width, height, candidate, head, gap)
+                        && rawFlatFromBowl(source.original, width, height, candidate, head, gap)) return true;
+            }
+        }
+        return false;
+    }
+
+    /** A clipped left vertex of the following harmonic's touch can look like a dot. */
+    private static boolean leftSideOfFollowingTouchDiamond(
+            byte[] gray,
+            int width,
+            int height,
+            Component head,
+            Component dot,
+            List<Component> heads,
+            float gap) {
+        float advance = dot.centerX - head.centerX;
+        if (gap < 9
+                || gap > 25
+                || advance < gap * 1.71f
+                || advance > gap * 2.05f
+                || dot.maxX - dot.minX + 1 < gap * .42f
+                || dot.maxY - dot.minY + 1 < gap * .27f) return false;
+        for (var next : heads) {
+            float column = next.centerX - head.centerX;
+            float fromDot = next.centerX - dot.centerX;
+            float touchY = next.centerY - gap * 1.5f;
+            if (column < gap * 2.30f
+                    || column > gap * 2.79f
+                    || fromDot < gap * .49f
+                    || fromDot > gap * .74f
+                    || Math.abs(dot.centerY - touchY) > gap * .22f
+                    || dot.maxX > next.centerX - gap * .20f) continue;
+            var following = attachedRawStem(gray, width, height, next, gap, 0);
+            if (following == null
+                    || following[2] != -1
+                    || !ArtificialHarmonics.shaftCrossedDiamond(
+                            gray, width, height, next.centerX, touchY, gap, following[0], 1, true))
+                continue;
+            var before = attachedRawStem(gray, width, height, head, gap, 0);
+            if (before != null
+                    && before[2] == -1
+                    && ArtificialHarmonics.shaftCrossedDiamond(
+                            gray,
+                            width,
+                            height,
+                            head.centerX,
+                            head.centerY - gap * 1.5f,
+                            gap,
+                            before[0],
+                            1,
+                            false)) return true;
+        }
+        return false;
+    }
+
+    /** A wide dot beneath the following higher head belongs to its up-stem beamed attack. */
+    private static boolean adjacentAscendingStaccato(
+            byte[] gray,
+            int width,
+            int height,
+            Component head,
+            Component dot,
+            List<Component> nearby,
+            float gap) {
+        float advance = dot.centerX - head.centerX;
+        if (gap < 8
+                || advance < gap * 1.70f
+                || advance > gap * 2.30f
+                || head.maxX - head.minX + 1 < gap) return false;
+        Component next = null;
+        for (Component candidate : nearby) {
+            float ascent = head.centerY - candidate.centerY;
+            float below = dot.centerY - candidate.centerY;
+            if (ascent < gap * .85f
+                    || ascent > gap * 1.17f
+                    || below < gap * .92f
+                    || below > gap * 1.68f
+                    || Math.abs(candidate.centerX - dot.centerX) > gap * .13f
+                    || dot.minY - candidate.maxY < gap * .30f
+                    || candidate.maxX - candidate.minX + 1 < gap) continue;
+            if (next != null) return false;
+            next = candidate;
+        }
+        if (next == null) return false;
+        float below = (dot.centerY - next.centerY) / gap;
+        boolean nextMark =
+                isolatedLowerStaccato(gray, width, height, next, gap, below - .12f, below + .12f);
+        boolean matchingMark =
+                isolatedLowerStaccato(
+                        gray,
+                        width,
+                        height,
+                        head,
+                        gap,
+                        Math.max(.89f, below - .40f),
+                        Math.min(1.81f, below + .40f));
+        int[] a = attachedRawStem(gray, width, height, head, gap, 0);
+        int[] b = attachedRawStem(gray, width, height, next, gap, 0);
+        if (a == null || b == null || a[2] != -1 || b[2] != -1) return false;
+        if (ownsPrintedPortato(gray, width, height, head, gap, 1, null)
+                && ownsPrintedPortato(gray, width, height, next, gap, 1, dot)
+                && sharesOneUpwardBeam(gray, width, height, head, next, gap))
+            return true;
+        if (nextMark
+                && advance >= gap * 1.92f
+                && matchingMark
+                && twoSharedBeamRails(gray, width, height, a, b, gap, 1.86f, 1)) return true;
+
+        if (advance <= gap * 2.12f
+                && matchingMark
+                && (nextMark
+                        || isolatedLowerStaccato(
+                                gray, width, height, next, gap, below - .12f, below + .12f, .75))
+                && sameOctaveStaccatoStem(gray, width, height, head, a, nearby, gap) != null
+                && sameOctaveStaccatoStem(gray, width, height, next, b, nearby, gap) != null
+                && twoSharedBeamRails(gray, width, height, a, b, gap, 1.72f, 1)) return true;
+
+        if (!nextMark
+                || advance > gap * 2.13f
+                || below > 1.28f
+                || !hasAscendingStaccatoDyad(gray, width, height, head, a, nearby, gap)
+                || !hasAscendingStaccatoDyad(gray, width, height, next, b, nearby, gap)
+                || !twoSharedBeamRails(gray, width, height, a, b, gap, 1.65f, 1)) return false;
+        if (matchingMark
+                || isolatedLowerStaccato(
+                        gray,
+                        width,
+                        height,
+                        head,
+                        gap,
+                        Math.max(.91f, below - .24f),
+                        Math.min(1.33f, below + .24f),
+                        .66)) return true;
+        for (var following : nearby) {
+            float spacing = following.centerX - next.centerX;
+            if (spacing < gap * 1.70f
+                    || spacing > gap * 2.25f
+                    || Math.abs(following.centerY - next.centerY) > gap * .70f
+                    || !isolatedLowerStaccato(
+                            gray,
+                            width,
+                            height,
+                            following,
+                            gap,
+                            Math.max(.91f, below - .24f),
+                            Math.min(1.33f, below + .24f),
+                            .66)) continue;
+            int[] c = attachedRawStem(gray, width, height, following, gap, 0);
+            if (c != null
+                    && c[2] == -1
+                    && hasAscendingStaccatoDyad(gray, width, height, following, c, nearby, gap)
+                    && twoSharedBeamRails(gray, width, height, b, c, gap, 1.65f, 1)) return true;
+        }
+        return false;
+    }
+
+    private static boolean hasAscendingStaccatoDyad(
+            byte[] gray,
+            int width,
+            int height,
+            Component lower,
+            int[] shaft,
+            List<Component> nearby,
+            float gap) {
+        Component upper = null;
+        for (var partner : nearby) {
+            float separation = lower.centerY - partner.centerY;
+            if (Math.abs(lower.centerX - partner.centerX) > gap * .16f
+                    || separation < gap * .88f
+                    || separation > gap * 1.15f
+                    || partner.maxX - partner.minX + 1 < gap) continue;
+            if (upper != null) return false;
+            upper = partner;
+        }
+        if (upper == null) return false;
+        int[] peerShaft = attachedRawStem(gray, width, height, upper, gap, 0);
+        return peerShaft != null
+                && peerShaft[2] == -1
+                && Math.abs(peerShaft[0] - shaft[0]) <= 1
+                && Math.abs(peerShaft[1] - shaft[1]) <= gap * .16f;
+    }
+
+    private static Component sameOctaveStaccatoStem(
+            byte[] gray,
+            int width,
+            int height,
+            Component head,
+            int[] shaft,
+            List<Component> nearby,
+            float gap) {
+        Component peer = null;
+        for (var other : nearby) {
+            float spacing = (other.centerY - head.centerY) * shaft[2];
+            if (spacing < gap * 3.32f
+                    || spacing > gap * 3.76f
+                    || Math.abs(other.centerX - head.centerX) > gap * .12f
+                    || other.maxX - other.minX + 1 < gap) continue;
+            if (peer != null) return null;
+            peer = other;
+        }
+        if (peer == null) return null;
+        var otherShaft = attachedRawStem(gray, width, height, peer, gap, 0);
+        return otherShaft != null
+                        && otherShaft[2] == shaft[2]
+                        && Math.abs(otherShaft[0] - shaft[0]) <= 1
+                        && Math.abs(otherShaft[1] - shaft[1]) <= gap * .15f
+                ? peer
+                : null;
+    }
+
+    private static List<Component> nextOctaveOwnsPortatoDot(
+            byte[] gray,
+            int width,
+            int height,
+            Component head,
+            Component dot,
+            List<Component> nearby,
+            float gap) {
+        float advance = dot.centerX - head.centerX;
+        if (gap < 9
+                || gap > 24
+                || advance < gap * 1.67f
+                || advance > gap * 2.10f
+                || head.maxX - head.minX + 1 < gap) return List.of();
+        Component next = null;
+        for (var other : nearby) {
+            float descent = other.centerY - head.centerY;
+            float above = other.centerY - dot.centerY;
+            if (descent < gap * .36f
+                    || descent > gap * .62f
+                    || above < gap * .94f
+                    || above > gap * 1.20f
+                    || Math.abs(dot.centerX - other.centerX) > gap * .14f
+                    || other.minY - dot.maxY < gap * .25f) continue;
+            if (next != null) return List.of();
+            next = other;
+        }
+        if (next == null || !ownsPrintedPortato(gray, width, height, next, gap)) return List.of();
+
+        var a = attachedRawStem(gray, width, height, head, gap, 0);
+        var b = attachedRawStem(gray, width, height, next, gap, 0);
+        if (a == null
+                || b == null
+                || a[2] != 1
+                || b[2] != 1
+                || sameOctaveStaccatoStem(gray, width, height, head, a, nearby, gap) == null)
+            return List.of();
+        var lower = sameOctaveStaccatoStem(gray, width, height, next, b, nearby, gap);
+        if (lower == null) return List.of();
+        boolean currentPortato = ownsPrintedPortato(gray, width, height, head, gap);
+        if (twoSharedBeamRails(gray, width, height, a, b, gap, 1.65f)) {
+            return currentPortato
+                            || adjoiningPortatoOctave(gray, width, height, next, b, nearby, gap, 1)
+                    ? List.of(next, lower)
+                    : List.of();
+        }
+        if (currentPortato
+                && closedPaperBetweenBeamGroups(gray, width, height, a, b, gap)
+                && adjoiningPortatoOctave(gray, width, height, head, a, nearby, gap, -1)
+                && adjoiningPortatoOctave(gray, width, height, next, b, nearby, gap, 1))
+            return List.of(next, lower);
+        return List.of();
+    }
+
+    private static boolean adjoiningPortatoOctave(
+            byte[] gray,
+            int width,
+            int height,
+            Component head,
+            int[] shaft,
+            List<Component> nearby,
+            float gap,
+            int side) {
+        for (var other : nearby) {
+            float spacing = (other.centerX - head.centerX) * side;
+            if (spacing < gap * 1.69f
+                    || spacing > gap * 2.22f
+                    || Math.abs(other.centerY - head.centerY) > gap * 1.12f
+                    || !ownsPrintedPortato(gray, width, height, other, gap)) continue;
+            var peer = attachedRawStem(gray, width, height, other, gap, 0);
+            if (peer != null
+                    && peer[2] == 1
+                    && sameOctaveStaccatoStem(gray, width, height, other, peer, nearby, gap) != null
+                    && twoSharedBeamRails(
+                            gray,
+                            width,
+                            height,
+                            side < 0 ? peer : shaft,
+                            side < 0 ? shaft : peer,
+                            gap,
+                            1.65f)) return true;
+        }
+        return false;
+    }
+
+    private static boolean closedPaperBetweenBeamGroups(
+            byte[] gray, int width, int height, int[] a, int[] b, float gap) {
+        int left = a[0] + Math.round(gap * .34f), right = b[0] - Math.round(gap * .34f);
+        int top = Math.min(a[1], b[1]) - Math.round(gap * 1.37f), bottom = Math.max(a[1], b[1]);
+        return left >= 0
+                && right < width
+                && top >= 0
+                && bottom < height
+                && right - left >= gap * .85f
+                && Math.abs(a[1] - b[1]) <= gap * .38f
+                && grayInk(gray, width, left, right, top, bottom, 180) == 0;
+    }
+
+    /** Two disconnected printed components, a round dot and the more distant tenuto dash. */
+    private static boolean ownsPrintedPortato(
+            byte[] gray, int width, int height, Component head, float gap) {
+        return ownsPrintedPortato(gray, width, height, head, gap, -1, null);
+    }
+
+    private static boolean ownsPrintedPortato(
+            byte[] gray, int width, int height, Component head, float gap,
+            int side, Component selectedDot) {
+        return ownsPrintedPortato(
+                gray, width, height, head.centerX, head.centerY, gap, side, selectedDot, .34f);
+    }
+
+    /** The connected strokes can be slightly taller in a closed double-beam group. */
+    static boolean ownsAbovePortato(byte[] gray, int width, int height, float x, float y, float gap) {
+        return ownsPrintedPortato(gray, width, height, x, y, gap, -1, null, .40f);
+    }
+
+    private static boolean ownsPrintedPortato(
+            byte[] gray, int width, int height, float x, float y, float gap,
+            int side, Component selectedDot, float maximumDashHeight) {
+        int x0 = Math.round(x - gap * .96f), x1 = Math.round(x + gap * .96f);
+        int y0 = Math.round(y + gap * (side < 0 ? -2.20f : .70f));
+        int y1 = Math.round(y + gap * (side < 0 ? -.70f : 2.36f));
+        if (gray == null || x0 < 0 || x1 >= width || y0 < 0 || y1 >= height) return false;
+        RawNumeralComponents.Component dot = null, dash = null;
+        var source =
+                RawNumeralComponents.capture(
+                        gray, width, height, x0, y0, x1, y1, 155, () -> {}, () -> {});
+        for (var item : source.components()) {
+            if (item.left <= x0 || item.right >= x1 || item.top <= y0 || item.bottom >= y1)
+                continue;
+            int w = item.right - item.left + 1, h = item.bottom - item.top + 1;
+            float midX = (item.left + item.right) * .5f, midY = (item.top + item.bottom) * .5f;
+            float distance = side * (midY - y) / gap;
+            if (distance >= .93f
+                    && distance <= 1.22f
+                    && Math.abs(midX - x) <= gap * .17f
+                    && w >= gap * .19f
+                    && w <= gap * .46f
+                    && h >= gap * .19f
+                    && h <= gap * .47f
+                    && Math.max(w, h) <= Math.min(w, h) * 1.62f
+                    && item.size() >= w * h * .55f) {
+                if (dot != null) return false;
+                dot = item;
+            }
+            if (distance >= 1.60f
+                    && distance <= (side < 0 ? 2.02f : 2.17f)
+                    && Math.abs(midX - x) <= gap * .25f
+                    && w >= gap * .86f
+                    && w <= gap * 1.48f
+                    && h >= gap * .12f
+                    && h <= gap * maximumDashHeight
+                    && item.size() >= w * h * .53f) {
+                if (dash != null) return false;
+                dash = item;
+            }
+        }
+        if (dot == null || dash == null) return false;
+        if (selectedDot != null
+                && (Math.abs((dot.left + dot.right) * .5f - selectedDot.centerX) > gap * .16f
+                        || Math.abs((dot.top + dot.bottom) * .5f - selectedDot.centerY) > gap * .16f))
+            return false;
+        int clearance = side < 0 ? dot.top - dash.bottom : dash.top - dot.bottom;
+        return clearance >= gap * .27f && clearance <= gap * (side < 0 ? .65f : .80f);
+    }
+
+    private static boolean sharesOneUpwardBeam(
+            byte[] gray, int width, int height, Component left, Component right, float gap) {
+        var budget = new PrintedBeamShafts.Budget(160_000);
+        var a = PrintedBeamShafts.at(gray, width, height, left.centerX, left.centerY, gap, budget);
+        var b = PrintedBeamShafts.at(gray, width, height, right.centerX, right.centerY, gap, budget);
+        return a.size() == 1 && b.size() == 1
+                && a.get(0).direction() == -1 && b.get(0).direction() == -1
+                && WrappedEighthTriplets.matchesRailBridge(
+                        gray, width, height, a.get(0), b.get(0), gap, true);
     }
 
     private static boolean adjacentDescendingStaccato(
@@ -23387,6 +28511,232 @@ final class OmrScoreInterpreter {
                 && descendingStaccatoAboveHead(gray, width, height, head, gap)
                 && isolatedUpperStaccato(gray, width, height, next, gap, .93f, 1.25f)
                 && twoSharedBeamRails(gray, width, height, a, b, gap, 1.72f);
+    }
+
+    /** A descending head can own an upper dot even at the opening of the next pair of rails. */
+    private static boolean followingDetachedStaccatoInDoubleBeams(
+            byte[] gray, int width, int height, Component head, Component dot,
+            List<Component> nearby, float gap) {
+        float advance = (dot.centerX - head.centerX) / gap;
+        if (gap < 10 || gap > 25 || advance < 1.80f || advance > 2.22f
+                || head.maxX - head.minX + 1 < gap) return false;
+        Component following = null;
+        for (var candidate : nearby) {
+            float descent = (candidate.centerY - head.centerY) / gap;
+            float dotHeight = (candidate.centerY - dot.centerY) / gap;
+            if (descent < .40f || descent > .62f || dotHeight < .90f || dotHeight > 1.27f
+                    || Math.abs(candidate.centerX - dot.centerX) > gap * .17f
+                    || candidate.minY - dot.maxY < gap * .21f
+                    || candidate.maxX - candidate.minX + 1 < gap) continue;
+            if (following != null) return false;
+            following = candidate;
+        }
+        if (following == null) return false;
+        float dotHeight = (following.centerY - dot.centerY) / gap;
+        if (!isolatedUpperStaccato(gray, width, height, following, gap,
+                dotHeight - .10f, dotHeight + .10f)) return false;
+        Component successor = null;
+        for (var candidate : nearby) {
+            float spacing = (candidate.centerX - following.centerX) / gap;
+            float ascent = (following.centerY - candidate.centerY) / gap;
+            if (spacing < 1.95f || spacing > 2.65f || ascent < .80f || ascent > 1.16f
+                    || candidate.maxX - candidate.minX + 1 < gap) continue;
+            if (successor != null) return false;
+            successor = candidate;
+        }
+        if (successor == null) return false;
+        int[] owner = attachedRawStem(gray, width, height, head, gap);
+        int[] next = attachedRawStem(gray, width, height, following, gap);
+        int[] after = attachedRawStem(gray, width, height, successor, gap);
+        if (owner == null || next == null || after == null
+                || owner[2] != 1 || next[2] != 1 || after[2] != 1
+                || !twoSharedBeamRails(gray, width, height, next, after, gap, 1.72f)) return false;
+        if (twoSharedBeamRails(gray, width, height, owner, next, gap, 1.72f))
+            return isolatedUpperStaccato(gray, width, height, successor, gap, .80f, 1.35f);
+        float beamStep = (owner[1] - next[1]) / gap;
+        if (beamStep < .72f || beamStep > 1.20f
+                || !isolatedUpperStaccato(gray, width, height, head, gap, .94f, 1.50f)) return false;
+        Component previous = null;
+        for (var candidate : nearby) {
+            float spacing = (head.centerX - candidate.centerX) / gap;
+            float ascent = (candidate.centerY - head.centerY) / gap;
+            if (spacing < 1.95f || spacing > 2.65f || ascent < .80f || ascent > 1.16f
+                    || candidate.maxX - candidate.minX + 1 < gap) continue;
+            if (previous != null) return false;
+            previous = candidate;
+        }
+        if (previous == null) return false;
+        int[] before = attachedRawStem(gray, width, height, previous, gap);
+        return before != null && before[2] == 1
+                && twoSharedBeamRails(gray, width, height, before, owner, gap, 1.72f);
+    }
+
+    /** Short-step staccatos over three downward, doubly beamed attacks. */
+    private static boolean adjacentShortStepStaccatoRun(
+            byte[] gray, int width, int height, Component head, Component dot,
+            List<Component> nearby, float gap) {
+        float advance = dot.centerX - head.centerX;
+        if (gap < 8 || gap > 26 || advance < gap * 1.76f || advance > gap * 2.20f
+                || head.maxX - head.minX + 1 < gap) return false;
+        Component following = null;
+        for (var next : nearby) {
+            float step = next.centerY - head.centerY;
+            float markHeight = next.centerY - dot.centerY;
+            if (step <= gap * .57f || step > gap * .64f
+                    || markHeight < gap * .94f || markHeight > gap * 1.22f
+                    || Math.abs(next.centerX - dot.centerX) > gap * .13f
+                    || next.minY - dot.maxY < gap * .25f
+                    || next.maxX - next.minX + 1 < gap) continue;
+            if (following != null) return false;
+            following = next;
+        }
+        if (following == null
+                || !isolatedUpperStaccato(gray, width, height, head, gap, .94f, 1.27f)
+                || !isolatedUpperStaccato(gray, width, height, following, gap, .94f, 1.27f))
+            return false;
+        Component third = null;
+        for (var next : nearby) {
+            float spacing = next.centerX - following.centerX;
+            float step = next.centerY - following.centerY;
+            if (spacing < gap * 1.80f || spacing > gap * 2.18f
+                    || step < gap * .35f || step > gap * .62f
+                    || next.maxX - next.minX + 1 < gap) continue;
+            if (third != null) return false;
+            third = next;
+        }
+        if (third == null
+                || !isolatedUpperStaccato(gray, width, height, third, gap, .94f, 1.27f)) return false;
+        int[] a = attachedRawStem(gray, width, height, head, gap);
+        int[] b = attachedRawStem(gray, width, height, following, gap);
+        int[] c = attachedRawStem(gray, width, height, third, gap);
+        return a != null && b != null && c != null && a[2] == 1 && b[2] == 1 && c[2] == 1
+                && twoSharedBeamRails(gray, width, height, a, b, gap, 1.72f)
+                && twoSharedBeamRails(gray, width, height, b, c, gap, 1.72f);
+    }
+
+    /** A detached core belongs to the full fingering numeral above the following attack. */
+    /** A fingering that touches a slur can leave its lower bowl as an apparent dot. */
+    private static boolean followingFingeringThreeOwnsDot(byte[] gray, byte[] raw, int width, int height,
+            Component head, Component dot, List<Component> nearby, float gap) {
+        float advance = dot.centerX - head.centerX;
+        if (raw == null || raw.length != gray.length || gap < 10 || gap > 26
+                || advance < gap * 1.95f || advance > gap * 2.4f
+                || head.centerY - dot.centerY < gap * .25f || head.centerY - dot.centerY > gap * .55f)
+            return false;
+        Component following = null;
+        for (var n : nearby) {
+            float descent = n.centerY - head.centerY, offset = n.centerX - dot.centerX;
+            if (descent < gap * .50f || descent > gap * .80f
+                    || offset < gap * .12f || offset > gap * .37f
+                    || n.minY - dot.maxY < gap * .22f || n.minY - dot.maxY > gap * .60f
+                    || n.maxX - n.minX + 1 < gap * 1.1f) continue;
+            if (following != null) return false;
+            following = n;
+        }
+        return following != null
+                && fingeringThreeBowl(gray, width, height, head, following, dot, gap)
+                && fingeringThreeBowl(raw, width, height, head, following, dot, gap);
+    }
+
+    private static boolean fingeringThreeBowl(byte[] gray, int width, int height, Component head,
+            Component following, Component dot, float gap) {
+        var budget = new PrintedBeamShafts.Budget(36_000);
+        var first = downShaft(gray, width, height, head, gap, budget);
+        var next = downShaft(gray, width, height, following, gap, budget);
+        if (first == null || next == null || !FingeringAnnotationFilter.pairedBeamRails(
+                gray, width, height, first, next, gap)) return false;
+        int left = Math.round(following.centerX - gap * .91f);
+        int right = Math.round(following.centerX + gap * .66f);
+        int phase = Math.round(following.centerY - gap * 1.86f);
+        int bottom = following.minY - 1;
+        if (left < 0 || right >= width || phase < 2 || bottom >= height || phase + 2 >= bottom) return false;
+        int lastRead = -2;
+        // Test adjacent top cuts under the touching slur. Both must retain the same lower bowl.
+        for (int top = phase - 2; top <= phase + 2; top++) {
+            var graph = RawNumeralComponents.capture(
+                    gray, width, height, left, top, right, bottom, 205, () -> {}, () -> {});
+            for (var glyph : graph.components()) {
+                int w = glyph.right - glyph.left + 1, h = glyph.bottom - glyph.top + 1;
+                if (glyph.left <= left || glyph.right >= right || glyph.bottom >= bottom
+                        || w < gap * .66f || w > gap * 1.03f || h < gap * .90f || h > gap * 1.28f
+                        || Math.abs((glyph.left + glyph.right) * .5f - following.centerX) > gap * .24f
+                        || dot.minX < glyph.left || dot.maxX > glyph.right || dot.minY < glyph.top
+                        || dot.maxY > glyph.bottom || dot.centerX > glyph.left + w * .43f
+                        || dot.centerY < glyph.top + h * .55f) continue;
+                int owned = 0;
+                for (int j = 0; j < glyph.size(); j++) {
+                    int pixel = glyph.pixel(j), x = pixel % width, y = pixel / width;
+                    if (x >= dot.minX && x <= dot.maxX && y >= dot.minY && y <= dot.maxY
+                            && (gray[pixel] & 255) <= 165) owned++;
+                }
+                if (owned < dot.area * .9f) continue;
+                var reading = JoinedDigitTemplates.inspect(gray, width, height, new java.util.BitSet(),
+                        glyph.left, glyph.top, glyph.right, glyph.bottom, () -> {});
+                if (reading != null && reading.digit() == 3) {
+                    if (lastRead == top - 1) return true;
+                    lastRead = top;
+                    break;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static boolean followingFingeringTwoOwnsDot(
+            byte[] gray, int width, int height, Component head, Component dot,
+            List<Component> nearby, float gap) {
+        float advance = dot.centerX - head.centerX;
+        if (gap < 10 || gap > 26 || advance < gap * 1.33f || advance > gap * 1.61f
+                || head.maxX - head.minX + 1 < gap) return false;
+        Component following = null;
+        for (var next : nearby) {
+            float descent = next.centerY - head.centerY;
+            float fromDot = next.centerX - dot.centerX;
+            if (descent < gap * 1.20f || descent > gap * 1.58f
+                    || fromDot < gap * .30f || fromDot > gap * .47f
+                    || next.minY - dot.maxY < gap * .85f
+                    || next.maxX - next.minX + 1 < gap) continue;
+            if (following != null) return false;
+            following = next;
+        }
+        if (following == null) return false;
+        int[] a = attachedRawStem(gray, width, height, head, gap);
+        int[] b = attachedRawStem(gray, width, height, following, gap);
+        if (a == null || b == null || a[2] != 1 || b[2] != 1
+                || !twoSharedBeamRails(gray, width, height, a, b, gap, 1.72f)) return false;
+        int l = Math.round(following.centerX - gap * .84f);
+        int r = Math.round(following.centerX + gap * .73f);
+        int t = Math.round(following.centerY - gap * 2.27f);
+        int bottom = Math.round(following.minY - gap * .12f);
+        if (l < 0 || t < 0 || r >= width || bottom >= height || t >= bottom) return false;
+        var captured = RawNumeralComponents.capture(
+                gray, width, height, l, t, r, bottom, 180, () -> {}, () -> {});
+        RawNumeralComponents.Component digit = null;
+        for (var glyph : captured.components()) {
+            float w = glyph.right - glyph.left + 1;
+            float h = glyph.bottom - glyph.top + 1;
+            if (glyph.left <= l || glyph.right >= r || glyph.top <= t || glyph.bottom >= bottom
+                    || w < gap * .63f || w > gap * .96f || h < gap * .89f || h > gap * 1.25f
+                    || following.minY - glyph.bottom < gap * .29f
+                    || Math.abs((glyph.left + glyph.right) * .5f - following.centerX) > gap * .29f
+                    || dot.minX < glyph.left || dot.maxX > glyph.right || dot.minY < glyph.top
+                    || dot.maxY > glyph.bottom || dot.centerX > glyph.left + w * .40f
+                    || dot.centerY > glyph.top + h * .48f) continue;
+            if (digit != null) return false;
+            digit = glyph;
+        }
+        if (digit == null) return false;
+        int constituentInk = 0;
+        for (int i = 0; i < digit.size(); i++) {
+            int pixel = digit.pixel(i);
+            int x = pixel % width, y = pixel / width;
+            if (x >= dot.minX && x <= dot.maxX && y >= dot.minY && y <= dot.maxY
+                    && (gray[pixel] & 255) <= 165) constituentInk++;
+        }
+        if (constituentInk < dot.area * .90f) return false;
+        var reading = JoinedDigitTemplates.inspect(gray, width, height, new java.util.BitSet(),
+                digit.left, digit.top, digit.right, digit.bottom, () -> {});
+        return reading != null && reading.digit() == 2;
     }
 
     private static boolean ascendingStaccatoPair(byte[] gray, int width, int height,
@@ -23459,7 +28809,7 @@ final class OmrScoreInterpreter {
         // A narrow vertical staccato may contain almost as much ink as the genuine dot.
         boolean narrowStaccato =
                 second.area < first.area
-                        && second.maxY - second.minY + 1 >= (second.maxX - second.minX + 1) * 1.35f;
+                        && second.maxY - second.minY + 1 >= (second.maxX - second.minX + 1) * 1.30f;
         if (gap < 8
                 || firstAdvance < gap * .98f
                 || firstAdvance > gap * 1.32f
@@ -23534,6 +28884,78 @@ final class OmrScoreInterpreter {
         return false;
     }
 
+    /** A freestanding mark above two closed rails can extend only the permissive shaft trace. */
+    private static boolean detachedMarkAboveDoubleBeam(
+            byte[] gray, int width, int height, Component head, List<Component> heads, float gap) {
+        if (gray == null || gap < 10 || gap > 24 || head.maxX - head.minX + 1 < gap) return false;
+        int[] bridged = attachedRawStem(gray, width, height, head, gap);
+        int[] stem = attachedRawStem(gray, width, height, head, gap, 0);
+        if (stem == null
+                || bridged == null
+                || stem[2] != -1
+                || bridged[2] != -1
+                || Math.abs(stem[0] - bridged[0]) > gap * .19f
+                || stem[1] - bridged[1] < gap * .85f
+                || stem[1] - bridged[1] > gap * 1.45f
+                || head.centerY - stem[1] < gap * 3) return false;
+        int left = Math.round(head.centerX - gap * 1.17f);
+        int right = Math.round(head.centerX + gap * 1.17f);
+        int top = Math.round(bridged[1] - gap * .57f);
+        int bottom = stem[1] - 1;
+        if (left < 0 || right >= width || top < 0 || bottom >= height || top >= bottom)
+            return false;
+        var field =
+                RawNumeralComponents.capture(
+                        gray, width, height, left, top, right, bottom, () -> {}, () -> {});
+        RawNumeralComponents.Component detached = null;
+        for (var part : field.components()) {
+            if (part.size() < gap * gap * .12f) continue;
+            if (detached != null
+                    || part.left <= left
+                    || part.right >= right
+                    || part.top <= top
+                    || part.bottom >= bottom
+                    || part.left > bridged[0] - 2
+                    || part.right < bridged[0]
+                    || part.right - part.left + 1 < gap * .62f
+                    || part.right - part.left + 1 > gap * 1.15f
+                    || part.bottom - part.top + 1 < gap * .87f
+                    || part.bottom - part.top + 1 > gap * 1.35f) return false;
+            detached = part;
+        }
+        if (detached == null) return false;
+
+        Component prior = null;
+        for (var candidate : heads) {
+            float distance = head.centerX - candidate.centerX;
+            if (distance < gap * 1.8f
+                    || distance > gap * 2.56f
+                    || Math.abs(head.centerY - candidate.centerY) > gap * 1.2f
+                    || candidate.maxX - candidate.minX + 1 < gap) continue;
+            if (prior != null) return false;
+            prior = candidate;
+        }
+        if (prior == null) return false;
+        int[] previous = attachedRawStem(gray, width, height, prior, gap, 0);
+        return previous != null
+                && previous[2] == -1
+                && twoSharedBeamRails(gray, width, height, previous, stem, gap, 1.86f, 1)
+                && whiteBeyondUpStemBeamEnd(gray, width, height, stem, gap)
+                && !OwnedTertiaryBeamlets.ownsThirdRailAtUpStemEnd(
+                        gray, width, height, stem, previous, gap);
+    }
+
+    private static boolean whiteBeyondUpStemBeamEnd(
+            byte[] gray, int width, int height, int[] stem, float gap) {
+        int left = stem[0] + Math.round(gap * .28f);
+        int right = stem[0] + Math.round(gap * .83f);
+        int top = stem[1] + Math.round(gap * .2f);
+        int bottom = stem[1] + Math.round(gap * 1.28f);
+        return right < width
+                && bottom < height
+                && grayInk(gray, width, left, right, top, bottom, 140) <= gap * .18f;
+    }
+
     private static boolean twoSharedBeamRails(
             byte[] gray, int width, int height, int[] a, int[] b, float gap) {
         return twoSharedBeamRails(gray, width, height, a, b, gap, 2);
@@ -23541,6 +28963,18 @@ final class OmrScoreInterpreter {
 
     private static boolean twoSharedBeamRails(
             byte[] gray, int width, int height, int[] a, int[] b, float gap, float minimumSpan) {
+        return twoSharedBeamRails(gray, width, height, a, b, gap, minimumSpan, -1);
+    }
+
+    private static boolean twoSharedBeamRails(
+            byte[] gray,
+            int width,
+            int height,
+            int[] a,
+            int[] b,
+            float gap,
+            float minimumSpan,
+            int depthDirection) {
         int margin = Math.round(gap * .4f), span = b[0] - a[0];
         if (span < gap * minimumSpan
                 || Math.abs(a[1] - b[1]) > span * .22f
@@ -23551,7 +28985,8 @@ final class OmrScoreInterpreter {
             int radius = Math.round(gap * .12f);
             for (int x = a[0] + margin; x <= b[0] - margin; x++) {
                 float projectedTip = a[1] + (b[1] - a[1]) * (x - a[0]) / (float) span;
-                int center = Math.round(projectedTip - depth * gap);
+                int center = Math.round(projectedTip + depthDirection * depth * gap);
+                if (center - radius < 0 || center + radius >= height) return false;
                 if (grayInk(gray, width, x, x, center - radius, center + radius, 120) < 2 * radius)
                     rail = false;
             }
@@ -23560,13 +28995,35 @@ final class OmrScoreInterpreter {
         return true;
     }
 
-
     private static boolean isolatedLowerStaccato(
             byte[] gray, int width, int height, Component head, float gap) {
-        int left = Math.round(head.centerX - gap * .14f);
-        int right = Math.round(head.centerX + gap * .18f);
-        int top = Math.round(head.centerY + gap * .92f);
-        int bottom = Math.round(head.centerY + gap * 1.20f);
+        return isolatedLowerStaccato(gray, width, height, head, gap, .92f, 1.20f);
+    }
+
+    private static boolean isolatedLowerStaccato(
+            byte[] gray, int width, int height, Component head, float gap, float near, float far) {
+        return isolatedLowerStaccato(gray, width, height, head, gap, near, far, .78);
+    }
+
+    private static boolean isolatedLowerStaccato(
+            byte[] gray,
+            int width,
+            int height,
+            Component head,
+            float gap,
+            float near,
+            float far,
+            double coreFill) {
+        return centerOwnedLowerStaccato(gray, width, height, head.centerX, head.centerY, gap, near, far, coreFill);
+    }
+
+    static boolean centerOwnedLowerStaccato(
+            byte[] gray, int width, int height, float headX, float headY,
+            float gap, float near, float far, double coreFill) {
+        int left = Math.round(headX - gap * .14f);
+        int right = Math.round(headX + gap * .18f);
+        int top = Math.round(headY + gap * near);
+        int bottom = Math.round(headY + gap * far);
         int core = Math.max(1, Math.round(gap * .095f));
         int ring = Math.max(core + 2, Math.round(gap * .33f));
         if (left < ring || top < ring || right + ring >= width || bottom + ring >= height)
@@ -23574,7 +29031,7 @@ final class OmrScoreInterpreter {
         for (int y = top; y <= bottom; y++) {
             for (int x = left; x <= right; x++) {
                 if (grayInk(gray, width, x - core, x + core, y - core, y + core, 105)
-                        < Math.ceil((2 * core + 1) * (2 * core + 1) * .78)) continue;
+                        < Math.ceil((2 * core + 1) * (2 * core + 1) * coreFill)) continue;
                 if (grayInk(gray, width, x - ring, x + ring, y - ring, y - ring, 155) != 0
                         || grayInk(gray, width, x - ring, x + ring, y + ring, y + ring, 155) != 0
                         || grayInk(gray, width, x - ring, x - ring, y - ring, y + ring, 155) != 0
@@ -24599,6 +30056,10 @@ final class OmrScoreInterpreter {
                     if (!printedRule
                             && leftKey >= 0
                             && rightKey >= 0
+                            && !PrintedRuleInkOwnership.matchesLedgerStack(
+                                    gray, width, height, stem[0], center,
+                                    staffTop + staffSlope * (stem[0] - head.centerX),
+                                    gap, staffSlope, strokeThreshold)
                             && !thinStaffRuleThroughStroke(
                                     gray, width, height, stem[0], center, gap, strokeThreshold)) {
                         // A nearby staff rule can seed this same pair of wings twice.
@@ -25306,14 +30767,14 @@ final class OmrScoreInterpreter {
             float gap = staff.gap;
             float extent = fragment.maxX - fragment.minX + 1;
             float heightInGaps = (fragment.maxY - fragment.minY + 1) / gap;
-            if (gap < 10 || extent < gap * 1.28f || extent > gap * 1.55f
+            if (gap < 10 || extent < gap * 1.20f || extent > gap * 1.55f
                     || heightInGaps < .8f || heightInGaps > 1.13f
                     || fragment.area < gap * gap * .84f || fragment.area > gap * gap * 1.10f)
                 continue;
             int[] borrowed = attachedRawStem(gray, width, height, fragment, gap, 2, 170);
             if (borrowed == null || borrowed[2] != -1
                     || fragment.centerY - borrowed[1] < gap * 4.7f
-                    || borrowed[0] - fragment.centerX < gap * .42f
+                    || borrowed[0] - fragment.centerX < gap * .38f
                     || borrowed[0] - fragment.centerX > gap * .69f) continue;
 
             var terminal = new ArrayList<TerminalBeamOwner>(2);
@@ -25332,9 +30793,9 @@ final class OmrScoreInterpreter {
                     continue;
                 float distance = borrowed[0] - stem[0];
                 if (Math.abs(distance) <= gap * .22f) terminal.add(new TerminalBeamOwner(head, stem));
-                else if (distance >= gap * 2.35f && distance <= gap * 3.7f)
+                else if (distance >= gap * 2.10f && distance <= gap * 3.7f)
                     preceding.add(new TerminalBeamOwner(head, stem));
-                else if (distance >= gap * 5.3f && distance <= gap * 6.7f) {
+                else if (distance >= gap * 5.15f && distance <= gap * 6.7f) {
                     if (earlier != null && Math.abs(earlier[0] - stem[0]) > 1)
                         ambiguousEarlier = true;
                     earlier = stem;
@@ -25561,6 +31022,606 @@ final class OmrScoreInterpreter {
         return a;
     }
 
+    /** Both owned rails can meet a staff rule where the beam mask is observed. */
+    private static List<Component> staffRuleBeamMasks(
+            byte[] labels, byte[] gray, byte[] source, int width, int height,
+            List<Component> heads, List<Staff> staffs) {
+        if (gray == null || source == null || gray.length != source.length) return List.of();
+        var rejected = new ArrayList<Component>();
+        for (Component mask : heads) {
+            Staff staff = nearestHeadStaff(staffs, mask.centerY);
+            if (staff == null || staff.count != 1 || staff.gap < 10 || staff.gap > 28) continue;
+            float gap = staff.gap;
+            if (wideBorrowedStaffRuleMask(labels, gray, source, width, height, mask, heads, staff)) {
+                rejected.add(mask);
+                continue;
+            }
+            float size = gap * gap;
+            int across = mask.maxX - mask.minX + 1, depth = mask.maxY - mask.minY + 1;
+            if (Math.abs(mask.centerY - staff.bottom) > gap * .36f
+                    || across < gap * 1.32f || across > gap * 1.62f
+                    || depth < gap * .88f || depth > gap * 1.12f
+                    || mask.area < size * .44f || mask.area > size * .66f
+                    || attachedRawStem(gray, width, height, mask, gap, 2, 170) != null
+                    || attachedRawStem(source, width, height, mask, gap, 2, 170) != null) continue;
+
+            var left = new ArrayList<int[]>();
+            var right = new ArrayList<int[]>();
+            for (Component head : heads) {
+                if (Math.abs(head.centerX - mask.centerX) > gap * 2
+                        || mask.centerY - head.centerY < gap * 2.2f
+                        || mask.centerY - head.centerY > gap * 3.2f
+                        || head.area < size * .98f
+                        || nearestHeadStaff(staffs, head.centerY) != staff
+                        || !filledBeamEndpointCore(source, width, height, head, gap)) continue;
+                int[] stem = attachedRawStem(gray, width, height, head, gap, 2, 170);
+                if (stem == null || stem[2] != 1 || stem[1] - head.centerY < gap * 3.05f
+                        || !java.util.Arrays.equals(
+                                stem, attachedRawStem(source, width, height, head, gap, 2, 170))) continue;
+                if (mask.minX - stem[0] >= gap * .30f && mask.minX - stem[0] <= gap * .78f)
+                    left.add(stem);
+                if (stem[0] - mask.maxX >= gap * .30f && stem[0] - mask.maxX <= gap * .78f)
+                    right.add(stem);
+            }
+            if (left.size() != 1 || right.size() != 1) continue;
+            int[] a = left.get(0), b = right.get(0);
+            int span = b[0] - a[0];
+            float slope = (b[1] - a[1]) / (float) span;
+            if (span < gap * 2.15f || span > gap * 2.75f
+                    || Math.abs(slope) < .045f || Math.abs(slope) > .14f) continue;
+            int[] members = completeHeadMembers(labels, width, height, mask);
+            if (members != null && followsBeamsAtStaffRule(
+                    gray, source, width, height, a, b, mask, members, slope, gap)) rejected.add(mask);
+        }
+        return rejected;
+    }
+
+    private static boolean wideBorrowedStaffRuleMask(
+            byte[] labels, byte[] gray, byte[] source, int width, int height,
+            Component mask, List<Component> heads, Staff staff) {
+        float gap = staff.gap;
+        int across = mask.maxX - mask.minX + 1, depth = mask.maxY - mask.minY + 1;
+        if (Math.abs(mask.centerY - staff.bottom) > gap * .26f
+                || across < gap * 2.05f || across > gap * 2.55f
+                || depth < gap * .50f || depth > gap * .82f
+                || mask.area < gap * gap * .70f || mask.area > gap * gap * 1.0f
+                || filledBeamEndpointCore(gray, width, height, mask, gap)
+                || filledBeamEndpointCore(source, width, height, mask, gap)) return false;
+        int[] reverse = attachedRawStem(gray, width, height, mask, gap, 2, 170);
+        if (reverse == null || reverse[2] != -1
+                || reverse[0] > mask.maxX || mask.maxX - reverse[0] > gap * .35f
+                || mask.centerY - reverse[1] < gap * 5.3f
+                || mask.centerY - reverse[1] > gap * 7.4f
+                || !java.util.Arrays.equals(
+                        reverse, attachedRawStem(source, width, height, mask, gap, 2, 170)))
+            return false;
+
+        var shafts = wideMergedDyadShafts(gray, width, height, mask, heads, gap * 1.025f, 2.35f);
+        WideMergedRailShaft left = null, middle = null, right = null;
+        for (var shaft : shafts) {
+            if (!heldBeamShaftPair(source, width, height, shaft, gap)) continue;
+            float offset = shaft.trace[0] - reverse[0];
+            if (Math.abs(offset) <= Math.round(gap * .17f)
+                    && Math.abs(shaft.upper.centerY - reverse[1]) <= gap * .32f) {
+                if (middle != null) return false;
+                middle = shaft;
+            } else if (offset >= -gap * 3.35f && offset <= -gap * 2.6f
+                    && mask.minX - shaft.trace[0] >= gap * .85f) {
+                if (left != null) return false;
+                left = shaft;
+            } else if (offset >= gap * 1.65f && offset <= gap * 2.4f
+                    && shaft.trace[0] - mask.maxX >= gap * 1.20f) {
+                if (right != null) return false;
+                right = shaft;
+            }
+        }
+        if (left == null || middle == null || right == null) return false;
+        var a = left.trace;
+        var b = right.trace;
+        float slope = (b[1] - a[1]) / (float) (b[0] - a[0]);
+        if (Math.abs(slope) > .18f
+                || Math.abs(middle.trace[1] - a[1] - slope * (middle.trace[0] - a[0])) > gap * .15f)
+            return false;
+        int[] members = completeHeadMembers(labels, width, height, mask);
+        return members != null && followsBeamsAtStaffRule(
+                gray, source, width, height, a, b, mask, members, slope, gap);
+    }
+
+    private static boolean heldBeamShaftPair(
+            byte[] source, int width, int height, WideMergedRailShaft shaft, float gap) {
+        int[] upper = attachedRawStem(source, width, height, shaft.upper, gap, 2, 170);
+        int[] lower = attachedRawStem(source, width, height, shaft.lower, gap, 2, 170);
+        return java.util.Arrays.equals(shaft.trace, upper)
+                && lower != null && lower[2] == 1
+                && Math.abs(lower[0] - upper[0]) <= gap * .15f
+                && Math.abs(lower[1] - upper[1]) <= gap * .15f
+                && filledBeamEndpointCore(source, width, height, shaft.upper, gap * 1.025f)
+                && filledBeamEndpointCore(source, width, height, shaft.lower, gap * 1.025f);
+    }
+
+    private static boolean followsBeamsAtStaffRule(
+            byte[] gray, byte[] source, int width, int height,
+            int[] a, int[] b, Component mask, int[] members, float slope, float gap) {
+        float firstMember = Float.POSITIVE_INFINITY, lastMember = Float.NEGATIVE_INFINITY;
+        int dark = 0;
+        for (int pixel : members) {
+            float depth = a[1] + slope * (pixel % width - a[0]) - pixel / width;
+            firstMember = Math.min(firstMember, depth);
+            lastMember = Math.max(lastMember, depth);
+            if ((gray[pixel] & 255) < 185 && (source[pixel] & 255) < 185) dark++;
+        }
+        if (dark < members.length * .96f) return false;
+        int margin = Math.max(3, Math.round(gap * .25f));
+        int first = a[0] + margin, last = b[0] - margin;
+        int primary = Math.round(gap * .27f);
+        if (!continuousBeamRail(gray, width, height, a, slope, first, last, primary)
+                || !continuousBeamRail(source, width, height, a, slope, first, last, primary))
+            return false;
+        for (int further = Math.round(gap * 1.0f); further <= Math.round(gap * 1.18f); further++) {
+            if (firstMember < primary - gap * .20f || lastMember > further + gap * .32f
+                    || !continuousBeamRail(gray, width, height, a, slope, first, last, further)
+                    || !continuousBeamRail(source, width, height, a, slope, first, last, further))
+                continue;
+            int seam = (primary + further) / 2;
+            int clear = 0;
+            for (int x = first; x <= last; x++) {
+                int y = Math.round(a[1] + slope * (x - a[0])) - seam;
+                if (y < 1 || y >= height - 1) return false;
+                // At the converging staff rule the seam remains visible only near one end.
+                boolean paper = !beamCore(gray, width, height, x, y, 1)
+                        && !beamCore(source, width, height, x, y, 1);
+                clear = paper ? clear + 1 : 0;
+                if (clear >= Math.max(3, Math.round(gap * .18f))
+                        && (x <= mask.minX + gap * .25f || x >= mask.maxX)) return true;
+            }
+        }
+        return false;
+    }
+
+    /** A clipped opening triplet can lend its filled rail to two separate head masks. */
+    private static List<Component> clippedTripletRailAliases(
+            byte[] labels, byte[] gray, byte[] source, int width, int height,
+            List<Component> heads, List<Staff> staffs, List<MeasureRegion> measures,
+            java.util.Set<Component> singleRailStarts) {
+        if (gray == null || source == null || gray.length != source.length) return List.of();
+        var rejected = new ArrayList<Component>();
+        for (var cap : heads) {
+            var staff = nearestHeadStaff(staffs, cap.centerY);
+            if (staff == null || staff.count != 1) continue;
+            float gap = staff.gap;
+            if (gap < 10 || gap > 30 || cap.area < gap * gap * .74f || cap.area > gap * gap
+                    || cap.maxX - cap.minX + 1 < gap * 1.30f
+                    || cap.maxX - cap.minX + 1 > gap * 1.58f
+                    || cap.maxY - cap.minY + 1 < gap * .74f
+                    || cap.maxY - cap.minY + 1 > gap * .99f) continue;
+            int index = containingMeasureForStaff(
+                    measures, cap.centerX / width, cap.centerY / height, staff, height);
+            if (index <= 0 || index + 1 >= measures.size()) continue;
+            var bar = measures.get(index);
+            if (Math.abs(bar.top() - measures.get(index - 1).top()) * height > gap * .33f
+                    || Math.abs(bar.top() - measures.get(index + 1).top()) * height > gap * .33f)
+                continue;
+            int[] reverse = attachedRawStem(gray, width, height, cap, gap, 2, 170);
+            if (reverse == null || reverse[2] != 1 || reverse[0] < cap.minX
+                    || reverse[0] > cap.minX + gap * .12f
+                    || reverse[1] - cap.centerY < gap * 3.5f
+                    || reverse[1] - cap.centerY > gap * 4.5f
+                    || !java.util.Arrays.equals(reverse,
+                            attachedRawStem(source, width, height, cap, gap, 2, 170)))
+                continue;
+            var owners = new ArrayList<Component>(3);
+            for (var head : heads) {
+                float before = head.centerX - reverse[0], drop = reverse[1] - head.centerY;
+                if (head == cap || before < -gap * .78f || before > gap * 4.4f
+                        || drop < -gap * .25f || drop > gap * 2.45f
+                        || nearestHeadStaff(staffs, head.centerY) != staff
+                        || !filledBeamEndpointCore(source, width, height, head, gap)) continue;
+                owners.add(head);
+                if (owners.size() > 3) break;
+            }
+            if (owners.size() != 3) continue;
+            owners.sort(java.util.Comparator.comparingDouble(h -> h.centerX));
+            var first = owners.get(0);
+            if (reverse[0] - first.centerX < gap * .42f
+                    || reverse[0] - first.centerX > gap * .73f
+                    || Math.abs(reverse[1] - first.centerY) > gap * .24f
+                    || first.centerX - bar.left() * width < gap * .8f
+                    || first.centerX - bar.left() * width > gap * 1.65f) continue;
+            var a = clippedOpeningTriplet(gray, width, height, gap, owners);
+            var b = clippedOpeningTriplet(source, width, height, gap, owners);
+            if (a == null || b == null || Math.abs(a[0].endY() - b[0].endY()) > 1
+                    || Math.abs(a[2].endY() - b[2].endY()) > 1
+                    || Math.abs((a[0].left() + a[0].right()) * .5f - reverse[0]) > 1
+                    || !maskInsideOpeningRail(labels, gray, source, width, height, cap, a, gap))
+                continue;
+            Component fragment = null;
+            for (var small : heads) {
+                if (small.centerX < owners.get(1).centerX + gap * .9f
+                        || small.centerX > owners.get(2).centerX + gap * .12f
+                        || small.centerY > cap.centerY - gap * .6f
+                        || small.centerY < cap.centerY - gap * 2.2f
+                        || small.area > gap * gap * .28f
+                        || small.maxX - small.minX + 1 > gap * .8f
+                        || small.maxY - small.minY + 1 > gap * .7f
+                        || attachedRawStem(gray, width, height, small, gap, 2, 170) != null
+                        || attachedRawStem(source, width, height, small, gap, 2, 170) != null
+                        || !maskInsideOpeningRail(labels, gray, source, width, height, small, a, gap))
+                    continue;
+                if (fragment != null) {
+                    fragment = null;
+                    break;
+                }
+                fragment = small;
+            }
+            if (fragment != null) {
+                rejected.add(cap);
+                rejected.add(fragment);
+                singleRailStarts.add(first);
+            }
+        }
+        return rejected;
+    }
+
+    /** A reverse mask can borrow the middle upshaft of a closed bar's opening single beam. */
+    private static List<Component> interiorOpeningRailMasks(
+            byte[] labels, byte[] gray, byte[] source, int width, int height,
+            List<Component> heads, List<Staff> staffs, List<MeasureRegion> measures) {
+        if (gray == null || source == null) return List.of();
+        var rejected = new ArrayList<Component>();
+        for (var mask : heads) {
+            var staff = nearestHeadStaff(staffs, mask.centerY);
+            if (staff == null || staff.count != 1) continue;
+            float gap = staff.gap;
+            int across = mask.maxX - mask.minX + 1, depth = mask.maxY - mask.minY + 1;
+            if (gap < 10 || across < gap * .93f || across > gap * 1.19f
+                    || depth < gap * .60f || depth > gap * .84f
+                    || mask.area < gap * gap * .42f || mask.area > gap * gap * .61f
+                    || filledBeamEndpointCore(source, width, height, mask, gap)
+                    || filledBeamEndpointCore(gray, width, height, mask, gap)) continue;
+            int bar = containingMeasureForStaff(
+                    measures, mask.centerX / width, mask.centerY / height, staff, height);
+            if (bar <= 0 || bar + 1 >= measures.size()) continue;
+            var region = measures.get(bar);
+            if (Math.abs(region.top() - measures.get(bar - 1).top()) * height > gap * .33f
+                    || Math.abs(region.top() - measures.get(bar + 1).top()) * height > gap * .33f)
+                continue;
+            int[] reverse = attachedRawStem(gray, width, height, mask, gap, 2, 170);
+            if (reverse == null || reverse[2] != 1 || reverse[0] < mask.minX - 2
+                    || reverse[0] > mask.minX + gap * .18f
+                    || reverse[1] - mask.centerY < gap * 3.35f
+                    || reverse[1] - mask.centerY > gap * 3.95f
+                    || !java.util.Arrays.equals(reverse,
+                            attachedRawStem(source, width, height, mask, gap, 2, 170)))
+                continue;
+            var owners = new ArrayList<Component>(3);
+            for (var head : heads) {
+                if (head == mask || head.centerX < reverse[0] - gap * 2.75f
+                        || head.centerX > reverse[0] + gap * 2.65f
+                        || head.centerY - mask.centerY < gap * 1.65f
+                        || head.centerY - mask.centerY > gap * 4.8f
+                        || nearestHeadStaff(staffs, head.centerY) != staff
+                        || !filledBeamEndpointCore(source, width, height, head, gap)
+                        || !filledBeamEndpointCore(gray, width, height, head, gap)) continue;
+                owners.add(head);
+                if (owners.size() > 3) break;
+            }
+            if (owners.size() != 3) continue;
+            owners.sort(java.util.Comparator.comparingDouble(head -> head.centerX));
+            float inset = owners.get(0).centerX - region.left() * width;
+            var middle = owners.get(1);
+            if (inset < gap * .80f || inset > gap * 1.65f
+                    || reverse[0] - middle.centerX < gap * .38f
+                    || reverse[0] - middle.centerX > gap * .64f
+                    || Math.abs(reverse[1] - middle.maxY) > gap * .19f) continue;
+            var a = clippedOpeningTriplet(gray, width, height, gap, owners, 1.60f);
+            var b = clippedOpeningTriplet(source, width, height, gap, owners, 1.60f);
+            if (a == null || b == null
+                    || !maskOnInteriorUpstemRail(labels, gray, width, height, mask, reverse[0], a, gap)
+                    || !maskOnInteriorUpstemRail(labels, source, width, height, mask, reverse[0], b, gap)
+                    || !enclosedRailCapMeasure(
+                            gray, source, width, height, heads, staffs, measures, bar, staff)) continue;
+            rejected.add(mask);
+        }
+        return rejected;
+    }
+
+    private static boolean maskOnInteriorUpstemRail(
+            byte[] labels, byte[] gray, int width, int height, Component mask, int reverseX,
+            PrintedBeamShafts.Shaft[] shafts, float gap) {
+        float start = (shafts[1].left() + shafts[1].right()) * .5f;
+        float end = (shafts[2].left() + shafts[2].right()) * .5f;
+        if (Math.abs(start - reverseX) > 1 || mask.minX < start || mask.maxX + gap * .8f > end)
+            return false;
+        float slope = (shafts[2].endY() - shafts[1].endY()) / (end - start);
+        if (slope < -.43f || slope > -.20f) return false;
+        int[] members = completeHeadMembers(labels, width, height, mask);
+        if (members == null) return false;
+        int uncertain = 0;
+        for (int pixel : members) {
+            float offset = pixel / width - (shafts[1].endY() + slope * (pixel % width - start));
+            int value = gray[pixel] & 255;
+            if (offset < -gap * .10f || offset > gap * .79f || value >= 225) return false;
+            if (value >= 185) uncertain++;
+        }
+        return uncertain <= Math.max(1, members.length / 100);
+    }
+
+    /** A closed downstem group can lend its final rail cap to a false full-size attack. */
+    private static List<Component> trailingSingleRailCapMasks(
+            byte[] labels, byte[] gray, byte[] source, int width, int height,
+            List<Component> heads, List<Staff> staffs, List<MeasureRegion> measures) {
+        if (gray == null || source == null) return List.of();
+        var rejected = new ArrayList<Component>();
+        for (var mask : heads) {
+            var staff = nearestHeadStaff(staffs, mask.centerY);
+            if (staff == null || staff.count != 1) continue;
+            float gap = staff.gap;
+            int widthOfMask = mask.maxX - mask.minX + 1;
+            int heightOfMask = mask.maxY - mask.minY + 1;
+            if (gap < 10 || widthOfMask < gap * .93f || widthOfMask > gap * 1.13f
+                    || heightOfMask < gap * .54f || heightOfMask > gap * .84f
+                    || mask.area < gap * gap * .4f || mask.area > gap * gap * .60f
+                    || filledBeamEndpointCore(source, width, height, mask, gap)) continue;
+            int bar = containingMeasureForStaff(
+                    measures, mask.centerX / width, mask.centerY / height, staff, height);
+            if (bar < 1 || bar + 2 >= measures.size()
+                    || measures.get(bar).top() >= measures.get(bar - 1).bottom()) continue;
+            var region = measures.get(bar);
+            boolean insideStaff = region.bottom() >= measures.get(bar + 1).top();
+            if (!insideStaff && (heightOfMask > gap * .78f || mask.area > gap * gap * .56f))
+                continue;
+            int[] reverse = attachedRawStem(gray, width, height, mask, gap, 2, 170);
+            if (reverse == null || reverse[2] != -1
+                    || reverse[0] < mask.maxX - gap * .15f || reverse[0] > mask.maxX + 1
+                    || mask.centerY - reverse[1] < gap * 3.5f
+                    || mask.centerY - reverse[1] > gap * 4.35f
+                    || !java.util.Arrays.equals(reverse,
+                        attachedRawStem(source, width, height, mask, gap, 2, 170))) continue;
+            var owners = new ArrayList<Component>(3);
+            for (var head : heads) {
+                if (head == mask || head.centerX < reverse[0] - gap * 5.2f
+                        || head.centerX > reverse[0] + gap * .74f
+                        || mask.centerY - head.centerY < gap * 1.2f
+                        || mask.centerY - head.centerY > gap * 4.2f
+                        || nearestHeadStaff(staffs, head.centerY) != staff
+                        || !filledBeamEndpointCore(source, width, height, head, gap)) continue;
+                owners.add(head);
+                if (owners.size() > 3) break;
+            }
+            if (owners.size() != 3) continue;
+            owners.sort(java.util.Comparator.comparingDouble(head -> head.centerX));
+            var last = owners.get(2);
+            if (last.centerX - reverse[0] < gap * .43f
+                    || last.centerX - reverse[0] > gap * .67f
+                    || Math.abs(reverse[1] - last.centerY) > gap * .31f) continue;
+            float minimumSpacing = insideStaff ? 1.95f : 2.2f;
+            var left = recoverClosingDownstemGroup(gray, width, height, gap, owners, minimumSpacing);
+            var right = recoverClosingDownstemGroup(source, width, height, gap, owners, minimumSpacing);
+            if (left == null || right == null || !closingCapOwnsMask(
+                    labels, source, width, height, gap, mask, reverse[0], left, right)) continue;
+            if (insideStaff && !enclosedRailCapMeasure(
+                    gray, source, width, height, heads, staffs, measures, bar, staff)) continue;
+            rejected.add(mask);
+        }
+        return rejected;
+    }
+
+    /** An inside-staff cap also needs independently printed measure rules on both sides. */
+    private static boolean enclosedRailCapMeasure(
+            byte[] gray, byte[] source, int width, int height, List<Component> heads, List<Staff> staffs,
+            List<MeasureRegion> measures, int bar, Staff staff) {
+        var region = measures.get(bar);
+        float left = Float.POSITIVE_INFINITY;
+        float right = Float.NEGATIVE_INFINITY;
+        for (var note : heads) {
+            if (nearestHeadStaff(staffs, note.centerY) != staff
+                    || note.centerX < region.left() * width
+                    || note.centerX > region.right() * width) continue;
+            left = Math.min(left, note.centerX);
+            right = Math.max(right, note.centerX);
+        }
+        return right - left > staff.gap * 15
+                && WrappedMeasureBoundaries.confirmsClosedTripletBar(gray, width, height, region, left, right)
+                && WrappedMeasureBoundaries.confirmsClosedTripletBar(
+                        source, width, height, region, left, right);
+    }
+
+    private static PrintedBeamShafts.Shaft[] recoverClosingDownstemGroup(
+            byte[] gray, int width, int height, float gap, List<Component> heads, float minimumSpacing) {
+        var shafts = new PrintedBeamShafts.Shaft[3];
+        var budget = new PrintedBeamShafts.Budget(300_000);
+        for (int i = 0; i < 3; i++) {
+            var head = heads.get(i);
+            if (i > 0) {
+                var previous = heads.get(i - 1);
+                float dx = head.centerX - previous.centerX, dy = previous.centerY - head.centerY;
+                if (dx < gap * minimumSpacing || dx > gap * 3.2f
+                        || dy < gap * .8f || dy > gap * 1.75f) return null;
+            }
+            var evidence = PrintedBeamShafts.at(gray, width, height, head.centerX, head.centerY, gap, budget);
+            if (evidence.size() != 1 || evidence.get(0).direction() != 1) return null;
+            shafts[i] = evidence.get(0);
+            if (i > 0 && !WrappedEighthTriplets.matchesRailBridge(
+                    gray, width, height, shafts[i - 1], shafts[i], gap, true)) return null;
+        }
+        return shafts;
+    }
+
+    private static boolean closingCapOwnsMask(
+            byte[] labels, byte[] source, int width, int height, float gap, Component mask,
+            int reverseX, PrintedBeamShafts.Shaft[] decoder, PrintedBeamShafts.Shaft[] original) {
+        int cap = (decoder[2].left() + decoder[2].right()) / 2;
+        int second = (decoder[1].left() + decoder[1].right()) / 2;
+        if (cap <= second || Math.abs(cap - reverseX) > 2
+                || Math.abs(decoder[2].endY() - original[2].endY()) > 2
+                || Math.abs(decoder[1].endY() - original[1].endY()) > 2) return false;
+        float slope = (decoder[2].endY() - decoder[1].endY()) / (float) (cap - second);
+        if (Math.abs(slope) > .55f) return false;
+        int[] pixels = completeHeadMembers(labels, width, height, mask);
+        if (pixels == null) return false;
+        for (int pixel : pixels) {
+            float fromCap = decoder[2].endY() + slope * (pixel % width - cap) - pixel / width;
+            if (fromCap < -gap * .17f || fromCap > gap * .8f || (source[pixel] & 255) >= 185) return false;
+        }
+        return true;
+    }
+
+    private static PrintedBeamShafts.Shaft[] clippedOpeningTriplet(
+            byte[] gray, int width, int height, float gap, List<Component> heads) {
+        return clippedOpeningTriplet(gray, width, height, gap, heads, 1.2f);
+    }
+
+    private static PrintedBeamShafts.Shaft[] clippedOpeningTriplet(
+            byte[] gray, int width, int height, float gap, List<Component> heads, float maximumRise) {
+        var x = new float[3];
+        var y = new float[3];
+        var shafts = new PrintedBeamShafts.Shaft[3];
+        var budget = new PrintedBeamShafts.Budget(300_000);
+        for (int i = 0; i < 3; i++) {
+            x[i] = heads.get(i).centerX;
+            y[i] = heads.get(i).centerY;
+            if (i > 0 && (x[i] - x[i - 1] < gap * 1.75f || x[i] - x[i - 1] > gap * 2.9f
+                    || y[i - 1] - y[i] < gap * .85f || y[i - 1] - y[i] > gap * maximumRise))
+                return null;
+            var candidates = PrintedBeamShafts.at(gray, width, height, x[i], y[i], gap, budget);
+            if (candidates.size() > 1 || !candidates.isEmpty() && candidates.get(0).direction() != -1)
+                return null;
+            if (!candidates.isEmpty()) shafts[i] = candidates.get(0);
+        }
+        var proof = WrappedShaftContinuation.recoverGroup(gray, width, height, gap, x, y, -1, shafts);
+        return proof != null && proof.revised() == 1 ? proof.shafts() : null;
+    }
+
+    private static boolean maskInsideOpeningRail(
+            byte[] labels, byte[] gray, byte[] source, int width, int height,
+            Component mask, PrintedBeamShafts.Shaft[] shafts, float gap) {
+        float start = (shafts[0].left() + shafts[0].right()) * .5f;
+        float end = (shafts[2].left() + shafts[2].right()) * .5f;
+        if (end <= start) return false;
+        float slope = (shafts[2].endY() - shafts[0].endY()) / (end - start);
+        if (slope < -.43f || slope > -.24f) return false;
+        int[] members = completeHeadMembers(labels, width, height, mask);
+        if (members == null) return false;
+        for (int pixel : members) {
+            float offset = pixel / width - (shafts[0].endY() + slope * (pixel % width - start));
+            if (offset < -gap * .11f || offset > gap * .73f
+                    || (source[pixel] & 255) >= 185 || (gray[pixel] & 255) >= 185)
+                return false;
+        }
+        return true;
+    }
+
+    /** An upstroke at a system-end opening can lend its upper rail cap to a false mask. */
+    private static List<Component> leadingSingleRailCapMasks(
+            byte[] labels,
+            byte[] gray,
+            byte[] source,
+            int width,
+            int height,
+            List<Component> heads,
+            List<Staff> staffs,
+            List<MeasureRegion> measures) {
+        if (gray == null || source == null) return List.of();
+        var rejected = new ArrayList<Component>();
+        for (var mask : heads) {
+            var staff = nearestHeadStaff(staffs, mask.centerY);
+            if (staff == null || staff.count != 1) continue;
+            float gap = staff.gap;
+            int across = mask.maxX - mask.minX + 1, depth = mask.maxY - mask.minY + 1;
+            if (gap < 10
+                    || across < gap * .68f
+                    || across > gap * .96f
+                    || depth < gap * .54f
+                    || depth > gap * .82f
+                    || mask.area < gap * gap * .36f
+                    || mask.area > gap * gap * .55f
+                    || filledBeamEndpointCore(source, width, height, mask, gap)) continue;
+            int bar =
+                    containingMeasureForStaff(
+                            measures, mask.centerX / width, mask.centerY / height, staff, height);
+            if (bar < 1
+                    || bar + 2 >= measures.size()
+                    || measures.get(bar).bottom() >= measures.get(bar + 1).top()
+                    || measures.get(bar).top() >= measures.get(bar - 1).bottom()) continue;
+            int[] reverse = attachedRawStem(gray, width, height, mask, gap, 2, 170);
+            if (reverse == null
+                    || reverse[2] != 1
+                    || reverse[0] < mask.minX
+                    || reverse[0] > mask.minX + gap * .20f
+                    || reverse[1] - mask.centerY < gap * 3.45f
+                    || reverse[1] - mask.centerY > gap * 4.2f
+                    || !java.util.Arrays.equals(
+                            reverse, attachedRawStem(source, width, height, mask, gap, 2, 170)))
+                continue;
+            var owners = new ArrayList<Component>(3);
+            for (var head : heads) {
+                if (head == mask
+                        || head.centerX < reverse[0] - gap
+                        || head.centerX > reverse[0] + gap * 5.6f
+                        || head.centerY < mask.centerY + gap * 1.25f
+                        || head.centerY > mask.centerY + gap * 4.5f
+                        || nearestHeadStaff(staffs, head.centerY) != staff
+                        || !filledBeamEndpointCore(source, width, height, head, gap)) continue;
+                owners.add(head);
+                if (owners.size() > 3) break;
+            }
+            if (owners.size() != 3) continue;
+            owners.sort(java.util.Comparator.comparingDouble(head -> head.centerX));
+            var first = owners.get(0);
+            if (reverse[0] - first.centerX < gap * .46f
+                    || reverse[0] - first.centerX > gap * .72f
+                    || Math.abs(reverse[1] - first.centerY) > gap * .25f
+                    || first.centerX - measures.get(bar).left() * width < gap * .7f
+                    || first.centerX - measures.get(bar).left() * width > gap * 1.4f) continue;
+            float[] x = new float[3], y = new float[3];
+            var shafts = new PrintedBeamShafts.Shaft[3];
+            var budget = new PrintedBeamShafts.Budget(300_000);
+            boolean spaced = true;
+            for (int j = 0; j < 3; j++) {
+                var owner = owners.get(j);
+                x[j] = owner.centerX;
+                y[j] = owner.centerY;
+                if (j > 0
+                        && (x[j] - x[j - 1] < gap * 2.2f
+                                || x[j] - x[j - 1] > gap * 3.2f
+                                || y[j - 1] - y[j] < gap * .8f
+                                || y[j - 1] - y[j] > gap * 1.75f)) {
+                    spaced = false;
+                    break;
+                }
+                var evidence = PrintedBeamShafts.at(gray, width, height, x[j], y[j], gap, budget);
+                if (evidence.size() == 1 && evidence.get(0).direction() == -1)
+                    shafts[j] = evidence.get(0);
+            }
+            if (!spaced || shafts[0] != null || shafts[1] == null || shafts[2] == null) continue;
+            var group =
+                    WrappedShaftContinuation.recoverGroup(
+                            gray, width, height, gap, x, y, -1, shafts);
+            var raw =
+                    WrappedShaftContinuation.recoverGroup(
+                            source, width, height, gap, x, y, -1, shafts);
+            if (group == null || raw == null || group.revised() != 0 || raw.revised() != 0)
+                continue;
+            var start = group.shafts()[0];
+            int capX = (start.left() + start.right()) / 2;
+            int nextX = (shafts[1].left() + shafts[1].right()) / 2;
+            if (Math.abs(capX - reverse[0]) > 1 || nextX <= capX) continue;
+            float slope = (shafts[1].endY() - start.endY()) / (float) (nextX - capX);
+            int[] pixels = completeHeadMembers(labels, width, height, mask);
+            if (pixels == null) continue;
+            boolean inside = true;
+            for (int pixel : pixels) {
+                float position = pixel / width - start.endY() - slope * (pixel % width - capX);
+                if (position < 0 || position > gap * .84f || (source[pixel] & 255) >= 185) {
+                    inside = false;
+                    break;
+                }
+            }
+            if (inside) rejected.add(mask);
+        }
+        return rejected;
+    }
+
     /** Small beam masks may trace back up the very shaft that owns the beam. */
     private static List<Component> filledBeamBandHeads(
             byte[] gray, int width, int height, List<Component> heads, List<Staff> staffs) {
@@ -25640,8 +31701,332 @@ final class OmrScoreInterpreter {
         return true;
     }
 
+    /** Ink at the foot of a down-stem dyad can borrow the same shaft in reverse. */
+    private static List<Component> ownedDyadRailMasks(
+            byte[] gray, int width, int height, List<Component> heads, List<Staff> staffs) {
+        if (gray == null || width <= 0 || height <= 0 || (long) width * height != gray.length)
+            return List.of();
+        var rejected = new ArrayList<Component>();
+        var shafts = new IdentityHashMap<Component, int[]>();
+        var ownerStaffs = new IdentityHashMap<Component, Staff>();
+        for (Component head : heads) {
+            Staff staff = nearestHeadStaff(staffs, head.centerY);
+            if (staff == null
+                    || staff.count != 1
+                    || staff.gap < 8
+                    || head.area < staff.gap * staff.gap * .9f
+                    || !filledBeamEndpointCore(gray, width, height, head, staff.gap + .5f))
+                continue;
+            int[] shaft = attachedRawStem(gray, width, height, head, staff.gap);
+            if (shaft == null
+                    || shaft[2] != 1
+                    || head.centerX - shaft[0] < staff.gap * .39f
+                    || shaft[1] - head.centerY < staff.gap * 2f) continue;
+            shafts.put(head, shaft);
+            ownerStaffs.put(head, staff);
+        }
+        for (Component mask : heads) {
+            Staff staff = nearestHeadStaff(staffs, mask.centerY);
+            if (staff == null || staff.count != 1 || staff.gap < 8 || shafts.containsKey(mask))
+                continue;
+            float gap = staff.gap;
+            int maskWidth = mask.maxX - mask.minX + 1;
+            int maskHeight = mask.maxY - mask.minY + 1;
+            if (maskWidth < gap * .65f
+                    || maskWidth > gap * 1.85f
+                    || maskHeight < gap * .42f
+                    || maskHeight > gap * 1.60f
+                    || mask.area > gap * gap * 1.35f) continue;
+            int[] apparent = attachedRawStem(gray, width, height, mask, gap);
+            if (apparent != null && apparent[2] != -1) continue;
+            int proofs = 0;
+            for (var lowerEntry : shafts.entrySet()) {
+                Component lower = lowerEntry.getKey();
+                int[] shaft = lowerEntry.getValue();
+                if (ownerStaffs.get(lower) != staff
+                        || mask.centerY - lower.centerY < gap * 1.88f
+                        || mask.centerY - lower.centerY > gap * 5.6f
+                        || shaft[1] - mask.centerY < gap * .17f
+                        || shaft[1] - mask.centerY > gap * 2.3f) continue;
+                if (apparent != null) {
+                    if (Math.abs(apparent[0] - shaft[0]) > gap * .25f
+                            || apparent[0] - mask.centerX < gap * .23f
+                            || apparent[0] - mask.centerX > gap * .83f
+                            || Math.abs(mask.maxX - apparent[0]) > gap * .27f
+                            || !ownedLeftRailInk(gray, width, height, mask, apparent[0], gap))
+                        continue;
+                } else if (maskWidth < gap * 1.55f
+                        || Math.abs(shaft[0] - mask.minX) > gap * .2f
+                        || !continuousDyadRailMask(gray, width, height, mask, gap)) continue;
+                for (var upperEntry : shafts.entrySet()) {
+                    Component upper = upperEntry.getKey();
+                    int[] anchor = upperEntry.getValue();
+                    if (ownerStaffs.get(upper) != staff
+                            || lower.centerY - upper.centerY < gap * 1.15f
+                            || lower.centerY - upper.centerY > gap * 3.2f
+                            || Math.abs(lower.centerX - upper.centerX) > gap * .19f
+                            || Math.abs(shaft[0] - anchor[0]) > gap * .19f
+                            || Math.abs(shaft[1] - anchor[1]) > gap * .19f
+                            || (apparent != null
+                                    && (Math.abs(apparent[0] - anchor[0]) > gap * .25f
+                                            || Math.abs(apparent[1] - upper.centerY) > gap * .39f)))
+                        continue;
+                    proofs++;
+                }
+            }
+            if (proofs == 1) rejected.add(mask);
+        }
+        return rejected;
+    }
+
+    private static boolean ownedLeftRailInk(
+            byte[] gray, int width, int height, Component mask, int shaft, float gap) {
+        int reach = Math.round(gap * 1.55f);
+        int guard = Math.round(gap * .54f);
+        int flank = Math.round(gap * .22f);
+        if (shaft - reach < 0 || shaft + guard >= width || mask.minY < 0 || mask.maxY >= height)
+            return false;
+        int shallow = Math.round(gap * .67f), deep = Math.round(gap * 1.32f);
+        int bandRows = 0, stableBand = 0;
+        int boxRows = 0, stableBox = 0, previousEdge = -1;
+        for (int y = mask.minY; y <= mask.maxY; y++) {
+            int start = shaft;
+            if ((gray[y * width + start] & 255) > 155) start--;
+            int edge = start;
+            while (edge > shaft - reach && (gray[y * width + edge] & 255) <= 155) edge--;
+            int ink = start - edge;
+            bandRows = ink >= deep ? bandRows + 1 : 0;
+            stableBand = Math.max(stableBand, bandRows);
+            boolean plainFlank = true;
+            for (int x = shaft + flank; x <= shaft + guard; x++) {
+                if ((gray[y * width + x] & 255) <= 155) plainFlank = false;
+            }
+            if (ink >= shallow && ink < deep && plainFlank) {
+                boxRows =
+                        previousEdge >= 0 && Math.abs(previousEdge - edge) <= gap * .13f
+                                ? boxRows + 1
+                                : 1;
+                stableBox = Math.max(stableBox, boxRows);
+                previousEdge = edge;
+            } else {
+                previousEdge = -1;
+                boxRows = 0;
+            }
+        }
+        return stableBox >= Math.max(3, Math.round(gap * .22f))
+                || stableBand >= Math.max(4, Math.round(gap * .35f));
+    }
+
+    /** An interior mask needs a wide rail and independent continuation outside the mask. */
+    private static boolean continuousDyadRailMask(
+            byte[] gray, int width, int height, Component mask, float gap) {
+        int flank = Math.round(gap * .7f);
+        int left = mask.minX - flank, right = mask.maxX + flank;
+        int yMargin = Math.round((right - left) * .19f);
+        if (left < 0 || right >= width || mask.minY < yMargin || mask.maxY + yMargin >= height)
+            return false;
+        int thick = Math.max(1, Math.round(gap * .065f));
+        for (int y = mask.minY + thick; y <= mask.maxY - thick; y++) {
+            for (int incline = -4; incline <= 4; incline++) {
+                if (Math.abs(incline) < 2) continue;
+                int ink = 0, core = 0, before = 0, after = 0;
+                for (int x = left; x <= right; x++) {
+                    int center = Math.round(y + incline * .04f * (x - mask.centerX));
+                    if ((gray[center * width + x] & 255) > 150) continue;
+                    ink++;
+                    if (beamCore(gray, width, height, x, center, thick)) core++;
+                    if (x < mask.minX) before++;
+                    if (x > mask.maxX) after++;
+                }
+                if (ink >= (right - left + 1) * .90f
+                        && core >= (right - left + 1) * .70f
+                        && before >= flank * .75f
+                        && after >= flank * .75f) return true;
+            }
+        }
+        return false;
+    }
+
+    /** A shallow interior island between two independently owned downstem octave columns. */
+    private static boolean pairedOctaveRailMask(
+            byte[] labels,
+            byte[] gray,
+            int width,
+            int height,
+            Component mask,
+            List<Component> heads,
+            Staff staff) {
+        float gap = staff.gap;
+        if (staff.count != 1
+                || gap < 10
+                || gap > 28
+                || mask.area < gap * gap * .45f
+                || mask.area > gap * gap * .65f
+                || mask.maxX - mask.minX + 1 < gap * 1.05f
+                || mask.maxX - mask.minX + 1 > gap * 1.32f
+                || mask.maxY - mask.minY + 1 > gap * .74f
+                || attachedRawStem(gray, width, height, mask, gap, 2, 170) != null
+                || !continuousDyadRailMask(gray, width, height, mask, gap)) return false;
+        Component left = null, right = null;
+        for (Component head : heads) {
+            float dx = head.centerX - mask.centerX, dy = mask.centerY - head.centerY;
+            if (dy < gap * 2.5f
+                    || dy > gap * 3.35f
+                    || Math.abs(dx) < gap * .85f
+                    || Math.abs(dx) > gap * 2.05f
+                    || !filledBeamEndpointCore(gray, width, height, head, gap)) continue;
+            if (dx < 0) {
+                if (left != null) return false;
+                left = head;
+            } else {
+                if (right != null) return false;
+                right = head;
+            }
+        }
+        if (left == null
+                || right == null
+                || Math.abs(left.centerY - right.centerY) > gap * .32f
+                || !hasOctaveHead(gray, width, height, heads, left, gap)
+                || !hasOctaveHead(gray, width, height, heads, right, gap)) return false;
+
+        var budget = new PrintedBeamShafts.Budget(180_000);
+        var earlier =
+                PrintedBeamShafts.at(gray, width, height, left.centerX, left.centerY, gap, budget);
+        var later =
+                PrintedBeamShafts.at(
+                        gray, width, height, right.centerX, right.centerY, gap, budget);
+        if (earlier.size() != 1 || later.size() != 1) return false;
+        var a = earlier.get(0);
+        var b = later.get(0);
+        int span = b.left() - a.right();
+        if (a.direction() != 1
+                || b.direction() != 1
+                || span < gap * 2.3f
+                || span > gap * 3.3f
+                || mask.minX - a.right() < gap * .48f
+                || b.left() - mask.maxX < gap * .48f
+                || Math.abs(a.endY() - b.endY()) > span * .18f
+                || !WrappedEighthTriplets.matchesBeamRails(gray, width, height, a, b, gap, 2))
+            return false;
+
+        var members = completeHeadMembers(labels, width, height, mask);
+        if (members == null) return false;
+        for (int pixel : members) {
+            int x = pixel % width;
+            int y = pixel / width;
+            float tip = a.endY() + (b.endY() - a.endY()) * (x - a.right()) / (float) span;
+            if ((gray[pixel] & 255) >= 155 || y < tip - gap * 1.02f || y > tip + gap * .14f)
+                return false;
+        }
+        return true;
+    }
+
+    private static boolean hasOctaveHead(
+            byte[] gray, int width, int height, List<Component> heads, Component lower, float gap) {
+        return heads.stream()
+                        .filter(
+                                upper ->
+                                        Math.abs(upper.centerX - lower.centerX) <= gap * .12f
+                                                && Math.abs(
+                                                                lower.centerY
+                                                                        - upper.centerY
+                                                                        - gap * 3.5f)
+                                                        <= gap * .2f
+                                                && filledBeamEndpointCore(
+                                                        gray, width, height, upper, gap))
+                        .count()
+                == 1;
+    }
+
+    /** A narrow mask at a closed double beam can borrow the terminating octave shaft in reverse. */
+    private static boolean terminalOctaveStemMask(
+            byte[] labels, byte[] gray, byte[] source, int width, int height,
+            Component mask, List<Component> heads, Staff staff) {
+        float gap = staff.gap;
+        int across = mask.maxX - mask.minX + 1, depth = mask.maxY - mask.minY + 1;
+        if (source == null || source.length != gray.length || staff.count != 1
+                || gap < 12 || gap > 24
+                || across < gap * .32f || across > gap * .59f
+                || depth < gap * 1.04f || depth > gap * 1.45f
+                || mask.area < gap * gap * .19f || mask.area > gap * gap * .42f) return false;
+        var reverse = attachedRawStem(gray, width, height, mask, gap, 2, 170);
+        if (reverse == null || reverse[2] != -1
+                || Math.abs(reverse[0] - mask.maxX) > 2
+                || mask.centerY - reverse[1] < gap * 6.25f
+                || mask.centerY - reverse[1] > gap * 7.65f
+                || !java.util.Arrays.equals(
+                        reverse, attachedRawStem(source, width, height, mask, gap, 2, 170)))
+            return false;
+
+        Component left = null, right = null;
+        for (var head : heads) {
+            float dx = (head.centerX - mask.centerX) / gap;
+            float dy = (mask.centerY - head.centerY) / gap;
+            if (dy < 2.51f || dy > 3.48f
+                    || dx < -1.55f || dx > 1.05f || Math.abs(dx) < .55f
+                    || !filledBeamEndpointCore(gray, width, height, head, gap)
+                    || !filledBeamEndpointCore(source, width, height, head, gap)) continue;
+            if (dx < 0) {
+                if (left != null) return false;
+                left = head;
+            } else {
+                if (right != null) return false;
+                right = head;
+            }
+        }
+        if (left == null || right == null) return false;
+        var members = completeHeadMembers(labels, width, height, mask);
+        return members != null
+                && terminalOctaveStemMaskInk(gray, width, height, mask, heads, left, right, reverse, members, gap)
+                && terminalOctaveStemMaskInk(source, width, height, mask, heads, left, right, reverse, members, gap);
+    }
+
+    private static boolean terminalOctaveStemMaskInk(
+            byte[] ink, int width, int height, Component mask, List<Component> heads,
+            Component left, Component right, int[] reverse, int[] members, float gap) {
+        if (!hasOctaveHead(ink, width, height, heads, left, gap)
+                || !hasOctaveHead(ink, width, height, heads, right, gap)) return false;
+        var budget = new PrintedBeamShafts.Budget(100_000);
+        var a = PrintedBeamShafts.at(ink, width, height, left.centerX, left.centerY, gap, budget);
+        var b = PrintedBeamShafts.at(ink, width, height, right.centerX, right.centerY, gap, budget);
+        if (a.size() != 1 || b.size() != 1) return false;
+        var first = a.get(0);
+        var last = b.get(0);
+        int span = last.right() - first.right();
+        if (first.direction() != 1 || last.direction() != 1
+                || reverse[0] < last.left() || reverse[0] > last.right()
+                || mask.minX > last.left() || mask.maxX < last.right()
+                || mask.minX - first.right() < gap * 1.35f
+                || span < gap * 1.55f || span > gap * 2.34f
+                || Math.abs(last.endY() - first.endY()) > span * .16f
+                || !WrappedEighthTriplets.matchesBeamRails(ink, width, height, first, last, gap, 2))
+            return false;
+        boolean reachesUpper = heads.stream().anyMatch(upper ->
+                Math.abs(upper.centerY - reverse[1]) <= gap * .38f
+                        && Math.abs(upper.centerX - right.centerX) <= gap * .12f
+                        && Math.abs(right.centerY - upper.centerY - gap * 3.5f) <= gap * .2f
+                        && java.util.Arrays.equals(
+                                attachedRawStem(ink, width, height, upper, gap, 2, 170),
+                                attachedRawStem(ink, width, height, right, gap, 2, 170)));
+        if (!reachesUpper) return false;
+        float slope = (last.endY() - first.endY()) / (float) span;
+        for (int pixel : members) {
+            float y = first.endY() + slope * (pixel % width - first.right());
+            float depth = y - pixel / width;
+            if ((ink[pixel] & 255) > 165 || depth < -gap * .12f || depth > gap * 1.37f) return false;
+        }
+        int outside = 0, firstX = last.right() + Math.round(gap * .35f);
+        int lastX = last.right() + Math.round(gap * .86f);
+        for (int x = firstX; x <= lastX; x++) {
+            int tip = Math.round(last.endY() + slope * (x - last.right()));
+            if (beamCore(ink, width, height, x, tip - Math.round(gap * .29f), 2)
+                    || beamCore(ink, width, height, x, tip - Math.round(gap), 2)) outside++;
+        }
+        return outside <= 1;
+    }
+
     private static List<Component> ownedSlopedBeamFragments(
-            byte[] labels, byte[] gray, int width, int height, List<Component> heads, List<Staff> staffs) {
+            byte[] labels, byte[] gray, byte[] original, int width, int height, List<Component> heads, List<Staff> staffs) {
         List<Component> rejected = new ArrayList<>();
         if (gray == null) return rejected;
         for (Component fragment : heads) {
@@ -25658,11 +32043,13 @@ final class OmrScoreInterpreter {
                 rejected.add(fragment);
                 continue;
             }
-            if (staff.count == 1 && gap >= 8 && fragment.area <= gap * gap * .68f
-                    && fragment.maxY - fragment.minY + 1 <= gap * .70f) {
+            if (staff.count == 1 && gap >= 8 && withinDenseRailMask(fragment, gap, true)) {
                 int[] reversed = attachedRawStem(gray, width, height, fragment, gap, 2, 170);
-                if (reversed != null && borrowedDenseDyadBeamMask(
-                        labels, gray, width, height, fragment, heads, gap, reversed)) {
+                if (reversed != null
+                        && (borrowedDenseDyadBeamMask(labels, gray, width, height, fragment, heads, gap,
+                                    reversed, false)
+                            || denseDyadMaskOnBothPlanes(labels, gray, original, width, height, fragment,
+                                    heads, gap, reversed))) {
                     rejected.add(fragment);
                     continue;
                 }
@@ -25690,10 +32077,26 @@ final class OmrScoreInterpreter {
                     continue;
                 }
             }
-            if (gap < 8 || fragment.area > gap * gap * .8f
+            if (terminalOctaveStemMask(labels, gray, original, width, height, fragment, heads, staff)) {
+                rejected.add(fragment);
+                continue;
+            }
+            if (gap < 8
+                    || fragment.area > gap * gap * .8f
                     || fragment.maxX - fragment.minX + 1 > gap * 1.25f
                     || fragment.maxY - fragment.minY + 1 > gap * 1.05f) continue;
+            if (pairedOctaveRailMask(labels, gray, width, height, fragment, heads, staff)) {
+                rejected.add(fragment);
+                continue;
+            }
             int[] borrowed = attachedRawStem(gray, width, height, fragment, gap, 2, 170);
+            if (staff.count == 1
+                    && borrowed != null
+                    && compactBorrowedUpstemRailMask(
+                            labels, gray, width, height, fragment, heads, gap, borrowed)) {
+                rejected.add(fragment);
+                continue;
+            }
             // A clipped shaft can still own a fragment if both continuous rails prove it.
             boolean interruptedShaft = borrowed == null;
             int stemGap = interruptedShaft ? Math.round(gap * .7f) : 2;
@@ -25728,6 +32131,78 @@ final class OmrScoreInterpreter {
             }
         }
         return rejected;
+    }
+
+    /** A shallow mask between upper rails can borrow the left shaft toward its real head. */
+    private static boolean compactBorrowedUpstemRailMask(
+            byte[] labels,
+            byte[] gray,
+            int width,
+            int height,
+            Component mask,
+            List<Component> heads,
+            float gap,
+            int[] reverse) {
+        if (reverse[2] != 1
+                || reverse[0] < mask.minX
+                || reverse[0] > mask.minX + gap * .25f
+                || mask.centerX - reverse[0] < gap * .31f
+                || mask.centerX - reverse[0] > gap * .68f
+                || mask.maxX - mask.minX + 1 < gap * 1.08f
+                || mask.maxY - mask.minY + 1 > gap * .78f
+                || mask.area > gap * gap * .68f
+                || reverse[1] - mask.centerY < gap * 2.8f
+                || reverse[1] - mask.centerY > gap * 3.48f) return false;
+
+        Component owner = null, peer = null;
+        for (var note : heads) {
+            float horizontal = note.centerX - mask.centerX;
+            boolean left = horizontal <= -gap * .72f && horizontal >= -gap * 1.16f;
+            boolean right = horizontal >= gap * 1.53f && horizontal <= gap * 1.96f;
+            if ((!left && !right)
+                    || Math.abs(note.centerY - reverse[1]) > gap * .36f
+                    || !filledBeamEndpointCore(gray, width, height, note, gap)) continue;
+            if (left) {
+                if (owner != null) return false;
+                owner = note;
+            } else {
+                if (peer != null) return false;
+                peer = note;
+            }
+        }
+        if (owner == null || peer == null) return false;
+        int[] left = attachedRawStem(gray, width, height, owner, gap, 0);
+        int[] right = attachedRawStem(gray, width, height, peer, gap, 0);
+        if (left == null
+                || right == null
+                || left[2] != -1
+                || right[2] != -1
+                || Math.abs(left[0] - reverse[0]) > 2
+                || right[0] - mask.maxX < gap * 1.1f
+                || !twoSharedBeamRails(gray, width, height, left, right, gap, 2.35f, 1))
+            return false;
+        float slope = (right[1] - left[1]) / (float) (right[0] - left[0]);
+        if (slope < .06f
+                || slope > .22f
+                || !wideMergedBeamSeam(
+                        gray,
+                        width,
+                        height,
+                        left,
+                        slope,
+                        mask.maxX + 1,
+                        right[0] - Math.round(gap * .25f),
+                        gap)) return false;
+
+        int[] members = completeHeadMembers(labels, width, height, mask);
+        if (members == null) return false;
+        for (int pixel : members) {
+            int x = pixel % width, y = pixel / width;
+            float depth = y - (left[1] + slope * (x - left[0]));
+            if (depth < gap * .29f || depth > gap * 1.21f || (gray[pixel] & 255) >= 155)
+                return false;
+        }
+        return true;
     }
 
     private record WideMergedRailShaft(int[] trace, Component upper, Component lower) {}
@@ -25778,40 +32253,7 @@ final class OmrScoreInterpreter {
             float gap) {
         var members = completeHeadMembers(labels, width, height, fragment);
         if (members == null) return null;
-        var nearby = new ArrayList<Component>();
-        var traces = new ArrayList<int[]>();
-        for (var head : heads) {
-            if (Math.abs(head.centerX - fragment.centerX) > gap * 3.7f
-                    || fragment.centerY - head.centerY < gap * 2.75f
-                    || fragment.centerY - head.centerY > gap * 8.5f
-                    || !filledBeamEndpointCore(gray, width, height, head, gap)) continue;
-            int[] stem = attachedRawStem(gray, width, height, head, gap, 2, 170);
-            if (stem == null
-                    || stem[2] != 1
-                    || stem[1] - fragment.centerY < gap * .32f
-                    || stem[1] - fragment.centerY > gap * 1.5f) continue;
-            nearby.add(head);
-            traces.add(stem);
-            if (nearby.size() > 16) return null;
-        }
-        var shafts = new ArrayList<WideMergedRailShaft>();
-        for (int i = 0; i < nearby.size(); i++) {
-            var lower = nearby.get(i);
-            int[] stem = traces.get(i);
-            for (int j = 0; j < nearby.size(); j++) {
-                var upper = nearby.get(j);
-                int[] other = traces.get(j);
-                float octave = lower.centerY - upper.centerY;
-                if (octave < gap * 3.06f
-                        || octave > gap * 3.85f
-                        || Math.abs(lower.centerX - upper.centerX) > gap * .30f
-                        || Math.abs(stem[0] - other[0]) > gap * .15f
-                        || Math.abs(stem[1] - other[1]) > gap * .15f) continue;
-                if (shafts.stream().noneMatch(v -> Math.abs(v.trace[0] - other[0]) <= gap * .15f))
-                    shafts.add(new WideMergedRailShaft(other, upper, lower));
-                break;
-            }
-        }
+        var shafts = wideMergedDyadShafts(gray, width, height, fragment, heads, gap, 2.75f);
         if (shafts.size() < 3) return null;
         for (var middleShaft : shafts) {
             int[] middle = middleShaft.trace;
@@ -25839,6 +32281,46 @@ final class OmrScoreInterpreter {
             }
         }
         return null;
+    }
+
+    private static List<WideMergedRailShaft> wideMergedDyadShafts(
+            byte[] gray, int width, int height, Component fragment,
+            List<Component> heads, float gap, float minimumDrop) {
+        var nearby = new ArrayList<Component>();
+        var traces = new ArrayList<int[]>();
+        for (var head : heads) {
+            if (Math.abs(head.centerX - fragment.centerX) > gap * 3.7f
+                    || fragment.centerY - head.centerY < gap * minimumDrop
+                    || fragment.centerY - head.centerY > gap * 8.5f
+                    || !filledBeamEndpointCore(gray, width, height, head, gap)) continue;
+            int[] stem = attachedRawStem(gray, width, height, head, gap, 2, 170);
+            if (stem == null
+                    || stem[2] != 1
+                    || stem[1] - fragment.centerY < gap * .32f
+                    || stem[1] - fragment.centerY > gap * 1.5f) continue;
+            nearby.add(head);
+            traces.add(stem);
+            if (nearby.size() > 16) return List.of();
+        }
+        var shafts = new ArrayList<WideMergedRailShaft>();
+        for (int i = 0; i < nearby.size(); i++) {
+            var lower = nearby.get(i);
+            int[] stem = traces.get(i);
+            for (int j = 0; j < nearby.size(); j++) {
+                var upper = nearby.get(j);
+                int[] other = traces.get(j);
+                float octave = lower.centerY - upper.centerY;
+                if (octave < gap * 3.06f
+                        || octave > gap * 3.85f
+                        || Math.abs(lower.centerX - upper.centerX) > gap * .30f
+                        || Math.abs(stem[0] - other[0]) > gap * .15f
+                        || Math.abs(stem[1] - other[1]) > gap * .15f) continue;
+                if (shafts.stream().noneMatch(v -> Math.abs(v.trace[0] - other[0]) <= gap * .15f))
+                    shafts.add(new WideMergedRailShaft(other, upper, lower));
+                break;
+            }
+        }
+        return shafts;
     }
 
     private static boolean wideMergedBeamMembership(
@@ -25885,7 +32367,7 @@ final class OmrScoreInterpreter {
             int y = Math.round(beam[1] + slope * (x - beam[0]));
             boolean clear = false;
             for (int depth = Math.round(gap * .53f); depth <= Math.round(gap * .9f); depth++) {
-                int row = y - depth;
+                int row = y - beam[2] * depth;
                 if (row < 0 || row >= height) return false;
                 if ((gray[row * width + x] & 255) >= 168) clear = true;
             }
@@ -25895,18 +32377,38 @@ final class OmrScoreInterpreter {
         return false;
     }
 
+    private static boolean denseDyadMaskOnBothPlanes(
+            byte[] labels, byte[] gray, byte[] original, int width, int height,
+            Component fragment, List<Component> heads, float gap, int[] reversed) {
+        if (original == null || original.length != gray.length
+                || !borrowedDenseDyadBeamMask(
+                        labels, gray, width, height, fragment, heads, gap, reversed, true))
+            return false;
+        if (original == gray) return true;
+        int[] originalStem = attachedRawStem(original, width, height, fragment, gap, 2, 170);
+        return originalStem != null && borrowedDenseDyadBeamMask(
+                labels, original, width, height, fragment, heads, gap, originalStem, true);
+    }
+
+    private static boolean withinDenseRailMask(Component fragment, float gap, boolean wide) {
+        float area = wide ? 1.12f : .68f;
+        float width = wide ? 1.72f : 1.45f;
+        float height = wide ? .85f : .70f;
+        return fragment.area <= gap * gap * area
+                && fragment.maxX - fragment.minX + 1 <= gap * width
+                && fragment.maxY - fragment.minY + 1 <= gap * height;
+    }
+
     /**
      * A head-shaped mask at the foot of a lower beam can trace backward up a real
      * dyad shaft. The mask must lie inside both rails between three owned shafts.
      */
     private static boolean borrowedDenseDyadBeamMask(
             byte[] labels, byte[] gray, int width, int height, Component fragment,
-            List<Component> heads, float gap, int[] borrowed) {
+            List<Component> heads, float gap, int[] borrowed, boolean wide) {
         if (borrowed[2] != -1 || borrowed[0] < fragment.minX || borrowed[0] > fragment.maxX
                 || fragment.centerY - borrowed[1] < gap * 4
-                || fragment.area > gap * gap * .68f
-                || fragment.maxX - fragment.minX + 1 > gap * 1.45f
-                || fragment.maxY - fragment.minY + 1 > gap * .70f
+                || !withinDenseRailMask(fragment, gap, wide)
                 || filledBeamEndpointCore(gray, width, height, fragment, gap)) return false;
         List<int[]> shafts = new ArrayList<>();
         for (Component head : heads) {
@@ -25936,7 +32438,7 @@ final class OmrScoreInterpreter {
                             || Math.abs(middle[1] - left[1] - slope * (middle[0] - left[0])) > gap * .18f)
                         continue;
                     if (denseDyadRailMembership(gray, width, height, members, fragment, left, right,
-                            slope, gap)) return true;
+                            slope, gap, wide ? 1.14f : 1.08f)) return true;
                 }
             }
         }
@@ -25945,7 +32447,7 @@ final class OmrScoreInterpreter {
 
     private static boolean denseDyadRailMembership(
             byte[] gray, int width, int height, int[] members, Component fragment,
-            int[] left, int[] right, float slope, float gap) {
+            int[] left, int[] right, float slope, float gap, float maximumDepth) {
         int margin=Math.round(gap * .25f);
         int first=left[0]+margin, end=right[0]-margin;
         int near=Math.round(gap * .22f), far=Math.round(gap * .90f);
@@ -25961,7 +32463,7 @@ final class OmrScoreInterpreter {
         for (int member : members) {
             int x=member%width, y=member/width;
             float depth=left[1]+slope*(x-left[0])-y;
-            if (depth < 0 || depth > gap*1.08f || (gray[member]&255)>=155) return false;
+            if (depth < 0 || depth > gap*maximumDepth || (gray[member]&255)>=155) return false;
         }
         return true;
     }
@@ -26208,11 +32710,165 @@ final class OmrScoreInterpreter {
         return true;
     }
 
+    /** A filled pair of rails can lend its middle downstroke to a false note mask. */
+    private static List<Component> borrowedInnerDoubleRailHeads(
+            byte[] labels, byte[] gray, byte[] source, int width, int height,
+            List<Component> heads, List<Staff> staffs) {
+        if (gray == null || source == null || gray.length != source.length) return List.of();
+        var rejected = new ArrayList<Component>();
+        for (var mask : heads) {
+            Staff staff = nearestHeadStaff(staffs, mask.centerY);
+            if (staff == null || staff.count != 1) continue;
+            float gap = staff.gap;
+            int across = mask.maxX - mask.minX + 1, depth = mask.maxY - mask.minY + 1;
+            if (gap < 10 || across < gap * .8f || across > gap * 1.16f
+                    || depth < gap || depth > gap * 1.35f
+                    || mask.area < gap * gap * .52f || mask.area > gap * gap * .9f
+                    || filledBeamEndpointCore(source, width, height, mask, gap)) continue;
+            int[] reverse = attachedRawStem(gray, width, height, mask, gap, 2, 170);
+            if (reverse == null || reverse[2] != -1
+                    || reverse[0] < mask.centerX || reverse[0] > mask.maxX
+                    || mask.centerY - reverse[1] < gap * 3.5f
+                    || mask.centerY - reverse[1] > gap * 4.9f
+                    || !java.util.Arrays.equals(reverse,
+                            attachedRawStem(source, width, height, mask, gap, 2, 170)))
+                continue;
+
+            int[][] shafts = new int[3][];
+            boolean ambiguous = false;
+            for (var head : heads) {
+                if (head == mask || Math.abs(head.centerX - mask.centerX) > gap * 3.4f
+                        || mask.centerY - head.centerY < gap * 2.55f
+                        || mask.centerY - head.centerY > gap * 5.7f
+                        || nearestHeadStaff(staffs, head.centerY) != staff
+                        || !filledBeamEndpointCore(source, width, height, head, gap)) continue;
+                int[] shaft = attachedRawStem(gray, width, height, head, gap, 2, 170);
+                if (shaft == null || shaft[2] != 1 || shaft[1] - head.centerY < gap * 3.4f
+                        || Math.abs(shaft[1] - mask.centerY) > gap * 1.45f
+                        || !java.util.Arrays.equals(shaft,
+                                attachedRawStem(source, width, height, head, gap, 2, 170)))
+                    continue;
+                int dx = shaft[0] - reverse[0];
+                int role;
+                if (Math.abs(dx) <= 2 && Math.abs(reverse[1] - head.centerY) <= gap * .35f) {
+                    role = 1;
+                } else if (dx >= gap * 1.45f && dx <= gap * 2.35f) {
+                    role = 2;
+                } else if (-dx >= gap * 1.45f && -dx <= gap * 2.35f) {
+                    role = 0;
+                } else continue;
+                if (shafts[role] != null) {
+                    ambiguous = true;
+                    break;
+                }
+                shafts[role] = shaft;
+            }
+            if (ambiguous || shafts[0] == null || shafts[1] == null || shafts[2] == null)
+                continue;
+            int[] left = shafts[0], middle = shafts[1], right = shafts[2];
+            float slope = (right[1] - left[1]) / (float) (right[0] - left[0]);
+            if (Math.abs(slope) > .28f
+                    || Math.abs(middle[1] - left[1] - slope * (middle[0] - left[0])) > gap * .45f)
+                continue;
+            int[] pixels = completeHeadMembers(labels, width, height, mask);
+            if (pixels != null && matchesBorrowedInnerRails(
+                    gray, source, width, height, mask, pixels, left, right, slope, gap))
+                rejected.add(mask);
+        }
+        return rejected;
+    }
+
+    private static boolean matchesBorrowedInnerRails(
+            byte[] gray, byte[] source, int width, int height, Component mask,
+            int[] pixels, int[] left, int[] right, float slope, float gap) {
+        int margin = Math.max(3, Math.round(gap * .28f));
+        int first = left[0] + margin, last = right[0] - margin;
+        if (mask.minX - first < gap * .55f || last - mask.maxX < gap * .55f) return false;
+        float minDepth = Float.POSITIVE_INFINITY, maxDepth = Float.NEGATIVE_INFINITY;
+        int dark = 0;
+        for (int pixel : pixels) {
+            int x = pixel % width, y = pixel / width;
+            float depth = left[1] + slope * (x - left[0]) - y;
+            minDepth = Math.min(minDepth, depth);
+            maxDepth = Math.max(maxDepth, depth);
+            if ((gray[pixel] & 255) < 185 && (source[pixel] & 255) < 185) dark++;
+        }
+        if (dark < pixels.length * .97f) return false;
+
+        // Separated ink rails must run through both neighboring intervals. The mask may
+        // bridge their seam only next to the shaft, with visible paper on both sides.
+        for (int near = Math.round(gap * .22f); near <= Math.round(gap * .45f); near++) {
+            if (!continuousBeamRail(gray, width, height, left, slope, first, last, near)
+                    || !continuousBeamRail(source, width, height, left, slope, first, last, near))
+                continue;
+            for (int step = Math.round(gap * .62f); step <= Math.round(gap * .92f); step++) {
+                int far = near + step;
+                if (minDepth < near - gap * .30f || maxDepth > far + gap * .38f
+                        || !continuousBeamRail(gray, width, height, left, slope, first, last, far)
+                        || !continuousBeamRail(source, width, height, left, slope, first, last, far))
+                    continue;
+                int seam = (near + far) / 2;
+                int clearLeft = 0, clearRight = 0;
+                for (int x = first; x <= last; x++) {
+                    if (x >= mask.minX && x <= mask.maxX) continue;
+                    int y = Math.round(left[1] + slope * (x - left[0])) - seam;
+                    if (y < 1 || y >= height - 1) return false;
+                    if ((gray[y * width + x] & 255) < 185 || (source[y * width + x] & 255) < 185)
+                        continue;
+                    if (x < mask.minX) clearLeft++;
+                    else clearRight++;
+                }
+                if (clearLeft >= gap * .45f && clearRight >= gap * .45f
+                        && clearLeft >= (mask.minX - first) * .55f
+                        && clearRight >= (last - mask.maxX) * .55f) return true;
+            }
+        }
+        return false;
+    }
+
+    /** Use the enclosing measure's staff scale when the page-wide estimate is too small. */
+    private static List<Component> locallyScaledDoubleRailFragments(
+            byte[] gray,
+            int width,
+            int height,
+            List<Component> heads,
+            List<Staff> staffs,
+            List<MeasureRegion> measures) {
+        if (gray == null) return List.of();
+        var rejected = new ArrayList<Component>();
+        for (var fragment : heads) {
+            var staff = nearestHeadStaff(staffs, fragment.centerY);
+            if (staff == null || staff.count != 1 || staff.gap < 8) continue;
+            float gap = staff.gap;
+            int across = fragment.maxX - fragment.minX + 1;
+            int depth = fragment.maxY - fragment.minY + 1;
+            if (fragment.area <= gap * gap * .8f
+                    || fragment.area > gap * gap * 1.0f
+                    || across <= gap * 1.25f
+                    || across > gap * 1.45f
+                    || depth > gap * 1.10f) continue;
+            int at = containingMeasureForStaff(
+                    measures, fragment.centerX / width, fragment.centerY / height, staff, height);
+            if (at < 0) continue;
+            var measure = measures.get(at);
+            float measureGap = (measure.bottom() - measure.top()) * height / 8.2f;
+            if (measureGap <= gap + .5f || measureGap > gap * 1.12f
+                    || fragment.area > measureGap * measureGap * .8f
+                    || across > measureGap * 1.25f
+                    || depth > measureGap * 1.05f
+                    || attachedRawStem(gray, width, height, fragment, measureGap,
+                            Math.round(measureGap * .7f), 170) != null) continue;
+            if (coveredBeamMask(gray, width, height, fragment, heads, measureGap, null))
+                rejected.add(fragment);
+        }
+        return rejected;
+    }
+
     private static boolean coveredBeamMask(
             byte[] gray, int width, int height, Component fragment, List<Component> heads, float gap, int[] borrowedShaft) {
         for (Component owner : heads) {
             if (Math.abs(owner.centerX - fragment.centerX) > gap * 2
-                    || Math.abs(owner.centerY - fragment.centerY) < gap * 3
+                    || Math.abs(owner.centerY - fragment.centerY) < Math.floor(gap * 3)
                     || Math.abs(owner.centerY - fragment.centerY) > gap * 6
                     || !filledBeamEndpointCore(gray, width, height, owner, gap)) continue;
             int[] shaft = attachedRawStem(gray, width, height, owner, gap, 2, 170);
@@ -31600,6 +38256,60 @@ final class OmrScoreInterpreter {
         }
         return bands;
     }
+    /** A small semantic island can fall entirely inside a double beam joining full stems. */
+    private static boolean interShaftDoubleBeamAlias(
+            byte[] gray, byte[] original, int width, int height, Component candidate,
+            Staff staff, List<Component> heads) {
+        float gap = staff.pitchGap;
+        if (original == null || staff.count != 1 || gap < 12 || gap > 26
+                || candidate.maxX - candidate.minX + 1 > gap * .68f
+                || candidate.maxY - candidate.minY + 1 > gap * .68f
+                || candidate.area > gap * gap * .31f
+                || attachedRawStem(gray, width, height, candidate, gap, 2, 170) != null
+                || attachedRawStem(original, width, height, candidate, gap, 2, 170) != null) return false;
+        Component left = null, right = null;
+        for (var head : heads) {
+            float dx = (head.centerX - candidate.centerX) / gap;
+            float above = (candidate.centerY - head.centerY) / gap;
+            if (Math.abs(dx) < .65f || Math.abs(dx) > 3.15f || above < 1.35f || above > 3.25f
+                    || head.maxX - head.minX + 1 < gap * .90f
+                    || head.maxY - head.minY + 1 < gap * .72f
+                    || head.area < gap * gap * .65f) continue;
+            if (dx < 0 && (left == null || head.centerX > left.centerX)) left = head;
+            if (dx > 0 && (right == null || head.centerX < right.centerX)) right = head;
+        }
+        if (left == null || right == null || right.centerX - left.centerX > gap * 4.8f) return false;
+        return beamContainsSmallIsland(gray, width, height, candidate, left, right, gap)
+                && beamContainsSmallIsland(original, width, height, candidate, left, right, gap);
+    }
+
+    private static boolean beamContainsSmallIsland(
+            byte[] gray, int width, int height, Component candidate, Component left, Component right, float gap) {
+        var budget = new PrintedBeamShafts.Budget(50_000);
+        var leftShafts = PrintedBeamShafts.at(gray, width, height, left.centerX, left.centerY, gap, budget);
+        var rightShafts = PrintedBeamShafts.at(gray, width, height, right.centerX, right.centerY, gap, budget);
+        if (budget.refused() || leftShafts.size() != 1 || rightShafts.size() != 1) return false;
+        var a = leftShafts.get(0);
+        var b = rightShafts.get(0);
+        int inset = Math.round(gap * .26f);
+        int start = candidate.minX - inset, end = candidate.maxX + inset;
+        if (a.direction() != 1 || b.direction() != 1 || start <= a.right() || end >= b.left()
+                || !WrappedEighthTriplets.matchesBeamRails(gray, width, height, a, b, gap, 2))
+            return false;
+        float ratio = (candidate.centerX - a.left()) / (b.left() - a.left());
+        float endY = a.endY() + ratio * (b.endY() - a.endY());
+        float below = (endY - candidate.centerY) / gap;
+        if (below < .60f || below > 1.55f) return false;
+        int crossed = 0;
+        for (int y = candidate.minY; y <= candidate.maxY; y++) {
+            int ink = 0;
+            for (int x = start; x <= end; x++)
+                if ((gray[y * width + x] & 255) < 165) ink++;
+            if (ink >= (end - start + 1) * .90f) crossed++;
+        }
+        return crossed >= (candidate.maxY - candidate.minY + 1) * .8f;
+    }
+
     /** A nearby note on a different shaft cannot own a real small/grace note's stem. */
     private static boolean semanticFlagPocketHead(
             byte[] labels,
@@ -31663,6 +38373,130 @@ final class OmrScoreInterpreter {
         return stem != null
                 && hasCurvedFlag(
                         labels, gray, width, height, head, cueGap, stem[0], stem[1], stem[2] < 0);
+    }
+
+    /** Detached print beside a proven hollow head cannot supply the shaft's flag. */
+    private static boolean ownsFlagBesideSustainedHead(
+            byte[] labels,
+            byte[] gray,
+            int width,
+            int height,
+            Component head,
+            float gap,
+            float slope,
+            float writtenValue,
+            int[] shaft) {
+        if (!hasCurvedFlag(
+                labels, gray, width, height, head, gap, shaft[0], shaft[1], shaft[2] < 0))
+            return false;
+        return writtenValue != ScoreNoteEvent.DURATION_HALF
+                || shaft[2] != 1
+                || !(sideInkSeparatedFromDownstem(gray, width, height, shaft[0], shaft[1], gap)
+                        || detachedOneBesideDownstem(gray, width, height, shaft[0], shaft[1], gap))
+                || !ClosedWrittenHeadPocket.proved(
+                        gray,
+                        width,
+                        height,
+                        head.minX,
+                        head.minY,
+                        head.maxX,
+                        head.maxY,
+                        head.centerX,
+                        head.centerY,
+                        gap,
+                        slope);
+    }
+
+    /** A complete fingering below the staff cannot also be a flag rooted at the shaft tip. */
+    private static boolean detachedOneBesideDownstem(
+            byte[] gray, int width, int height, int shaftX, int end, float gap) {
+        if (!Float.isFinite(gap) || gap < 10 || gap > 28) return false;
+        int left = shaftX + Math.round(gap * .20f);
+        int right = shaftX + Math.round(gap * 1.30f);
+        int top = end - Math.round(gap * .73f);
+        int bottom = end + Math.round(gap);
+        int flagTop = end - Math.round(gap * 2.3f);
+        if (left < 0 || right >= width || flagTop < 0 || bottom >= height) return false;
+        var glyphs =
+                RawNumeralComponents.capture(
+                                gray, width, height, left, top, right, bottom, () -> {}, () -> {})
+                        .components()
+                        .stream()
+                        .filter(c -> c.size() >= 8)
+                        .toList();
+        if (glyphs.size() != 1) return false;
+        var one = glyphs.get(0);
+        int inkHeight = one.bottom - one.top + 1;
+        if (one.left <= left
+                || one.right >= right
+                || one.top <= top
+                || one.bottom >= bottom
+                || one.top >= end - gap * .12f
+                || one.bottom <= end + gap * .48f
+                || inkHeight < gap * .81f
+                || inkHeight > gap * 1.24f
+                || !TripletRhythmDetector.fingerOne(gray, width, one)) return false;
+        // Confirm an uninterrupted paper seam wherever a root could join the shaft.
+        // Only rows of a long staff rule, not a neck or a loose edge, can occlude it.
+        int seam = 0;
+        for (int x = left; x < one.left; x++) {
+            boolean open = true;
+            for (int y = flagTop; y <= one.bottom; y++) {
+                if ((gray[y * width + x] & 255) >= 215) continue;
+                if (y < top
+                        && (rawRuleBeyondFlag(gray, width, y, shaftX, gap, 230)
+                                || (y > 0
+                                        && (gray[(y - 1) * width + x] & 255) >= 215
+                                        && (gray[(y + 1) * width + x] & 255) <= 165
+                                        && rawRuleBeyondFlag(
+                                                gray, width, y + 1, shaftX, gap, 230)))) continue;
+                open = false;
+                break;
+            }
+            seam = open ? seam + 1 : 0;
+            if (seam >= Math.max(2, Math.round(gap * .13f))) return true;
+        }
+        return false;
+    }
+
+    private static boolean sideInkSeparatedFromDownstem(
+            byte[] gray, int width, int height, int shaftX, int end, float gap) {
+        if (!Float.isFinite(gap) || gap < 8 || gap > 32) return false;
+        int left = shaftX + Math.max(2, Math.round(gap * .20f));
+        int right = shaftX + Math.round(gap * .54f);
+        int outside = shaftX + Math.round(gap * 1.5f);
+        int top = end - Math.round(gap * 2.3f);
+        if (left < 0 || right >= outside || outside >= width || top < 0 || end >= height)
+            return false;
+        int threshold = BeamInkThreshold.at(gray, width, height, shaftX, top, end, gap);
+        int paper = Math.min(225, threshold + 35);
+        boolean[] clear = new boolean[right - left + 1];
+        java.util.Arrays.fill(clear, true);
+        int maskedRows = 0;
+        int sideRows = 0;
+        for (int y = top; y <= end; y++) {
+            if (rawRuleBeyondFlag(gray, width, y, shaftX, gap, Math.min(235, paper + 25))) {
+                if (end - y < gap * 1.6f || ++maskedRows > Math.round(gap * .34f)) return false;
+                continue;
+            }
+            int row = y * width;
+            for (int x = left; x <= right; x++)
+                clear[x - left] &= (gray[row + x] & 255) >= paper;
+            for (int x = right + 1; x <= outside; x++) {
+                if ((gray[row + x] & 255) <= threshold) {
+                    sideRows++;
+                    break;
+                }
+            }
+        }
+        if (sideRows < Math.round(gap * .62f)) return false;
+        int needed = Math.max(2, Math.round(gap * .13f));
+        int run = 0;
+        for (boolean column : clear) {
+            run = column ? run + 1 : 0;
+            if (run >= needed) return true;
+        }
+        return false;
     }
 
     /** A single flag is a narrow curved hook, not a horizontal beam-width run. */
@@ -32012,8 +38846,11 @@ final class OmrScoreInterpreter {
     }
 
     /** Printed accidentals carry to the same written pitch until the next barline. */
-    private static List<DetectedNote> applyAccidentalState(List<DetectedNote> source) {
-        Map<AccidentalStateKey, Integer> measureState = new HashMap<>();
+    private static List<DetectedNote> applyAccidentalState(
+            List<DetectedNote> source, java.util.Set<Component> beamedThirdNaturals,
+            java.util.Set<Component> sharpFragments, java.util.Set<Component> flatBowls,
+            IdentityHashMap<Component, Component> carryOwners) {
+        Map<AccidentalStateKey, AccidentalOwner> measureState = new HashMap<>();
         Map<PitchKey, Integer> lastResolved = new HashMap<>();
         List<DetectedNote> result = new ArrayList<>(source.size());
         for (DetectedNote note : source) {
@@ -32032,11 +38869,17 @@ final class OmrScoreInterpreter {
             PitchKey pitchKey =
                     new PitchKey(
                             event.staffIndex(), event.staffCount(), event.diatonicPitchIdentity());
-            int accidental = event.writtenAccidental();
+            int accidental = beamedThirdNaturals.contains(note.head)
+                    ? ScoreNoteEvent.ACCIDENTAL_NATURAL : event.writtenAccidental();
+            if (sharpFragments.contains(note.head)) accidental = ScoreNoteEvent.ACCIDENTAL_SHARP;
+            if (flatBowls.contains(note.head)) accidental = ScoreNoteEvent.ACCIDENTAL_FLAT;
+            var prior = measureState.get(stateKey);
             if (accidental != ScoreNoteEvent.ACCIDENTAL_FROM_KEY)
-                measureState.put(stateKey, accidental);
-            else if (measureState.containsKey(stateKey)) accidental = measureState.get(stateKey);
-            else if (event.tiedFromPrevious() && lastResolved.containsKey(pitchKey))
+                measureState.put(stateKey, new AccidentalOwner(note.head, accidental));
+            else if (prior != null) {
+                accidental = prior.accidental;
+                carryOwners.put(note.head, prior.head);
+            } else if (event.tiedFromPrevious() && lastResolved.containsKey(pitchKey))
                 accidental = lastResolved.get(pitchKey);
             lastResolved.put(pitchKey, accidental);
             if (accidental != event.writtenAccidental()) {
@@ -34350,6 +41193,8 @@ final class OmrScoreInterpreter {
                     : label == value;
         }
     }
+
+    private record AccidentalOwner(Component head, int accidental) {}
 
     private record AccidentalStateKey(
             int measureIndex, int staffIndex, int staffCount, int staffStep) {}

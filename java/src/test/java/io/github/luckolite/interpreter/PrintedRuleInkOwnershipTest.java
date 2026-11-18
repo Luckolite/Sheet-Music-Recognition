@@ -145,6 +145,41 @@ public final class PrintedRuleInkOwnershipTest {
     }
 
     @Test
+    public void longSharedLedgerRulesAboveTheStaffAreNotTremoloStrokes() {
+        byte[] p = page(-.04f, 220, 5);
+        drawLedgerStroke(p, TOP - 3 * G, -.04f, 30);
+        drawLedgerStroke(p, TOP - 2 * G, -.04f, 30);
+        assertTrue(PrintedRuleInkOwnership.matchesLedgerStack(
+                p, W, H, X, TOP - 3 * G, TOP, G, -.04f, 155));
+    }
+
+    @Test
+    public void ledgerProofRequiresAnotherBroadRuleOnTheSamePhase() {
+        byte[] p = page(0, 220, 5);
+        drawLedgerStroke(p, TOP - 3 * G, 0, 30);
+        drawLedgerStroke(p, TOP - 2 * G + 6, 0, 30);
+        assertFalse(PrintedRuleInkOwnership.matchesLedgerStack(
+                p, W, H, X, TOP - 3 * G, TOP, G, 0, 155));
+    }
+
+    @Test
+    public void finiteSlantedSlashesCannotProveSharedLedgerInk() {
+        byte[] p = page(0, 220, 5);
+        drawLedgerStroke(p, TOP - 3 * G, .25f, 14);
+        drawLedgerStroke(p, TOP - 2 * G, .25f, 14);
+        assertFalse(PrintedRuleInkOwnership.matchesLedgerStack(
+                p, W, H, X, TOP - 3 * G, TOP, G, 0, 155));
+    }
+
+    private static void drawLedgerStroke(byte[] p, int y, float slope, int reach) {
+        for (int dx = -reach; dx <= reach; dx++) {
+            int row = y + Math.round(dx * slope);
+            p[row * W + X + dx] = 30;
+            p[(row + 1) * W + X + dx] = 30;
+        }
+    }
+
+    @Test
     public void wrongFramePhaseCannotEraseStroke() {
         assertFalse(
                 PrintedRuleInkOwnership.matches(

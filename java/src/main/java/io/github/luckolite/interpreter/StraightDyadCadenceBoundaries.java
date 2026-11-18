@@ -17,8 +17,11 @@ final class StraightDyadCadenceBoundaries {
             var proposal = propose(region, gray, width, height);
             if (!proposal.isEmpty()) {
                 var local = OmrScoreInterpreter.analyze(labels, gray, width, height, proposal);
-                if (completeCadenceGroup(proposal, local.notes(), local.rests(), width, height)
-                        || closesWithQuarterDyad(proposal, local.notes(), local.rests(), width, height)) {
+                if (closedSixteenthPair(proposal, local.notes(), local.rests(), width, height)
+                        || completeCadenceGroup(
+                                proposal, local.notes(), local.rests(), width, height)
+                        || closesWithQuarterDyad(
+                                proposal, local.notes(), local.rests(), width, height)) {
                     result.addAll(proposal);
                     continue;
                 }
@@ -26,6 +29,80 @@ final class StraightDyadCadenceBoundaries {
             result.add(region);
         }
         return result.size() == regions.size() ? regions : List.copyOf(result);
+    }
+
+    /** Two complete sixteenth runs can flank a printed rule even with one unresolved head. */
+    static boolean closedSixteenthPair(
+            List<MeasureRegion> parts,
+            List<ScoreNoteEvent> notes,
+            List<ScoreRestEvent> rests,
+            int width,
+            int height) {
+        if (parts.size() != 2 || !rests.isEmpty()) return false;
+        for (int bar = 0; bar < parts.size(); bar++) {
+            final int measure = bar;
+            var owners = notes.stream().filter(n -> n.measureIndex() == measure).toList();
+            var members =
+                    owners.stream()
+                            .filter(n -> n.stemDirection() != 0 && dyadMember(n, false))
+                            .sorted(Comparator.comparingDouble(ScoreNoteEvent::positionInMeasure))
+                            .toList();
+            if (members.size() < 31 || members.size() > 32 || owners.size() - members.size() > 1)
+                return false;
+
+            var region = parts.get(bar);
+            float span = (region.right() - region.left()) * width;
+            float gap = (region.bottom() - region.top()) * height / 8.2f;
+            float normalizedGap = gap / span;
+            if (members.get(0).positionInMeasure() > 2 * normalizedGap
+                    || members.get(members.size() - 1).positionInMeasure() < 1 - 2 * normalizedGap)
+                return false;
+
+            for (var owner : owners) {
+                if (members.contains(owner)) continue;
+                var adjacent =
+                        members.stream()
+                                .filter(
+                                        n ->
+                                                Math.abs(
+                                                                n.positionInMeasure()
+                                                                        - owner.positionInMeasure())
+                                                        <= .35f * normalizedGap)
+                                .toList();
+                if (owner.stemDirection() != 0
+                        || owner.beamCount() < 3
+                        || adjacent.size() != 2
+                        || adjacent.stream()
+                                .anyMatch(n -> Math.abs(n.staffStep() - owner.staffStep()) < 8))
+                    return false;
+            }
+
+            int attacks = 0;
+            float previous = 0;
+            for (int start = 0; start < members.size(); ) {
+                var first = members.get(start);
+                float position = first.positionInMeasure();
+                int end = start + 1;
+                while (end < members.size()
+                        && members.get(end).positionInMeasure() - position <= .35f * normalizedGap)
+                    end++;
+                if (end - start > 2) return false;
+                if (end - start == 2) {
+                    var second = members.get(start + 1);
+                    if (Math.abs(first.staffStep() - second.staffStep()) < 2
+                            || first.stemDirection() != second.stemDirection()) return false;
+                }
+                float separation = position - previous;
+                if (attacks > 0
+                        && (separation < 1.25f * normalizedGap
+                                || separation > 3.25f * normalizedGap)) return false;
+                previous = position;
+                attacks++;
+                start = end;
+            }
+            if (attacks != 16) return false;
+        }
+        return true;
     }
 
     static List<MeasureRegion> propose(

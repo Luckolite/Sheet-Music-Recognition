@@ -62,14 +62,12 @@ public class TypedOmrStateTest {
                         .withKind(ScoreNoteEvent.Kind.UNPITCHED);
         var later = note(.5f, ScoreNoteEvent.ACCIDENTAL_FROM_KEY);
         var out =
-                apply(
-                        "applyAccidentalState",
+                AccidentalStateTestSupport.apply(
                         List.of(detected(sharp, 80), detected(u, 160), detected(later, 240)));
         assertEquals(u, event(out.get(1)));
         assertEquals(ScoreNoteEvent.ACCIDENTAL_SHARP, event(out.get(2)).writtenAccidental());
         out =
-                apply(
-                        "applyAccidentalState",
+                AccidentalStateTestSupport.apply(
                         List.of(detected(u.withArticulations(5), 80), detected(later, 240)));
         assertEquals(ScoreNoteEvent.ACCIDENTAL_FROM_KEY, event(out.get(1)).writtenAccidental());
     }

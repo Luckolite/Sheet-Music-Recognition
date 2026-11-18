@@ -39,6 +39,13 @@ final class WholeHeadPocketEvidence {
     static boolean hasEnclosedOpening(
             byte[] gray, int width, int height, int left, int top, int right, int bottom,
             float centerX, float centerY, float gap) {
+        return hasEnclosedOpening(gray, width, height, left, top, right, bottom,
+                centerX, centerY, gap, 4, 2);
+    }
+
+    static boolean hasEnclosedOpening(
+            byte[] gray, int width, int height, int left, int top, int right, int bottom,
+            float centerX, float centerY, float gap, int minimumArea, int minimumRows) {
         if (gray == null || width < 1 || height < 1 || gray.length != (long) width * height
                 || !Float.isFinite(gap) || gap < 6 || !Float.isFinite(centerX) || !Float.isFinite(centerY)
                 || left < 0 || top < 0 || right >= width || bottom >= height || right < left || bottom < top) return true;
@@ -72,7 +79,7 @@ final class WholeHeadPocketEvidence {
                     }
                 }
             }
-            if (edge || end < 4 || maxX - minX < 1 || maxY - minY < 1) continue;
+            if (edge || end < minimumArea || maxX - minX < 1 || maxY - minY + 1 < minimumRows) continue;
             double mx = sumX / (double) end, my = sumY / (double) end;
             double nx = (mx - centerX) / rx, ny = (my - centerY) / ry;
             if (nx * nx + ny * ny <= .70) return true;

@@ -25,7 +25,6 @@ Requires **Python 3.10 or 3.11** and **Java 17+** on your PATH (or via `JAVA_HOM
 
 ```sh
 python -m pip install "score-reader[pdf,audio]"
-score-reader --demo -o scale.json --musicxml scale.musicxml --midi scale.mid --mp3 scale.mp3
 ```
 
 | Input image | Recognized score |

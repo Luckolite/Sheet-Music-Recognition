@@ -80,6 +80,23 @@ class BeamExportTests(unittest.TestCase):
         first = duration_fixture.WrittenDurationPartsTests().export(events, **source).find('.//note')
         self.assertEqual(['beam', 'notations'], [child.tag for child in first][-2:])
 
+    def test_full_beam_group_keeps_available_voice_after_independent_sustain(self):
+        source = fixture(((0,), (1,)), (3,))
+        events = [event(0, 1.25, 55), event(1, .25, 60, sourceNoteIndex=0),
+                  event(1.25, .25, 62, sourceNoteIndex=1)]
+        root = duration_fixture.WrittenDurationPartsTests().export(events, **source)
+        first, last = root.findall('.//note[beam]')
+        self.assertEqual(first.findtext('voice'), last.findtext('voice'))
+        self.assertEqual([(1, 'begin'), (2, 'begin')], beam_values(first))
+        self.assertEqual([(1, 'end'), (2, 'end')], beam_values(last))
+
+    def test_beam_voice_does_not_displace_an_independent_attack(self):
+        source = fixture(((0,), (1,)), (3,))
+        events = [event(0, 1.25, 55), event(1, .25, 60, sourceNoteIndex=0),
+                  event(1.25, .25, 62, sourceNoteIndex=1), event(1.375, .125, 67)]
+        root = duration_fixture.WrittenDurationPartsTests().export(events, **source)
+        self.assertEqual([], root.findall('.//beam'))
+
     def test_matching_voice_numbers_in_separate_parts_do_not_join(self):
         source = fixture(((0,), (1,)), (1,))
         events = [event(0, .5, sourceNoteIndex=0),

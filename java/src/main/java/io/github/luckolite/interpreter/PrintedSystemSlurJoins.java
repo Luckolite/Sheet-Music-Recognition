@@ -76,6 +76,21 @@ final class PrintedSystemSlurJoins {
             List<? extends PrintedSlurPageCapture.Frame<? extends PrintedSlurOwners.Location>> frames,
             List<ScoreNoteEvent> notes, byte[] gray, int w, int h, long allowance,
             List<ScoreExpressiveEvent> pageEdges, List<MeasureRegion> measures) {
+        return joinInternal(page, observed, frames, notes, gray, w, h, allowance, pageEdges, measures, false);
+    }
+
+    static List<ScoreSlurPages.Span> joinLongTaperedFragments(
+            int page, List<Observed> observed,
+            List<? extends PrintedSlurPageCapture.Frame<? extends PrintedSlurOwners.Location>> frames,
+            List<ScoreNoteEvent> notes, byte[] gray, int w, int h, List<MeasureRegion> measures) {
+        return joinInternal(page, observed, frames, notes, gray, w, h, 8_000_000L, null, measures, true);
+    }
+
+    private static List<ScoreSlurPages.Span> joinInternal(
+            int page, List<Observed> observed,
+            List<? extends PrintedSlurPageCapture.Frame<? extends PrintedSlurOwners.Location>> frames,
+            List<ScoreNoteEvent> notes, byte[] gray, int w, int h, long allowance,
+            List<ScoreExpressiveEvent> pageEdges, List<MeasureRegion> measures, boolean allowTaper) {
         Objects.requireNonNull(observed);
         Objects.requireNonNull(frames);
         Objects.requireNonNull(notes);
@@ -209,8 +224,13 @@ final class PrintedSystemSlurJoins {
                         var end = a.observed().bow().end();
                         var start = b.observed().bow().start();
                         if (ea[1] >= 0) {
-                            if (end.x() > ea[1] || ea[1] - end.x() > fa.gap() * 2) continue;
+                            int taper = allowTaper
+                                    && a.observed().bow().end().x() - a.observed().bow().start().x() >= fa.gap() * 18
+                                    && b.observed().bow().end().x() - b.observed().bow().start().x() >= fb.gap() * 18
+                                    ? Math.min(2, Math.round(fa.gap() * .11f)) : 0;
+                            if (end.x() > ea[1] + taper || ea[1] - end.x() > fa.gap() * 2) continue;
                         } else {
+                            if (allowTaper) continue;
                             double closing = printedMeasureEdge(fa, info.values(), notes, measures, w, h, true);
                             if (!longFragment(a, fa.gap()) || !longFragment(b, fb.gap())
                                     || !Double.isFinite(closing)

@@ -20,6 +20,17 @@ public final class ScoreFermataDetector {
             int width,
             int height,
             List<PlayingTechniqueDetector.Staff> staffs) {
+        return withFermatas(score, labels, gray, width, height, staffs, (note, mark) -> false);
+    }
+
+    static ScorePageInterpretation withFermatas(
+            ScorePageInterpretation score,
+            byte[] labels,
+            byte[] gray,
+            int width,
+            int height,
+            List<PlayingTechniqueDetector.Staff> staffs,
+            java.util.function.BiPredicate<ScoreNoteEvent, NoteArticulationDetector.FermataMark> claimedInk) {
         if (score.measures().isEmpty()) return score;
         var anchors = new ArrayList<NoteArticulationDetector.Anchor>();
         for (var note : score.notes()) {
@@ -60,6 +71,7 @@ public final class ScoreFermataDetector {
                 continue;
             }
             var note = score.notes().get(mark.noteIndex());
+            if (claimedInk.test(note, mark)) continue;
             String target =
                     target(
                             note.measureIndex(),

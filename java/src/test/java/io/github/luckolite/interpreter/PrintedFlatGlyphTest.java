@@ -70,6 +70,19 @@ public class PrintedFlatGlyphTest {
     }
 
     @Test
+    public void dotWindowBelongsToTheFollowingFlatOnlyWhileConnectedToItsSpine() {
+        flat();
+        // The lower bowl crosses the same aperture as a rhythm dot.
+        rect(60, 82, 9, 4);
+        var core = new WrappedTripletDotInk.Center(67, 84);
+        assertTrue(WrappedTripletDotInk.singleFlatOwns(gray, w, h, core, 94, 75, 16));
+        assertFalse(WrappedTripletDotInk.singleFlatOwns(gray, w, h, core, 94, 90, 16));
+
+        for (int y = 53; y < 80; y++) Arrays.fill(gray, y * w + 59, y * w + 64, (byte) 255);
+        assertFalse(WrappedTripletDotInk.singleFlatOwns(gray, w, h, core, 94, 75, 16));
+    }
+
+    @Test
     public void adjacentLocalFlatsAreNotAKeyChange() {
         byte[] labels = new byte[400 * 240];
         for (int y = 80; y <= 120; y += 10) for (int x = 20; x < 380; x++) labels[y * 400 + x] = 4;

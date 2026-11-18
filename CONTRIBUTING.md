@@ -50,4 +50,11 @@ java -jar google-java-format-1.24.0-all-deps.jar --aosp --skip-sorting-imports -
 
 ## Maintainers
 
+Full GitHub releases and their PyPI packages use the same three-part version. Before tagging, check the exact version on PyPI, including yanked files. A yanked wheel still reserves its filename.
+For a PyPI-only update, append a fourth component to the latest full release,
+for example `0.1.5.1` after `v0.1.5`, and increment it for later updates on
+that release. Update both package and runtime versions before dispatching the
+PyPI workflow. Use the new three-part version when publishing the next full
+release.
+
 When porting changes from the app, run `python scripts/check_app_drift.py --app <active-app-worktree>` and review helpers, adapters, and assets outside the mapped files. See [source provenance](docs/source-provenance.md). Keep weight hashes, lineage, and evaluation in sync; publish new weights with a new release. To check the Android and native pickup callers, add `--app <app-worktree>` to the pickup check and use the matching core classpath. This checks source calls, without running Android or the packaged worker.

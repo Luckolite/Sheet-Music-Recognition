@@ -399,22 +399,26 @@ public class TabTextRhythmTest {
     }
 
     @Test
-    public void dottedQuarterIsNotSilentlyReadAsPlainQuarter() {
+    public void printedTempoUnitSurvivesStandaloneTabPlayback() {
         var score =
                 TablatureDecoder.apply(
                         new ScorePageInterpretation(List.of(), List.of()),
                         List.of(staff(List.of(new TablatureDecoder.Fret(150, 80, 0, 5)))),
                         W,
                         H);
-        var words =
-                List.of(
-                        word("\uECA5", 45, 30, 12, 28),
-                        word("\uECB7", 58, 36, 4, 4),
-                        word("=", 70, 37, 10, 6),
-                        word("132", 95, 35, 24, 16));
-        assertTrue(
-                TabTempo.apply(score, List.of(staff(List.of())), words, W, H)
-                        .tempoChanges()
-                        .isEmpty());
+        for (int row = 0; row < 3; row++) {
+            String glyph = new String[] {"\uECA5", "\uECA4", "\uECA7"}[row];
+            double unit = new double[] {1.5, 2, .75}[row];
+            var words = new ArrayList<TablatureDecoder.Word>();
+            words.add(word(glyph, 45, 30, 12, 28));
+            if (row != 1) words.add(word("\uECB7", 58, 36, 4, 4));
+            words.add(word("=", 70, 37, 10, 6));
+            words.add(word("132", 95, 35, 24, 16));
+            assertTrue(TabTextSource.tokens(glyph + "=132").contains(glyph));
+            var marks = TabTempo.apply(score, List.of(staff(List.of())), words, W, H).tempoChanges();
+            assertEquals(1, marks.size());
+            assertEquals(unit, marks.get(0).beatUnit(), 0);
+            assertEquals(132 * unit, marks.get(0).bpm(), 0);
+        }
     }
 }

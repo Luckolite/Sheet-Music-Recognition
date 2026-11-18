@@ -94,7 +94,8 @@ public final class SharpCrossbarHeadTest {
         page.sharp(400, 148);
         var interpreter = OmrScoreInterpreter.class;
         var component = Class.forName(interpreter.getName() + "$Component");
-        var create = component.getDeclaredConstructors()[0];
+        var create = component.getDeclaredConstructor(
+                int.class, int.class, int.class, int.class, int.class, float.class, float.class);
         create.setAccessible(true);
         var fragment = create.newInstance(80, 384, 405, 153, 166, 396f, 160f);
         var sharp = create.newInstance(120, 392, 407, 126, 170, 400f, 148f);
@@ -106,5 +107,70 @@ public final class SharpCrossbarHeadTest {
         for (int y = 155; y <= 163; y++)
             for (int x = 384; x <= 390; x++) page.ink(x, y, 2);
         assertTrue((boolean) outside.invoke(null, page.gray, W, fragment, sharp, 16f));
+    }
+
+    @Test
+    public void ownedSharpCannotPlayAsAnUnbeamedHalf() throws Exception {
+        assertEquals(1, remainingHalfCandidates(0, true, false, false));
+    }
+
+    @Test
+    public void retainsHalfWithIndependentEvidenceOrWithoutSharpOwnership() throws Exception {
+        assertEquals(2, remainingHalfCandidates(1, true, false, false));
+        assertEquals(2, remainingHalfCandidates(0, false, false, false));
+        assertEquals(2, remainingHalfCandidates(0, true, true, false));
+        assertEquals(2, remainingHalfCandidates(0, true, false, true));
+    }
+
+    private int remainingHalfCandidates(
+            int direction, boolean ownerProved, boolean outsideBody, boolean headMask) throws Exception {
+        var page = new JoinedSignatureSharpTest();
+        page.row(100, 0, 0, false);
+        page.sharp(400, 148);
+        for (int y = 127; y <= 143; y++) {
+            for (int x = 395; x <= 399; x++) page.ink(x, y, 3);
+            for (int x = 403; x <= 407; x++) page.ink(x, y, 3);
+        }
+        if (outsideBody) {
+            for (int y = 127; y <= 131; y++)
+                for (int x = 408; x <= 413; x++) page.ink(x, y, 1);
+        }
+        if (headMask) page.ink(413, 136, 2);
+
+        var interpreter = OmrScoreInterpreter.class;
+        var component = Class.forName(interpreter.getName() + "$Component");
+        var create = component.getDeclaredConstructor(
+                int.class, int.class, int.class, int.class, int.class, float.class, float.class);
+        create.setAccessible(true);
+        var ghost = create.newInstance(162, 393, 413, 127, 143, 402f, 135f);
+        var sharp = create.newInstance(180, 392, 407, 126, 170, 400f, 148f);
+        var head = create.newInstance(160, 412, 432, 140, 155, 422f, 148f);
+        var noteType = Class.forName(interpreter.getName() + "$DetectedNote");
+        var detected = noteType.getDeclaredConstructor(ScoreNoteEvent.class, component, float.class);
+        detected.setAccessible(true);
+        var actual = new ScoreNoteEvent(
+                0, .6f, 4, 0, 1, 148f / H, false, 0, 2,
+                ScoreNoteEvent.ACCIDENTAL_SHARP, 0);
+        var extra = new ScoreNoteEvent(
+                0, .54f, 2, 0, 1, 135f / H, false, 0, 0,
+                ScoreNoteEvent.ACCIDENTAL_FROM_KEY, ScoreNoteEvent.DURATION_HALF)
+                        .withStemDirection(direction);
+        var notes = new java.util.ArrayList<>();
+        notes.add(detected.newInstance(actual, head, 16f));
+        notes.add(detected.newInstance(extra, ghost, 16f));
+        var choices = new java.util.IdentityHashMap<>();
+        if (ownerProved) {
+            var selection = OmrScoreInterpreter.WrittenAccidentalChoice.class
+                    .getDeclaredConstructor(
+                            int.class, Object.class, Object.class, int.class, int.class, boolean.class);
+            selection.setAccessible(true);
+            choices.put(head, selection.newInstance(
+                    ScoreNoteEvent.ACCIDENTAL_SHARP, sharp, head, 1, 1, false));
+        }
+        var reject = interpreter.getDeclaredMethod("removeOwnedSharpFragments", List.class,
+                java.util.IdentityHashMap.class, byte[].class, byte[].class, int.class);
+        reject.setAccessible(true);
+        reject.invoke(null, notes, choices, page.labels, page.gray, W);
+        return notes.size();
     }
 }

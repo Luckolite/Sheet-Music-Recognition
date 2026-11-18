@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.github.luckolite.interpreter;
 
-/** Detaches a verified complete double rule from an otherwise unread meter crop. */
+/** Detaches verified boundary ink from an otherwise unread meter crop. */
 final class MeterDoubleRuleCrop {
     private MeterDoubleRuleCrop() {}
 
@@ -10,16 +10,45 @@ final class MeterDoubleRuleCrop {
 
     static MeterChangeDetector.Crop trim(MeterChangeDetector.Crop crop,byte[] gray,
             int width,int height,float ownerLeft) {
+        return trim(crop, gray, width, height, ownerLeft, false);
+    }
+
+    static MeterChangeDetector.Crop trimPair(
+            MeterChangeDetector.Crop crop, byte[] gray, int width, int height, float ownerLeft) {
+        return trim(crop, gray, width, height, ownerLeft, true);
+    }
+
+    private static MeterChangeDetector.Crop trim(MeterChangeDetector.Crop crop, byte[] gray,
+            int width, int height, float ownerLeft, boolean requiresPair) {
         if (gray==null || gray.length!=(long)width*height || !Float.isFinite(ownerLeft)
                 || crop==null || crop.gap()<8 || crop.gap()>32
                 || crop.left()<0 || crop.right()>width || crop.top()<0 || crop.bottom()>height)
             return crop;
-        float gap=crop.gap();
         if (ownerLeft<crop.left() || ownerLeft>crop.right()) return crop;
+        var trimmed = trimRules(crop, gray, width, height, ownerLeft, requiresPair);
+        if (trimmed != crop) return trimmed;
+
+        // A wide crop can begin in verified paper before both bars. Discard only
+        // that paper, and require the same complete pair past the shorter prefix.
+        int left = crop.left() + Math.round(crop.gap() * .42f);
+        if (left >= ownerLeft || left >= crop.right()) return crop;
+        for (int x = crop.left(); x < left; x++)
+            if (!paperBetweenRules(gray, width, height, x, crop.firstLine(), crop.gap())) return crop;
+        var narrowed = new MeterChangeDetector.Crop(
+                left, crop.top(), crop.right(), crop.bottom(), crop.firstLine(), crop.gap());
+        var recovered = trimRules(narrowed, gray, width, height, ownerLeft, true);
+        return recovered == narrowed ? crop : recovered;
+    }
+
+    private static MeterChangeDetector.Crop trimRules(
+            MeterChangeDetector.Crop crop, byte[] gray, int width, int height,
+            float ownerLeft, boolean requiresPair) {
+        float gap=crop.gap();
         int end=Math.min(crop.right()-Math.round(1.3f*gap),
                 Math.min(crop.left()+Math.round(gap*1.28f),Math.round(ownerLeft+gap*.3f)));
         if (end<=crop.left()) return crop;
-        int maxWidth=Math.max(2,Math.round(gap*.34f));
+        int maxSingleWidth = Math.max(2, Math.round(gap * .34f));
+        int maxPairedWidth = Math.max(2, Math.round(gap * .43f));
         Stroke first=null,second=null;
         for (int x=crop.left();x<end;) {
             if (!spansStaff(gray,width,height,x,crop.firstLine(),gap)) {
@@ -29,24 +58,84 @@ final class MeterDoubleRuleCrop {
             int left=x;
             do { x++; }
             while (x<end && spansStaff(gray,width,height,x,crop.firstLine(),gap));
-            if (x>=end || x-left<2 || x-left>maxWidth) return crop;
+            if (x>=end || x-left<2 || x-left>maxPairedWidth) return crop;
             var stroke=new Stroke(left,x);
             if(first==null) first=stroke;
             else if(second==null) second=stroke;
             else return crop;
         }
-        if (second==null || first.left-crop.left()>gap*.42f
-                || second.left-first.right<2 || second.left-first.right>gap*.43f
-                || second.right-first.left>gap*.93f
-                || second.right+2>=crop.right()) return crop;
-        // A separating paper column rules out trimming the initial stroke of a numeral.
-        int boundary=second.right;
-        if (!paperBetweenRules(gray,width,height,boundary,crop.firstLine(),gap)) boundary++;
-        if (!paperBetweenRules(gray,width,height,boundary,crop.firstLine(),gap)
-                || !paperBetweenRules(gray,width,height,boundary+1,crop.firstLine(),gap))
-            return crop;
-        return new MeterChangeDetector.Crop(boundary,crop.top(),crop.right(),crop.bottom(),
-                crop.firstLine(),gap);
+        if (first == null || first.left - crop.left() > gap * .42f) return crop;
+        int boundary;
+        if (second == null) {
+            if (requiresPair) return crop;
+            float distance = ownerLeft - first.right;
+            if (first.right - first.left > maxSingleWidth
+                    || distance < gap * .24f || distance > gap * .76f) return crop;
+            boundary = first.right;
+        } else {
+            if (second.left - first.right < 2
+                    || second.left - first.right > gap * .43f
+                    || second.right - first.left > gap * .93f) return crop;
+            if ((first.right - first.left > maxSingleWidth
+                            || second.right - second.left > maxSingleWidth)
+                    && (extendsBeyondStaff(gray, width, height, crop, first)
+                            || extendsBeyondStaff(gray, width, height, crop, second))) return crop;
+            boundary = second.right;
+        }
+        if (boundary + 2 >= crop.right()) return crop;
+        // Prefer the paper immediately beside the established rule. A displaced edge
+        // of a verified pair can taper for a few more connected columns.
+        if (!paperBetweenRules(gray, width, height, boundary, crop.firstLine(), gap)
+                || !paperBetweenRules(gray, width, height, boundary + 1, crop.firstLine(), gap)) {
+            int next = boundary + 1;
+            if (paperBetweenRules(gray, width, height, next, crop.firstLine(), gap)
+                    && paperBetweenRules(gray, width, height, next + 1, crop.firstLine(), gap))
+                boundary = next;
+            else if (second != null)
+                boundary = pairedRuleFringe(gray, width, height, crop, boundary);
+            else return crop;
+            if (boundary < 0) return crop;
+        }
+        return new MeterChangeDetector.Crop(
+                boundary, crop.top(), crop.right(), crop.bottom(), crop.firstLine(), gap);
+    }
+
+    private static int pairedRuleFringe(
+            byte[] gray, int width, int height, MeterChangeDetector.Crop crop, int start) {
+        float gap = crop.gap();
+        int top = crop.firstLine();
+        if (DottedDyadMeasureSeparator.continuesBeyondStaff(
+                gray, width, height, start - 1, top, Math.round(top + 4 * gap), gap)) return -1;
+        int last = Math.min(crop.right() - 3, start + Math.round(gap * .24f));
+        int previous = Integer.MAX_VALUE;
+        for (int x = start; x <= last; x++) {
+            if (paperBetweenRules(gray, width, height, x, top, gap)
+                    && paperBetweenRules(gray, width, height, x + 1, top, gap)) return x;
+            int samples = 0;
+            for (int space = 0; space < 4; space++) {
+                int first = Math.round(top + (space + .22f) * gap);
+                int end = Math.round(top + (space + .80f) * gap);
+                if (first < 1 || end >= height - 1) return -1;
+                for (int y = first; y <= end; y++) {
+                    if ((gray[y * width + x] & 255) >= 155) continue;
+                    if ((gray[(y - 1) * width + x - 1] & 255) >= 155
+                            && (gray[y * width + x - 1] & 255) >= 155
+                            && (gray[(y + 1) * width + x - 1] & 255) >= 155) return -1;
+                    samples++;
+                }
+            }
+            if (samples == 0 || samples >= previous) return -1;
+            previous = samples;
+        }
+        return -1;
+    }
+
+    private static boolean extendsBeyondStaff(
+            byte[] gray, int width, int height, MeterChangeDetector.Crop crop, Stroke stroke) {
+        int middle = (stroke.left + stroke.right) / 2;
+        return DottedDyadMeasureSeparator.continuesBeyondStaff(
+                gray, width, height, middle, crop.firstLine(),
+                Math.round(crop.firstLine() + 4 * crop.gap()), crop.gap());
     }
 
     private static boolean spansStaff(byte[] gray,int width,int height,int x,int top,float gap) {

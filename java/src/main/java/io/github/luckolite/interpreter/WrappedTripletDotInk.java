@@ -10,10 +10,20 @@ final class WrappedTripletDotInk {
 
     static Center uniqueCore(byte[] gray, int width, int height,
             float headX, float headY, float nextX, float gap) {
+        return uniqueCore(gray, width, height, headX, headY, nextX, gap, 1.44f);
+    }
+
+    static Center dottedHalfCore(byte[] gray, int width, int height,
+            float headX, float headY, float closingX, float gap) {
+        return uniqueCore(gray, width, height, headX, headY, closingX, gap, 1.65f);
+    }
+
+    private static Center uniqueCore(byte[] gray, int width, int height,
+            float headX, float headY, float nextX, float gap, float horizontalReach) {
         if (gray == null || gray.length != (long) width * height
                 || !Float.isFinite(headX + headY + nextX + gap) || gap < 10 || gap > 30) return null;
         int left = Math.round(headX + gap * .87f);
-        int right = Math.min(Math.round(headX + gap * 1.44f), Math.round(nextX - gap * .58f));
+        int right = Math.min(Math.round(headX + gap * horizontalReach), Math.round(nextX - gap * .58f));
         int top = Math.round(headY - gap * .70f);
         int bottom = Math.round(headY + gap * .30f);
         int reach = Math.round(gap * .68f);
@@ -94,6 +104,56 @@ final class WrappedTripletDotInk {
             }
         }
         return false;
+    }
+
+    static boolean singleFlatOwns(
+            byte[] gray, int width, int height, Center core, float noteX, float noteY, float gap) {
+        float before = noteX - core.x(), below = core.y() - noteY;
+        if (before < gap * 1.4f || before > gap * 1.95f || below < gap * .45f || below > gap * .78f)
+            return false;
+        int left = core.x() - Math.round(gap * .49f);
+        int right = core.x() + Math.round(gap * .45f);
+        int top = core.y() - Math.round(gap * 1.96f);
+        int bottom = core.y() + Math.round(gap * .49f);
+        if (!PrintedFlatGlyph.matches(gray, width, height, left, top, right, bottom, gap))
+            return false;
+        int spineTop = core.y() - Math.round(gap * 1.75f);
+        for (int spine = left; spine <= core.x(); spine++)
+            if (flatSpine(gray, width, spine, spineTop, core.y())
+                    && count(gray, width, spine, core.x(), core.y(), core.y(), 155)
+                            == core.x() - spine + 1) return true;
+        return false;
+    }
+
+    /** A low flat bowl can reach the dot window while its full spine remains optically owned. */
+    static boolean labelledFlatOwns(byte[] labels, byte[] gray, int width, int height,
+            Center core, float noteX, float noteY, float gap) {
+        if (core == null || labels == null || gray == null
+                || labels.length != gray.length || gray.length != (long) width * height
+                || core.x() < 0 || core.x() >= width || core.y() < 0 || core.y() >= height) return false;
+        float before = noteX - core.x(), below = core.y() - noteY;
+        if (before < gap * 1.38f || before > gap * 1.95f || below < gap * .40f || below > gap * .78f
+                || labels[core.y() * width + core.x()] != OmrMeasurePostProcessor.CLEF_OR_KEY
+                || !PrintedFlatGlyph.matchesOwnedInk(labels, gray, width, height, noteX, noteY, gap))
+            return false;
+        int left = core.x() - Math.round(gap * .46f);
+        int top = core.y() - Math.round(gap * 1.75f);
+        for (int spine = left; spine + 1 < core.x(); spine++) {
+            int rows = 0;
+            for (int y = top; y <= core.y(); y++)
+                if (ownedInk(labels, gray, width, spine, y) && ownedInk(labels, gray, width, spine + 1, y))
+                    rows++;
+            if (rows < (core.y() - top + 1) * .94f) continue;
+            int joined = 0;
+            for (int x = spine; x <= core.x(); x++) if (ownedInk(labels, gray, width, x, core.y())) joined++;
+            if (joined == core.x() - spine + 1) return true;
+        }
+        return false;
+    }
+
+    private static boolean ownedInk(byte[] labels, byte[] gray, int width, int x, int y) {
+        int offset = y * width + x;
+        return labels[offset] == OmrMeasurePostProcessor.CLEF_OR_KEY && (gray[offset] & 255) < 155;
     }
 
     private static boolean flatSpine(byte[] gray, int width, int x, int top, int bottom) {

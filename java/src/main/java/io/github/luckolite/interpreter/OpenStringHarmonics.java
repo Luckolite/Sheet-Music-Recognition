@@ -56,6 +56,109 @@ final class OpenStringHarmonics {
         return score.withNotes(notes, owners).withClockContextSource(score.clockContextSource());
     }
 
+    /** Upgrades a proved open-string quarter with a literal stopped fourth on the same shaft. */
+    static Map<Integer, ScoreNoteEvent> captureFourthPartners(
+            ScorePageInterpretation score, byte[] raw, byte[] normalized, int width, int height, int[] keys,
+            List<Recovery> recovered) {
+        if (keys.length != score.measures().size() || raw == null || normalized == null || raw.length != (long) width * height
+                || normalized.length != raw.length) return Map.of();
+        var revised = new LinkedHashMap<Integer, ScoreNoteEvent>();
+        var notes = score.notes();
+        for (var natural : recovered) {
+            var base = notes.get(natural.owner());
+            var touch = base.openStringTouch();
+            int bar = base.measureIndex(), direction = base.stemDirection();
+            int written = ScoreTiePitchGuard.writtenMidi(
+                    base.diatonicPitchIdentity(), base.writtenAccidental(), keys[bar]);
+            int artificialTouch = ScoreTiePitchGuard.writtenMidi(
+                    base.diatonicPitchIdentity() + 3, ScoreNoteEvent.ACCIDENTAL_FROM_KEY, keys[bar]);
+            int separation = touch.staffStep() - base.staffStep();
+            boolean terminalBelow = direction == -1 && separation == -2 && bar > 0
+                    && bar + 1 == score.measures().size()
+                    && score.measures().get(bar).cadenceQuarterBeats() == 1
+                    && natural.touchMidi() < written;
+            if (base.octaveShift() != 2 || base.harmonicSemitones() != 0 || direction == 0
+                    || base.kind() != ScoreNoteEvent.Kind.PITCHED || base.staffIndex() != 0 || base.staffCount() != 1
+                    || base.clefBottomDiatonic() != ScoreNoteEvent.CLEF_TREBLE
+                    || base.visualSize() != ScoreNoteEvent.VisualSize.FULL || base.beamCount() != 0
+                    || base.unbeamedDurationBeats() != ScoreNoteEvent.DURATION_QUARTER
+                    || base.augmentationDots() != 0 || base.tupletDivisor() != 1 || base.crossStaffBeam()
+                    || base.articulations() != 0 || base.tiedFromPrevious() || base.boundaryTies() != 0
+                    || !terminalBelow && (separation < 5 || separation > 6 || natural.touchMidi() <= artificialTouch)
+                    || artificialTouch - written != 5
+                    || written + 24 > 127 || natural.soundingMidi() == written + 24) continue;
+            var region = score.measures().get(bar);
+            float x = xAt(base, region, width);
+            if (notes.stream().anyMatch(other -> other != base && other.measureIndex() == bar
+                    && other.staffIndex() == base.staffIndex()
+                    && Math.abs(xAt(other, region, width) - x) <= (region.bottom() - region.top()) * height * .055f))
+                continue;
+            int a = terminalBelow
+                    ? terminalFourthShaft(raw, width, height, score.measures().get(bar - 1), region, base, x)
+                    : fourthPartnerShaft(raw, width, height, region, base, x);
+            int b = terminalBelow
+                    ? terminalFourthShaft(normalized, width, height, score.measures().get(bar - 1), region, base, x)
+                    : fourthPartnerShaft(normalized, width, height, region, base, x);
+            if (a < 0 || b < 0 || Math.abs(a - b) > 1) continue;
+            revised.put(natural.owner(), base.withOctaveShift(0).withHarmonicSemitones(24));
+        }
+        return revised;
+    }
+
+    private static int terminalFourthShaft(byte[] ink, int width, int height, MeasureRegion prior,
+            MeasureRegion bar, ScoreNoteEvent base, float x) {
+        var proof = TerminalCompoundHarmonicQuarter.prove(ink, width, height, prior, bar, x);
+        return proof != null && proof.stoppedStep() == base.staffStep()
+                && Math.abs(proof.lowerY() - base.openStringTouch().pageY() * height) <= .18f * proof.gap()
+                ? proof.shaft() : -1;
+    }
+
+    private static int fourthPartnerShaft(byte[] ink, int width, int height, MeasureRegion region,
+            ScoreNoteEvent base, float x) {
+        if (x < 40 || x > width - 40) return -1;
+        float nominal = (region.bottom() - region.top()) * height / 8.2f;
+        if (nominal < 10 || nominal > 26) return -1;
+        var rails = PrintedDirectionStaff.printedRules(
+                ink, width, height, x, region.bottom() * height - 2.1f * nominal, nominal);
+        if (rails == null) return -1;
+        float gap = rails[1], y = base.pageY() * height;
+        float middle = rails[0] - (base.staffStep() + 3) * gap * .5f;
+        var touch = base.openStringTouch();
+        float outer = touch.pageY() * height;
+        if (outer < gap * 3 || y > height - gap * 3
+                || Math.abs(y - (rails[0] - base.staffStep() * gap * .5f)) > gap * .25f
+                || Math.abs(outer - (rails[0] - touch.staffStep() * gap * .5f)) > gap * .25f
+                || !filledCenter(ink, width, x, y, gap)) return -1;
+        var shafts = PrintedBeamShafts.at(ink, width, height, x, y, gap, new PrintedBeamShafts.Budget(100_000));
+        int direction = base.stemDirection();
+        if (shafts.size() != 1 || shafts.get(0).direction() != -direction) return -1;
+        var shaft = shafts.get(0);
+        var staff = new PlayingTechniqueDetector.Staff(rails[0]-4*gap, rails[0], gap, 0, 1);
+        for (int column = shaft.left(); column <= shaft.right(); column++) {
+            if (continuous(ink, width, column, outer, y)
+                    && ArtificialHarmonics.shaftCrossedDiamond(ink, width, height, x, middle, gap, column, direction, true)
+                    && ArtificialHarmonics.shaftCrossedDiamond(ink, width, height, x, outer, gap, column, direction, true)
+                    && ArtificialHarmonics.unflaggedQuarterTip(
+                        ink, width, height, column, outer, y, shaft.endY(), direction, staff)) return column;
+        }
+        return -1;
+    }
+
+    private static boolean continuous(byte[] ink, int width, int x, float from, float to) {
+        for (int y = Math.round(from); y <= Math.round(to); y++)
+            if ((ink[y * width + x] & 255) >= 180) return false;
+        return true;
+    }
+
+    private static boolean filledCenter(byte[] ink, int width, float x, float y, float gap) {
+        int row = Math.round(y), col = Math.round(x), dark = 0;
+        int a = Math.round(.24f * gap), b = Math.round(.14f * gap);
+        for (int dy = -b; dy <= b; dy++)
+            for (int dx = -a; dx <= a; dx++)
+                if ((ink[(row + dy) * width + col + dx] & 255) < 155) dark++;
+        return dark >= (2 * a + 1) * (2 * b + 1) * .72f;
+    }
+
     static List<Recovery> recover(ScorePageInterpretation score, int initialKey) {
         var recovered = new ArrayList<Recovery>();
         for (int owner = 0; owner < score.notes().size(); owner++) {
@@ -108,6 +211,11 @@ final class OpenStringHarmonics {
                 && note.clefBottomDiatonic() == anchor.clefBottomDiatonic()
                 && note.staffStep() == step && note.positionInMeasure() < anchor.positionInMeasure() - .005f
                 && note.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_FROM_KEY;
+    }
+
+    static int uniqueSoundingMidi(int touch) {
+        var pitch = sounding(touch);
+        return pitch == null ? -1 : pitch.sounding();
     }
 
     private static Pitch sounding(int touch) {
@@ -181,6 +289,20 @@ final class OpenStringHarmonics {
 
     static boolean isFingering(String text) {
         return text != null && FINGERING.matcher(text.trim()).matches();
+    }
+
+    static boolean verifiedZeroBelow(List<PlayingTechniqueDetector.Word> words,
+            byte[] original, byte[] normalized, int width, int height, float x, float y, float gap) {
+        for (var word : words) {
+            var a = zero(original, width, height, word);
+            var b = zero(normalized, width, height, word);
+            if (a == null || b == null || Math.abs(a.x - b.x) > .17f * gap
+                    || Math.abs(a.y - b.y) > .17f * gap || Math.abs(a.x - x) > .55f * gap
+                    || a.y - y < 1.55f * gap || a.y - y > 4.85f * gap) continue;
+            return ArtificialHarmonics.enclosedCounter(original, width, height, a.x, a.y, .82f * gap, .13f * gap)
+                    && ArtificialHarmonics.enclosedCounter(normalized, width, height, b.x, b.y, .82f * gap, .13f * gap);
+        }
+        return false;
     }
 
     private static Mark zero(byte[] gray, int width, int height, PlayingTechniqueDetector.Word word) {

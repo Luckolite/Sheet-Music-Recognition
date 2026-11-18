@@ -27,7 +27,17 @@ public final class TallFollowingStaccatoTest {
         assertFalse(witness(false, true));
     }
 
+    @Test
+    public void aSixByEightPixelStaccatoStillNeedsBothRails() throws Exception {
+        assertTrue(witness(6, true));
+        assertFalse(witness(6, false));
+    }
+
     private static boolean witness(boolean narrow, boolean sharedRails) throws Exception {
+        return witness(narrow ? 5 : 7, sharedRails);
+    }
+
+    private static boolean witness(int width, boolean sharedRails) throws Exception {
         byte[] gray = new byte[WIDTH * HEIGHT];
         Arrays.fill(gray, (byte) 255);
         int direction = 1;
@@ -36,7 +46,7 @@ public final class TallFollowingStaccatoTest {
         oval(gray, 120, first, 10, 8);
         oval(gray, 162, next, 10, 8);
         oval(gray, 139, orientedY(91, direction), 4, 4);
-        oval(gray, 160, orientedY(92, direction), narrow ? 2 : 3, 3);
+        oval(gray, 160, orientedY(92, direction), (width - 1) / 2, 3);
         oval(gray, 120, orientedY(77, direction), 3, 3);
         stem(gray, 120 - 9 * direction, first, orientedY(181, direction));
         stem(gray, 162 - 9 * direction, next, orientedY(183, direction));
@@ -65,7 +75,7 @@ public final class TallFollowingStaccatoTest {
         Object b = body(box, 162, next, 10, 8, 280);
         Object firstDot = body(box, 139, orientedY(91, direction), 3, 3, 37);
         Object secondDot =
-                box.newInstance(33, narrow ? 158 : 157, narrow ? 162 : 163, 89, 95, 159.7f, 92f);
+                box.newInstance(33, 160 - width / 2, 159 + (width + 1) / 2, 88, 95, 159.7f, 92f);
         Method method =
                 OmrScoreInterpreter.class.getDeclaredMethod(
                         "widelySpacedStaccatoPair",

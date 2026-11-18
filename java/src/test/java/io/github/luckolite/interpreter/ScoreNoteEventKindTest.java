@@ -151,7 +151,11 @@ public class ScoreNoteEventKindTest {
                 source,
                 source.withVisualSize(ScoreNoteEvent.VisualSize.CUE),
                 Map.of("visualSize", ScoreNoteEvent.VisualSize.CUE));
+        assertCopy(source, source.withWrittenAccidental(ScoreNoteEvent.ACCIDENTAL_FLAT),
+                Map.of("writtenAccidental", ScoreNoteEvent.ACCIDENTAL_FLAT));
         var pitched = source.withKind(ScoreNoteEvent.Kind.PITCHED);
+        assertCopy(pitched, pitched.withWrittenAccidental(ScoreNoteEvent.ACCIDENTAL_FLAT),
+                Map.of("writtenAccidental", ScoreNoteEvent.ACCIDENTAL_FLAT));
         var touch = new ScoreNoteEvent.OpenStringTouch(4, .5f, 0);
         assertCopy(pitched, pitched.withHarmonicSemitones(24), Map.of("harmonicSemitones", 24));
         assertCopy(pitched, pitched.withOpenStringTouch(touch), Map.of("openStringTouch", touch));
@@ -171,6 +175,7 @@ public class ScoreNoteEventKindTest {
                         "withTupletRatio",
                         "withBoundaryTies",
                         "withOctaveShift",
+                        "withWrittenAccidental",
                         "withCompactOpening",
                         "withLeadingRest",
                         "withCrossStaffBeam",

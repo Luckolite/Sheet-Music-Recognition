@@ -48,17 +48,30 @@ final class OriginalBeamAnalysisSnapshot {
                 }
                 var m = c.getAccessor();
                 m.setAccessible(true);
-                sorted.put(c.getName(), m.invoke(value));
+                Object field = m.invoke(value);
+                if (value instanceof SourceLocalAccidental.Choice
+                        && c.getName().equals("naturalPrefix") && field == null) continue;
+                sorted.put(c.getName(), field);
             }
         } else
             for (var f : value.getClass().getDeclaredFields())
                 if (!Modifier.isStatic(f.getModifiers())) {
                     f.setAccessible(true);
                     Object field = f.get(value);
-                    // Preserve the original snapshot shape for scenes with no joined naturals.
+                    // Preserve the original snapshot shape for absent accidental provenance.
+                    if (value instanceof ScoreClockProducerSource
+                            && f.getName().equals("accidentalCarries")
+                            && field instanceof List<?> carries
+                            && carries.isEmpty()) continue;
                     if (value instanceof SourceLocalAccidental
-                            && f.getName().equals("joinedNaturalOwners")
-                            && field instanceof Set<?> owners && owners.isEmpty()) continue;
+                            && (f.getName().equals("joinedNaturalOwners")
+                                            && field instanceof Set<?> naturals
+                                            && naturals.isEmpty()
+                                    || f.getName().equals("splitAccidentalOwners")
+                                            && field instanceof Map<?, ?> splitOwners
+                                            && splitOwners.isEmpty()
+                                    || f.getName().equals("printedDoubleSharpOwners")
+                                            && field == null)) continue;
                     sorted.put(f.getName(), field);
                 }
         return fields(sorted);

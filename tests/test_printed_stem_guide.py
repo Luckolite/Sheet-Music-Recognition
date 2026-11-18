@@ -82,7 +82,7 @@ class PrintedStemGuideTests(unittest.TestCase):
 
     def test_unknown_future_layout_is_rejected(self):
 
-        with self.assertRaises(ValueError):wire.encode(original_score(),wire.GUIDE_VERSION + 1)
+        with self.assertRaises(ValueError):wire.encode(original_score(),max(wire.SUPPORTED_GUIDE_VERSIONS) + 1)
 
 
 

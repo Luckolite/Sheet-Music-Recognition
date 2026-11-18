@@ -41,6 +41,37 @@ class NaturalHarmonicExportOriginals(unittest.TestCase):
         self.assertEqual(before,doc)
         return root
 
+    def test_artificial_fourth_keeps_written_chord_and_one_sounding_quarter(self):
+        source = dict(measureIndex=0, positionInMeasure=.3, pageY=.5, staffStep=-5,
+                      clefBottomDiatonic=30, staffIndex=0, staffCount=1, harmonicSemitones=24)
+        attack = dict(measureIndex=0, staffIndex=0, staffCount=1, sourceNoteIndex=0,
+                      startBeat=0, durationBeats=1, durationFallback=False, tiedFromPrevious=False,
+                      midi=80, writtenMidi=56, harmonicTouchMidi=61, artificialHarmonicFourth=True)
+        page = dict(events=[attack], measureBeats=[1], totalBeats=1,
+                    score=dict(firstMeasureNumber=1, notes=[source], measures=[{}], tempoChanges=[]))
+
+        root = self.export(dict(pages=[page]))
+        notes = root.findall('.//note[pitch]')
+        self.assertEqual([('G', '1', '5'), ('G', '1', '3'), ('C', '1', '4')], [
+            tuple(note.findtext('pitch/' + field) for field in ('step', 'alter', 'octave'))
+            for note in notes])
+        self.assertEqual(['sounding-pitch', 'base-pitch', 'touching-pitch'], [
+            list(note.find('notations/technical/harmonic'))[-1].tag for note in notes])
+        self.assertEqual('no', notes[0].get('print-object'))
+        self.assertEqual(['quarter'] * 3, [note.findtext('type') for note in notes])
+        self.assertEqual(['10080'] * 3, [note.findtext('duration') for note in notes])
+        self.assertIsNone(notes[0].find('cue'))
+        self.assertIsNone(notes[0].find('chord'))
+        for written in notes[1:]:
+            self.assertIsNotNone(written.find('cue'))
+            self.assertIsNotNone(written.find('chord'))
+            self.assertEqual('full', written.find('type').get('size'))
+        self.assertEqual('diamond', notes[-1].findtext('notehead'))
+
+        attack['sourceNoteIndex'] = 1
+        with self.assertRaisesRegex(ValueError, 'requires one retained stopped head'):
+            self.export(dict(pages=[page]))
+
     def test_chord_member_and_repeated_pitch_keep_one_exact_owner(self):
         doc=document();root=self.export(doc)
         notes=[n for n in root.findall('.//note') if n.find('pitch') is not None]

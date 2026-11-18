@@ -80,6 +80,40 @@ public class MeterCropStaffTest {
     }
 
     @Test
+    public void clippedLowerRuleWithTwoPrefixWitnessesKeepsTheHeader() {
+        var clipped = new MeterChangeDetector.Crop(300, 91, 340, 153, 95, 14);
+        byte[] gray = rails(5, 100, 0);
+        for (int line = 100; line <= 156; line += 14) {
+            Arrays.fill(gray, (line - 1) * W + 60, (line - 1) * W + 580, (byte) 30);
+            Arrays.fill(gray, (line + 1) * W + 60, (line + 1) * W + 580, (byte) 30);
+        }
+        for (int y = 95; y < 164; y++) Arrays.fill(gray, y * W + 342, y * W + 580, (byte) 235);
+        for (int y = 104; y <= 124; y++) {
+            for (int x = 307; x <= 323; x++) {
+                if (x >= 316 || y <= 107 || y >= 121) gray[y * W + x] = 30;
+            }
+        }
+        for (int y = 130; y <= 153; y++) {
+            for (int x = 300; x <= 324; x++) {
+                if (x >= 316 && x <= 321
+                        || y >= 142 && y <= 145
+                        || x >= 306 && x <= 310 && y <= 145) gray[y * W + x] = 30;
+            }
+        }
+
+        var restored = MeterCropStaff.refine(gray, W, H, clipped);
+        assertEquals(100, restored.firstLine());
+        assertTrue(restored.bottom() > 156);
+        assertEquals(clipped.top(), restored.top());
+        assertEquals(clipped.left(), restored.left());
+        assertEquals(clipped.right(), restored.right());
+
+        for (int y = 155; y <= 157; y++)
+            Arrays.fill(gray, y * W + clipped.left(), y * W + clipped.right(), (byte) 235);
+        assertEquals(clipped, MeterCropStaff.refine(gray, W, H, clipped));
+    }
+
+    @Test
     public void sourcePixelsArePreserved() {
         var g = rails(5, 100, 0);
         var before = g.clone();

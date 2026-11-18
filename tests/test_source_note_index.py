@@ -32,7 +32,11 @@ import java.util.*;
 
 public final class SheetInterpreter {
     public record NumberToken(int value, float left, float top, float right, float bottom, float annotationLeft) {}
-    public record Word(String text, float left, float top, float right, float bottom) {}
+    public record Word(String text, float left, float top, float right, float bottom) {
+        PlayingTechniqueDetector.Word internal() {
+            return new PlayingTechniqueDetector.Word(text, left, top, right, bottom);
+        }
+    }
     public record Annotations(List<NumberToken> measureNumbers, List<NumberToken> tempoNumbers,
             List<NumberToken> restCounts, List<Word> words, List<ScoreMeterChange> meters, List<Word> tabWords) {
         public static final Annotations EMPTY = new Annotations(List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
@@ -83,14 +87,19 @@ public final class SheetInterpreter {
     }
 
     record AnalyzedPage(ScorePageInterpretation score, List<ScoreNoteEvent> originalNotes,
-            SourceLocalAccidental accidentalSource) {}
+            SourceLocalAccidental accidentalSource, List<MeasureRegion> accidentalMeasures,
+            List<ScoreNoteEvent> provedSharpOwners,
+            List<List<ScoreNoteEvent>> harmonicTails,
+            List<OctaveMarkDetector.StaffSpan> printedOctaveSpans) {}
 
     static AnalyzedPage analyzeWithPrintedSources(byte[] labels, byte[] gray, int width, int height,
             Annotations annotations, MusicalOcr ocr, int physicalPage, byte[] decoderGray,
-            TablatureDecoder.Prepared preparedTabs, ScoreMeterChange inheritedMeter) {
+            TablatureDecoder.Prepared preparedTabs, ScoreMeterChange inheritedMeter,
+            Integer initialKeyFifths, boolean standardViolin) {
         var score = analyze(labels, gray, width, height, annotations, ocr, physicalPage,
                 decoderGray, preparedTabs);
-        return new AnalyzedPage(score, score.notes(), SourceLocalAccidental.unavailable());
+        return new AnalyzedPage(score, score.notes(), SourceLocalAccidental.unavailable(),
+                score.measures(), List.of(), List.of(), List.of());
     }
 
 }

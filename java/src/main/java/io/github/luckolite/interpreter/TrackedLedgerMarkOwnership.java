@@ -81,7 +81,7 @@ final class TrackedLedgerMarkOwnership {
         return false;
     }
 
-    private static boolean shortRule(
+    static boolean shortRule(
             byte[] gray, int w, int h, float nx, float gap, int step, StaffPitchTrack track) {
         int x = Math.round(nx), span = Math.round(gap * .75f), hits = 0;
         if (x - span < 1 || x + span >= w - 1) return false;

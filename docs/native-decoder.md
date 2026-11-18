@@ -104,6 +104,27 @@ This is derived-cache recognition metadata. Model weights and source documents
 are unchanged. Generic scalar/geometry regressions establish layout and matching
 contracts; private score scans remain outside public fixtures.
 
+## Printed staff octave spans
+
+In a violin decode, a printed shared-shaft terminal harmonic can have two
+sounding events in the same written quarter. The stopped event carries
+`artificialHarmonicThird: true`, `writtenMidi`, and `harmonicTouchMidi`.
+Its retained score note owns an `openStringTouch` matching the second event,
+which carries `openStringMidi` and its written touch pitch. The MusicXML writer
+checks both source owners before writing the visible stopped head and the two
+diamonds over the two playback pitches.
+
+A decoder page may include `printedOctaveSpans`. Each entry contains integer
+`firstMeasureIndex` and `lastMeasureIndex` (inclusive, zero-based physical
+measures), `staffIndex`, `staffCount`, and `octaveShift` in octaves.
+The decoder emits this field when it proves a literal mark over complete
+staff measures and verifies the final note owners. A repeated mark can continue
+across successive systems on the same page.
+
+MusicXML renders each retained entry as one staff-wide direction pair. Event
+MIDI values and `octaveShift` still carry the sounding pitches. Pages without
+this field use the existing per-voice octave directions.
+
 ## Review and verification boundary
 
 The app-side client, managed-worker selection, Hub process ownership and Android

@@ -4,12 +4,14 @@ package io.github.luckolite.interpreter;
 
 /** Normalized page geometry and optional proved short-cadence length. */
 public record MeasureRegion(float left, float right, float top, float bottom, int cadenceQuarterBeats) {
+    static final int MAX_CADENCE_QUARTER_BEATS = 3;
+
     public MeasureRegion(float left, float right, float top, float bottom) {
         this(left, right, top, bottom, 0);
     }
 
     public MeasureRegion {
-        if (cadenceQuarterBeats < 0 || cadenceQuarterBeats > 2)
+        if (cadenceQuarterBeats < 0 || cadenceQuarterBeats > MAX_CADENCE_QUARTER_BEATS)
             throw new IllegalArgumentException("Invalid printed cadence duration");
     }
 }

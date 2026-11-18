@@ -60,7 +60,7 @@ public class LateralFlatRecoveryControl {
         Object head = make("Component", 120, 63, 79, 59, 71, 71f, 65f);
         var a = make("DetectedNote", first, head, 16f);
         var b = make("DetectedNote", later, head, 16f);
-        var result = (List<?>) call("applyAccidentalState", List.of(a, b));
+        var result = AccidentalStateTestSupport.apply(List.of(a, b));
         int[] out = new int[2];
         for (int i = 0; i < 2; i++) {
             var m = result.get(i).getClass().getDeclaredMethod("event");

@@ -381,17 +381,95 @@ public final class MeterChangeDetector {
             byte[] labels, byte[] gray, int width, int height,
             List<MeasureRegion> measures, List<ScoreNoteEvent> notes,
             List<SignatureStaff> staffs) {
-        return candidates(
-                labels,
-                gray,
-                width,
-                height,
-                crop -> {
-                    int measure = followingMeasure(crop, width, height, measures);
-                    return measure >= 0
-                            && precedesNotes(
-                                    crop, labels, gray, width, height, measure, measures, notes);
-                }, staffs);
+        java.util.function.Predicate<Crop> eligible = crop -> {
+            int measure = followingMeasure(crop, width, height, measures);
+            return measure >= 0
+                    && precedesNotes(crop, labels, gray, width, height, measure, measures, notes);
+        };
+        var candidates = candidates(labels, gray, width, height, eligible, staffs);
+        if (candidates.size() >= 48 || labels == null || gray == null
+                || labels.length != (long) width * height || gray.length != labels.length) return candidates;
+        var result = new ArrayList<>(candidates);
+        for (var crop : restartedStaffCrops(labels, gray, width, height, measures, notes)) {
+            addCandidate(result, crop, eligible);
+            if (result.size() >= 48) break;
+        }
+        return List.copyOf(result);
+    }
+
+    /** A new clef and meter can restart the staff after an inline double bar and blank strip. */
+    private static List<Crop> restartedStaffCrops(
+            byte[] labels, byte[] gray, int width, int height,
+            List<MeasureRegion> measures, List<ScoreNoteEvent> notes) {
+        var first = new float[measures.size()];
+        java.util.Arrays.fill(first, Float.POSITIVE_INFINITY);
+        for (var note : notes) {
+            int i = note.measureIndex();
+            if (i < 0 || i >= measures.size() || note.kind() != ScoreNoteEvent.Kind.PITCHED) continue;
+            var bar = measures.get(i);
+            float x = (bar.left() + note.positionInMeasure() * (bar.right() - bar.left())) * width;
+            first[i] = Math.min(first[i], x);
+        }
+        var found = new ArrayList<Crop>();
+        for (int i = 1; i < measures.size(); i++) {
+            var bar = measures.get(i);
+            var prior = measures.get(i - 1);
+            float left = bar.left() * width;
+            float priorEdge = prior.right() * width;
+            float gap = (bar.bottom() - bar.top()) * height / 8.2f;
+            if (gap < 10 || gap > 26 || Math.abs(bar.top() - prior.top()) * height > .35f * gap
+                    || first[i] - left < 14 * gap || first[i] - left > 25 * gap
+                    || left - priorEdge < .65f * gap || left - priorEdge > 1.6f * gap) continue;
+            float hint = bar.bottom() * height - 2.1f * gap;
+            var reopened = PrintedDirectionStaff.printedRules(
+                    gray, width, height, first[i] - 3.4f * gap, hint, gap);
+            var closed = PrintedDirectionStaff.printedRules(
+                    gray, width, height, priorEdge - 2.55f * gap, hint, gap);
+            if (reopened == null || closed == null || Math.abs(reopened[0] - closed[0]) > .4f * gap)
+                continue;
+            var oldStaff = new PlayingTechniqueDetector.Staff(
+                    closed[0] - 4 * closed[1], closed[0], closed[1], 0, 1);
+            int edge = PrintedCadenceDurations.boundaryColumn(
+                    gray, width, oldStaff, priorEdge + .35f * gap, false, true);
+            if (edge < 0 || !missingStaffBand(gray, width, height, edge, oldStaff)) continue;
+            int start = Math.max(0, Math.round(first[i] - 4.6f * gap));
+            int end = Math.min(width - 1, Math.round(first[i] - 1.6f * gap));
+            int top = Math.round(reopened[0] - 4 * reopened[1]);
+            int bottom = Math.round(reopened[0]);
+            for (var glyph : stackedSymbolMeterCrops(
+                    labels, width, height, start, end, top, bottom, reopened[1], 0, true)) {
+                // Restore the clipped left shoulder of the upper numeral from the same glyph strip.
+                var crop = new Crop(Math.max(start, glyph.left() - Math.round(.55f * gap)),
+                        glyph.top(), glyph.right(), glyph.bottom(), glyph.firstLine(), glyph.gap());
+                var meter = MeterFontMatcher.readCrop(gray, width, height, crop);
+                if (meter.text().equals("2/4") && meter.topScore() >= .85f && meter.bottomScore() >= .85f)
+                    found.add(crop);
+            }
+        }
+        return found;
+    }
+
+    private static boolean missingStaffBand(
+            byte[] gray, int width, int height, int doubleRule, PlayingTechniqueDetector.Staff staff) {
+        int first = doubleRule + Math.round(staff.gap() * 1.2f);
+        int last = Math.min(width - 1, doubleRule + Math.round(staff.gap() * 3.8f));
+        if (first >= last || staff.top() < 1 || staff.bottom() >= height - 1) return false;
+        int top = Math.round(staff.top()), bottom = Math.round(staff.bottom());
+        int clear = 0;
+        for (int x = first; x <= last; x++) {
+            // Exercise numbers can occupy the central spaces. Neither outer staff rule
+            // continues across the gap before the new clef.
+            boolean outer = false;
+            for (int dy = -1; dy <= 1; dy++) {
+                if ((gray[(top + dy) * width + x] & 255) < 155
+                        || (gray[(bottom + dy) * width + x] & 255) < 155) {
+                    outer = true;
+                    break;
+                }
+            }
+            if (!outer) clear++;
+        }
+        return clear >= (last - first + 1) * .90f;
     }
 
     private static List<Crop> candidates(

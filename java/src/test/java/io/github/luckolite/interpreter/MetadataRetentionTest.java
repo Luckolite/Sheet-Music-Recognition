@@ -69,10 +69,7 @@ public class MetadataRetentionTest {
         ctor.setAccessible(true);
         var input = new java.util.ArrayList<Object>();
         for (var event : events) input.add(ctor.newInstance(event, null, 10f));
-        Method apply =
-                OmrScoreInterpreter.class.getDeclaredMethod("applyAccidentalState", List.class);
-        apply.setAccessible(true);
-        var output = (List<?>) apply.invoke(null, input);
+        var output = AccidentalStateTestSupport.apply(input);
         Method event = detected.getDeclaredMethod("event");
         event.setAccessible(true);
         var result = new java.util.ArrayList<ScoreNoteEvent>();

@@ -11,6 +11,7 @@ import java.util.regex.Pattern;
 /** Applies octave directions to sounding pitch while preserving written staff geometry. */
 final class OctaveMarkDetector {
     private static final Pattern TEXT_SEPARATORS = Pattern.compile("[\\s()\\[\\].,:;_\\-–—]");
+    private static final Pattern PROSE_BODY = Pattern.compile("\\p{L}{4,}");
     private static final Pattern TERMINAL_HOOKS = Pattern.compile("[┘┐」]+$");
     private static final Pattern MEASURE_CONTINUATION =
             Pattern.compile(
@@ -44,16 +45,24 @@ final class OctaveMarkDetector {
                             word.left() * width
                                     + Math.max(
                                             gap * 2, (word.bottom() - word.top()) * height * 3.5f));
-            dashEnd(
-                    gray,
-                    width,
-                    height,
-                    textRight,
-                    word.top() * height,
-                    word.bottom() * height,
-                    gap,
-                    3,
-                    result);
+            float right =
+                    dashEnd(
+                            gray,
+                            width,
+                            height,
+                            textRight,
+                            word.top() * height,
+                            word.bottom() * height,
+                            gap,
+                            3,
+                            result);
+            if (shift == 1) {
+                var ribbon = provedPrintedRibbon(gray, width, height, word, gap, right);
+                if (ribbon != null)
+                    for (var dot : ribbon.dots)
+                        for (int pixel = 0; pixel < dot.size(); pixel++)
+                            result.set(dot.pixel(pixel));
+            }
         }
         return result;
     }
@@ -74,12 +83,64 @@ final class OctaveMarkDetector {
         };
     }
 
+    /** The loops of a letter in a typeset paragraph can look like a bare octave numeral. */
+    private static boolean proseOwned(PlayingTechniqueDetector.Word candidate,
+            List<PlayingTechniqueDetector.Word> words, int width, int height) {
+        for (var row : words) {
+            if (candidate.left() < row.left() || candidate.right() > row.right()
+                    || candidate.top() < row.top() || candidate.bottom() > row.bottom()
+                    || !proseLine(row, width, height)) continue;
+            float rowsHigh = row.bottom() - row.top();
+            float leftTolerance = rowsHigh * height / width * .55f;
+            for (var neighboring : words) {
+                float rowDistance = Math.abs(row.top() - neighboring.top());
+                if (rowDistance >= rowsHigh * .75f && rowDistance <= rowsHigh * 1.55f
+                        && Math.abs(neighboring.left() - row.left()) <= leftTolerance
+                        && neighboring.bottom() - neighboring.top() >= rowsHigh * .65f
+                        && neighboring.bottom() - neighboring.top() <= rowsHigh * 1.5f
+                        && proseLine(neighboring, width, height)) return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean proseLine(PlayingTechniqueDetector.Word row, int width, int height) {
+        float rowWidth = (row.right() - row.left()) * width;
+        float rowHeight = (row.bottom() - row.top()) * height;
+        if (rowWidth < rowHeight * 7 || rowWidth < width * .12f || rowHeight <= 0
+                || row.text() == null) return false;
+        var matcher = PROSE_BODY.matcher(row.text());
+        return matcher.find() && matcher.find() && matcher.find();
+    }
+
     private record Span(
             PlayingTechniqueDetector.Staff staff,
             float left,
             float right,
             int shift,
-            boolean isolated) {}
+            boolean isolated,
+            SystemRibbonEnd ribbon,
+            boolean printedRange) {}
+
+    private record SystemRibbonEnd(
+            float right, boolean continuesAtStaffEdge, boolean closedCrossing, boolean startsAtNumeral) {
+        SystemRibbonEnd(float right, boolean continuesAtStaffEdge) {
+            this(right, continuesAtStaffEdge, false);
+        }
+
+        SystemRibbonEnd(float right, boolean continuesAtStaffEdge, boolean closedCrossing) {
+            this(right, continuesAtStaffEdge, closedCrossing, false);
+        }
+    }
+
+    record Fragment(float left, float right) {}
+
+    record StaffSpan(int firstMeasureIndex, int lastMeasureIndex,
+            int staffIndex, int staffCount, int octaveShift, Fragment fragment) {
+        StaffSpan(int firstMeasureIndex, int lastMeasureIndex, int staffIndex, int staffCount, int octaveShift) {
+            this(firstMeasureIndex, lastMeasureIndex, staffIndex, staffCount, octaveShift, null);
+        }
+    }
 
     static List<ScoreNoteEvent> apply(
             List<PlayingTechniqueDetector.Word> words,
@@ -89,23 +150,103 @@ final class OctaveMarkDetector {
             byte[] gray,
             int width,
             int height) {
+        return apply(words, staffs, measures, notes, gray, width, height, null);
+    }
+
+    static List<ScoreNoteEvent> apply(
+            List<PlayingTechniqueDetector.Word> words,
+            List<PlayingTechniqueDetector.Staff> staffs,
+            List<MeasureRegion> measures,
+            List<ScoreNoteEvent> notes,
+            byte[] gray,
+            int width,
+            int height,
+            List<StaffSpan> retainedSpans) {
+        return apply(words, staffs, measures, notes, gray, width, height, retainedSpans, List.of());
+    }
+
+    static List<ScoreNoteEvent> apply(
+            List<PlayingTechniqueDetector.Word> words,
+            List<PlayingTechniqueDetector.Staff> staffs,
+            List<MeasureRegion> measures,
+            List<ScoreNoteEvent> notes,
+            byte[] gray,
+            int width,
+            int height,
+            List<StaffSpan> retainedSpans,
+            List<OctaveAccidentalCarry> accidentalCarries) {
         if (staffs == null || staffs.isEmpty() || notes.isEmpty()) return notes;
         gray = contrastedInk(gray, width, height);
         List<PlayingTechniqueDetector.Word> combined =
                 new ArrayList<>(words == null ? List.of() : words);
-        var printed = printedWords(gray, width, height, staffs, true);
+        var sloping = new ArrayList<SlopingOctave>();
+        var printed = printedWords(gray, width, height, staffs, true, sloping);
+        if (words != null && !words.isEmpty())
+            printed.removeIf(mark -> proseOwned(mark, words, width, height));
         combined.addAll(printed);
-        if (combined.isEmpty()) return notes;
         List<Span> spans = new ArrayList<>();
+        for (var direction : sloping) {
+            if (combined.stream()
+                    .anyMatch(
+                            word ->
+                                    shift(word.text()) != 0
+                                            && Math.abs(
+                                                            word.left() * width
+                                                                    - direction.numeral.left)
+                                                    <= .6f * direction.staff.gap()
+                                            && Math.abs(word.top() * height - direction.numeral.top)
+                                                    <= .6f * direction.staff.gap())) continue;
+            var range =
+                    slopingOctaveOwners(gray, width, height, direction, staffs, measures, notes);
+            if (range != null) spans.add(range);
+        }
         for (var sourceWord : combined) {
             var word = directionAfterMeasureNumber(sourceWord);
             int shift = shift(word.text());
             if (shift == 0) continue;
             var owner =
                     owner(word, staffs, shift, height, printed.contains(sourceWord), gray, width);
+            boolean printedWord = printed.contains(sourceWord);
+            InkBox numeral = printedWord && Math.abs(shift) == 1
+                    ? new InkBox(Math.round(word.left() * width), Math.round(word.top() * height),
+                            Math.round(word.right() * width) - 1, Math.round(word.bottom() * height) - 1, 0)
+                    : null;
+            SystemRibbonEnd offsetRibbon = null;
+            if (shift == -1 && numeral != null && owner != null) {
+                var next = owner(word, staffs, 1, height, true, gray, width);
+                if (next != null && next.top() > owner.bottom()) {
+                    offsetRibbon = offsetUpperDottedRibbon(numeral, owner, next, staffs, measures, notes,
+                            gray, width, height);
+                    if (offsetRibbon != null) {
+                        owner = next;
+                        shift = 1;
+                    }
+                }
+            }
+            var initialUpperOwner = shift == 1 ? owner : null;
+            boolean provedNumeral = numeral != null && initialUpperOwner != null
+                    && bareEightShape(gray, width, numeral, initialUpperOwner.gap());
+            var initialRibbon = offsetRibbon != null ? offsetRibbon : numeral != null && initialUpperOwner != null
+                    ? provedSystemRibbonNumeral(gray, width, height, numeral, initialUpperOwner) : null;
+            float compactEnd =
+                    numeral != null && initialUpperOwner != null && initialRibbon == null
+                            ? compactDottedReturn(
+                                    gray, width, height, numeral, initialUpperOwner.gap())
+                            : -1;
+            boolean closedCompact =
+                    compactEnd >= 0
+                            || provedNumeral
+                                    && initialRibbon == null
+                                    && completeDottedRibbon(
+                                                    gray,
+                                                    width,
+                                                    height,
+                                                    numeral,
+                                                    initialUpperOwner.gap())
+                                            != null;
             // A full alta suffix may still be engraved below its staff. The actual
             // terminal hook resolves that placement without changing the text parser.
-            if (shift > 0) {
+            if (shift > 0 && !closedCompact && (initialRibbon == null || initialRibbon.continuesAtStaffEdge)) {
                 var belowOwner =
                         owner(
                                 word,
@@ -151,6 +292,18 @@ final class OctaveMarkDetector {
                 }
             }
             if (owner == null) continue;
+            if (shift == -1 && printed.contains(sourceWord)) {
+                var nextOwner =
+                        openUpperLedgerOwner(
+                                word, owner, staffs, measures, notes, gray, width, height);
+                if (nextOwner == null && numeral != null)
+                    nextOwner = unhookedOpeningRibbonOwner(
+                            word, numeral, owner, staffs, measures, notes, printed, gray, width, height);
+                if (nextOwner != null) {
+                    owner = nextOwner;
+                    shift = 1;
+                }
+            }
             float gap = owner.gap(), left = word.left() * width - gap * .65f;
             float textRight =
                     Math.min(
@@ -167,7 +320,62 @@ final class OctaveMarkDetector {
                             word.top() * height,
                             word.bottom() * height,
                             gap);
-            if (shift > 0 && right >= 0)
+            SystemRibbonEnd literal = null;
+            if (shift == 1 && printedWord) {
+                boolean bareEight = bareEightShape(gray, width, numeral, gap);
+                var systemRibbon = owner.equals(initialUpperOwner) ? initialRibbon
+                        : provedSystemRibbonNumeral(gray, width, height, numeral, owner);
+                float crossedStart = earlySlurRibbonEnd(gray, width, height, word, gap);
+                if (systemRibbon != null && systemRibbon.right >= right) {
+                    right = systemRibbon.right;
+                    literal = systemRibbon;
+                } else if (compactEnd >= 0 && owner.equals(initialUpperOwner)) {
+                    right = compactEnd;
+                    left = Math.max(left, numeral.left);
+                } else if (crossedStart >= 0) {
+                    right = crossedStart;
+                } else {
+                    var ribbon = provedPrintedRibbon(gray, width, height, word, gap, right);
+                    if (ribbon != null) {
+                        right = ribbon.right;
+                        if (ribbon.closedCrossing) literal = new SystemRibbonEnd(right, false, true);
+                    } else if (!bareEight
+                            && right >= 0
+                            && hookDirection(
+                                            gray,
+                                            width,
+                                            height,
+                                            right,
+                                            numeral.top,
+                                            numeral.bottom,
+                                            gap)
+                                    == 0
+                            && closedWideRibbonEight(gray, width, height, numeral, gap)) {
+                        var wideRibbon = completeDottedRibbon(gray, width, height, numeral, gap);
+                        if (wideRibbon != null) {
+                            right = Math.max(right, wideRibbon.right);
+                            if (wideRibbon.closedCrossing) literal = new SystemRibbonEnd(right, false, true);
+                        }
+                    }
+                }
+                if (literal == null && right >= 0 && bareEight
+                        && bottomAttachedDottedEight(gray, width, height, numeral, gap))
+                    literal = new SystemRibbonEnd(right, false, true);
+                if (right >= 0)
+                    left = closedBeamStart(gray, width, height, word, owner, staffs, measures, notes, left, right);
+                if (right >= 0 && bareEight && literal == null) {
+                    var detached = dottedTripletOctaveStart(
+                            gray, width, height, numeral, owner, staffs, measures, notes, left, right);
+                    if (detached != null) literal = detached;
+                }
+                if (literal != null && literal.startsAtNumeral) left = Math.max(left, numeral.left);
+                if (!bareEight && (closedWideRibbonEight(gray, width, height, numeral, gap)
+                        || systemRibbon == null && !canRepairEight(gray, width, numeral, gap)
+                                && faintCounterEight(gray, width, numeral, gap) == null
+                                && paleCounterShape(gray, width, height, numeral, gap)))
+                    left = Math.max(left, numeral.left);
+            }
+            if (shift > 0 && right >= 0 && compactEnd < 0)
                 right =
                         extendOverDottedHook(
                                 gray,
@@ -191,7 +399,7 @@ final class OctaveMarkDetector {
                 left = first - gap * .35f;
                 right = first + gap * .35f;
             }
-            spans.add(new Span(owner, left, right, shift, isolated));
+            spans.add(new Span(owner, left, right, shift, isolated, literal, printedWord && !isolated));
         }
         if (spans.isEmpty()) return notes;
         List<Span> ambiguous = new ArrayList<>();
@@ -215,10 +423,13 @@ final class OctaveMarkDetector {
                     right = Math.min(right, b.left - .01f);
             }
             if (right != a.right)
-                spans.set(i, new Span(a.staff, a.left, right, a.shift, a.isolated));
+                spans.set(i, new Span(a.staff, a.left, right, a.shift, a.isolated, null, false));
         }
         List<ScoreNoteEvent> result = new ArrayList<>(notes.size());
         boolean[] carry = new boolean[notes.size()], explicit = new boolean[notes.size()];
+        Span[] assigned = retainedSpans != null && spans.stream().anyMatch(span -> span.ribbon != null)
+                ? new Span[notes.size()] : null;
+        boolean[] printedRange = accidentalCarries.isEmpty() ? null : new boolean[notes.size()];
         for (var note : notes) {
 
             if (note.kind() != ScoreNoteEvent.Kind.PITCHED) {
@@ -236,10 +447,376 @@ final class OctaveMarkDetector {
             int index = result.size();
             carry[index] = selected != null && selected.isolated;
             explicit[index] = selected != null;
+            if (assigned != null) assigned[index] = selected;
+            if (printedRange != null) printedRange[index] = selected != null && selected.printedRange;
             result.add(selected == null ? note : note.withOctaveShift(selected.shift));
         }
         carryIsolatedTies(notes, result, carry, explicit);
+        if (assigned != null) retainStaffRibbons(retainedSpans, spans, assigned, notes, measures);
+        if (printedRange != null)
+            OctaveAccidentalCarry.clearAtRangeBoundary(notes, result, printedRange, accidentalCarries);
         return List.copyOf(result);
+    }
+
+    private record OwnedRibbon(Span span, int first, int last) {}
+
+    private static void retainStaffRibbons(
+            List<StaffSpan> result, List<Span> spans, Span[] assigned, List<ScoreNoteEvent> notes,
+            List<MeasureRegion> measures) {
+        var ribbons = new ArrayList<OwnedRibbon>();
+        for (var span : spans) {
+            if (span.ribbon == null) continue;
+            int first = measures.size(), last = -1;
+            for (int i = 0; i < notes.size(); i++) {
+                if (assigned[i] != span) continue;
+                int measure = notes.get(i).measureIndex();
+                first = Math.min(first, measure);
+                last = Math.max(last, measure);
+            }
+            if (last < first || first < 0 || last >= measures.size()) continue;
+            var measuresWithNotes = new java.util.BitSet();
+            boolean partial = false;
+            for (int i = 0; i < notes.size(); i++) {
+                var note = notes.get(i);
+                int measure = note.measureIndex();
+                if (measure < first || measure > last || note.staffIndex() != span.staff.index()
+                        || note.staffCount() != span.staff.count()) continue;
+                if (assigned[i] != span) {
+                    partial = true;
+                    break;
+                }
+                measuresWithNotes.set(measure);
+            }
+            if (!partial && measuresWithNotes.nextClearBit(first) > last) {
+                ribbons.add(new OwnedRibbon(span, first, last));
+            } else if (first == last && span.ribbon.closedCrossing) {
+                result.add(new StaffSpan(first, last, span.staff.index(), span.staff.count(), span.shift,
+                        new Fragment(span.left, span.right)));
+            }
+        }
+        ribbons.sort(Comparator.comparingInt(OwnedRibbon::first));
+        for (int i = 0; i < ribbons.size(); i++) {
+            var start = ribbons.get(i);
+            var end = start;
+            while (i + 1 < ribbons.size() && continuesOnNextSystem(end, ribbons.get(i + 1), measures))
+                end = ribbons.get(++i);
+            result.add(new StaffSpan(start.first, end.last,
+                    start.span.staff.index(), start.span.staff.count(), start.span.shift));
+        }
+    }
+
+    private static boolean continuesOnNextSystem(OwnedRibbon earlier, OwnedRibbon later,
+            List<MeasureRegion> measures) {
+        return earlier.span.ribbon.continuesAtStaffEdge && earlier.last + 1 == later.first
+                && earlier.span.shift == later.span.shift
+                && earlier.span.staff.index() == later.span.staff.index()
+                && earlier.span.staff.count() == later.span.staff.count()
+                && earlier.span.staff.bottom() < later.span.staff.top()
+                && measures.get(earlier.last).bottom() < measures.get(later.first).top();
+    }
+
+    private record BeamStartHead(ScoreNoteEvent note, float x) {}
+
+    /**
+     * A closed bare eight between two independent beams can start over the next beam.
+     * The normal text margin otherwise reaches the preceding group's final ledger head.
+     */
+    private static float closedBeamStart(
+            byte[] gray,
+            int width,
+            int height,
+            PlayingTechniqueDetector.Word word,
+            PlayingTechniqueDetector.Staff owner,
+            List<PlayingTechniqueDetector.Staff> staffs,
+            List<MeasureRegion> measures,
+            List<ScoreNoteEvent> notes,
+            float left,
+            float right) {
+        float gap = owner.gap(), wordLeft = word.left() * width, wordRight = word.right() * width;
+        float top = word.top() * height, bottom = word.bottom() * height;
+        if (gap < 10 || gap > 28 || wordRight - wordLeft > 1.7f * gap) return left;
+        var nearby = new ArrayList<BeamStartHead>();
+        for (var note : notes) {
+            if (note.kind() != ScoreNoteEvent.Kind.PITCHED
+                    || note.staffIndex() != owner.index()
+                    || note.staffCount() != owner.count()
+                    || note.measureIndex() < 0
+                    || note.measureIndex() >= measures.size()) continue;
+            float headX = x(note, measures, width);
+            if (headX >= wordLeft - 4 * gap
+                    && headX <= wordRight + 3.5f * gap
+                    && onStaff(note, owner, staffs, measures, height))
+                nearby.add(new BeamStartHead(note, headX));
+        }
+        nearby.sort(Comparator.comparingDouble(BeamStartHead::x));
+        for (int i = 1; i + 2 < nearby.size(); i++) {
+            var a = nearby.get(i - 1);
+            var b = nearby.get(i);
+            var c = nearby.get(i + 1);
+            var d = nearby.get(i + 2);
+            if (b.x < left || b.x > wordLeft - .42f * gap) continue;
+            if (b.x - a.x < 1.12f * gap || d.x - c.x < 1.12f * gap
+                    || Math.abs(c.x - wordRight) > .32f * gap
+                    || wordLeft + wordRight - b.x - c.x < .18f * gap
+                    || c.note.pageY() * height - b.note.pageY() * height < 1.25f * gap
+                    || d.x >= right
+                    || a.note.measureIndex() != b.note.measureIndex()
+                    || b.note.measureIndex() != c.note.measureIndex()
+                    || c.note.measureIndex() != d.note.measureIndex()) return left;
+            var numeral = new InkBox(Math.round(wordLeft), Math.round(top),
+                    Math.round(wordRight) - 1, Math.round(bottom) - 1, 0);
+            if (!bareEightShape(gray, width, numeral, gap)
+                    || hookDirection(gray, width, height, right, top, bottom, gap) <= 0) return left;
+            var shafts = new ArrayList<PrintedBeamShafts.Shaft>(4);
+            var budget = new PrintedBeamShafts.Budget(180_000);
+            for (var head : List.of(a, b, c, d)) {
+                var note = head.note;
+                if (note.beamCount() != 1 || note.stemDirection() != -1 || note.crossStaffBeam())
+                    return left;
+                var measured = PrintedBeamShafts.at(gray, width, height, head.x,
+                        note.pageY() * height, gap, budget);
+                if (measured.size() != 1 || measured.get(0).direction() != 1) return left;
+                shafts.add(measured.get(0));
+            }
+            if (WrappedEighthTriplets.matchesRailBridge(gray, width, height, shafts.get(0), shafts.get(1), gap, true)
+                    && WrappedEighthTriplets.matchesRailBridge(gray, width, height, shafts.get(1), shafts.get(2), gap, false)
+                    && WrappedEighthTriplets.matchesRailBridge(gray, width, height, shafts.get(2), shafts.get(3), gap, true))
+                return (b.x + c.x) * .5f;
+            return left;
+        }
+        return left;
+    }
+
+    /** Separate a late ledger attack from the dotted triplet under a new printed octave line. */
+    private static SystemRibbonEnd dottedTripletOctaveStart(
+            byte[] gray, int width, int height, InkBox numeral, PlayingTechniqueDetector.Staff owner,
+            List<PlayingTechniqueDetector.Staff> staffs, List<MeasureRegion> measures,
+            List<ScoreNoteEvent> notes, float left, float right) {
+        float gap = owner.gap();
+        if (gap < 10 || gap > 25 || right - numeral.right < 7.5f * gap
+                || right - numeral.right > 14.5f * gap
+                || dashEnd(gray, width, height, numeral.right + 1, numeral.top, numeral.bottom, gap, 12) < 0)
+            return null;
+        var heads = notes.stream()
+                .filter(n -> n.kind() == ScoreNoteEvent.Kind.PITCHED
+                        && n.measureIndex() >= 0 && n.measureIndex() < measures.size())
+                .map(n -> new BeamStartHead(n, x(n, measures, width)))
+                .filter(h -> h.x >= numeral.left - 3f * gap && h.x <= numeral.right + 3.25f * gap
+                        && onStaff(h.note, owner, staffs, measures, height))
+                .sorted(Comparator.comparingDouble(BeamStartHead::x)).toList();
+        if (heads.size() != 4) return null;
+        var a = heads.get(0); var b = heads.get(1); var c = heads.get(2); var d = heads.get(3);
+        if (b.x < left || b.x > numeral.left - .49f * gap || c.x < numeral.right
+                || c.x > numeral.right + .83f * gap || c.x - b.x < 1.7f * gap
+                || c.x - b.x > 3f * gap
+                || b.note.pageY() * height - numeral.bottom < .75f * gap
+                || b.note.pageY() * height - numeral.bottom > 1.75f * gap
+                || (c.note.pageY() - b.note.pageY()) * height < 1.55f * gap) return null;
+        if (a.note.beamCount() != 2 || b.note.beamCount() != 1 || c.note.beamCount() != 1
+                || c.note.augmentationDots() != 1 || d.note.beamCount() != 2) return null;
+        var shafts = new ArrayList<PrintedBeamShafts.Shaft>(4);
+        var budget = new PrintedBeamShafts.Budget(180_000);
+        for (var head : heads) {
+            var note = head.note;
+            if (note.measureIndex() != b.note.measureIndex() || note.stemDirection() != -1
+                    || note.crossStaffBeam() || note.tiedFromPrevious()) return null;
+            var found = PrintedBeamShafts.at(gray, width, height, head.x, note.pageY() * height, gap, budget);
+            if (found.size() != 1 || found.get(0).direction() != 1 || budget.refused()) return null;
+            shafts.add(found.get(0));
+        }
+        if (!WrappedEighthTriplets.matchesRailBridge(gray, width, height, shafts.get(0), shafts.get(1), gap, true)
+                || !WrappedEighthTriplets.matchesRailBridge(gray, width, height, shafts.get(1), shafts.get(2), gap, false)
+                || !WrappedEighthTriplets.matchesRailBridge(gray, width, height, shafts.get(2), shafts.get(3), gap, true))
+            return null;
+        return shortDottedDownturn(gray, width, height, numeral, right, gap)
+                ? new SystemRibbonEnd(right, false, true, true) : null;
+    }
+
+    /** The horizontal dash becomes a short vertical corner followed by one detached vertical dot. */
+    private static boolean shortDottedDownturn(
+            byte[] gray, int width, int height, InkBox numeral, float end, float gap) {
+        int lo = Math.max(numeral.right + 2, Math.round(end - gap * 1.1f));
+        int hi = Math.min(width - 2, Math.round(end - gap * .32f));
+        int lower = Math.min(height - 1, numeral.bottom + Math.round(gap * .9f));
+        int upstream = Math.round(gap * .25f);
+        for (int x = lo; x <= hi; x++) {
+            for (int y = numeral.top; y <= numeral.top + Math.round(gap * .75f); y++) {
+                if (y < upstream || y + Math.round(gap * 1.55f) > lower
+                        || !endsHorizontalDashes(gray, width, x, y, gap)
+                        || !darkPair(gray, width, x, y)
+                        || darkPair(gray, width, x, y - upstream)) continue;
+                int turn = y;
+                while (turn < lower && darkPair(gray, width, x, turn)) turn++;
+                int dot = turn;
+                while (dot < lower && !darkPair(gray, width, x, dot)) dot++;
+                int stop = dot;
+                while (stop < lower && darkPair(gray, width, x, stop)) stop++;
+                if (turn - y >= gap * .40f && turn - y <= gap * .85f
+                        && dot - turn >= gap * .09f && dot - turn <= gap * .43f
+                        && stop - dot >= gap * .17f && stop - dot <= gap * .46f)
+                    return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean darkPair(byte[] gray, int width, int x, int y) {
+        return (gray[y * width + x] & 255) < 155 && (gray[y * width + x + 1] & 255) < 155;
+    }
+
+    /** A bare eight can head the first attack of a later system, below the preceding staff. */
+    private static PlayingTechniqueDetector.Staff unhookedOpeningRibbonOwner(
+            PlayingTechniqueDetector.Word word, InkBox numeral, PlayingTechniqueDetector.Staff preceding,
+            List<PlayingTechniqueDetector.Staff> staffs, List<MeasureRegion> measures,
+            List<ScoreNoteEvent> notes, List<PlayingTechniqueDetector.Word> printed,
+            byte[] gray, int width, int height) {
+        var incoming = owner(word, staffs, 1, height, true, gray, width);
+        if (incoming == null || incoming.count() != 1 || preceding.count() != 1) return null;
+        float gap = incoming.gap();
+        float above = (incoming.top() - numeral.bottom) / gap;
+        float below = (numeral.top - preceding.bottom()) / gap;
+        if (Math.abs(preceding.gap() - gap) > gap * .08f
+                || above < 3 || above > 6
+                || below < 3 || below > 6
+                || Math.abs(above - below) > 2.05f
+                || !bareEightShape(gray, width, numeral, gap)) return null;
+        var ribbon = fullSystemDottedEnd(gray, width, height, numeral, incoming);
+        if (ribbon == null || !ribbon.continuesAtStaffEdge) return null;
+        float first = Float.POSITIVE_INFINITY, firstPrior = Float.POSITIVE_INFINITY;
+        ScoreNoteEvent firstOwner = null;
+        for (var note : notes) {
+            if (note.kind() != ScoreNoteEvent.Kind.PITCHED || note.staffCount() != 1
+                    || note.visualSize() != ScoreNoteEvent.VisualSize.FULL
+                    || (note.articulations() & NoteOrnament.GRACE) != 0) continue;
+            float x = x(note, measures, width);
+            if (x < firstPrior && onStaff(note, preceding, staffs, measures, height)) firstPrior = x;
+            if (x < first && onStaff(note, incoming, staffs, measures, height)) {
+                first = x;
+                firstOwner = note;
+            }
+        }
+        if (firstPrior <= numeral.right + gap * 2.75f
+                && !alreadyRaisedByOwnRibbon(printed, preceding, firstPrior, gray, width, height))
+            return null;
+        float alignment = Math.abs(first - numeral.right);
+        if (alignment <= gap * .34f && Math.abs(above - below) <= 1.45f) return incoming;
+        boolean besideFirstAttack = first >= numeral.right && alignment <= gap * .75f
+                && Math.abs(above - below) <= .70f;
+        if (firstOwner == null || alignment > gap * .58f && !besideFirstAttack
+                || firstOwner.positionInMeasure() > .14f || firstOwner.measureIndex() < 1) return null;
+        var incomingMeasure = measures.get(firstOwner.measureIndex());
+        var lastPriorMeasure = measures.get(firstOwner.measureIndex() - 1);
+        return (incomingMeasure.top() - lastPriorMeasure.bottom()) * height > gap * 3
+                ? incoming : null;
+    }
+
+    /** The preceding system can have its own independent printed octave ribbon. */
+    private static boolean alreadyRaisedByOwnRibbon(
+            List<PlayingTechniqueDetector.Word> words, PlayingTechniqueDetector.Staff staff,
+            float firstAttack, byte[] gray, int width, int height) {
+        float gap = staff.gap();
+        for (var word : words) {
+            if (shift(word.text()) != 1 || staff.top() - word.bottom() * height < gap * 2
+                    || staff.top() - word.bottom() * height > gap * 12
+                    || firstAttack < word.left() * width - gap * .65f
+                    || firstAttack > word.right() * width + gap * .70f) continue;
+            var digit = new InkBox(Math.round(word.left() * width), Math.round(word.top() * height),
+                    Math.round(word.right() * width) - 1, Math.round(word.bottom() * height) - 1, 0);
+            var ribbon = provedSystemRibbonNumeral(gray, width, height, digit, staff);
+            if (ribbon != null && ribbon.continuesAtStaffEdge) return true;
+        }
+        return false;
+    }
+
+    /** An unhooked bare eight can sit inline with the next staff's upper ledger attack. */
+    private static PlayingTechniqueDetector.Staff openUpperLedgerOwner(
+            PlayingTechniqueDetector.Word word,
+            PlayingTechniqueDetector.Staff preceding,
+            List<PlayingTechniqueDetector.Staff> staffs,
+            List<MeasureRegion> measures,
+            List<ScoreNoteEvent> notes,
+            byte[] gray,
+            int width,
+            int height) {
+        var next = owner(word, staffs, 1, height, true, gray, width);
+        if (next == null
+                || next.count() != 1
+                || preceding.count() != 1
+                || Math.abs(next.gap() - preceding.gap()) > next.gap() * .1f) return null;
+        float gap = next.gap(), left = word.left() * width, right = word.right() * width;
+        float top = word.top() * height, bottom = word.bottom() * height;
+        float below = (top - preceding.bottom()) / gap;
+        float above = (next.top() - bottom) / gap;
+        if (below < 3 || above < 3 || above > 6 || Math.abs(below - above) > 1) return null;
+        int l = Math.round(left),
+                r = Math.round(right) - 1,
+                t = Math.round(top),
+                b = Math.round(bottom) - 1;
+        if (l < 0
+                || t < 0
+                || r >= width
+                || b >= height
+                || l >= r
+                || t >= b
+                || !bareEightShape(gray, width, new InkBox(l, t, r, b, 0), gap)) return null;
+        float end = dashEnd(gray, width, height, right, top, bottom, gap);
+        if (end - right < gap * 12
+                || hookDirection(gray, width, height, end, top, bottom, gap) != 0
+                || OctaveBracketEnd.direction(gray, width, height, end, top, bottom, gap) != 0)
+            return null;
+
+        ScoreNoteEvent inline = null, first = null, second = null;
+        float inlineX = Float.NEGATIVE_INFINITY;
+        float firstX = Float.POSITIVE_INFINITY, secondX = Float.POSITIVE_INFINITY;
+        float ordinaryLeft = left - gap * 1.35f;
+        boolean extraPrecedingHead = false;
+        for (var note : notes) {
+            if (note.kind() != ScoreNoteEvent.Kind.PITCHED
+                    || note.staffCount() != 1
+                    || note.visualSize() != ScoreNoteEvent.VisualSize.FULL
+                    || (note.articulations() & NoteOrnament.GRACE) != 0) continue;
+            float xx = x(note, measures, width), y = note.pageY() * height;
+            if (xx < left - gap * 1.60f || xx > right + gap * 4) continue;
+            if (onStaff(note, preceding, staffs, measures, height) && y > top - gap * 3) {
+                if (xx >= ordinaryLeft) return null;
+                extraPrecedingHead = true;
+            }
+            if (!onStaff(note, next, staffs, measures, height)) continue;
+            if (xx < left - gap * .65f && xx > inlineX
+                    && y >= top && y <= bottom && note.staffStep() >= 12) {
+                inline = note;
+                inlineX = xx;
+            }
+            if (xx < left || xx >= secondX) continue;
+            if (xx < firstX) {
+                second = first;
+                secondX = firstX;
+                first = note;
+                firstX = xx;
+            } else if (xx > firstX + gap) {
+                second = note;
+                secondX = xx;
+            }
+        }
+        if (inline == null
+                || first == null
+                || second == null
+                || firstX > right + gap * .55f
+                || first.measureIndex() != second.measureIndex()) return null;
+        float separation = secondX - firstX;
+        if (inlineX < ordinaryLeft || separation > gap * 2.85f) {
+            // The next pitch's sharp can push the first two columns farther apart.
+            // Prove that glyph in the space between the two owners.
+            if (extraPrecedingHead
+                    || inline.measureIndex() != first.measureIndex()
+                    || separation > gap * 3.55f
+                    || second.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_SHARP
+                    || !OmrScoreInterpreter.printedSharpBeforeDyad(
+                            gray, width, height, Math.round(secondX - gap * 2.25f), secondX,
+                            second.pageY() * height, gap)) return null;
+        }
+        float a = first.pageY() * height - bottom, c = second.pageY() * height - bottom;
+        return a >= gap * 1.4f && a <= gap * 4 && c >= gap * 1.4f && c <= gap * 4 ? next : null;
     }
 
     private static void carryIsolatedTies(
@@ -332,6 +909,9 @@ final class OctaveMarkDetector {
 
     private record InkBox(int left, int top, int right, int bottom, int area) {}
 
+    private record BareOctaveMark(
+            PlayingTechniqueDetector.Word word, boolean twoCounters, float end, float gap) {}
+
     /** Confirmed printed direction text cannot also be a sounding notehead. */
     static boolean containsPrintedMark(
             List<PlayingTechniqueDetector.Word> printedMarks,
@@ -372,12 +952,24 @@ final class OctaveMarkDetector {
             int height,
             List<PlayingTechniqueDetector.Staff> staffs,
             boolean alreadyContrasted) {
+        return printedWords(gray, width, height, staffs, alreadyContrasted, null);
+    }
+
+    private static List<PlayingTechniqueDetector.Word> printedWords(
+            byte[] gray,
+            int width,
+            int height,
+            List<PlayingTechniqueDetector.Staff> staffs,
+            boolean alreadyContrasted,
+            List<SlopingOctave> sloping) {
         List<PlayingTechniqueDetector.Word> words = new ArrayList<>();
         if (gray == null || gray.length != width * height) return words;
         if (!alreadyContrasted) gray = contrastedInk(gray, width, height);
         var visited = new java.util.BitSet();
         var flood = new WordInkRuns();
         var holeScan = new HoleScanScratch();
+        var closedMarks = new ArrayList<BareOctaveMark>();
+        var closedSystemMarks = new ArrayList<PlayingTechniqueDetector.Word>();
         for (var staff : staffs)
             for (boolean below : StaffSides.VALUES) {
                 float gap = staff.gap();
@@ -431,13 +1023,26 @@ final class OctaveMarkDetector {
                             && y2 - y1 + 1 >= gap * .55f
                             && y2 - y1 + 1 <= gap * 3.2f
                             && right - left + 1 >= gap * .12f
-                            && right - left + 1 <= gap * 8)
+                            && right - left + 1 <= gap * 8) {
                         boxes.add(new InkBox(left, top + y1, right, top + y2, count));
+                    } else if (!below && count >= minimumArea && y2 - y1 + 1 > gap * 3.2f
+                            && y2 - y1 + 1 <= gap * 4.35f
+                            && right - left + 1 >= gap * .8f && right - left + 1 <= gap * 1.65f) {
+                        var stacked = new InkBox(left, top + y1, right, top + y2, count);
+                        var numeral = closedStackedRibbonEight(gray, width, height, stacked, staff);
+                        if (numeral != null && !centeredInStaff(numeral, staffs)) {
+                            var mark = new PlayingTechniqueDetector.Word("8va", numeral.left / (float) width,
+                                    numeral.top / (float) height, (numeral.right + 1) / (float) width,
+                                    (numeral.bottom + 1) / (float) height);
+                            if (!words.contains(mark)) words.add(mark);
+                            closedSystemMarks.add(mark);
+                        }
+                    }
                 }
                 boxes.sort(Comparator.comparingInt(InkBox::left));
                 boolean[] used = new boolean[boxes.size()];
                 int componentCount = boxes.size();
-                var attachedBoxes = attachedEightBoxes(gray, width, height, top, bottom, gap, holeScan);
+                var attachedBoxes = attachedEightBoxes(gray, width, height, top, bottom, gap, below, holeScan);
                 var componentBoxes = attachedBoxes.isEmpty()
                         ? java.util.Set.<InkBox>of()
                         : new java.util.HashSet<>(boxes);
@@ -449,13 +1054,66 @@ final class OctaveMarkDetector {
                             ? boxes.get(candidateIndex) : attachedBoxes.get(candidateIndex - componentCount);
                     boolean isComponent = fromComponent || componentBoxes.contains(box);
                     if (centeredInStaff(box, staffs)) continue;
+                    if (sloping != null && !below && fromComponent) {
+                        float end = slopingDottedOctaveEnd(gray, width, height, box, staff);
+                        if (end >= 0) sloping.add(new SlopingOctave(staff, box, end));
+                    }
                     boolean closedEight = bareEightShape(gray, width, box, gap);
+                    if (!below && !closedEight && box.right - box.left + 1 > gap * 1.6f) {
+                        var clipped = new InkBox(box.left, box.top,
+                                box.left + Math.round(gap * 1.6f) - 1, box.bottom, 0);
+                        if (bareEightShape(gray, width, clipped, gap)
+                                && fullSystemDottedEnd(gray, width, height, clipped, staff) != null) {
+                            box = clipped;
+                            closedEight = true;
+                        }
+                    }
+                    if (!below && !closedEight && isComponent)
+                        closedEight = closedWideRibbonEight(gray, width, height, box, gap);
+                    float compactReturn =
+                            !below && isComponent
+                                    ? compactDottedReturn(gray, width, height, box, gap)
+                                    : -1;
+                    if (compactReturn >= 0) closedEight = true;
+                    var shortStaffEdge =
+                            !below && isComponent
+                                    ? shortOpenDottedStaffEdge(gray, width, height, box, staff)
+                                    : null;
+                    if (shortStaffEdge != null) closedEight = true;
+                    SystemRibbonEnd paleSystem = null;
+                    if (!below && !closedEight && isComponent && paleCounterShape(gray, width, height, box, gap)) {
+                        paleSystem = fullSystemDottedEnd(gray, width, height, box, staff);
+                        float shortEnd = dashEnd(gray, width, height, box.right + 1, box.top, box.bottom, gap, 8);
+                        closedEight = paleSystem != null || shortEnd - box.right >= gap * 8
+                                && shortEnd - box.right <= gap * 24
+                                && hookDirection(gray, width, height, shortEnd, box.top, box.bottom, gap) == 1;
+                    }
                     var attached = !below && !closedEight && isComponent
                             ? verticallyAttachedEight(gray, width, box, gap) : null;
                     if (attached != null) box = attached;
-                    if (!closedEight && attached == null
-                            && (below || !canRepairEight(gray, width, box, gap)))
-                        continue;
+                    boolean brokenCounter =
+                            !below
+                                    && !closedEight
+                                    && attached == null
+                                    && canRepairEight(gray, width, box, gap);
+                    var faint =
+                            !below
+                                            && !closedEight
+                                            && attached == null
+                                            && isComponent
+                                            && !brokenCounter
+                                    ? faintCounterEight(gray, width, box, gap)
+                                    : null;
+                    if (faint != null) {
+                        box = faint;
+                        closedEight = true;
+                    }
+                    var diagonalRibbon =
+                            !below && isComponent
+                                    ? diagonalNumeralRibbon(gray, width, height, box, staff)
+                                    : null;
+                    if (diagonalRibbon != null) closedEight = true;
+                    if (!closedEight && attached == null && !brokenCounter) continue;
                     float dashRight =
                             dashEnd(
                                     gray,
@@ -466,9 +1124,74 @@ final class OctaveMarkDetector {
                                     box.bottom,
                                     gap,
                                     6);
-                    if (dashRight < 0) continue;
                     int hookDirection =
-                            hookDirection(gray, width, height, dashRight, box.top, box.bottom, gap);
+                            dashRight < 0
+                                    ? 0
+                                    : hookDirection(
+                                            gray,
+                                            width,
+                                            height,
+                                            dashRight,
+                                            box.top,
+                                            box.bottom,
+                                            gap);
+                    if (compactReturn >= 0 && hookDirection <= 0) {
+                        dashRight = compactReturn;
+                        hookDirection = 1;
+                    }
+                    float crossedStart = !below
+                            ? qualifiedEarlySlurRibbonEnd(gray, width, height, box, gap) : -1;
+                    if (crossedStart >= 0) {
+                        dashRight = crossedStart;
+                        hookDirection = 1;
+                    }
+                    if (!below && !isComponent && closedEight && hookDirection == 0
+                            && attachedShortRibbonEnd(gray, width, height, box, gap) >= 0)
+                        hookDirection = 1;
+                    if (shortStaffEdge != null && shortStaffEdge.right >= dashRight) {
+                        dashRight = shortStaffEdge.right;
+                        hookDirection = 1;
+                    }
+                    boolean closedSystem = false;
+                    if (diagonalRibbon != null) {
+                        dashRight = diagonalRibbon.right;
+                        hookDirection = 1;
+                        closedSystem = !diagonalRibbon.continuesAtStaffEdge;
+                    }
+                    if (!below && brokenCounter && hookDirection <= 0 && brokenEightShape(gray, width, box, gap)) {
+                        float crossedTerminal = octaveReturnAcrossSlur(gray, width, height, box, gap);
+                        if (crossedTerminal >= 0) {
+                            dashRight = crossedTerminal;
+                            hookDirection = 1;
+                            closedSystem = true;
+                        }
+                    }
+                    if (paleSystem != null && paleSystem.right >= dashRight) {
+                        dashRight = paleSystem.right;
+                        hookDirection = paleSystem.continuesAtStaffEdge ? 0 : 1;
+                        closedSystem = !paleSystem.continuesAtStaffEdge;
+                    }
+                    if (closedEight && !below && hookDirection <= 0) {
+                        var ribbon = completeDottedRibbon(gray, width, height, box, gap);
+                        if (ribbon != null) {
+                            dashRight = ribbon.right;
+                            hookDirection = 1;
+                            closedSystem = true;
+                        }
+                    }
+                    if (closedEight && !below && hookDirection <= 0) {
+                        var systemRibbon = fullSystemDottedEnd(gray, width, height, box, staff);
+                        if (systemRibbon != null && systemRibbon.right > dashRight) {
+                            dashRight = systemRibbon.right;
+                            hookDirection = 1;
+                            closedSystem = !systemRibbon.continuesAtStaffEdge;
+                        }
+                    }
+                    if (!below && hookDirection == 0 && dashRight - box.right >= gap * 8
+                            && dashRight - box.right <= gap * 28
+                            && detachedDownwardDashPair(gray, width, height, dashRight, box.top, box.bottom, gap))
+                        hookDirection = 1;
+                    if (dashRight < 0 || faint != null && hookDirection <= 0) continue;
                     boolean openEnded =
                             !below && hookDirection == 0 && dashRight - box.right >= gap * 44;
                     if (!closedEight
@@ -501,13 +1224,17 @@ final class OctaveMarkDetector {
                     // An attached fragment needs either a suffix or a proved upward end hook
                     // before it can establish a lower octave for the preceding staff.
                     if (below && !isComponent && hookDirection >= 0) continue;
-                    words.add(
+                    var word =
                             new PlayingTechniqueDetector.Word(
                                     below ? "8vb" : "8va",
                                     box.left / (float) width,
                                     box.top / (float) height,
                                     (box.right + 1) / (float) width,
-                                    (box.bottom + 1) / (float) height));
+                                    (box.bottom + 1) / (float) height);
+                    words.add(word);
+                    if (closedSystem) closedSystemMarks.add(word);
+                    if (!below && hookDirection > 0)
+                        closedMarks.add(new BareOctaveMark(word, closedEight, dashRight, gap));
                 }
                 var members = new ArrayList<InkBox>();
                 for (int i = 0; i < boxes.size(); i++) {
@@ -624,11 +1351,30 @@ final class OctaveMarkDetector {
                                     (b + 1) / (float) height));
                 }
             }
+        // A repaired outline can borrow the nearby complete numeral's dash chain.
+        for (var mark : closedMarks) {
+            if (mark.twoCounters) continue;
+            var word = mark.word;
+            for (var other : closedMarks) {
+                if (!other.twoCounters || Math.abs(other.end - mark.end) > mark.gap * .22f)
+                    continue;
+                float separation = (other.word.left() - word.right()) * width;
+                if (separation > 0
+                        && separation <= mark.gap
+                        && Math.abs((other.word.top() - word.top()) * height) <= mark.gap * .8f) {
+                    words.remove(word);
+                    break;
+                }
+            }
+        }
         // A proved suffix determines the direction. Do not also interpret its
         // numeral as a bare lower-octave mark for the preceding staff.
         if (words.size() < 2) return words;
         var completeWords = List.copyOf(words);
         words.removeIf(word -> {
+            if (shift(word.text()) == -1 && closedSystemMarks.stream().anyMatch(mark ->
+                    mark.left() == word.left() && mark.right() == word.right()
+                            && mark.top() == word.top() && mark.bottom() == word.bottom())) return true;
             float left = word.left() * width + 1, right = word.right() * width + 2;
             float top = word.top() * height + 1, bottom = word.bottom() * height - 1;
             for (var other : completeWords)
@@ -988,10 +1734,102 @@ final class OctaveMarkDetector {
                 && Math.abs(centers[0] - centers[2]) < gap * .65f;
     }
 
+    /** A two-counter numeral can touch a taller fingering stack below its own closed ribbon. */
+    private static InkBox closedStackedRibbonEight(byte[] gray, int width, int height,
+            InkBox stack, PlayingTechniqueDetector.Staff staff) {
+        float gap = staff.gap();
+        int first = stack.top + Math.round(gap * 1.62f), last = stack.top + Math.round(gap * 2.0f);
+        for (int cut = first; cut <= last; cut++) {
+            var numeral = new InkBox(stack.left, stack.top, stack.right, cut, 0);
+            if (!bareEightShape(gray, width, numeral, gap)) continue;
+            var ribbon = fullSystemDottedEnd(gray, width, height, numeral, staff);
+            if (ribbon != null && !ribbon.continuesAtStaffEdge) return numeral;
+        }
+        return null;
+    }
+
+    private static SystemRibbonEnd provedSystemRibbonNumeral(byte[] gray, int width, int height,
+            InkBox numeral, PlayingTechniqueDetector.Staff staff) {
+        float gap = staff.gap();
+        var shortStaffEdge = shortOpenDottedStaffEdge(gray, width, height, numeral, staff);
+        if (shortStaffEdge != null) return shortStaffEdge;
+        boolean closedNumeral = bareEightShape(gray, width, numeral, gap)
+                || paleCounterShape(gray, width, height, numeral, gap);
+        if (closedNumeral) {
+            var fullSystem = fullSystemDottedEnd(gray, width, height, numeral, staff);
+            if (fullSystem != null) return fullSystem;
+        }
+        var diagonal = diagonalNumeralRibbon(gray, width, height, numeral, staff);
+        if (diagonal != null) return diagonal;
+        if (!canRepairEight(gray, width, numeral, gap)
+                || !brokenEightShape(gray, width, numeral, gap)) return null;
+        float crossedTerminal = octaveReturnAcrossSlur(gray, width, height, numeral, gap);
+        if (crossedTerminal >= 0) return new SystemRibbonEnd(crossedTerminal, false, true, true);
+        if (closedNumeral) return null;
+        var ribbon = traceSystemDottedEnd(gray, width, height, numeral, staff, .18f, 44, true);
+        return ribbon != null && ribbon.continuesAtStaffEdge ? ribbon : null;
+    }
+
+    /** A wider italic eight needs its own regular dotted line and a physical endpoint. */
+    private static SystemRibbonEnd diagonalNumeralRibbon(
+            byte[] gray, int width, int height, InkBox numeral, PlayingTechniqueDetector.Staff staff) {
+        float gap = staff.gap();
+        int span = numeral.right - numeral.left + 1;
+        int tall = numeral.bottom - numeral.top + 1;
+        if (span < gap * 1.55f || span > gap * 1.91f
+                || tall < gap * 1.65f || tall > gap * 1.95f
+                || staff.count() != 1 || staff.top() - numeral.bottom < gap * 2)
+            return null;
+        int holes = OctaveClefDigit.holes(gray, width, numeral.left, numeral.top, span, tall);
+        if (holes == 2) {
+            if (bareEightShape(gray, width, numeral, gap)) return null;
+            var closed = completeDottedRibbon(gray, width, height, numeral, gap);
+            return closed != null && closed.right - numeral.right >= gap * 18
+                    ? new SystemRibbonEnd(closed.right, false, true, true)
+                    : null;
+        }
+        if (holes != 1 || !canRepairEight(gray, width, numeral, gap)
+                || !brokenEightShape(gray, width, numeral, gap)) return null;
+        var open = traceSystemDottedEnd(gray, width, height, numeral, staff, .30f, 9, true);
+        return open != null && open.continuesAtStaffEdge
+                ? new SystemRibbonEnd(open.right, true, true, true)
+                : null;
+    }
+
+    /** Recover two real light-ink counters within a bounded contour. */
+    private static boolean paleCounterShape(byte[] gray, int width, int height, InkBox box, float gap) {
+        int wide = box.right - box.left + 1, tall = box.bottom - box.top + 1;
+        if (wide < gap * 1.1f || wide > gap * 2.15f || tall < gap * 1.42f || tall > gap * 1.98f
+                || OctaveClefDigit.holes(gray, width, box.left, box.top, wide, tall) >= 2) return false;
+        int pad = Math.round(gap * .13f);
+        int left = Math.max(0, box.left - pad), top = Math.max(0, box.top - pad);
+        int right = Math.min(width - 1, box.right + pad), bottom = Math.min(height - 1, box.bottom + pad);
+        int w = right - left + 1, h = bottom - top + 1;
+        var optical = new byte[w * h];
+        int dark = 0;
+        for (int y = top; y <= bottom; y++)
+            for (int x = left; x <= right; x++)
+                if ((gray[y * width + x] & 255) < 165) dark++;
+        if (dark < gap * gap * .75f) return false;
+        for (int shade : new int[] {205, 235, 253}) {
+            for (int y = top; y <= bottom; y++)
+                for (int x = left; x <= right; x++)
+                    optical[(y - top) * w + x - left] = (gray[y * width + x] & 255) < shade ? 0 : (byte) 255;
+            var components = RawNumeralComponents.capture(optical, w, h, 0, 0, w - 1, h - 1, () -> {}, () -> {});
+            for (var part : components.components()) {
+                int cw = part.right - part.left + 1, ch = part.bottom - part.top + 1;
+                if (cw < gap * 1.1f || cw > gap * 2.18f || ch < gap * 1.4f || ch > gap * 2.15f
+                        || part.size() < dark || part.size() > cw * ch * .80f) continue;
+                if (OctaveClefDigit.holes(optical, w, part.left, part.top, cw, ch) == 2) return true;
+            }
+        }
+        return false;
+    }
+
     /** Trim a thin vertical attachment from a two-counter numeral above the staff. */
     private static InkBox verticallyAttachedEight(byte[] gray, int width, InkBox box, float gap) {
         int w = box.right - box.left + 1, h = box.bottom - box.top + 1;
-        if (h < gap * 2.3f || w < gap * .8f || w > gap * 1.65f) return null;
+        if (h < gap * 2.3f || w < gap * .8f || w > gap * 1.9f) return null;
         for (int y = box.top + Math.round(gap * 1.35f); y <= box.top + Math.round(gap * 1.85f); y++) {
             if (box.bottom - y < gap * .65f) break;
             int narrow = 0;
@@ -1008,9 +1846,52 @@ final class OctaveMarkDetector {
         return null;
     }
 
+    /** Both printed counters can be completed by pale ink at the edge of the numeral. */
+    private static InkBox faintCounterEight(byte[] gray, int width, InkBox box, float gap) {
+        int w = box.right - box.left + 1, h = box.bottom - box.top + 1;
+        if (w < gap * 1.0f || w > gap * 1.55f || h < gap * 1.43f || h > gap * 1.85f) return null;
+        var contained = faintCounterEight(gray, width, box, gap, box.left, h);
+        if (contained != null) return contained;
+        return faintCounterEight(
+                gray, width, box, gap, Math.max(0, box.left - Math.round(gap * .20f)), h);
+    }
+
+    private static InkBox faintCounterEight(
+            byte[] gray, int width, InkBox box, float gap, int left, int h) {
+        int capWidth = box.right - left + 1;
+        byte[] cap = new byte[capWidth * h];
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < capWidth; x++)
+                cap[y * capWidth + x] =
+                        (byte) ((gray[(box.top + y) * width + left + x] & 255) < 245 ? 0 : 255);
+        var components =
+                RawNumeralComponents.capture(
+                        cap, capWidth, h, 0, 0, capWidth - 1, h - 1, 164, () -> {}, () -> {});
+        InkBox accepted = null;
+        for (var component : components.components()) {
+            if (component.size() < box.area || component.top != 0 || component.bottom < h - 2)
+                continue;
+            int inkWidth = component.right - component.left + 1;
+            if (inkWidth > gap * 1.62f) continue;
+            if (OctaveClefDigit.holes(cap, capWidth, component.left, 0, inkWidth, h) != 2) continue;
+            if (accepted != null) return null;
+            accepted =
+                    new InkBox(
+                            left + component.left,
+                            box.top,
+                            left + component.right,
+                            box.bottom,
+                            component.size());
+        }
+        return accepted;
+    }
+
     private static boolean canRepairEight(byte[] gray, int width, InkBox box, float gap) {
         int w = box.right - box.left + 1, h = box.bottom - box.top + 1;
-        return w >= gap * .8f && w <= gap * 1.85f && h >= gap * 1.15f && h <= gap * 2.3f
+        return w >= gap * .8f
+                && w <= Math.round(gap * 1.85f)
+                && h >= gap * 1.15f
+                && h <= gap * 2.3f
                 && OctaveClefDigit.holes(gray, width, box.left, box.top, w, h) == 1;
     }
 
@@ -1077,11 +1958,26 @@ final class OctaveMarkDetector {
         return false;
     }
 
+    /** Prove a wide bare numeral by both counters and a closed printed ribbon. */
+    private static boolean closedWideRibbonEight(byte[] gray, int width, int height, InkBox box, float gap) {
+        int wide = box.right - box.left + 1, tall = box.bottom - box.top + 1;
+        int nominal = Math.round(gap * 1.6f);
+        if (wide <= nominal || wide > gap * 2.1f || tall < gap * 1.15f || tall > gap * 2.25f
+                || OctaveClefDigit.holes(gray, width, box.left, box.top, wide, tall) != 2) return false;
+        var core = new InkBox(box.left, box.top, box.left + nominal - 1, box.bottom, 0);
+        if (!bareEightShape(gray, width, core, gap)) return false;
+        float ordinary = dashEnd(gray, width, height, box.right + 1, box.top, box.bottom, gap, 6);
+        if (ordinary - box.right >= gap * 8 && ordinary - box.right <= gap * 30
+                && hookDirection(gray, width, height, ordinary, box.top, box.bottom, gap) == 1) return true;
+        var ribbon = completeDottedRibbon(gray, width, height, box, gap);
+        return ribbon != null && ribbon.right - box.right >= gap * 8 && ribbon.right - box.right <= gap * 30;
+    }
+
     private static boolean bareEightShape(byte[] gray, int width, InkBox box, float gap) {
         int height = box.bottom - box.top + 1;
         int span = box.right - box.left + 1;
         if (height < gap * .65f || height > gap * 2.3f || span < gap * .3f) return false;
-        int maxWidth = (int) Math.min(gap * 1.6f, height / .9f);
+        int maxWidth = Math.round(Math.min(gap * 1.6f, height / .9f));
         if (span <= maxWidth) {
             return OctaveClefDigit.holes(gray, width, box.left, box.top, span, height) == 2;
         }
@@ -1112,7 +2008,7 @@ final class OctaveMarkDetector {
     }
 
     private static List<InkBox> attachedEightBoxes(
-            byte[] gray, int w, int h, int top, int bottom, float gap, HoleScanScratch scratch) {
+            byte[] gray, int w, int h, int top, int bottom, float gap, boolean below, HoleScanScratch scratch) {
         // Every component in a strip this narrow touches a side.
         if (w <= 2) return List.of();
         int band = bottom - top + 1;
@@ -1174,8 +2070,11 @@ final class OctaveMarkDetector {
                 int y0 = Math.max(top, a.top - pad), y1 = Math.min(bottom, b.bottom + pad);
                 if (y1 - y0 < gap * .65f || y1 - y0 > gap * 2.3f || right - left > gap * 1.6f)
                     continue;
-                if (ledgerTouchesLeft(gray, w, h, left, right, y0, y1, gap))
-                    result.add(new InkBox(left, y0, right, y1, a.area + b.area));
+                var box = new InkBox(left, y0, right, y1, a.area + b.area);
+                if (ledgerTouchesLeft(gray, w, h, left, right, y0, y1, gap)
+                        || attachedShortRibbonEnd(gray, w, h, box, gap) >= 0
+                        || !below && bottomAttachedDottedEight(gray, w, h, box, gap))
+                    result.add(box);
             }
         }
         return result;
@@ -1214,6 +2113,63 @@ final class OctaveMarkDetector {
 
     /** Recover a numeral merged with a thin ledger, not a second reading of every
      * isolated numeral or a pair of counters inside neighboring text. */
+    /** A short closed octave ribbon can own a numeral touching the preceding head at its lower loop. */
+    private static float attachedShortRibbonEnd(byte[] gray, int width, int height, InkBox box, float gap) {
+        int tall = box.bottom - box.top + 1;
+        if (box.left < 2 || tall < gap * 1.4f || tall > gap * 1.95f
+                || !bareEightShape(gray, width, box, gap)) return -1;
+        int joined = 0;
+        for (int y = box.top + Math.round(tall * .62f); y <= box.bottom; y++)
+            if ((gray[y * width + box.left - 1] & 255) < 165
+                    && (gray[y * width + box.left] & 255) < 165) joined++;
+        if (joined < gap * .16f) return -1;
+        float right = dashEnd(gray, width, height, box.right + 1, box.top, box.bottom, gap, 12);
+        if (right - box.right < gap * 11 || right - box.right > gap * 24) return -1;
+        int end = Math.round(right - gap * .55f);
+        int from = Math.max(0, Math.round(box.top - gap * .12f));
+        int through = Math.min(height - 1, Math.round(box.bottom + gap * .22f));
+        if (end < 3 || end + 2 >= width) return -1;
+        for (int y = from; y <= through; y++) {
+            if (!endsHorizontalDashes(gray, width, end, y, gap)
+                    || y + gap * .45f >= height) continue;
+            for (int start = y + Math.round(gap * .14f); start <= y + Math.round(gap * .40f); start++) {
+                int x = end + 1;
+                if ((gray[start * width + x] & 255) >= 165 || (gray[start * width + x + 1] & 255) >= 165)
+                    continue;
+                if (hasJoinedDashHook(gray, width, height, x, start, 1, gap)
+                        && hasJoinedDashHook(gray, width, height, x + 1, start, 1, gap)
+                        && !hasJoinedDashHook(gray, width, height, x, start, -1, gap)) return right;
+            }
+        }
+        return -1;
+    }
+
+    /** A slur touching the lower rim can merge an octave numeral into a wider component. */
+    private static boolean bottomAttachedDottedEight(
+            byte[] gray, int width, int height, InkBox box, float gap) {
+        int tall = box.bottom - box.top + 1;
+        if (tall < gap * 1.4f || tall > gap * 2.0f || !bareEightShape(gray, width, box, gap))
+            return false;
+        int reach = Math.round(gap * .6f);
+        int left = box.left - reach, right = box.left + reach;
+        if (left < 0 || right >= width) return false;
+        boolean touchesBottom = false;
+        for (int y = box.bottom - Math.round(gap * .12f); y <= box.bottom; y++) {
+            int ink = 0;
+            for (int x = left; x <= right; x++)
+                if ((gray[y * width + x] & 255) < 165) ink++;
+            if (ink >= right - left - 1) {
+                touchesBottom = true;
+                break;
+            }
+        }
+        if (!touchesBottom) return false;
+        float end = dashEnd(gray, width, height, box.right + 1, box.top, box.bottom, gap, 10);
+        return end - box.right >= gap * 11
+                && end - box.right <= gap * 24
+                && hookDirection(gray, width, height, end, box.top, box.bottom, gap) == 1;
+    }
+
     private static boolean ledgerTouchesLeft(
             byte[] gray, int w, int h, int left, int right, int top, int bottom, float gap) {
         int reach = Math.max(3, Math.round(gap * .8f));
@@ -1386,6 +2342,958 @@ final class OctaveMarkDetector {
     }
 
     /** Find a horizontal chain of short printed dashes, stopping at its actual end. */
+    private record DottedRibbon(float right, List<RawNumeralComponents.Component> dots, boolean closedCrossing) {
+        DottedRibbon(float right, List<RawNumeralComponents.Component> dots) {
+            this(right, dots, false);
+        }
+    }
+
+    private static DottedRibbon provedPrintedRibbon(
+            byte[] gray,
+            int width,
+            int height,
+            PlayingTechniqueDetector.Word word,
+            float gap,
+            float ordinaryRight) {
+        var box =
+                new InkBox(
+                        Math.round(word.left() * width),
+                        Math.round(word.top() * height),
+                        Math.round(word.right() * width) - 1,
+                        Math.round(word.bottom() * height) - 1,
+                        0);
+        if (!bareEightShape(gray, width, box, gap)
+                || ordinaryRight >= 0
+                        && hookDirection(
+                                        gray,
+                                        width,
+                                        height,
+                                        ordinaryRight,
+                                        box.top,
+                                        box.bottom,
+                                        gap)
+                                > 0) return null;
+        return completeDottedRibbon(gray, width, height, box, gap);
+    }
+
+    private static DottedRibbon completeDottedRibbon(
+            byte[] gray, int width, int height, InkBox box, float gap) {
+        var crossed = dottedRibbonAcrossSlur(gray, width, height, box, gap);
+        if (crossed != null) return crossed;
+        return longClosedDottedRibbon(gray, width, height, box, gap);
+    }
+
+    private record SlopingOctave(PlayingTechniqueDetector.Staff staff, InkBox numeral, float end) {}
+
+    /** The rising lead and level end belong to one continuously printed series of dashes. */
+    private static float slopingDottedOctaveEnd(
+            byte[] gray, int width, int height, InkBox box, PlayingTechniqueDetector.Staff staff) {
+        float gap = staff.gap();
+        int wide = box.right - box.left + 1, tall = box.bottom - box.top + 1;
+        if (gap < 10
+                || gap > 24
+                || staff.top() - box.bottom < 2 * gap
+                || staff.top() - box.bottom > 4 * gap
+                || wide < 1.4f * gap
+                || wide > 2.1f * gap
+                || tall < 1.45f * gap
+                || tall > 2.15f * gap
+                || OctaveClefDigit.holes(gray, width, box.left, box.top, wide, tall) != 2)
+            return -1;
+        int left = box.right, top = Math.round(box.top - gap);
+        int right = Math.min(width - 1, left + Math.round(29 * gap));
+        int bottom = Math.round(box.top + gap * .95f);
+        if (top < 0 || bottom >= height || right - left < 24 * gap) return -1;
+        var frame =
+                RawNumeralComponents.captureLongWindow(gray, width, height, left, top, right, bottom, 165);
+        var dots = dottedComponents(frame, gap, .6f);
+        var line = new ArrayList<RawNumeralComponents.Component>();
+        for (var dot : dots) {
+            float dx = dotX(dot) - left, y = dotY(dot);
+            if (line.isEmpty()) {
+                if (dx > .72f * gap) return -1;
+                if (y >= box.top + .25f * gap && y <= box.top + .72f * gap) line.add(dot);
+                continue;
+            }
+            var prior = line.get(line.size() - 1);
+            float advance = dotX(dot) - dotX(prior);
+            if (Math.abs(y - dotY(prior)) > .24f * gap) continue;
+            if (advance > .80f * gap) {
+                if (advance < 4 * gap) return -1;
+                break;
+            }
+            if (advance < .33f * gap) continue;
+            line.add(dot);
+        }
+        if (line.size() < 34) return -1;
+        var first = line.get(0);
+        var last = line.get(line.size() - 1);
+        float advance = dotX(last) - dotX(first), rise = dotY(first) - dotY(last);
+        if (advance < 19 * gap || advance > 25 * gap || rise < .55f * gap || rise > 1.1f * gap)
+            return -1;
+        var tail = line.subList(line.size() / 2, line.size());
+        if (tail.stream().anyMatch(dot -> Math.abs(dotY(dot) - dotY(last)) > .18f * gap)
+                || hookDirection(
+                                gray,
+                                width,
+                                height,
+                                last.right + gap * .55f,
+                                last.top,
+                                last.bottom,
+                                gap)
+                        != 0) return -1;
+        return last.right;
+    }
+
+    private record SlopingDyad(BeamStartHead upper, BeamStartHead lower) {
+        float x() {
+            return (upper.x + lower.x) * .5f;
+        }
+    }
+
+    /** An open-looking ink end only closes when two independent beams and both written pitches agree. */
+    private static Span slopingOctaveOwners(
+            byte[] gray,
+            int width,
+            int height,
+            SlopingOctave direction,
+            List<PlayingTechniqueDetector.Staff> staffs,
+            List<MeasureRegion> measures,
+            List<ScoreNoteEvent> notes) {
+        float gap = direction.staff.gap(), start = direction.numeral.left, end = direction.end;
+        var heads = new ArrayList<BeamStartHead>();
+        for (var n : notes) {
+            if (n.kind() != ScoreNoteEvent.Kind.PITCHED
+                    || n.visualSize() != ScoreNoteEvent.VisualSize.FULL
+                    || n.measureIndex() < 0
+                    || n.measureIndex() >= measures.size()
+                    || n.staffIndex() != direction.staff.index()
+                    || n.staffCount() != direction.staff.count()) continue;
+            float x = x(n, measures, width);
+            if (x >= start - 6 * gap
+                    && x <= end + 6 * gap
+                    && onStaff(n, direction.staff, staffs, measures, height))
+                heads.add(new BeamStartHead(n, x));
+        }
+        heads.sort(Comparator.comparingDouble(BeamStartHead::x));
+        if (heads.size() % 2 != 0) return null;
+        var dyads = new ArrayList<SlopingDyad>();
+        int first = -1, last = -1;
+        for (int i = 0; i < heads.size(); i += 2) {
+            var a = heads.get(i);
+            var b = heads.get(i + 1);
+            var pair =
+                    a.note.pageY() < b.note.pageY() ? new SlopingDyad(a, b) : new SlopingDyad(b, a);
+            float separation = (pair.lower.note.pageY() - pair.upper.note.pageY()) * height;
+            if (b.x - a.x > .21f * gap
+                    || separation < 3.1f * gap
+                    || separation > 3.9f * gap
+                    || a.note.measureIndex() != b.note.measureIndex()) return null;
+            if (pair.x() >= start && first < 0) first = dyads.size();
+            if (pair.x() <= end) last = dyads.size();
+            dyads.add(pair);
+        }
+        if (first < 2
+                || last < first + 6
+                || last + 2 >= dyads.size()
+                || dyads.get(first).x() - start > gap
+                || end - dyads.get(last).x() > .85f * gap) return null;
+        if (!slopingOctaveBreak(gray, width, height, gap, dyads, first, 1)
+                || !slopingOctaveBreak(gray, width, height, gap, dyads, last + 1, -1)) return null;
+        return new Span(direction.staff, dyads.get(first).x() - .20f * gap, end, 1, false, null, true);
+    }
+
+    private static boolean slopingOctaveBreak(
+            byte[] gray,
+            int width,
+            int height,
+            float gap,
+            List<SlopingDyad> dyads,
+            int index,
+            int direction) {
+        var left = dyads.get(index - 1);
+        var right = dyads.get(index);
+        float advance = right.x() - left.x();
+        if (advance < 1.6f * gap || advance > 3.6f * gap) return false;
+        float upperMove = (right.upper.note.pageY() - left.upper.note.pageY()) * height * direction;
+        float lowerMove = (right.lower.note.pageY() - left.lower.note.pageY()) * height * direction;
+        if (upperMove < 2.55f * gap
+                || upperMove > 3.6f * gap
+                || lowerMove < 2.55f * gap
+                || lowerMove > 3.6f * gap) return false;
+        var shafts = new ArrayList<PrintedBeamShafts.Shaft>(4);
+        var budget = new PrintedBeamShafts.Budget(180_000);
+        for (int i = index - 2; i <= index + 1; i++) {
+            var dyad = dyads.get(i);
+            if (dyad.upper.note.beamCount() != 2
+                    || dyad.lower.note.beamCount() != 2
+                    || dyad.upper.note.stemDirection() != -1
+                    || dyad.lower.note.stemDirection() != -1) return false;
+            var low = dyad.lower;
+            var ink =
+                    PrintedBeamShafts.at(
+                            gray, width, height, low.x, low.note.pageY() * height, gap, budget);
+            if (ink.size() != 1 || ink.get(0).direction() != 1) return false;
+            shafts.add(ink.get(0));
+        }
+        return WrappedEighthTriplets.matchesBeamRails(
+                        gray, width, height, shafts.get(0), shafts.get(1), gap, 2)
+                && WrappedEighthTriplets.matchesBeamRails(
+                        gray, width, height, shafts.get(1), shafts.get(2), gap, 0)
+                && WrappedEighthTriplets.matchesBeamRails(
+                        gray, width, height, shafts.get(2), shafts.get(3), gap, 2);
+    }
+
+    /** Confirm a compact horizontal dotted line turning toward its staff at a detached tip. */
+    private static float compactDottedReturn(
+            byte[] gray, int width, int height, InkBox box, float gap) {
+        int span = box.right - box.left + 1, tall = box.bottom - box.top + 1;
+        if (gap < 10
+                || gap > 24
+                || span < gap * 1.12f
+                || span > gap * 2.0f
+                || tall < gap * 1.40f
+                || tall > gap * 2.2f
+                || OctaveClefDigit.holes(gray, width, box.left, box.top, span, tall) != 2)
+            return -1;
+        int left = box.right, top = Math.round(box.top - gap * .25f);
+        int right = Math.min(width - 1, left + Math.round(gap * 10));
+        int bottom = Math.round(box.top + gap * 2.2f);
+        if (top < 0 || bottom >= height || right - left < gap * 5) return -1;
+        var components =
+                RawNumeralComponents.capture(
+                        gray, width, height, left, top, right, bottom, 165, () -> {}, () -> {});
+        var dots = dottedComponents(components, gap, .74f);
+        if (dots.size() < 11) return -1;
+        for (var dot : dots) {
+            float y = dotY(dot);
+            if (dot.left - left > .47f * gap) break;
+            if (y < box.top + .21f * gap || y > box.top + .76f * gap) continue;
+            var last = dot;
+            int count = 1;
+            for (var next : dots) {
+                if (dotX(next) <= dotX(last) || Math.abs(dotY(next) - y) > gap * .33f) continue;
+                float step = dotX(next) - dotX(last);
+                if (step > gap * .86f) break;
+                if (step < gap * .34f) continue;
+                last = next;
+                count++;
+            }
+            float length = last.right - left;
+            if (count < 10 || length < gap * 4.7f || length > gap * 9.3f) continue;
+            boolean down = false, up = false;
+            for (var tooth : dots) {
+                if (tooth == last
+                        || Math.abs(dotX(tooth) - dotX(last)) > gap * .29f
+                        || tooth.bottom - tooth.top + 1 < gap * .24f) continue;
+                float offset = dotY(tooth) - dotY(last);
+                if (offset >= gap * .39f && offset <= gap * 1.08f && tooth.bottom - y >= gap * .69f)
+                    down = true;
+                if (offset <= -gap * .39f && offset >= -gap * .99f) up = true;
+            }
+            if (down && !up) return last.right + gap * .4f;
+        }
+        return -1;
+    }
+
+    /** Dense printed dots may touch in the row scanner. Follow their full ink components. */
+    private static DottedRibbon longClosedDottedRibbon(
+            byte[] gray, int width, int height, InkBox numeral, float gap) {
+        if (gap < 10 || gap > 24) return null;
+        int left = numeral.right + 1;
+        int top = Math.round(numeral.top - .35f * gap);
+        int bottom = Math.round(numeral.top + 1.04f * gap);
+        int right = Math.min(width - 1, left + Math.round(gap * 78));
+        int leadRight = Math.min(right, left + Math.round(gap * 3.5f));
+        if (top < 0 || bottom >= height || leadRight <= left) return null;
+        var lead =
+                RawNumeralComponents.capture(
+                        gray, width, height, left, top, leadRight, bottom, 164, () -> {}, () -> {});
+        var earlyDots = dottedComponents(lead, gap, .74f);
+        var first =
+                earlyDots.stream()
+                        .filter(
+                                dot ->
+                                        dot.left - left <= gap * .48f
+                                                && dotY(dot) >= numeral.top + gap * .10f
+                                                && dotY(dot) <= numeral.top + gap * .72f)
+                        .findFirst()
+                        .orElse(null);
+        if (first == null || earlyDots.size() < 4) return null;
+
+        var line = new ArrayList<RawNumeralComponents.Component>();
+        line.add(first);
+        int fused = 0;
+        float center = dotY(first);
+        for (var dot : wideDottedComponents(gray, width, height, left, top, right, bottom, gap)) {
+            float y = dotY(dot);
+            var prior = line.get(line.size() - 1);
+            int space = dot.left - prior.right - 1;
+            if (space < 1
+                    || Math.abs(y - center) > gap * .76f
+                    || Math.abs(y - dotY(prior)) > gap * .22f) continue;
+            if (space > gap * .47f) break;
+            if (dot.right - dot.left + 1 > gap * .74f) fused++;
+            line.add(dot);
+        }
+        var last = line.get(line.size() - 1);
+        float edge = last.right + gap * .55f;
+        if (last.right - first.left < gap * 21)
+            return bareEightShape(gray, width, numeral, gap)
+                            && (fused == 0 && compactDottedRibbonHasClosedEnd(gray, width, height, line, gap)
+                                    || fused == 1 && denseRibbonHasOffsetReturn(gray, width, height, line, gap))
+                    ? new DottedRibbon(edge, line)
+                    : null;
+        if (line.size() < 27 || fused * 8 > line.size()) return null;
+        if (hookDirection(gray, width, height, edge, last.top, last.bottom, gap) <= 0) return null;
+        return new DottedRibbon(edge, line);
+    }
+
+    /** Verify a short, still-open dotted line ends on an independent final staff rule. */
+    private static SystemRibbonEnd shortOpenDottedStaffEdge(
+            byte[] gray, int width, int height, InkBox box, PlayingTechniqueDetector.Staff staff) {
+        float gap = staff.gap();
+        int wide = box.right - box.left + 1, tall = box.bottom - box.top + 1;
+        if (gap < 10
+                || gap > 24
+                || box.right < width * .75f
+                || wide < gap * 1.1f
+                || wide > gap * 2.1f
+                || tall < gap * 1.4f
+                || tall > gap * 2.2f
+                || OctaveClefDigit.holes(gray, width, box.left, box.top, wide, tall) != 2)
+            return null;
+        var ribbon = traceSystemDottedEnd(gray, width, height, box, staff, .46f, 6, true);
+        return ribbon != null && ribbon.continuesAtStaffEdge && ribbon.right - box.right <= 11 * gap
+                ? ribbon
+                : null;
+    }
+
+    /** A densely spaced line may join two horizontal dots before a short, staggered downward return. */
+    private static boolean denseRibbonHasOffsetReturn(
+            byte[] gray, int width, int height, List<RawNumeralComponents.Component> dots, float gap) {
+        var first = dots.get(0);
+        var last = dots.get(dots.size() - 1);
+        if (dots.size() < 30 || last.right - first.left < gap * 16) return false;
+        int fused = 0;
+        var prior = first;
+        for (int i = 0; i < dots.size(); i++) {
+            var dot = dots.get(i);
+            int wide = dot.right - dot.left + 1;
+            if (wide > gap * .62f
+                    && (i < 4 || i + 4 >= dots.size() || wide > gap * 1.12f || ++fused > 1)) return false;
+            if (dot.bottom - dot.top + 1 > gap * .43f
+                    || Math.abs(dotY(dot) - dotY(first)) > gap * .30f
+                    || (i > 0 && dot.left - prior.right - 1 > gap * .35f)) return false;
+            prior = dot;
+        }
+        if (fused != 1 || last.right + gap * 1.2f >= width) return false;
+        for (int y = last.top; y <= last.bottom; y++) {
+            if (!endsHorizontalDashes(gray, width, last.right, y, gap)) continue;
+            boolean open = true;
+            for (int x = last.right + 1; x <= last.right + Math.round(gap); x++)
+                open &= (gray[y * width + x] & 255) >= 165;
+            if (open && joinedDashHookDirection(gray, width, height, last.right, y, y, gap) == 1) return true;
+        }
+        return false;
+    }
+
+    /** Follow the regular dot rail past intersecting notation to its printed endpoint. */
+    private static SystemRibbonEnd fullSystemDottedEnd(
+            byte[] gray, int width, int height, InkBox numeral, PlayingTechniqueDetector.Staff staff) {
+        var ordinary = traceSystemDottedEnd(gray, width, height, numeral, staff, .18f, 44, true);
+        if (ordinary != null) return ordinary;
+        var closed = traceSystemDottedEnd(gray, width, height, numeral, staff, .46f, 39, false);
+        if (closed != null) return closed;
+        var continued = traceSystemDottedEnd(gray, width, height, numeral, staff, .31f, 44, true);
+        if (continued != null && continued.continuesAtStaffEdge) return continued;
+        // One column of sampling can move the tile edge onto a crossing stroke.
+        var shifted = traceSystemDottedEnd(gray, width, height, numeral, staff, .31f, 44, true, -1);
+        if (shifted != null && shifted.continuesAtStaffEdge) return shifted;
+        // A shorter repeated line can still end at a ruled staff edge or at a literal downward turn.
+        return bareEightShape(gray, width, numeral, staff.gap())
+                ? traceSystemDottedEnd(gray, width, height, numeral, staff, .18f, 24, true)
+                : null;
+    }
+
+    private static SystemRibbonEnd traceSystemDottedEnd(byte[] gray, int width, int height, InkBox numeral,
+            PlayingTechniqueDetector.Staff staff, float initialRadius, int minimumSpan, boolean allowOpen) {
+        return traceSystemDottedEnd(gray, width, height, numeral, staff, initialRadius, minimumSpan, allowOpen, 0);
+    }
+
+    private static SystemRibbonEnd traceSystemDottedEnd(byte[] gray, int width, int height, InkBox numeral,
+            PlayingTechniqueDetector.Staff staff, float initialRadius, int minimumSpan, boolean allowOpen,
+            int tileStepAdjustment) {
+        float gap = staff.gap();
+        if (gap < 10 || gap > 24 || staff.count() != 1
+                || staff.top() - numeral.bottom < gap * 2) return null;
+        int first = numeral.right + 1;
+        int initialRow = numeral.top + Math.round(gap * .29f), row = initialRow;
+        int tileWidth = Math.round(gap * 4.25f), step = Math.round(gap * 2.65f) + tileStepAdjustment;
+        int radius = Math.round(gap * .18f), drift = Math.round(gap * .65f);
+        if (initialRow - drift < 0 || initialRow + drift >= height) return null;
+        int last = -1;
+        for (int start = first; start + tileWidth < width; start += step) {
+            int strongestCount = 0, strongestRow = row, rightmost = -1;
+            int range = last < 0 ? Math.round(initialRadius * gap) : radius;
+            for (int y = Math.max(initialRow - drift, row - range);
+                    y <= Math.min(initialRow + drift, row + range); y++) {
+                int before = -1, count = 0, regularSteps = 0, edge = -1;
+                for (int x = start, stop = start + tileWidth; x < stop; ) {
+                    while (x < stop && (gray[y * width + x] & 255) >= 165) x++;
+                    int inkStart = x;
+                    while (x < stop && (gray[y * width + x] & 255) < 165) x++;
+                    int length = x - inkStart;
+                    if (inkStart == start || x == stop
+                            || length < Math.round(gap * .19f) || length > gap * .65f) continue;
+                    if (before >= 0 && inkStart - before >= gap * .34f && inkStart - before <= gap * .77f)
+                        regularSteps++;
+                    before = inkStart;
+                    count++;
+                    edge = x - 1;
+                }
+                if (regularSteps < 2 || count < strongestCount
+                        || count == strongestCount
+                                && Math.abs(y - row) >= Math.abs(strongestRow - row)) continue;
+                strongestCount = count;
+                strongestRow = y;
+                rightmost = edge;
+            }
+            if (strongestCount < 4) {
+                // An incomplete final tile may have only three intact dots before the turn.
+                if (strongestCount == 3 && last - first >= gap * minimumSpan
+                        && rightmost > last && rightmost - last <= gap * 1.8f) {
+                    last = rightmost;
+                    row = strongestRow;
+                }
+                break;
+            }
+            last = Math.max(last, rightmost);
+            row = strongestRow;
+        }
+        if (last - first < gap * minimumSpan) return null;
+        float right = last + gap * .55f;
+        int hook = hookDirection(gray, width, height, right, row - 2, row + 2, gap);
+        if (hook != 0) return hook > 0 ? new SystemRibbonEnd(right, false) : null;
+        if (deepDottedTerminal(gray, width, height, last, row, gap)
+                || !allowOpen && joinedDeepDottedTerminal(gray, width, height, last, row, gap))
+            return new SystemRibbonEnd(right, false);
+        return allowOpen && ribbonReachesStaffEdge(gray, width, height, staff, last)
+                ? new SystemRibbonEnd(right, true) : null;
+    }
+
+    /** Two separate downward dashes can bracket a slur crossing the third terminal dot. */
+    private static float octaveReturnAcrossSlur(byte[] gray, int width, int height, InkBox numeral, float gap) {
+        if (gap < 10 || gap > 24) return -1;
+        float right = dashEnd(gray, width, height, numeral.right + 1, numeral.top, numeral.bottom, gap, 20);
+        if (right - numeral.right < gap * 12 || right - numeral.right > gap * 23) return -1;
+        int end = Math.round(right - gap * .55f);
+        int left = Math.round(end - gap * 2), far = Math.round(end + gap * 2.2f);
+        int top = Math.round(numeral.top - gap * .10f), bottom = Math.round(numeral.top + gap * 2.7f);
+        if (left < 3 || far >= width || top < 0 || bottom >= height) return -1;
+        var field = RawNumeralComponents.capture(gray, width, height, left, top, far, bottom,
+                165, () -> {}, () -> {});
+        var dots = dottedComponents(field, gap, .46f);
+        for (var corner : dots) {
+            float x = dotX(corner), y = dotY(corner);
+            if (x - end < gap * .18f || x - end > gap * .53f
+                    || y - numeral.top < gap * .28f || y - numeral.top > gap * .65f) continue;
+            var second = alignedTerminalDot(dots, x, y + gap * .56f, gap);
+            var last = alignedTerminalDot(dots, x, y + gap * 1.70f, gap);
+            if (second == null || last == null) continue;
+            int anchor = Math.round(x), row = Math.round(y);
+            if (!crossingBetweenTerminalDots(field, width, anchor, row, gap)) continue;
+            return Math.max(right, last.right + gap * .30f);
+        }
+        return -1;
+    }
+
+    private static RawNumeralComponents.Component alignedTerminalDot(
+            List<RawNumeralComponents.Component> dots, float x, float y, float gap) {
+        return dots.stream().filter(d -> Math.abs(dotX(d) - x) <= gap * .16f
+                        && Math.abs(dotY(d) - y) <= gap * .14f
+                        && d.bottom - d.top + 1 >= gap * .22f)
+                .findFirst().orElse(null);
+    }
+
+    private static boolean crossingBetweenTerminalDots(RawNumeralComponents field, int width,
+            int x, int row, float gap) {
+        int top = row + Math.round(gap * .89f), bottom = row + Math.round(gap * 1.36f);
+        for (var component : field.components()) {
+            if (component.left >= x - gap * .85f || component.right <= x + gap * .85f) continue;
+            int first = field.bottom, last = field.top, ink = 0;
+            for (int i = 0; i < component.size(); i++) {
+                int pixel = component.pixel(i);
+                if (pixel % width != x) continue;
+                int y = pixel / width;
+                first = Math.min(first, y);
+                last = Math.max(last, y);
+                ink++;
+            }
+            if (first >= top && last <= bottom && ink >= gap * .19f
+                    && ink <= gap * .44f && ink == last - first + 1) return true;
+        }
+        return false;
+    }
+
+    private static boolean deepDottedTerminal(
+            byte[] gray, int width, int height, int end, int row, float gap) {
+        int reach = Math.round(gap * .34f), heightReach = Math.round(gap * .18f);
+        for (int x = Math.max(3, end - reach); x < Math.min(width - 1, end + reach); x++) {
+            for (int y = Math.max(0, row - heightReach); y <= Math.min(height - 1, row + heightReach); y++) {
+                if (!endsHorizontalDashes(gray, width, x, y, gap)
+                        || hasDottedHook(gray, width, height, x, y, -1, gap)) continue;
+                if (hasDottedHook(gray, width, height, x, y, 1, gap, 4, .57f)
+                        && hasDottedHook(gray, width, height, x + 1, y, 1, gap, 4, .57f)) return true;
+            }
+        }
+        return false;
+    }
+
+    /** Bold printing can join the middle dots within the centre of a four-dash terminal. */
+    private static boolean joinedDeepDottedTerminal(
+            byte[] gray, int width, int height, int end, int row, float gap) {
+        int reach = Math.round(gap * .34f), vertical = Math.round(gap * .22f);
+        int maxDistance = Math.round(gap * .25f);
+        for (int y = Math.max(0, row - vertical); y <= Math.min(height - 1, row + vertical); y++) {
+            int first = -1;
+            for (int x = Math.max(3, end - reach); x < Math.min(width - 1, end + reach); x++) {
+                if (!endsHorizontalDashes(gray, width, x, y, gap)
+                        || hasDottedHook(gray, width, height, x, y, -1, gap)
+                        || !hasDottedHook(gray, width, height, x, y, 1, gap, 4, .57f, 2.8f, 1)) continue;
+                if (first >= 0 && x - first <= maxDistance) return true;
+                first = x;
+            }
+        }
+        return false;
+    }
+
+    private static boolean ribbonReachesStaffEdge(
+            byte[] gray, int width, int height, PlayingTechniqueDetector.Staff staff, int ribbonEnd) {
+        if (ribbonEdgeOnRuledFrame(gray, width, height, staff, ribbonEnd)) return true;
+        float gap = staff.gap();
+        var measured = PrintedDirectionStaff.printedRules(
+                gray, width, height, ribbonEnd - gap * 2.25f, staff.bottom(), gap);
+        if (measured == null) {
+            // The bilateral window at the right edge can fall past the last printed rule.
+            // Fit from farther inside the same staff, then verify all its rules at the edge.
+            measured = PrintedDirectionStaff.printedRules(
+                    gray, width, height, ribbonEnd - gap * 4.35f, staff.bottom(), gap);
+        }
+        if (measured == null || Math.abs(measured[0] - staff.bottom()) > gap * .38f
+                || Math.abs(measured[1] - gap) > gap * .07f) return false;
+        var fitted = new PlayingTechniqueDetector.Staff(measured[0] - measured[1] * 4,
+                measured[0], measured[1], staff.index(), staff.count());
+        return ribbonEdgeOnRuledFrame(gray, width, height, fitted, ribbonEnd);
+    }
+
+    private static boolean ribbonEdgeOnRuledFrame(
+            byte[] gray, int width, int height, PlayingTechniqueDetector.Staff staff, int ribbonEnd) {
+        float gap = staff.gap();
+        int top = Math.round(staff.top()), bottom = Math.round(staff.bottom());
+        int left = Math.max(1, ribbonEnd - Math.round(gap * .65f));
+        int right = Math.min(width - 1, ribbonEnd + Math.round(gap * .85f));
+        int offset = Math.round(gap * .85f), length = Math.round(gap * 1.35f);
+        int radius = Math.round(gap * .23f);
+        if (left <= offset + length || right + offset + length >= width
+                || top < radius || bottom + radius >= height) return false;
+        for (int x = left; x <= right; x++) {
+            int vertical = 0;
+            for (int y = top; y <= bottom; y++)
+                if ((gray[y * width + x] & 255) < 165) vertical++;
+            if (vertical < (bottom - top) * .86f) continue;
+            int before = 0, after = 0;
+            for (int rule = 0; rule <= 4; rule++) {
+                int y = Math.round(staff.top() + rule * gap);
+                before += ribbonEdgeRule(gray, width, x - offset - length, length, y, radius) ? 1 : 0;
+                after += ribbonEdgeRule(gray, width, x + offset, length, y, radius) ? 1 : 0;
+            }
+            if (before == 5 && after == 0) return true;
+        }
+        return false;
+    }
+
+    private static boolean ribbonEdgeRule(
+            byte[] gray, int width, int left, int length, int y, int radius) {
+        for (int row = y - radius; row <= y + radius; row++) {
+            int ink = 0;
+            for (int x = left; x < left + length; x++)
+                if ((gray[row * width + x] & 255) < 165) ink++;
+            if (ink >= length * .80f) return true;
+        }
+        return false;
+    }
+
+    /** A short octave line needs a regular rail and a single complete, downward turn. */
+    private static boolean compactDottedRibbonHasClosedEnd(
+            byte[] gray,
+            int width,
+            int height,
+            List<RawNumeralComponents.Component> dots,
+            float gap) {
+        var first = dots.get(0);
+        var last = dots.get(dots.size() - 1);
+        float span = last.right - first.left;
+        if (dots.size() < 12 || span < gap * 6.5f) return false;
+        int turns = dots.size() < 24 || span < gap * 12 ? 2 : 3;
+        var prior = first;
+        for (var dot : dots) {
+            if (dot.right - dot.left + 1 > gap * .62f
+                    || dot.bottom - dot.top + 1 > gap * .43f
+                    || Math.abs(dotY(dot) - dotY(first)) > gap * .36f
+                    || (dot != first && dot.left - prior.right - 1 > gap * .32f)) return false;
+            prior = dot;
+        }
+        int terminal = -1, columns = 0;
+        for (int x = last.left; x <= last.right; x++) {
+            boolean down = false;
+            for (int y = last.top; y <= last.bottom; y++) {
+                if (!endsHorizontalDashes(gray, width, x, y, gap)) continue;
+                if (hasDottedHook(gray, width, height, x, y, -1, gap, turns)) return false;
+                down |= hasDottedHook(gray, width, height, x, y, 1, gap, turns);
+            }
+            if (!down) continue;
+            if (terminal >= 0 && x != terminal + 1) return false;
+            terminal = x;
+            columns++;
+        }
+        return columns >= 2;
+    }
+
+    private static List<RawNumeralComponents.Component> wideDottedComponents(
+            byte[] gray,
+            int width,
+            int height,
+            int left,
+            int top,
+            int right,
+            int bottom,
+            float gap) {
+        var dots = new java.util.HashMap<InkBox, RawNumeralComponents.Component>();
+        int band = 16384 / (bottom - top + 1), overlap = Math.round(gap * 2.4f);
+        for (int start = left; start < right; start += band - overlap) {
+            int end = Math.min(start + band - 1, right);
+            var frame =
+                    RawNumeralComponents.capture(
+                            gray, width, height, start, top, end, bottom, 164, () -> {}, () -> {});
+            for (var dot : dottedComponents(frame, gap, 1.78f))
+                dots.putIfAbsent(
+                        new InkBox(dot.left, dot.top, dot.right, dot.bottom, dot.size()), dot);
+            if (end == right) break;
+        }
+        return dots.values().stream()
+                .sorted(
+                        Comparator.comparingInt((RawNumeralComponents.Component d) -> d.left)
+                                .thenComparingInt(d -> d.top))
+                .toList();
+    }
+
+    /** A descending slur may merge several dots while leaving both halves and the end hook intact. */
+    private static DottedRibbon dottedRibbonAcrossSlur(
+            byte[] gray, int width, int height, InkBox numeral, float gap) {
+        if (gap < 10 || gap > 24) return null;
+        int left = numeral.right + 1, top = Math.round(numeral.top - .86f * gap);
+        int right = Math.min(width - 1, left + Math.round(gap * 10));
+        int bottom = Math.round(numeral.top + 1.63f * gap);
+        if (left >= right || top < 0 || bottom >= height) return null;
+        var around =
+                RawNumeralComponents.capture(
+                        gray, width, height, left, top, right, bottom, 164, () -> {}, () -> {});
+        var prefix = new ArrayList<RawNumeralComponents.Component>();
+        for (var dot : dottedComponents(around, gap, .70f)) {
+            float y = dotY(dot);
+            if (prefix.isEmpty()) {
+                if (dot.left - left > gap * .42f) return null;
+                if (y < numeral.top + gap * .13f || y > numeral.top + gap * .62f) continue;
+            } else {
+                var prior = prefix.get(prefix.size() - 1);
+                float advance = dotX(dot) - dotX(prior);
+                if (Math.abs(dotY(prior) - y) > gap * .24f || advance < gap * .38f) continue;
+                if (advance > gap * .80f) {
+                    if (prefix.size() < 3 || advance > gap * 3.25f) return null;
+                    if (crossesSlur(around, prefix, dot, width, gap, false))
+                        return finishCrossedRibbon(gray, width, height, prefix, dot, gap, 9, false);
+                    if (prefix.size() >= 6 && crossesSlur(around, prefix, dot, width, gap, true))
+                        return finishCrossedRibbon(gray, width, height, prefix, dot, gap, 8, false);
+                    if (prefix.size() >= 5 && shallowDescendingSlur(around, prior, dot, width, gap))
+                        return finishCrossedRibbon(gray, width, height, prefix, dot, gap, 10, true);
+                    return null;
+                }
+            }
+            prefix.add(dot);
+        }
+        return null;
+    }
+
+    private static boolean crossesSlur(
+            RawNumeralComponents ink,
+            List<RawNumeralComponents.Component> prefix,
+            RawNumeralComponents.Component resume,
+            int width,
+            float gap,
+            boolean slurEndsAfterCrossing) {
+        float priorX = dotX(prefix.get(prefix.size() - 1)), nextX = dotX(resume);
+        int center =
+                Math.round(
+                        (float)
+                                prefix.stream()
+                                        .mapToDouble(OctaveMarkDetector::dotY)
+                                        .average()
+                                        .orElseThrow());
+        int top = center - Math.round(gap * .51f);
+        int bottom = center + Math.round(gap * (slurEndsAfterCrossing ? .23f : .52f));
+        for (var component : ink.components()) {
+            if (component.top > top || component.bottom < bottom) continue;
+            if (slurEndsAfterCrossing
+                    && (component.bottom < center + gap * .28f
+                            || component.bottom > center + gap * .45f
+                            || component.right > nextX - gap * .22f)) continue;
+            int topCount = 0, middleCount = 0, bottomCount = 0, topX = 0, bottomX = 0;
+            for (int i = 0; i < component.size(); i++) {
+                int pixel = component.pixel(i), row = pixel / width;
+                if (row == top) {
+                    topCount++;
+                    topX += pixel % width;
+                } else if (row == center) {
+                    middleCount++;
+                } else if (row == bottom) {
+                    bottomCount++;
+                    bottomX += pixel % width;
+                }
+            }
+            if (topCount == 0
+                    || bottomCount == 0
+                    || topCount > gap * .92f
+                    || bottomCount > gap * .92f) continue;
+            // An ending slur must join a broad run of dots and taper below the rail.
+            if (slurEndsAfterCrossing
+                    && (middleCount < gap * .9f
+                            || middleCount > gap * 2.1f
+                            || bottomCount > topCount * .75f)) continue;
+            float upper = topX / (float) topCount, lower = bottomX / (float) bottomCount;
+            if (upper >= priorX - gap * 1.5f
+                    && lower <= nextX + gap * .68f
+                    && lower - upper >= gap * .68f
+                    && lower - upper <= gap * 3.05f) return true;
+        }
+        return false;
+    }
+
+    /** Count only the local slur between the interrupted and resumed dots. */
+    private static boolean shallowDescendingSlur(RawNumeralComponents ink,
+            RawNumeralComponents.Component before, RawNumeralComponents.Component after,
+            int width, float gap) {
+        float first = dotX(before), next = dotX(after);
+        int center = Math.round((dotY(before) + dotY(after)) * .5f);
+        int high = center - Math.round(gap * .44f), low = center + Math.round(gap * .28f);
+        float left = first - gap * .80f, right = next + gap * .85f;
+        for (var component : ink.components()) {
+            if (component.top > high || component.bottom < low
+                    || component.left > first || component.right < next - gap * .3f) continue;
+            int upperInk = 0, lowerInk = 0, centerInk = 0, upperX = 0, lowerX = 0;
+            for (int i = 0; i < component.size(); i++) {
+                int pixel = component.pixel(i);
+                int row = pixel / width, column = pixel % width;
+                if (column < left || column > right) continue;
+                if (row == high) {
+                    upperInk++;
+                    upperX += column;
+                } else if (row == low) {
+                    lowerInk++;
+                    lowerX += column;
+                } else if (row == center) {
+                    centerInk++;
+                }
+            }
+            if (upperInk < gap * .38f || upperInk > gap * 1.2f
+                    || centerInk < gap * .82f || centerInk > gap * 1.65f
+                    || lowerInk < gap * .14f || lowerInk > gap * .48f
+                    || lowerInk > upperInk * .65f) continue;
+            float upper = (float) upperX / upperInk, lower = (float) lowerX / lowerInk;
+            if (Math.abs(upper - first) <= gap * .52f && Math.abs(lower - next) <= gap * .55f
+                    && lower - upper >= gap * 1.2f && lower - upper <= gap * 2.65f) return true;
+        }
+        return false;
+    }
+
+    private static DottedRibbon finishCrossedRibbon(
+            byte[] gray,
+            int width,
+            int height,
+            List<RawNumeralComponents.Component> prefix,
+            RawNumeralComponents.Component resume,
+            float gap,
+            int minimumTailDots,
+            boolean shallowCrossing) {
+        float y = dotY(resume);
+        int left = resume.left - 1,
+                top = Math.round(y - .59f * gap),
+                right = Math.min(width - 1, resume.left + Math.round(gap * 15)),
+                bottom = Math.round(y + .58f * gap);
+        if (left < 0 || left >= right || top < 0 || bottom >= height) return null;
+        var ink =
+                RawNumeralComponents.capture(
+                        gray, width, height, left, top, right, bottom, 164, () -> {}, () -> {});
+        var tail = new ArrayList<RawNumeralComponents.Component>();
+        for (var dot : dottedComponents(ink, gap, 1.08f)) {
+            if (Math.abs(dotY(dot) - y) > gap * .55f) continue;
+            if (tail.isEmpty()) {
+                if (dot.left != resume.left || dot.right != resume.right) return null;
+            } else {
+                var preceding = tail.get(tail.size() - 1);
+                int space = dot.left - preceding.right - 1;
+                if (Math.abs(dotY(dot) - dotY(preceding)) > gap * .23f || space < gap * .06f)
+                    continue;
+                if (space > gap * .44f) break;
+            }
+            tail.add(dot);
+        }
+        if (tail.size() < minimumTailDots) return null;
+        var last = tail.get(tail.size() - 1);
+        float edge = last.right + gap * .55f;
+        boolean fragment = shallowCrossing;
+        if (hookDirection(gray, width, height, edge, last.top, last.bottom, gap) <= 0) {
+            int terminal = joinedDottedTail(gray, width, height, last, gap);
+            if (terminal < 0) return null;
+            edge = Math.max(last.right, terminal) + gap * .55f;
+            fragment = true;
+        }
+        var dots = new ArrayList<>(prefix);
+        dots.addAll(tail);
+        return new DottedRibbon(edge, dots, fragment);
+    }
+
+    private static int joinedDottedTail(byte[] gray, int width, int height,
+            RawNumeralComponents.Component last, float gap) {
+        int end = Math.min(width - 2, last.right + Math.round(gap * .72f));
+        for (int x = end; x >= Math.max(last.left, last.right - 3); x--) {
+            int top = last.top, bottom = Math.min(last.bottom, top + Math.round(gap * .34f));
+            for (int y = top; y <= bottom; y++) {
+                if (!endsHorizontalDashes(gray, width, x, y, gap)) continue;
+                if (hasJoinedDashHook(gray, width, height, x, y, 1, gap, .72f)
+                        && hasJoinedDashHook(gray, width, height, x + 1, y, 1, gap, .72f)
+                        && !hasJoinedDashHook(gray, width, height, x, y, -1, gap, .72f)) return x;
+            }
+        }
+        return -1;
+    }
+
+    private static float earlySlurRibbonEnd(byte[] gray, int width, int height,
+            PlayingTechniqueDetector.Word word, float gap) {
+        var box = new InkBox(Math.round(word.left() * width), Math.round(word.top() * height),
+                Math.round(word.right() * width) - 1, Math.round(word.bottom() * height) - 1, 0);
+        return qualifiedEarlySlurRibbonEnd(gray, width, height, box, gap);
+    }
+
+    private static float qualifiedEarlySlurRibbonEnd(byte[] gray, int width, int height,
+            InkBox box, float gap) {
+        float end = earlySlurRibbonEnd(gray, width, height, box.right, box.top, gap);
+        if (end < 0) return -1;
+        return bareEightShape(gray, width, box, gap)
+                || canRepairEight(gray, width, box, gap) && brokenEightShape(gray, width, box, gap)
+                ? end : -1;
+    }
+
+    /** A slur can cross at the first dots of an otherwise complete short dotted octave line. */
+    static float earlySlurRibbonEnd(byte[] gray, int width, int height,
+            int numeralRight, int numeralTop, float gap) {
+        if (gray == null || gray.length != (long) width * height || !Float.isFinite(gap)
+                || gap < 10 || gap > 24) return -1;
+        int left = numeralRight + 1, top = numeralTop - Math.round(gap * .86f);
+        int right = left + Math.round(gap * 10), bottom = numeralTop + Math.round(gap * 2.45f);
+        if (left < 0 || top < 0 || right >= width || bottom >= height
+                || (long) (right - left + 1) * (bottom - top + 1) > 16_384) return -1;
+        var ink = RawNumeralComponents.capture(gray, width, height, left, top, right, bottom,
+                () -> {}, () -> {});
+        RawNumeralComponents.Component prefix = null, last = null;
+        int tail = 0;
+        for (var dot : dottedComponents(ink, gap, .69f)) {
+            float y = dotY(dot);
+            if (y < numeralTop + gap * .13f || y > numeralTop + gap * .62f) continue;
+            if (prefix == null) {
+                if (dot.left - left > gap * .44f) return -1;
+                prefix = dot;
+                continue;
+            }
+            if (Math.abs(y - dotY(prefix)) > gap * .20f) continue;
+            if (last == null) {
+                float step = dotX(dot) - dotX(prefix);
+                if (step < gap * 1.32f || step > gap * 2.42f
+                        || !slurCrossesInitialDots(ink, prefix, dot, width, gap)) return -1;
+            } else {
+                float step = dotX(dot) - dotX(last);
+                if (step < gap * .38f || step > gap * .74f) return -1;
+            }
+            last = dot;
+            tail++;
+        }
+        if (tail < 8 || last == null || dottedHookDirection(
+                gray, width, height, last.right, last.top, last.bottom, gap) != 1)
+            return -1;
+        return last.right + gap * .55f;
+    }
+
+    private static boolean slurCrossesInitialDots(RawNumeralComponents ink,
+            RawNumeralComponents.Component prefix, RawNumeralComponents.Component resume,
+            int width, float gap) {
+        int center = Math.round(dotY(prefix));
+        int above = center - Math.round(gap * .49f), below = center + Math.round(gap * .25f);
+        for (var component : ink.components()) {
+            if (component.top > above || component.bottom < center + gap * .30f
+                    || component.bottom > center + gap * .51f
+                    || component.left > prefix.left + gap * .23f
+                    || component.right < resume.left - gap * .42f
+                    || component.right > resume.left + gap * .17f) continue;
+            int upperInk = 0, centerInk = 0, lowerInk = 0, upperX = 0, lowerX = 0;
+            for (int i = 0; i < component.size(); i++) {
+                int pixel = component.pixel(i), row = pixel / width;
+                if (row == above) {
+                    upperInk++;
+                    upperX += pixel % width;
+                } else if (row == center) {
+                    centerInk++;
+                } else if (row == below) {
+                    lowerInk++;
+                    lowerX += pixel % width;
+                }
+            }
+            if (upperInk == 0 || lowerInk == 0 || lowerInk > upperInk * .72f
+                    || centerInk < gap * .56f || centerInk > gap * 1.40f) continue;
+            float slope = lowerX / (float) lowerInk - upperX / (float) upperInk;
+            if (slope >= gap * .65f && slope <= gap * 2.15f) return true;
+        }
+        return false;
+    }
+
+
+    private static List<RawNumeralComponents.Component> dottedComponents(
+            RawNumeralComponents field, float gap, float maxWidth) {
+        return field.components().stream()
+                .filter(
+                        dot -> {
+                            int w = dot.right - dot.left + 1, h = dot.bottom - dot.top + 1;
+                            return dot.left > field.left
+                                    && dot.top > field.top
+                                    && dot.right < field.right
+                                    && dot.bottom < field.bottom
+                                    && w >= gap * .16f
+                                    && w <= gap * maxWidth
+                                    && h >= gap * .13f
+                                    && h <= gap * .50f
+                                    && dot.size() >= w * h * .46f;
+                        })
+                .sorted(Comparator.comparingInt(dot -> dot.left))
+                .toList();
+    }
+
+    private static float dotX(RawNumeralComponents.Component dot) {
+        return (dot.left + dot.right) * .5f;
+    }
+
+    private static float dotY(RawNumeralComponents.Component dot) {
+        return (dot.top + dot.bottom) * .5f;
+    }
+
     private static float dashEnd(
             byte[] gray, int width, int height, float start, float top, float bottom, float gap) {
         return dashEnd(gray, width, height, start, top, bottom, gap, 3);
@@ -1635,6 +3543,33 @@ final class OctaveMarkDetector {
         return false;
     }
 
+    /** The apparent augmentation mark belongs to a downward dotted bracket end. */
+    static int hookedOctaveDashBesideHead(
+            byte[] gray, int width, int height, float right, float headX, float headY, float gap) {
+        int reach = Math.round(gap * .40f);
+        int left = Math.round(right) - reach, end = Math.round(right) + reach;
+        int top = Math.round(headY - gap * 2.3f), bottom = Math.round(headY - gap * 1.2f);
+        if (left < 3 || end >= width || top < 0 || headY + gap >= height) return -1;
+        int first = -1, last = -1;
+        for (int x = left; x <= end; x++) {
+            if (x - headX < gap * 1.5f || x - headX > gap * 2.35f) continue;
+            for (int y = top; y <= bottom; y++) {
+                if (!endsHorizontalDashes(gray, width, x, y, gap)
+                        || !hasJoinedDashHook(gray, width, height, x, y, 1, gap)
+                        || hasJoinedDashHook(gray, width, height, x, y, -1, gap)) continue;
+                boolean lastDash = false;
+                for (int yy = Math.round(headY - gap * .22f);
+                        yy <= Math.round(headY + gap * .12f);
+                        yy++) if ((gray[yy * width + x] & 255) < 165) lastDash = true;
+                if (!lastDash) continue;
+                if (first < 0) first = x;
+                last = x;
+                break;
+            }
+        }
+        return first >= 0 && last - first <= gap * .32f ? (first + last) / 2 : -1;
+    }
+
     private static int joinedDashHookDirection(
             byte[] gray, int width, int height, int end, int top, int bottom, float gap) {
         int direction = 0;
@@ -1654,13 +3589,19 @@ final class OctaveMarkDetector {
 
     private static boolean hasJoinedDashHook(
             byte[] gray, int width, int height, int x, int y, int step, float gap) {
+        return hasJoinedDashHook(gray, width, height, x, y, step, gap, .45f);
+    }
+
+    private static boolean hasJoinedDashHook(
+            byte[] gray, int width, int height, int x, int y, int step, float gap, float firstRun) {
+        if (x < 0 || x >= width) return false;
         int maxRun = Math.max(3, Math.round(gap * .45f));
         int minInk = Math.max(2, Math.round(gap * .1f));
         int limit = y + step * Math.round(gap * 2.25f);
         if (limit < 0 || limit >= height) return false;
         int row = y;
         while (row != limit && (gray[row * width + x] & 255) < 165) row += step;
-        if (Math.abs(row - y) > maxRun) return false;
+        if (Math.abs(row - y) > Math.max(3, Math.round(gap * firstRun))) return false;
         // Require separated vertical ink after the horizontal chain's last dash.
         for (int dash = 0; dash < 2; dash++) {
             int start = row;
@@ -1757,6 +3698,124 @@ final class OctaveMarkDetector {
         return Math.max(right, rightmost + gap * .24f);
     }
 
+    /** A downward terminal above an attack binds a bare inter-system numeral to the next staff. */
+    private static SystemRibbonEnd offsetUpperDottedRibbon(InkBox numeral,
+            PlayingTechniqueDetector.Staff preceding, PlayingTechniqueDetector.Staff incoming,
+            List<PlayingTechniqueDetector.Staff> staffs, List<MeasureRegion> measures,
+            List<ScoreNoteEvent> notes, byte[] gray, int width, int height) {
+        float gap = incoming.gap(), lineGap = preceding.gap();
+        if (gap < 10 || gap > 24 || incoming.count() != 1 || preceding.count() != 1
+                || Math.abs(preceding.gap() - gap) > gap * .1f
+                || incoming.top() - numeral.bottom < gap * 3
+                || incoming.top() - numeral.bottom > gap * 7
+                || numeral.top - preceding.bottom() < gap * 3
+                || !bareEightShape(gray, width, numeral, lineGap)) return null;
+        float end = dashEnd(gray, width, height, numeral.right + 1, numeral.top, numeral.bottom, lineGap);
+        if (end - numeral.right < gap * 12
+                || !offsetDownwardDottedHook(gray, width, height, end, numeral, lineGap)) return null;
+        for (var note : notes) {
+            if (note.kind() != ScoreNoteEvent.Kind.PITCHED || note.staffCount() != 1
+                    || note.visualSize() != ScoreNoteEvent.VisualSize.FULL
+                    || (note.articulations() & NoteOrnament.GRACE) != 0) continue;
+            float head = x(note, measures, width);
+            if (head >= numeral.left - gap * .35f && head <= numeral.right + gap * 1.20f
+                    && note.pageY() * height >= numeral.top + gap * 1.4f
+                    && onStaff(note, incoming, staffs, measures, height))
+                return new SystemRibbonEnd(end, false);
+        }
+        return null;
+    }
+
+    /** Dense dotted octave lines can turn after the final horizontal dot. */
+    private static boolean offsetDownwardDottedHook(byte[] gray, int width, int height,
+            float dashRight, InkBox numeral, float gap) {
+        int right = Math.round(dashRight - gap * .55f);
+        int spread = Math.round(gap * .32f);
+        int from = Math.round(numeral.top - gap * .15f);
+        int to = Math.round(numeral.bottom + gap * .21f);
+        if (right - spread < 6 || right + spread * 2 + 2 >= width
+                || from < gap * 2 || to + gap * 2 >= height) return false;
+        for (int y = from; y < to; y++) {
+            for (int x = right - spread; x <= right + spread; x++) {
+                if (!endsHorizontalDashes(gray, width, x, y, gap)
+                        || !endsHorizontalDashes(gray, width, x, y + 1, gap)
+                        || (gray[y * width + x + 1] & 255) < 165) continue;
+                for (int column = x; column <= x + spread; column++) {
+                    if (offsetDotPair(gray, width, column, y, gap, 1)
+                            && offsetDotPair(gray, width, column + 1, y, gap, 1)
+                            && !offsetDotPair(gray, width, column, y, gap, -1)) return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static boolean offsetDotPair(byte[] gray, int width, int column, int baseline,
+            float gap, int direction) {
+        int reach = Math.round(gap * 2);
+        int offset = 0;
+        while (offset < reach && (gray[(baseline + direction * offset) * width + column] & 255) >= 165)
+            offset++;
+        if (offset < gap * .40f || offset > gap * .92f) return false;
+        for (int dot = 0; dot < 2; dot++) {
+            int start = offset;
+            while (offset < reach && (gray[(baseline + direction * offset) * width + column] & 255) < 165)
+                offset++;
+            if (offset - start < gap * .12f || offset - start > gap * .44f) return false;
+            if (dot == 0) {
+                int white = offset;
+                while (offset < reach && (gray[(baseline + direction * offset) * width + column] & 255) >= 165)
+                    offset++;
+                if (offset - white < gap * .16f || offset - white > gap * .46f) return false;
+            }
+        }
+        return true;
+    }
+
+    /** A short dashed octave line can end with two detached downward dashes. */
+    static boolean detachedDownwardDashPair(byte[] gray, int width, int height,
+            float dashRight, float top, float bottom, float gap) {
+        if (gap < 10 || gap > 26) return false;
+        int right = Math.round(dashRight - gap * .55f);
+        int from = Math.round(top - gap * .15f), to = Math.round(bottom + gap * .22f);
+        if (right < 6 || right + 2 >= width || from < 0 || to + gap * 2.35f >= height) return false;
+        for (int y = from; y <= to; y++) {
+            if (!endsHorizontalDashes(gray, width, right, y, gap)
+                    || !endsHorizontalDashes(gray, width, right, y + 1, gap)
+                    || (gray[y * width + right + 1] & 255) < 165) continue;
+            for (int x = right - 1; x <= right; x++) {
+                if (terminalDashPairColumn(gray, width, x, y, gap, 1)
+                        && terminalDashPairColumn(gray, width, x + 1, y, gap, 1)
+                        && (y < gap * 2.35f || !terminalDashPairColumn(gray, width, x, y, gap, -1)))
+                    return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean terminalDashPairColumn(byte[] gray, int width, int x, int y, float gap, int step) {
+        int limit = y + step * Math.round(gap * 2.35f);
+        int row = y;
+        while (row != limit && (gray[row * width + x] & 255) < 165) row += step;
+        if (Math.abs(row - y) > gap * .28f) return false;
+        int blank = row;
+        while (row != limit && (gray[row * width + x] & 255) >= 165) row += step;
+        int jump = Math.abs(row - blank);
+        if (jump < gap * .68f || jump > gap * 1.16f || row == limit) return false;
+        for (int dash = 0; dash < 2; dash++) {
+            int start = row;
+            while (row != limit && (gray[row * width + x] & 255) < 165) row += step;
+            int size = Math.abs(row - start);
+            if (size < gap * .18f || size > gap * .46f || row == limit) return false;
+            blank = row;
+            while (row != limit && (gray[row * width + x] & 255) >= 165) row += step;
+            int pause = Math.abs(row - blank);
+            if (dash == 0 && (row == limit || pause < gap * .15f || pause > gap * .43f)) return false;
+            if (dash == 1 && (row != limit || pause < gap * .22f)) return false;
+        }
+        return true;
+    }
+
     private static boolean endsHorizontalDashes(byte[] gray, int width, int x, int y, float gap) {
         int row = y * width;
         int left = Math.max(1, x - Math.round(gap * 1.2f));
@@ -1769,23 +3828,41 @@ final class OctaveMarkDetector {
 
     private static boolean hasDottedHook(
             byte[] gray, int width, int height, int x, int y, int step, float gap) {
+        return hasDottedHook(gray, width, height, x, y, step, gap, 3);
+    }
+
+    private static boolean hasDottedHook(
+            byte[] gray, int width, int height, int x, int y, int step, float gap, int count) {
+        return hasDottedHook(gray, width, height, x, y, step, gap, count, .45f);
+    }
+
+    private static boolean hasDottedHook(
+            byte[] gray, int width, int height, int x, int y, int step, float gap,
+            int count, float inkFraction) {
+        return hasDottedHook(gray, width, height, x, y, step, gap, count, inkFraction, 2.25f, 2);
+    }
+
+    private static boolean hasDottedHook(
+            byte[] gray, int width, int height, int x, int y, int step, float gap,
+            int count, float inkFraction, float reach, int minimumSpace) {
         int maxRun = Math.max(3, Math.round(gap * .45f));
         int minInk = Math.max(2, Math.round(gap * .1f));
-        int limit = y + step * Math.round(gap * 2.25f);
+        int maxInk = Math.max(maxRun, Math.round(gap * inkFraction));
+        int limit = y + step * Math.round(gap * reach);
         if (limit < 0 || limit >= height) return false;
         int row = y;
         while (row != limit && (gray[row * width + x] & 255) < 165) row += step;
         if (Math.abs(row - y) > maxRun) return false;
-        // Three compact, separated dashes must continue from the horizontal chain's last dash.
-        for (int dash = 0; dash < 3; dash++) {
+        // Separated vertical dots must continue from the last horizontal dot.
+        for (int dash = 0; dash < count; dash++) {
             int start = row;
             while (row != limit && (gray[row * width + x] & 255) >= 165) row += step;
             int space = Math.abs(row - start);
-            if (space < 2 || space > maxRun || row == limit) return false;
+            if (space < minimumSpace || space > maxRun || row == limit) return false;
             start = row;
             while (row != limit && (gray[row * width + x] & 255) < 165) row += step;
             int ink = Math.abs(row - start);
-            if (ink < minInk || ink > maxRun || row == limit) return false;
+            if (ink < minInk || ink > maxInk || row == limit) return false;
         }
         return true;
     }

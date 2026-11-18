@@ -176,6 +176,18 @@ final class ArtificialHarmonics {
             List<MeasureRegion> measures,
             List<ScoreNoteEvent> notes,
             List<PlayingTechniqueDetector.Staff> staffs) {
+        return apply(labels, gray, null, w, h, measures, notes, staffs);
+    }
+
+    static List<ScoreNoteEvent> apply(
+            byte[] labels,
+            byte[] gray,
+            byte[] original,
+            int w,
+            int h,
+            List<MeasureRegion> measures,
+            List<ScoreNoteEvent> notes,
+            List<PlayingTechniqueDetector.Staff> staffs) {
         if (gray == null || notes.isEmpty()) return notes;
         var replacements = new HashMap<ScoreNoteEvent, ScoreNoteEvent>();
         var remove = new HashSet<ScoreNoteEvent>();
@@ -227,6 +239,12 @@ final class ArtificialHarmonics {
                     pairedTouch = upper;
                     break;
                 }
+            if (pairedTouch != null && original != null && original.length == gray.length
+                    && beamedWholeTouch(n, pairedTouch, notes, m, original, gray, w, h, x, y, gap)) {
+                replacements.put(n, n.withOctaveShift(2));
+                remove.add(pairedTouch);
+                continue;
+            }
             boolean strictDiamond = diamond(gray, w, h, x, y - 1.5f * gap, gap);
             boolean symbolTouch =
                     pairedTouch == null
@@ -273,10 +291,17 @@ final class ArtificialHarmonics {
                     ? shaftPairedFourth(gray, w, h, x, y, gap, n, m, notes) : null;
             if (pairedHalfEighth && shaftTouch != pairedTouch) shaftTouch = null;
             boolean shaftPairedTouch = shaftTouch != null;
+            // Raw shared-shaft evidence also applies to a single printed beam. For an
+            // unlabelled touch, require a full stopped eighth and keep the optical proof.
             boolean rawTouch = pairedTouch == null && shaftTouch == null && !strictDiamond
-                    && !symbolTouch && !ruleCrossedTouch && n.beamCount() >= 2
-                    && n.stemDirection() != 0 && unlabelledShaftTouch(gray, w, h, x, y, gap,
-                            n.stemDirection());
+                    && !symbolTouch && !ruleCrossedTouch
+                    && (n.beamCount() >= 2
+                            || n.beamCount() == 1 && n.unbeamedDurationBeats() == 0
+                                    && n.visualSize() == ScoreNoteEvent.VisualSize.FULL
+                                    && !n.crossStaffBeam()
+                                    && labelledTouchRegion(labels, gray, w, h, x, y - 1.5f * gap, gap))
+                    && n.stemDirection() != 0 && unlabelledShaftTouch(
+                            gray, w, h, x, y, gap, n, m, notes);
 
             ScoreNoteEvent quarterTouch = pairedTouch;
             if (quarterTouch == null && n.beamCount() == 0 && n.unbeamedDurationBeats() == 1) {
@@ -358,16 +383,198 @@ final class ArtificialHarmonics {
         return List.copyOf(result);
     }
 
-    private static boolean isolatedQuarterTouch(
-            byte[] labels, byte[] gray, int width, int height, List<MeasureRegion> measures,
-            List<ScoreNoteEvent> notes, ScoreNoteEvent stopped, ScoreNoteEvent touch,
-            MeasureRegion measure, PlayingTechniqueDetector.Staff staff,
-            float x, float y, float gap) {
-        if (stopped.beamCount() != 0 || stopped.unbeamedDurationBeats() != 1
-                || touch.stemDirection() != 0 || touch.beamCount() != 1
-                || touch.unbeamedDurationBeats() != 0
-                || !ordinaryIsolatedHarmonicHead(stopped) || !ordinaryIsolatedHarmonicHead(touch))
+    /** A ledger or a shared shaft can leave a hollow fourth in the whole-head detector. */
+    private static boolean beamedWholeTouch(ScoreNoteEvent stop, ScoreNoteEvent touch,
+            List<ScoreNoteEvent> notes, MeasureRegion measure, byte[] original, byte[] gray,
+            int width, int height, float x, float y, float gap) {
+        if (gap < 10 || gap > 25 || stop.staffIndex() != 0 || stop.staffCount() != 1
+                || touch.staffCount() != 1 || stop.clefBottomDiatonic() != touch.clefBottomDiatonic()
+                || stop.beamCount() != 2 || stop.stemDirection() == 0 || stop.unbeamedDurationBeats() != 0
+                || !ordinaryIsolatedHarmonicHead(stop)
+                || stop.harmonicSemitones() != 0 || stop.openStringTouch() != null
+                || stop.visualSize() != ScoreNoteEvent.VisualSize.FULL
+                || touch.unbeamedDurationBeats() != ScoreNoteEvent.DURATION_WHOLE
+                || touch.visualSize() != ScoreNoteEvent.VisualSize.FULL
+                || touch.stemDirection() != 0 || touch.beamCount() != 0
+                || touch.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_FROM_KEY
+                || touch.augmentationDots() != 0 || touch.tupletDivisor() != 1
+                || touch.articulations() != 0 || touch.boundaryTies() != 0
+                || touch.followingRestBeats() != 0 || touch.leadingRestBeats() != 0 || touch.crossStaffBeam()
+                || touch.octaveShift() != 0 || touch.harmonicSemitones() != 0 || touch.openStringTouch() != null)
             return false;
+        float tx = (measure.left() + touch.positionInMeasure() * (measure.right() - measure.left())) * width;
+        float ty = touch.pageY() * height;
+        for (var other : notes)
+            if (other != stop && other != touch && other.kind() == ScoreNoteEvent.Kind.PITCHED
+                    && other.measureIndex() == stop.measureIndex() && other.staffIndex() == stop.staffIndex()
+                    && Math.abs(other.positionInMeasure() - touch.positionInMeasure())
+                            * (measure.right() - measure.left()) * width <= gap * .48f
+                    && other.pageY() * height >= ty - gap * .30f
+                    && other.pageY() * height <= y + gap * .30f) return false;
+        int direction = stop.stemDirection();
+        return sameBeamedDiamondShaft(original, width, height, x, y, tx, ty, gap, direction)
+                && sameBeamedDiamondShaft(gray, width, height, x, y, tx, ty, gap, direction);
+    }
+
+    private static boolean sameBeamedDiamondShaft(byte[] ink, int width, int height,
+            float x, float y, float tx, float ty, float gap, int direction) {
+        if (!enclosedCounter(ink, width, height, tx, ty, gap * .76f, gap * .25f))
+            return false;
+        var budget = new PrintedBeamShafts.Budget(100_000);
+        var stopped = PrintedBeamShafts.at(ink, width, height, x, y, gap, budget);
+        var raised = PrintedBeamShafts.at(ink, width, height, tx, ty, gap, budget);
+        if (budget.refused() || stopped.size() != 1 || raised.size() != 1) return false;
+        var a = stopped.get(0);
+        var b = raised.get(0);
+        if (a.direction() != -direction || b.direction() != -direction
+                || Math.abs(a.endY() - b.endY()) > gap * .12f) return false;
+        boolean ledger = ledgerJoinedDiamond(ink, width, height, tx, ty, y, gap, direction);
+        int first = Math.max(a.left(), b.left()), last = Math.min(a.right(), b.right());
+        for (int column = first; column <= last; column++) {
+            if (!darkRun(ink, width, height, column, ty - gap * .15f, y - gap * .15f))
+                continue;
+            if (ledger || shaftCrossedDiamond(ink, width, height, tx, ty, gap, column, direction, true))
+                return true;
+        }
+        return false;
+    }
+
+    /** A stemless whole placeholder can be the raised diamond already owned by a beamed harmonic. */
+    static List<ScoreNoteEvent> removeWholeTouchAliases(
+            List<ScoreNoteEvent> notes,
+            List<MeasureRegion> measures,
+            byte[] labels,
+            byte[] normalized,
+            byte[] original,
+            int width,
+            int height) {
+        if (labels == null
+                || normalized == null
+                || original == null
+                || labels.length != (long) width * height
+                || normalized.length != labels.length
+                || original.length != labels.length) return notes;
+        List<ScoreNoteEvent> kept = null;
+        for (int i = 0; i < notes.size(); i++) {
+            var touch = notes.get(i);
+            if (wholeTouchAlias(
+                    touch, notes, measures, labels, normalized, original, width, height)) {
+                if (kept == null) kept = new ArrayList<>(notes.subList(0, i));
+            } else if (kept != null) kept.add(touch);
+        }
+        return kept == null ? notes : List.copyOf(kept);
+    }
+
+    private static boolean wholeTouchAlias(
+            ScoreNoteEvent touch,
+            List<ScoreNoteEvent> notes,
+            List<MeasureRegion> measures,
+            byte[] labels,
+            byte[] normalized,
+            byte[] original,
+            int width,
+            int height) {
+        if (touch.kind() != ScoreNoteEvent.Kind.PITCHED
+                || touch.visualSize() != ScoreNoteEvent.VisualSize.FULL
+                || touch.openStringTouch() != null
+                || touch.harmonicSemitones() != 0
+                || !ordinaryIsolatedHarmonicHead(touch)
+                || touch.staffIndex() != 0
+                || touch.staffCount() != 1
+                || touch.beamCount() != 0
+                || touch.stemDirection() != 0
+                || touch.unbeamedDurationBeats() != ScoreNoteEvent.DURATION_WHOLE
+                || touch.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_FROM_KEY
+                || touch.octaveShift() != 0
+                || touch.articulations() != 0) return false;
+        var measure = measures.get(touch.measureIndex());
+        float span = (measure.right() - measure.left()) * width;
+        float nominal = (measure.bottom() - measure.top()) * height / 8.2f;
+        if (nominal < 10 || nominal > 25) return false;
+        ScoreNoteEvent stop = null;
+        for (var note : notes) {
+            if (note.measureIndex() != touch.measureIndex()
+                    || note.staffIndex() != touch.staffIndex()
+                    || note.staffCount() != touch.staffCount()
+                    || note.staffStep() >= touch.staffStep()
+                    || Math.abs(note.positionInMeasure() - touch.positionInMeasure()) * span
+                            > nominal * .3f
+                    || Math.abs((touch.pageY() - note.pageY()) * height + nominal * 1.75f)
+                            > nominal * .36f) continue;
+            if (stop != null) return false;
+            stop = note;
+        }
+        if (stop == null
+                || stop.kind() != ScoreNoteEvent.Kind.PITCHED
+                || stop.visualSize() != ScoreNoteEvent.VisualSize.FULL
+                || stop.openStringTouch() != null
+                || stop.harmonicSemitones() != 0
+                || !ordinaryIsolatedHarmonicHead(stop)
+                || stop.clefBottomDiatonic() != touch.clefBottomDiatonic()
+                || stop.octaveShift() != 2
+                || stop.stemDirection() != 1
+                || stop.beamCount() < 1
+                || stop.beamCount() > 2
+                || stop.unbeamedDurationBeats() != 0
+                || touch.staffStep() - stop.staffStep() != 4) return false;
+        float left = measure.left() * width;
+        float x = left + stop.positionInMeasure() * span, y = stop.pageY() * height;
+        float tx = left + touch.positionInMeasure() * span, ty = touch.pageY() * height;
+        return ownedWholeTouch(labels, original, width, height, measure, x, y, tx, ty)
+                && ownedWholeTouch(labels, normalized, width, height, measure, x, y, tx, ty);
+    }
+
+    private static boolean ownedWholeTouch(
+            byte[] labels,
+            byte[] gray,
+            int width,
+            int height,
+            MeasureRegion measure,
+            float x,
+            float y,
+            float tx,
+            float ty) {
+        var track = WrappedMeasureBoundaries.verifiedTripletStaff(gray, width, height, measure);
+        if (track == null) return false;
+        float gap = track.at(x)[1];
+        if (!quarterTouchDiamond(labels, gray, width, height, x, y, gap)
+                || !symbolDiamond(labels, gray, width, height, tx, ty, gap)
+                || !joinedQuarterStem(gray, width, height, x, y, gap, 1)) return false;
+        var budget = new PrintedBeamShafts.Budget(100_000);
+        var heads = PrintedBeamShafts.at(gray, width, height, x, y, gap, budget);
+        var touches = PrintedBeamShafts.at(gray, width, height, tx, ty, gap, budget);
+        if (heads.size() != 1 || touches.size() != 1) return false;
+        var a = heads.get(0);
+        var b = touches.get(0);
+        return a.direction() == -1
+                && b.direction() == -1
+                && Math.abs(a.endY() - b.endY()) <= gap * .12f
+                && Math.max(a.left(), b.left()) <= Math.min(a.right(), b.right());
+    }
+
+    static boolean isolatedQuarterTouch(
+            byte[] labels,
+            byte[] gray,
+            int width,
+            int height,
+            List<MeasureRegion> measures,
+            List<ScoreNoteEvent> notes,
+            ScoreNoteEvent stopped,
+            ScoreNoteEvent touch,
+            MeasureRegion measure,
+            PlayingTechniqueDetector.Staff staff,
+            float x,
+            float y,
+            float gap) {
+        boolean wholeLikeTouch =
+                touch.beamCount() == 0
+                        && touch.unbeamedDurationBeats() == ScoreNoteEvent.DURATION_WHOLE;
+        if (stopped.beamCount() != 0
+                || stopped.unbeamedDurationBeats() != 1
+                || touch.stemDirection() != 0
+                || !(wholeLikeTouch || touch.beamCount() == 1 && touch.unbeamedDurationBeats() == 0)
+                || !ordinaryIsolatedHarmonicHead(stopped)
+                || !ordinaryIsolatedHarmonicHead(touch)) return false;
 
         int index = stopped.measureIndex();
         if (index > 0 && !onSameStaff(measure, measures.get(index - 1), height, gap)
@@ -377,12 +584,12 @@ final class ArtificialHarmonics {
         if (notes.stream().filter(note -> note.measureIndex() == index).count() != 2) return false;
 
         float left = measure.left() * width, right = measure.right() * width;
-        if (right - left < gap * 3.5f || right - left > gap * 8
-                || Math.abs(staff.bottom() - touch.pageY() * height) > gap * .7f) return false;
+        if (right - left < gap * 3.5f || right - left > gap * 8) return false;
         var rails = PrintedDirectionStaff.printedRules(
                 gray, width, height, right - 2.6f * gap, staff.bottom(), gap);
         if (rails == null) return false;
         float localGap = rails[1];
+        if (Math.abs(rails[0] - touch.pageY() * height) > localGap * .7f) return false;
         var local = new PlayingTechniqueDetector.Staff(
                 rails[0] - 4 * localGap, rails[0], localGap, 0, 1);
         if (PrintedCadenceDurations.boundaryColumn(
@@ -401,10 +608,171 @@ final class ArtificialHarmonics {
             float tip = direction > 0 ? touchY - localGap * 2.65f : y + localGap * 1.65f;
             if (!unflaggedQuarterTip(gray, width, height, shaft, touchY, y, tip, direction, local))
                 continue;
-            if (shaftCrossedDiamond(
-                    gray, width, height, touchX, touchY, localGap, shaft, direction, true)) return true;
+            if (wholeLikeTouch) {
+                if (joinsWiderQuarterTouch(
+                                gray, width, height, touchX, touchY, shaft, direction, local)
+                        && symbolDiamond(labels, gray, width, height, touchX, touchY, localGap))
+                    return true;
+            } else if (shaftCrossedDiamond(
+                    gray, width, height, touchX, touchY, localGap, shaft, direction, true))
+                return true;
         }
         return false;
+    }
+
+    private static boolean joinsWiderQuarterTouch(
+            byte[] gray,
+            int width,
+            int height,
+            float x,
+            float y,
+            int shaft,
+            int direction,
+            PlayingTechniqueDetector.Staff staff) {
+        float gap = staff.gap();
+        float distance = (shaft - x) * direction;
+        if (distance < gap * .55f || distance > gap * 1.02f) return false;
+        int edge = Math.round(x + direction * gap * .55f);
+        int rows = 0;
+        for (int yy = Math.round(y - gap * .26f); yy <= Math.round(y + gap * .26f); yy++) {
+            float phase = (staff.bottom() - yy) / gap;
+            if (Math.abs(phase - Math.round(phase)) <= .23f) {
+                rows = 0;
+                continue;
+            }
+            boolean joined = true;
+            for (int xx = edge; (shaft - xx) * direction >= 0; xx += direction) {
+                if (!dark(gray, width, height, xx, yy)) {
+                    joined = false;
+                    break;
+                }
+            }
+            rows = joined ? rows + 1 : 0;
+            if (rows == 2) return true;
+        }
+        return false;
+    }
+
+    static ScorePageInterpretation recoverClosedQuarterTouches(ScorePageInterpretation score,
+            byte[] labels, byte[] gray, byte[] source, int width, int height) {
+        if (source == null || gray == null || labels == null || gray.length != (long) width * height
+                || source.length != gray.length || labels.length != gray.length) return score;
+        var bars = score.measures();
+        var groups = new ArrayList<List<Integer>>(bars.size());
+        for (int i = 0; i < bars.size(); i++) groups.add(new ArrayList<>());
+        for (int i = 0; i < score.notes().size(); i++)
+            groups.get(score.notes().get(i).measureIndex()).add(i);
+        var removed = new java.util.BitSet();
+        var replacements = new HashMap<Integer, ScoreNoteEvent>();
+        for (int i = 1; i < bars.size(); i++) {
+            var bar = bars.get(i);
+            var notes = groups.get(i);
+            if (notes.size() < 2 || notes.size() > 3 || bar.cadenceQuarterBeats() != 0
+                    || i + 1 < bars.size() && bars.get(i + 1).top() <= bar.bottom()) continue;
+            float gap = (bar.bottom() - bar.top()) * height / 8.2f;
+            if (gap < 8 || gap > 28 || !onSameStaff(bar, bars.get(i - 1), height, gap)) continue;
+            int index = i;
+            if (score.rests().stream().anyMatch(rest -> rest.measureIndex() == index)) continue;
+            if (!notes.stream().allMatch(owner -> {
+                var n = score.notes().get(owner);
+                return n.kind() == ScoreNoteEvent.Kind.PITCHED && n.visualSize() == ScoreNoteEvent.VisualSize.FULL
+                        && n.staffIndex() == 0 && n.staffCount() == 1 && n.beamCount() == 0
+                        && n.openStringTouch() == null && n.harmonicSemitones() == 0
+                        && n.octaveShift() == 0 && ordinaryIsolatedHarmonicHead(n)
+                        && score.beamSource().noteOrigins().get(owner).isEmpty();
+            })) continue;
+            notes.sort(java.util.Comparator.comparingDouble(owner -> score.notes().get(owner).pageY()));
+            var lower = score.notes().get(notes.get(notes.size() - 1));
+            if (lower.stemDirection() != 1 || lower.unbeamedDurationBeats() != 1) continue;
+            if (notes.size() == 2 && i + 1 < bars.size()) {
+                var touch = score.notes().get(notes.get(0));
+                if (touch.unbeamedDurationBeats() != 1 || touch.stemDirection() != 1
+                        || touch.staffStep() - lower.staffStep() != 3
+                        || touch.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_FROM_KEY) continue;
+                if (closedQuarterTouch(labels, gray, width, height, bar, lower, touch, null)
+                        && closedQuarterTouch(labels, source, width, height, bar, lower, touch, null)) {
+                    removed.set(notes.get(0));
+                    replacements.put(notes.get(1), lower.withOctaveShift(2));
+                }
+            } else if (notes.size() == 3 && i == bars.size() - 1) {
+                var meter = score.meterChanges().stream().filter(change -> change.measureIndex() <= index)
+                        .max(java.util.Comparator.comparingInt(ScoreMeterChange::measureIndex)).orElse(null);
+                if (meter == null || meter.numerator() != 2 || meter.denominator() != 4) continue;
+                var upper = score.notes().get(notes.get(0));
+                var touch = score.notes().get(notes.get(1));
+                if (upper.unbeamedDurationBeats() != 1 || upper.stemDirection() < 0
+                        || upper.staffStep() - lower.staffStep() != 4
+                        || touch.unbeamedDurationBeats() != 2 || touch.stemDirection() != 0
+                        || touch.staffStep() - lower.staffStep() != 2
+                        || touch.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_FROM_KEY) continue;
+                if (closedQuarterTouch(labels, gray, width, height, bar, lower, touch, upper)
+                        && closedQuarterTouch(labels, source, width, height, bar, lower, touch, upper))
+                    removed.set(notes.get(1));
+            }
+        }
+        if (removed.isEmpty()) return score;
+        var retained = new ArrayList<ScoreNoteEvent>();
+        var owners = new ArrayList<Integer>();
+        for (int i = 0; i < score.notes().size(); i++) {
+            if (removed.get(i)) continue;
+            retained.add(replacements.getOrDefault(i, score.notes().get(i)));
+            owners.add(i);
+        }
+        return score.withNotes(retained, owners);
+    }
+
+    private static boolean closedQuarterTouch(byte[] labels, byte[] gray, int width, int height,
+            MeasureRegion bar, ScoreNoteEvent lower, ScoreNoteEvent touch, ScoreNoteEvent upper) {
+        var stopped = upper == null ? List.of(lower) : List.of(lower, upper);
+        if (!PrintedCadenceDurations.closedAfterFit(
+                gray, width, height, bar, stopped, upper == null ? .35f : 0)) return false;
+        float left = bar.left() * width, right = bar.right() * width, span = right - left;
+        float nominal = (bar.bottom() - bar.top()) * height / 8.2f;
+        var rails = PrintedDirectionStaff.printedRules(
+                gray, width, height, right - 2.6f * nominal, bar.bottom() * height - 2.1f * nominal, nominal);
+        if (rails == null) return false;
+        float gap = rails[1];
+        var staff = new PlayingTechniqueDetector.Staff(rails[0] - 4 * gap, rails[0], gap, 0, 1);
+        float x = left + lower.positionInMeasure() * span, y = lower.pageY() * height;
+        float tx = left + touch.positionInMeasure() * span, ty = touch.pageY() * height;
+        if (Math.abs(x - tx) > gap * .40f || !filledQuarterCore(gray, width, height, x, y, gap))
+            return false;
+        if (upper == null) {
+            if (Math.abs(y - ty - 1.5f * gap) > gap * .24f
+                    || !symbolDiamond(labels, gray, width, height, tx, ty, gap)) return false;
+            for (int shaft = Math.round(x + gap * .35f); shaft <= Math.round(x + gap * .85f); shaft++)
+                if (darkRun(gray, width, height, shaft, ty - gap * .18f, y - gap * .22f)
+                        && shaftCrossedDiamond(gray, width, height, tx, ty, gap, shaft, 1, true)
+                        && unflaggedQuarterTip(
+                                gray, width, height, shaft, ty, y, ty - gap * 2.65f, 1, staff))
+                    return true;
+            return false;
+        }
+        float ux = left + upper.positionInMeasure() * span, uy = upper.pageY() * height;
+        float upperTouch = uy - 1.5f * gap;
+        if (Math.abs(x - ux) > gap * .18f || Math.abs(y - uy - 2 * gap) > gap * .22f
+                || Math.abs(y - ty - 1.25f * gap) > gap * .25f
+                || !filledQuarterCore(gray, width, height, ux, uy, gap)
+                || !quarterTouchDiamond(labels, gray, width, height, ux, uy, gap)
+                || !enclosedCounter(gray, width, height, tx + gap * .25f, ty, gap * .68f,
+                        gap * .28f, 8)) return false;
+        for (int shaft = Math.round(x + gap * .35f); shaft <= Math.round(x + gap * .85f); shaft++)
+            if (darkRun(gray, width, height, shaft, upperTouch - gap * .13f, y - gap * .13f)
+                    && joinsWiderQuarterTouch(gray, width, height, tx, ty, shaft, 1, staff)
+                    && unflaggedQuarterTip(gray, width, height, shaft, upperTouch, uy,
+                            upperTouch - gap * 2.6f, 1, staff)) return true;
+        return false;
+    }
+
+    private static boolean filledQuarterCore(
+            byte[] gray, int width, int height, float x, float y, float gap) {
+        int left = Math.round(x - gap * .20f), right = Math.round(x + gap * .20f);
+        int top = Math.round(y - gap * .13f), bottom = Math.round(y + gap * .13f);
+        int filled = 0;
+        for (int row = top; row <= bottom; row++)
+            for (int col = left; col <= right; col++)
+                if (dark(gray, width, height, col, row)) filled++;
+        return filled >= (right - left + 1) * (bottom - top + 1) * .76f;
     }
 
     private static boolean ordinaryIsolatedHarmonicHead(ScoreNoteEvent note) {
@@ -418,8 +786,15 @@ final class ArtificialHarmonics {
         return Math.abs(first.top() - second.top()) * height < gap;
     }
 
-    private static boolean unflaggedQuarterTip(byte[] gray, int width, int height, int shaft,
-            float touchY, float stoppedY, float limit, int direction,
+    static boolean unflaggedQuarterTip(
+            byte[] gray,
+            int width,
+            int height,
+            int shaft,
+            float touchY,
+            float stoppedY,
+            float limit,
+            int direction,
             PlayingTechniqueDetector.Staff staff) {
         float gap = staff.gap();
         int start = direction > 0 ? Math.round(touchY - gap * .65f)
@@ -824,18 +1199,97 @@ final class ArtificialHarmonics {
         return found;
     }
 
+    /** Require a tall symbol body before searching for the shaft-owned touch of an eighth. */
+    private static boolean labelledTouchRegion(
+            byte[] labels, byte[] gray, int width, int height, float x, float y, float gap) {
+        if (labels == null || labels.length != gray.length || gap < 6 || gap > 36) return false;
+        int r = Math.round(gap * .65f);
+        int left = Math.round(x) - r, right = Math.round(x) + r;
+        int top = Math.round(y) - r, bottom = Math.round(y) + r;
+        if (left < 0 || right >= width || top < 0 || bottom >= height) return false;
+        int rows = 0, symbols = 0, heads = 0;
+        int rowMinimum = Math.max(2, Math.round(gap * .2f));
+        for (int row = top; row <= bottom; row++) {
+            int supported = 0;
+            for (int column = left; column <= right; column++) {
+                int pixel = row * width + column;
+                if ((gray[pixel] & 255) >= 185) continue;
+                if (labels[pixel] == OmrMeasurePostProcessor.SYMBOL) supported++;
+                if (labels[pixel] == OmrMeasurePostProcessor.NOTEHEAD) heads++;
+            }
+            if (supported >= rowMinimum) rows++;
+            symbols += supported;
+        }
+        return rows >= Math.round(gap * .95f)
+                && symbols >= gap * gap * .48f && symbols >= heads * 2;
+    }
+
     private static boolean unlabelledShaftTouch(
-            byte[] gray, int width, int height, float x, float y, float gap, int direction) {
+            byte[] gray, int width, int height, float x, float y, float gap, ScoreNoteEvent note,
+            MeasureRegion measure, List<ScoreNoteEvent> notes) {
+        int direction = note.stemDirection();
         for (int offset = Math.round(gap * .4f); offset <= Math.round(gap * .8f); offset++) {
             int shaft = Math.round(x) + direction * offset;
             if (!darkRun(gray, width, height, shaft, y - gap * 1.5f, y - gap * .2f)) continue;
             boolean tail = direction > 0
                     ? darkRun(gray, width, height, shaft, y - gap * 2.5f, y - gap * 1.5f)
                     : darkRun(gray, width, height, shaft, y + gap * .2f, y + gap * 1.4f);
-            if (tail && shaftCrossedDiamond(gray, width, height, x, y - gap * 1.5f,
-                    gap, shaft, direction, true)) return true;
+            if (!tail || !shaftCrossedDiamond(gray, width, height, x, y - gap * 1.5f,
+                    gap, shaft, direction, true)) continue;
+            var beam = direction > 0 && note.beamCount() == 3
+                    ? confirmedThirdBeam(gray, width, height, x, y, gap, note, measure, notes) : null;
+            if (beam == null || shaft < beam.left() || shaft > beam.right()
+                    || shaftCrossedDiamond(gray, width, height, x, y - gap * 1.5f,
+                            gap, shaft, direction, true, beam.endY())) return true;
         }
         return false;
+    }
+
+    private static PrintedBeamShafts.Shaft confirmedThirdBeam(
+            byte[] gray, int width, int height, float x, float y, float gap, ScoreNoteEvent note,
+            MeasureRegion measure, List<ScoreNoteEvent> notes) {
+        ScoreNoteEvent previous = null;
+        float previousX = -1;
+        for (var other : notes) {
+            if (other.measureIndex() != note.measureIndex() || other.staffIndex() != note.staffIndex()
+                    || other.kind() != ScoreNoteEvent.Kind.PITCHED || other.beamCount() < 2
+                    || other.stemDirection() != note.stemDirection()) continue;
+            float px = (measure.left() + other.positionInMeasure() * (measure.right() - measure.left())) * width;
+            float distance = x - px;
+            if (distance >= gap * 1.55f && distance <= gap * 3.30f && px > previousX) {
+                previous = other;
+                previousX = px;
+            }
+        }
+        if (previous == null) return null;
+        var budget = new PrintedBeamShafts.Budget(140_000);
+        var own = PrintedBeamShafts.at(gray, width, height, x, y, gap, budget);
+        var peer = PrintedBeamShafts.at(gray, width, height, previousX, previous.pageY() * height, gap, budget);
+        if (budget.refused() || own.size() != 1 || peer.size() != 1) return null;
+        var a = own.get(0);
+        var b = peer.get(0);
+        if (a.direction() != -1 || b.direction() != -1
+                || !WrappedEighthTriplets.matchesBeamRails(gray, width, height, b, a, gap, 2)) return null;
+        int[] terminal = {(a.left() + a.right()) / 2, a.endY(), a.direction()};
+        int[] left = {(b.left() + b.right()) / 2, b.endY(), b.direction()};
+        return OwnedTertiaryBeamlets.ownsThirdRailAtUpStemEnd(gray, width, height, terminal, left, gap)
+                ? a : null;
+    }
+
+    /** A filled third hook at the proposed counter is the wrong owner for its paper pocket. */
+    private static boolean beamOccupiesTouchCounter(
+            byte[] gray, int width, int height, int cx, int cy, float gap, int shaft, int tip) {
+        float depth = cy - tip;
+        if (tip < 0 || depth < gap * 1.60f || depth > gap * 2.44f) return false;
+        int start = cx - Math.round(gap * .12f), span = shaft - start + 1;
+        int half = Math.max(2, Math.round(gap * .15f)), rows = 0;
+        if (span < gap * .28f) return false;
+        for (int row = cy - half; row <= cy + half; row++) {
+            int solid = 0;
+            for (int col = start; col <= shaft; col++) if (dark(gray, width, height, col, row)) solid++;
+            if (solid >= span * .90f) rows++;
+        }
+        return rows >= Math.max(4, Math.round(gap * .25f));
     }
 
     private static boolean shaftCrossedDiamond(
@@ -847,6 +1301,12 @@ final class ArtificialHarmonics {
     static boolean shaftCrossedDiamond(
             byte[] gray, int width, int height, float x, float y, float gap, int shaft,
             int direction, boolean allowSplitCounter) {
+        return shaftCrossedDiamond(gray, width, height, x, y, gap, shaft, direction, allowSplitCounter, -1);
+    }
+
+    private static boolean shaftCrossedDiamond(
+            byte[] gray, int width, int height, float x, float y, float gap, int shaft,
+            int direction, boolean allowSplitCounter, int thirdBeamTip) {
         for (int cy = Math.round(y - gap * .32f); cy <= Math.round(y + gap * .32f); cy++)
             for (int cx = Math.round(x - gap * .4f); cx <= Math.round(x + gap * .4f); cx++) {
                 int distance = (shaft - cx) * direction;
@@ -879,7 +1339,9 @@ final class ArtificialHarmonics {
                             if (paper > 0) exposedSides++;
                             outside += paper;
                         }
-                    if (outline >= 11 && outside >= 6 && exposedSides >= 3) return true;
+                    if (outline >= 11 && outside >= 6 && exposedSides >= 3
+                            && !beamOccupiesTouchCounter(gray, width, height, cx, cy, gap, shaft, thirdBeamTip))
+                        return true;
                 }
             }
         return false;
@@ -1018,7 +1480,7 @@ final class ArtificialHarmonics {
         return true;
     }
 
-    private static boolean enclosedCounter(
+    static boolean enclosedCounter(
             byte[] gray, int w, int h, float cx, float cy, float r,
             float verticalTolerance) {
         return enclosedCounter(gray, w, h, cx, cy, r, verticalTolerance, 4);

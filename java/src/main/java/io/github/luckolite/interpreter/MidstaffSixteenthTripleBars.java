@@ -59,14 +59,18 @@ final class MidstaffSixteenthTripleBars {
             var cadence = regions.get(index + 1);
             var following = regions.get(index + 2);
             float gap = (span.bottom() - span.top()) * height / 8.2f;
+
+            float firstWidth = (span.right() - span.left()) * width;
+            float nextWidth = (cadence.right() - cadence.left()) * width;
+            boolean mergedRuns = firstWidth >= gap * 54 && firstWidth <= gap * 74
+                    && nextWidth >= gap * 4 && nextWidth <= gap * 8;
+            boolean mergedCadence = firstWidth >= gap * 25 && firstWidth <= gap * 40
+                    && nextWidth >= gap * 28 && nextWidth <= gap * 45;
             if (gap < 11
                     || gap > 25
                     || span.cadenceQuarterBeats() != 0
                     || cadence.cadenceQuarterBeats() != 0
-                    || (span.right() - span.left()) * width < gap * 54
-                    || (span.right() - span.left()) * width > gap * 74
-                    || (cadence.right() - cadence.left()) * width < gap * 4
-                    || (cadence.right() - cadence.left()) * width > gap * 8
+                    || !mergedRuns && !mergedCadence
                     || !sameRow(previous, span, height, gap)
                     || !sameRow(span, cadence, height, gap)
                     || (following.top() - cadence.bottom()) * height < gap * 2) continue;
@@ -74,15 +78,43 @@ final class MidstaffSixteenthTripleBars {
                 candidates = MeterChangeDetector.candidates(labels, gray, width, height);
             var meter = atOpening(candidates, span, gray, raw, width, height, gap);
             if (meter == null) continue;
-            var replacement = prove(span, cadence, meter, labels, gray, raw, width, height);
+            var replacement = mergedRuns
+                    ? prove(span, cadence, meter, labels, gray, raw, width, height)
+                    : splitClosedCadence(span, cadence, meter, labels, gray, raw, width, height);
             if (replacement.isEmpty()) continue;
             if (retained != null) return new Result(regions, -1, null);
             var edited = new ArrayList<>(regions);
             edited.set(index, replacement.get(0));
+            if (mergedCadence) edited.set(index + 1, replacement.get(2));
             edited.add(index + 1, replacement.get(1));
             retained = new Result(List.copyOf(edited), index, meter);
         }
         return retained == null ? new Result(regions, -1, null) : retained;
+    }
+
+
+    /** The first divider can be retained even when the terminal quarter has merged into its run. */
+    private static List<MeasureRegion> splitClosedCadence(
+            MeasureRegion first, MeasureRegion fused, MeterCrop meter,
+            byte[] labels, byte[] gray, byte[] raw, int width, int height) {
+        float gap = meter.gap;
+        float end = fused.right() * width;
+        int top = meter.crop.firstLine(), bottom = Math.round(top + 4 * gap);
+        int from = Math.round(end - 8.4f * gap), to = Math.round(end - 4.25f * gap);
+        int cut = isolatedRule(raw, width, height, top, bottom, gap, from, to);
+        int correctedCut = isolatedRule(gray, width, height, top, bottom, gap, from, to);
+        if (cut < 0 || correctedCut < 0 || Math.abs(cut - correctedCut) > 1) return List.of();
+        int inset = Math.round(gap * .52f);
+        float spanEnd = (cut - inset) / (float) width;
+        float cadenceStart = (cut + inset) / (float) width;
+        if (spanEnd <= fused.left() || cadenceStart >= fused.right()) return List.of();
+        var span = new MeasureRegion(first.left(), spanEnd, fused.top(), fused.bottom());
+        var cadence = new MeasureRegion(cadenceStart, fused.right(), fused.top(), fused.bottom(), 1);
+        var pieces = prove(span, cadence, meter, labels, gray, raw, width, height);
+        if (pieces.size() != 2
+                || Math.abs(pieces.get(0).right() - first.right()) * width > gap * .18f
+                || Math.abs(pieces.get(1).left() - fused.left()) * width > gap * .18f) return List.of();
+        return List.of(pieces.get(0), pieces.get(1), cadence);
     }
 
     private static boolean sameRow(MeasureRegion a, MeasureRegion b, int height, float gap) {
@@ -159,7 +191,10 @@ final class MidstaffSixteenthTripleBars {
         var trial = OmrScoreInterpreter.analyze(labels, gray, width, height, local, raw);
         var supportedTies = ScoreTiePitchGuard.apply(trial.notes(), trial.keyChanges());
         var aliases = aliases(supportedTies, local, 0, meter, labels, gray, raw, width, height);
-        if (aliases == null || !trial.rests().isEmpty()) return List.of();
+        if (!trial.rests().isEmpty()) return List.of();
+        if (aliases == null)
+            return closedOctaveRuns(local, supportedTies, staff, raw, gray, width, height, inner)
+                    ? List.of(a, b) : List.of();
         var written = new ArrayList<>(supportedTies);
         if (aliases.meter != null) written.remove(aliases.meter);
         if (aliases.flat != null) written.remove(aliases.flat);
@@ -178,6 +213,64 @@ final class MidstaffSixteenthTripleBars {
             }
         }
         return List.of(a, b);
+    }
+
+    private static boolean closedOctaveRuns(List<MeasureRegion> regions, List<ScoreNoteEvent> notes,
+            PlayingTechniqueDetector.Staff staff, byte[] raw, byte[] gray, int width, int height,
+            int separator) {
+        var cadence = sectionNotes(notes, 2, 2);
+        if (cadence.size() != 2 || cadence.get(0).staffStep() == cadence.get(1).staffStep()
+                || cadence.get(0).stemDirection() != cadence.get(1).stemDirection()) return false;
+        for (var note : cadence) {
+            if (!plainHead(note) || note.beamCount() != 0 || note.unbeamedDurationBeats() != 1
+                    || note.tiedFromPrevious() || note.positionInMeasure() < .25f
+                    || note.positionInMeasure() > .65f) return false;
+        }
+        float gap = staff.gap();
+        var end = regions.get(2);
+        double first = Math.min(noteX(cadence.get(0), end, width), noteX(cadence.get(1), end, width));
+        double last = Math.max(noteX(cadence.get(0), end, width), noteX(cadence.get(1), end, width));
+        if (last - first > gap * .25f
+                || !PrintedCadenceDurations.emptyOutsideChord(gray, width, staff, end.left() * width,
+                        end.right() * width - gap * .6f, first, last, false)
+                || !PrintedCadenceDurations.emptyOutsideChord(raw, width, staff, end.left() * width,
+                        end.right() * width - gap * .6f, first, last, false)) return false;
+        for (int bar = 0; bar < 2; bar++) {
+            var ordered = sectionNotes(notes, bar, bar).stream()
+                    .sorted(Comparator.comparingDouble(ScoreNoteEvent::positionInMeasure)).toList();
+            if (ordered.size() != 24) return false;
+            var bounds = regions.get(bar);
+            for (int group = 0; group < 24; group += 8) {
+                var heads = new ClosedFourDyadBeam.Head[4];
+                int direction = ordered.get(group).stemDirection();
+                for (int i = 0; i < heads.length; i++) {
+                    var a = ordered.get(group + 2 * i);
+                    var b = ordered.get(group + 2 * i + 1);
+                    float x1 = noteX(a, bounds, width), x2 = noteX(b, bounds, width);
+                    if (!plainHead(a) || !plainHead(b) || a.beamCount() != 2 || b.beamCount() != 2
+                            || a.unbeamedDurationBeats() != 0 || b.unbeamedDurationBeats() != 0
+                            || a.stemDirection() != direction || b.stemDirection() != direction
+                            || Math.abs(a.staffStep() - b.staffStep()) != 7 || x2 - x1 > gap * .24f)
+                        return false;
+                    heads[i] = new ClosedFourDyadBeam.Head((x1 + x2) * .5f,
+                            Math.min(a.pageY(), b.pageY()) * height, Math.max(a.pageY(), b.pageY()) * height);
+                }
+                int leftRule = bar == 1 && group == 0 ? separator : -1;
+                if (!ClosedFourDyadBeam.provesOctavesAfterRule(
+                            gray, width, height, heads, gap, staff.bottom(), -direction, leftRule)
+                        || !ClosedFourDyadBeam.provesOctavesAfterRule(
+                            raw, width, height, heads, gap, staff.bottom(), -direction, leftRule)) return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean plainHead(ScoreNoteEvent n) {
+        return n.kind() == ScoreNoteEvent.Kind.PITCHED && n.staffCount() == 1 && n.staffIndex() == 0
+                && n.visualSize() == ScoreNoteEvent.VisualSize.FULL && !n.crossStaffBeam()
+                && n.boundaryTies() == 0 && n.leadingRestBeats() == 0 && n.followingRestBeats() == 0
+                && n.tupletDivisor() == 1 && n.augmentationDots() == 0 && n.stemDirection() != 0
+                && (n.articulations() & NoteOrnament.GRACE) == 0;
     }
 
     private static boolean closedRails(

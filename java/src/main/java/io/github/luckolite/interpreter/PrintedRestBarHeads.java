@@ -107,7 +107,68 @@ final class PrintedRestBarHeads {
         int near = Math.max(2, Math.round(bh * .18f));
         int far = Math.max(3, Math.round(bh * .48f));
         return cap(gray, w, left, top, bottom, limit, radius, near, far)
-                && cap(gray, w, right, top, bottom, limit, radius, near, far);
+                && cap(gray, w, right, top, bottom, limit, radius, near, far)
+                && !hollowHeadRim(gray, w, h, left, top, right, bottom, limit);
+    }
+
+    /** A tightly curved white counter with a dark lid gives the short dark band to a notehead. */
+    private static boolean hollowHeadRim(
+            byte[] gray, int w, int h, int left, int top, int right, int bottom, int limit) {
+        int band = bottom - top + 1;
+        int width = right - left + 1;
+        if (width > band * 5 || width > 35) return false;
+        return closedCounter(gray, w, h, left, right, top, -1, band, limit)
+                || closedCounter(gray, w, h, left, right, bottom, 1, band, limit);
+    }
+
+    private static boolean closedCounter(
+            byte[] gray, int w, int h, int left, int right, int edge,
+            int dy, int band, int limit) {
+        int width = right - left + 1;
+        int widest = 0;
+        int narrowest = width;
+        int rows = 0;
+        int first = -1;
+        int last = -1;
+        for (int distance = 0; distance <= band * 3; distance++) {
+            int y = edge + dy * distance;
+            if (y < 0 || y >= h) return false;
+            int runFirst = -1;
+            int runLast = -1;
+            int offset = y * w;
+            for (int x = left + 2; x <= right - 2; x++) {
+                if ((gray[offset + x] & 255) <= Math.min(225, limit + 35)) continue;
+                if (runFirst < 0) runFirst = x;
+                if (runLast >= 0 && x != runLast + 1) return false;
+                runLast = x;
+            }
+            if (runFirst < 0) {
+                if (rows == 0) {
+                    if (distance > 1) return false;
+                    continue;
+                }
+                for (int x = first; x <= last; x++)
+                    if ((gray[offset + x] & 255) >= limit + 12) return false;
+                return rows >= Math.max(3, band) && widest >= Math.max(3, narrowest + 1);
+            }
+            int length = runLast - runFirst + 1;
+            if (length > width * .50f
+                    || !darkWall(gray, offset, runFirst - 1, Math.max(left, runFirst - 4), -1, limit)
+                    || !darkWall(gray, offset, runLast + 1, Math.min(right, runLast + 4), 1, limit)
+                    || (rows > 0 && (runFirst > last + 1 || runLast < first - 1))) return false;
+            first = runFirst;
+            last = runLast;
+            rows++;
+            widest = Math.max(widest, length);
+            narrowest = Math.min(narrowest, length);
+        }
+        return false;
+    }
+
+    private static boolean darkWall(byte[] gray, int offset, int from, int to, int step, int limit) {
+        for (int x = from; x != to + step; x += step)
+            if ((gray[offset + x] & 255) < limit) return true;
+        return false;
     }
 
     private static boolean cap(byte[] gray, int w, int edge, int top, int bottom,

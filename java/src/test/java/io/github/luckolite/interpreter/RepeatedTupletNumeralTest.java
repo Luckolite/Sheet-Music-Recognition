@@ -8,6 +8,30 @@ import static org.junit.Assert.*;
 
 public class RepeatedTupletNumeralTest {
     @Test
+    public void thinRuleMaskKeepsShortRunsAndRejectsClippedLongRuns() throws Exception {
+        byte[] gray = paper();
+        rect(gray, 4, 9, 4, 13);     // Five pixels meet the thin-rule limit.
+        rect(gray, 5, 0, 5, 13);     // The top of this run is beyond the scan halo.
+        rect(gray, 6, 12, 6, 17);    // Six pixels exceed the limit by one.
+        rect(gray, 7, 8, 7, 8);      // This thin run hits the outer edge of the margin.
+        Class<?> type = Class.forName(RepeatedTupletNumeral.class.getName() + "$ThinRuleMask");
+        var scan = type.getDeclaredMethod(
+                "scan", byte[].class, int.class, int.class, int.class, int.class,
+                int.class, int.class, float.class);
+        var contains = type.getDeclaredMethod("contains", int.class, int.class);
+        scan.setAccessible(true);
+        contains.setAccessible(true);
+        Object mask = scan.invoke(null, gray, W, H, 4, 7, 10, 16, (float) G);
+        assertTrue((Boolean) contains.invoke(mask, 4, 10));
+        assertTrue((Boolean) contains.invoke(mask, 4, 15));
+        assertFalse((Boolean) contains.invoke(mask, 4, 16));
+        assertFalse((Boolean) contains.invoke(mask, 5, 10));
+        assertFalse((Boolean) contains.invoke(mask, 6, 14));
+        assertTrue((Boolean) contains.invoke(mask, 7, 10));
+        assertFalse((Boolean) contains.invoke(mask, 7, 11));
+    }
+
+    @Test
     public void filledBeamInkIsRejectedBeforeExpensiveOwnership() {
         byte[] g = paper();
         three(g, 30, 25);

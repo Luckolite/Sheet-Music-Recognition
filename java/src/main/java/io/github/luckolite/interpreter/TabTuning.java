@@ -7,21 +7,34 @@ import java.util.regex.*;
 
 /** Explicit low-to-high guitar tuning headers. Returned MIDI values are top-string first. */
 public final class TabTuning {
+    private static final String SPACE = "[\\p{Zs}\\t]";
+    private static final String NAME = "[A-G](?:[#♯b♭])?[0-9]?(?![\\p{L}\\p{N}#♯♭])";
+    private static final String SEPARATOR = "(?:" + SPACE + "*[,/–—-]" + SPACE + "*|" + SPACE + "+)";
+    private static final Pattern HEADER = Pattern.compile(
+            "(?i)\\btuning" + SPACE + "*[:=]?" + SPACE + "*(" + NAME + "(?:" + SEPARATOR + NAME + ")*)");
+    private static final Pattern SEPARATORS = Pattern.compile(SEPARATOR);
+    private static final Pattern SPLIT_ACCIDENTAL = Pattern.compile("(?<=[A-Ga-g])" + SPACE + "+(?=[#♯♭])");
+    private static final Pattern NOTE = Pattern.compile("(?i)([A-G])([#♯b♭]?)([0-9]?)");
+
     private TabTuning() {}
 
     public static List<Integer> parse(String text, int strings) {
-        text = text.replaceAll("(?<=[A-Ga-g])[\\p{Zs}\\t]+(?=[#♯♭])", "");
-        var m =
-                Pattern.compile(
-                                "(?i)\\btuning\\s*[:=]?\\s*((?:[A-G](?:[#♯b♭])?[0-9]?\\s+){5,6}[A-G](?:[#♯b♭])?[0-9]?)(?![A-Za-z0-9])")
-                        .matcher(text);
-        if (!m.find()) return List.of();
-        String[] names = m.group(1).trim().split("\\s+");
-        if (names.length != strings) return List.of();
+        if (strings != 6 && strings != 7) return List.of();
+        var header = HEADER.matcher(SPLIT_ACCIDENTAL.matcher(text).replaceAll(""));
+        while (header.find()) {
+            String[] names = SEPARATORS.split(header.group(1));
+            if (names.length != strings) continue;
+            var pitches = parsePitches(names);
+            if (!pitches.isEmpty()) return pitches;
+        }
+        return List.of();
+    }
+
+    private static List<Integer> parsePitches(String[] names) {
         var result = new ArrayList<Integer>();
         int above = 76;
         for (int i = names.length - 1; i >= 0; i--) {
-            var note = Pattern.compile("(?i)([A-G])([#♯b♭]?)([0-9]?)").matcher(names[i]);
+            var note = NOTE.matcher(names[i]);
             if (!note.matches()) return List.of();
             int pc =
                     switch (note.group(1).toUpperCase(Locale.ROOT)) {
@@ -59,6 +72,11 @@ public final class TabTuning {
         float limit = tabs.get(0).top() - tabs.get(0).gap();
         var header = new ArrayList<TablatureDecoder.Word>();
         for (var word : words) if (word.bottom() * h < limit) header.add(word);
+        return withHeader(tabs, headerText(header));
+    }
+
+    static String headerText(List<TablatureDecoder.Word> words) {
+        var header = new ArrayList<>(words);
         header.sort(
                 Comparator.comparingDouble(TablatureDecoder.Word::top)
                         .thenComparingDouble(TablatureDecoder.Word::left));
@@ -81,7 +99,7 @@ public final class TabTuning {
             for (var word : line) text.append(word.text()).append(' ');
             text.append('\n');
         }
-        return withHeader(tabs, text.toString());
+        return text.toString();
     }
 
     public static List<TablatureDecoder.Staff> withHeader(

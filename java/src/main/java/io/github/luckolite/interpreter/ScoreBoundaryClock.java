@@ -24,7 +24,8 @@ public record ScoreBoundaryClock(double openingQuarterBeats, double closingQuart
     public ScoreBoundaryClock {
         sourceCadences = sourceCadences == null ? java.util.Map.of() : java.util.Map.copyOf(sourceCadences);
         for (var entry : sourceCadences.entrySet())
-            if (entry.getKey() < 0 || entry.getValue() < 1 || entry.getValue() > 2)
+            if (entry.getKey() < 0 || entry.getValue() < 1
+                    || entry.getValue() > MeasureRegion.MAX_CADENCE_QUARTER_BEATS)
                 throw new IllegalArgumentException("Invalid printed cadence");
         if (!Double.isFinite(openingQuarterBeats)
                 || !Double.isFinite(closingQuarterBeats)

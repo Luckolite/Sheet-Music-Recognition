@@ -83,4 +83,31 @@ public class PrintedRestBarHeadsTest {
         assertArrayEquals(l, p[0]);
         assertArrayEquals(g, p[1]);
     }
+
+    @Test
+    public void aCompactClosedOvalOwnsItsRimEvenWhenItHasBilateralInk() {
+        var ink = new byte[W * H];
+        Arrays.fill(ink, (byte) 255);
+        for (int y = 87; y <= 96; y++) {
+            for (int x : new int[] {120, 121, 136, 137}) ink[y * W + x] = 0;
+        }
+        fill(ink, 120, 90, 137, 93, 0);
+        assertTrue(PrintedRestBarHeads.proved(ink, W, H, 120, 90, 137, 93));
+
+        fill(ink, 121, 84, 136, 89, 0);
+        fill(ink, 127, 85, 129, 85, 247);
+        fill(ink, 127, 86, 131, 86, 247);
+        fill(ink, 128, 87, 132, 87, 247);
+        fill(ink, 129, 88, 133, 88, 247);
+        fill(ink, 131, 89, 133, 89, 247);
+        assertFalse(PrintedRestBarHeads.proved(ink, W, H, 120, 90, 137, 93));
+
+        fill(ink, 127, 77, 129, 84, 247);
+        assertTrue(PrintedRestBarHeads.proved(ink, W, H, 120, 90, 137, 93));
+    }
+
+    private static void fill(byte[] ink, int left, int top, int right, int bottom, int shade) {
+        for (int y = top; y <= bottom; y++)
+            Arrays.fill(ink, y * W + left, y * W + right + 1, (byte) shade);
+    }
 }

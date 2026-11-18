@@ -34,9 +34,73 @@ final class SourceLocalAccidental {
             int glyphAlternatives,
             int headAlternatives,
             boolean ambiguous,
-            String status) {}
+            String status,
+            Boolean naturalPrefix) {
+        Choice(int note, ScoreNoteEvent originalNote, int glyph, int head, int accidental,
+                int glyphAlternatives, int headAlternatives, boolean ambiguous, String status) {
+            this(note, originalNote, glyph, head, accidental, glyphAlternatives, headAlternatives,
+                    ambiguous, status, null);
+        }
+    }
 
-    record PrintedMark(int noteIndex, int accidental) {}
+    record PrintedMark(int noteIndex, int accidental, Boolean naturalPrefix) {
+        PrintedMark(int noteIndex, int accidental) {
+            this(noteIndex, accidental, null);
+        }
+    }
+
+    /** Optically proved sloping crossbars. Each strip is checked against the exact parent pixels. */
+    record AccidentalStrips(
+            int kind,
+            int left,
+            int right,
+            int rise,
+            int topFirst,
+            int topLast,
+            int bottomFirst,
+            int bottomLast) {
+        int top() {
+            return topFirst - edge();
+        }
+
+        int bottom() {
+            return bottomLast + edge();
+        }
+
+        private int edge() {
+            return (int) Math.ceil(rise * .05 * (right - left));
+        }
+
+        boolean represented(Set<Integer> pixels, int width) {
+            return band(pixels, width, topFirst, topLast)
+                    && band(pixels, width, bottomFirst, bottomLast);
+        }
+
+        private boolean band(Set<Integer> pixels, int width, int first, int last) {
+            float center = (left + right) * .5f;
+            int minimum = Math.max(3, (right - left + 2) / 2);
+            int rows = 0;
+            for (int y = first; y <= last; y++) {
+                int run = 0;
+                for (int x = left; x <= right; x++) {
+                    int row = Math.round(y - rise * .1f * (x - center));
+                    run = pixels.contains(row * width + x) ? run + 1 : 0;
+                    if (run == minimum) {
+                        rows++;
+                        break;
+                    }
+                }
+            }
+            return rows >= 2;
+        }
+    }
+
+    record SplitAccidental(
+            Object parent,
+            Object upper,
+            Object lower,
+            AccidentalStrips upperInk,
+            AccidentalStrips lowerInk) {}
 
     private record NoteLocation(
             int measure, int staff, int staffCount, float position, float pageY, int staffStep) {
@@ -65,6 +129,9 @@ final class SourceLocalAccidental {
     private final List<Glyph> glyphs;
     private final List<Choice> choices;
     private final Set<Integer> joinedNaturalOwners;
+    // Absent when the producer has no authenticated double-sharp claims.
+    private final Set<Integer> printedDoubleSharpOwners;
+    private final Map<Integer, Integer> splitAccidentalOwners;
     private final List<Head> headAlternatives;
     private final List<Integer> unrepresentedGlyphMembers;
     private final boolean complete;
@@ -81,6 +148,8 @@ final class SourceLocalAccidental {
             List<Head> headAlternatives,
             List<Choice> choices,
             Set<Integer> joinedNaturalOwners,
+            Set<Integer> printedDoubleSharpOwners,
+            Map<Integer, Integer> splitAccidentalOwners,
             List<Integer> unrepresentedGlyphMembers,
             boolean complete,
             boolean authenticatedFrame) {
@@ -95,6 +164,9 @@ final class SourceLocalAccidental {
         this.headAlternatives = List.copyOf(headAlternatives);
         this.choices = List.copyOf(choices);
         this.joinedNaturalOwners = Set.copyOf(joinedNaturalOwners);
+        this.printedDoubleSharpOwners =
+                printedDoubleSharpOwners.isEmpty() ? null : Set.copyOf(printedDoubleSharpOwners);
+        this.splitAccidentalOwners = Map.copyOf(splitAccidentalOwners);
         this.unrepresentedGlyphMembers = List.copyOf(unrepresentedGlyphMembers);
         this.complete = complete;
         this.authenticatedFrame = authenticatedFrame;
@@ -115,12 +187,14 @@ final class SourceLocalAccidental {
                 && headAlternatives.equals(other.headAlternatives)
                 && choices.equals(other.choices)
                 && joinedNaturalOwners.equals(other.joinedNaturalOwners)
+                && Objects.equals(printedDoubleSharpOwners, other.printedDoubleSharpOwners)
+                && splitAccidentalOwners.equals(other.splitAccidentalOwners)
                 && unrepresentedGlyphMembers.equals(other.unrepresentedGlyphMembers);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(
+        int hash = Objects.hash(
                 rawSha,
                 labelSha,
                 width,
@@ -131,15 +205,17 @@ final class SourceLocalAccidental {
                 headAlternatives,
                 choices,
                 joinedNaturalOwners,
+                splitAccidentalOwners,
                 unrepresentedGlyphMembers,
                 complete,
                 authenticatedFrame);
+        return printedDoubleSharpOwners == null ? hash : 31 * hash + printedDoubleSharpOwners.hashCode();
     }
 
     static SourceLocalAccidental unavailable() {
         return new SourceLocalAccidental(
-                "", "", 0, 0, 0, 0, List.of(), List.of(), List.of(), Set.of(), List.of(), false,
-                false);
+                "", "", 0, 0, 0, 0, List.of(), List.of(), List.of(), Set.of(), Set.of(), Map.of(),
+                List.of(), false, false);
     }
 
     List<Choice> choices() {
@@ -199,6 +275,78 @@ final class SourceLocalAccidental {
             List<ScoreNoteEvent> notes,
             Map<Object, List<Object>> accidentalFragments,
             Set<Object> provedNaturalHeads) {
+        return capture(
+                symbols,
+                clefs,
+                originalGlyphs,
+                allHeads,
+                heads,
+                actualChoices,
+                finalHeads,
+                notes,
+                accidentalFragments,
+                provedNaturalHeads,
+                List.of());
+    }
+
+    static SourceLocalAccidental capture(
+            ExactComponentMembers.Collector symbols,
+            ExactComponentMembers.Collector clefs,
+            List<?> originalGlyphs,
+            List<?> allHeads,
+            ExactComponentMembers.Collector heads,
+            Map<?, OmrScoreInterpreter.WrittenAccidentalChoice> actualChoices,
+            List<?> finalHeads,
+            List<ScoreNoteEvent> notes,
+            Map<Object, List<Object>> accidentalFragments,
+            Set<Object> provedNaturalHeads,
+            List<SplitAccidental> splitProofs) {
+        return capture(
+                symbols,
+                clefs,
+                originalGlyphs,
+                allHeads,
+                heads,
+                actualChoices,
+                finalHeads,
+                notes,
+                accidentalFragments,
+                provedNaturalHeads,
+                splitProofs,
+                Set.of());
+    }
+
+    static SourceLocalAccidental capture(
+            ExactComponentMembers.Collector symbols,
+            ExactComponentMembers.Collector clefs,
+            List<?> originalGlyphs,
+            List<?> allHeads,
+            ExactComponentMembers.Collector heads,
+            Map<?, OmrScoreInterpreter.WrittenAccidentalChoice> actualChoices,
+            List<?> finalHeads,
+            List<ScoreNoteEvent> notes,
+            Map<Object, List<Object>> accidentalFragments,
+            Set<Object> provedNaturalHeads,
+            List<SplitAccidental> splitProofs,
+            Set<Object> provedDoubleSharpHeads) {
+        return capture(symbols, clefs, originalGlyphs, allHeads, heads, actualChoices, finalHeads, notes,
+                accidentalFragments, provedNaturalHeads, splitProofs, provedDoubleSharpHeads, Map.of(), Map.of());
+    }
+
+    static SourceLocalAccidental capture(
+            ExactComponentMembers.Collector symbols,
+            ExactComponentMembers.Collector clefs,
+            List<?> originalGlyphs,
+            List<?> allHeads,
+            ExactComponentMembers.Collector heads,
+            Map<?, OmrScoreInterpreter.WrittenAccidentalChoice> actualChoices,
+            List<?> finalHeads,
+            List<ScoreNoteEvent> notes,
+            Map<Object, List<Object>> accidentalFragments,
+            Set<Object> provedNaturalHeads,
+            List<SplitAccidental> splitProofs,
+            Set<Object> provedDoubleSharpHeads,
+            Map<?, ?> recoveredNaturals, Map<?, ?> recoveredDyadAccidentals) {
         var budget = new ExactComponentMembers.Budget(64_000_000, 128L * 1024 * 1024);
         if (symbols == null || clefs == null || heads == null || finalHeads.size() != notes.size())
             return unavailable();
@@ -266,6 +414,8 @@ final class SourceLocalAccidental {
                             status));
         }
         var joinedNaturalOwners = new HashSet<Integer>();
+        var dyadOwners = new HashMap<Integer, Integer>();
+        var printedDoubleSharpOwners = new HashSet<Integer>();
         var fragmentClaims = new IdentityHashMap<Object, Integer>();
         if (!provedNaturalHeads.isEmpty()) {
             for (var head : finalHeads) {
@@ -307,6 +457,47 @@ final class SourceLocalAccidental {
                         && partition != null
                         && partition.residual().isEmpty()) joinedNaturalOwners.add(n);
             }
+            if (authenticatedFrame
+                    && headId != null
+                    && headToken != null
+                    && choice.head() == head
+                    && provedDoubleSharpHeads.contains(head)
+                    && (!choice.ambiguous()
+                            || choice.accidental() == ScoreNoteEvent.ACCIDENTAL_DOUBLE_SHARP)
+                    && note.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_DOUBLE_SHARP) {
+                int[] members = headToken.pixels(budget);
+                var partition = partitions.get(head);
+                if (members != null
+                        && members.length == headToken.stats().area()
+                        && partition != null
+                        && partition.residual().isEmpty()) printedDoubleSharpOwners.add(n);
+            }
+            Integer naturalGlyph = glyphIds.get(recoveredNaturals.get(head));
+            if (authenticatedFrame && naturalGlyph != null && exactGlyphs.containsKey(naturalGlyph)
+                    && headId != null && headToken != null
+                    && note.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_NATURAL) {
+                var partition = partitions.get(head);
+                if (partition != null && partition.residual().isEmpty()) {
+                    joinedNaturalOwners.add(n);
+                    rows.add(new Choice(n, note, naturalGlyph, headId, ScoreNoteEvent.ACCIDENTAL_NATURAL,
+                            choice.glyphAlternatives(), choice.headAlternatives(), false, SUPPORTED));
+                    continue;
+                }
+            }
+            Integer dyadGlyph = glyphIds.get(recoveredDyadAccidentals.get(head));
+            if (authenticatedFrame && dyadGlyph != null && exactGlyphs.containsKey(dyadGlyph)
+                    && headId != null && headToken != null
+                    && (note.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_FLAT
+                            || note.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_SHARP)) {
+                var partition = partitions.get(head);
+                if (partition != null && partition.residual().isEmpty()) {
+                    dyadOwners.put(n, note.writtenAccidental());
+                    rows.add(new Choice(n, note, dyadGlyph, headId, note.writtenAccidental(),
+                            choice.glyphAlternatives(), choice.headAlternatives(), false, SUPPORTED,
+                            choice.naturalPrefix() ? Boolean.TRUE : null));
+                    continue;
+                }
+            }
             String status = "UNKNOWN_UNBOUND_OR_CHANGED_PICKER_ROLE";
             if (choice.head() == head
                     && glyph != null
@@ -335,6 +526,20 @@ final class SourceLocalAccidental {
                             choice.ambiguous(),
                             status));
         }
+        var splitAccidentalOwners =
+                authenticatedFrame
+                        ? splitAccidentalOwners(
+                                splitProofs,
+                                glyphIds,
+                                exactGlyphs,
+                                partitions,
+                                finalHeads,
+                                notes,
+                                actualChoices,
+                                accidentalFragments,
+                                symbols.width)
+                        : Map.<Integer, Integer>of();
+        dyadOwners.putAll(splitAccidentalOwners);
         return new SourceLocalAccidental(
                 symbols.rawSha,
                 symbols.labelSha,
@@ -346,9 +551,116 @@ final class SourceLocalAccidental {
                 alternatives,
                 rows,
                 joinedNaturalOwners,
+                printedDoubleSharpOwners,
+                dyadOwners,
                 unrepresented,
                 complete,
                 authenticatedFrame);
+    }
+
+    private static Map<Integer, Integer> splitAccidentalOwners(
+            List<SplitAccidental> proofs,
+            Map<Object, Integer> glyphIds,
+            Map<Integer, Glyph> glyphs,
+            ExactComponentMembers.ProducerPartitionBatch partitions,
+            List<?> finalHeads,
+            List<ScoreNoteEvent> notes,
+            Map<?, OmrScoreInterpreter.WrittenAccidentalChoice> choices,
+            Map<Object, List<Object>> fragments,
+            int width) {
+        var owners = new HashMap<Integer, Integer>();
+        if (proofs.isEmpty()) return owners;
+
+        var site = new IdentityHashMap<Object, Integer>();
+        for (int index = 0; index < finalHeads.size(); index++)
+            site.merge(finalHeads.get(index), index, (first, second) -> -1);
+        var byParent = new IdentityHashMap<Object, SplitAccidental>();
+        var conflicts = Collections.newSetFromMap(new IdentityHashMap<Object, Boolean>());
+        for (SplitAccidental proof : proofs) {
+            SplitAccidental prior = byParent.putIfAbsent(proof.parent(), proof);
+            if (prior != null
+                    && (prior.upper() != proof.upper()
+                            || prior.lower() != proof.lower()
+                            || !prior.upperInk().equals(proof.upperInk())
+                            || !prior.lowerInk().equals(proof.lowerInk())))
+                conflicts.add(proof.parent());
+        }
+
+        var candidates = new ArrayList<AccidentalPair>();
+        var ownerClaims = new HashMap<Integer, Integer>();
+        for (SplitAccidental proof : byParent.values()) {
+            if (conflicts.contains(proof.parent())) continue;
+            Integer id = glyphIds.get(proof.parent());
+            Glyph glyph = id == null ? null : glyphs.get(id);
+            int upperKind = proof.upperInk().kind(), lowerKind = proof.lowerInk().kind();
+            if (glyph == null
+                    || glyph.label() != OmrMeasurePostProcessor.CLEF_OR_KEY
+                    || proof.upperInk().bottom() >= proof.lowerInk().top()
+                    || !splitKind(upperKind)
+                    || !splitKind(lowerKind)
+                    || (upperKind != ScoreNoteEvent.ACCIDENTAL_SHARP
+                            && lowerKind != ScoreNoteEvent.ACCIDENTAL_SHARP)) continue;
+            int upper = site.getOrDefault(proof.upper(), -1);
+            int lower = site.getOrDefault(proof.lower(), -1);
+            if (upper < 0
+                    || lower < 0
+                    || upper == lower
+                    || !retainedAccidental(
+                            choices, partitions, proof.upper(), notes.get(upper), upperKind)
+                    || !retainedAccidental(
+                            choices, partitions, proof.lower(), notes.get(lower), lowerKind))
+                continue;
+            var a = notes.get(upper);
+            var b = notes.get(lower);
+            if (a.measureIndex() != b.measureIndex()
+                    || a.staffIndex() != b.staffIndex()
+                    || a.staffCount() != b.staffCount()
+                    || a.pageY() >= b.pageY()) continue;
+            var pixels = new HashSet<>(glyph.pixels());
+            if (!proof.upperInk().represented(pixels, width)
+                    || !proof.lowerInk().represented(pixels, width)) continue;
+            boolean borrowed = false;
+            for (var head : finalHeads) {
+                if (head == proof.upper() || head == proof.lower()) continue;
+                var claim = choices.get(head);
+                if (claim == null || claim.glyph() == null) continue;
+                for (var parent : fragments.getOrDefault(claim.glyph(), List.of(claim.glyph())))
+                    if (parent == proof.parent()) borrowed = true;
+            }
+            if (borrowed) continue;
+            ownerClaims.merge(upper, 1, Integer::sum);
+            ownerClaims.merge(lower, 1, Integer::sum);
+            candidates.add(new AccidentalPair(upper, lower, upperKind, lowerKind));
+        }
+        for (var pair : candidates)
+            if (ownerClaims.get(pair.upper()) == 1 && ownerClaims.get(pair.lower()) == 1) {
+                owners.put(pair.upper(), pair.upperKind());
+                owners.put(pair.lower(), pair.lowerKind());
+            }
+        return owners;
+    }
+
+    private record AccidentalPair(int upper, int lower, int upperKind, int lowerKind) {}
+
+    private static boolean splitKind(int kind) {
+        return kind == ScoreNoteEvent.ACCIDENTAL_SHARP || kind == ScoreNoteEvent.ACCIDENTAL_NATURAL;
+    }
+
+    private static boolean retainedAccidental(
+            Map<?, OmrScoreInterpreter.WrittenAccidentalChoice> choices,
+            ExactComponentMembers.ProducerPartitionBatch partitions,
+            Object head,
+            ScoreNoteEvent note,
+            int kind) {
+        var choice = choices.get(head);
+        var partition = partitions.get(head);
+        return choice != null
+                && choice.head() == head
+                && !choice.ambiguous()
+                && partition != null
+                && partition.residual().isEmpty()
+                && note.kind() == ScoreNoteEvent.Kind.PITCHED
+                && note.writtenAccidental() == kind;
     }
 
     private static boolean exclusivelyOwnedNaturalUnion(
@@ -371,16 +683,27 @@ final class SourceLocalAccidental {
         return clefComponents == 1 && symbolMembers > 0 && clefMembers >= symbolMembers * 4;
     }
 
-    List<PrintedMark> printedMarks(List<ScoreNoteEvent> original, List<ScoreNoteEvent> retained) {
+    List<PrintedMark> printedMarks(List<ScoreNoteEvent> original, List<ScoreNoteEvent> retained,
+            List<MeasureRegion> sourceMeasures) {
         if (issuer != ISSUER || !authenticatedFrame || choices.isEmpty()) return List.of();
-        var representedGlyphs = new BitSet(glyphCount);
-        for (var glyph : glyphs) representedGlyphs.set(glyph.index());
+        var representedGlyphs = new HashMap<Integer, Glyph>();
+        var glyphsByRow = new TreeMap<Integer, List<Glyph>>();
+        for (var glyph : glyphs) {
+            representedGlyphs.put(glyph.index(), glyph);
+            glyphsByRow.computeIfAbsent((int) glyph.stats().centerY(), ignored -> new ArrayList<>())
+                    .add(glyph);
+        }
         var glyphOwners = new HashMap<Integer, Integer>();
         for (var choice : choices)
             if (choice.glyph() >= 0) glyphOwners.merge(choice.glyph(), 1, Integer::sum);
         var originalLocations = new HashMap<NoteLocation, Integer>();
-        for (var note : original)
+        var notesByMeasure = new HashMap<Integer, List<ScoreNoteEvent>>();
+        for (var note : original) {
             originalLocations.merge(new NoteLocation(note), 1, Integer::sum);
+            if (note.kind() == ScoreNoteEvent.Kind.PITCHED)
+                notesByMeasure.computeIfAbsent(note.measureIndex(), ignored -> new ArrayList<>())
+                        .add(note);
+        }
         var retainedIndexes = new HashMap<NoteLocation, Integer>();
         for (int index = 0; index < retained.size(); index++)
             retainedIndexes.merge(new NoteLocation(retained.get(index)), index, (a, b) -> -1);
@@ -389,8 +712,17 @@ final class SourceLocalAccidental {
             boolean originalGlyph =
                     choice.status().equals(SUPPORTED)
                             && glyphOwners.getOrDefault(choice.glyph(), 0) == 1
-                            && representedGlyphs.get(choice.glyph());
-            if ((!originalGlyph && !joinedNaturalOwners.contains(choice.note()))
+                            && representedGlyphs.containsKey(choice.glyph());
+            Integer ownedKind = splitAccidentalOwners.get(choice.note());
+            boolean ownedDoubleSharp =
+                    !originalGlyph
+                            && ownedKind == null
+                            && printedDoubleSharpOwners != null
+                            && printedDoubleSharpOwners.contains(choice.note());
+            if ((!originalGlyph
+                            && !joinedNaturalOwners.contains(choice.note())
+                            && ownedKind == null
+                            && !ownedDoubleSharp)
                     || choice.note() < 0
                     || choice.note() >= original.size()) continue;
             var originalNote = original.get(choice.note());
@@ -400,12 +732,118 @@ final class SourceLocalAccidental {
             int index = retainedIndexes.getOrDefault(location, -1);
             if (index < 0 || originalLocations.get(location) != 1) continue;
             var note = retained.get(index);
+            if (ownedDoubleSharp
+                    && (note.kind() != ScoreNoteEvent.Kind.PITCHED
+                            || choice.originalNote() != originalNote
+                            || note.diatonicPitchIdentity() != originalNote.diatonicPitchIdentity()
+                            || note.octaveShift() != originalNote.octaveShift()
+                            || note.harmonicSemitones() != originalNote.harmonicSemitones()))
+                continue;
+            int accidental =
+                    ownedDoubleSharp
+                            ? ScoreNoteEvent.ACCIDENTAL_DOUBLE_SHARP
+                            : ownedKind == null ? choice.accidental() : ownedKind;
             if (note.kind() == ScoreNoteEvent.Kind.PITCHED
-                    && note.writtenAccidental() == choice.accidental())
-                marks.add(new PrintedMark(index, choice.accidental()));
+                    && note.writtenAccidental() == accidental
+                    && (!originalGlyph || ownedKind != null || joinedNaturalOwners.contains(choice.note())
+                            || !ambiguousVerticalOwner(choice, originalNote, sourceMeasures,
+                                    notesByMeasure, representedGlyphs, glyphsByRow)))
+                marks.add(new PrintedMark(index, accidental,
+                        accidental == ScoreNoteEvent.ACCIDENTAL_SHARP ? choice.naturalPrefix() : null));
         }
         marks.sort(Comparator.comparingInt(PrintedMark::noteIndex));
         return List.copyOf(marks);
+    }
+
+    static List<PrintedMark> includeClosedTripletSharps(
+            List<PrintedMark> marks, List<ScoreNoteEvent> proved, List<ScoreNoteEvent> retained) {
+        if (proved.isEmpty()) return marks;
+        var owners = new HashMap<NoteLocation, Integer>();
+        for (int i = 0; i < retained.size(); i++)
+            if (retained.get(i).kind() == ScoreNoteEvent.Kind.PITCHED)
+                owners.merge(new NoteLocation(retained.get(i)), i, (a, b) -> -1);
+        var combined = new TreeMap<Integer, PrintedMark>();
+        for (var mark : marks) combined.put(mark.noteIndex(), mark);
+        for (var note : proved) {
+            int index = owners.getOrDefault(new NoteLocation(note), -1);
+            if (index >= 0
+                    && retained.get(index).writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_SHARP
+                    && retained.get(index).clefBottomDiatonic() == note.clefBottomDiatonic())
+                combined.putIfAbsent(
+                        index, new PrintedMark(index, ScoreNoteEvent.ACCIDENTAL_SHARP));
+        }
+        return List.copyOf(combined.values());
+    }
+
+    private boolean ambiguousVerticalOwner(
+            Choice choice, ScoreNoteEvent note, List<MeasureRegion> measures,
+            Map<Integer, List<ScoreNoteEvent>> notesByMeasure,
+            Map<Integer, Glyph> originals, NavigableMap<Integer, List<Glyph>> byRow) {
+        int measure = note.measureIndex(), head = choice.head();
+        if (note.staffCount() != 1 || measure < 0 || measure >= measures.size()
+                || head < 0 || head >= headAlternatives.size()) return false;
+        var region = measures.get(measure);
+        float gap = (region.bottom() - region.top()) * height / 7.4f;
+        if (gap < 6 || gap > 36) return false;
+        var source = headAlternatives.get(head);
+        if (source.pixels().isEmpty() || !source.unresolvedParentResidual().isEmpty()) return false;
+        // Split children have their own compact footprint. Only a tall unresolved selected head
+        // can straddle both accidental pitch lanes.
+        int left = width, right = -1, top = height, bottom = -1;
+        for (int pixel : source.pixels()) {
+            left = Math.min(left, pixel % width);
+            right = Math.max(right, pixel % width);
+            top = Math.min(top, pixel / width);
+            bottom = Math.max(bottom, pixel / width);
+        }
+        float span = bottom - top + 1f;
+        float headY = note.pageY() * height;
+        if (span < 1.9f * gap || span > 2.45f * gap
+                || headY - top < .4f * span || headY - top > .6f * span) return false;
+        for (var other : notesByMeasure.getOrDefault(measure, List.of())) {
+            if (other == note) continue;
+            float x = (region.left() + other.positionInMeasure() * (region.right() - region.left()))
+                    * width;
+            float y = other.pageY() * height;
+            if (x >= left && x <= right && y >= top && y <= bottom) return false;
+        }
+        float center = (top + bottom) / 2f;
+        var selected = originals.get(choice.glyph());
+        if (!offsetGlyphLane(selected, left, center, gap)) return false;
+        int minRow = (int) Math.floor(center - .7f * gap);
+        int maxRow = (int) Math.ceil(center + .7f * gap);
+        int localBudget = 256;
+        for (var row : byRow.subMap(minRow, true, maxRow, true).values())
+            for (var glyph : row) {
+                if (--localBudget < 0) return false;
+                if (otherVerticalGlyphLane(selected, glyph, left, center, gap)) return true;
+            }
+        return false;
+    }
+
+    static boolean otherVerticalGlyphLane(Glyph selected, Glyph other, int left, float center, float gap) {
+        if (other.index() == selected.index() || !offsetGlyphLane(other, left, center, gap))
+            return false;
+        var a = selected.stats();
+        var b = other.stats();
+        float dy = Math.abs(a.centerY() - b.centerY());
+        float dx = Math.abs(a.centerX() - b.centerX());
+        return (a.centerY() < center) != (b.centerY() < center)
+                && dy >= .8f * gap && dy <= 1.2f * gap
+                && dx >= .6f * gap && dx <= 1.3f * gap
+                && (a.maxX() < b.minX() || b.maxX() < a.minX());
+    }
+
+    private static boolean offsetGlyphLane(Glyph glyph, int left, float center, float gap) {
+        if (glyph.label() != 3 && glyph.label() != 5) return false;
+        var stats = glyph.stats();
+        float dx = left - stats.maxX(), dy = Math.abs(stats.centerY() - center);
+        float w = stats.maxX() - stats.minX() + 1f, h = stats.maxY() - stats.minY() + 1f;
+        return dx >= 0 && dx <= 1.3f * gap
+                && dy >= .3f * gap && dy <= .7f * gap
+                && w >= .65f * gap && w <= 1.25f * gap
+                && h >= 2.2f * gap && h <= 3.2f * gap
+                && stats.area() >= .65f * gap * gap && stats.area() <= 1.5f * gap * gap;
     }
 
     Role role(

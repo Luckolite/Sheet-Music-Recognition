@@ -16,7 +16,8 @@ public final class Main {
     public static void main(String[] args) throws Exception {
         if (args.length < 5 || args.length > 11 || args.length % 2 != 1)
             throw new IllegalArgumentException(
-                    "Expected page, output, meter, key and optional page-index, decoder-gray and instrument pairs");
+                    "Expected page, output, meter, key and optional page-index, decoder-gray and"
+                        + " instrument pairs");
         int physicalPage = -1;
         Path decoderRaster = null;
         boolean standardViolin = false;
@@ -27,9 +28,12 @@ public final class Main {
                     throw new IllegalArgumentException("Physical source page must be 0..100000");
             } else if (args[i].equals("--decoder-gray") && decoderRaster == null) {
                 decoderRaster = Path.of(args[i + 1]);
-            } else if (args[i].equals("--instrument") && !standardViolin && args[i + 1].equals("violin")) {
+            } else if (args[i].equals("--instrument")
+                    && !standardViolin
+                    && args[i + 1].equals("violin")) {
                 standardViolin = true;
-            } else throw new IllegalArgumentException("Unknown, invalid or duplicate decoder option");
+            } else
+                throw new IllegalArgumentException("Unknown, invalid or duplicate decoder option");
         }
         int numerator = Integer.parseInt(args[2]), denominator = Integer.parseInt(args[3]);
         var initialMeter = new ScoreMeterChange(0, numerator, denominator);
@@ -96,7 +100,8 @@ public final class Main {
         var tabWarnings = new ArrayList<String>();
         if (preparedTabs.recognized().stream().anyMatch(t -> t.frets().isEmpty()))
             tabWarnings.add(
-                    "Tablature detected but no reliable fret OCR supplied; paired notation is retained where available.");
+                    "Tablature detected but no reliable fret OCR supplied; paired notation is"
+                        + " retained where available.");
         var tabs = preparedTabs.withRhythm();
         if (tabs.stream()
                 .filter(t -> t.standardTop() < 0)
@@ -106,10 +111,12 @@ public final class Main {
                     "Some standalone tab durations are unknown and playback timing is estimated.");
         if (!tabs.isEmpty())
             tabWarnings.add(
-                    "Guitar effects require explicit OCR symbols; unsupported graphical bend curves and performance directions are not inferred.");
+                    "Guitar effects require explicit OCR symbols; unsupported graphical bend curves"
+                        + " and performance directions are not inferred.");
         if (!tabs.isEmpty())
             tabWarnings.add(
-                    "Tab pitch uses an explicit tuning header when available, otherwise standard six- or seven-string guitar tuning.");
+                    "Tab pitch uses an explicit tuning header when available, otherwise standard"
+                        + " six- or seven-string guitar tuning.");
         byte[] decoderGray = null;
         if (decoderRaster != null) {
             if (Files.size(decoderRaster) != (long) width * height)
@@ -127,9 +134,22 @@ public final class Main {
                         physicalPage,
                         decoderGray,
                         preparedTabs,
-                        initialMeter);
+                        initialMeter,
+                        initialKey,
+                        standardViolin);
         var score = ScoreTiePitchGuard.withInitialKeyContext(decoded.score(), initialKey);
         score = ScoreTupletMeterContext.apply(score, initialMeter);
+        score =
+                ClosedSixteenthDyads.applyClosedMonophonicThreeFour(
+                        score,
+                        decoderGray == null ? gray : decoderGray,
+                        gray,
+                        width,
+                        height,
+                        physicalPage);
+        score = PrintedLedgerSlurContinuations.apply(
+                score, decoderGray == null ? gray : decoderGray, gray, labels,
+                width, height, physicalPage, initialKey);
         score =
                 ClosedDottedSixteenths.applyClosedOctaves(
                         score,
@@ -149,8 +169,26 @@ public final class Main {
             if (Double.isFinite(closing)) beats[beats.length - 1] = (float) closing;
         }
         boolean[] cadences = PrintedCadenceDurations.apply(score, beats);
+        ClosedBeamedHalfBar.apply(
+                score,
+                initialMeter,
+                decoderGray == null ? gray : decoderGray,
+                width,
+                height,
+                beats);
+        ClosedEarlyTripleDyads.apply(
+                score,
+                initialMeter,
+                decoderGray == null ? gray : decoderGray,
+                width,
+                height,
+                beats);
         IsolatedDottedHalfCadence.apply(score, labels, decoderGray == null ? gray : decoderGray,
                 width, height, beats, cadences);
+        PrintedFiveBeatMeasure.apply(
+                score, decoderGray == null ? gray : decoderGray, gray, width, height, beats);
+        PrintedOpeningSixteenthExamples.apply(
+                score, labels, decoderGray == null ? gray : decoderGray, gray, width, height, beats);
         int[] keys = measureKeys(beats.length, initialKey, score.keyChanges());
         var wrapped =
                 WrappedTripletMeasure.capture(
@@ -162,12 +200,23 @@ public final class Main {
                         beats,
                         labels,
                         keys);
+        wrapped = WrappedSixteenthMeasure.capture(
+                wrapped, initialMeter, decoderGray == null ? gray : decoderGray,
+                width, height, beats, labels, keys);
         score = wrapped.score();
         var tiedCadence = TiedQuarterCadence.capture(score, initialMeter,
                 decoderGray == null ? gray : decoderGray, width, height, beats);
-        score = tiedCadence.score();
+        score = ClosedLateTripleDyads.normalize(
+                tiedCadence.score(), initialMeter, decoderGray == null ? gray : decoderGray, width, height);
+        float[] lateDyadOnsets = ClosedLateTripleDyads.place(
+                score, initialMeter, decoderGray == null ? gray : decoderGray, width, height, beats, cadences);
+        var harmonicQuarterOnsets =
+                ClosedDoubleHarmonicQuarters.writtenOnsets(
+                        score, decoderGray == null ? gray : decoderGray, gray, width, height, beats);
+        var closedHarmonicOnsets = ClosedHarmonicQuarterCadence.onsets(score);
         var harmonicPitches = ArtificialHarmonics.resolveThirdPitches(
                 labels, decoderGray == null ? gray : decoderGray, width, height, score, initialKey);
+        int sharedThird = TerminalSharedArtificialHarmonics.stoppedThird(score);
         double[] starts = new double[beats.length + 1];
         for (int i = 0; i < beats.length; i++) starts[i + 1] = starts[i] + beats[i];
         var events = new ArrayList<Map<String, Object>>();
@@ -182,6 +231,20 @@ public final class Main {
                     identity.put("writtenMidi", harmonic.writtenMidi());
                     identity.put("harmonicTouchMidi", harmonic.touchMidi());
                     identity.put("midi", harmonic.soundingMidi());
+                }
+                if (bar == beats.length - 1 && cadences[bar]
+                        && note.harmonicSemitones() == 28 && note.octaveShift() == 0
+                        && (noteIndex == sharedThird || standardViolin && note.openStringTouch() != null)) {
+                    int written = ScoreTiePitchGuard.writtenMidi(
+                            note.diatonicPitchIdentity(), note.writtenAccidental(), keys[bar]);
+                    int touch = ScoreTiePitchGuard.writtenMidi(
+                            note.diatonicPitchIdentity() + 2, ScoreNoteEvent.ACCIDENTAL_FROM_KEY, keys[bar]);
+                    if (touch - written == 4 && written + 28 <= 127) {
+                        identity.put("writtenMidi", written);
+                        identity.put("harmonicTouchMidi", touch);
+                        identity.put("artificialHarmonicThird", true);
+                        identity.put("midi", written + 28);
+                    }
                 }
                 boolean guessed = (Boolean) identity.get("clefInferred");
                 double duration =
@@ -222,6 +285,12 @@ public final class Main {
                                 + (wrappedTiming != null ? wrappedTiming.onset()
                                   : tiedCadenceTiming != null ? tiedCadenceTiming.onset() : cadences[bar] ? 0
                                         : ScoreNoteTiming.beatInMeasure(note, score.notes(), beats[bar]));
+                Integer harmonicOnset = harmonicQuarterOnsets.get(noteIndex);
+                if (harmonicOnset != null) startBeat = starts[bar] + harmonicOnset;
+                Double closedHarmonicOnset = closedHarmonicOnsets.get(noteIndex);
+                if (closedHarmonicOnset != null) startBeat = starts[bar] + closedHarmonicOnset;
+                if (lateDyadOnsets.length > 0 && Float.isFinite(lateDyadOnsets[noteIndex]))
+                    startBeat = starts[bar] + lateDyadOnsets[noteIndex];
                 if (note.kind() == ScoreNoteEvent.Kind.UNPITCHED
                         && (!Double.isFinite(startBeat)
                                 || startBeat < 0
@@ -273,11 +342,99 @@ public final class Main {
                     events.get(i).put("writtenPlacement", new ScoreNoteTiming.WrittenPlacement(
                             onset, duration, -1, -1, false, 0));
                 }
+            for (int i = 0; i < lateDyadOnsets.length; i++) {
+                if (Float.isFinite(lateDyadOnsets[i]))
+                    events.get(i).put("writtenPlacement", new ScoreNoteTiming.WrittenPlacement(
+                            lateDyadOnsets[i], .25, -1, -1, false, 0));
+            }
         }
+        HarmonicBeamBarline.placeTails(
+                decoded.harmonicTails(), score.notes(), events, beats, starts);
+        if (standardViolin)
+            PenultimateHarmonicQuarterClock.place(
+                    score,
+                    events,
+                    decoderGray == null ? gray : decoderGray,
+                    gray,
+                    width,
+                    height,
+                    beats,
+                    starts);
         attachNotePerformance(score.notes(), events);
         if (standardViolin) {
+            var mixed = ClosedMixedHarmonicQuarters.capture(score, labels, gray,
+                    decoderGray == null ? gray : decoderGray, width, height, beats, keys);
+            score = ClosedMixedHarmonicQuarters.apply(score, events, mixed, starts, width, height);
             var recovered = OpenStringHarmonics.recover(score, initialKey);
+            var compoundFourths = OpenStringHarmonics.captureFourthPartners(
+                    score, gray, decoderGray == null ? gray : decoderGray, width, height, keys, recovered);
+            if (!compoundFourths.isEmpty()) {
+                var changed = new ArrayList<>(score.notes());
+                for (var partner : compoundFourths.entrySet()) {
+                    int owner = partner.getKey();
+                    var base = partner.getValue();
+                    var identity = noteIdentity(base, keys[base.measureIndex()]);
+                    var event = events.get(owner);
+                    if (!Boolean.TRUE.equals(identity.get("artificialHarmonicFourth"))
+                            || !identity.get("midi").equals(event.get("midi"))
+                            || !Integer.valueOf(owner).equals(event.get("sourceNoteIndex"))
+                            || !completeCompoundQuarter(event, starts[base.measureIndex()],
+                                    starts[base.measureIndex() + 1])) continue;
+                    event.remove("octaveShift");
+                    event.putAll(identity);
+                    event.put("compoundHarmonicFourth", true);
+                    changed.set(owner, base);
+                }
+                var owners = java.util.stream.IntStream.range(0, changed.size()).boxed().toList();
+                score = score.withNotes(changed, owners).withClockContextSource(score.clockContextSource());
+            }
             score = appendOpenStringHarmonics(score, events, recovered, height);
+        }
+        var hollow = tabs.isEmpty() ? TerminalOpenHarmonicHeads.capture(score, labels,
+                decoderGray == null ? gray : decoderGray, gray, width, height, beats,
+                annotations.words().stream().map(SheetInterpreter.Word::internal).toList(),
+                initialKey, standardViolin) : List.<TerminalOpenHarmonicHeads.Chord>of();
+        if (standardViolin && !hollow.isEmpty()) {
+            var notes = new ArrayList<>(score.notes());
+            var owners = new ArrayList<>(java.util.stream.IntStream.range(0,notes.size()).boxed().toList());
+            var archived = new ArrayList<TerminalOpenHarmonicHeads.Chord>();
+            for (var chord : hollow) {
+                int bar = chord.measureIndex();
+                var heads = new ArrayList<TerminalOpenHarmonicHeads.Head>();
+                var region = score.measures().get(bar);
+                for (var written : chord.heads()) {
+                    int index = notes.size();
+                    float position = (written.x()/width-region.left())/(region.right()-region.left());
+                    float y = written.y()/height;
+                    var note = new ScoreNoteEvent(bar,position,written.staffStep(),0,1,y,
+                            false,0,0,ScoreNoteEvent.ACCIDENTAL_FROM_KEY,1,1,0,0,
+                            ScoreNoteEvent.CLEF_TREBLE).withStemDirection(1);
+                    var event = new LinkedHashMap<String,Object>();
+                    event.put("measureIndex",bar);
+                    event.put("staffIndex",0);
+                    event.put("staffCount",1);
+                    event.put("sourceNoteIndex",index);
+                    event.put("midi",written.soundingMidi());
+                    event.put("writtenMidi",written.writtenMidi());
+                    event.put("harmonicTouchMidi",written.writtenMidi());
+                    event.put("startBeat",starts[bar]+chord.quarterBeatOffset());
+                    event.put("durationBeats",1);
+                    event.put("clefInferred",false);
+                    event.put("durationFallback",false);
+                    event.put("tiedFromPrevious",false);
+                    event.put("x",written.x());
+                    event.put("y",written.y());
+                    events.add(event);
+                    notes.add(note);
+                    owners.add(-1);
+                    heads.add(new TerminalOpenHarmonicHeads.Head(written.staffStep(),written.writtenMidi(),
+                            written.x(),written.y(),written.soundingMidi(),index));
+                }
+                archived.add(new TerminalOpenHarmonicHeads.Chord(bar,chord.quarterBeatOffset(),List.copyOf(heads)));
+            }
+            var context = score.clockContextSource().withNoteCount(notes.size());
+            score = score.withNotes(notes,owners).withClockContextSource(context);
+            hollow = List.copyOf(archived);
         }
         var result = new LinkedHashMap<String, Object>();
         result.put("schemaVersion", 1);
@@ -287,8 +444,39 @@ public final class Main {
         result.put("events", events);
         result.put("tablatureWarnings", tabWarnings);
         result.put("measureBeats", beats);
-        var accidentals = decoded.accidentalSource().printedMarks(decoded.originalNotes(), score.notes());
-        if (!accidentals.isEmpty()) result.put("printedAccidentals", accidentals);
+        var printedOctaves = new ArrayList<Object>();
+        for (var span : retainedStaffOctaves(decoded.printedOctaveSpans(), events, wrapped.continuations()))
+            printedOctaves.add(new PrintedOctaveFragments.CompleteSpan(span));
+        printedOctaves.addAll(PrintedOctaveFragments.retain(
+                decoded.printedOctaveSpans(), events, wrapped.continuations(), beats));
+        if (!printedOctaves.isEmpty()) result.put("printedOctaveSpans", printedOctaves);
+        if (!hollow.isEmpty()) result.put("printedOpenHarmonicChords", hollow);
+        var accidentals = decoded.accidentalSource().printedMarks(
+                decoded.originalNotes(), score.notes(), decoded.accidentalMeasures());
+        accidentals =
+                SourceLocalAccidental.includeClosedTripletSharps(
+                        accidentals, decoded.provedSharpOwners(), score.notes());
+        if (sharedThird >= 0 || events.stream().anyMatch(
+                event -> Boolean.TRUE.equals(event.get("mixedHarmonicQuarter")))) {
+            var marks = new java.util.TreeMap<Integer, SourceLocalAccidental.PrintedMark>();
+            for (var mark : accidentals) marks.put(mark.noteIndex(), mark);
+            for (int i = 0; i < events.size(); i++) {
+                if (i != sharedThird && !Boolean.TRUE.equals(events.get(i).get("mixedHarmonicQuarter"))) continue;
+                int sign = score.notes().get(i).writtenAccidental();
+                if (sign != ScoreNoteEvent.ACCIDENTAL_FROM_KEY)
+                    marks.put(i, new SourceLocalAccidental.PrintedMark(i, sign));
+            }
+            accidentals = List.copyOf(marks.values());
+        }
+        if (!accidentals.isEmpty()) {
+            result.put("printedAccidentals", accidentals.stream().map(mark -> {
+                var value = new java.util.LinkedHashMap<String, Object>();
+                value.put("noteIndex", mark.noteIndex());
+                value.put("accidental", mark.accidental());
+                if (Boolean.TRUE.equals(mark.naturalPrefix())) value.put("naturalPrefix", true);
+                return value;
+            }).toList());
+        }
         if (!wrapped.continuations().isEmpty())
             result.put("printedMeasureContinuations", wrapped.continuations());
         var barlineStyles = PrintedBarlineStyles.capture(
@@ -297,11 +485,59 @@ public final class Main {
         if (!barlineStyles.isEmpty()) result.put("printedBarlineStyles", barlineStyles);
         if (tabs.isEmpty()) {
             var fingerings = PrintedFingeringDigits.capture(
-                    gray, width, height, annotations.words(), score, events);
+                    gray, decoderGray == null ? gray : decoderGray, width, height,
+                    annotations.words(), score, events);
             if (!fingerings.isEmpty()) result.put("printedFingerings", fingerings);
+            if (standardViolin) {
+                byte[] geometry = decoderGray == null ? gray : decoderGray;
+                var romanScore = score;
+                var marks = PrintedRomanStrings.capture(geometry, width, height, annotations.words(),
+                        score, events, () -> OmrScoreInterpreter.techniqueStaffs(
+                                labels, geometry, width, height, romanScore.measures()));
+                if (!marks.isEmpty()) result.put("printedStringMarks", marks);
+            }
         }
         result.put("totalBeats", starts[beats.length]);
         Files.writeString(Path.of(args[1]), json(result) + "\n", StandardCharsets.UTF_8);
+    }
+
+    static List<OctaveMarkDetector.StaffSpan> retainedStaffOctaves(
+            List<OctaveMarkDetector.StaffSpan> spans, List<Map<String, Object>> events,
+            List<Integer> continuations) {
+        var result = new ArrayList<OctaveMarkDetector.StaffSpan>();
+        for (var span : spans) {
+            if (span.fragment() != null || continuations.contains(span.firstMeasureIndex())
+                    || continuations.contains(span.lastMeasureIndex() + 1)) continue;
+            var occupied = new java.util.BitSet();
+            boolean partial = false;
+            for (var event : events) {
+                if (!(event.get("measureIndex") instanceof Integer measure)
+                        || measure < span.firstMeasureIndex()
+                        || measure > span.lastMeasureIndex()
+                        || !Integer.valueOf(span.staffIndex()).equals(event.get("staffIndex"))
+                        || !Integer.valueOf(span.staffCount()).equals(event.get("staffCount")))
+                    continue;
+                if (!(event.get("midi") instanceof Number)
+                        || !Integer.valueOf(span.octaveShift()).equals(event.get("octaveShift"))) {
+                    partial = true;
+                    break;
+                }
+                occupied.set(measure);
+            }
+            if (!partial && occupied.nextClearBit(span.firstMeasureIndex()) > span.lastMeasureIndex())
+                result.add(span);
+        }
+        return List.copyOf(result);
+    }
+
+    static boolean completeCompoundQuarter(Map<String, Object> event, double left, double right) {
+        return Boolean.FALSE.equals(event.get("durationFallback"))
+                && Boolean.FALSE.equals(event.get("tiedFromPrevious"))
+                && !event.containsKey("writtenPlacement")
+                && event.get("durationBeats") instanceof Number duration
+                && duration.doubleValue() == 1
+                && event.get("startBeat") instanceof Number onset
+                && left <= onset.doubleValue() && onset.doubleValue() + 1 <= right;
     }
 
     private static ScorePageInterpretation appendOpenStringHarmonics(
@@ -323,6 +559,8 @@ public final class Main {
             event.put("writtenMidi", harmonic.touchMidi());
             event.put("harmonicTouchMidi", harmonic.touchMidi());
             event.put("openStringMidi", harmonic.openMidi());
+            if (Boolean.TRUE.equals(anchor.get("mixedHarmonicQuarter")))
+                event.put("mixedHarmonicQuarter", true);
             event.put("clefInferred", false);
             event.put("startBeat", anchor.get("startBeat"));
             event.put("durationBeats", anchor.get("durationBeats"));
@@ -379,7 +617,8 @@ public final class Main {
                     || NoteOrnament.tremoloBeams(note.articulations()) != 0
                     || guitar != 0 && !neutralDead)
                 throw new IOException(
-                        "Unpitched source ties and tonal performance marks need explicit instrument semantics");
+                        "Unpitched source ties and tonal performance marks need explicit instrument"
+                            + " semantics");
             if (octave < 0 || octave > 9)
                 throw new IOException("Unpitched display octave must be 0..9");
             identity.put("kind", note.kind().name());
@@ -401,6 +640,16 @@ public final class Main {
                     (octave + 1 + note.octaveShift()) * 12
                             + new int[] {0, 2, 4, 5, 7, 9, 11}[letter]
                             + ScoreNoteEvent.accidentalSemitones(accidental);
+            if (note.harmonicSemitones() == 24 && note.octaveShift() == 0) {
+                int touch = ScoreTiePitchGuard.writtenMidi(
+                        diatonic + 3, ScoreNoteEvent.ACCIDENTAL_FROM_KEY, key);
+                if (touch - midi == 5 && midi + 24 <= 127) {
+                    identity.put("writtenMidi", midi);
+                    identity.put("harmonicTouchMidi", touch);
+                    identity.put("artificialHarmonicFourth", true);
+                    midi += 24;
+                }
+            }
             identity.put("midi", midi);
         }
         identity.put("clefInferred", guessed);
@@ -637,6 +886,9 @@ public final class Main {
                 if (value instanceof ScoreNoteEvent note
                         && note.kind() == ScoreNoteEvent.Kind.PITCHED
                         && c.getName().equals("kind")) continue;
+                if (value instanceof ScoreBeamSource.Group group
+                        && group.tupletMark() == null
+                        && c.getName().equals("tupletMark")) continue;
                 items.add(json(c.getName()) + ":" + json(c.getAccessor().invoke(value)));
             }
             return "{" + String.join(",", items) + "}";

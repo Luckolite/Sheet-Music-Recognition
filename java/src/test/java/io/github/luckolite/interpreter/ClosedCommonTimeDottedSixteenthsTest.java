@@ -41,6 +41,74 @@ public class ClosedCommonTimeDottedSixteenthsTest {
         assertSame(score, apply(score, noBar));
     }
 
+    @Test
+    public void opposedOuterHooksRequireBothPlanesAndThePrintedClose() {
+        byte[] gray = new byte[W * H];
+        Arrays.fill(gray, (byte) 255);
+        for (int line = STAFF_BOTTOM - 64; line <= STAFF_BOTTOM; line += 16)
+            paint(gray, 75, 1080, line, line, (byte) 0);
+        paint(gray, 793, 795, STAFF_BOTTOM - 64, STAFF_BOTTOM, (byte) 0);
+        var events = new ArrayList<ScoreNoteEvent>();
+        int first = FIRST - 14, spacing = 40;
+        for (int slot = 0; slot < 16; slot++) {
+            int x = first + slot * spacing;
+            boolean down = slot < 8;
+            boolean dotted = slot % 2 == 0;
+            boolean missing = slot == 1 || slot == 15;
+            int head = down ? STAFF_BOTTOM - 64 : STAFF_BOTTOM;
+            int axis = x + (down ? -9 : 9);
+            int tip = down ? 349 : 230;
+            paint(gray, x - 9, x + 9, head - 5, head + 5, (byte) 0);
+            paint(gray, axis - 1, axis + 1, Math.min(tip, head), Math.max(tip, head), (byte) 0);
+            if (!dotted)
+                paint(gray, axis - 13, axis + 1, down ? 313 : 256, down ? 322 : 265, (byte) 0);
+            if (slot % 4 == 0) {
+                paint(
+                        gray,
+                        axis - 1,
+                        axis + 3 * spacing + 1,
+                        down ? 341 : 230,
+                        down ? 349 : 238,
+                        (byte) 0);
+                paint(
+                        gray,
+                        axis - 1,
+                        axis + 3 * spacing + 1,
+                        down ? 327 : 244,
+                        down ? 335 : 252,
+                        (byte) 0);
+            }
+            events.add(
+                    note(
+                            x,
+                            head,
+                            down ? 8 : 0,
+                            dotted ? 1 : 0,
+                            dotted || missing ? 2 : 3,
+                            down ? -1 : 1));
+        }
+        var measure = new MeasureRegion(LEFT / (float) W, RIGHT / (float) W, 199f / H, 330f / H);
+        var meter = new ScoreMeterChange(0, 4, 4);
+        var score =
+                new ScorePageInterpretation(
+                        List.of(measure), events, 0, List.of(), List.of(), List.of(meter));
+        var kept =
+                ClosedDottedSixteenths.applyClosedMonophonicHooks(score, meter, gray, gray, W, H);
+        assertEquals(3, kept.notes().get(1).beamCount());
+        assertEquals(3, kept.notes().get(15).beamCount());
+        var noHook = gray.clone();
+        int lastAxis = first + 15 * spacing + 9;
+        paint(noHook, lastAxis - 13, lastAxis - 4, 256, 265, (byte) 255);
+        assertSame(
+                score,
+                ClosedDottedSixteenths.applyClosedMonophonicHooks(
+                        score, meter, noHook, gray, W, H));
+        assertSame(
+                score,
+                ClosedDottedSixteenths.applyClosedMonophonicHooks(
+                        score, meter, gray, noHook, W, H));
+    }
+
     private static ScorePageInterpretation apply(ScorePageInterpretation score, byte[] gray) {
         return ClosedDottedSixteenths.apply(score, gray, W, H);
     }

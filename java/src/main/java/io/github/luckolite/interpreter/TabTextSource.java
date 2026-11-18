@@ -13,7 +13,7 @@ public final class TabTextSource {
     private static final class TokenPattern {
         private static final Pattern VALUE =
                 Pattern.compile(
-                        "-(?:[12]|(?i:full))|(?i:full|whammy|w/bar|bar|upstroke|downstroke|strum up|strum down)|-?(?:1 1/2|1/4|1/2|3/4|1\u00bd|[\u00bc\u00bd\u00be])|[\\uE846\\uE847]|<[0-9]{1,2}>|\\([0-9]{1,2}\\)|(?<![0-9])[0-9]{1,2}[bB][0-9]{1,2}(?:[rR][0-9]{1,2})?~*|(?<![0-9])(?:[0-9]{1,2}|[xX])(?:[/\\\\hHpP][0-9]{1,2})+~*|(?<![0-9])[0-9]{1,3}(?![0-9])~*|(?<![\\p{L}\\p{N}])[QESWHT](?:\\.{1,2})?(?![\\p{L}\\p{N}])|[xXP=]|[𝅝𝅗𝅥𝅘𝅥𝅘𝅥𝅮𝅘𝅥𝅯𝅘𝅥𝅰𝄻𝄼𝄽𝄾𝄿𝅀♩♪\\uE4E3-\\uE4E8](?:\\.{1,2})?|[\\uE1E7\\uE241\\uE243\\uE245\\uE4A2\\uEAB2\\uE080-\\uE089\\uECA5\\uECA6\\uECB7]");
+                        "-(?:[12]|(?i:full))|(?i:full|whammy|w/bar|bar|upstroke|downstroke|strum up|strum down)|-?(?:1 1/2|1/4|1/2|3/4|1\u00bd|[\u00bc\u00bd\u00be])|[\\uE846\\uE847]|<[0-9]{1,2}>|\\([0-9]{1,2}\\)|(?<![0-9])[0-9]{1,2}[bB][0-9]{1,2}(?:[rR][0-9]{1,2})?~*|(?<![0-9])(?:[0-9]{1,2}|[xX])(?:[/\\\\hHpP][0-9]{1,2})+~*|(?<![0-9])[0-9]{1,3}(?![0-9])~*|(?<![\\p{L}\\p{N}])[QESWHT](?:\\.{1,2})?(?![\\p{L}\\p{N}])|[xXP=]|[𝅝𝅗𝅥𝅘𝅥𝅘𝅥𝅮𝅘𝅥𝅯𝅘𝅥𝅰𝄻𝄼𝄽𝄾𝄿𝅀♩♪\\uE4E3-\\uE4E8](?:\\.{1,2})?|[\\uE1E7\\uE241\\uE243\\uE245\\uE4A2\\uEAB2\\uE080-\\uE089\\uECA3-\\uECA8\\uECB7]");
     }
 
     private static final class DigitPattern {

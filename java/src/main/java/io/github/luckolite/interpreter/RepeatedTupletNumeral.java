@@ -87,6 +87,12 @@ final class RepeatedTupletNumeral {
                                 w - rw, Math.round(cx + gap * 1.2f - (ownedJoined ? rw * .5f : 0)));
         int top = Math.max(0, Math.round(y1 - gap * 7)),
                 bottom = Math.min(h - rh, Math.round(y3 + gap * 7));
+        int armReach = Math.round(gap * 1.5f);
+        int maxShift = (int) Math.ceil((rw * .5f + armReach) * .5f) + 1;
+        int maskLeft = Math.max(0, left - armReach), maskRight = Math.min(w - 1, right + rw + armReach);
+        int maskTop = Math.max(0, top - maxShift), maskBottom = Math.min(h - 1, bottom + rh - 1 + maxShift);
+        long maskCells = (long) (maskRight - maskLeft + 1) * (maskBottom - maskTop + 1);
+        ThinRuleMask thinRules = null;
         for (int y = top; y <= bottom; y++) {
             if (y + rh >= y1 - gap && y <= y3 + gap) continue;
             for (int x = left; x <= right; x++) {
@@ -97,6 +103,8 @@ final class RepeatedTupletNumeral {
                     if (hit + ni - i - 1 < ni * .93f) break;
                 }
                 if (hit < ni * .93f) continue;
+                if (thinRules == null && maskCells > 0 && maskCells <= 262_144)
+                    thinRules = ThinRuleMask.scan(gray, w, h, maskLeft, maskRight, maskTop, maskBottom, gap);
                 int[] box = {x, y, x + rw - 1, y + rh - 1};
                 boolean[] covered = new boolean[rh];
                 int hidden = 0;
@@ -116,7 +124,9 @@ final class RepeatedTupletNumeral {
                             total++;
                             boolean rowInk =
                                     (gray[cy * w + xx] & 255) < 190
-                                            || nearThinRule(gray, w, h, xx, cy, gap);
+                                            || (thinRules == null
+                                                    ? nearThinRule(gray, w, h, xx, cy, gap)
+                                                    : thinRules.contains(xx, cy));
                             if (rowInk) valid++;
                             if (dx < 0) {
                                 leftTotal++;
@@ -258,17 +268,51 @@ final class RepeatedTupletNumeral {
         return rows < 2 || open >= 1;
     }
 
+    /** Nearby short vertical ink runs are shared by the slope probes of every candidate. */
+    private record ThinRuleMask(int left, int top, int width, byte[] hits) {
+        boolean contains(int x, int y) {
+            return hits[(y - top) * width + x - left] != 0;
+        }
+
+        static ThinRuleMask scan(
+                byte[] gray, int w, int h, int left, int right, int top, int bottom, float gap) {
+            int width = right - left + 1;
+            byte[] hits = new byte[width * (bottom - top + 1)];
+            int margin = Math.max(1, Math.round(gap * .12f));
+            int limit = Math.max(2, Math.round(gap * .25f));
+            int scanTop = Math.max(0, top - margin - limit);
+            int scanBottom = Math.min(h - 1, bottom + margin + limit);
+            for (int x = left; x <= right; x++) {
+                for (int y = scanTop; y <= scanBottom; y++) {
+                    if ((gray[y * w + x] & 255) >= 190) continue;
+                    int start = y;
+                    while (y < scanBottom && (gray[(y + 1) * w + x] & 255) < 190) y++;
+                    if (y - start + 1 > limit) continue;
+                    if (start == scanTop && start > 0 && (gray[(start - 1) * w + x] & 255) < 190
+                            || y == scanBottom && y + 1 < h && (gray[(y + 1) * w + x] & 255) < 190)
+                        continue;
+                    int first = Math.max(top, start - margin), last = Math.min(bottom, y + margin);
+                    for (int row = first; row <= last; row++)
+                        hits[(row - top) * width + x - left] = 1;
+                }
+            }
+            return new ThinRuleMask(left, top, width, hits);
+        }
+    }
+
     private static boolean nearThinRule(byte[] gray, int w, int h, int x, int y, float gap) {
         int margin = Math.max(1, Math.round(gap * .12f)),
                 limit = Math.max(2, Math.round(gap * .25f));
-        for (int yy = Math.max(0, y - margin); yy <= Math.min(h - 1, y + margin); yy++) {
+        int last = Math.min(h - 1, y + margin);
+        for (int yy = Math.max(0, y - margin); yy <= last; yy++) {
             if ((gray[yy * w + x] & 255) >= 190) continue;
             int top = yy, bottom = yy;
-            while (top > 0 && yy - top <= limit && (gray[(top - 1) * w + x] & 255) < 190) top--;
-            while (bottom < h - 1
-                    && bottom - yy <= limit
-                    && (gray[(bottom + 1) * w + x] & 255) < 190) bottom++;
+            while (top > 0 && yy - top < limit && (gray[(top - 1) * w + x] & 255) < 190) top--;
+            int end = Math.min(h - 1, Math.max(last, top + limit));
+            while (bottom < end && (gray[(bottom + 1) * w + x] & 255) < 190) bottom++;
             if (bottom - top + 1 <= limit) return true;
+            // Every later pixel of this contiguous run has the same run length.
+            yy = bottom;
         }
         return false;
     }

@@ -1,0 +1,211 @@
+// Copyright 2026 Luckolite
+// SPDX-License-Identifier: Apache-2.0
+package io.github.luckolite.interpreter;
+
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
+
+/** Restore a short quarter dyad between twelve beamed sixteenth dyads and a section divider. */
+final class InlineSixteenthQuarterCadence {
+    private InlineSixteenthQuarterCadence() {}
+
+    static List<MeasureRegion> recover(
+            List<MeasureRegion> measures,
+            byte[] labels,
+            byte[] gray,
+            byte[] paper,
+            int width,
+            int height) {
+        if (width <= 0
+                || height <= 0
+                || labels == null
+                || gray == null
+                || paper == null
+                || gray.length != (long) width * height
+                || labels.length != gray.length
+                || paper.length != gray.length) return measures;
+        List<MeasureRegion> repaired = null;
+        for (int i = 0; i < measures.size(); i++) {
+            var region = measures.get(i);
+            var split =
+                    i + 1 < measures.size()
+                            ? split(region, measures.get(i + 1), labels, gray, paper, width, height)
+                            : List.<MeasureRegion>of();
+            if (!split.isEmpty()) {
+                if (repaired == null) repaired = new ArrayList<>(measures.subList(0, i));
+                repaired.addAll(split);
+            } else if (repaired != null) {
+                repaired.add(region);
+            }
+        }
+        return repaired == null ? measures : List.copyOf(repaired);
+    }
+
+    private static List<MeasureRegion> split(
+            MeasureRegion region,
+            MeasureRegion next,
+            byte[] labels,
+            byte[] gray,
+            byte[] paper,
+            int width,
+            int height) {
+        float left = region.left() * width, right = region.right() * width;
+        float top = region.top() * height, bottom = region.bottom() * height;
+        float gap = (bottom - top) / 8.2f;
+        float nextLeft = next.left() * width;
+        if (gap < 9
+                || gap > 25
+                || region.cadenceQuarterBeats() != 0
+                || right - left < gap * 30
+                || right - left > gap * 43
+                || nextLeft - right < .7f * gap
+                || nextLeft - right > 1.45f * gap
+                || Math.abs(next.top() * height - top) > gap * .45f
+                || Math.abs(next.bottom() * height - bottom) > gap * .45f) return List.of();
+        float hint = bottom - gap * 2.1f;
+        int cut = separator(gray, width, height, right, nextLeft, hint, gap);
+        if (cut < 0 || separator(paper, width, height, right, nextLeft, hint, gap) != cut)
+            return List.of();
+
+        var local = OmrScoreInterpreter.analyze(labels, gray, width, height, List.of(region));
+        if (!local.rests().isEmpty() || local.notes().size() != 26) return List.of();
+        var notes =
+                local.notes().stream()
+                        .sorted(Comparator.comparingDouble(ScoreNoteEvent::positionInMeasure))
+                        .toList();
+        float previous = Float.NaN;
+        int direction = notes.get(24).stemDirection();
+        if (direction == 0) return List.of();
+        for (int i = 0; i < notes.size(); i += 2) {
+            var a = notes.get(i);
+            var b = notes.get(i + 1);
+            boolean cadence = i == 24;
+            float x = left + a.positionInMeasure() * (right - left);
+            float bx = left + b.positionInMeasure() * (right - left);
+            if (!plain(a, cadence, direction)
+                    || !plain(b, cadence, direction)
+                    || Math.abs(a.staffStep() - b.staffStep()) < 2
+                    || bx - x > gap * .23f
+                    || (!Float.isNaN(previous)
+                            && (x - previous < gap * 1.60f || x - previous > gap * 3.8f))
+                    || (cadence
+                            ? x - cut < gap * 1.1f || x - cut > gap * 2.0f
+                            : cut - bx < gap * 1.1f)) return List.of();
+            if (!sharedStem(
+                            gray,
+                            width,
+                            height,
+                            x,
+                            a.pageY() * height,
+                            bx,
+                            b.pageY() * height,
+                            gap,
+                            direction)
+                    || !sharedStem(
+                            paper,
+                            width,
+                            height,
+                            x,
+                            a.pageY() * height,
+                            bx,
+                            b.pageY() * height,
+                            gap,
+                            direction)) return List.of();
+            previous = x;
+        }
+        int margin = Math.round(gap * .50f);
+        return List.of(
+                new MeasureRegion(
+                        region.left(),
+                        (cut - margin) / (float) width,
+                        region.top(),
+                        region.bottom()),
+                new MeasureRegion(
+                        (cut + margin) / (float) width,
+                        region.right(),
+                        region.top(),
+                        region.bottom(),
+                        1));
+    }
+
+    private static boolean plain(ScoreNoteEvent head, boolean cadence, int direction) {
+        return head.kind() == ScoreNoteEvent.Kind.PITCHED
+                && head.visualSize() == ScoreNoteEvent.VisualSize.FULL
+                && head.staffCount() == 1
+                && head.staffIndex() == 0
+                && head.stemDirection() == direction
+                && head.beamCount() == (cadence ? 0 : 2)
+                && head.unbeamedDurationBeats() == (cadence ? ScoreNoteEvent.DURATION_QUARTER : 0)
+                && head.augmentationDots() == 0
+                && head.tupletDivisor() == 1
+                && !head.crossStaffBeam()
+                && (!cadence || !head.tiedFromPrevious())
+                && head.boundaryTies() == 0
+                && head.leadingRestBeats() == 0
+                && head.followingRestBeats() == 0
+                && (head.articulations() & NoteOrnament.GRACE) == 0;
+    }
+
+    private static boolean sharedStem(
+            byte[] gray,
+            int width,
+            int height,
+            float x,
+            float y,
+            float bx,
+            float by,
+            float gap,
+            int direction) {
+        var budget = new PrintedBeamShafts.Budget(20_000);
+        var a = PrintedBeamShafts.at(gray, width, height, x, y, gap, budget);
+        var b = PrintedBeamShafts.at(gray, width, height, bx, by, gap, budget);
+        if (a.size() != 1 || b.size() != 1) return false;
+        var first = a.get(0);
+        var second = b.get(0);
+        return first.direction() == -direction
+                && second.direction() == -direction
+                && Math.abs(first.endY() - second.endY()) <= gap * .15f
+                && Math.max(first.left(), second.left()) <= Math.min(first.right(), second.right());
+    }
+
+    private static int separator(
+            byte[] gray,
+            int width,
+            int height,
+            float right,
+            float nextLeft,
+            float hint,
+            float gap) {
+        int from = Math.round(right - 4.15f * gap), to = Math.round(right - 2.6f * gap);
+        var staff =
+                DottedDyadMeasureSeparator.localRails(
+                        gray, width, height, (from + to) / 2, hint, gap);
+        if (staff == null) return -1;
+        int top = Math.round(staff[0] - 4 * staff[1]), bottom = Math.round(staff[0]);
+        int first = -1, last = -1;
+        for (int x = from; x <= to; x++) {
+            if (!isRule(gray, width, height, x, top, bottom, staff[1])) continue;
+            if (last >= 0 && last + 1 != x) return -1;
+            if (first < 0) first = x;
+            last = x;
+        }
+        if (first < 0 || last - first + 1 < 2 || last - first + 1 > gap * .35f) return -1;
+        int groups = 0, previous = -2;
+        for (int x = Math.round(right + .17f * gap); x <= Math.round(nextLeft + .12f * gap); x++) {
+            if (!isRule(gray, width, height, x, top, bottom, staff[1])) continue;
+            if (x > previous + 1) groups++;
+            previous = x;
+        }
+        return groups == 2 ? (first + last) / 2 : -1;
+    }
+
+    private static boolean isRule(
+            byte[] gray, int width, int height, int x, int top, int bottom, float gap) {
+        return DottedDyadMeasureSeparator.fullInk(gray, width, x, top, gap)
+                && OmrMeasurePostProcessor.verticalRuleAt(gray, width, x, top, bottom, gap)
+                && !DottedDyadMeasureSeparator.continuesBeyondStaff(
+                        gray, width, height, x, top, bottom, gap)
+                && !ClosedHeadBarlineGuard.attached(gray, width, height, x, top, bottom, gap);
+    }
+}

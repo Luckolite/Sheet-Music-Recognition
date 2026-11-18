@@ -178,4 +178,4 @@ class TypedTabTieWriterTests(unittest.TestCase):
 
         with self.assertRaises(ValueError):
 
-            wire.encode(score(), wire.GUIDE_VERSION + 1)
+            wire.encode(score(), max(wire.SUPPORTED_GUIDE_VERSIONS) + 1)

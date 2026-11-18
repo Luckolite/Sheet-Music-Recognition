@@ -136,10 +136,11 @@ public class BorrowedDyadBeamMaskTest {
         for (Object head : heads)
             if ((float) centerY.invoke(head) > 150) fragment = head;
         Method owns = interpreter.getDeclaredMethod("borrowedDenseDyadBeamMask", byte[].class,
-                byte[].class, int.class, int.class, component, List.class, float.class, int[].class);
+                byte[].class, int.class, int.class, component, List.class, float.class, int[].class,
+                boolean.class);
         owns.setAccessible(true);
         return (boolean) owns.invoke(null, labels, gray, WIDTH, HEIGHT, fragment, heads, GAP,
-                new int[]{MIDDLE + 1, 64, -1});
+                new int[]{MIDDLE + 1, 64, -1}, false);
     }
 
     private static int tip(int x) {

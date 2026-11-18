@@ -6,6 +6,29 @@ package io.github.luckolite.interpreter;
 final class PrintedFlatGlyph {
     private PrintedFlatGlyph() {}
 
+    static boolean matchesOwnedInk(byte[] labels, byte[] gray, int width, int height,
+            float noteX, float noteY, float gap) {
+        if (labels == null || gray == null || labels.length != gray.length
+                || gray.length != (long) width * height || gap < 9 || gap > 27) return false;
+        int left = Math.round(noteX - 1.85f * gap), right = Math.round(noteX - .72f * gap);
+        int top = Math.round(noteY - 1.80f * gap), bottom = Math.round(noteY + .85f * gap);
+        int pad = Math.round(1.6f * gap);
+        int originX = left - pad, originY = top - pad;
+        int endX = right + pad, endY = bottom + pad;
+        if (originX < 0 || originY < 0 || endX >= width || endY >= height) return false;
+        int w = endX - originX + 1, h = endY - originY + 1;
+        var glyphInk = new byte[w * h];
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                int at = (originY + y) * width + originX + x;
+                glyphInk[y * w + x] = labels[at] == OmrMeasurePostProcessor.CLEF_OR_KEY
+                        ? gray[at] : (byte) 255;
+            }
+        }
+        return matches(glyphInk, w, h, left - originX, top - originY,
+                right - originX, bottom - originY, gap);
+    }
+
     static boolean matches(
             byte[] gray, int w, int h, int left, int top, int right, int bottom, float gap) {
         return matches(gray, w, h, left, top, right, bottom, gap, null);

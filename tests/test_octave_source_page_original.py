@@ -62,3 +62,24 @@ class OctaveSourcePageTest(unittest.TestCase):
                  for i, measure in enumerate(bars) for elem in measure.findall("direction")]
         self.assertEqual([(0, "4", "down"), (0, "4", "stop"), (0, "2", "down"),
                           (2, "2", "stop")], marks)
+
+
+    def test_voice_reused_after_skipped_measures_on_next_page(self):
+        notes = [(0, 3, 2), (1, 1, 0), (2, 1, 0), (3, 3, 0)]
+        root, bars, owned, pages = scene([0, 1, 1, 1], notes)
+        apply(root, owned, pages)
+        self.assertEqual([["down", "stop"], [], [], []], [shifts(bar) for bar in bars])
+        self.assertEqual(["direction", "note", "direction"], [node.tag for node in bars[0]])
+
+    def test_sparse_voice_within_one_page_keeps_its_original_stop(self):
+        notes = [(0, 3, 2), (1, 1, 0), (2, 3, 0)]
+        root, bars, owned, pages = scene([0, 0, 0], notes)
+        apply(root, owned, pages)
+        self.assertEqual([["down"], [], ["stop"]], [shifts(bar) for bar in bars])
+
+    def test_changed_scope_after_page_turn_stops_at_the_previous_owned_note(self):
+        notes = [(0, 3, 2), (1, 3, 0)]
+        root, bars, owned, pages = scene([0, 1], notes)
+        apply(root, owned, pages)
+        self.assertEqual([["down", "stop"], []], [shifts(bar) for bar in bars])
+        self.assertEqual("stop", bars[0][-1].find("direction-type/octave-shift").get("type"))
