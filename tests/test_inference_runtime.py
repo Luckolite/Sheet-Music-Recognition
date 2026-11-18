@@ -1,12 +1,11 @@
 # Copyright 2026 Luckolite
 # SPDX-License-Identifier: Apache-2.0
-import ctypes
 import sys
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from sheet_music_recognition.runtime import default_inference_threads, inference_interpreter
+from sheet_music_recognition.runtime import inference_interpreter
 
 
 class InferenceRuntimeTest(unittest.TestCase):
@@ -34,20 +33,3 @@ class InferenceRuntimeTest(unittest.TestCase):
                 self.assertIs(tf, inference_interpreter(bundled=True))
             with patch("importlib.metadata.version", side_effect=ModuleNotFoundError):
                 self.assertIs(tf, inference_interpreter(bundled=True))
-
-    def test_automatic_threads_follow_the_windows_process_affinity(self):
-        class Lite:
-            __module__ = "ai_edge_litert.interpreter"
-
-        for mask, success, expected in ((0xfff, 1, 6), (0x7ff, 1, 2), (0xffff, 0, 2)):
-            def affinity(handle, process_mask, system_mask):
-                ctypes.cast(process_mask, ctypes.POINTER(ctypes.c_size_t))[0] = mask
-                return success
-
-            api = SimpleNamespace(kernel32=SimpleNamespace(GetProcessAffinityMask=affinity))
-            with (self.subTest(mask=mask, success=success), patch("sys.platform", "win32"),
-                  patch.object(ctypes, "windll", api, create=True)):
-                self.assertEqual(expected, default_inference_threads(Lite))
-                self.assertEqual(2, default_inference_threads(object))
-        with patch("sys.platform", "linux"):
-            self.assertEqual(2, default_inference_threads(Lite))

@@ -13694,16 +13694,14 @@ final class OmrScoreInterpreter {
         if (membership != null && !membership.bindInput(labels, rawGray, width, height))
             membership = null;
         List<Component> result = new ArrayList<>();
-        int firstTarget = 0;
-        while (firstTarget < labels.length && labels[firstTarget] != target) firstTarget++;
-        if (firstTarget == labels.length) return result;
-        boolean[] visited = new boolean[labels.length];
+        var remaining = PackedGrayInk.matchingLabels(labels, target);
+        if (remaining == null) return result;
         int[] stack = new int[Math.min(labels.length, 256)];
-        for (int origin = firstTarget; origin < labels.length; origin++) {
-            if (labels[origin] != target || visited[origin]) continue;
+        for (int origin = remaining.nextInk(0, labels.length); origin < labels.length;
+                origin = remaining.nextInk(origin + 1, labels.length)) {
             int stackSize = 0;
             stack[stackSize++] = origin;
-            visited[origin] = true;
+            remaining.remove(origin);
             int area = 0, minX = width, minY = height, maxX = 0, maxY = 0;
             long sumX = 0, sumY = 0;
             List<int[]> acceptedRuns = origins == null ? null : new ArrayList<>();
@@ -13711,13 +13709,10 @@ final class OmrScoreInterpreter {
             while (stackSize > 0) {
                 int current = stack[--stackSize];
                 int y = current / width, row = y * width, x = current - row;
-                int left = x, right = x;
-                while (left > 0 && !visited[row + left - 1] && labels[row + left - 1] == target)
-                    left--;
-                while (right + 1 < width
-                        && !visited[row + right + 1]
-                        && labels[row + right + 1] == target) right++;
-                java.util.Arrays.fill(visited, row + left, row + right + 1, true);
+                int left = remaining.runStart(current, row) - row;
+                int end = remaining.nextGap(current + 1, row + width);
+                int right = end - row - 1;
+                remaining.removeRun(row + left, end - 1);
                 int count = right - left + 1;
                 if (acceptedRuns != null) acceptedRuns.add(new int[] {y, left, right});
                 if (memberRuns != null) memberRuns.add(y, left, right);
@@ -13733,10 +13728,9 @@ final class OmrScoreInterpreter {
                     int ny = y + dy;
                     if (ny < 0 || ny >= height) continue;
                     int nextRow = ny * width;
-                    for (int nx = first; nx <= last; nx++) {
-                        int next = nextRow + nx;
-                        if (visited[next] || labels[next] != target) continue;
-                        visited[next] = true;
+                    int neighborEnd = nextRow + last + 1;
+                    for (int next = remaining.nextInk(nextRow + first, neighborEnd); next < neighborEnd;) {
+                        remaining.remove(next);
                         if (stackSize == stack.length) {
                             int capacity;
                             if (stack.length < 65536)
@@ -13750,10 +13744,9 @@ final class OmrScoreInterpreter {
                         }
                         stack[stackSize++] = next;
                         // One queued seed covers this as-yet-unvisited horizontal run.
-                        while (nx < last && !visited[next + 1] && labels[next + 1] == target) {
-                            nx++;
-                            next++;
-                        }
+                        int stop = remaining.nextGap(next + 1, neighborEnd);
+                        if (stop == neighborEnd) break;
+                        next = remaining.nextInk(stop + 1, neighborEnd);
                     }
                 }
             }

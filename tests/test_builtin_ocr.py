@@ -7,11 +7,12 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 from PIL import Image
 
-from sheet_music_recognition.ocr import LocalOcr, tempo_numbers, rest_count_numbers
+from sheet_music_recognition.ocr import LocalOcr, _byte_detector_input, tempo_numbers, rest_count_numbers
 from sheet_music_recognition.reader import Interpreter, grayscale, java_executable, write_page
 
 
@@ -19,6 +20,34 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class BuiltinOcrTests(unittest.TestCase):
+    def test_detector_input_matches_original_float_bits_in_every_channel(self):
+        from rapidocr.ch_ppocr_det.utils import DetPreProcess
+
+        base = np.arange(1024, dtype=np.uint8).reshape(32, 32)
+        image = np.stack((base, 255 - base, base.T), axis=-1)
+        original = DetPreProcess(32, "min", [.485, .456, .406], [.229, .224, .225])
+        prepare = _byte_detector_input(original)
+        for pixels in (image, image[::2, 1::2]):
+            np.testing.assert_array_equal(prepare(pixels).view(np.uint32),
+                                          original(pixels).view(np.uint32))
+
+    def test_white_page_preserves_native_annotations_and_defers_ocr_until_ink(self):
+        owner = object.__new__(Interpreter)
+        owner.ocr = None
+        owner._threads = 2
+        gray = np.full((65, 67), 255, dtype=np.uint8)
+        supplied = {"tabWords": [{"text": "12"}]}
+        with patch("sheet_music_recognition.ocr.LocalOcr") as create:
+            result = owner._read_annotations(gray, supplied)
+            self.assertEqual([], result["words"])
+            self.assertEqual(supplied["tabWords"], result["tabWords"])
+            create.assert_not_called()
+            gray[-1, -1] = 254
+            create.return_value.words.return_value = []
+            owner._read_annotations(gray, None)
+            create.assert_called_once_with(threads=2)
+            create.return_value.words.assert_called_once_with(gray)
+
     def test_compound_meter_tempo_and_short_system_from_print(self):
         fixture = ROOT / 'tests/fixtures/compound-meter-score/page.png'
         with Image.open(fixture) as image:

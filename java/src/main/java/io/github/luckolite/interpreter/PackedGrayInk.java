@@ -48,6 +48,76 @@ final class PackedGrayInk {
         }
     }
 
+    /** Mutable target pixels for one component scan. Return null for an absent label. */
+    static MatchingLabels matchingLabels(byte[] labels, byte target) {
+        long repeated = (target & 255) * 0x0101010101010101L;
+        int wordCount = (int) ((labels.length + 63L) >>> 6);
+        long[] bits = null;
+        int at = 0;
+        for (; at <= labels.length - Long.BYTES; at += Long.BYTES) {
+            long different = (long) PIXEL_WORDS.get(labels, at) ^ repeated;
+            long selected = matchingByteBits(different);
+            if (selected == 0) continue;
+            if (bits == null) bits = new long[wordCount];
+            bits[at >>> 6] |= selected << at;
+        }
+        for (; at < labels.length; at++) {
+            if (labels[at] != target) continue;
+            if (bits == null) bits = new long[wordCount];
+            bits[at >>> 6] |= 1L << at;
+        }
+        return bits == null ? null : new MatchingLabels(bits);
+    }
+
+    static final class MatchingLabels {
+        private final long[] bits;
+
+        private MatchingLabels(long[] bits) {
+            this.bits = bits;
+        }
+
+        int nextInk(int from, int end) {
+            return nextBit(from, end, 0L);
+        }
+
+        int nextGap(int from, int end) {
+            return nextBit(from, end, -1L);
+        }
+
+        // The exclusive bound keeps a missing neighbor from scanning unrelated rows.
+        private int nextBit(int from, int end, long invert) {
+            if (from >= end) return end;
+            int word = from >>> 6, lastWord = (end - 1) >>> 6;
+            long matches = (bits[word] ^ invert) & (-1L << from);
+            while (matches == 0 && word < lastWord) matches = bits[++word] ^ invert;
+            return matches == 0 ? end : Math.min(end, (word << 6) + Long.numberOfTrailingZeros(matches));
+        }
+
+        int runStart(int seed, int rowStart) {
+            if (seed == rowStart) return seed;
+            int last = seed - 1, word = last >>> 6, firstWord = rowStart >>> 6;
+            long gaps = ~bits[word] & (-1L >>> (63 - (last & 63)));
+            while (gaps == 0 && word > firstWord) gaps = ~bits[--word];
+            return gaps == 0 ? rowStart : Math.max(rowStart, (word << 6) + 64 - Long.numberOfLeadingZeros(gaps));
+        }
+
+        void remove(int pixel) {
+            bits[pixel >>> 6] &= ~(1L << pixel);
+        }
+
+        void removeRun(int first, int last) {
+            int startWord = first >>> 6, endWord = last >>> 6;
+            long startMask = -1L << first, endMask = -1L >>> (63 - (last & 63));
+            if (startWord == endWord) {
+                bits[startWord] &= ~(startMask & endMask);
+            } else {
+                bits[startWord] &= ~startMask;
+                java.util.Arrays.fill(bits, startWord + 1, endWord, 0L);
+                bits[endWord] &= ~endMask;
+            }
+        }
+    }
+
     static void fillSymbols(byte[] labels, int offset, int size, long[] words, int at) {
         int p = 0;
         while (p < size) {
@@ -72,6 +142,10 @@ final class PackedGrayInk {
 
     private static long symbolBits(long labels) {
         long mismatch = labels ^ (0x0101010101010101L * OmrMeasurePostProcessor.SYMBOL);
+        return matchingByteBits(mismatch);
+    }
+
+    private static long matchingByteBits(long mismatch) {
         long lowBits = ~HIGH_BITS;
         long selected = ~(((mismatch & lowBits) + lowBits) | mismatch) & HIGH_BITS;
         return ((selected >>> 7) * 0x0102040810204080L) >>> 56;

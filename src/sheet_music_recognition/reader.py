@@ -19,7 +19,7 @@ from typing import NamedTuple
 
 import numpy as np
 from PIL import ExifTags, Image, ImageOps
-from .runtime import default_inference_threads, inference_interpreter, java_executable
+from .runtime import inference_interpreter, java_executable
 from .whitening import PaperBackgroundWhitening, WhiteningResult, MODEL_SHA256 as PAPER_FIELD_SHA256, RASTER_POLICY
 
 MODEL_SHA256 = "92ab7c34c27cb704d95f0cde247b3611d1563fdf1c114b9f9817abb18a7b6a93"
@@ -266,8 +266,8 @@ class _PreparedPage(NamedTuple):
 
 class Interpreter:
     """One reusable CPU interpreter. Use one instance per worker; calls are not thread-safe."""
-    def __init__(self, model_path=None, threads=None):
-        if threads is not None and not 1 <= threads <= 32:
+    def __init__(self, model_path=None, threads=2):
+        if not 1 <= threads <= 32:
             raise ValueError("threads must be 1..32")
         self.jar = Path(__file__).with_name("interpreter.jar")
         if not self.jar.is_file():
@@ -283,8 +283,6 @@ class Interpreter:
         if model_path is None and self.model_sha256 != MODEL_SHA256:
             raise ValueError("Bundled model checksum mismatch")
         interpreter = inference_interpreter(bundled=model_path is None)
-        if threads is None:
-            threads = default_inference_threads(interpreter)
         self.runtime = interpreter(model_path=str(path), num_threads=threads)
         self.runtime.allocate_tensors()
         self.input = self.runtime.get_input_details()[0]
@@ -349,7 +347,11 @@ class Interpreter:
             pairs, blank_tiles = _sparse_pairs(gray, regions, decisions)
             plan = iter(decisions)
             if pairs:
-                paper = Interpreter.predict(self, np.full((320, 320), 255, np.uint8))
+                paper = getattr(self, "_white_prediction", None)
+                if paper is None:
+                    paper = Interpreter.predict(self, np.full((320, 320), 255, np.uint8))
+                    paper.setflags(write=False)
+                    self._white_prediction = paper
         for index, (region, wins) in enumerate(_tile_windows(height, width, self.edge, rows, columns)):
             tile = gray[region]
             cached = pixels = None
@@ -430,9 +432,12 @@ class Interpreter:
     def _read_annotations(self, gray, annotations):
         from .ocr import LocalOcr, page_annotations
 
-        if self.ocr is None:
-            self.ocr = LocalOcr(threads=self._threads)
-        words = self.ocr.words(gray)
+        if gray[0, 0] == 255 and gray.min() == 255:
+            words = []
+        else:
+            if self.ocr is None:
+                self.ocr = LocalOcr(threads=self._threads)
+            words = self.ocr.words(gray)
         if annotations is None:
             return page_annotations(words, [])
         return dict(page_annotations(words, annotations["tabWords"]), **annotations)

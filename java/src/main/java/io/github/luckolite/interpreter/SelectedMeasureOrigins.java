@@ -109,6 +109,13 @@ public final class SelectedMeasureOrigins {
                         || gray.length != labels.length;
     }
 
+    /** A new header pass emits fresh regions from the same physical staff detections. */
+    void reframeMeasures(boolean incompleteStaffs) {
+        origins.clear();
+        invocation = new Object();
+        incomplete = incompleteStaffs;
+    }
+
     void born(
             Object owner,
             int[] rows,

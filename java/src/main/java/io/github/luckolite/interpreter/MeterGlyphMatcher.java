@@ -339,6 +339,8 @@ public final class MeterGlyphMatcher {
             sourceCount += rowInk;
         }
         if (sourceCount < gap * 3) return new Ranking(new Match(0, 0), 0);
+        long[] sourceBits = width <= Long.SIZE ? packedRows(source, width, h) : null;
+        long[] validBits = width <= Long.SIZE ? packedRows(valid, width, h) : null;
         int winner = 0;
         float winningScore = -1, runnerScore = 0;
         int minSize = Math.round(gap * 2.1f), maxSize = Math.round(gap * 5.15f);
@@ -352,6 +354,10 @@ public final class MeterGlyphMatcher {
                 if (bold) glyph = weighted(glyph);
                 int gw = glyph.width(), gh = glyph.height();
                 if (gw < 1 || gh < 1 || gw > width + 8 || gh > h + 8) continue;
+                if (sourceBits != null && gw <= Long.SIZE) {
+                    best = Math.max(best, bestPacked(glyph, width, sourceCount, sourceBits, validBits));
+                    continue;
+                }
                 var runs = GlyphRuns.from(glyph);
                 int[] rowRuns = runs.rows(), bounds = runs.bounds();
                 for (int dx = -4; dx <= width - gw + 4; dx++) {
@@ -383,6 +389,45 @@ public final class MeterGlyphMatcher {
             }
         }
         return new Ranking(new Match(winner, winningScore), runnerScore);
+    }
+
+    private static long[] packedRows(int[] prefix, int width, int height) {
+        long[] bits = new long[height];
+        for (int y = 0, row = 0; y < height; y++, row += width + 1) {
+            for (int x = 0; x < width; x++) {
+                if (prefix[row + x] != prefix[row + x + 1]) bits[y] |= 1L << x;
+            }
+        }
+        return bits;
+    }
+
+    static float bestPacked(
+            Glyph glyph, int width, int sourceCount, long[] source, long[] valid) {
+        int gw = glyph.width(), gh = glyph.height(), height = source.length;
+        long[] rows = new long[gh], shifted = new long[gh];
+        for (int y = 0, i = 0; y < gh; y++) {
+            long bits = 0;
+            for (int x = 0; x < gw; x++, i++) {
+                if (glyph.ink()[i]) bits |= 1L << x;
+            }
+            rows[y] = bits;
+        }
+        float best = 0;
+        for (int dx = -4; dx <= Math.min(width - 1, width - gw + 4); dx++) {
+            for (int y = 0; y < gh; y++) {
+                shifted[y] = dx < 0 ? rows[y] >>> -dx : rows[y] << dx;
+            }
+            for (int dy = -4; dy <= height - gh + 4; dy++) {
+                int tp = 0, targetCount = 0;
+                int end = Math.min(gh, height - dy);
+                for (int y = Math.max(0, -dy); y < end; y++) {
+                    tp += Long.bitCount(shifted[y] & source[y + dy]);
+                    targetCount += Long.bitCount(shifted[y] & valid[y + dy]);
+                }
+                best = Math.max(best, 2f * tp / Math.max(1, sourceCount + targetCount));
+            }
+        }
+        return best;
     }
 
     private record GlyphRuns(int[] rows, int[] bounds) {

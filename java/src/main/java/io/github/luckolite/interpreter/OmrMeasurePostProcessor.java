@@ -53,39 +53,51 @@ final class OmrMeasurePostProcessor {
             int height,
             byte[] headerLabels,
             SelectedMeasureOrigins origins) {
-        if (labels == null || width <= 0 || height <= 0 || labels.length != width * height)
+        if (labels == null || headerLabels == null || headerLabels.length != labels.length)
             return List.of();
-        if (headerLabels == null || headerLabels.length != labels.length) return List.of();
+        return detectSystems(labels, gray, width, height, origins).measures(headerLabels, origins);
+    }
+
+    static StaffSystems detectSystems(
+            byte[] labels, byte[] gray, int width, int height, SelectedMeasureOrigins origins) {
+        if (labels == null || width <= 0 || height <= 0 || labels.length != width * height)
+            return new StaffSystems(List.of(), null, width, height);
         if (gray != null && gray.length != labels.length) gray = null;
         if (origins != null) origins.begin(labels, gray, width, height);
         List<StaffRun> staffs = findStaffs(labels, gray, width, height, origins);
-        if (staffs.isEmpty()) return List.of();
+        if (staffs.isEmpty()) return new StaffSystems(List.of(), gray, width, height);
         List<SystemRun> systems = mergeAlignedStaffs(staffs, labels, gray, width, height);
         recoverIndependentGrandStaffBars(systems, labels, gray, width, height);
-        List<MeasureRegion> result = new ArrayList<>();
-        for (int i = 0; i < systems.size(); i++) {
-            SystemRun system = systems.get(i);
-            // Header trimming must see the same ledger range as note recognition.
-            // Stop halfway to adjacent systems so their heads cannot trim this header.
-            float headTop = system.top - system.gap * MAX_HEAD_LEDGER_GAPS;
-            float headBottom = system.bottom + system.gap * MAX_HEAD_LEDGER_GAPS;
-            if (i > 0) headTop = Math.max(headTop, (systems.get(i - 1).bottom + system.top) / 2f);
-            if (i + 1 < systems.size())
-                headBottom = Math.min(headBottom, (system.bottom + systems.get(i + 1).top) / 2f);
-            addMeasures(
-                    headerLabels,
-                    gray,
-                    width,
-                    height,
-                    system,
-                    result,
-                    headTop,
-                    headBottom,
-                    origins);
+        return new StaffSystems(systems, gray, width, height);
+    }
+
+    record StaffSystems(List<SystemRun> systems, byte[] gray, int width, int height) {
+        List<MeasureRegion> measures(byte[] headerLabels, SelectedMeasureOrigins origins) {
+            List<MeasureRegion> result = new ArrayList<>();
+            for (int i = 0; i < systems.size(); i++) {
+                SystemRun system = systems.get(i);
+                // Header trimming must see the same ledger range as note recognition.
+                // Stop halfway to adjacent systems so their heads cannot trim this header.
+                float headTop = system.top - system.gap * MAX_HEAD_LEDGER_GAPS;
+                float headBottom = system.bottom + system.gap * MAX_HEAD_LEDGER_GAPS;
+                if (i > 0) headTop = Math.max(headTop, (systems.get(i - 1).bottom + system.top) / 2f);
+                if (i + 1 < systems.size())
+                    headBottom = Math.min(headBottom, (system.bottom + systems.get(i + 1).top) / 2f);
+                addMeasures(
+                        headerLabels,
+                        gray,
+                        width,
+                        height,
+                        system,
+                        result,
+                        headTop,
+                        headBottom,
+                        origins);
+            }
+            // Systems already run top to bottom and their boundaries left to right.
+            // Sorting tilted measure boxes by their top edge reverses an uphill row.
+            return List.copyOf(result);
         }
-        // Systems already run top to bottom and their boundaries left to right.
-        // Sorting tilted measure boxes by their top edge reverses an uphill row.
-        return List.copyOf(result);
     }
 
     /** Carry creation rows only along a real same-frame object replacement. */

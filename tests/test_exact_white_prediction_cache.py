@@ -179,6 +179,10 @@ class ExactWhitePredictionCacheTest(unittest.TestCase):
         expected = original.predict(gray)
         self.assertTrue(np.array_equal(expected, paired.predict(gray)))
         self.assertLess(paired.runtime.calls, original.runtime.calls)
+        first_page_calls = paired.runtime.calls
+        gray[3, 151] += 1
+        self.assertTrue(np.array_equal(original.predict(gray), paired.predict(gray)))
+        self.assertEqual(first_page_calls - 1, paired.runtime.calls - first_page_calls)
 
     def test_sparse_pair_limits_and_white_reference_cost(self):
         gray = np.full((320, 320 * 34), 160, np.uint8)

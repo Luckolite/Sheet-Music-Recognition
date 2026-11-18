@@ -27,7 +27,7 @@ def main():
     parser.add_argument("--instrument", choices=("violin",),
                         help="Use standard violin tuning to resolve printed open-string harmonics")
     parser.add_argument("--width", type=int, default=2048)
-    parser.add_argument("--threads", type=int, help="Override the recognition worker thread count (1..32)")
+    parser.add_argument("--threads", type=int, default=2, help="Recognition worker threads (1..32, default: 2)")
     parser.add_argument("--model", type=Path, help="Custom TFLite model with the documented tensor contract")
     parser.add_argument("--pages", help="One-based comma-separated PDF pages, in reading order")
     parser.add_argument("--annotations", type=Path, help="JSON list of annotation objects, one per selected page")

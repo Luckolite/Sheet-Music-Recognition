@@ -48,10 +48,16 @@ final class TieShoulderWindow {
                     }
                 }
                 int start = x;
-                if (y >= firstRule && y <= lastRule && (gray[row + x] & 255) <= 80) {
-                    // Dark even at the lowest adaptive cutoff. Any span contained
-                    // within this run classifies the row as a straight rule.
-                    while (x < right && (gray[row + x + 1] & 255) <= 80) x++;
+                int tone = gray[row + x] & 255;
+                if (y >= firstRule && y <= lastRule && tone <= 225) {
+                    // Every adaptive cutoff includes the darkest runs. A lighter
+                    // uniform run is either entirely paper or entirely ink, so it
+                    // cannot supply a visible stroke to a span contained within it.
+                    if (tone <= 80) {
+                        while (x < right && (gray[row + x + 1] & 255) <= 80) x++;
+                    } else {
+                        while (x < right && (gray[row + x + 1] & 255) == tone) x++;
+                    }
                     int end = x++;
                     // A rule covering every candidate span supplies no visible ink.
                     if (start == left && end == right) continue;

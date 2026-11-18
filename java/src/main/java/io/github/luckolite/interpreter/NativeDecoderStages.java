@@ -17,19 +17,20 @@ public final class NativeDecoderStages {
 
     public static Geometry geometry(
             byte[] labels, byte[] gray, int width, int height, SelectedMeasureOrigins origins) {
-        var raw = OmrMeasurePostProcessor.process(labels, gray, width, height, labels, origins);
+        var systems = OmrMeasurePostProcessor.detectSystems(labels, gray, width, height, origins);
+        boolean incompleteStaffs = origins != null && origins.incomplete();
+        var raw = systems.measures(labels, origins);
         byte[] prepared =
                 OmrScoreInterpreter.normalizeHeaderSymbols(labels, gray, width, height, raw);
-        if (prepared != labels)
-            raw =
-                    OmrMeasurePostProcessor.process(
-                            OmrScoreInterpreter.normalizeTextGeometry(
-                                    labels, gray, width, height, raw),
-                            gray,
-                            width,
-                            height,
-                            prepared,
-                            origins);
+        if (prepared != labels) {
+            byte[] textGeometry = OmrScoreInterpreter.normalizeTextGeometry(labels, gray, width, height, raw);
+            if (textGeometry == labels) {
+                if (origins != null) origins.reframeMeasures(incompleteStaffs);
+                raw = systems.measures(prepared, origins);
+            } else {
+                raw = OmrMeasurePostProcessor.process(textGeometry, gray, width, height, prepared, origins);
+            }
+        }
         if (origins != null) origins.prepared(prepared);
         return new Geometry(prepared, raw);
     }

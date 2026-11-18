@@ -36,16 +36,3 @@ def inference_interpreter(*, bundled):
     except ImportError as error:
         raise RuntimeError("Recognition dependencies are missing. Run: pip install --upgrade score-reader") from error
     return tf.lite.Interpreter
-
-
-def default_inference_threads(interpreter):
-    """Reserve at least half the available logical CPUs on larger Windows workers."""
-    if sys.platform != "win32" or interpreter.__module__ != "ai_edge_litert.interpreter":
-        return 2
-    # Python 3.10/3.11 os.cpu_count() includes CPUs excluded by process affinity.
-    import ctypes
-    process_mask = ctypes.c_size_t()
-    system_mask = ctypes.c_size_t()
-    ok = ctypes.windll.kernel32.GetProcessAffinityMask(
-        ctypes.c_void_p(-1), ctypes.byref(process_mask), ctypes.byref(system_mask))
-    return 6 if ok and process_mask.value.bit_count() >= 12 else 2

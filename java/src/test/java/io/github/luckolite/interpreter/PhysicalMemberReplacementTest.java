@@ -16,6 +16,32 @@ public final class PhysicalMemberReplacementTest {
     }
 
     @Test
+    public void reframingDropsOldRegionsButKeepsPhysicalStaffOwnership() {
+        var origins = fresh();
+        Object owner = new Object(), system = new Object();
+        origins.born(owner, new int[] {60, 72, 84, 96, 108}, 12, 20, 120, 0, null);
+        var member = origins.member(owner, 12, 20, 120, 0, null);
+        var first = new MeasureRegion(.1f, .8f, .3f, .6f);
+        var next = new MeasureRegion(.2f, .8f, .3f, .6f);
+        var members = java.util.List.of(member);
+        origins.emitted(system, members, first, 20, 120);
+        origins.emitted(system, members, first, 20, 120);
+        assertTrue(origins.incomplete());
+
+        origins.reframeMeasures(false);
+        assertSame(member, origins.member(owner, 12, 20, 120, 0, null));
+        origins.emitted(system, members, next, 20, 120);
+        origins.prepared(l);
+        assertNull(origins.origin(first, l, g, 160, 200));
+        assertSame(member, origins.origin(next, l, g, 160, 200).members.get(0));
+
+        origins.reframeMeasures(true);
+        origins.emitted(system, members, first, 20, 120);
+        origins.prepared(l);
+        assertTrue(origins.incomplete());
+        assertNull(origins.origin(first, l, g, 160, 200));
+    }
+    @Test
     public void boundsReplacementRetainsLiteralCreationRows() {
         var p = fresh();
         var old = new Object();

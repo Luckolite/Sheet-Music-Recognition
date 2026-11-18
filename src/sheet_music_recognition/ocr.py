@@ -78,6 +78,24 @@ def page_annotations(words, tab_words):
             "measureNumbers": measures, "tempoNumbers": tempo_numbers(words), "restCounts": rests}
 
 
+def _byte_detector_input(preprocess):
+    import cv2
+
+    # Each byte has only 256 possible normalized values per channel. Generate
+    # them with the pinned detector's own arithmetic, including float rounding.
+    levels = np.repeat(np.arange(256, dtype=np.uint8)[:, None, None], 3, axis=2)
+    lookup = preprocess.normalize(levels).astype(np.float32)
+
+    def prepare(image):
+        resized = preprocess.resize(image)
+        if resized is None:
+            return None
+        channels = cv2.LUT(resized, lookup)
+        return np.ascontiguousarray(channels.transpose(2, 0, 1))[None]
+
+    return prepare
+
+
 class LocalOcr:
     def __init__(self, threads=2):
         try:
@@ -90,6 +108,11 @@ class LocalOcr:
         self.engine = RapidOCR(params={
             "EngineConfig.onnxruntime.intra_op_num_threads": min(threads, os.cpu_count() or 1),
         })
+        detector = self.engine.text_det
+        # With the minimum-side policy the preprocessor is independent of page size.
+        if detector.limit_type == "min":
+            prepare = _byte_detector_input(detector.get_preprocess(0))
+            detector.get_preprocess = lambda _max_wh: prepare
 
     def words(self, gray):
         """Return decoder words in normalized page coordinates."""
