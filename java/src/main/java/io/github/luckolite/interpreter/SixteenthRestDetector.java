@@ -1842,30 +1842,36 @@ final class SixteenthRestDetector {
         int vertical = radius * width;
         byte[] ordinary = gray, faint = gray;
         for (int row = vertical, stop = gray.length - vertical; row < stop; row += width) {
-            for (int at = row + radius, end = row + width - radius; at < end; at++) {
-                int ink = gray[at] & 255;
-                if (ink < 170 || ink >= 205) continue;
-                int threshold = ink + 40;
-                int bright = (gray[at - radius] & 255) >= threshold ? 1 : 0;
-                if ((gray[at + radius] & 255) >= threshold) bright++;
-                if (bright < 2) {
-                    if ((gray[at - vertical] & 255) >= threshold) bright++;
-                    if (bright < 2 && (bright == 0 || (gray[at + vertical] & 255) < threshold))
-                        continue;
-                }
-                if (ink < 185) {
-                    if (ordinary == gray) {
-                        ordinary = gray.clone();
-                        if (faint == gray) faint = ordinary;
+            for (int base = row + radius, end = row + width - radius; base < end; base += 8) {
+                // The excluded bottom border leaves at least one full word after this row.
+                long lanes = PackedGrayInk.restContrastLanes(gray, base);
+                if (end - base < 8) lanes &= (1L << (8 * (end - base))) - 1;
+                while (lanes != 0) {
+                    int at = base + (Long.numberOfTrailingZeros(lanes) >>> 3);
+                    lanes &= lanes - 1;
+                    int ink = gray[at] & 255;
+                    int threshold = ink + 40;
+                    int bright = (gray[at - radius] & 255) >= threshold ? 1 : 0;
+                    if ((gray[at + radius] & 255) >= threshold) bright++;
+                    if (bright < 2) {
+                        if ((gray[at - vertical] & 255) >= threshold) bright++;
+                        if (bright < 2 && (bright == 0 || (gray[at + vertical] & 255) < threshold))
+                            continue;
                     }
-                    ordinary[at] = (byte) 169;
-                    if (faint == ordinary) continue;
-                } else if (faint == ordinary) {
-                    // The views share their ordinary edits until the first
-                    // additional faint pixel needs its own raster.
-                    faint = ordinary.clone();
+                    if (ink < 185) {
+                        if (ordinary == gray) {
+                            ordinary = gray.clone();
+                            if (faint == gray) faint = ordinary;
+                        }
+                        ordinary[at] = (byte) 169;
+                        if (faint == ordinary) continue;
+                    } else if (faint == ordinary) {
+                        // The views share their ordinary edits until the first
+                        // additional faint pixel needs its own raster.
+                        faint = ordinary.clone();
+                    }
+                    faint[at] = (byte) 169;
                 }
-                faint[at] = (byte) 169;
             }
         }
         return new ContrastViews(ordinary, faint);

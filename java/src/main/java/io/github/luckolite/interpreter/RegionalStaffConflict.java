@@ -49,10 +49,11 @@ final class RegionalStaffConflict {
         int[][] previous = new int[25][band], current = new int[25][band];
         int[] previousCenter = new int[5], center = new int[5];
         int[] counts = new int[25], longest = new int[25];
-        boolean[][] candidateInk = new boolean[5][band];
+        int[] candidateInk = new int[5];
+        int[] nextColumn = new int[25];
         float[] priorCenter = new float[5];
         int[] roundedPrior = new int[5];
-        boolean[][] priorInk = new boolean[5][priorBand];
+        int[] priorInk = new int[5];
         for (int x = 0; x < width; x++) {
             boolean joint = true;
             for (int line = 0; line < 5; line++) {
@@ -62,20 +63,25 @@ final class RegionalStaffConflict {
                 center[line] = Math.round(phase);
                 priorCenter[line] = prior.y(line, x);
                 if (!Float.isFinite(priorCenter[line])) return false;
-                boolean found = false;
+                int inkRows = 0;
                 for (int k = 0; k < band; k++) {
                     boolean ink =
                             contrasted(gray, width, height, x, center[line] + k - radius, probe);
-                    candidateInk[line][k] = ink;
-                    found |= ink;
+                    if (ink) inkRows |= 1 << k;
                 }
-                joint &= found;
-                if (found) {
+                candidateInk[line] = inkRows;
+                joint &= inkRows != 0;
+                if (inkRows != 0) {
                     lineCount[line]++;
                     lineLongest[line] = Math.max(lineLongest[line], ++lineRun[line]);
                 } else lineRun[line] = 0;
             }
-            if (joint) jointCount++;
+            if (joint && ++jointCount >= minimum) {
+                // Every jointly supported column also contributes to each individual count.
+                boolean complete = true;
+                for (int run : lineLongest) complete &= run >= minimumRun;
+                if (complete) return false;
+            }
             for (int line = 0; line < 5; line++) roundedPrior[line] = Math.round(priorCenter[line]);
             // Inclusive search bands must be disjoint: each candidate pixel can
             // otherwise cause up to five separately charged predecessor scans.
@@ -85,45 +91,48 @@ final class RegionalStaffConflict {
                         return false;
             boolean priorJoint = true;
             for (int line = 0; line < 5; line++) {
-                boolean found = false;
+                int inkRows = 0;
                 for (int p = 0; p < priorBand; p++) {
                     long y = (long) roundedPrior[line] + p - priorRadius;
                     boolean ink =
                             y >= 0
                                     && y < height
                                     && contrasted(gray, width, height, x, (int) y, priorProbe);
-                    priorInk[line][p] = ink;
-                    found |= ink;
+                    if (ink) inkRows |= 1 << p;
                 }
-                priorJoint &= found;
+                priorInk[line] = inkRows;
+                priorJoint &= inkRows != 0;
             }
+            if (!priorJoint) continue;
             for (int line = 0; line < 5; line++) {
+                if (candidateInk[line] == 0) continue;
                 for (int oldLine = 0; oldLine < 5; oldLine++) {
+                    long shift = (long) roundedPrior[oldLine] - priorRadius - center[line] + radius;
+                    if (shift >= band || shift <= -priorBand) continue;
+                    int aligned = shift >= 0 ? priorInk[oldLine] << (int) shift
+                            : priorInk[oldLine] >>> (int) -shift;
+                    int shared = candidateInk[line] & aligned;
+                    if (shared == 0) continue;
                     int pair = line * 5 + oldLine;
-                    boolean any = false;
-                    for (int k = 0; k < band; k++) {
-                        int y = center[line] + k - radius;
-                        long priorOffset = (long) y - roundedPrior[oldLine] + priorRadius;
-                        boolean shared =
-                                priorJoint
-                                        && candidateInk[line][k]
-                                        && priorOffset >= 0
-                                        && priorOffset < priorBand
-                                        && priorInk[oldLine][(int) priorOffset];
-                        int length = 0;
-                        if (shared) {
-                            length = 1;
-                            for (int p = 0; p < band; p++) {
-                                long oldY = (long) previousCenter[line] + p - radius;
-                                if (Math.abs((long) y - oldY) <= 1)
-                                    length = Math.max(length, previous[pair][p] + 1);
-                            }
-                            longest[pair] = Math.max(longest[pair], length);
-                            any = true;
+                    boolean adjacent = nextColumn[pair] == x && x != 0;
+                    nextColumn[pair] = x + 1;
+                    counts[pair]++;
+                    int[] lengths = current[pair];
+                    java.util.Arrays.fill(lengths, 0);
+                    while (shared != 0) {
+                        int k = Integer.numberOfTrailingZeros(shared);
+                        shared &= shared - 1;
+                        int length = 1;
+                        if (adjacent) {
+                            long offset = (long) center[line] - previousCenter[line] + k;
+                            int first = (int) Math.min(band, Math.max(0L, offset - 1));
+                            int last = (int) Math.max(-1L, Math.min(band - 1L, offset + 1));
+                            for (int j = first; j <= last; j++)
+                                length = Math.max(length, previous[pair][j] + 1);
                         }
-                        current[pair][k] = length;
+                        lengths[k] = length;
+                        longest[pair] = Math.max(longest[pair], length);
                     }
-                    if (any) counts[pair]++;
                 }
             }
             int[][] swap = previous;

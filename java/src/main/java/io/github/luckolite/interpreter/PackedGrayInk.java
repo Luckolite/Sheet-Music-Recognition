@@ -77,6 +77,14 @@ final class PackedGrayInk {
         return ((selected >>> 7) * 0x0102040810204080L) >>> 56;
     }
 
+    // One high bit per grayscale sample in the rest contrast interval [170, 205).
+    static long restContrastLanes(byte[] gray, int at) {
+        long tone = (long) PIXEL_WORDS.get(gray, at);
+        long high = tone | HIGH_BITS;
+        return tone & (high - 0x2a2a2a2a2a2a2a2aL)
+                & ~(high - 0x4d4d4d4d4d4d4d4dL) & HIGH_BITS;
+    }
+
     static boolean isSlideRuleRow(byte[] gray, int start, int width) {
         final long bias = 0x0101010101010101L * (150 - 128);
         int required = (int) (width * .45) + 1;
