@@ -38,6 +38,35 @@ public class FiniteRibbonCapPhaseTest {
     }
 
     @Test
+    public void longStraightStripsKeepTheirWorkLimits() {
+        Set<Long> cells = new HashSet<>();
+        for (int x = 0; x < 1100; x++)
+            for (int y = 0; y < 2; y++) cells.add(FiniteSlurRibbon.pixel(x, y));
+        var narrow = FiniteSlurRibbon.certify(cells, 3);
+        assertTrue(narrow.limitReached());
+        assertEquals("crossing-check-limit", narrow.reason());
+        var wide = FiniteSlurRibbon.certify(cells, 48);
+        assertTrue(wide.limitReached());
+        assertEquals("state-limit", wide.reason());
+    }
+
+    @Test
+    public void distantCurvesKeepTheirExactAreaAndDamageDecision() {
+        for (boolean damaged : new boolean[] {false, true}) {
+            Set<Long> cells = bowl(false);
+            if (damaged) cells.remove(FiniteSlurRibbon.pixel(60, 69));
+            var expected = FiniteSlurRibbon.certify(cells, 6);
+            assertEquals(!damaged, expected.complete());
+            Set<Long> translated = new HashSet<>();
+            for (long cell : cells) {
+                int x = (int) (cell >> 32), y = (int) cell;
+                translated.add(FiniteSlurRibbon.pixel(x + 73000, y - 91000));
+            }
+            assertEquals(expected, FiniteSlurRibbon.certify(translated, 6));
+        }
+    }
+
+    @Test
     public void twoPixelCapHasExactVertexMidpoint() {
         complete(rectangle(2, 0, 0));
     }

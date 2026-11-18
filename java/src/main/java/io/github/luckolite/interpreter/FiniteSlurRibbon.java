@@ -25,18 +25,7 @@ final class FiniteSlurRibbon {
 
     private record Cap(int edge, P point) {}
 
-    private record T(long n, long d) implements Comparable<T> {
-        T {
-            if (d < 0) {
-                n = -n;
-                d = -d;
-            }
-        }
-
-        public int compareTo(T o) {
-            return Long.compare(n * o.d, o.n * d);
-        }
-    }
+    private record T(long n, long d) {}
 
     private static Certificate no(String why, int cells) {
         return new Certificate(false, why, cells, 0, 0, false, false, false, false);
@@ -117,59 +106,73 @@ final class FiniteSlurRibbon {
         var lower = sample(reverse);
         if (!monotone(upper) || !monotone(lower)) return no("branched-side", cells.size());
         long budget = 16L * maximum * maximum;
-        var reached = new HashMap<Long, Long>();
-        int considered = 0;
-        int jFirst = 0;
+        // Only a horizontal band of lower samples is inspected for each upper sample.
+        // Store the chosen predecessor in that band so backtracking retains its tie order.
+        byte[][] parents = new byte[upper.size()][];
+        int[] starts = new int[upper.size()];
+        int considered = 0, firstColumn = 0, endColumn = 0;
         for (int i = 0; i < upper.size(); i++) {
             P u = upper.get(i);
-            while (jFirst < lower.size() && lower.get(jFirst).x() < u.x() - 4L * maximum) jFirst++;
-            for (int j = jFirst;
-                    j < lower.size() && lower.get(j).x() <= u.x() + 4L * maximum;
-                    j++) {
-                // Count EVERY inspected pair, including unreachable states. Otherwise a
-                // jagged boundary could spend unbounded work before a reachable-state cap.
-                if (++considered > MAX_STATES) return limit("state-limit", cells.size());
-                long key = key(i, j);
-                long[] parents = {key(i - 1, j), key(i, j - 1), key(i - 1, j - 1)};
-                boolean origin = i == 0 && j == 0, has = origin;
-                for (long p : parents) if (reached.containsKey(p)) has = true;
-                if (!has) continue;
+            while (firstColumn < lower.size() && lower.get(firstColumn).x() < u.x() - 4L * maximum)
+                firstColumn++;
+            endColumn = Math.max(endColumn, firstColumn);
+            while (endColumn < lower.size() && lower.get(endColumn).x() <= u.x() + 4L * maximum)
+                endColumn++;
+            int length = endColumn - firstColumn;
+            if (length > MAX_STATES - considered) return limit("state-limit", cells.size());
+            considered += length;
+            starts[i] = firstColumn;
+            byte[] row = parents[i] = new byte[length];
+            for (int j = firstColumn; j < endColumn; j++) {
+                int col = j - firstColumn;
+                boolean origin = i == 0 && j == 0;
+                int above = i == 0 ? -1 : j - starts[i - 1];
+                boolean up = i > 0 && reached(parents[i - 1], above);
+                boolean leftward = col > 0 && row[col - 1] != 0;
+                boolean diagonal = i > 0 && reached(parents[i - 1], above - 1);
+                if (!(origin || up || leftward || diagonal)) continue;
                 P l = lower.get(j);
                 if (distance(u, l) > budget || !insideCut(u, l, cells)) continue;
-                if (origin) {
-                    reached.put(key, Long.MIN_VALUE);
-                    continue;
-                }
-                for (long parent : parents)
-                    if (reached.containsKey(parent)) {
-                        P a = upper.get((int) (parent >> 32)), b = lower.get((int) parent);
-                        if (strictCross(a, b, u, l) || area2(a, u, l, b) < 0) continue;
-                        reached.put(key, parent);
-                        break;
-                    }
+                // An up or left step shares an endpoint and encloses a single triangle.
+                if (origin) row[col] = ORIGIN;
+                else if (up && cross(upper.get(i - 1), u, l) >= 0) row[col] = UP;
+                else if (leftward && cross(u, l, lower.get(j - 1)) >= 0) row[col] = LEFT;
+                else if (diagonal && validStep(upper.get(i - 1), lower.get(j - 1), u, l))
+                    row[col] = DIAGONAL;
             }
         }
-        long end = key(upper.size() - 1, lower.size() - 1);
-        if (!reached.containsKey(end)) return no("no-complete-width-path", cells.size());
+        int iEnd = upper.size() - 1, jEnd = lower.size() - 1;
+        if (!reached(parents[iEnd], jEnd - starts[iEnd]))
+            return no("no-complete-width-path", cells.size());
         var path = new ArrayList<Long>();
-        long at = end;
-        while (at != Long.MIN_VALUE) {
-            path.add(at);
-            at = reached.get(at);
+        while (true) {
+            path.add(key(iEnd, jEnd));
+            byte direction = parents[iEnd][jEnd - starts[iEnd]];
+            if (direction == ORIGIN) break;
+            if (direction == UP || direction == DIAGONAL) iEnd--;
+            if (direction == LEFT || direction == DIAGONAL) jEnd--;
         }
         Collections.reverse(path);
         // No non-adjacent cut may cross, even if local free-space reachability was valid.
         int comparisons = 0;
-        for (int i = 0; i < path.size(); i++)
+        for (int i = 0; i + 2 < path.size(); i++) {
+            long a = path.get(i);
+            P top = upper.get((int) (a >> 32)), bottom = lower.get((int) a);
+            int rightEdge = Math.max(top.x(), bottom.x());
             for (int j = i + 2; j < path.size(); j++) {
+                long b = path.get(j);
+                P nextTop = upper.get((int) (b >> 32)), nextBottom = lower.get((int) b);
+                // Both sides advance monotonically. Every remaining cut lies to the right.
+                if (Math.min(nextTop.x(), nextBottom.x()) > rightEdge) {
+                    comparisons += path.size() - j;
+                    if (comparisons > MAX_CLIPS) return limit("crossing-check-limit", cells.size());
+                    break;
+                }
                 if (++comparisons > MAX_CLIPS) return limit("crossing-check-limit", cells.size());
-                long a = path.get(i), b = path.get(j);
-                if (strictCross(
-                        upper.get((int) (a >> 32)),
-                        lower.get((int) a),
-                        upper.get((int) (b >> 32)),
-                        lower.get((int) b))) return no("crossing-strip", cells.size());
+                if (strictCross(top, bottom, nextTop, nextBottom))
+                    return no("crossing-strip", cells.size());
             }
+        }
         var covered = new HashMap<Long, Q>();
         int[] clips = {0};
         long maxCut = 0;
@@ -211,6 +214,16 @@ final class FiniteSlurRibbon {
                 true,
                 true,
                 false);
+    }
+
+    private static final byte UP = 1, LEFT = 2, DIAGONAL = 3, ORIGIN = 4;
+
+    private static boolean reached(byte[] row, int column) {
+        return column >= 0 && column < row.length && row[column] != 0;
+    }
+
+    private static boolean validStep(P a, P b, P u, P l) {
+        return !strictCross(a, b, u, l) && area2(a, u, l, b) >= 0;
     }
 
     private static long key(int i, int j) {
@@ -321,31 +334,36 @@ final class FiniteSlurRibbon {
     }
 
     private static boolean insideCut(P a, P b, Set<Long> cells) {
-        var ts = new TreeSet<T>();
-        ts.add(new T(0, 1));
-        ts.add(new T(1, 1));
-        for (int axis = 0; axis < 2; axis++) {
-            int v = axis == 0 ? a.x() : a.y(), w = axis == 0 ? b.x() : b.y();
-            if (v == w) continue;
-            for (int k = Math.floorDiv(Math.min(v, w), 4) - 1;
-                    k <= Math.floorDiv(Math.max(v, w), 4) + 1;
-                    k++) {
-                T t = new T(4L * k + 2 - v, w - v);
-                if (t.compareTo(new T(0, 1)) > 0 && t.compareTo(new T(1, 1)) < 0) ts.add(t);
+        long dx = (long) b.x() - a.x(), dy = (long) b.y() - a.y();
+        long width = Math.abs(dx), height = Math.abs(dy);
+        long x = firstBoundaryDistance(a.x(), dx);
+        long y = firstBoundaryDistance(a.y(), dy);
+        T before = new T(0, 1);
+        if (!insidePoint(a, b, before, cells)) return false;
+        while (true) {
+            boolean crossX = x < width, crossY = y < height;
+            T next;
+            if (crossX && (!crossY || x * height <= y * width)) {
+                next = new T(x, width);
+                if (crossY && x * height == y * width) y += 4;
+                x += 4;
+            } else if (crossY) {
+                next = new T(y, height);
+                y += 4;
+            } else {
+                next = new T(1, 1);
             }
+            T midpoint = new T(before.n() * next.d() + next.n() * before.d(),
+                    2 * before.d() * next.d());
+            if (!insidePoint(a, b, next, cells) || !insidePoint(a, b, midpoint, cells)) return false;
+            if (!crossX && !crossY) return true;
+            before = next;
         }
-        T before = null;
-        for (T t : ts) {
-            if (!insidePoint(a, b, t, cells)) return false;
-            if (before != null
-                    && !insidePoint(
-                            a,
-                            b,
-                            new T(before.n() * t.d() + t.n() * before.d(), 2 * before.d() * t.d()),
-                            cells)) return false;
-            before = t;
-        }
-        return true;
+    }
+
+    private static long firstBoundaryDistance(int coordinate, long delta) {
+        // Pixel boundaries are congruent to two modulo four in quarter-pixel units.
+        return 1 + Math.floorMod(delta >= 0 ? 1L - coordinate : coordinate - 3L, 4L);
     }
 
     private static boolean insidePoint(P a, P b, T t, Set<Long> cells) {
@@ -353,47 +371,85 @@ final class FiniteSlurRibbon {
                 yn = (long) a.y() * t.d() + ((long) b.y() - a.y()) * t.n();
         int cx = (int) Math.floorDiv(xn + 2 * t.d(), 4 * t.d()),
                 cy = (int) Math.floorDiv(yn + 2 * t.d(), 4 * t.d());
-        for (int x = cx - 1; x <= cx; x++)
-            for (int y = cy - 1; y <= cy; y++)
-                if (cells.contains(pixel(x, y))
-                        && Math.abs(xn - 4L * x * t.d()) <= 2 * t.d()
-                        && Math.abs(yn - 4L * y * t.d()) <= 2 * t.d()) return true;
+        long radius = 2 * t.d();
+        for (int x = cx - 1; x <= cx; x++) {
+            if (Math.abs(xn - 4L * x * t.d()) > radius) continue;
+            for (int y = cy - 1; y <= cy; y++) {
+                if (Math.abs(yn - 4L * y * t.d()) <= radius && cells.contains(pixel(x, y)))
+                    return true;
+            }
+        }
         return false;
     }
 
-    private record Q(BigInteger n, BigInteger d) implements Comparable<Q> {
-        Q {
+    // Two products of signed 31-bit magnitudes, including their sum or difference,
+    // fit in a signed long. Larger reduced fractions use arbitrary precision.
+    private record Q(long n, long d, BigInteger wideN, BigInteger wideD) implements Comparable<Q> {
+        private static Q small(long n, long d) {
+            if (d < 0) {
+                n = -n;
+                d = -d;
+            }
+            long a = Math.abs(n), b = d;
+            while (b != 0) {
+                long remainder = a % b;
+                a = b;
+                b = remainder;
+            }
+            n /= a;
+            d /= a;
+            if (Math.abs(n) <= Integer.MAX_VALUE && d <= Integer.MAX_VALUE)
+                return new Q(n, d, null, null);
+            return new Q(0, 0, BigInteger.valueOf(n), BigInteger.valueOf(d));
+        }
+
+        private static Q wide(BigInteger n, BigInteger d) {
             if (d.signum() < 0) {
                 n = n.negate();
                 d = d.negate();
             }
-            BigInteger g = n.gcd(d);
-            n = n.divide(g);
-            d = d.divide(g);
+            BigInteger gcd = n.gcd(d);
+            n = n.divide(gcd);
+            d = d.divide(gcd);
+            if (n.abs().bitLength() <= 31 && d.bitLength() <= 31)
+                return new Q(n.longValue(), d.longValue(), null, null);
+            return new Q(0, 0, n, d);
         }
 
-        static Q of(long n) {
-            return new Q(BigInteger.valueOf(n), BigInteger.ONE);
+        static Q of(long value) {
+            if (value >= -Integer.MAX_VALUE && value <= Integer.MAX_VALUE)
+                return new Q(value, 1, null, null);
+            return new Q(0, 0, BigInteger.valueOf(value), BigInteger.ONE);
         }
+
+        private BigInteger numerator() { return wideN != null ? wideN : BigInteger.valueOf(n); }
+        private BigInteger denominator() { return wideD != null ? wideD : BigInteger.valueOf(d); }
 
         Q add(Q v) {
-            return new Q(n.multiply(v.d).add(v.n.multiply(d)), d.multiply(v.d));
+            if (wideN == null && v.wideN == null) return small(n * v.d + v.n * d, d * v.d);
+            return wide(numerator().multiply(v.denominator()).add(v.numerator().multiply(denominator())),
+                    denominator().multiply(v.denominator()));
         }
 
         Q sub(Q v) {
-            return new Q(n.multiply(v.d).subtract(v.n.multiply(d)), d.multiply(v.d));
+            if (wideN == null && v.wideN == null) return small(n * v.d - v.n * d, d * v.d);
+            return wide(numerator().multiply(v.denominator()).subtract(v.numerator().multiply(denominator())),
+                    denominator().multiply(v.denominator()));
         }
 
         Q mul(Q v) {
-            return new Q(n.multiply(v.n), d.multiply(v.d));
+            if (wideN == null && v.wideN == null) return small(n * v.n, d * v.d);
+            return wide(numerator().multiply(v.numerator()), denominator().multiply(v.denominator()));
         }
 
         Q div(Q v) {
-            return new Q(n.multiply(v.d), d.multiply(v.n));
+            if (wideN == null && v.wideN == null) return small(n * v.d, d * v.n);
+            return wide(numerator().multiply(v.denominator()), denominator().multiply(v.numerator()));
         }
 
         public int compareTo(Q v) {
-            return n.multiply(v.d).compareTo(v.n.multiply(d));
+            if (wideN == null && v.wideN == null) return Long.compare(n * v.d, v.n * d);
+            return numerator().multiply(v.denominator()).compareTo(v.numerator().multiply(denominator()));
         }
     }
 
@@ -412,15 +468,19 @@ final class FiniteSlurRibbon {
             maxX = Math.max(maxX, p.x());
             minY = Math.min(minY, p.y());
             maxY = Math.max(maxY, p.y());
-            poly.add(new V(Q.of(p.x()), Q.of(p.y())));
         }
-        for (int x = Math.floorDiv(minX + 2, 4) - 1; x <= Math.floorDiv(maxX + 2, 4); x++)
+        // Clipping and signed area are invariant under a common translation.
+        for (P p : triangle)
+            poly.add(new V(Q.of((long) p.x() - minX), Q.of((long) p.y() - minY)));
+        for (int x = Math.floorDiv(minX + 2, 4) - 1; x <= Math.floorDiv(maxX + 2, 4); x++) {
+            List<V> column = 4L * x + 2 <= minX || 4L * x - 2 >= maxX
+                    ? List.of() : clip(poly, 0, 4L * x - 2 - minX, true);
+            column = clip(column, 0, 4L * x + 2 - minX, false);
             for (int y = Math.floorDiv(minY + 2, 4) - 1; y <= Math.floorDiv(maxY + 2, 4); y++) {
                 if (++clips[0] > MAX_CLIPS) return false;
-                List<V> p = clip(poly, 0, 4L * x - 2, true);
-                p = clip(p, 0, 4L * x + 2, false);
-                p = clip(p, 1, 4L * y - 2, true);
-                p = clip(p, 1, 4L * y + 2, false);
+                if (column.size() < 3 || 4L * y + 2 <= minY || 4L * y - 2 >= maxY) continue;
+                List<V> p = clip(column, 1, 4L * y - 2 - minY, true);
+                p = clip(p, 1, 4L * y + 2 - minY, false);
                 Q area = Q.of(0);
                 for (int i = 0; i < p.size(); i++) {
                     V a = p.get(i), b = p.get((i + 1) % p.size());
@@ -434,28 +494,38 @@ final class FiniteSlurRibbon {
                 if (sum.compareTo(Q.of(32)) > 0) return false;
                 covered.put(id, sum);
             }
+        }
         return true;
     }
 
     private static List<V> clip(List<V> p, int axis, long boundary, boolean lower) {
         if (p.isEmpty()) return p;
-        var result = new ArrayList<V>();
+        ArrayList<V> result = null;
         Q k = Q.of(boundary);
         V a = p.get(p.size() - 1);
-        for (V b : p) {
-            Q av = axis == 0 ? a.x() : a.y(), bv = axis == 0 ? b.x() : b.y();
-            boolean ain = lower ? av.compareTo(k) >= 0 : av.compareTo(k) <= 0,
-                    bin = lower ? bv.compareTo(k) >= 0 : bv.compareTo(k) <= 0;
+        Q av = axis == 0 ? a.x() : a.y();
+        boolean ain = lower ? av.compareTo(k) >= 0 : av.compareTo(k) <= 0;
+        for (int i = 0; i < p.size(); i++) {
+            V b = p.get(i);
+            Q bv = axis == 0 ? b.x() : b.y();
+            boolean bin = lower ? bv.compareTo(k) >= 0 : bv.compareTo(k) <= 0;
             if (ain != bin) {
+                if (result == null) {
+                    result = new ArrayList<>(p.size() + 1);
+                    if (ain) {
+                        for (int j = 0; j < i; j++) result.add(p.get(j));
+                    }
+                }
                 Q t = k.sub(av).div(bv.sub(av));
-                result.add(
-                        new V(
-                                a.x().add(b.x().sub(a.x()).mul(t)),
-                                a.y().add(b.y().sub(a.y()).mul(t))));
+                result.add(new V(a.x().add(b.x().sub(a.x()).mul(t)),
+                        a.y().add(b.y().sub(a.y()).mul(t))));
             }
-            if (bin) result.add(b);
+            if (bin && result != null) result.add(b);
             a = b;
+            av = bv;
+            ain = bin;
         }
+        if (result == null) return ain ? p : List.of();
         return result;
     }
 }
