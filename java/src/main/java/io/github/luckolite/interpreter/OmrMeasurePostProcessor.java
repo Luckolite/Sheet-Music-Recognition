@@ -192,6 +192,7 @@ final class OmrMeasurePostProcessor {
             int total = Arrays.stream(columns).sum();
             int left = percentileColumn(columns, total, 0.012f);
             int right = percentileColumn(columns, total, 0.988f);
+            BitSet barColumns = null;
             if (gray != null) {
                 int[] printed = rawStaffColumns(gray, width, height, rows, gap, slope);
                 int printedTotal = Arrays.stream(printed).sum();
@@ -225,10 +226,10 @@ final class OmrMeasurePostProcessor {
                 // Very faded horizontal rules may disappear while the closing
                 // bar remains clear. A verified full-height bar can preserve
                 // those final notes without guessing a regular measure width.
-                List<Integer> outer =
-                        findBoundaries(
-                                labels, gray, width, height, rows, gap, left, width - 1, slope,
-                                track);
+                barColumns = findBarlineColumns(
+                        labels, gray, width, height, rows, gap, left, width - 1, slope, track);
+                List<Integer> outer = measureBoundaries(
+                        barColumns, gray, width, height, rows, gap, left, width - 1, slope, track);
                 if (outer.size() > 2) {
                     int closing = outer.get(outer.size() - 2);
                     if (closing > right && closing - right < width * .25f) right = closing;
@@ -246,30 +247,21 @@ final class OmrMeasurePostProcessor {
                         right = trackedRight;
                 }
             }
-            if (right - left >= Math.max(width / 4, Math.round(gap * 18f))
-                    || ShortFinalStaff.proved(labels, gray, width, height, rows, gap, left, right, slope)) {
-                List<Integer> boundaries =
-                        findBoundaries(
-                                labels, gray, width, height, rows, gap, left, right, slope, track);
+            boolean fullStaff = right - left >= Math.max(width / 4, Math.round(gap * 18f))
+                    || ShortFinalStaff.proved(labels, gray, width, height, rows, gap, left, right, slope);
+            if (fullStaff || (slope == 0f && right - left >= gap * 9)) {
+                if (barColumns == null)
+                    barColumns = findBarlineColumns(
+                            labels, gray, width, height, rows, gap, left, right, slope, track);
+                List<Integer> boundaries = measureBoundaries(
+                        barColumns, gray, width, height, rows, gap, left, right, slope, track);
                 if (boundaries.size() >= 2) {
-                    var accepted =
-                            new StaffRun(
-                                    rows[0], rows[4], gap, left, right, boundaries, slope, track);
+                    var accepted = new StaffRun(
+                            rows[0], rows[4], gap, left, right, boundaries, slope, track);
                     if (origins != null)
                         origins.born(accepted, rows, gap, left, right, slope, track);
-                    result.add(accepted);
-                }
-            } else if (slope == 0f && right - left >= gap * 9) {
-                List<Integer> boundaries =
-                        findBoundaries(
-                                labels, gray, width, height, rows, gap, left, right, slope, track);
-                if (boundaries.size() >= 2) {
-                    var accepted =
-                            new StaffRun(
-                                    rows[0], rows[4], gap, left, right, boundaries, slope, track);
-                    if (origins != null)
-                        origins.born(accepted, rows, gap, left, right, slope, track);
-                    shortCandidates.add(accepted);
+                    if (fullStaff) result.add(accepted);
+                    else shortCandidates.add(accepted);
                 }
             }
         }
@@ -513,34 +505,16 @@ final class OmrMeasurePostProcessor {
             right = Math.min(width - 1, right + Math.round(seed.gap() * .5f));
             if (right - left < Math.max(width / 4, seed.gap() * 18)) continue;
             // Reuse the established reader's faint closing-bar proof in this frame.
-            List<Integer> outer =
-                    findBoundaries(
-                            labels,
-                            gray,
-                            width,
-                            height,
-                            rows,
-                            seed.gap(),
-                            left,
-                            width - 1,
-                            seed.slope(),
-                            track);
+            var barColumns = findBarlineColumns(
+                    labels, gray, width, height, rows, seed.gap(), left, width - 1, seed.slope(), track);
+            List<Integer> outer = measureBoundaries(
+                    barColumns, gray, width, height, rows, seed.gap(), left, width - 1, seed.slope(), track);
             if (outer.size() > 2) {
                 int closing = outer.get(outer.size() - 2);
                 if (closing > right && closing - right < width * .25f) right = closing;
             }
-            List<Integer> boundaries =
-                    findBoundaries(
-                            labels,
-                            gray,
-                            width,
-                            height,
-                            rows,
-                            seed.gap(),
-                            left,
-                            right,
-                            seed.slope(),
-                            track);
+            List<Integer> boundaries = measureBoundaries(
+                    barColumns, gray, width, height, rows, seed.gap(), left, right, seed.slope(), track);
             if (boundaries.size() < 2) continue;
             StaffRun recovered =
                     new StaffRun(
@@ -955,10 +929,22 @@ final class OmrMeasurePostProcessor {
                     labels, width, height, right, continuedRight, raw.rows(), raw.gap(), slope))
                 right = continuedRight;
             if (right - left < Math.max(width / 4, Math.round(raw.gap() * 18f))) continue;
-            StaffPitchTrack rawTrack =
+            StaffRun existing = representedIndex < 0 ? null : result.get(representedIndex);
+            boolean canCorroborate = existing != null && existing.boundaries.size() > 2
+                        && existing.track == null
+                        && Math.abs(raw.top() - existing.top) > existing.gap * .5f
+                        && Math.abs(raw.top() - existing.top) <= existing.gap * 1.5f
+                        && Math.abs(raw.gap() - existing.gap) <= existing.gap * .18f;
+            // Already split, matching geometry can only extend the outer edges below.
+            // Discover raw inner bars only when a recovery path consumes them.
+            StaffPitchTrack rawTrack = null;
+            List<Integer> boundaries = List.of();
+            if (existing == null || existing.boundaries.size() == 2
+                    || existing.gap < raw.gap() * .68f || canCorroborate) {
+                rawTrack =
                     StaffPitchTrack.detectForMeasures(
                             gray, width, height, raw.top(), raw.bottom(), raw.gap());
-            List<Integer> boundaries =
+                boundaries =
                     findBoundaries(
                             labels,
                             gray,
@@ -970,8 +956,8 @@ final class OmrMeasurePostProcessor {
                             right,
                             slope,
                             rawTrack);
-            if (representedIndex >= 0) {
-                StaffRun existing = result.get(representedIndex);
+            }
+            if (existing != null) {
                 if (existing.gap < raw.gap() * .68f && rawTrack != null && boundaries.size() >= 2) {
                     replaceStaff(
                             result,
@@ -992,11 +978,7 @@ final class OmrMeasurePostProcessor {
                 // rejected by the shifted semantic frame. Both raw and tracked
                 // five-rule frames must prove the same new bar; retain every
                 // original boundary and all original vertical/stem guards.
-                if (existing.boundaries.size() > 2
-                        && existing.track == null
-                        && Math.abs(raw.top() - existing.top) > existing.gap * .5f
-                        && Math.abs(raw.top() - existing.top) <= existing.gap * 1.5f
-                        && Math.abs(raw.gap() - existing.gap) <= existing.gap * .18f) {
+                if (canCorroborate) {
                     StaffPitchTrack local =
                             StaffPitchTrack.detectForMeasures(
                                     gray,
@@ -1530,14 +1512,32 @@ final class OmrMeasurePostProcessor {
             int right,
             float slope,
             StaffPitchTrack track) {
+        var columns = findBarlineColumns(labels, gray, width, height, seedRows, gap, left, right, slope, track);
+        return measureBoundaries(columns, gray, width, height, seedRows, gap, left, right, slope, track);
+    }
+
+    private static BitSet findBarlineColumns(
+            byte[] labels,
+            byte[] gray,
+            int width,
+            int height,
+            int[] seedRows,
+            float gap,
+            int left,
+            int right,
+            float slope,
+            StaffPitchTrack track) {
         var repeatColumns =
                 PrintedRepeatGlyphs.provedColumns(
                         gray, width, height, seedRows[0], seedRows[4], gap);
         float centerX = width / 2f;
         int span = Math.max(1, Math.round(seedRows[4] - seedRows[0] + gap * 0.5f));
-        List<Integer> candidates = new ArrayList<>();
-        boolean inRun = false;
-        int runStart = 0;
+        var columns = new BitSet();
+        int[] flatCoverage = track == null && slope == 0f && right > left && left >= 0 && right < width
+                ? flatBarlineCoverage(labels, width, height, seedRows, gap, left, right)
+                : null;
+        PaperWindow paperWindow = gray == null ? null : new PaperWindow();
+        float semanticMinimum = Math.max(gap * 1.65f, span * .36f);
         for (int x = left + 1; x <= right; x++) {
             float shift = slope * (x - centerX);
             int[] rows = seedRows;
@@ -1550,19 +1550,24 @@ final class OmrMeasurePostProcessor {
             int top = Math.max(0, Math.round(rows[0] + shift - gap * 0.25f));
             int bottom = Math.min(height - 1, Math.round(rows[4] + shift + gap * 0.25f));
             int covered = 0;
-            for (int y = top; y <= bottom; y++) {
-                boolean ink = false;
-                for (int dx = -1; dx <= 1 && !ink; dx++) {
-                    int checkX = x + dx;
-                    ink =
-                            checkX >= 0
-                                    && checkX < width
-                                    && isVerticalInk(labels[y * width + checkX]);
+            if (flatCoverage != null) {
+                covered = flatCoverage[x - left];
+            } else {
+                for (int y = top; y <= bottom; y++) {
+                    boolean ink = false;
+                    for (int dx = -1; dx <= 1 && !ink; dx++) {
+                        int checkX = x + dx;
+                        ink =
+                                checkX >= 0
+                                        && checkX < width
+                                        && isVerticalInk(labels[y * width + checkX]);
+                    }
+                    if (ink) covered++;
                 }
-                if (ink) covered++;
             }
+            boolean enoughCoverage = covered >= semanticMinimum || (gray != null && covered >= span * .85f);
             boolean touchesTop =
-                    hasVerticalInk(
+                    enoughCoverage && hasVerticalInk(
                             labels,
                             width,
                             height,
@@ -1571,7 +1576,7 @@ final class OmrMeasurePostProcessor {
                             top,
                             Math.min(bottom, Math.round(top + gap)));
             boolean touchesBottom =
-                    hasVerticalInk(
+                    enoughCoverage && hasVerticalInk(
                             labels,
                             width,
                             height,
@@ -1584,7 +1589,7 @@ final class OmrMeasurePostProcessor {
             // symbol mask retains more of the original line, so combine both semantic outputs
             // and rely on the absence of an attached notehead to reject ordinary note stems.
             boolean semanticCandidate =
-                    covered >= Math.max(gap * 1.65f, span * 0.36f) && (touchesTop || touchesBottom);
+                    covered >= semanticMinimum && (touchesTop || touchesBottom);
             int rawColumn =
                     gray != null && semanticCandidate
                             ? rawBarlineColumn(
@@ -1597,7 +1602,7 @@ final class OmrMeasurePostProcessor {
                                     shift,
                                     slope,
                                     RAW_BARLINE_DARK,
-                                    track == null ? 12 : 32)
+                                    track == null ? 12 : 32, paperWindow)
                             : Integer.MIN_VALUE;
             // A one-pixel staff-row bias can exclude the lower edge of a short
             // printed rule. Retry only when the original raw page still shows
@@ -1619,7 +1624,7 @@ final class OmrMeasurePostProcessor {
                                 shift,
                                 slope,
                                 RAW_BARLINE_DARK,
-                                track == null ? 12 : 32);
+                                track == null ? 12 : 32, paperWindow);
             }
             // A nearly complete semantic rule can survive a scan whose raw core
             // is slightly paler. Keep all raw continuity, space and branch gates,
@@ -1640,7 +1645,7 @@ final class OmrMeasurePostProcessor {
                                 shift,
                                 slope,
                                 220,
-                                track == null ? 12 : 32);
+                                track == null ? 12 : 32, paperWindow);
             boolean rawSpansStaff = rawColumn != Integer.MIN_VALUE;
             boolean semanticBar = semanticCandidate && (gray == null || rawSpansStaff);
             // Note ownership can only veto a proven bar; it cannot create one. Avoid scanning
@@ -1730,21 +1735,24 @@ final class OmrMeasurePostProcessor {
             boolean bar =
                     semanticBar
                             && (!attachedHead || rawColumn >= 0 && repeatColumns.get(rawColumn));
-            if (bar && !inRun) {
-                inRun = true;
-                runStart = x;
-            }
-            if ((!bar || x == right) && inRun) {
-                int runEnd = bar && x == right ? x : x - 1;
-                candidates.add((runStart + runEnd) / 2);
-                inRun = false;
-            }
+            if (bar) columns.set(x - left - 1);
         }
+        return columns;
+    }
 
+    private static List<Integer> measureBoundaries(
+            BitSet columns, byte[] gray, int width, int height, int[] seedRows,
+            float gap, int left, int right, float slope, StaffPitchTrack track) {
         List<Integer> boundaries = new ArrayList<>();
         boundaries.add(left);
         int minimumGap = Math.max(Math.round(gap * 2.5f), width / 55);
-        for (int candidate : candidates) {
+        // Clip each run before taking its midpoint, including a run crossing a shortened right edge.
+        int next = columns.nextSetBit(0);
+        while (next >= 0 && next < right - left) {
+            int end = Math.min(right - left - 1, columns.nextClearBit(next) - 1);
+            int runStart = left + 1 + next, runEnd = left + 1 + end;
+            int candidate = (runStart + runEnd) / 2;
+            next = columns.nextSetBit(end + 1);
             if (candidate - boundaries.get(boundaries.size() - 1) < minimumGap) continue;
             if (right - candidate < minimumGap) continue;
             if (gray != null) {
@@ -1785,6 +1793,27 @@ final class OmrMeasurePostProcessor {
         }
         merged.sort(Integer::compareTo);
         return merged.size() <= 32 ? List.copyOf(merged) : original;
+    }
+
+    private static int[] flatBarlineCoverage(
+            byte[] labels, int width, int height, int[] rows, float gap, int left, int right) {
+        int[] covered = new int[right - left + 1];
+        int top = Math.max(0, Math.round(rows[0] - gap * .25f));
+        int bottom = Math.min(height - 1, Math.round(rows[4] + gap * .25f));
+        int scanRight = Math.min(width - 1, right + 1);
+        for (int y = top; y <= bottom; y++) {
+            int row = y * width;
+            int lastCovered = left;
+            for (int x = left; x <= scanRight; x++) {
+                if (!isVerticalInk(labels[row + x])) continue;
+                // One ink pixel covers three candidate centers. Count overlapping centers once per row.
+                int end = Math.min(right, x + 1);
+                for (int center = Math.max(lastCovered + 1, x - 1); center <= end; center++)
+                    covered[center - left]++;
+                lastCovered = end;
+            }
+        }
+        return covered;
     }
 
     private static boolean isVerticalInk(byte label) {
@@ -2357,6 +2386,26 @@ final class OmrMeasurePostProcessor {
             float slope,
             int inkLimit,
             int contrast) {
+        return rawBarlineColumn(gray, width, height, centerX, rows, gap, shift, slope, inkLimit, contrast, null);
+    }
+
+    /** Local to one staff scan. Equal outgoing and incoming samples preserve the row percentile. */
+    private static final class PaperWindow {
+        int left, right, top;
+        int[] tones;
+    }
+
+    private static int rawBarlineColumn(
+            byte[] gray,
+            int width,
+            int height,
+            int centerX,
+            int[] rows,
+            float gap,
+            float shift,
+            float slope,
+            int inkLimit,
+            int contrast, PaperWindow previous) {
         shift += printedRuleOffset(gray, width, height, centerX, rows, gap, shift);
         float[] physicalRows = new float[5];
         for (int i = 0; i < 5; i++) physicalRows[i] = rows[i] + shift;
@@ -2366,20 +2415,39 @@ final class OmrMeasurePostProcessor {
         // Gray paper must not supply the missing parts of a rest's vertical stroke.
         int[] inkCutoff = new int[bottom - top + 1], paperTones = new int[bottom - top + 1];
         int surround = Math.max(4, Math.round(gap * 2));
-        int[] tones = new int[256];
+        int left = Math.max(0, centerX - surround), right = Math.min(width - 1, centerX + surround);
+        int step = previous == null ? 0 : left - previous.left;
+        boolean nearby = previous != null && previous.tones != null && step >= 0 && step <= 4
+                && right - previous.right == step && step <= right - left + 1;
+        int[] tones = null;
         for (int y = top; y <= bottom; y++) {
-            java.util.Arrays.fill(tones, 0);
+            int row = y * width;
+            if (nearby && y >= previous.top && y - previous.top < previous.tones.length) {
+                int equal = 0;
+                while (equal < step
+                        && gray[row + previous.left + equal] == gray[row + previous.right + 1 + equal])
+                    equal++;
+                if (equal == step) {
+                    paperTones[y - top] = previous.tones[y - previous.top];
+                    continue;
+                }
+            }
+            if (tones == null) tones = new int[256];
+            else java.util.Arrays.fill(tones, 0);
             int count = 0;
-            for (int x = Math.max(0, centerX - surround);
-                    x <= Math.min(width - 1, centerX + surround);
-                    x++) {
-                tones[gray[y * width + x] & 255]++;
+            for (int x = left; x <= right; x++) {
+                tones[gray[row + x] & 255]++;
                 count++;
             }
-            // Isolated bright texture is not the paper tone against which to judge ink.
             int paper = 0, seen = tones[0], target = Math.max(1, (count * 3 + 3) / 4);
             while (seen < target && paper < 255) seen += tones[++paper];
             paperTones[y - top] = paper;
+        }
+        if (previous != null) {
+            previous.top = top;
+            previous.left = left;
+            previous.right = right;
+            previous.tones = paperTones;
         }
         // On an exact staff-rule row, all horizontal samples can be ink. Include
         // neighboring paper rows so the rule does not break a genuine barline.

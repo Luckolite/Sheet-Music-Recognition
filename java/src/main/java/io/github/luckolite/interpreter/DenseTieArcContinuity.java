@@ -50,6 +50,41 @@ final class DenseTieArcContinuity {
             return flatColumns[column];
         }
 
+        boolean canSupplyVisibleVotes(byte[] labels, int[] columns, int top, int bottom) {
+            // All accepted curves require at least 34 visible strokes among the 50 samples.
+            int visible = 0, possible = columns.length;
+            // Both ten-sample shoulders require at least three visible strokes.
+            // Test them before the middle, where a staff rule may hide a valid crest.
+            for (int region = 0; region < 3; region++) {
+                int first = region == 0 ? 0 : region == 1 ? 40 : 10;
+                int limit = region == 0 ? 10 : region == 1 ? 50 : 40;
+                int available = limit - first;
+                for (int i = first; i < limit;) {
+                    int x = columns[i], end = i + 1;
+                    while (end < limit && columns[end] == x) end++;
+                    boolean found = false;
+                    for (int y = top, at = top * width + x; y <= bottom; y++, at += width) {
+                        if ((gray[at] & 255) <= inkLimit
+                                && labels[at] != OmrMeasurePostProcessor.NOTEHEAD && !contains(y)) {
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (found) {
+                        visible += end - i;
+                        if (visible >= 34) return true;
+                    } else {
+                        int missed = end - i;
+                        possible -= missed;
+                        available -= missed;
+                        if (possible < 34 || (region < 2 && available < 3)) return false;
+                    }
+                    i = end;
+                }
+            }
+            return visible >= 34;
+        }
+
         boolean contains(int y) {
             int index = y - first;
             if (index < 0 || index >= states.length) return false;

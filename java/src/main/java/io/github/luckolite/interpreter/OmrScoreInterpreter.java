@@ -40614,6 +40614,17 @@ final class OmrScoreInterpreter {
             if (sample == 0 || x != sampleColumns[sample - 1]) distinctColumns++;
             sampleBases[sample] = (distinctColumns - 1) * TIE_PROBE_SLOTS;
         }
+        if (!flatProfile && (requiredSide == -1 || requiredSide == 1)
+                && gap > 0 && gap <= 64 && centerY >= 0 && centerY < height
+                && left >= 0 && left < right && right < width && sampleColumns[49] < width
+                && labels != null && labels.length == gray.length) {
+            // Every parabolic ordinate lies between the head and 3 gaps on this side.
+            // Compact shapes reach at most 1.6 gaps. Include the full ink-probe radius.
+            float far = centerY + requiredSide * gap * (compact ? 1.61f : 3f);
+            int top = Math.max(0, Math.round(Math.min(centerY, far)) - radius - 1);
+            int bottom = Math.min(height - 1, Math.round(Math.max(centerY, far)) + radius + 1);
+            if (!straightRows.canSupplyVisibleVotes(labels, sampleColumns, top, bottom)) return false;
+        }
         // Cache ordered probes by physical column and row, with separate banks for
         // the two sides. Short spans may sample the same column multiple times.
         long[] probeKeys = scratch.probeKeys;

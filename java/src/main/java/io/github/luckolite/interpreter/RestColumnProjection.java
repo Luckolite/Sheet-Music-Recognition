@@ -9,7 +9,8 @@ final class RestColumnProjection {
     private final byte[] gray;
     private final int width;
     private final int[] rowDark, columns;
-    private final int[][] rowColumns;
+    private final int[][] rowRuns;
+    private int[] scratch = new int[16];
     private int priorTop, priorBottom = -1;
     private boolean[] priorMask;
     private long priorInk;
@@ -19,11 +20,11 @@ final class RestColumnProjection {
         this.width = width;
         this.rowDark = rowDark;
         columns = new int[width];
-        rowColumns = new int[height][];
+        rowRuns = new int[height][];
     }
 
-    /** Consumers read these counts synchronously; the same storage serves the next band. */
-    int[] sum(int top, int bottom, boolean[] mask) {
+    /** Returns null if the band has fewer than two ink pixels. Counts are valid until the next call. */
+    int[] restBandCounts(int top, int bottom, boolean[] mask) {
         if (priorMask == mask && priorTop == top && priorBottom == bottom) return columns;
         int sharedTop = Math.max(top, priorTop), sharedBottom = Math.min(bottom, priorBottom);
         long kept = 0, added = 0;
@@ -33,22 +34,23 @@ final class RestColumnProjection {
                 kept += rowDark[row];
             else added += rowDark[row];
         }
+        if (kept + added < 2) return null;
         long removed = priorInk - kept;
         if (removed > kept + width) {
             Arrays.fill(columns, 0);
             for (int row = top; row <= bottom; row++)
-                if (!mask[row - top]) addRow(row);
+                if (!mask[row - top]) updateRow(row, 1);
         } else {
             if (removed > 0)
                 for (int row = priorTop; row <= priorBottom; row++)
                     if (!priorMask[row - priorTop]
                             && (row < sharedTop || row > sharedBottom || mask[row - top]))
-                        removeRow(row);
+                        updateRow(row, -1);
             if (added > 0)
                 for (int row = top; row <= bottom; row++)
                     if (!mask[row - top]
                             && (row < sharedTop || row > sharedBottom || priorMask[row - priorTop]))
-                        addRow(row);
+                        updateRow(row, 1);
         }
         priorTop = top;
         priorBottom = bottom;
@@ -57,26 +59,38 @@ final class RestColumnProjection {
         return columns;
     }
 
-    private void addRow(int y) {
-        if (rowDark[y] == 0) return;
-        int[] dark = rowColumns[y];
-        if (dark == null) {
-            dark = new int[rowDark[y]];
-            int count = 0, row = y * width;
-            for (int x = 0; x < width; x++)
-                if ((gray[row + x] & 255) < 170) {
-                    dark[count++] = x;
-                    columns[x]++;
-                }
-            rowColumns[y] = dark;
-            return;
+    void readRow(int y, int[] rowLongest) {
+        int count = 0, maximum = 0, used = 0, row = y * width;
+        for (int x = 0; x < width; ) {
+            while (x < width && (gray[row + x] & 255) >= 170) x++;
+            if (x == width) break;
+            int start = x++;
+            while (x < width && (gray[row + x] & 255) < 170) x++;
+            if (scratch.length - used < 2) scratch = Arrays.copyOf(scratch, scratch.length * 2);
+            // A singleton needs one slot. Longer runs use a complemented start and an exclusive end.
+            if (x == start + 1) scratch[used++] = start;
+            else {
+                scratch[used++] = ~start;
+                scratch[used++] = x;
+            }
+            count += x - start;
+            maximum = Math.max(maximum, x - start);
         }
-        for (int x : dark) columns[x]++;
+        rowDark[y] = count;
+        rowLongest[y] = maximum;
+        if (used > 0) rowRuns[y] = Arrays.copyOf(scratch, used);
     }
 
-    private void removeRow(int y) {
-        int[] dark = rowColumns[y];
-        if (dark == null) return;
-        for (int x : dark) columns[x]--;
+    private void updateRow(int y, int delta) {
+        int[] runs = rowRuns[y];
+        if (runs == null) return;
+        for (int i = 0; i < runs.length; ) {
+            int start = runs[i++];
+            if (start >= 0) columns[start] += delta;
+            else {
+                int end = runs[i++];
+                for (int x = ~start; x < end; x++) columns[x] += delta;
+            }
+        }
     }
 }

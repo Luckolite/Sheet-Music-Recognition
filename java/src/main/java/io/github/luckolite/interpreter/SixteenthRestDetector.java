@@ -2071,22 +2071,7 @@ final class SixteenthRestDetector {
                 ordinaryRuleRuns = new RestStaffRuleEdge.OrdinaryRuns(gray, width, rowLongest);
             }
             for (int y = top; y <= bottom; y++) {
-                if (rowDark[y] < 0) {
-                    int dark = 0, longest = 0, run = 0;
-                    int offset = y * width;
-                    for (int pixel = offset, limit = offset + width; pixel < limit; pixel++) {
-                        if ((gray[pixel] & 255) < 170) {
-                            dark++;
-                            run++;
-                        } else if (run > 0) {
-                            longest = Math.max(longest, run);
-                            run = 0;
-                        }
-                    }
-                    longest = Math.max(longest, run);
-                    rowDark[y] = dark;
-                    rowLongest[y] = longest;
-                }
+                if (rowDark[y] < 0) projection.readRow(y, rowLongest);
                 int dark = rowDark[y], longest = rowLongest[y];
                 float nearestLine = staff.top() + Math.round((y - staff.top()) / gap) * gap;
                 // Rectification can leave only a local antialiased edge of a rule.
@@ -2147,7 +2132,8 @@ final class SixteenthRestDetector {
                                     ? baseMask
                                     : java.util.Arrays.copyOfRange(
                                             baseMask, scanTop - top, scanBottom - top + 1);
-                    int[] columnInk = projection.sum(scanTop, scanBottom, mask);
+                    int[] columnInk = projection.restBandCounts(scanTop, scanBottom, mask);
+                    if (columnInk == null) continue;
                     for (int x = 0; x < width; ) {
                         while (x < width && columnInk[x] < 2) x++;
                         if (x == width) break;
