@@ -272,6 +272,21 @@ public class CorroboratedFaintBeamTest {
     }
 
     @Test
+    public void sparseRimNearHalfPixelKeepsTheSameHeadCenter() {
+        Page page = page(false);
+        // Local paper and ink around the rim distinguish two competing centers.
+        for (int[] dot : new int[][] {{84, 80}, {79, 68}, {102, 68}, {98, 60},
+                {105, 65}, {77, 80}, {100, 65}, {97, 73}})
+            page.g[dot[1] * W + dot[0]] = 80;
+        page.g[80 * W + 80] = (byte) 250;
+        float gap = 9.5f / .69f;
+        for (int i = 0; i < 5; i++) gap = Math.nextDown(gap);
+        var heads = SymbolStemHeadRecovery.sparseOvals(page.l, page.g, W, H, gap, 20, 150);
+        assertEquals(3, heads.size());
+        assertEquals(new SymbolStemHeadRecovery.Head(79, 65, 98, 79, 144, 88, 72), heads.get(0));
+    }
+
+    @Test
     public void outerStripProposalsRemainBoundedAndDeduplicated() {
         Page p = page(false);
         var heads = CorroboratedFaintBeam.outerSparse(p.l, p.g, W, H, GAP, 60, 180);

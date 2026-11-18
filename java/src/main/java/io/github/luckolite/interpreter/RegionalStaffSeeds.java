@@ -289,11 +289,8 @@ final class RegionalStaffSeeds {
         List<Evidence> result = new ArrayList<>();
         int first = -1, lastInk = -1, total = 0;
         for (int y = 0, row = 0; y <= height; y++, row += width) {
-            int count = 0;
-            if (y < height) {
-                for (int at = row + left, end = row + right; at < end; at++)
-                    if (labels[at] == OmrMeasurePostProcessor.STAFF) count++;
-            }
+            int count = y < height
+                    ? OmrMeasurePostProcessor.countStaffLabels(labels, row + left, row + right) : 0;
             boolean ink = count >= minimum;
             if (ink) {
                 if (first < 0) first = y;
@@ -331,15 +328,10 @@ final class RegionalStaffSeeds {
             List<Evidence> result) {
         int localHeight = last - first;
         if (localHeight <= 0) return;
-        byte[] local = Arrays.copyOfRange(labels, first * width, last * width);
-        float slope = OmrMeasurePostProcessor.estimateStaffSlope(local, width, localHeight);
+        int offset = first * width;
+        float slope = OmrMeasurePostProcessor.estimateStaffSlope(labels, offset, width, localHeight);
         int[] projection = new int[localHeight];
-        for (int y = 0, rowStart = 0; y < localHeight; y++, rowStart += width)
-            for (int x = 0; x < width; x++)
-                if (local[rowStart + x] == OmrMeasurePostProcessor.STAFF) {
-                    int row = Math.round(y - slope * (x - width * .5f));
-                    if (row >= 0 && row < localHeight) projection[row]++;
-                }
+        OmrMeasurePostProcessor.projectStaffLabels(labels, offset, width, localHeight, slope, projection);
         for (var lines :
                 RawStaffLineDetector.detectFromStrength(
                         projection, Math.max(10, width / 80), localHeight)) {

@@ -59,4 +59,25 @@ public class RepeatColumnProofTest {
                 PrintedRepeatGlyphs.provedColumns(page(true, true, true), W, H, 120, 168, 12)
                         .isEmpty());
     }
+
+    @Test
+    public void printedRepeatDotsPreserveRailsWithSemanticHeadFragments() throws Exception {
+        var find = OmrMeasurePostProcessor.class.getDeclaredMethod(
+                "findBarlineColumns", byte[].class, byte[].class, int.class, int.class,
+                int[].class, float.class, int.class, int.class, float.class, StaffPitchTrack.class);
+        find.setAccessible(true);
+        int left = 40;
+        for (int rail : new int[] {292, 300}) {
+            byte[] labels = new byte[W * H];
+            rect(labels, rail, 120, 2, 49, OmrMeasurePostProcessor.STEM_OR_REST);
+            rect(labels, rail - 2, 126, 4, 5, OmrMeasurePostProcessor.NOTEHEAD);
+            for (boolean dots : new boolean[] {false, true}) {
+                var actual = (BitSet) find.invoke(null, labels, page(dots, true, false), W, H,
+                        new int[] {120, 132, 144, 156, 168}, 12f, left, 559, 0f, null);
+                var expected = new BitSet();
+                if (dots) expected.set(rail - left - 2, rail - left + 2);
+                assertEquals(expected, actual);
+            }
+        }
+    }
 }

@@ -1500,10 +1500,32 @@ final class StaffPitchTrack {
     }
 
     private static int contrastCount(byte[] gray, int start, int length, int flank) {
-        int count = 0;
-        for (int at = start; at < start + length; at++)
+        int count = 0, at = start, end = start + length;
+        // Preserve scalar short-circuit reads for partial or malformed rasters.
+        int wordEnd = flank >= 0 && start >= flank && end >= start && end <= (long) gray.length - flank
+                ? end - Long.BYTES : -1;
+        for (; at >= 0 && at <= wordEnd; at += Long.BYTES) {
+            long center = (long) RuleProjection.GRAY_WORDS.get(gray, at);
+            long above = (long) RuleProjection.GRAY_WORDS.get(gray, at - flank);
+            if (center == above) continue;
+            long below = (long) RuleProjection.GRAY_WORDS.get(gray, at + flank);
+            if (center == below) continue;
+            count += Long.bitCount(contrastedLanes(center, above, below)
+                    | (contrastedLanes(center >>> 8, above >>> 8, below >>> 8) >>> 8));
+        }
+        for (; at < end; at++)
             if (isContrastedStaffPixel(gray, at, flank, 225)) count++;
         return count;
+    }
+
+    private static long contrastedLanes(long center, long above, long below) {
+        // The spare high byte prevents borrows between four independent samples.
+        long samples = 0x00ff00ff00ff00ffL, high = 0x8000800080008000L;
+        long ink = center & samples;
+        long needed = ink + 0x000c000c000c000cL;
+        return high & (0x80e180e180e180e1L - ink)
+                & (((above & samples) | high) - needed)
+                & (((below & samples) | high) - needed);
     }
 
     private static boolean isContrastedStaffPixel(byte[] gray, int pixel, int flank, int threshold) {

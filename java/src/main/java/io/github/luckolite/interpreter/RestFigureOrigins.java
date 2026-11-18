@@ -70,31 +70,6 @@ final class RestFigureOrigins {
             return new HeadOrigin(component, gray, width, height, runs, null, null, 0, 0, gray);
         }
 
-        private HeadOrigin rectified(
-                byte[] flat,
-                int bandHeight,
-                float[] actualBottoms,
-                int first,
-                float staffBottom,
-                byte[] originalFlat) {
-            if (source != null
-                    || flat == null
-                    || flat.length != (long) width * bandHeight
-                    || actualBottoms == null
-                    || actualBottoms.length != width) return null;
-            return new HeadOrigin(
-                    component,
-                    flat,
-                    width,
-                    bandHeight,
-                    null,
-                    this,
-                    actualBottoms.clone(),
-                    first,
-                    staffBottom,
-                    originalFlat);
-        }
-
         boolean contains(int x, int y) {
             return contains(x, y, null);
         }
@@ -127,14 +102,13 @@ final class RestFigureOrigins {
         OwnedNotes(List<ScoreNoteEvent> values, Map<ScoreNoteEvent, HeadOrigin> origins) {
             this.values = List.copyOf(values);
             this.origins = new IdentityHashMap<>();
+            // An ordinary Map can match a different, value-equal note. Normalize
+            // its keys to identity semantics before selecting the exact list members.
+            var byIdentity = origins.getClass() == IdentityHashMap.class
+                    ? origins : new IdentityHashMap<>(origins);
             for (ScoreNoteEvent n : this.values) {
-                // The incoming Map may use record equality; provenance is identity-only.
-                for (var entry : origins.entrySet()) {
-                    if (entry.getKey() == n && entry.getValue() != null) {
-                        this.origins.put(n, entry.getValue());
-                        break;
-                    }
-                }
+                HeadOrigin origin = byIdentity.get(n);
+                if (origin != null) this.origins.put(n, origin);
             }
         }
 
@@ -262,35 +236,35 @@ final class RestFigureOrigins {
             float[] actualBottoms,
             int first,
             float staffBottom) {
-        if (!(original instanceof OwnedNotes) || mapped.size() != mappedSources.size())
+        if (!(original instanceof OwnedNotes) || mapped.size() != mappedSources.size()
+                || flat == null || flat.length != (long) w * bandHeight
+                || actualBottoms == null || actualBottoms.length != w)
             return mapped;
         var evidence = new IdentityHashMap<ScoreNoteEvent, HeadOrigin>();
         byte[] canonicalSource = null, canonicalFlat = null;
+        float[] trackSnapshot = null;
         for (int i = 0; i < mapped.size(); i++) {
             HeadOrigin source = origin(original, mappedSources.get(i), gray, w, h);
             if (source == null) continue;
             if (source.originalGray == null || source.originalGray.length != (long) w * h) continue;
+            // All mapped noteheads on this band use the same private sampling coordinates.
+            if (trackSnapshot == null) trackSnapshot = actualBottoms.clone();
             byte[] originalFlat = flat;
             if (source.originalGray != gray) {
-                if (flat == null || flat.length != (long) w * bandHeight) continue;
-                if (actualBottoms == null || actualBottoms.length != w) continue;
                 if (canonicalSource == null) {
                     canonicalSource = source.originalGray;
                     canonicalFlat = new byte[flat.length];
-                    for (int yy = 0; yy < bandHeight; yy++)
-                        for (int xx = 0; xx < w; xx++) {
-                            int sy = Math.round(actualBottoms[xx] + (first + yy - staffBottom));
-                            canonicalFlat[yy * w + xx] =
-                                    sy >= 0 && sy < h ? canonicalSource[sy * w + xx] : (byte) 255;
-                        }
+                    StaffBandRows.rectify(canonicalSource, w, h, first, staffBottom,
+                            trackSnapshot, canonicalFlat);
                 }
                 if (canonicalSource != source.originalGray) continue;
                 originalFlat = canonicalFlat;
             }
-            HeadOrigin view =
-                    source.rectified(
-                            flat, bandHeight, actualBottoms, first, staffBottom, originalFlat);
-            if (view != null) evidence.put(mapped.get(i), view);
+            if (source.source == null) {
+                var view = new HeadOrigin(source.component, flat, w, bandHeight, null, source,
+                        trackSnapshot, first, staffBottom, originalFlat);
+                evidence.put(mapped.get(i), view);
+            }
         }
         return bind(mapped, evidence);
     }

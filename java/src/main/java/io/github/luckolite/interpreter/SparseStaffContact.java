@@ -138,6 +138,26 @@ final class SparseStaffContact {
             return (local[index(x, y)] & 255) < INK;
         }
 
+        private static final java.lang.invoke.VarHandle GRAY_WORDS =
+                java.lang.invoke.MethodHandles.byteArrayViewVarHandle(
+                        long[].class, java.nio.ByteOrder.nativeOrder());
+        private static final long HIGH_BITS = 0x8080808080808080L;
+        private static final long INK_BIAS = 0x0101010101010101L * (INK - 128);
+
+        int countDarkOutside(BitSet excluded) {
+            int dark = 0, i = 0;
+            for (; i <= local.length - Long.BYTES; i += Long.BYTES) {
+                long tones = (long) GRAY_WORDS.get(local, i);
+                long paper = ((tones | HIGH_BITS) - INK_BIAS) & tones;
+                dark += Long.bitCount(~paper & HIGH_BITS);
+            }
+            for (; i < local.length; i++) if ((local[i] & 255) < INK) dark++;
+            for (int at = excluded.nextSetBit(0); at >= 0 && at < local.length;
+                    at = excluded.nextSetBit(at + 1))
+                if ((local[at] & 255) < INK) dark--;
+            return dark;
+        }
+
         int observedGray(int x, int y) {
             return local[index(x, y)] & 255;
         }

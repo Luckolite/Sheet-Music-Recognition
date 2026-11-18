@@ -48,6 +48,37 @@ public class JoinedAccentControlTest {
     }
 
     @Test
+    public void bilateralCoverageCountsColumnsAcrossRowsAndPartialWords() throws Exception {
+        var method = NoteArticulationDetector.class.getDeclaredMethod("bilateralRuleInk",
+                byte[].class, int.class, int.class, int.class, int.class, int.class, int.class,
+                int.class, float.class);
+        method.setAccessible(true);
+        int width = 113, height = 5, center = 56;
+        byte[] gray = new byte[width * height];
+        for (int i = 0; i < gray.length; i++) gray[i] = (byte) (140 + (i * 7 % 28));
+        for (int near = 3; near <= 10; near++)
+            for (int length = 1; length <= 32; length++)
+                for (int y = 0; y < height; y++) {
+                    int far = near + length - 1;
+                    boolean expected = true;
+                    for (int direction : new int[] {-1, 1}) {
+                        int hits = 0;
+                        for (int d = near; d <= far; d++) {
+                            int x = center + direction * d;
+                            for (int row = Math.max(0, y - 1); row <= Math.min(height - 1, y + 1); row++)
+                                if ((gray[row * width + x] & 255) < 155) {
+                                    hits++;
+                                    break;
+                                }
+                        }
+                        expected &= hits >= length * .85f;
+                    }
+                    assertEquals(expected, method.invoke(null, gray, width, height, center, y,
+                            near, far, 155, .85f));
+                }
+    }
+
+    @Test
     public void recoversChevronTouchingUpperRule() {
         byte[] p = paper();
         rules(p);

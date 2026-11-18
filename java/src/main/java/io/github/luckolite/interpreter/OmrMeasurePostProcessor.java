@@ -120,15 +120,8 @@ final class OmrMeasurePostProcessor {
             byte[] labels, byte[] gray, int width, int height, SelectedMeasureOrigins origins) {
         float slope = estimateStaffSlope(labels, width, height);
         int[] rowStrength = new int[height];
-        int staffPixelCount = 0;
         float centerX = width / 2f;
-        for (int y = 0; y < height; y++)
-            for (int x = 0; x < width; x++)
-                if (labels[y * width + x] == STAFF) {
-                    int deskewedY = Math.round(y - slope * (x - centerX));
-                    if (deskewedY >= 0 && deskewedY < height) rowStrength[deskewedY]++;
-                    staffPixelCount++;
-                }
+        int staffPixelCount = projectStaffLabels(labels, 0, width, height, slope, rowStrength);
         int minimumStrength = Math.max(10, width / 80);
         byte[] semanticGray = gray;
         if (gray != null && slope != 0f) {
@@ -1178,14 +1171,18 @@ final class OmrMeasurePostProcessor {
     }
 
     static float estimateStaffSlope(byte[] labels, int width, int height) {
+        return estimateStaffSlope(labels, 0, width, height);
+    }
+
+    static float estimateStaffSlope(byte[] labels, int offset, int width, int height) {
         // Sampling alternate rows biases thin rules toward horizontal. Keep every
         // row, and reuse only staff pixels while testing candidate angles.
         int count = 0, activeColumns = 0;
         boolean bounded = width > 0 && width <= (1 << 20) && height > 0 && height <= (1 << 20);
         int[] columnCounts = bounded ? new int[(width + 2) / 3] : null;
-        boolean checkEmptyRows = bounded && width >= 64 && (long) width * height <= labels.length;
+        boolean checkEmptyRows = bounded && width >= 64 && (long) width * height <= labels.length - offset;
         long flatScore = 0;
-        for (int y = 0, row = 0; y < height; y++, row += width) {
+        for (int y = 0, row = offset; y < height; y++, row += width) {
             if (checkEmptyRows && emptyLabelRow(labels, row, width)) continue;
             int rowCount = 0;
             for (int x = 0, column = 0; x < width; x += 3, column++) {
@@ -1221,7 +1218,7 @@ final class OmrMeasurePostProcessor {
             }
         }
         int index = 0;
-        for (int y = 0, row = 0; y < height; y++, row += width) {
+        for (int y = 0, row = offset; y < height; y++, row += width) {
             if (checkEmptyRows && emptyLabelRow(labels, row, width)) continue;
             for (int x = 0, col = 0; x < width; x += 3, col++)
                 if (labels[row + x] == STAFF) {
@@ -1527,9 +1524,7 @@ final class OmrMeasurePostProcessor {
             int right,
             float slope,
             StaffPitchTrack track) {
-        var repeatColumns =
-                PrintedRepeatGlyphs.provedColumns(
-                        gray, width, height, seedRows[0], seedRows[4], gap);
+        BitSet repeatColumns = null;
         float centerX = width / 2f;
         int span = Math.max(1, Math.round(seedRows[4] - seedRows[0] + gap * 0.5f));
         var columns = new BitSet();
@@ -1732,10 +1727,16 @@ final class OmrMeasurePostProcessor {
                                 Math.round(rows[0] + shift),
                                 Math.round(rows[4] + shift),
                                 gap);
-            boolean bar =
-                    semanticBar
-                            && (!attachedHead || rawColumn >= 0 && repeatColumns.get(rawColumn));
-            if (bar) columns.set(x - left - 1);
+            if (!semanticBar) continue;
+            if (attachedHead) {
+                if (rawColumn < 0) continue;
+                // Only an otherwise vetoed bar needs printed repeat evidence.
+                if (repeatColumns == null)
+                    repeatColumns = PrintedRepeatGlyphs.provedColumns(
+                            gray, width, height, seedRows[0], seedRows[4], gap);
+                if (!repeatColumns.get(rawColumn)) continue;
+            }
+            columns.set(x - left - 1);
         }
         return columns;
     }
@@ -1795,6 +1796,61 @@ final class OmrMeasurePostProcessor {
         return merged.size() <= 32 ? List.copyOf(merged) : original;
     }
 
+    private static final java.lang.invoke.VarHandle LABEL_WORDS =
+            java.lang.invoke.MethodHandles.byteArrayViewVarHandle(
+                    long[].class, java.nio.ByteOrder.LITTLE_ENDIAN);
+    private static final long LABEL_LOW_BITS = 0x7f7f7f7f7f7f7f7fL;
+
+    private static long zeroLabelBytes(long mismatch) {
+        return ~(((mismatch & LABEL_LOW_BITS) + LABEL_LOW_BITS) | mismatch | LABEL_LOW_BITS);
+    }
+
+    static int countStaffLabels(byte[] labels, int at, int end) {
+        int count = 0;
+        for (; at <= end - Long.BYTES; at += Long.BYTES)
+            count += Long.bitCount(staffLabelBits(labels, at));
+        for (; at < end; at++) if (labels[at] == STAFF) count++;
+        return count;
+    }
+
+    private static long staffLabelBits(byte[] labels, int at) {
+        return zeroLabelBytes((long) LABEL_WORDS.get(labels, at) ^ (STAFF * 0x0101010101010101L));
+    }
+
+    /** Project a crop in local y coordinates, counting even the staff pixels projected outside it. */
+    static int projectStaffLabels(byte[] labels, int offset, int width, int height,
+            float slope, int[] projection) {
+        int total = 0;
+        float centerX = width * .5f;
+        boolean horizontal = slope == 0 && height <= (1 << 24);
+        for (int y = 0, row = offset; y < height; y++, row += width) {
+            if (horizontal) {
+                int count = countStaffLabels(labels, row, row + width);
+                projection[y] += count;
+                total += count;
+                continue;
+            }
+            int x = 0;
+            for (; x <= width - Long.BYTES; x += Long.BYTES) {
+                long bits = staffLabelBits(labels, row + x);
+                total += Long.bitCount(bits);
+                while (bits != 0) {
+                    int column = x + Long.numberOfTrailingZeros(bits) / Byte.SIZE;
+                    int target = Math.round(y - slope * (column - centerX));
+                    if (target >= 0 && target < height) projection[target]++;
+                    bits &= bits - 1;
+                }
+            }
+            for (; x < width; x++) {
+                if (labels[row + x] != STAFF) continue;
+                int target = Math.round(y - slope * (x - centerX));
+                if (target >= 0 && target < height) projection[target]++;
+                total++;
+            }
+        }
+        return total;
+    }
+
     private static int[] flatBarlineCoverage(
             byte[] labels, int width, int height, int[] rows, float gap, int left, int right) {
         int[] covered = new int[right - left + 1];
@@ -1804,16 +1860,31 @@ final class OmrMeasurePostProcessor {
         for (int y = top; y <= bottom; y++) {
             int row = y * width;
             int lastCovered = left;
-            for (int x = left; x <= scanRight; x++) {
+            int x = left;
+            for (; x <= scanRight - 7; x += 8) {
+                long labels8 = (long) LABEL_WORDS.get(labels, row + x);
+                // Stem/rest (1) and symbol (5) differ only in bit 2.
+                long mismatch = (labels8 & 0xfbfbfbfbfbfbfbfbL) ^ 0x0101010101010101L;
+                long hits = zeroLabelBytes(mismatch);
+                while (hits != 0) {
+                    int pos = x + (Long.numberOfTrailingZeros(hits) >>> 3);
+                    lastCovered = coverBarlineNeighbors(covered, left, right, lastCovered, pos);
+                    hits &= hits - 1;
+                }
+            }
+            for (; x <= scanRight; x++) {
                 if (!isVerticalInk(labels[row + x])) continue;
-                // One ink pixel covers three candidate centers. Count overlapping centers once per row.
-                int end = Math.min(right, x + 1);
-                for (int center = Math.max(lastCovered + 1, x - 1); center <= end; center++)
-                    covered[center - left]++;
-                lastCovered = end;
+                lastCovered = coverBarlineNeighbors(covered, left, right, lastCovered, x);
             }
         }
         return covered;
+    }
+
+    private static int coverBarlineNeighbors(int[] covered, int left, int right, int last, int x) {
+        // One ink pixel covers three candidate centers. Count overlaps once per row.
+        int end = Math.min(right, x + 1);
+        for (int center = Math.max(last + 1, x - 1); center <= end; center++) covered[center - left]++;
+        return end;
     }
 
     private static boolean isVerticalInk(byte label) {

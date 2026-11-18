@@ -66,49 +66,27 @@ final class ScoreDynamicsDetector {
     static List<PlayingTechniqueDetector.Word> symbolBoxes(
             byte[] gray, List<PlayingTechniqueDetector.Staff> staffs, int width, int height) {
         if (staffs.isEmpty()) return List.of();
-        boolean[] seen = new boolean[gray.length];
-        int[] queue = new int[gray.length];
         List<int[]> boxes = new ArrayList<>();
-        for (int p = 0; p < gray.length; p++) {
-            if (seen[p] || (gray[p] & 255) >= 145) continue;
-            int start = 0, n = 1;
-            queue[0] = p;
-            seen[p] = true;
-            int left = p % width, right = left, top = p / width, bottom = top;
-            while (start < n) {
-                int at = queue[start++], x = at % width, y = at / width;
-                left = Math.min(left, x);
-                right = Math.max(right, x);
-                top = Math.min(top, y);
-                bottom = Math.max(bottom, y);
-                for (int dy = -1; dy <= 1; dy++)
-                    for (int dx = -1; dx <= 1; dx++) {
-                        int nx = x + dx, ny = y + dy;
-                        if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
-                        int next = ny * width + nx;
-                        if (!seen[next] && (gray[next] & 255) < 145) {
-                            seen[next] = true;
-                            queue[n++] = next;
-                        }
-                    }
-            }
-            if (n < 3) continue;
+        new PrintedInkComponents().scan(gray, width, 0, 0, width, height, 144, (left, top, endX, endY, n) -> {
+            if (n < 3) return true;
+            int right = endX - 1, bottom = endY - 1;
             var staff = owner(staffs, top, bottom, 8f);
-            if (staff == null) continue;
+            if (staff == null) return true;
             float gap = staff.gap();
             // A nearby hairpin must not glue itself to mf/mp and make the whole
             // group too wide to be a word. Hairpins are detected independently.
-            if (right - left >= gap * 4 && right - left > (bottom - top) * 4) continue;
+            if (right - left >= gap * 4 && right - left > (bottom - top) * 4) return true;
             // Keep small adjacent letters too, so the p in "pizz." is not accepted as piano.
             if (bottom - top >= gap * .2
                     && bottom - top <= gap * 3
                     && right - left >= gap * .12
                     && right - left <= gap * 8)
                 boxes.add(new int[] {left, top, right + 1, bottom + 1, staffs.indexOf(staff)});
-        }
+            return true;
+        });
         // A faded printed mark may have no pixels at the ordinary component threshold.
         // These are shape proposals only: the music-font matcher still proves its identity.
-        for (var b : FaintDynamicGlyphComponents.find(gray, width, height, seen, queue)) {
+        for (var b : FaintDynamicGlyphComponents.find(gray, width, height)) {
             var staff = owner(staffs, b.top(), b.bottom() - 1, 8f);
             if (staff == null) continue;
             float gap = staff.gap();

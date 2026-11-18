@@ -376,6 +376,26 @@ final class RawMeasuredStaffTracks {
         }
     }
 
+    private static int readRuns(SparseStaffContact.Snapshot p, OwnerFootprint owner, int x,
+            int top, int bottom, int[] runs, boolean stopAtSecond) {
+        boolean exterior = x < owner.left || x > owner.right;
+        int count = 0, active = -1;
+        for (int y = top; y <= bottom; y++) {
+            boolean ink = p.dark(x, y) && (exterior || !owner.pixels.get(p.index(x, y)));
+            if (ink) {
+                if (active < 0) {
+                    if (count >= runs.length / 2)
+                        throw new SparseStaffContact.Unknown("PROFILE_RUN_CAPACITY");
+                    active = count++;
+                    if (stopAtSecond && count == 2) return count;
+                    runs[2 * active] = y;
+                }
+                runs[2 * active + 1] = y;
+            } else active = -1;
+        }
+        return count;
+    }
+
     private static Evidence prove(
             SparseStaffContact.Snapshot p,
             SparseStaffContact.StaffIdentity staff,
@@ -386,7 +406,7 @@ final class RawMeasuredStaffTracks {
         int w = p.scope.width(), h = p.scope.height();
         long area = (long) w * h;
         // Fixed O(scopeArea+5*width*height) scans plus bounded candidate-run storage.
-        // Debit the worst-case run table before allocating or inspecting profiles.
+        // Preserve the original worst-case profile reservation before inspecting any ink.
         int runCapacity = (int) ((Math.ceil(staff.gap() + 2) + 1) / 2);
         long columns, runSlots, runBytes;
         try {
@@ -406,12 +426,13 @@ final class RawMeasuredStaffTracks {
         int maxThickness = (int) Math.ceil(.35 * staff.gap()); // existing CompleteStaffRuleBeamBand
         // complete-profile cap
         int[][] first = new int[5][w], last = new int[5][w];
-        boolean[][] occluded = new boolean[5][w];
         boolean[][] uncertain = new boolean[5][w];
         BitSet observed = new BitSet((int) area);
-        int[] candidateFirst = new int[(int) runSlots],
-                candidateLast = new int[(int) runSlots],
-                candidateCount = new int[(int) columns];
+        // Only ambiguous interior columns need another look after fitting.
+        // Their disjoint five rail bands occupy at most one additional scope scan.
+        int ownerWidth = owner.right - owner.left + 1;
+        BitSet competing = new BitSet(5 * ownerWidth);
+        int[] runs = new int[2 * runCapacity];
         for (int r = 0; r < 5; r++) {
             Arrays.fill(first[r], -1);
             Arrays.fill(last[r], -1);
@@ -426,33 +447,19 @@ final class RawMeasuredStaffTracks {
                         bottom = (int) Math.ceil(seed + staff.gap() * .5) - 1;
                 if (top <= p.scope.top() || bottom >= p.scope.bottom())
                     throw new SparseStaffContact.Unknown("FRAME_OUTSIDE_SCOPE");
-                int column = r * w + ix, base = column * runCapacity, count = 0, active = -1;
-                for (int y = top; y <= bottom; y++) {
-                    int i = p.index(x, y);
-                    boolean ink = p.dark(x, y) && !owner.pixels.get(i);
-                    if (ink) {
-                        if (active < 0) {
-                            if (count >= runCapacity)
-                                throw new SparseStaffContact.Unknown("PROFILE_RUN_CAPACITY");
-                            active = count++;
-                            candidateFirst[base + active] = y;
-                        }
-                        candidateLast[base + active] = y;
-                    } else active = -1;
-                }
-                candidateCount[column] = count;
+                boolean exterior = x < owner.left || x > owner.right;
+                int count = readRuns(p, owner, x, top, bottom, runs, true);
                 if (count == 0) {
                     uncertain[r][ix] = true;
                     continue;
                 }
-                // Multiple raw runs are retained as candidates, not discarded. External
-                // witness columns remain strict; only interior columns can later select a
-                // unique run that agrees with the independently fitted five-rule frame.
+                // Revisit competing interior runs against the independently fitted frame.
                 if (count > 1) {
+                    if (!exterior) competing.set(r * ownerWidth + (x - owner.left));
                     uncertain[r][ix] = true;
                     continue;
                 }
-                int a = candidateFirst[base], b = candidateLast[base];
+                int a = runs[0], b = runs[1];
                 if (b - a + 1 > maxThickness) {
                     uncertain[r][ix] = true;
                     continue;
@@ -468,17 +475,10 @@ final class RawMeasuredStaffTracks {
                 }
                 first[r][ix] = a;
                 last[r][ix] = b;
-                // Semantic ink only occludes a measured rule where it physically joins the
-                // observed nonowner run. A disconnected endpoint elsewhere in the half-gap
-                // search domain does not make this full raw cross-section unknown.
-                // Only a pixel that is itself part of the exact owner footprint is occluded.
-                // Adjacency alone cannot transfer ownership of this independently observed
-                // raw run pixel to a nearby endpoint.
-                for (int y = a; y <= b; y++)
-                    if (owner.pixels.get(p.index(x, y))) occluded[r][ix] = true;
-                for (int y = a; y <= b; y++)
-                    if (p.dark(x, y) && !owner.pixels.get(p.index(x, y)))
-                        observed.set(p.index(x, y));
+                // The profile builder opens runs only on dark, nonowner pixels and
+                // closes them at the first gap. All pixels between these ends were observed.
+                for (int y = a, pixel = p.index(x, a); y <= b; y++, pixel += w)
+                    observed.set(pixel);
             }
         // A valid frame is evaluated independently of isolated cross-section
         // changes. Per-pixel authority below remains conservative: only an observed
@@ -491,10 +491,9 @@ final class RawMeasuredStaffTracks {
         for (int x = p.scope.left(); x <= p.scope.right(); x++)
             if (x < owner.left || x > owner.right) {
                 int ix = x - p.scope.left();
-                boolean complete = true, ownerContact = false;
+                boolean complete = true;
                 for (int r = 0; r < 5; r++) {
-                    if (occluded[r][ix]) ownerContact = true;
-                    if (occluded[r][ix] || uncertain[r][ix] || first[r][ix] < 0) complete = false;
+                    if (uncertain[r][ix] || first[r][ix] < 0) complete = false;
                 }
                 if (!complete) {
                     // This column supplies no external frame sample and no staff authority.
@@ -544,15 +543,22 @@ final class RawMeasuredStaffTracks {
                 x <= Math.min(p.scope.right(), owner.right);
                 x++)
             for (int r = 0; r < 5; r++) {
-                int ix = x - p.scope.left(), column = r * w + ix, count = candidateCount[column];
-                if (count < 1) continue;
+                int ix = x - p.scope.left();
+                double expected = staff.top() + r * staff.gap() + phase + slope * (x - mid);
+                if (!competing.get(r * ownerWidth + (x - owner.left))) {
+                    int a = first[r][ix], b = last[r][ix];
+                    if (a >= 0 && !(Math.abs((a + b) * .5 - expected) <= (b - a + 1) * .5 + .5)) {
+                        first[r][ix] = last[r][ix] = -1;
+                        uncertain[r][ix] = true;
+                    }
+                    continue;
+                }
                 int top = (int) Math.floor(staff.top() + r * staff.gap() - staff.gap() * .5) + 1;
                 int bottom = (int) Math.ceil(staff.top() + r * staff.gap() + staff.gap() * .5) - 1;
-                double expected = staff.top() + r * staff.gap() + phase + slope * (x - mid);
                 int chosen = -1, matches = 0;
-                for (int c = 0; c < count; c++) {
-                    int a = candidateFirst[column * runCapacity + c],
-                            b = candidateLast[column * runCapacity + c];
+                int count = readRuns(p, owner, x, top, bottom, runs, false);
+                for (int c = 0; c < 2 * count; c += 2) {
+                    int a = runs[c], b = runs[c + 1];
                     if (b - a + 1 > maxThickness) continue;
                     if ((a == top && p.dark(x, a - 1) && !owner.pixels.get(p.index(x, a - 1)))
                             || (b == bottom
@@ -570,16 +576,12 @@ final class RawMeasuredStaffTracks {
                     uncertain[r][ix] = true;
                     continue;
                 }
-                int a = candidateFirst[column * runCapacity + chosen],
-                        b = candidateLast[column * runCapacity + chosen];
+                int a = runs[chosen], b = runs[chosen + 1];
                 first[r][ix] = a;
                 last[r][ix] = b;
                 uncertain[r][ix] = false;
-                for (int y = a; y <= b; y++) {
-                    int pixel = p.index(x, y);
-                    if (owner.pixels.get(pixel)) occluded[r][ix] = true;
-                    else if (p.dark(x, y)) observed.set(pixel);
-                }
+                for (int y = a, pixel = p.index(x, a); y <= b; y++, pixel += w)
+                    observed.set(pixel);
             }
         BitSet certain = new BitSet((int) area);
         for (int x = p.scope.left(); x <= p.scope.right(); x++)
@@ -595,8 +597,6 @@ final class RawMeasuredStaffTracks {
                 if (ix > 0
                         && first[r][ix] >= 0
                         && first[r][ix - 1] >= 0
-                        && !occluded[r][ix]
-                        && !occluded[r][ix - 1]
                         && (first[r][ix] > last[r][ix - 1] + 1
                                 || first[r][ix - 1] > last[r][ix] + 1))
                     throw new SparseStaffContact.Unknown("DISCONNECTED_RULE");
@@ -604,7 +604,7 @@ final class RawMeasuredStaffTracks {
                 // Query the independently external-fitted carrier against ACTUAL observed raw ink.
                 // If quantization puts that coordinate on paper, this column is simply unowned;
                 // the separate raw-path proof below may still establish genuine staff continuation.
-                if (!occluded[r][ix] && !uncertain[r][ix] && first[r][ix] >= 0) {
+                if (!uncertain[r][ix] && first[r][ix] >= 0) {
                     int measuredY = (int) Math.rint(center);
                     if (measuredY >= p.scope.top()
                             && measuredY <= p.scope.bottom()
@@ -630,8 +630,7 @@ final class RawMeasuredStaffTracks {
                                 (int) Math.floor(center + maxThickness * .5 + .5));
                 boolean reached = false;
                 for (int y = lo; y <= hi; y++) {
-                    if (!occluded[r][ix]
-                            && !uncertain[r][ix]
+                    if (!uncertain[r][ix]
                             && (y < first[r][ix] || y > last[r][ix])) continue;
                     if (!p.dark(x, y)) continue;
                     int at = y - p.scope.top();
@@ -652,19 +651,14 @@ final class RawMeasuredStaffTracks {
 
         // Retain every unknown raw pixel rather than erase it or make an unrelated body
         // certify itself. This is selective staff-core evidence, NOT whole-component ownership.
-        int unknown = 0;
-        for (int y = p.scope.top(); y <= p.scope.bottom(); y++)
-            for (int x = p.scope.left(); x <= p.scope.right(); x++) {
-                int i = p.index(x, y);
-                if (p.dark(x, y) && !certain.get(i) && !owner.pixels.get(i)) unknown++;
-            }
-        for (int r = 0; r < 5; r++) for (int x = 0; x < w; x++) occluded[r][x] |= uncertain[r][x];
+        // Every certain core was selected from observed dark pixels outside the owner.
+        int unknown = p.countDarkOutside(owner.pixels) - certain.cardinality();
         return new Evidence(
                 p,
                 staff,
                 first,
                 last,
-                occluded,
+                uncertain,
                 certain,
                 slope,
                 phase,

@@ -178,30 +178,46 @@ final class SymbolStemHeadRecovery {
         int firstY = (int) firstRow, lastY = (int) lastRow;
         int[] ovalBounds = null;
         float minArea = gap * gap * .3f, duplicateWidth = gap * .8f, duplicateHeight = gap * .65f;
-        float[] rimX = new float[48], rimY = new float[48];
-        float[] outerX = new float[48], outerY = new float[48];
-        for (int k = 0; k < rimX.length; k++) {
-            rimX[k] = rx * RIM_COS[k];
-            rimY[k] = ry * RIM_SIN[k] - .4f * rimX[k];
-            outerX[k] = rimX[k] * 1.6f;
-            outerY[k] = rimY[k] * 1.6f;
+        int[] rim = new int[48], outer = new int[48];
+        // Add integer raster offsets unless floating-point addition could cross a rounding
+        // boundary. In that case preserve the original rounding at each candidate center.
+        long ambiguous = 0;
+        float precision = Math.ulp((float) Math.max(w, h));
+        for (int k = 0; k < rim.length; k++) {
+            float dx = rx * RIM_COS[k], dy = ry * RIM_SIN[k] - .4f * dx;
+            float ox = dx * 1.6f, oy = dy * 1.6f;
+            rim[k] = Math.round(dy) * w + Math.round(dx);
+            outer[k] = Math.round(oy) * w + Math.round(ox);
+            if (precision >= .5f || nearHalf(dx, precision) || nearHalf(dy, precision)
+                    || nearHalf(ox, precision) || nearHalf(oy, precision))
+                ambiguous |= 1L << k;
         }
         var upper = new ShaftSpan();
         var lower = new ShaftSpan();
+        int limit = w - margin;
         for (int y = firstY; y <= lastY; y += stride) {
             boolean hasUpper = upper.reset(w, h, y, gap, firstDistance, lastDistance, -1);
             boolean hasLower = lower.reset(w, h, y, gap, firstDistance, lastDistance, 1);
             if (!hasUpper && !hasLower) continue;
-            candidates: for (int x = margin; x < w - margin; x += stride) {
+            candidates: for (int x = margin; x < limit; x += stride) {
                 if (!(hasUpper && upper.owns(labels, gray, w, x + rx, shaftRadius))
-                        && !(hasLower && lower.owns(labels, gray, w, x - rx, shaftRadius)))
+                        && !(hasLower && lower.owns(labels, gray, w, x - rx, shaftRadius))) {
+                    int next = hasUpper ? upper.nextCenter(x, stride, rx, shaftRadius, limit) : limit;
+                    if (hasLower)
+                        next = Math.min(next, lower.nextCenter(x, stride, -rx, shaftRadius, limit));
+                    x = next - stride;
                     continue;
-                int quadrantMisses = 0, misses = 0;
+                }
+                int center = y * w + x, quadrantMisses = 0, misses = 0;
                 for (int k = 0; k < 48; k++) {
-                    int outer = gray[Math.round(y + outerY[k]) * w + Math.round(x + outerX[k])] & 255;
-                    int maxInk = Math.min(204, outer - 30);
-                    if (maxInk < 0 || !rimInk(gray, w, Math.round(x + rimX[k]), Math.round(y + rimY[k]),
-                            pixelRadius, maxInk)) {
+                    int outerIndex = center + outer[k], rimIndex = center + rim[k];
+                    if ((ambiguous & (1L << k)) != 0) {
+                        float dx = rx * RIM_COS[k], dy = ry * RIM_SIN[k] - .4f * dx;
+                        outerIndex = Math.round(y + dy * 1.6f) * w + Math.round(x + dx * 1.6f);
+                        rimIndex = Math.round(y + dy) * w + Math.round(x + dx);
+                    }
+                    int maxInk = Math.min(204, (gray[outerIndex] & 255) - 30);
+                    if (maxInk < 0 || !rimInk(gray, w, rimIndex, pixelRadius, maxInk)) {
                         if (++misses > 9 || ++quadrantMisses > 4) continue candidates;
                     }
                     if ((k + 1) % 12 == 0) quadrantMisses = 0;
@@ -241,12 +257,27 @@ final class SymbolStemHeadRecovery {
         return out;
     }
 
-    private static boolean rimInk(byte[] gray, int width, int x, int y, int radius, int maxInk) {
-        int first = (y - radius) * width + x - radius;
+    private static boolean nearHalf(float delta, float precision) {
+        double distance = Math.abs((double) delta - Math.round(delta));
+        // Exact half-integers are representable throughout the fast path's coordinate range.
+        return distance != .5 && distance >= .5 - precision;
+    }
+
+    private static boolean rimInk(byte[] gray, int width, int center, int radius, int maxInk) {
+        int first = center - radius * width - radius;
+        if (radius == 1) {
+            return threePixels(gray, first, maxInk) || threePixels(gray, first + width, maxInk)
+                    || threePixels(gray, first + width * 2, maxInk);
+        }
         for (int row = 0, base = first; row <= 2 * radius; row++, base += width)
             for (int at = base, end = base + 2 * radius; at <= end; at++)
                 if ((gray[at] & 255) <= maxInk) return true;
         return false;
+    }
+
+    private static boolean threePixels(byte[] gray, int at, int maxInk) {
+        return (gray[at] & 255) <= maxInk || (gray[at + 1] & 255) <= maxInk
+                || (gray[at + 2] & 255) <= maxInk;
     }
 
     private static int[] ovalRowBounds(float rx, float ry, int halfHeight) {
@@ -270,7 +301,6 @@ final class SymbolStemHeadRecovery {
     private static final class ShaftSpan {
         private int middleRow, firstRow, step, total;
         private int requiredRaw, requiredSemantic;
-        private int nextColumn;
         private int witness = -1;
 
         boolean reset(
@@ -286,7 +316,6 @@ final class SymbolStemHeadRecovery {
             step = direction * width;
             requiredRaw = (int) Math.ceil(total * .85f);
             requiredSemantic = (int) Math.ceil(total * .5f);
-            nextColumn = 0;
             witness = -1;
             return true;
         }
@@ -294,19 +323,31 @@ final class SymbolStemHeadRecovery {
         boolean owns(byte[] labels, byte[] gray, int width, float center, int radius) {
             int shaft = Math.round(center);
             int left = Math.max(0, shaft - radius), right = Math.min(width - 1, shaft + radius);
-            // Candidate centers move right. Reuse a passing column while it stays in range
-            // and resume scanning beyond every column whose evidence was already checked.
-            if (witness >= left) return true;
-            nextColumn = Math.max(left, nextColumn);
-            for (; nextColumn <= right; nextColumn++) {
-                int middle = middleRow + nextColumn;
-                if (labels[middle] != 1 || (gray[middle] & 255) >= 205) continue;
-                if (supportsShaft(labels, gray, firstRow + nextColumn)) {
-                    witness = nextColumn++;
-                    return true;
+            if (witness < left) {
+                witness = Integer.MAX_VALUE;
+                for (int column = left; column < width; column++) {
+                    int middle = middleRow + column;
+                    if (labels[middle] == 1 && (gray[middle] & 255) < 205
+                            && supportsShaft(labels, gray, firstRow + column)) {
+                        witness = column;
+                        break;
+                    }
                 }
             }
-            return false;
+            return witness <= right;
+        }
+
+        // The next eligible column was already found. Locate the first remaining grid
+        // point whose rounded shaft window can reach it.
+        int nextCenter(int x, int stride, float offset, int radius, int limit) {
+            if (witness == Integer.MAX_VALUE) return limit;
+            int lo = 1, hi = (limit - 1 - x) / stride + 1;
+            while (lo < hi) {
+                int mid = lo + (hi - lo) / 2;
+                if (Math.round(x + mid * stride + offset) + radius < witness) lo = mid + 1;
+                else hi = mid;
+            }
+            return Math.min(limit, x + lo * stride);
         }
 
         private boolean supportsShaft(byte[] labels, byte[] gray, int at) {

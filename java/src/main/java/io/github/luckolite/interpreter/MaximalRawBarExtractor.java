@@ -659,17 +659,19 @@ final class MaximalRawBarExtractor {
 
         void reset() {
             java.util.Arrays.fill(charges, 0);
-            java.util.Arrays.fill(cursor, -1);
             work = 0;
         }
 
-        void schedule(int column, int copies, int shift, int laneLeft,
+        void schedule(int column, int copies, int shift, int laneLeft, int laneTop, double offset, boolean stable,
                 RawStaffBarPartition.LaneStaffPixels staff, InterceptColumns sweep) {
             int base = profile[column];
             cursor[column] = base;
+            int next = stable ? rows[base] + shift : projectedStart(rows[base], shift, laneTop, offset);
             for (int i = base; rows[i] < centerCount; i++) {
-                int start = Math.max(0, rows[i] + shift);
-                int end = Math.min(charges.length - 1, rows[i + 1] + shift);
+                int start = Math.max(0, next);
+                int row = rows[i + 1];
+                next = stable ? row + shift : projectedStart(row, shift, laneTop, offset);
+                int end = Math.min(charges.length - 1, next);
                 if (start >= charges.length - 1) break;
                 if (start >= end) continue;
                 long cost = costs[i];
@@ -681,6 +683,15 @@ final class MaximalRawBarExtractor {
                 charges[start] += cost * copies;
                 charges[end] -= cost * copies;
             }
+        }
+
+        private int projectedStart(int row, int shift, int laneTop, double offset) {
+            // Half-even rounding can move a section boundary one intercept in either direction.
+            // Evaluate the original projection at the two possible neighbors of the estimate.
+            int estimate = row + shift, center = firstCenter + row;
+            if (Math.rint((laneTop + estimate) + offset) < center) return estimate + 1;
+            if (Math.rint((laneTop + estimate - 1) + offset) >= center) return estimate - 1;
+            return estimate;
         }
 
         long advance(int intercept) {
@@ -875,6 +886,11 @@ final class MaximalRawBarExtractor {
         // be omitted from the logical work total.
         long work = 0;
         if (cells > workBudget / 2) return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), 0);
+        // Each raster cell incurs two scans and, for joined lanes, one staff split.
+        // Every newly opened raw run contributes exactly one additional unit.
+        work = cells * (joined ? 3 : 2);
+        if (work > workBudget)
+            return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), workBudget);
         var membership =
                 joined && staffPixels.size() <= cells
                         ? new RawStaffBarPartition.LaneStaffPixels(
@@ -898,17 +914,11 @@ final class MaximalRawBarExtractor {
             int splitCount = 0, splitStart = -1;
             int pixel = spanTop * width + x;
             for (int y = spanTop; y <= spanBottom; y++, pixel += width) {
-                if (work >= workBudget)
-                    return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), work);
-                work++;
                 boolean rawInk = (gray[pixel] & 255) < DARK_LIMIT;
                 boolean staffInk = rawInk && staffPixels != null
                         && (membership == null ? staffPixels.contains(pixel) : membership.contains(y, x));
                 if (rawInk && (joined || !staffInk)) {
                     if (!inRun) {
-                        if (work >= workBudget)
-                            return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), work);
-                        work++;
                         runTops[runBase + runCount] = (char) (y - spanTop);
                         inRun = true;
                     }
@@ -930,14 +940,10 @@ final class MaximalRawBarExtractor {
             if (inRun) runBottoms[runBase + runCount++] = (char) (spanHeight - 1);
             runCounts[column] = runCount;
             if (runCount != 0) activeColumns[activeCount++] = column;
-            // Retain the established logical work charge for the former reverse scan.
-            if (spanHeight > workBudget - work)
+            if (runCount > workBudget - work)
                 return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), workBudget);
-            work += spanHeight;
+            work += runCount;
             if (joined) {
-                if (spanHeight > workBudget - work)
-                    return new Discovery(Status.BUDGET_EXHAUSTED, List.of(), workBudget);
-                work += spanHeight;
                 if (splitStart >= 0) {
                     staffSplitRuns[splitBase + splitCount++] = (char) (splitStart - spanTop);
                     staffSplitRuns[splitBase + splitCount++] = (char) (spanHeight - 1);
@@ -1000,8 +1006,8 @@ final class MaximalRawBarExtractor {
                     end = activeColumns[index++] + 1;
                 sectionEnd[column] = end;
                 int shift = spanTop - lane.top - rounded;
-                if (plan != null && stable)
-                    plan.schedule(column, end - column, shift + radius, lane.left, membership, sweep);
+                if (plan != null)
+                    plan.schedule(column, end - column, shift + radius, lane.left, lane.top, offsets[column], stable, membership, sweep);
                 else
                     sweep.include(column, runTops, column * runCapacity, runCounts[column], shift, radius);
             }
@@ -1024,7 +1030,7 @@ final class MaximalRawBarExtractor {
                     int at = sweep.columns[index];
                     int y = (int) Math.rint(intercept + offsets[at]);
                     int end = sectionEnd[at];
-                    if (plan != null && plan.cursor[at] >= 0) {
+                    if (plan != null) {
                         plan.read(at, y, sections);
                     } else {
                         long cost = sections.select(at, y, workBudget - work);

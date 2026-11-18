@@ -66,17 +66,79 @@ final class RawStaffLineDetector {
         return List.copyOf(result);
     }
 
-    private static int countDarkRow(byte[] gray, int start, int width) {
+    private static long darkPixels(byte[] gray, int at) {
+        long word = (long) GRAY_WORDS.get(gray, at);
+        // Set each high bit before subtracting so no byte can borrow from its neighbor.
+        return ~(((word | BYTE_HIGH_BITS) - BRIGHT_LOW_BITS) & word) & BYTE_HIGH_BITS;
+    }
+
+    static int countDarkRow(byte[] gray, int start, int width) {
         int at = start, end = start + width, strength = 0;
-        int wordEnd = start + width - width % Long.BYTES;
-        for (; at < wordEnd; at += Long.BYTES) {
-            long word = (long) GRAY_WORDS.get(gray, at);
-            // Set each high bit before subtracting so no byte can borrow from its neighbor.
-            long bright = ((word | BYTE_HIGH_BITS) - BRIGHT_LOW_BITS) & word & BYTE_HIGH_BITS;
-            strength += Long.BYTES - Long.bitCount(bright);
-        }
+        for (; at <= end - Long.BYTES; at += Long.BYTES)
+            strength += Long.bitCount(darkPixels(gray, at));
         for (; at < end; at++) {
             strength += ((gray[at] & 0xff) - (DARK + 1)) >>> 31;
+        }
+        return strength;
+    }
+
+    /** Count supported columns in an eight-column window around a predicted rule. */
+    static int darkColumns(byte[] gray, int at, int stride, int rows) {
+        long ink = 0;
+        for (int i = 0; i < rows && ink != BYTE_HIGH_BITS; i++, at += stride)
+            ink |= darkPixels(gray, at);
+        return Long.bitCount(ink);
+    }
+
+    /** A dark peak bounded by paper on both sides belongs to the measured thin band. */
+    static boolean peakHasThinSupport(byte[] gray, int width, int peak, int above, int below,
+            float required) {
+        int hits = 0, x = 0;
+        for (; x <= width - Long.BYTES; x += Long.BYTES) {
+            long dark = darkPixels(gray, peak + x);
+            if (above >= 0) dark &= ~darkPixels(gray, above + x);
+            if (below >= 0) dark &= ~darkPixels(gray, below + x);
+            hits += Long.bitCount(dark);
+            if (hits >= required) return true;
+            if (hits + (width - x - Long.BYTES) < required) return false;
+        }
+        for (; x < width; x++)
+            if ((gray[peak + x] & 255) <= DARK
+                    && (above < 0 || (gray[above + x] & 255) > DARK)
+                    && (below < 0 || (gray[below + x] & 255) > DARK)) hits++;
+        return hits >= required;
+    }
+
+    /** Count pixels in short vertical runs, clipping each run at the strip boundaries. */
+    static int[] thinRowStrength(byte[] gray, int offset, int stride, int width, int height,
+            int maximumThickness) {
+        int[] strength = new int[height];
+        long[] ink = new long[height];
+        int x = 0;
+        for (; x <= width - Long.BYTES; x += Long.BYTES) {
+            for (int y = 0, at = offset + x; y < height; y++, at += stride)
+                ink[y] = darkPixels(gray, at);
+            long thick = 0;
+            for (int y = 0; y < height; y++) {
+                long row = ink[y];
+                thick &= row;
+                if (y < height - maximumThickness) {
+                    long continuing = row & ~thick;
+                    for (int i = 1; continuing != 0 && i <= maximumThickness; i++)
+                        continuing &= ink[y + i];
+                    thick |= continuing;
+                }
+                strength[y] += Long.bitCount(row & ~thick);
+            }
+        }
+        for (; x < width; x++) {
+            int start = 0;
+            for (int y = 0; y <= height; y++) {
+                if (y < height && (gray[offset + y * stride + x] & 255) <= DARK) continue;
+                if (y - start <= maximumThickness)
+                    for (int row = start; row < y; row++) strength[row]++;
+                start = y + 1;
+            }
         }
         return strength;
     }

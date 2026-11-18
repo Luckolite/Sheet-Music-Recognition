@@ -105,4 +105,26 @@ public class ShadedPaperOctaveTest {
         assertNotSame(gray, once);
         assertSame(once, twice);
     }
+
+    @Test
+    public void contrastKeepsBrightPaperOnlyAtTheRequiredRank() throws Exception {
+        var contrast = OctaveMarkDetector.class.getDeclaredMethod(
+                "contrastedInk", byte[].class, int.class, int.class);
+        contrast.setAccessible(true);
+        for (int start : new int[] {0, 84}) {
+            for (int bright : new int[] {15, 16}) {
+                byte[] gray = new byte[100];
+                Arrays.fill(gray, (byte) 188);
+                Arrays.fill(gray, start, start + bright, (byte) 189);
+                byte[] result = (byte[]) contrast.invoke(null, gray, 10, 10);
+                if (bright == 16) {
+                    assertSame(gray, result);
+                } else {
+                    byte[] expected = gray.clone();
+                    for (int i = 0; i < expected.length; i++) expected[i]++;
+                    assertArrayEquals(expected, result);
+                }
+            }
+        }
+    }
 }

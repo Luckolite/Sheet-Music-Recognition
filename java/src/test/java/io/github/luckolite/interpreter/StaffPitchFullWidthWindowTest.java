@@ -9,6 +9,33 @@ import static org.junit.Assert.*;
 /** Original procedural crops preserve the detector's unsupported-span and invalid-input contracts. */
 public class StaffPitchFullWidthWindowTest {
     @Test
+    public void packedStaffContrastMatchesEveryShadeAndFlankBoundary() throws Exception {
+        var count = StaffPitchTrack.class.getDeclaredMethod(
+                "contrastCount", byte[].class, int.class, int.class, int.class);
+        count.setAccessible(true);
+        byte[] gray = new byte[96];
+        for (int shade = 0; shade < 256; shade++) {
+            for (int k = 0; k < 32; k++) {
+                int center = (shade + 73 * k) & 255;
+                gray[32 + k] = (byte) center;
+                gray[k] = (byte) Math.min(255, center + 11 + k % 3);
+                gray[64 + k] = (byte) Math.min(255, center + 13 - k % 3);
+            }
+            for (int size : new int[] {7, 8, 9, 16, 25}) {
+                int expected = 0;
+                for (int k = 3; k < 3 + size; k++) {
+                    int center = gray[32 + k] & 255;
+                    if (center <= 225 && (gray[k] & 255) >= center + 12
+                            && (gray[64 + k] & 255) >= center + 12) expected++;
+                }
+                assertEquals(expected, ((Integer) count.invoke(null, gray, 35, size, 32)).intValue());
+            }
+        }
+        Arrays.fill(gray, (byte) 255);
+        assertEquals(0, ((Integer) count.invoke(null, gray, 0, 32, 32)).intValue());
+    }
+
+    @Test
     public void narrowCompleteRulesCannotInventAHorizontalTrack() {
         int width = 80, height = 200;
         float gap = 8, top = 60, bottom = 92;
