@@ -537,39 +537,10 @@ final class PortableNoteOrnaments {
             List<StaffPitchTrack> tracks,
             PortableOrnamentGlyphs recognizer) {
         if (staffs.isEmpty()) return new ArrayList<>();
-        boolean[] seen = new boolean[gray.length];
-        int[] queue = null;
         List<Bounds> parts = new ArrayList<>();
-        for (int p = 0; p < gray.length; p++) {
-            if (seen[p] || (gray[p] & 255) >= 150) continue;
-            if (queue == null) queue = new int[Math.min(gray.length, 256)];
-            int start = 0, end = 1;
-            queue[0] = p;
-            seen[p] = true;
-            int l = p % w, r = l, t = p / w, b = t;
-            while (start < end) {
-                int at = queue[start++], x = at % w, y = at / w;
-                l = Math.min(l, x);
-                r = Math.max(r, x);
-                t = Math.min(t, y);
-                b = Math.max(b, y);
-                int firstX = Math.max(0, x - 1), lastX = Math.min(w - 1, x + 1);
-                int lastY = Math.min(h - 1, y + 1);
-                for (int ny = Math.max(0, y - 1); ny <= lastY; ny++) {
-                    int row = ny * w;
-                    for (int next = row + firstX, limit = row + lastX; next <= limit; next++) {
-                        if (!seen[next] && (gray[next] & 255) < 150) {
-                            seen[next] = true;
-                            if (end == queue.length) {
-                                int capacity = Math.min(gray.length - end, end);
-                                queue = Arrays.copyOf(queue, end + capacity);
-                            }
-                            queue[end++] = next;
-                        }
-                    }
-                }
-            }
-            if (end < 5) continue;
+        new PrintedInkComponents().scan(gray, w, 0, 0, w, h, 149, (l, t, endX, endY, count) -> {
+            if (count < 5) return true;
+            int r = endX - 1, b = endY - 1;
             int horizontalSpan = r - l, verticalSpan = b - t;
             for (int staffIndex = 0; staffIndex < staffs.size(); staffIndex++) {
                 var s = staffs.get(staffIndex);
@@ -584,7 +555,8 @@ final class PortableNoteOrnaments {
                     break;
                 }
             }
-        }
+            return true;
+        });
         // The letters in tr may be separate components. Merge only letters on the same
         // baseline; dots and vertically placed auxiliary accidentals remain separate.
         parts.sort(Comparator.comparingInt(r -> r.left));

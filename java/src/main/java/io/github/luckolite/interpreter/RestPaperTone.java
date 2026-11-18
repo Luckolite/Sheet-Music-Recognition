@@ -102,6 +102,7 @@ final class RestPaperTone {
             byte[] gray, int tone, float paperLevel, boolean exactBlend) {
         if (!exactBlend && !(paperLevel >= 120 && paperLevel <= 340)) return null;
         byte[] conversions = new byte[256];
+        boolean[] ambiguous = null;
         // Each blend can lose a few rounding bits across its complement, products,
         // and sum. Both blends together stay within four ULPs of the integer tone.
         float error = exactBlend ? 0 : 4 * Math.ulp((float) tone);
@@ -109,9 +110,15 @@ final class RestPaperTone {
         for (int ink = 0; ink < conversions.length; ink++) {
             float scaled = ink * paperLevel;
             int value = Math.min(255, Math.round(scaled / lightest));
-            if (!exactBlend && value < 255 && value != Math.min(255, Math.round(scaled / darkest)))
-                return null;
+            if (!exactBlend && value < 255 && value != Math.min(255, Math.round(scaled / darkest))) {
+                if (ambiguous == null) ambiguous = new boolean[256];
+                ambiguous[ink] = true;
+            }
             conversions[ink] = (byte) value;
+        }
+        // Interpolate only when this raster actually uses a tone at a rounding boundary.
+        if (ambiguous != null) {
+            for (byte pixel : gray) if (ambiguous[pixel & 255]) return null;
         }
         byte[] result = new byte[gray.length];
         for (int pixel = 0; pixel < gray.length; pixel++)

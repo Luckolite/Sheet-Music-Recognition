@@ -2463,7 +2463,7 @@ final class OmrMeasurePostProcessor {
     /** Local to one staff scan. Equal outgoing and incoming samples preserve the row percentile. */
     private static final class PaperWindow {
         int left, right, top;
-        int[] tones;
+        int[] tones, cutoffs, histogram;
     }
 
     private static int rawBarlineColumn(
@@ -2484,22 +2484,35 @@ final class OmrMeasurePostProcessor {
         int bottom = Math.min(height - 1, Math.round(rows[4] + shift + gap * .12f));
         if (bottom <= top) return Integer.MIN_VALUE;
         // Gray paper must not supply the missing parts of a rest's vertical stroke.
-        int[] inkCutoff = new int[bottom - top + 1], paperTones = new int[bottom - top + 1];
+        int rowCount = bottom - top + 1;
+        int[] inkCutoff = previous != null && previous.cutoffs != null && previous.cutoffs.length == rowCount
+                ? previous.cutoffs : new int[rowCount];
+        // With matching row bounds each old tone is consumed before its slot is updated.
+        int[] paperTones = previous != null && previous.tones != null
+                && previous.top == top && previous.tones.length == rowCount
+                ? previous.tones : new int[rowCount];
         int surround = Math.max(4, Math.round(gap * 2));
         int left = Math.max(0, centerX - surround), right = Math.min(width - 1, centerX + surround);
         int step = previous == null ? 0 : left - previous.left;
         boolean nearby = previous != null && previous.tones != null && step >= 0 && step <= 4
                 && right - previous.right == step && step <= right - left + 1;
-        int[] tones = null;
+        int[] tones = previous == null ? null : previous.histogram;
         for (int y = top; y <= bottom; y++) {
             int row = y * width;
             if (nearby && y >= previous.top && y - previous.top < previous.tones.length) {
-                int equal = 0;
-                while (equal < step
-                        && gray[row + previous.left + equal] == gray[row + previous.right + 1 + equal])
-                    equal++;
-                if (equal == step) {
-                    paperTones[y - top] = previous.tones[y - previous.top];
+                int previousPaper = previous.tones[y - previous.top];
+                int matched = 0;
+                while (matched < step) {
+                    int outgoing = gray[row + previous.left + matched] & 255;
+                    int incoming = gray[row + previous.right + 1 + matched] & 255;
+                    // The percentile is unchanged when both rank partitions retain their sizes.
+                    if (outgoing != incoming
+                            && Integer.compare(outgoing, previousPaper) != Integer.compare(incoming, previousPaper))
+                        break;
+                    matched++;
+                }
+                if (matched == step) {
+                    paperTones[y - top] = previousPaper;
                     continue;
                 }
             }
@@ -2519,6 +2532,8 @@ final class OmrMeasurePostProcessor {
             previous.left = left;
             previous.right = right;
             previous.tones = paperTones;
+            previous.cutoffs = inkCutoff;
+            previous.histogram = tones;
         }
         // On an exact staff-rule row, all horizontal samples can be ink. Include
         // neighboring paper rows so the rule does not break a genuine barline.

@@ -125,23 +125,26 @@ final class NoteSlideDetector {
                 for (int y = Math.max(2, center - radius);
                         y <= Math.min(h - 3, center + radius);
                         y++) {
-                    int count = 0;
-                    for (int x = 0; x < w; x++) if ((gray[y * w + x] & 255) < 150) count++;
-                    if (count > w * .45) {
+                    if (PackedGrayInk.isSlideRuleRow(gray, y * w, w)) {
                         top = Math.min(top, y);
                         bottom = Math.max(bottom, y);
                     }
                 }
                 if (bottom < top) continue;
+                // Each crossing needs ink in both five-column windows. Read each
+                // incoming column once and remember the latest hit on either side.
+                int lastAbove = -3, lastBelow = -3, incoming = 0;
                 for (int x = 0; x < w; x++) {
-                    boolean above = false, below = false;
-                    for (int dx = -2; dx <= 2; dx++)
-                        if (x + dx >= 0 && x + dx < w)
-                            for (int dy = 1; dy <= 2; dy++) {
-                                above |= (gray[(top - dy) * w + x + dx] & 255) < 150;
-                                below |= (gray[(bottom + dy) * w + x + dx] & 255) < 150;
-                            }
-                    if (!above || !below)
+                    while (incoming < w && incoming - x <= 2) {
+                        if ((gray[(top - 1) * w + incoming] & 255) < 150
+                                || (gray[(top - 2) * w + incoming] & 255) < 150)
+                            lastAbove = incoming;
+                        if ((gray[(bottom + 1) * w + incoming] & 255) < 150
+                                || (gray[(bottom + 2) * w + incoming] & 255) < 150)
+                            lastBelow = incoming;
+                        incoming++;
+                    }
+                    if (lastAbove < x - 2 || lastBelow < x - 2)
                         for (int y = top; y <= bottom; y++) clean[y * w + x] = (byte) 255;
                 }
             }
@@ -212,9 +215,8 @@ final class NoteSlideDetector {
             byte[] clean,
             StaffPitchTrack[] crossingTracks) {
         removeHeadLedgerLines(clean, gray, w, h, staffs, heads);
-        boolean[] ink = new boolean[gray.length];
-        for (int i = 0; i < ink.length; i++) ink[i] = (clean[i] & 255) < 150;
-        int[] queue = new int[ink.length];
+        long[] ink = PackedGrayInk.classify(clean, 0, gray.length, 150);
+        int[] queue = new int[Math.min(256, gray.length)];
         List<Stroke> result = new ArrayList<>();
         List<Stroke> attachedApproaches = new ArrayList<>();
         var attachedBudget = new AttachedApproachBranches.Budget(64_000_000);
@@ -222,11 +224,15 @@ final class NoteSlideDetector {
         var compactGlyphInk = new HashSet<Integer>();
         List<Fragment> fragments = new ArrayList<>();
         Map<Integer, StaffPitchTrack> curveTracks = new HashMap<>();
-        for (int pixel = 0; pixel < ink.length; pixel++) {
-            if (!ink[pixel]) continue;
+        for (int word = 0; word < ink.length; ) {
+            if (ink[word] == 0) {
+                word++;
+                continue;
+            }
+            int pixel = word * 64 + Long.numberOfTrailingZeros(ink[word]);
             int start = 0, end = 1;
             queue[0] = pixel;
-            ink[pixel] = false;
+            ink[word] &= ink[word] - 1;
             int l = w, r = 0, t = h, b = 0;
             double sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0;
             while (start < end) {
@@ -240,15 +246,16 @@ final class NoteSlideDetector {
                 sxx += (double) x * x;
                 syy += (double) y * y;
                 sxy += (double) x * y;
-                for (int dy = -1; dy <= 1; dy++)
-                    for (int dx = -1; dx <= 1; dx++) {
-                        int nx = x + dx, ny = y + dy;
-                        if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
-                        int next = ny * w + nx;
-                        if (ink[next]) {
-                            ink[next] = false;
-                            queue[end++] = next;
-                        }
+                int from = Math.max(0, x - 1), to = Math.min(w - 1, x + 1);
+                for (int ny = Math.max(0, y - 1); ny <= Math.min(h - 1, y + 1); ny++)
+                    for (int n = ny * w + from, last = ny * w + to; n <= last; n++) {
+                        int bucket = n >>> 6;
+                        long bit = 1L << n;
+                        if ((ink[bucket] & bit) == 0) continue;
+                        ink[bucket] ^= bit;
+                        if (end == queue.length)
+                            queue = Arrays.copyOf(queue, end + Math.min(end, gray.length - end));
+                        queue[end++] = n;
                     }
             }
             if (crossingTracks != null) {
