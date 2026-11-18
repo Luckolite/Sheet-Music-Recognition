@@ -103,11 +103,16 @@ final class SeparatedRestInk {
         private byte[] visited = new byte[0];
         private int[] queue = new int[0];
         private int[] crossingRows;
+        private long[] remainingInk;
+
+        private int[] queue(int size) {
+            if (queue.length < size) queue = new int[size];
+            return queue;
+        }
 
         private void reset(int size) {
             if (visited.length < size) {
                 visited = new byte[size];
-                queue = new int[size];
             } else {
                 Arrays.fill(visited, 0, size, (byte) 0);
             }
@@ -166,6 +171,7 @@ final class SeparatedRestInk {
         byte[] visited = null;
         int[] queue = null;
         int[] crossingRows = null;
+        long[] remainingInk = null;
         int lineOffset = firstVisible - top;
         int rasterBase = firstVisible * width + left;
         List<Body> result = null;
@@ -198,9 +204,11 @@ final class SeparatedRestInk {
             int seedBase = seedRow * span;
             int scanColumn = 0, wordColumn = 0;
             long seeds = 0;
-            while (seeds != 0 || scanColumn < span) {
+            while (remainingInk != null ? remainingInk[seedRow] != 0 : seeds != 0 || scanColumn < span) {
                 int sx;
-                if (seeds != 0) {
+                if (remainingInk != null) {
+                    sx = Long.numberOfTrailingZeros(remainingInk[seedRow]);
+                } else if (seeds != 0) {
                     sx = wordColumn + Long.numberOfTrailingZeros(seeds) / Byte.SIZE;
                     seeds &= seeds - 1;
                 } else if (scanColumn <= span - Long.BYTES) {
@@ -218,14 +226,25 @@ final class SeparatedRestInk {
                 }
                 int seed = seedBase + sx;
                 if (visited != null && visited[seed] != 0) continue;
-                if (visited == null) {
-                    scratch.reset(size);
-                    visited = scratch.visited;
-                    queue = scratch.queue;
+                if (queue == null) {
+                    queue = scratch.queue(size);
+                    if (!masked || span > Long.SIZE) {
+                        scratch.reset(size);
+                        visited = scratch.visited;
+                    }
                     if (masked) {
                         if (scratch.crossingRows == null || scratch.crossingRows.length < rows * 2)
                             scratch.crossingRows = new int[rows * 2];
                         crossingRows = scratch.crossingRows;
+                        if (span <= Long.SIZE) {
+                            if (scratch.remainingInk == null || scratch.remainingInk.length < rows)
+                                scratch.remainingInk = new long[rows];
+                            remainingInk = scratch.remainingInk;
+                            for (int row = 0; row < rows; row++) {
+                                remainingInk[row] = line[lineOffset + row] ? 0
+                                        : darkColumns(gray, rasterBase + row * width, span);
+                            }
+                        }
                         // Only the nearest visible row can be reached in each direction.
                         // Rebuild every visible entry before traversing the crop.
                         int previous = -1;
@@ -243,7 +262,8 @@ final class SeparatedRestInk {
                 }
                 int count = 1, cursor = 0;
                 queue[0] = (seedRow << columnBits) | sx;
-                visited[seed] = 1;
+                if (remainingInk != null) remainingInk[seedRow] &= ~(1L << sx);
+                else visited[seed] = 1;
                 int l = span - 1, r = 0, b = seedRow;
                 boolean eligible = seedRow > 0;
                 while (cursor < count) {
@@ -277,12 +297,23 @@ final class SeparatedRestInk {
                         int neighborRow = direction == 0 ? row
                                 : crossingRows[row * 2 + (direction > 0 ? 1 : 0)];
                         if (neighborRow < 0 || neighborRow >= rows) continue;
-                        int targetRow = neighborRow * span;
-                        int targetRaster = rasterBase + neighborRow * width;
                         int packedRow = neighborRow << columnBits;
                         int reach = direction == 0 ? 1 : (neighborRow - row) * direction;
                         int endColumn = Math.min(span - 1, x + reach);
                         int firstColumn = Math.max(0, x - reach);
+                        if (remainingInk != null) {
+                            long columns = (-1L << firstColumn) & (-1L >>> (Long.SIZE - 1 - endColumn));
+                            long fresh = remainingInk[neighborRow] & columns;
+                            remainingInk[neighborRow] &= ~columns;
+                            while (fresh != 0) {
+                                int col = Long.numberOfTrailingZeros(fresh);
+                                fresh &= fresh - 1;
+                                queue[count++] = packedRow | col;
+                            }
+                            continue;
+                        }
+                        int targetRow = neighborRow * span;
+                        int targetRaster = rasterBase + neighborRow * width;
                         for (int xx = firstColumn, next = targetRow + firstColumn,
                                 at = targetRaster + firstColumn; xx <= endColumn; xx++, next++, at++) {
                             if (visited[next] != 0) continue;
@@ -306,6 +337,20 @@ final class SeparatedRestInk {
         }
         return result == null ? List.of() : List.copyOf(result);
     }
+    private static long darkColumns(byte[] gray, int offset, int span) {
+        long columns = 0;
+        int x = 0;
+        for (; x <= span - Long.BYTES; x += Long.BYTES) {
+            long highBits = darkSeedWord(gray, offset + x);
+            // Gather bit seven of each little-endian byte into one eight-column mask.
+            long mask = ((highBits >>> 7) * 0x0102040810204080L) >>> 56;
+            columns |= mask << x;
+        }
+        for (; x < span; x++)
+            if ((gray[offset + x] & 255) < 170) columns |= 1L << x;
+        return columns;
+    }
+
     private static long darkSeedWord(byte[] gray, int offset) {
         long word = (long) SeedInkWords.WORDS.get(gray, offset);
         long bright = ((word | SeedInkWords.HIGH_BITS) - SeedInkWords.CUTOFF)

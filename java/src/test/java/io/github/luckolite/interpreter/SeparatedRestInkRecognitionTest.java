@@ -13,6 +13,27 @@ import java.util.List;
 public class SeparatedRestInkRecognitionTest {
     static final int W = 600, H = 300;
 
+    @Test
+    public void narrowAndWideCropsVisitTheSamePixelsAcrossStaffLines() {
+        int width = 69, height = 41;
+        var scratch = new SeparatedRestInk.Scratch();
+        boolean[] line = new boolean[height];
+        line[18] = line[19] = true;
+        for (int left : new int[] {0, 5, 22, 41, 52}) {
+            byte[] gray = new byte[width * height];
+            Arrays.fill(gray, (byte) 170);
+            for (int y = 8; y < 30; y++) {
+                int x = left + (y >= 20 ? 2 : 0);
+                Arrays.fill(gray, y * width + x, y * width + x + 10, (byte) 169);
+            }
+            var wide = SeparatedRestInk.find(gray, width, height, 0, 64, 0, height - 1, line, 12, scratch);
+            var narrow = SeparatedRestInk.find(gray, width, height, 0, 63, 0, height - 1, line, 12, scratch);
+            assertEquals(1, wide.size());
+            assertEquals(1, narrow.size());
+            assertArrayEquals(wide.get(0).pixels(), narrow.get(0).pixels());
+        }
+    }
+
     private byte[] page(boolean clutter, boolean tail, boolean connected) {
         byte[] gray = new byte[W * H];
         Arrays.fill(gray, (byte) 255);

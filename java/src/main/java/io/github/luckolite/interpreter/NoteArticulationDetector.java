@@ -1434,7 +1434,6 @@ final class NoteArticulationDetector {
             byte[] gray,
             int width,
             int height,
-            boolean[] seen,
             GlyphFloodScratch scratch) {
         float gap = note.gap;
         if (!Float.isFinite(gap) || gap < 6 || gap > 64) return false;
@@ -1446,7 +1445,7 @@ final class NoteArticulationDetector {
         if (w <= 0 || h <= 0) return false;
         boolean[] rules = new boolean[h];
         int cropSize = w * h;
-        Arrays.fill(seen, 0, cropSize, false);
+        boolean[] seen = scratch.clearSeen(cropSize);
         int[] queue = scratch.reserve(cropSize);
         for (int y = top; y <= bottom; y++)
             rules[y - top] = recoveryStaffRule(gray, width, height, Math.round(note.x), y, gap);
@@ -1632,6 +1631,14 @@ final class NoteArticulationDetector {
             queue = new int[Math.min(256, limit)];
         }
 
+        private boolean[] seen;
+
+        boolean[] clearSeen(int size) {
+            if (seen == null || seen.length < size) seen = new boolean[size];
+            else Arrays.fill(seen, 0, size, false);
+            return seen;
+        }
+
         int[] grow(int size) {
             queue = Arrays.copyOf(queue, size + Math.min(size, limit - size));
             return queue;
@@ -1662,7 +1669,6 @@ final class NoteArticulationDetector {
         // lines: doing so would manufacture dashes/dots from beams, stems and noteheads.
         boolean raw = gray != null && gray.length == labels.length;
         java.util.BitSet octaveDashInk = null;
-        boolean[] seen = new boolean[labels.length];
         GlyphFloodScratch scratch = new GlyphFloodScratch(labels.length);
         int[] queue = scratch.queue;
         List<Glyph> glyphs = new ArrayList<>();
@@ -1672,13 +1678,26 @@ final class NoteArticulationDetector {
         SlurEndpointAccents.Work accentWork = new SlurEndpointAccents.Work();
         List<Anchor> accentFrames = null;
         int sizeEligibleDarkPixels = 0;
+        long[] remaining = articulationInk(raw ? gray : labels, raw);
         for (int p = 0; p < labels.length; p++) {
-            if (seen[p] || !ink(labels, gray, p, raw)) continue;
+            int word = p >>> 6;
+            long candidates = remaining[word];
+            if (candidates == 0) {
+                p = Math.min(labels.length - 1, p | 63);
+                continue;
+            }
+            p = (p & ~63) + Long.numberOfTrailingZeros(candidates);
+            remaining[word] &= candidates - 1;
             int start = 0, end = 1;
             queue[0] = p;
-            seen[p] = true;
             int left = p % width, right = left, top = p / width, bottom = top;
             while (start < end) {
+                if ((start & 63) == 0 && (!raw || end > SlurEndpointDots.MAX_PIXELS)
+                        && (right - left > width * .025f || bottom - top > height * .018f)) {
+                    discardComponent(remaining, width, height, scratch, start, end);
+                    queue = scratch.queue;
+                    break;
+                }
                 int point = queue[start++], y = point / width, x = point - y * width;
                 left = Math.min(left, x);
                 right = Math.max(right, x);
@@ -1688,11 +1707,17 @@ final class NoteArticulationDetector {
                 int lastY = Math.min(height - 1, y + 1);
                 for (int ny = Math.max(0, y - 1); ny <= lastY; ny++) {
                     int row = ny * width;
-                    for (int next = row + firstX; next <= row + lastX; next++) {
-                        if (!seen[next] && ink(labels, gray, next, raw)) {
-                            seen[next] = true;
-                            if (end == queue.length)
-                                queue = scratch.grow(end);
+                    int first = row + firstX, last = row + lastX;
+                    int group = first >>> 6, endWord = last >>> 6;
+                    long range = -1L << first;
+                    for (; group <= endWord; group++, range = -1L) {
+                        if (group == endWord) range &= -1L >>> (63 - (last & 63));
+                        long hits = remaining[group] & range;
+                        remaining[group] &= ~hits;
+                        while (hits != 0) {
+                            int next = (group << 6) + Long.numberOfTrailingZeros(hits);
+                            hits &= hits - 1;
+                            if (end == queue.length) queue = scratch.grow(end);
                             queue[end++] = next;
                         }
                     }
@@ -1706,13 +1731,8 @@ final class NoteArticulationDetector {
                     int[] component = Arrays.copyOf(queue, end);
                     if (accentWork.use(end))
                         for (var mark :
-                                SlurEndpointAccents.partition(
-                                        gray,
-                                        width,
-                                        height,
-                                        component,
-                                        notes,
-                                        accentWork)) {
+                                SlurEndpointAccents.partitionFlooded(
+                                        width, component, notes, accentWork, left, right, top, bottom)) {
                             Glyph body =
                                     new Glyph(
                                             mark.left(),
@@ -1726,12 +1746,8 @@ final class NoteArticulationDetector {
                             provedJoinedAccents.add(body);
                         }
                     SlurEndpointDots.Result split =
-                            SlurEndpointDots.partition(
-                                    gray,
-                                    width,
-                                    height,
-                                    component,
-                                    notes);
+                            SlurEndpointDots.partitionFlooded(width, height, component, notes,
+                                    left, right, top, bottom);
                     for (SlurEndpointDots.Dot dot : split.dots()) {
                         Glyph body =
                                 new Glyph(
@@ -1753,7 +1769,7 @@ final class NoteArticulationDetector {
         // Every accepted faint accent contains at least three dark pixels. Lightening
         // the threshold can join components or enlarge them, but cannot shrink them.
         List<Glyph> faintAccents = raw && sizeEligibleDarkPixels >= 3
-                ? rawFaintAccents(gray, width, height, seen, scratch, glyphs, joinedOwners)
+                ? rawFaintAccents(gray, width, height, scratch, glyphs, joinedOwners)
                 : new ArrayList<>();
         float paperGap = raw ? medianArticulationGap(notes) : Float.NaN;
         RestPaperTone.Estimate paperEstimate =
@@ -1764,16 +1780,16 @@ final class NoteArticulationDetector {
                 planes == null
                         ? new SoftMarks(List.of(), List.of())
                         : softShadedDirectionBodies(gray, planes.soft(), strongPaper,
-                                width, height, paperGap, seen, scratch);
+                                width, height, paperGap, scratch);
         if (strongPaper != gray)
-            faintAccents.addAll(shadedAccentGlyphs(gray, strongPaper, width, height, seen, scratch));
+            faintAccents.addAll(shadedAccentGlyphs(gray, strongPaper, width, height, scratch));
         List<Glyph> softFaintAccents = softMarks.accents;
         faintAccents.addAll(softFaintAccents);
         List<Glyph> originalGlyphs = List.copyOf(glyphs);
         List<Glyph> paperCandidates =
                 strongPaper == gray
                         ? new ArrayList<>()
-                        : paperGlyphs(gray, strongPaper, width, height, seen, scratch);
+                        : paperGlyphs(gray, strongPaper, width, height, scratch);
         paperCandidates.addAll(softMarks.peaks);
         var paperMembership = java.util.Set.copyOf(paperCandidates);
         glyphs.addAll(paperCandidates);
@@ -2326,13 +2342,13 @@ final class NoteArticulationDetector {
                                             labels,
                                             gray,
                                             width,
-                                            height, seen, scratch))
+                                            height, scratch))
                                 for (int j = 0; j < notes.size(); j++)
                                     if (notes.get(j).staff == note.staff
                                             && Math.abs(notes.get(j).x - note.x) < note.gap * .45f)
                                         result[j] |= NoteArticulation.ACCENT;
                             if ((result[i] & NoteArticulation.MARCATO) == 0
-                                    && ruleJoinedMarcato(note, labels, gray, width, height, seen, scratch))
+                                    && ruleJoinedMarcato(note, labels, gray, width, height, scratch))
                                 for (int j = 0; j < notes.size(); j++)
                                     if (notes.get(j).staff == note.staff
                                             && Math.abs(notes.get(j).x - note.x) < note.gap * .45f)
@@ -2345,7 +2361,7 @@ final class NoteArticulationDetector {
                                             gray,
                                             labels,
                                             width,
-                                            height, seen, scratch))
+                                            height, scratch))
                                 for (int j = 0; j < notes.size(); j++)
                                     if (notes.get(j).staff == note.staff
                                             && Math.abs(notes.get(j).x - note.x) < note.gap * .45f)
@@ -2759,7 +2775,6 @@ final class NoteArticulationDetector {
             byte[] labels,
             int width,
             int height,
-            boolean[] seen,
             GlyphFloodScratch scratch) {
         float gap = note.gap;
         if (!Float.isFinite(gap)
@@ -2795,7 +2810,7 @@ final class NoteArticulationDetector {
             int endRow = direction < 0 ? lastRule : h;
             if (endRow <= firstRow) continue;
             int cropSize = w * h;
-            Arrays.fill(seen, 0, cropSize, false);
+            boolean[] seen = scratch.clearSeen(cropSize);
             int[] queue = scratch.reserve(cropSize);
             for (int origin = firstRow * w; origin < endRow * w; origin++) {
                 int oy = origin / w;
@@ -2880,7 +2895,7 @@ final class NoteArticulationDetector {
     /** Recover an upward angular mark joined to independently long, thin staff rules. */
     private static boolean ruleJoinedMarcato(
             Anchor note, byte[] labels, byte[] gray, int width, int height,
-            boolean[] seenBuffer, GlyphFloodScratch scratch) {
+            GlyphFloodScratch scratch) {
         float gap = note.gap;
         if (!Float.isFinite(gap)
                 || !Float.isFinite(note.x)
@@ -2948,8 +2963,7 @@ final class NoteArticulationDetector {
             }
             if ((gray[rasterRow + ox] & 255) >= 155 || (seen != null && seen[origin])) continue;
             if (seen == null) {
-                seen = seenBuffer;
-                Arrays.fill(seen, 0, cropSize, false);
+                seen = scratch.clearSeen(cropSize);
                 queue = scratch.queue;
             }
             seen[origin] = true;
@@ -4126,9 +4140,9 @@ final class NoteArticulationDetector {
      * Original components and all later shape, notation and ownership proofs remain in force. */
     private static List<Glyph> paperGlyphs(
             byte[] gray, byte[] normalized, int width, int height,
-            boolean[] seen, GlyphFloodScratch scratch) {
+            GlyphFloodScratch scratch) {
         int[] queue = scratch.queue;
-        java.util.Arrays.fill(seen, false);
+        boolean[] seen = scratch.clearSeen(normalized.length);
         List<Glyph> result = new ArrayList<>();
         for (int seed = 0; seed < normalized.length; seed++) {
             if (seen[seed] || (normalized[seed] & 255) >= 200) continue;
@@ -4552,9 +4566,6 @@ final class NoteArticulationDetector {
         }
     }
 
-    private static boolean ink(byte[] labels, byte[] gray, int p, boolean raw) {
-        return raw ? (gray[p] & 255) < 155 : labels[p] == OmrMeasurePostProcessor.SYMBOL;
-    }
 
     private static boolean durationDot(Glyph glyph, List<Anchor> notes) {
         for (Anchor note : notes) {
@@ -5934,9 +5945,9 @@ final class NoteArticulationDetector {
 
     /** Complete chevron recovery may retain a pale bridge on darker photographed paper. */
     private static List<Glyph> shadedAccentGlyphs(
-            byte[] gray, byte[] paper, int width, int height, boolean[] seen, GlyphFloodScratch scratch) {
+            byte[] gray, byte[] paper, int width, int height, GlyphFloodScratch scratch) {
         List<Glyph> result = new ArrayList<>();
-        for (Glyph glyph : faintAccentGlyphs(paper, width, height, seen, scratch, 235, 200)) {
+        for (Glyph glyph : faintAccentGlyphs(paper, width, height, scratch, 235, 200)) {
             int pad =
                     Math.max(
                             3,
@@ -5964,10 +5975,10 @@ final class NoteArticulationDetector {
     /** Soft paper retains complete chevrons and carets without widening their meaning. */
     private static SoftMarks softShadedDirectionBodies(
             byte[] gray, byte[] paper, byte[] seedInk, int width, int height, float gap,
-            boolean[] seen, GlyphFloodScratch scratch) {
+            GlyphFloodScratch scratch) {
         List<Glyph> accents = new ArrayList<>(), peaks = new ArrayList<>();
         int[] queue = scratch.queue;
-        java.util.Arrays.fill(seen, false);
+        boolean[] seen = scratch.clearSeen(paper.length);
         for (int seed = 0; seed < paper.length; seed++) {
             if (seen[seed] || (paper[seed] & 255) >= 185) continue;
             int take = 0,
@@ -6107,19 +6118,19 @@ final class NoteArticulationDetector {
 
     /** Recover only complete open chevrons; pale ink never becomes a dot or dash. */
     private static List<Glyph> faintAccentGlyphs(
-            byte[] gray, int width, int height, boolean[] seen, GlyphFloodScratch scratch) {
-        return faintAccentGlyphs(gray, width, height, seen, scratch, 185, 155);
+            byte[] gray, int width, int height, GlyphFloodScratch scratch) {
+        return faintAccentGlyphs(gray, width, height, scratch, 185, 155);
     }
 
     private static List<Glyph> faintAccentGlyphs(
             byte[] gray,
             int width,
             int height,
-            boolean[] seen, GlyphFloodScratch scratch,
+            GlyphFloodScratch scratch,
             int threshold,
             int darkThreshold) {
         int[] queue = scratch.queue;
-        java.util.Arrays.fill(seen, false);
+        boolean[] seen = scratch.clearSeen(gray.length);
         List<Glyph> result = new ArrayList<>();
         float maxWidth = width * .025f, maxHeight = height * .018f;
         boolean packedTones = threshold >= 128 && threshold <= 255;
@@ -6174,9 +6185,9 @@ final class NoteArticulationDetector {
     }
 
     private static List<Glyph> rawFaintAccents(
-            byte[] gray, int width, int height, boolean[] seen, GlyphFloodScratch scratch,
+            byte[] gray, int width, int height, GlyphFloodScratch scratch,
             List<Glyph> glyphs, java.util.IdentityHashMap<Glyph, Integer> joinedOwners) {
-        if (hasFaintOnlyInk(gray)) return faintAccentGlyphs(gray, width, height, seen, scratch);
+        if (hasFaintOnlyInk(gray)) return faintAccentGlyphs(gray, width, height, scratch);
 
         // Both thresholds selected identical pixels. Reuse whole dark components in
         // flood order. Partitioned marks came from a component outside the size cap.
@@ -6188,6 +6199,72 @@ final class NoteArticulationDetector {
             }
         }
         return accents;
+    }
+
+    /** The pending pixels are already claimed. Extend each along its row and clear
+     * all eight-connected ink above and below without retaining its pixel order. */
+    private static void discardComponent(long[] ink, int width, int height,
+            GlyphFloodScratch scratch, int pending, int end) {
+        int[] queue = scratch.queue;
+        // The FIFO prefix has already been expanded and can be reused for new seeds.
+        int size = end - pending;
+        System.arraycopy(queue, pending, queue, 0, size);
+        while (size != 0) {
+            int seed = queue[--size];
+            int y = seed / width, row = y * width;
+            int left = seed, right = seed;
+            while (left > row && (ink[(left - 1) >>> 6] & (1L << (left - 1))) != 0) {
+                left--;
+                ink[left >>> 6] &= ~(1L << left);
+            }
+            while (right < row + width - 1 && (ink[(right + 1) >>> 6] & (1L << (right + 1))) != 0) {
+                right++;
+                ink[right >>> 6] &= ~(1L << right);
+            }
+            if (left > row) left--;
+            if (right < row + width - 1) right++;
+            for (int dy = -1; dy <= 1; dy += 2) {
+                if (y + dy < 0 || y + dy >= height) continue;
+                int first = left + dy * width, last = right + dy * width;
+                int firstWord = first >>> 6, lastWord = last >>> 6;
+                for (int word = firstWord; word <= lastWord; word++) {
+                    long hits = ink[word];
+                    if (word == firstWord) hits &= -1L << first;
+                    if (word == lastWord) hits &= -1L >>> (63 - (last & 63));
+                    ink[word] &= ~hits;
+                    while (hits != 0) {
+                        if (size == queue.length) queue = scratch.grow(size);
+                        queue[size++] = (word << 6) + Long.numberOfTrailingZeros(hits);
+                        hits &= hits - 1;
+                    }
+                }
+            }
+        }
+    }
+
+    private static long[] articulationInk(byte[] plane, boolean raw) {
+        long[] ink = new long[(int) ((plane.length + 63L) >>> 6)];
+        long bias = SeedToneWords.BYTE_ONES * (155 - 128);
+        long symbol = SeedToneWords.BYTE_ONES * OmrMeasurePostProcessor.SYMBOL;
+        long lowBits = ~SeedToneWords.HIGH_BITS;
+        int p = 0;
+        for (; p <= plane.length - Long.BYTES; p += Long.BYTES) {
+            long word = (long) SeedToneWords.LITTLE_GRAY.get(plane, p);
+            long selected;
+            if (raw) {
+                long bright = ((word | SeedToneWords.HIGH_BITS) - bias) & word;
+                selected = ~bright & SeedToneWords.HIGH_BITS;
+            } else {
+                long mismatch = word ^ symbol;
+                selected = ~(((mismatch & lowBits) + lowBits) | mismatch) & SeedToneWords.HIGH_BITS;
+            }
+            // Gather the eight high bits in left-to-right pixel order.
+            ink[p >>> 6] |= (((selected >>> 7) * 0x0102040810204080L) >>> 56) << p;
+        }
+        for (; p < plane.length; p++)
+            if (raw ? (plane[p] & 255) < 155 : plane[p] == OmrMeasurePostProcessor.SYMBOL)
+                ink[p >>> 6] |= 1L << p;
+        return ink;
     }
 
     private static boolean hasFaintOnlyInk(byte[] gray) {
@@ -6211,6 +6288,8 @@ final class NoteArticulationDetector {
     private static final class SeedToneWords {
         static final java.lang.invoke.VarHandle GRAY = java.lang.invoke.MethodHandles.byteArrayViewVarHandle(
                 long[].class, java.nio.ByteOrder.nativeOrder());
+        static final java.lang.invoke.VarHandle LITTLE_GRAY = java.lang.invoke.MethodHandles.byteArrayViewVarHandle(
+                long[].class, java.nio.ByteOrder.LITTLE_ENDIAN);
         static final long BYTE_ONES = 0x0101010101010101L;
         static final long HIGH_BITS = 0x8080808080808080L;
     }

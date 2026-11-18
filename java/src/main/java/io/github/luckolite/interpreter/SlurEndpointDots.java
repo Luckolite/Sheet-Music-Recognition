@@ -29,19 +29,6 @@ final class SlurEndpointDots {
             int height,
             int[] pixels,
             List<NoteArticulationDetector.Anchor> notes) {
-        Work work = new Work();
-        Result old = columnPartition(gray, width, height, pixels, notes, work);
-        if (!old.dots().isEmpty() || old.limited()) return old;
-        return contactPartition(gray, width, height, pixels, notes, work);
-    }
-
-    private static Result columnPartition(
-            byte[] gray,
-            int width,
-            int height,
-            int[] pixels,
-            List<NoteArticulationDetector.Anchor> notes,
-            Work work) {
         Result unknown = new Result(List.of(), false);
         if (gray == null
                 || gray.length != (long) width * height
@@ -74,6 +61,59 @@ final class SlurEndpointDots {
                     }
                 }
         }
+        return partitionComplete(width, height, pixels, notes, l, r, t, b, member);
+    }
+
+    /** Only for a complete raw component already enumerated by the articulation flood. */
+    static Result partitionFlooded(int width, int height, int[] pixels,
+            List<NoteArticulationDetector.Anchor> notes, int l, int r, int t, int b) {
+        if (pixels.length > MAX_PIXELS || r - l + 1 > MAX_COLUMNS)
+            return new Result(List.of(), true);
+        return partitionComplete(width, height, pixels, notes, l, r, t, b, null);
+    }
+
+    private record Ends(int left, int right, int side) {}
+
+    private static Ends owners(List<NoteArticulationDetector.Anchor> notes, int l, int r, int t, int b) {
+        int leftOwner = -1, rightOwner = -1, side = 0;
+        for (int i = 0; i < notes.size(); i++) {
+            var a = notes.get(i);
+            if (a.x() >= l && a.x() <= r && a.y() >= t && a.y() <= b) return null;
+            if (a.staff() < 0 || !(a.gap() > 0)) continue;
+            int away = b < a.y() - .7f * a.gap() ? -1 : t > a.y() + .7f * a.gap() ? 1 : 0;
+            if (away == 0 || Math.max(Math.abs(t - a.y()), Math.abs(b - a.y())) > 8 * a.gap())
+                continue;
+            if (Math.abs(a.x() - l) <= .7f * a.gap()) {
+                if (leftOwner >= 0) return null;
+                leftOwner = i;
+                side = away;
+            }
+            if (Math.abs(a.x() - r) <= .7f * a.gap()) {
+                if (rightOwner >= 0) return null;
+                rightOwner = i;
+                if (side != 0 && side != away) return null;
+                side = away;
+            }
+        }
+        if (leftOwner < 0 || rightOwner < 0 || leftOwner == rightOwner) return null;
+        return new Ends(leftOwner, rightOwner, side);
+    }
+
+    private static Result partitionComplete(int width, int height, int[] pixels,
+            List<NoteArticulationDetector.Anchor> notes, int l, int r, int t, int b, Set<Integer> member) {
+        Ends ends = owners(notes, l, r, t, b);
+        if (ends == null) return new Result(List.of(), false);
+        Work work = new Work();
+        Result column = columnPartition(width, height, pixels, notes, work, l, r, t, b, member, ends);
+        if (!column.dots().isEmpty() || column.limited()) return column;
+        return contactPartition(width, pixels, notes, work, l, r, t, b, ends);
+    }
+
+    private static Result columnPartition(int width, int height, int[] pixels,
+            List<NoteArticulationDetector.Anchor> notes, Work work, int l, int r, int t, int b,
+            Set<Integer> member, Ends ends) {
+        Result unknown = new Result(List.of(), false);
+        int columns = r - l + 1;
         int[] low = new int[columns], high = new int[columns], count = new int[columns];
         Arrays.fill(low, height);
         for (int p : pixels) {
@@ -85,29 +125,7 @@ final class SlurEndpointDots {
         // Terminal bodies retain their exact two-dimensional samples; only the exposed
         // connector must be a single complete vertical run in each column.
         for (int x = 0; x < columns; x++) if (count[x] == 0) return unknown;
-        // An already accepted head anywhere in this component cannot be donated to articulation.
-        for (var a : notes)
-            if (a.x() >= l && a.x() <= r && a.y() >= t && a.y() <= b) return unknown;
-        int leftOwner = -1, rightOwner = -1, side = 0;
-        for (int i = 0; i < notes.size(); i++) {
-            var a = notes.get(i);
-            if (a.staff() < 0 || !(a.gap() > 0)) continue;
-            int away = b < a.y() - .7f * a.gap() ? -1 : t > a.y() + .7f * a.gap() ? 1 : 0;
-            if (away == 0 || Math.max(Math.abs(t - a.y()), Math.abs(b - a.y())) > 8 * a.gap())
-                continue;
-            if (Math.abs(a.x() - l) <= .7f * a.gap()) {
-                if (leftOwner >= 0) return unknown;
-                leftOwner = i;
-                side = away;
-            }
-            if (Math.abs(a.x() - r) <= .7f * a.gap()) {
-                if (rightOwner >= 0) return unknown;
-                rightOwner = i;
-                if (side != 0 && side != away) return unknown;
-                side = away;
-            }
-        }
-        if (leftOwner < 0 || rightOwner < 0 || leftOwner == rightOwner) return unknown;
+        int leftOwner = ends.left, rightOwner = ends.right, side = ends.side;
         var first = notes.get(leftOwner);
         var last = notes.get(rightOwner);
         if (first.staff() != last.staff() || first.x() >= last.x()) return unknown;
@@ -115,7 +133,7 @@ final class SlurEndpointDots {
         if (Math.abs(first.y() - last.y()) > .35f * gap) return unknown;
         // A complete exposed middle lies outside every body allowed by the existing dot bounds.
         int cap = (int) Math.floor(.62f * gap);
-        if (cap < 1 || columns <= 2 * cap + 2) return unknown;
+        if (cap < 1 || columns <= 2L * cap + 2) return unknown;
         int min = Integer.MAX_VALUE, max = 0;
         for (int x = cap; x < columns - cap; x++) {
             min = Math.min(min, count[x]);
@@ -128,6 +146,18 @@ final class SlurEndpointDots {
         int wholeMax = 0;
         for (int n : count) wholeMax = Math.max(wholeMax, n);
         if (wholeMax <= max) return unknown; // A constant-width rounded tie tip is not a bulb.
+        if (member == null) {
+            // Only the two terminal windows query individual pixels. The full vertical
+            // interval is exact for any column whose count covers that interval.
+            for (int x = 0; x < cap; x++) {
+                int other = columns - 1 - x;
+                if (count[x] == high[x] - low[x] + 1
+                        && count[other] == high[other] - low[other] + 1) continue;
+                member = new HashSet<>();
+                for (int pixel : pixels) member.add(pixel);
+                break;
+            }
+        }
         List<Body> left = new ArrayList<>(), right = new ArrayList<>();
         left.add(null);
         right.add(null);
@@ -246,7 +276,8 @@ final class SlurEndpointDots {
             boolean ink = false, ended = false;
             for (int x = start; x <= end; x++) {
                 if (!work.use(1)) return null;
-                boolean hit = member.contains(y * width + origin + x);
+                boolean hit = member == null ? y >= low[x] && y <= high[x]
+                            : member.contains(y * width + origin + x);
                 if (hit) {
                     if (ended) return null;
                     ink = true;
@@ -284,68 +315,13 @@ final class SlurEndpointDots {
     private record Contact(int first, int last, int top, int bottom, int count) {}
 
     /** Additional complete two-dimensional contact models; the released column partition runs first. */
-    private static Result contactPartition(
-            byte[] gray,
-            int width,
-            int height,
-            int[] pixels,
-            List<NoteArticulationDetector.Anchor> notes,
-            Work work) {
+    private static Result contactPartition(int width, int[] pixels,
+            List<NoteArticulationDetector.Anchor> notes, Work work, int l, int r, int t, int b, Ends ends) {
         Result unknown = new Result(List.of(), false);
-        if (gray == null
-                || gray.length != (long) width * height
-                || pixels == null
-                || pixels.length < 3
-                || pixels.length > MAX_PIXELS
-                || notes == null) return unknown;
-        int l = width, r = -1, t = height, b = -1;
-        Set<Integer> member = new HashSet<>();
         if (!work.use(pixels.length * 12)) return new Result(List.of(), true);
-        for (int p : pixels) {
-            if (p < 0 || p >= gray.length || (gray[p] & 255) >= 155 || !member.add(p))
-                return unknown;
-            l = Math.min(l, p % width);
-            r = Math.max(r, p % width);
-            t = Math.min(t, p / width);
-            b = Math.max(b, p / width);
-        }
         int columns = r - l + 1, rows = b - t + 1;
-        // A long stores the complete observed vertical profile, not a sampled or quantized path.
-        if (columns > MAX_COLUMNS || rows > 64) return unknown;
-        for (int p : pixels) {
-            int x = p % width, y = p / width;
-            for (int dy = -1; dy <= 1; dy++)
-                for (int dx = -1; dx <= 1; dx++) {
-                    int xx = x + dx, yy = y + dy;
-                    if (xx >= 0
-                            && xx < width
-                            && yy >= 0
-                            && yy < height
-                            && (gray[yy * width + xx] & 255) < 155
-                            && !member.contains(yy * width + xx)) return unknown;
-                }
-        }
-        int leftOwner = -1, rightOwner = -1, side = 0;
-        for (int i = 0; i < notes.size(); i++) {
-            var a = notes.get(i);
-            if (a.x() >= l && a.x() <= r && a.y() >= t && a.y() <= b) return unknown;
-            if (a.staff() < 0 || !(a.gap() > 0)) continue;
-            int away = b < a.y() - .7f * a.gap() ? -1 : t > a.y() + .7f * a.gap() ? 1 : 0;
-            if (away == 0 || Math.max(Math.abs(t - a.y()), Math.abs(b - a.y())) > 8 * a.gap())
-                continue;
-            if (Math.abs(a.x() - l) <= .7f * a.gap()) {
-                if (leftOwner >= 0) return unknown;
-                leftOwner = i;
-                side = away;
-            }
-            if (Math.abs(a.x() - r) <= .7f * a.gap()) {
-                if (rightOwner >= 0) return unknown;
-                rightOwner = i;
-                if (side != 0 && side != away) return unknown;
-                side = away;
-            }
-        }
-        if (leftOwner < 0 || rightOwner < 0 || leftOwner == rightOwner) return unknown;
+        if (rows > 64) return unknown;
+        int leftOwner = ends.left, rightOwner = ends.right, side = ends.side;
         var first = notes.get(leftOwner);
         var last = notes.get(rightOwner);
         float gap = Math.min(first.gap(), last.gap());

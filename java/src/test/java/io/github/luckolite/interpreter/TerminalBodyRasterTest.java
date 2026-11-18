@@ -77,6 +77,42 @@ public class TerminalBodyRasterTest {
     }
 
     @Test
+    public void floodedTerminalWindowsPreserveSolidAndSplitColumnOwnership() {
+        for (int mode = 0; mode < 3; mode++) {
+            byte[] gray = raster(true, true, false);
+            if (mode != 0) {
+                for (int x = 0; x < W; x++) {
+                    int top = H, bottom = -1;
+                    for (int y = 0; y < H; y++) {
+                        if (gray[y * W + x] != 0) continue;
+                        top = Math.min(top, y);
+                        bottom = y;
+                    }
+                    for (int y = top; y <= bottom; y++) gray[y * W + x] = 0;
+                }
+            }
+            if (mode == 2) gray[67 * W + 50] = (byte) 255;
+            int[] pixels = component(gray);
+            int l = W, r = -1, t = H, b = -1;
+            for (int p : pixels) {
+                l = Math.min(l, p % W);
+                r = Math.max(r, p % W);
+                t = Math.min(t, p / W);
+                b = Math.max(b, p / W);
+            }
+            var checked = check(gray, pixels, owners());
+            var flooded = SlurEndpointDots.partitionFlooded(W, H, pixels, owners(), l, r, t, b);
+            assertEquals(checked.limited(), flooded.limited());
+            assertEquals(mode == 2 ? 0 : 2, flooded.dots().size());
+            assertEquals(checked.dots().size(), flooded.dots().size());
+            for (int i = 0; i < checked.dots().size(); i++) {
+                assertEquals(checked.dots().get(i).owner(), flooded.dots().get(i).owner());
+                assertArrayEquals(checked.dots().get(i).pixels(), flooded.dots().get(i).pixels());
+            }
+        }
+    }
+
+    @Test
     public void exactTwoDimensionalBulbsSurviveSplitColumnProjection() {
         byte[] gray = raster(true, false, false);
         int[] pixels = component(gray);

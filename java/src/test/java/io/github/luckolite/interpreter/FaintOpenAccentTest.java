@@ -39,6 +39,25 @@ public class FaintOpenAccentTest {
     }
 
     @Test
+    public void articulationMasksKeepEveryShadeAndLabelAcrossWordBoundaries() throws Exception {
+        var classify = NoteArticulationDetector.class.getDeclaredMethod("articulationInk", byte[].class, boolean.class);
+        classify.setAccessible(true);
+        for (int length : new int[] {0, 1, 7, 8, 63, 64, 65, 263}) {
+            byte[] plane = new byte[length];
+            for (int i = 0; i < length; i++) plane[i] = (byte) (i * 73 + 145);
+            for (boolean raw : new boolean[] {false, true}) {
+                long[] bits = (long[]) classify.invoke(null, plane, raw);
+                assertEquals((length + 63) / 64, bits.length);
+                for (int i = 0; i < bits.length * 64; i++) {
+                    boolean expected = i < length && (raw ? (plane[i] & 255) < 155
+                            : plane[i] == OmrMeasurePostProcessor.SYMBOL);
+                    assertEquals(expected, (bits[i >>> 6] & (1L << i)) != 0);
+                }
+            }
+        }
+    }
+
+    @Test
     public void detachedDarkAccentSurvivesBothThresholdPaths() {
         int width = 1100, height = 820;
         byte[] gray = new byte[width * height], labels = new byte[gray.length];
@@ -53,6 +72,10 @@ public class FaintOpenAccentTest {
         var notes = List.of(new NoteArticulationDetector.Anchor(112, 150, 16, 0));
         int[] dark = NoteArticulationDetector.detect(labels, gray, width, height, notes);
         assertTrue((dark[0] & NoteArticulation.ACCENT) != 0);
+        // A wide connected component exceeds the partition limit before the accent is visited.
+        for (int y = 12; y < 24; y++)
+            Arrays.fill(gray, y * width + 43, y * width + 989, (byte) 28);
+        assertArrayEquals(dark, NoteArticulationDetector.detect(labels, gray, width, height, notes));
         gray[width - 1] = (byte) 155;
         assertArrayEquals(dark, NoteArticulationDetector.detect(labels, gray, width, height, notes));
     }
@@ -102,7 +125,6 @@ public class FaintOpenAccentTest {
                 count++;
             }
         byte[] before = gray.clone(), labelsBefore = labels.clone();
-        boolean[] seen = new boolean[gray.length];
         var scratchType = Class.forName(NoteArticulationDetector.class.getName() + "$GlyphFloodScratch");
         var constructor = scratchType.getDeclaredConstructor(int.class);
         constructor.setAccessible(true);
@@ -115,10 +137,9 @@ public class FaintOpenAccentTest {
                         byte[].class,
                         int.class,
                         int.class,
-                        boolean[].class,
                         scratchType);
         faint.setAccessible(true);
-        List<?> first = (List<?>) faint.invoke(null, gray, w, h, seen, scratch);
+        List<?> first = (List<?>) faint.invoke(null, gray, w, h, scratch);
         assertEquals(1, first.size());
         Object glyph = first.get(0);
         Class<?> type = glyph.getClass();
@@ -135,7 +156,7 @@ public class FaintOpenAccentTest {
         }
         Arrays.fill((int[]) queueField.get(scratch), Integer.MIN_VALUE);
         assertArrayEquals(retainedBefore, retained);
-        List<?> repeated = (List<?>) faint.invoke(null, gray, w, h, seen, scratch);
+        List<?> repeated = (List<?>) faint.invoke(null, gray, w, h, scratch);
         assertEquals(1, repeated.size());
         assertArrayEquals(retainedBefore, (int[]) pixelAccessor.invoke(repeated.get(0)));
         assertTrue(
@@ -152,7 +173,7 @@ public class FaintOpenAccentTest {
         assertArrayEquals(before, gray);
         assertArrayEquals(labelsBefore, labels);
         Arrays.fill(gray, (byte) 255);
-        assertTrue(((List<?>) faint.invoke(null, gray, w, h, seen, scratch)).isEmpty());
+        assertTrue(((List<?>) faint.invoke(null, gray, w, h, scratch)).isEmpty());
         assertArrayEquals(retainedBefore, retained);
     }
 }

@@ -40,16 +40,7 @@ final class SlurEndpointAccents {
                 || pixels.length < 8
                 || pixels.length > MAX_PIXELS
                 || notes == null) return List.of();
-        return partition(gray, width, height, pixels, notes, new Work());
-    }
-
-    static List<Mark> partition(
-            byte[] gray,
-            int width,
-            int height,
-            int[] pixels,
-            List<NoteArticulationDetector.Anchor> notes,
-            Work work) {
+        Work work = new Work();
         if (!work.use(pixels.length * 12L + notes.size())) return List.of();
         Set<Integer> member = new HashSet<>();
         int l = width, r = -1, t = height, b = -1;
@@ -75,11 +66,22 @@ final class SlurEndpointAccents {
                             && !member.contains(yy * width + xx)) return List.of();
                 }
         }
-        long[] bits = new long[r - l + 1];
-        for (int p : pixels) bits[p % width - l] |= 1L << (p / width - t);
-        long terminal = bits[bits.length - 1];
-        int tipTop = t + Long.numberOfTrailingZeros(terminal),
-                tipBottom = t + 63 - Long.numberOfLeadingZeros(terminal);
+        return partitionBits(width, pixels, notes, work, l, r, t, b);
+    }
+
+    /** Called only for a whole eight-connected component flooded from the raw ink plane. */
+    static List<Mark> partitionFlooded(
+            int width, int[] pixels, List<NoteArticulationDetector.Anchor> notes, Work work,
+            int l, int r, int t, int b) {
+        if (!work.use(pixels.length * 12L + notes.size())
+                || r - l + 1 > MAX_COLUMNS || b - t + 1 > 64) return List.of();
+        return partitionBits(width, pixels, notes, work, l, r, t, b);
+    }
+
+    private static List<Mark> partitionBits(
+            int width, int[] pixels, List<NoteArticulationDetector.Anchor> notes, Work work,
+            int l, int r, int t, int b) {
+        long[] bits = null;
         int owner = -1;
         Box union = null;
         for (int n = 0; n < notes.size(); n++) {
@@ -90,6 +92,13 @@ final class SlurEndpointAccents {
                     || gap < 5
                     || gap > 64
                     || Math.abs(r - a.x()) > gap * 1.5f) continue;
+            if (bits == null) {
+                bits = new long[r - l + 1];
+                for (int pixel : pixels) bits[pixel % width - l] |= 1L << (pixel / width - t);
+            }
+            long terminal = bits[bits.length - 1];
+            int tipTop = t + Long.numberOfTrailingZeros(terminal);
+            int tipBottom = t + 63 - Long.numberOfLeadingZeros(terminal);
             boolean splitProfile = false;
             int search = Math.max(0, bits.length - (int) Math.floor(gap * 2.1f + 1));
             if (!work.use(bits.length)) return List.of();

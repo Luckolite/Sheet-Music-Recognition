@@ -28,7 +28,6 @@ public class CaretClaimPriorityOriginalTest {
         var constructor = scratchType.getDeclaredConstructor(int.class);
         constructor.setAccessible(true);
         var scratch = constructor.newInstance(raw.length);
-        var seen = new boolean[raw.length];
         if (paper) {
             var gap = detector.getDeclaredMethod("medianArticulationGap", List.class);
             gap.setAccessible(true);
@@ -36,14 +35,14 @@ public class CaretClaimPriorityOriginalTest {
             if (estimate == null) return List.of();
             var method = detector.getDeclaredMethod(
                     "paperGlyphs", byte[].class, byte[].class, int.class, int.class,
-                    boolean[].class, scratchType);
+                    scratchType);
             method.setAccessible(true);
-            return (List<?>) method.invoke(null, raw, estimate.normalize(340f), W, H, seen, scratch);
+            return (List<?>) method.invoke(null, raw, estimate.normalize(340f), W, H, scratch);
         }
         var method = detector.getDeclaredMethod(
-                "faintAccentGlyphs", byte[].class, int.class, int.class, boolean[].class, scratchType);
+                "faintAccentGlyphs", byte[].class, int.class, int.class, scratchType);
         method.setAccessible(true);
-        return (List<?>) method.invoke(null, raw, W, H, seen, scratch);
+        return (List<?>) method.invoke(null, raw, W, H, scratch);
     }
 
     static int field(Object g, String name) throws Exception {
