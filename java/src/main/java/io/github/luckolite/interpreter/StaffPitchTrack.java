@@ -644,34 +644,43 @@ final class StaffPitchTrack {
         // Broad evidence from all five original rules outweighs a few narrow
         // strips where darker beams displace a faded outer rule. Do not require
         // complete semantic labels: curved scans can lose entire labelled rules.
+        int first = Math.round(width * .1f), last = Math.round(width * .94f);
+        int extent = last - first, samples = (extent + 1) / 2;
+        if (samples < 24) return false;
+        int regions = throughout ? 4 : 1;
         for (int line = 0; line < 5; line++) {
-            int supported = 0, samples = 0, row = Math.round(bottom - line * gap);
-            int first = Math.round(width * .1f), last = Math.round(width * .94f);
-            int[] regionSamples = new int[4], regionSupport = new int[4];
-            for (int x = first; x < last; x += 2) {
-                int region = Math.min(3, (x - first) * 4 / Math.max(1, last - first));
-                samples++;
-                regionSamples[region]++;
-                for (int y = Math.max(flank, row - radius);
-                        y <= Math.min(height - 1 - flank, row + radius);
-                        y++) {
-                    int ink = gray[y * width + x] & 255;
-                    if (ink <= 205
-                            && (gray[(y - flank) * width + x] & 255) >= ink + 12
-                            && (gray[(y + flank) * width + x] & 255) >= ink + 12) {
-                        supported++;
-                        regionSupport[region]++;
-                        break;
-                    }
+            int row = Math.round(bottom - line * gap);
+            int top = Math.max(flank, row - radius), end = Math.min(height - 1 - flank, row + radius);
+            if (top > end) return false;
+            int center = Math.max(top, Math.min(row, end));
+            int total = 0, start = 0;
+            for (int region = 0; region < regions; region++) {
+                // The original samples are spaced two pixels apart. Round each
+                // quarter boundary up to the next sample on that same lattice.
+                int stop = region + 1 == regions ? samples : (int) (((long) (region + 1) * extent + 7) / 8);
+                int length = stop - start, count = 0;
+                if (throughout && length < 6) return false;
+                for (int index = start; index < stop;) {
+                    int n = Math.min(32, stop - index), x = first + index * 2;
+                    int columns = 2 * n - 1;
+                    long sampled = 0x5555555555555555L >>> (64 - 2 * n);
+                    // Sample the predicted rule first so a clear straight line needs one row.
+                    long supported = sampled & RuleProjection.contrastMask(
+                            gray, center * width + x, columns, flank * width, 205);
+                    for (int y = top; y <= end && supported != sampled; y++)
+                        if (y != center)
+                            supported |= sampled & RuleProjection.contrastMask(
+                                    gray, y * width + x, columns, flank * width, 205);
+                    count += Long.bitCount(supported);
+                    index += n;
+                    if (!throughout && count >= samples * .8f) break;
+                    if (count + (stop - index) < length * .8f) return false;
                 }
+                if (throughout && count < length * .8f) return false;
+                total += count;
+                start = stop;
             }
-            if (samples < 24 || supported < samples * .8f) return false;
-            // Reject a curved track only when the edge regions also support straight rules.
-            // Broad scale calibration can still bridge a locally obscured group.
-            if (throughout)
-                for (int region = 0; region < 4; region++)
-                    if (regionSamples[region] < 6
-                            || regionSupport[region] < regionSamples[region] * .8f) return false;
+            if (total < samples * .8f) return false;
         }
         return true;
     }

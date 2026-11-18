@@ -6278,27 +6278,9 @@ final class NoteArticulationDetector {
     }
 
     private static long[] articulationInk(byte[] plane, boolean raw) {
+        if (raw) return PackedGrayInk.classify(plane, 0, plane.length, 155);
         long[] ink = new long[(int) ((plane.length + 63L) >>> 6)];
-        long bias = SeedToneWords.BYTE_ONES * (155 - 128);
-        long symbol = SeedToneWords.BYTE_ONES * OmrMeasurePostProcessor.SYMBOL;
-        long lowBits = ~SeedToneWords.HIGH_BITS;
-        int p = 0;
-        for (; p <= plane.length - Long.BYTES; p += Long.BYTES) {
-            long word = (long) SeedToneWords.LITTLE_GRAY.get(plane, p);
-            long selected;
-            if (raw) {
-                long bright = ((word | SeedToneWords.HIGH_BITS) - bias) & word;
-                selected = ~bright & SeedToneWords.HIGH_BITS;
-            } else {
-                long mismatch = word ^ symbol;
-                selected = ~(((mismatch & lowBits) + lowBits) | mismatch) & SeedToneWords.HIGH_BITS;
-            }
-            // Gather the eight high bits in left-to-right pixel order.
-            ink[p >>> 6] |= (((selected >>> 7) * 0x0102040810204080L) >>> 56) << p;
-        }
-        for (; p < plane.length; p++)
-            if (raw ? (plane[p] & 255) < 155 : plane[p] == OmrMeasurePostProcessor.SYMBOL)
-                ink[p >>> 6] |= 1L << p;
+        PackedGrayInk.fillSymbols(plane, 0, plane.length, ink, 0);
         return ink;
     }
 
@@ -6323,8 +6305,6 @@ final class NoteArticulationDetector {
     private static final class SeedToneWords {
         static final java.lang.invoke.VarHandle GRAY = java.lang.invoke.MethodHandles.byteArrayViewVarHandle(
                 long[].class, java.nio.ByteOrder.nativeOrder());
-        static final java.lang.invoke.VarHandle LITTLE_GRAY = java.lang.invoke.MethodHandles.byteArrayViewVarHandle(
-                long[].class, java.nio.ByteOrder.LITTLE_ENDIAN);
         static final long BYTE_ONES = 0x0101010101010101L;
         static final long HIGH_BITS = 0x8080808080808080L;
     }
