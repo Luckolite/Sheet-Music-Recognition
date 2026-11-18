@@ -57,6 +57,29 @@ public class BoundaryHairpinProposalTest {
     }
 
     @Test
+    public void coreBridgeCanSkipOneRowAndStillKeepsBothEnvelopes() {
+        int width = 60;
+        byte[] gray = new byte[width * 6];
+        Arrays.fill(gray, (byte) 145);
+        Arrays.fill(gray, 4, 20, (byte) 144);
+        Arrays.fill(gray, 26, 41, (byte) 144);
+        Arrays.fill(gray, 2 * width + 20, 2 * width + 26, (byte) 144);
+        Arrays.fill(gray, 5 * width + 9, 5 * width + 34, (byte) 144);
+        var cores = OpenHairpinPairs.horizontalCores(gray, width, 0, 5, 4);
+        assertEquals(2, cores.size());
+        var bridged = cores.get(0);
+        assertEquals(4, bridged.left());
+        assertEquals(40, bridged.right());
+        for (int x = 4; x <= 40; x++) {
+            int row = x >= 20 && x <= 25 ? 2 : 0;
+            assertEquals(row, bridged.upper()[x - 4]);
+            assertEquals(row, bridged.lower()[x - 4]);
+        }
+        assertEquals(9, cores.get(1).left());
+        assertEquals(33, cores.get(1).right());
+    }
+
+    @Test
     public void lowerCoreBeyondProposalBand13() {
         var s = new Scene(13);
         s.wedge();

@@ -1447,74 +1447,83 @@ final class NoteArticulationDetector {
         if (w <= 0 || h <= 0) return false;
         boolean[] rules = new boolean[h];
         int cropSize = w * h;
+        boolean hasRule = false;
+        for (int y = top; y <= bottom; y++) {
+            rules[y - top] = recoveryStaffRule(gray, width, height, Math.round(note.x), y, gap);
+            hasRule |= rules[y - top];
+        }
+        if (!hasRule) return false;
         boolean[] seen = scratch.clearSeen(cropSize);
         int[] queue = scratch.reserve(cropSize);
-        for (int y = top; y <= bottom; y++)
-            rules[y - top] = recoveryStaffRule(gray, width, height, Math.round(note.x), y, gap);
-        for (int seed = 0; seed < cropSize; seed++) {
-            int sx = seed % w, sy = seed / w;
-            if (seen[seed] || rules[sy] || (gray[(top + sy) * width + left + sx] & 255) >= 155)
-                continue;
-            int take = 0, size = 1, minX = sx, maxX = sx, minY = sy, maxY = sy;
-            boolean clipped = false, touches = false;
-            queue[0] = seed;
-            seen[seed] = true;
-            while (take < size) {
-                int at = queue[take++], x = at % w, y = at / w;
-                minX = Math.min(minX, x);
-                maxX = Math.max(maxX, x);
-                minY = Math.min(minY, y);
-                maxY = Math.max(maxY, y);
-                clipped |= x == 0 || x == w - 1 || y == 0 || y == h - 1;
-                for (int dy = -1; dy <= 1; dy++)
-                    for (int dx = -1; dx <= 1; dx++) {
-                        int xx = x + dx, yy = y + dy;
-                        if (xx < 0 || xx >= w || yy < 0 || yy >= h) continue;
-                        int p = yy * w + xx;
-                        if ((gray[(top + yy) * width + left + xx] & 255) >= 155) continue;
-                        if (rules[yy]) {
-                            touches = true;
-                            continue;
-                        }
-                        if (!seen[p]) {
-                            seen[p] = true;
-                            queue[size++] = p;
-                        }
+        // Every eligible component contains a dark pixel adjacent to ink on a rule row.
+        for (int sy = 0; sy < h; sy++) {
+            boolean above = sy > 0 && rules[sy - 1], below = sy + 1 < h && rules[sy + 1];
+            if (rules[sy] || (!above && !below)) continue;
+            int rawRow = (top + sy) * width + left;
+            for (int sx = 0; sx < w; sx++) {
+                int seed = sy * w + sx;
+                if (seen[seed] || (gray[rawRow + sx] & 255) >= 155) continue;
+                int x0 = rawRow + Math.max(0, sx - 1), x1 = rawRow + Math.min(w - 1, sx + 1);
+                if (!(above && hasAccentInk(gray, x0 - width, x1 - width))
+                        && !(below && hasAccentInk(gray, x0 + width, x1 + width))) continue;
+                int take = 0, size = 1, minX = sx, maxX = sx, minY = sy, maxY = sy;
+                queue[0] = seed;
+                seen[seed] = true;
+                while (take < size) {
+                    int at = queue[take++], y = at / w, x = at - y * w;
+                    minX = Math.min(minX, x);
+                    maxX = Math.max(maxX, x);
+                    minY = Math.min(minY, y);
+                    maxY = Math.max(maxY, y);
+                    int first = Math.max(0, x - 1), last = Math.min(w - 1, x + 1);
+                    for (int yy = Math.max(0, y - 1); yy <= Math.min(h - 1, y + 1); yy++) {
+                        if (rules[yy]) continue;
+                        int offset = (top + yy) * width + left - yy * w;
+                        for (int p = yy * w + first, end = yy * w + last; p <= end; p++)
+                            if (!seen[p] && (gray[offset + p] & 255) < 155) {
+                                seen[p] = true;
+                                queue[size++] = p;
+                            }
                     }
+                }
+                float gw = maxX - minX + 1,
+                        gh = maxY - minY + 1,
+                        gx = left + (minX + maxX) * .5f,
+                        gy = top + (minY + maxY) * .5f;
+                if (minX == 0 || maxX == w - 1 || minY == 0 || maxY == h - 1
+                        || gw < gap * .75f
+                        || gw > gap * 2.1f + 1
+                        || gh < gap * .35f
+                        || gh > gap * 1.25f
+                        || Math.abs(gx - note.x) > gap * .7f
+                        || Math.abs(gy - note.y) < gap * .7f
+                        || Math.abs(gy - note.y) > gap * 5.5f) continue;
+                int[] pixels = new int[size];
+                int notation = 0;
+                for (int i = 0; i < size; i++) {
+                    int p = (top + queue[i] / w) * width + left + queue[i] % w;
+                    pixels[i] = p;
+                    byte label = labels[p];
+                    if (label == OmrMeasurePostProcessor.NOTEHEAD
+                            || label == OmrMeasurePostProcessor.STEM_OR_REST
+                            || label == OmrMeasurePostProcessor.CLEF_OR_KEY) notation++;
+                }
+                if (notation > size * .25f
+                        || !OpenChevron.matches(
+                                pixels, width, left + minX, top + minY, left + maxX, top + maxY))
+                    continue;
+                Glyph g = new Glyph(left + minX, top + minY, left + maxX, top + maxY, size, pixels);
+                if (nearHead(g, notes)
+                        || detachedThreeOwns(g, context, width, gap)
+                        || completeBowOwns(g, gray, width, height, gap)) continue;
+                return true;
             }
-            float gw = maxX - minX + 1,
-                    gh = maxY - minY + 1,
-                    gx = left + (minX + maxX) * .5f,
-                    gy = top + (minY + maxY) * .5f;
-            if (clipped
-                    || !touches
-                    || gw < gap * .75f
-                    || gw > gap * 2.1f + 1
-                    || gh < gap * .35f
-                    || gh > gap * 1.25f
-                    || Math.abs(gx - note.x) > gap * .7f
-                    || Math.abs(gy - note.y) < gap * .7f
-                    || Math.abs(gy - note.y) > gap * 5.5f) continue;
-            int[] pixels = new int[size];
-            int notation = 0;
-            for (int i = 0; i < size; i++) {
-                int p = (top + queue[i] / w) * width + left + queue[i] % w;
-                pixels[i] = p;
-                byte label = labels[p];
-                if (label == OmrMeasurePostProcessor.NOTEHEAD
-                        || label == OmrMeasurePostProcessor.STEM_OR_REST
-                        || label == OmrMeasurePostProcessor.CLEF_OR_KEY) notation++;
-            }
-            if (notation > size * .25f
-                    || !OpenChevron.matches(
-                            pixels, width, left + minX, top + minY, left + maxX, top + maxY))
-                continue;
-            Glyph g = new Glyph(left + minX, top + minY, left + maxX, top + maxY, size, pixels);
-            if (nearHead(g, notes)
-                    || detachedThreeOwns(g, context, width, gap)
-                    || completeBowOwns(g, gray, width, height, gap)) continue;
-            return true;
         }
+        return false;
+    }
+
+    private static boolean hasAccentInk(byte[] gray, int first, int last) {
+        for (int p = first; p <= last; p++) if ((gray[p] & 255) < 155) return true;
         return false;
     }
 
@@ -5573,9 +5582,24 @@ final class NoteArticulationDetector {
         int firstRow = Math.max(0, y - 1) * width;
         int lastRow = Math.min(height - 1, y + 1) * width;
         float requiredHits = samples * coverage;
+        long bias = SeedToneWords.BYTE_ONES * (threshold - 128L);
         for (int direction = -1; direction <= 1; direction += 2) {
-            int hits = 0;
-            for (int d = near; d <= far; d++) {
+            int hits = 0, d = near;
+            if (threshold >= 128 && threshold <= 255) {
+                for (; d <= far - 7; d += 8) {
+                    int left = direction < 0 ? x - d - 7 : x + d;
+                    long paper = SeedToneWords.HIGH_BITS;
+                    for (int row = firstRow; row <= lastRow; row += width) {
+                        long tone = (long) SeedToneWords.GRAY.get(gray, row + left);
+                        paper &= ((tone | SeedToneWords.HIGH_BITS) - bias) & tone;
+                    }
+                    hits += Long.bitCount(SeedToneWords.HIGH_BITS ^ paper);
+                    if (hits >= requiredHits) break;
+                    if (hits + (far - d - 7) < requiredHits) return false;
+                }
+                if (hits >= requiredHits) continue;
+            }
+            for (; d <= far; d++) {
                 int xx = x + direction * d;
                 for (int row = firstRow; row <= lastRow; row += width)
                     if ((gray[row + xx] & 255) < threshold) {

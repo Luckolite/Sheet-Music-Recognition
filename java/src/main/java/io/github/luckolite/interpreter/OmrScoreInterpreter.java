@@ -13324,11 +13324,13 @@ final class OmrScoreInterpreter {
     /** Center complete printed rule bands instead of using whichever edge pixel wins a peak. */
     private static float[] printedStaffPitch(
             byte[] gray, int width, int height, RawStaffLineDetector.StaffLines raw) {
-        return printedStaffPitch(gray, width, height, raw, .25f);
+        return printedStaffPitch(gray, 0, width, width, height, raw, .25f);
     }
 
     private static float[] printedStaffPitch(
             byte[] gray,
+            int offset,
+            int stride,
             int width,
             int height,
             RawStaffLineDetector.StaffLines raw,
@@ -13344,8 +13346,7 @@ final class OmrScoreInterpreter {
             int rows = last - first + 1;
             int strongest = 0, peak = 0;
             for (int y = first; y <= last; y++) {
-                int n = 0;
-                for (int x = 0; x < width; x++) if ((gray[y * width + x] & 255) <= 170) n++;
+                int n = RawStaffLineDetector.countDarkRow(gray, offset + y * stride, width);
                 strength[y - first] = n;
                 if (n > strongest) {
                     strongest = n;
@@ -13363,18 +13364,22 @@ final class OmrScoreInterpreter {
             // page projection. A printed rule stays thin in individual columns,
             // even on a skewed scan; beams do not. Do not let such a candidate
             // move the pitch reference by an entire staff gap.
+            int before = first + start - 1, after = first + end + 1;
+            if (RawStaffLineDetector.peakHasThinSupport(gray, width, offset + (first + peak) * stride,
+                    before < 0 ? -1 : offset + before * stride,
+                    after >= height ? -1 : offset + after * stride, requiredSupport)) continue;
             int thinColumns = 0, maxThickness = Math.max(3, Math.round(raw.gap() * .4f));
             for (int x = 0; x < width && thinColumns < requiredSupport; x++) {
                 if (thinColumns + (width - x) < requiredSupport) return null;
                 for (int y = first; y <= last; y++) {
-                    if ((gray[y * width + x] & 255) > 170) continue;
+                    if ((gray[offset + y * stride + x] & 255) > 170) continue;
                     int a = y, b = y;
                     while (a > 0
                             && y - a <= maxThickness
-                            && (gray[(a - 1) * width + x] & 255) <= 170) a--;
+                            && (gray[offset + (a - 1) * stride + x] & 255) <= 170) a--;
                     while (b + 1 < height
                             && b - a < maxThickness
-                            && (gray[(b + 1) * width + x] & 255) <= 170) b++;
+                            && (gray[offset + (b + 1) * stride + x] & 255) <= 170) b++;
                     if (b - a + 1 <= maxThickness) {
                         thinColumns++;
                         break;
@@ -13405,6 +13410,8 @@ final class OmrScoreInterpreter {
         int top = Math.max(0, Math.round(staff.top - staff.gap * 2));
         int bottom = Math.min(height, Math.round(staff.bottom + staff.gap * 2));
         List<float[]> pitches = new ArrayList<>();
+        int lastLeft = -1;
+        float[] best = null;
         for (int strip = 0; strip < 7; strip++) {
             int left =
                     Math.max(
@@ -13412,40 +13419,9 @@ final class OmrScoreInterpreter {
                             Math.min(
                                     width - stripWidth,
                                     Math.round(width * (.15f + strip * .12f) - stripWidth * .5f)));
-            byte[] local = new byte[stripWidth * (bottom - top)];
-            for (int y = top; y < bottom; y++)
-                System.arraycopy(gray, y * width + left, local, (y - top) * stripWidth, stripWidth);
-            int[] thinStrength = new int[bottom - top];
-            int maxThickness = Math.max(3, Math.round(staff.gap * .4f));
-            for (int x = 0; x < stripWidth; x++)
-                for (int y = 0; y < bottom - top; ) {
-                    if ((local[y * stripWidth + x] & 255) > 170) {
-                        y++;
-                        continue;
-                    }
-                    int first = y;
-                    while (y < bottom - top && (local[y * stripWidth + x] & 255) <= 170) y++;
-                    if (y - first <= maxThickness)
-                        for (int row = first; row < y; row++) thinStrength[row]++;
-                }
-            float[] best = null;
-            float distance = Float.MAX_VALUE;
-            for (var raw :
-                    RawStaffLineDetector.detectFromStrength(
-                            thinStrength,
-                            Math.max(24, Math.round(stripWidth * .55f)),
-                            bottom - top)) {
-                float[] pitch = printedStaffPitch(local, stripWidth, bottom - top, raw, .55f);
-                if (pitch == null
-                        || pitch[1] < staff.gap * .75f
-                        || pitch[1] > staff.gap * 1.4f
-                        || Math.abs(raw.top() + top - staff.top) > staff.gap * 1.6f
-                        || Math.abs(raw.bottom() + top - staff.bottom) > staff.gap * 1.6f) continue;
-                float d = Math.abs(pitch[0] + top - staff.pitchBottom);
-                if (d < distance) {
-                    distance = d;
-                    best = new float[] {pitch[0] + top, pitch[1], left + stripWidth * .5f};
-                }
+            if (left != lastLeft) {
+                best = pitchInStrip(gray, width, left, top, bottom - top, stripWidth, staff);
+                lastLeft = left;
             }
             if (best != null) pitches.add(best);
         }
@@ -13494,6 +13470,34 @@ final class OmrScoreInterpreter {
                 : null;
     }
 
+    private static float[] pitchInStrip(byte[] gray, int width, int left, int top, int height,
+            int stripWidth, Staff staff) {
+        int offset = top * width + left;
+        int maxThickness = Math.max(3, Math.round(staff.gap * .4f));
+        int[] thinStrength = RawStaffLineDetector.thinRowStrength(
+                gray, offset, width, stripWidth, height, maxThickness);
+        float[] best = null;
+        float distance = Float.MAX_VALUE;
+        for (var raw :
+                RawStaffLineDetector.detectFromStrength(
+                        thinStrength,
+                        Math.max(24, Math.round(stripWidth * .55f)),
+                        height)) {
+            if (Math.abs(raw.top() + top - staff.top) > staff.gap * 1.6f
+                    || Math.abs(raw.bottom() + top - staff.bottom) > staff.gap * 1.6f) continue;
+            float[] pitch = printedStaffPitch(gray, offset, width, stripWidth, height, raw, .55f);
+            if (pitch == null
+                    || pitch[1] < staff.gap * .75f
+                    || pitch[1] > staff.gap * 1.4f) continue;
+            float d = Math.abs(pitch[0] + top - staff.pitchBottom);
+            if (d < distance) {
+                distance = d;
+                best = new float[] {pitch[0] + top, pitch[1], left + stripWidth * .5f};
+            }
+        }
+        return best;
+    }
+
     /**
      * A local strip can land entirely between repeated occlusions and make a broken rule look
      * continuous. Recheck the fitted five rules across the page: four must remain independently
@@ -13504,19 +13508,27 @@ final class OmrScoreInterpreter {
         int strong = 0, radius = Math.max(1, Math.round(gap * .22f));
         for (int line = 0; line < 5; line++) {
             int columns = 0;
-            for (int x = 0; x < width; x++) {
-                int center = Math.round(bottom - line * gap + slope * (x - width * .5f));
-                boolean ink = false;
-                for (int y = Math.max(0, center - radius);
-                        y <= Math.min(height - 1, center + radius);
-                        y++)
-                    if ((gray[y * width + x] & 255) <= 170) {
-                        ink = true;
-                        break;
-                    }
-                if (ink) columns++;
+            float base = bottom - line * gap, halfWidth = width * .5f;
+            float required = width * .84f;
+            for (int x = 0; x < width && columns < required && columns + (width - x) >= required; ) {
+                int center = Math.round(base + slope * (x - halfWidth));
+                int first = Math.max(0, center - radius), last = Math.min(height - 1, center + radius);
+                // A linear prediction that rounds to the same row at both ends stays there.
+                if (x <= width - Long.BYTES
+                        && Math.round(base + slope * (x + 7 - halfWidth)) == center) {
+                    columns += RawStaffLineDetector.darkColumns(gray, first * width + x,
+                            width, last - first + 1);
+                    x += Long.BYTES;
+                } else {
+                    for (int y = first; y <= last; y++)
+                        if ((gray[y * width + x] & 255) <= 170) {
+                            columns++;
+                            break;
+                        }
+                    x++;
+                }
             }
-            if (columns >= width * .84f) strong++;
+            if (columns >= required) strong++;
         }
         return strong;
     }

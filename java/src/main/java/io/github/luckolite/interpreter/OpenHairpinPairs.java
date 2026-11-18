@@ -11,6 +11,107 @@ final class OpenHairpinPairs {
 
     record Core(int left, int right, int[] upper, int[] lower) {}
 
+    private record Fits(double[] upper, double[] lower) {}
+
+    private static Fits fits(Core core, float gap, Map<Core, Fits> cache) {
+        var result = cache.get(core);
+        if (result == null) {
+            result = new Fits(fit(core.upper, gap), fit(core.lower, gap));
+            cache.put(core, result);
+        }
+        return result;
+    }
+
+    private static final class Stroke {
+        final int left, right, y, index;
+        Stroke parent = this;
+        int minX, maxX;
+        Core core;
+
+        Stroke(int left, int right, int y, int index) {
+            this.left = minX = left;
+            this.right = maxX = right;
+            this.y = y;
+            this.index = index;
+        }
+
+        Stroke root() {
+            Stroke node = this;
+            while (node.parent != node) {
+                node.parent = node.parent.parent;
+                node = node.parent;
+            }
+            return node;
+        }
+    }
+
+    private static int connectRow(List<Stroke> strokes, Stroke current, int first, int end) {
+        while (first < end && strokes.get(first).right < current.left - 1) first++;
+        for (int i = first; i < end; i++) {
+            var other = strokes.get(i);
+            if (other.left > current.right + 1) break;
+            var a = current.root();
+            var b = other.root();
+            if (a == b) continue;
+            // Retain the earliest raster seed, including when a later stroke bridges two cores.
+            var parent = a.index < b.index ? a : b;
+            var child = parent == a ? b : a;
+            child.parent = parent;
+            parent.minX = Math.min(parent.minX, child.minX);
+            parent.maxX = Math.max(parent.maxX, child.maxX);
+        }
+        return first;
+    }
+
+    static List<Core> horizontalCores(byte[] gray, int width, int top, int bottom,
+            float gap) {
+        var strokes = new ArrayList<Stroke>();
+        int minimumRun = Math.max(6, Math.round(gap * 1.5f));
+        int older = 0, previous = 0;
+        for (int y = top; y <= bottom; y++) {
+            int row = y * width, rowStart = strokes.size(), prevCursor = previous, olderCursor = older;
+            // Every qualifying run contains a probe. A paper probe rules out the whole
+            // preceding interval; an ink probe recovers both ends of its containing stroke.
+            for (int start = 0; start <= width - minimumRun; ) {
+                int probe = start + minimumRun - 1;
+                if ((gray[row + probe] & 255) >= 145) {
+                    start = probe + 1;
+                    continue;
+                }
+                int left = probe, right = probe;
+                while (left > start && (gray[row + left - 1] & 255) < 145) left--;
+                while (right + 1 < width && (gray[row + right + 1] & 255) < 145) right++;
+                start = right + 1;
+                if (right - left + 1 < minimumRun) continue;
+                var stroke = new Stroke(left, right, y, strokes.size());
+                prevCursor = connectRow(strokes, stroke, prevCursor, rowStart);
+                olderCursor = connectRow(strokes, stroke, olderCursor, previous);
+                strokes.add(stroke);
+            }
+            older = previous;
+            previous = rowStart;
+        }
+        var cores = new ArrayList<Core>();
+        for (var stroke : strokes) {
+            var root = stroke.root();
+            int length = root.maxX - root.minX + 1;
+            if (length < gap * 6) continue;
+            if (root.core == null) {
+                var upper = new int[length];
+                Arrays.fill(upper, Integer.MAX_VALUE);
+                root.core = new Core(root.minX, root.maxX, upper, new int[length]);
+                cores.add(root.core);
+            }
+            var upper = root.core.upper;
+            var lower = root.core.lower;
+            for (int x = stroke.left - root.minX; x <= stroke.right - root.minX; x++) {
+                if (upper[x] == Integer.MAX_VALUE) upper[x] = stroke.y;
+                lower[x] = stroke.y;
+            }
+        }
+        return cores;
+    }
+
     static List<Shape> detect(
             byte[] gray, int w, int h, List<PlayingTechniqueDetector.Staff> staffs) {
         if (gray == null || gray.length != (long) w * h || w <= 0 || h <= 0) return List.of();
@@ -27,55 +128,11 @@ final class OpenHairpinPairs {
                 if (next.top() > staff.bottom())
                     bottom = Math.min(bottom, (int) Math.floor(next.top() - gap * .3));
             if (bottom <= top) continue;
-            int bh = bottom - top + 1;
-            boolean[] mask = new boolean[w * bh];
-            int run = Math.max(6, Math.round(gap * 1.5f));
-            for (int y = top; y <= bottom; y++) {
-                int x = 0;
-                while (x < w) {
-                    while (x < w && (gray[y * w + x] & 255) >= 145) x++;
-                    int start = x;
-                    while (x < w && (gray[y * w + x] & 255) < 145) x++;
-                    if (x - start >= run)
-                        Arrays.fill(mask, (y - top) * w + start, (y - top) * w + x, true);
-                }
-            }
-            var cores = new ArrayList<Core>();
-            int[] queue = new int[mask.length];
-            for (int p = 0; p < mask.length; p++) {
-                if (!mask[p]) continue;
-                mask[p] = false;
-                int n = 1, start = 0;
-                queue[0] = p;
-                int left = p % w, right = left;
-                while (start < n) {
-                    int at = queue[start++], x = at % w, y = at / w;
-                    left = Math.min(left, x);
-                    right = Math.max(right, x);
-                    for (int dy = -2; dy <= 2; dy++)
-                        for (int dx = -1; dx <= 1; dx++) {
-                            int xx = x + dx, yy = y + dy;
-                            if (xx < 0 || xx >= w || yy < 0 || yy >= bh) continue;
-                            int q = yy * w + xx;
-                            if (mask[q]) {
-                                mask[q] = false;
-                                queue[n++] = q;
-                            }
-                        }
-                }
-                if (right - left + 1 < gap * 6) continue;
-                int[] u = new int[right - left + 1], l = new int[u.length];
-                Arrays.fill(u, Integer.MAX_VALUE);
-                Arrays.fill(l, Integer.MIN_VALUE);
-                for (int k = 0; k < n; k++) {
-                    int x = queue[k] % w - left, y = queue[k] / w + top;
-                    u[x] = Math.min(u[x], y);
-                    l[x] = Math.max(l[x], y);
-                }
-                cores.add(new Core(left, right, u, l));
-            }
-            completeBoundaryCores(cores, gray, w, h, bottom, gap, staffs, staff, completionBudget);
-            proposeUnseededRails(cores, gray, w, h, bottom, gap, staffs, staff, completionBudget);
+            var cores = horizontalCores(gray, w, top, bottom, gap);
+            if (cores.isEmpty()) continue;
+            var cache = new IdentityHashMap<Core, Fits>();
+            completeBoundaryCores(cores, gray, w, h, bottom, gap, staffs, staff, completionBudget, cache);
+            proposeUnseededRails(cores, gray, w, h, bottom, gap, staffs, staff, completionBudget, cache);
             for (int i = 0; i < cores.size(); i++)
                 for (int j = i; j < cores.size(); j++) {
                     Core a = cores.get(i), c = cores.get(j);
@@ -84,18 +141,30 @@ final class OpenHairpinPairs {
                             || Math.abs(a.left() - c.left()) > gap * .5
                             || Math.abs(a.right() - c.right()) > gap * .5) continue;
                     int len = right - left + 1;
-                    int[] u = new int[len], l = new int[len];
-                    for (int x = 0; x < len; x++) {
-                        u[x] =
-                                Math.min(
-                                        a.upper()[left + x - a.left()],
-                                        c.upper()[left + x - c.left()]);
-                        l[x] =
-                                Math.max(
-                                        a.lower()[left + x - a.left()],
-                                        c.lower()[left + x - c.left()]);
+                    int[] u, l;
+                    double[] up, lo;
+                    if (i == j) {
+                        u = a.upper;
+                        l = a.lower;
+                        var lines = fits(a, gap, cache);
+                        up = lines.upper;
+                        lo = lines.lower;
+                    } else {
+                        u = new int[len];
+                        l = new int[len];
+                        for (int x = 0; x < len; x++) {
+                            u[x] =
+                                    Math.min(
+                                            a.upper()[left + x - a.left()],
+                                            c.upper()[left + x - c.left()]);
+                            l[x] =
+                                    Math.max(
+                                            a.lower()[left + x - a.left()],
+                                            c.lower()[left + x - c.left()]);
+                        }
+                        up = fit(u, gap);
+                        lo = fit(l, gap);
                     }
-                    double[] up = fit(u, gap), lo = fit(l, gap);
                     if (up == null && lo != null)
                         up = finiteArmEndpoint(u, lo, gray, w, h, left, gap, true);
                     else if (lo == null && up != null)
@@ -221,7 +290,8 @@ final class OpenHairpinPairs {
             float gap,
             List<PlayingTechniqueDetector.Staff> staffs,
             PlayingTechniqueDetector.Staff staff,
-            long[] budget) {
+            long[] budget,
+            Map<Core, Fits> cache) {
         if (cores.size() > budget[0]) return;
         budget[0] -= cores.size();
         var anchors = List.copyOf(cores);
@@ -229,7 +299,8 @@ final class OpenHairpinPairs {
             long anchorWork = anchor.upper().length * 6L + 64;
             if (anchorWork > budget[0]) return;
             budget[0] -= anchorWork;
-            double[] upper = fit(anchor.upper(), gap), lower = fit(anchor.lower(), gap);
+            var lines = fits(anchor, gap, cache);
+            double[] upper = lines.upper, lower = lines.lower;
             if (upper == null || lower == null) continue;
             boolean thin = true;
             for (int x = 0; x < anchor.upper().length; x++)
@@ -328,7 +399,8 @@ final class OpenHairpinPairs {
             float gap,
             List<PlayingTechniqueDetector.Staff> staffs,
             PlayingTechniqueDetector.Staff staff,
-            long[] budget) {
+            long[] budget,
+            Map<Core, Fits> cache) {
         if (cores.size() > budget[0]) return;
         budget[0] -= cores.size();
         var original = List.copyOf(cores);
@@ -336,7 +408,8 @@ final class OpenHairpinPairs {
             long anchorWork = anchor.upper().length * 6L + 64;
             if (anchorWork > budget[0]) return;
             budget[0] -= anchorWork;
-            double[] up = fit(anchor.upper(), gap), lo = fit(anchor.lower(), gap);
+            var lines = fits(anchor, gap, cache);
+            double[] up = lines.upper, lo = lines.lower;
             if (up == null || lo == null) continue;
             boolean thin = true;
             for (int x = 0; x < anchor.upper().length; x++)

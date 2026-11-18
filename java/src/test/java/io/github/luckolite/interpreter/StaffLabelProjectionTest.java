@@ -34,4 +34,28 @@ public class StaffLabelProjectionTest {
                     OmrMeasurePostProcessor.estimateStaffSlope(labels, offset, width, height), 0f);
         }
     }
+
+    @Test public void thinRunProjectionClipsBothEndsAtTheCrop() {
+        Random random = new Random(171);
+        for (int width = 1; width < 48; width++) {
+            int height = 13, stride = width + 6, offset = stride + 3;
+            byte[] gray = new byte[stride * (height + 2)];
+            for (int i = 0; i < gray.length; i++)
+                gray[i] = (byte) (random.nextBoolean() ? 170 : 171);
+            for (int thickness = 1; thickness <= 15; thickness++) {
+                int[] expected = new int[height];
+                for (int x = 0; x < width; x++) {
+                    for (int y = 0; y < height; y++) {
+                        if ((gray[offset + y * stride + x] & 255) > 170) continue;
+                        int first = y;
+                        while (y + 1 < height && (gray[offset + (y + 1) * stride + x] & 255) <= 170) y++;
+                        if (y - first + 1 <= thickness)
+                            for (int row = first; row <= y; row++) expected[row]++;
+                    }
+                }
+                assertArrayEquals(expected, RawStaffLineDetector.thinRowStrength(
+                        gray, offset, stride, width, height, thickness));
+            }
+        }
+    }
 }
