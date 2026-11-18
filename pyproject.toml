@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "score-reader"
-version = "0.1.6.1"
+version = "0.1.7"
 description = "Experimental offline optical music recognition (OMR): sheet-music images and PDFs to MusicXML, MIDI, JSON and MP3, with Python and Java"
 readme = "README.md"
 requires-python = ">=3.10,<3.12"
