@@ -50,7 +50,32 @@ final class DenseTieArcContinuity {
             return flatColumns[column];
         }
 
-        boolean canSupplyVisibleVotes(byte[] labels, int[] columns, int top, int bottom) {
+        /** Center of the thresholded vertical stroke, or NaN if it is too thick for a tie. */
+        float strokeCenter(int at, int y, int height, int reach, float maximumThickness) {
+            int inkTop = y, inkBottom = y;
+            int firstRow = Math.max(0, y - reach);
+            int pixel = at - width;
+            while (inkTop > firstRow && (gray[pixel] & 255) <= inkLimit) {
+                inkTop--;
+                pixel -= width;
+            }
+            if (y - inkTop > maximumThickness) return Float.NaN;
+            int lastRow = Math.min(height - 1, y + reach);
+            // One extra ink row is enough to prove excessive thickness.
+            if (maximumThickness < (1 << 24) && lastRow - inkTop > maximumThickness)
+                lastRow = inkTop + (int) maximumThickness + 1;
+            pixel = at + width;
+            while (inkBottom < lastRow && (gray[pixel] & 255) <= inkLimit) {
+                inkBottom++;
+                pixel += width;
+            }
+            if (inkBottom - inkTop > maximumThickness) return Float.NaN;
+            return (inkTop + inkBottom) * .5f;
+        }
+
+        boolean canSupplyVisibleVotes(byte[] labels, int[] columns, int top, int bottom, float gap) {
+            int height = gray.length / width, reach = Math.max(2, Math.round(gap * .4f));
+            float maximumThickness = gap * .6f;
             // All accepted curves require at least 34 visible strokes among the 50 samples.
             int visible = 0, possible = columns.length;
             // Both ten-sample shoulders require at least three visible strokes.
@@ -65,7 +90,8 @@ final class DenseTieArcContinuity {
                     boolean found = false;
                     for (int y = top, at = top * width + x; y <= bottom; y++, at += width) {
                         if ((gray[at] & 255) <= inkLimit
-                                && labels[at] != OmrMeasurePostProcessor.NOTEHEAD && !contains(y)) {
+                                && labels[at] != OmrMeasurePostProcessor.NOTEHEAD && !contains(y)
+                                && !Float.isNaN(strokeCenter(at, y, height, reach, maximumThickness))) {
                             found = true;
                             break;
                         }
@@ -184,26 +210,9 @@ final class DenseTieArcContinuity {
                 }
                 // A staff crossing may be obscured only by real raw ink at this column.
                 // Outside a rule, thick vertical objects cannot supply the curve corridor.
-                if (!straightRows.contains(y)) {
-                    int inkTop = y, inkBottom = y;
-                    int firstRow = Math.max(0, y - reach);
-                    int pixel = at - width;
-                    while (inkTop > firstRow && (gray[pixel] & 255) <= inkLimit) {
-                        inkTop--;
-                        pixel -= width;
-                    }
-                    if (y - inkTop > maximumThickness) continue;
-                    int lastRow = Math.min(height - 1, y + reach);
-                    // The first excess row rejects this stroke without scanning its far edge.
-                    if (maximumThickness < (1 << 24) && lastRow - inkTop > maximumThickness)
-                        lastRow = inkTop + (int) maximumThickness + 1;
-                    pixel = at + width;
-                    while (inkBottom < lastRow && (gray[pixel] & 255) <= inkLimit) {
-                        inkBottom++;
-                        pixel += width;
-                    }
-                    if (inkBottom - inkTop > maximumThickness) continue;
-                }
+                if (!straightRows.contains(y)
+                        && Float.isNaN(straightRows.strokeCenter(at, y, height, reach, maximumThickness)))
+                    continue;
                 // Both frontiers and candidate rows are ordered, so cursors only advance.
                 while (previousCursor < previousSize && previous[previousCursor] < y - rise)
                     previousCursor++;

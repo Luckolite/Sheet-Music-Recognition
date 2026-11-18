@@ -2,11 +2,33 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.github.luckolite.interpreter;
 
+import java.util.HashMap;
 import java.util.List;
 
 /** A complete quarter-rest contour cannot also subdivide its printed measure. */
 final class PrintedQuarterRestBoundary {
-    private PrintedQuarterRestBoundary() {}
+    private record Position(int x, float top, float bottom, float gap) {}
+
+    private final byte[] gray;
+    private final int width, height;
+    private final HashMap<Position, Boolean> decisions = new HashMap<>();
+
+    /** Shared by the semantic and regional passes over one read-only staff raster. */
+    private PrintedQuarterRestBoundary(byte[] gray, int width, int height) {
+        this.gray = gray;
+        this.width = width;
+        this.height = height;
+    }
+
+    static PrintedQuarterRestBoundary forRaster(byte[] gray, int width, int height) {
+        return gray == null ? null : new PrintedQuarterRestBoundary(gray, width, height);
+    }
+
+    boolean owns(int x, float top, float bottom, float gap) {
+        return decisions.computeIfAbsent(
+                new Position(x, top, bottom, gap),
+                p -> owns(gray, width, height, p.x(), p.top(), p.bottom(), p.gap()));
+    }
 
     static boolean owns(byte[] gray, int w, int h, float x, float top, float bottom, float gap) {
         if (gray == null

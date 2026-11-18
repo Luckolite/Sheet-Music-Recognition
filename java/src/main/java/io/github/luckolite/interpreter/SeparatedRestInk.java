@@ -308,6 +308,15 @@ final class SeparatedRestInk {
                         }
                         continue;
                     }
+                    if (rowWords == 1) {
+                        int previous = crossingRows[row * 2], next = crossingRows[row * 2 + 1];
+                        if (previous >= 0) count = appendNeighbors(
+                                previous, x, row - previous, columnBits, remainingInk, queue, count);
+                        count = appendNeighbors(row, x, 1, columnBits, remainingInk, queue, count);
+                        if (next >= 0) count = appendNeighbors(
+                                next, x, next - row, columnBits, remainingInk, queue, count);
+                        continue;
+                    }
                     for (int direction = -1; direction <= 1; direction++) {
                         int neighborRow = direction == 0 ? row
                                 : crossingRows[row * 2 + (direction > 0 ? 1 : 0)];
@@ -316,17 +325,6 @@ final class SeparatedRestInk {
                         int reach = direction == 0 ? 1 : (neighborRow - row) * direction;
                         int endColumn = Math.min(span - 1, x + reach);
                         int firstColumn = Math.max(0, x - reach);
-                        if (rowWords == 1) {
-                            long columns = (-1L << firstColumn) & (-1L >>> (Long.SIZE - 1 - endColumn));
-                            long fresh = remainingInk[neighborRow] & columns;
-                            remainingInk[neighborRow] &= ~columns;
-                            while (fresh != 0) {
-                                int col = Long.numberOfTrailingZeros(fresh);
-                                fresh &= fresh - 1;
-                                queue[count++] = packedRow | col;
-                            }
-                            continue;
-                        }
                         int firstWord = firstColumn >>> 6, lastWord = endColumn >>> 6;
                         long columns = -1L << firstColumn;
                         int rowStart = neighborRow * rowWords;
@@ -359,6 +357,21 @@ final class SeparatedRestInk {
             }
         }
         return result == null ? List.of() : List.copyOf(result);
+    }
+
+    private static int appendNeighbors(int row, int x, int reach, int columnBits, long[] ink, int[] queue, int count) {
+        // The packed row has no set bits beyond the crop's right edge.
+        long mask = (-1L << Math.max(0, x - reach)) & (-1L >>> (63 - Math.min(63, x + reach)));
+        long fresh = ink[row] & mask;
+        if (fresh != 0) {
+            ink[row] ^= fresh;
+            int base = row << columnBits;
+            do {
+                queue[count++] = base | Long.numberOfTrailingZeros(fresh);
+                fresh &= fresh - 1;
+            } while (fresh != 0);
+        }
+        return count;
     }
 
     /** Once the bounds rule fails, only the set of reachable pixels matters. */

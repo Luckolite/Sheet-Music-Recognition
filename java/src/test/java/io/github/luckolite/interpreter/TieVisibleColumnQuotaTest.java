@@ -21,15 +21,31 @@ public class TieVisibleColumnQuotaTest {
         Arrays.fill(columns, 0, 10, 3);
         Arrays.fill(columns, 10, 27, 4);
         Arrays.fill(columns, 27, columns.length, 5);
-        assertFalse(rows.canSupplyVisibleVotes(labels, columns, 0, 3));
+        assertFalse(rows.canSupplyVisibleVotes(labels, columns, 0, 3, 4));
         columns[26] = 5;
-        assertTrue(rows.canSupplyVisibleVotes(labels, columns, 0, 3));
+        assertTrue(rows.canSupplyVisibleVotes(labels, columns, 0, 3, 4));
         Arrays.fill(columns, 0, 8, 1);
         Arrays.fill(columns, 10, columns.length, 5);
-        assertFalse(rows.canSupplyVisibleVotes(labels, columns, 0, 3));
+        assertFalse(rows.canSupplyVisibleVotes(labels, columns, 0, 3, 4));
         columns[7] = 3;
-        assertTrue(rows.canSupplyVisibleVotes(labels, columns, 0, 3));
+        assertTrue(rows.canSupplyVisibleVotes(labels, columns, 0, 3, 4));
         labels[2 * width + 3] = OmrMeasurePostProcessor.NOTEHEAD;
-        assertFalse(rows.canSupplyVisibleVotes(labels, columns, 0, 3));
+        assertFalse(rows.canSupplyVisibleVotes(labels, columns, 0, 3, 4));
+    }
+
+    @Test
+    public void measuresStrokeThicknessPastTheVoteWindowAndIncludesTheLimit() {
+        int width = 12, height = 12, x = 5;
+        byte[] gray = new byte[width * height], labels = new byte[gray.length];
+        Arrays.fill(gray, (byte) 255);
+        for (int y = 1; y <= 9; y++) gray[y * width + x] = 0;
+        int[] columns = new int[50];
+        Arrays.fill(columns, x);
+        var rows = new DenseTieArcContinuity.StraightRows(gray, width, 0, 11, 180, 0, 11);
+        assertFalse(rows.canSupplyVisibleVotes(labels, columns, 5, 5, 5));
+
+        gray[7 * width + x] = (byte) 255;
+        rows = new DenseTieArcContinuity.StraightRows(gray, width, 0, 11, 180, 0, 11);
+        assertTrue(rows.canSupplyVisibleVotes(labels, columns, 5, 5, 5));
     }
 }

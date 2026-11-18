@@ -5,6 +5,7 @@ package io.github.luckolite.interpreter;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import javax.imageio.ImageIO;
+import javax.imageio.stream.MemoryCacheImageInputStream;
 
 /** Immutable, lazily loaded recognition templates bundled with the standalone JAR. */
 final class GlyphResources {
@@ -13,22 +14,19 @@ final class GlyphResources {
     static BufferedImage image(String relative) throws IOException {
         try (var input = GlyphResources.class.getResourceAsStream("glyphs/" + relative)) {
             if (input == null) throw new IOException("Missing bundled glyph template: " + relative);
-            var image = ImageIO.read(input);
-            if (image == null) throw new IOException("Invalid bundled glyph template: " + relative);
+            // Bundled PNGs are small. Keep ImageIO seek operations in memory.
+            var memory = new MemoryCacheImageInputStream(input);
+            var image = ImageIO.read(memory);
+            if (image == null) {
+                memory.close(); // ImageIO closes the stream only when a reader accepts it.
+                throw new IOException("Invalid bundled glyph template: " + relative);
+            }
             return image;
         }
     }
 
     private static final class DynamicHolder {
-        static final NativeDynamicGlyphs INSTANCE = create();
-
-        private static NativeDynamicGlyphs create() {
-            try {
-                return new NativeDynamicGlyphs();
-            } catch (IOException failure) {
-                throw new IllegalStateException("Cannot load dynamic templates", failure);
-            }
-        }
+        static final NativeDynamicGlyphs INSTANCE = new NativeDynamicGlyphs();
     }
 
     private static final class OrnamentHolder {
@@ -47,8 +45,13 @@ final class GlyphResources {
         return DynamicHolder.INSTANCE;
     }
 
+    private static final class OrnamentMatcher {
+        static final PortableOrnamentGlyphs INSTANCE =
+                new PortableOrnamentGlyphs(() -> OrnamentHolder.INSTANCE.portable());
+    }
+
     static PortableOrnamentGlyphs ornaments() {
-        return OrnamentHolder.INSTANCE.portable();
+        return OrnamentMatcher.INSTANCE;
     }
 
     private static final class ExpressionHolder {

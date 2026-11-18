@@ -3,6 +3,7 @@
 package io.github.luckolite.interpreter;
 
 import java.util.*;
+import java.util.function.Supplier;
 
 /** Platform-independent ornament templates and bilinear grayscale comparison. */
 final class PortableOrnamentGlyphs {
@@ -28,12 +29,28 @@ final class PortableOrnamentGlyphs {
 
     private final List<Template> ornaments = new ArrayList<>(), accidentals = new ArrayList<>();
 
+    private final Supplier<PortableOrnamentGlyphs> source;
+
+    PortableOrnamentGlyphs() {
+        this(null);
+    }
+
+    /** The desktop holder builds its font and PNG templates on the first glyph query. */
+    PortableOrnamentGlyphs(Supplier<PortableOrnamentGlyphs> source) {
+        this.source = source;
+    }
+
+    private List<Template> templates(boolean accidental) {
+        var bank = source == null ? this : source.get();
+        return accidental ? bank.accidentals : bank.ornaments;
+    }
+
     void add(byte[] gray, int width, int height, int kind, boolean accidental) {
         if (gray == null || width < 1 || height < 1 || gray.length != (long) width * height)
             throw new IllegalArgumentException("Invalid glyph raster");
         float[] pixels = recognitionMask(gray, width, 0, 0, width, height);
         float aspect = width / (float) height;
-        List<Template> list = accidental ? accidentals : ornaments;
+        List<Template> list = templates(accidental);
         list.add(new Template(kind, aspect, pixels));
         if (!accidental && (kind == NoteOrnament.MORDENT || kind == NoteOrnament.INVERTED_MORDENT))
             for (float factor : new float[] {.6f, .75f, .9f})
@@ -46,16 +63,16 @@ final class PortableOrnamentGlyphs {
 
     /** Internal single-call sharing; ornament recovery still evaluates each sample normally. */
     Match match(byte[] gray, int width, PortableNoteOrnaments.Bounds bounds, Query query) {
-        Match original = match(gray, width, bounds, ornaments, query, null);
+        Match original = match(gray, width, bounds, templates(false), query, null);
         if (original.accepted()
-                || ornaments.isEmpty()
+                || templates(false).isEmpty()
                 || !MordentContour.matches(gray, width, bounds)) return original;
         return recoverMordent(gray, width, bounds, original);
     }
 
     Match matchWithMordentContour(byte[] gray, int width, PortableNoteOrnaments.Bounds bounds) {
         Match original = templateMatch(gray, width, bounds);
-        return original.accepted() || ornaments.isEmpty()
+        return original.accepted() || templates(false).isEmpty()
                 ? original : recoverMordent(gray, width, bounds, original);
     }
 
@@ -82,7 +99,7 @@ final class PortableOrnamentGlyphs {
             for (int x = 0; x < w; x++) normalized[dest + x] = (byte) tones[gray[source + x] & 255];
         }
         Match recovered = match(normalized, w, new PortableNoteOrnaments.Bounds(0, 0, w, h),
-                ornaments, null, COMPACT_MORDENT);
+                templates(false), null, COMPACT_MORDENT);
         return recovered.kind() == NoteOrnament.MORDENT && recovered.accepted()
                 ? recovered
                 : original;
@@ -94,7 +111,7 @@ final class PortableOrnamentGlyphs {
     }
 
     Match templateMatch(byte[] gray, int width, PortableNoteOrnaments.Bounds bounds, Query query) {
-        return match(gray, width, bounds, ornaments, query, null);
+        return match(gray, width, bounds, templates(false), query, null);
     }
 
     private static int percentile(int[] tones, int count, double fraction) {
@@ -124,7 +141,7 @@ final class PortableOrnamentGlyphs {
     }
 
     Match accidental(byte[] gray, int width, PortableNoteOrnaments.Bounds bounds) {
-        return match(gray, width, bounds, accidentals);
+        return match(gray, width, bounds, templates(true));
     }
 
     private Match match(

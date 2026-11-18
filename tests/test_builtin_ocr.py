@@ -3,6 +3,8 @@
 """Synthetic scanned-tab regression for the installed OCR and Java decoder."""
 
 import json
+import platform
+import sys
 import subprocess
 import tempfile
 import unittest
@@ -20,6 +22,59 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class BuiltinOcrTests(unittest.TestCase):
+    @unittest.skipUnless(sys.platform == "win32" and platform.machine() == "AMD64",
+                         "Windows x64 detector arithmetic")
+    def test_detector_restores_callers_denormal_mode_even_after_failure(self):
+        from sheet_music_recognition.ocr import _detector_inference
+
+        def half_smallest_normal():
+            value = np.array([0x00800000], dtype=np.uint32).view(np.float32)
+            return (value * np.float32(.5)).view(np.uint32).item()
+
+        previous = half_smallest_normal()
+        self.assertEqual(0, _detector_inference(half_smallest_normal)())
+        self.assertEqual(previous, half_smallest_normal())
+
+        def fail():
+            self.assertEqual(0, half_smallest_normal())
+            raise RuntimeError("detector failed")
+
+        with self.assertRaisesRegex(RuntimeError, "detector failed"):
+            _detector_inference(fail)()
+        self.assertEqual(previous, half_smallest_normal())
+
+    @unittest.skipUnless(sys.platform == "win32" and platform.machine() == "AMD64",
+                         "Windows x64 detector arithmetic")
+    def test_detector_worker_mode_is_limited_to_detector_construction(self):
+        from rapidocr.inference_engine.onnxruntime.main import OrtInferSession
+
+        def caller_value():
+            half_normal = np.array([0x00800000], dtype=np.uint32).view(np.float32) * np.float32(.5)
+            return half_normal.view(np.uint32).item()
+
+        seen = []
+        original = OrtInferSession.__init__
+
+        def inspect_session(session, cfg):
+            if cfg.get("session") is None:
+                options = session._init_sess_opts(cfg.engine_cfg)
+                seen.append((options.get_session_config_entry("session.set_denormal_as_zero"),
+                             options.intra_op_num_threads, caller_value()))
+            original(session, cfg)
+
+        before = caller_value()
+        with patch.object(OrtInferSession, "__init__", inspect_session):
+            LocalOcr(threads=1)
+        self.assertEqual([("1", 1, 0)], seen)
+        self.assertEqual(before, caller_value())
+
+    def test_unsupported_detector_mode_uses_the_original_model_factory(self):
+        from sheet_music_recognition.ocr import _detector_inference
+
+        with patch.object(sys, "platform", "linux"):
+            self.assertIs(_detector_inference(int, fallback=float), float)
+            self.assertIs(_detector_inference(int), int)
+
     def test_detector_input_matches_original_float_bits_in_every_channel(self):
         from rapidocr.ch_ppocr_det.utils import DetPreProcess
 
@@ -28,7 +83,9 @@ class BuiltinOcrTests(unittest.TestCase):
         original = DetPreProcess(32, "min", [.485, .456, .406], [.229, .224, .225])
         prepare = _byte_detector_input(original)
         for pixels in (image, image[::2, 1::2]):
-            np.testing.assert_array_equal(prepare(pixels).view(np.uint32),
+            tensor = prepare(pixels)
+            self.assertTrue(tensor.flags.c_contiguous)
+            np.testing.assert_array_equal(tensor.view(np.uint32),
                                           original(pixels).view(np.uint32))
 
     def test_white_page_preserves_native_annotations_and_defers_ocr_until_ink(self):
@@ -111,7 +168,19 @@ class BuiltinOcrTests(unittest.TestCase):
         # vary across operating systems and font rasterizers.
         with Image.open(ROOT / "tests/fixtures/synthetic-scanned-tab.png") as image:
             gray = np.asarray(image.convert("L"), dtype=np.uint8)
-        words = LocalOcr().words(gray)
+        from rapidocr.main import TextClassifier, TextRecognizer
+        from sheet_music_recognition import _ocr_engine
+
+        with patch.object(_ocr_engine, "TextClassifier", wraps=TextClassifier) as classify, \
+             patch.object(_ocr_engine, "TextRecognizer", wraps=TextRecognizer) as recognize:
+            ocr = LocalOcr()
+            self.assertEqual([], ocr.words(np.full((64, 96), 255, dtype=np.uint8)))
+            classify.assert_not_called()
+            recognize.assert_not_called()
+            words = ocr.words(gray)
+            self.assertEqual(words, ocr.words(gray))
+            classify.assert_called_once()
+            recognize.assert_called_once()
         self.assertEqual({"0", "12", "7", "3"}, {word["text"] for word in words})
         for fret, x in (("0", 240), ("12", 420), ("7", 590), ("3", 760)):
             word = next(word for word in words if word["text"] == fret)

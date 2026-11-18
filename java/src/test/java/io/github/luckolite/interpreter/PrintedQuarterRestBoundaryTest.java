@@ -37,6 +37,22 @@ public class PrintedQuarterRestBoundaryTest {
     }
 
     @Test
+    public void repeatedBoundaryProbesKeepTheirRasterAndExactStaffFrame() {
+        var page = new CompactQuarterRestTest.Page(16, true, true, false, false);
+        var checks = PrintedQuarterRestBoundary.forRaster(page.gray, 600, 280);
+        assertTrue(checks.owns(156, 100, 164, 16));
+        assertFalse(checks.owns(200, 100, 164, 16));
+        assertFalse(checks.owns(156, 112, 164, 16));
+        assertFalse(checks.owns(156, 100, 152, 16));
+        assertFalse(checks.owns(156, 100, 164, 12));
+        assertTrue(checks.owns(156, 100, 164, 16));
+
+        Arrays.fill(page.gray, (byte) 255);
+        var nextRead = PrintedQuarterRestBoundary.forRaster(page.gray, 600, 280);
+        assertFalse(nextRead.owns(156, 100, 164, 16));
+    }
+
+    @Test
     public void largerQuarterOwnsFalseBoundary() {
         assertTrue(rest(22, true, true, false));
     }

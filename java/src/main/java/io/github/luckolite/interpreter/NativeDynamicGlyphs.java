@@ -21,25 +21,26 @@ final class NativeDynamicGlyphs {
         }
     }
 
-    private final List<Template> templates;
-    private final List<Template> fpTemplates;
     private static final boolean TRACE = "1".equals(System.getenv("NATIVE_MUSICAL_OCR_TRACE"));
 
-    NativeDynamicGlyphs() throws java.io.IOException {
-        var loaded = new ArrayList<Template>();
-        for (String mark : MARKS) {
-            BufferedImage image = GlyphResources.image("dynamic_templates/" + mark + ".png");
-            loaded.add(
-                    new Template(mark, image.getWidth() / (float) image.getHeight(), mask(image)));
+    // An ordinary mark and a literal fp candidate use different reference sets.
+    private static final class LevelTemplates {
+        static final List<Template> ALL = Arrays.stream(MARKS)
+                .map(mark -> load(mark, mark)).toList();
+    }
+
+    private static final class FpTemplates {
+        static final List<Template> ALL = List.of(
+                load("fp", "fp_0"), load("fp", "fp_16"), load("fp", "fp_24"), load("fp", "fp_32"));
+    }
+
+    private static Template load(String mark, String name) {
+        try {
+            BufferedImage image = GlyphResources.image("dynamic_templates/" + name + ".png");
+            return new Template(mark, image.getWidth() / (float) image.getHeight(), mask(image));
+        } catch (java.io.IOException failure) {
+            throw new IllegalStateException("Cannot load dynamic template " + name, failure);
         }
-        templates = List.copyOf(loaded);
-        var compounds = new ArrayList<Template>();
-        for (int tracking : new int[] {0, 16, 24, 32}) {
-            BufferedImage image =
-                    GlyphResources.image("dynamic_templates/fp_" + tracking + ".png");
-            compounds.add(new Template("fp", image.getWidth() / (float) image.getHeight(), mask(image)));
-        }
-        fpTemplates = List.copyOf(compounds);
     }
 
     List<PlayingTechniqueDetector.Word> recognize(
@@ -98,9 +99,9 @@ final class NativeDynamicGlyphs {
                                     if (CompoundDynamicEvidence.literal(candidate)) {
                                         float aspect = (right - left) / (float) (bottom - top);
                                         float[] crop = mask(gray, width, left, top, right, bottom);
-                                        var fp = match(aspect, fpTemplates, () -> crop);
+                                        var fp = match(aspect, FpTemplates.ALL, () -> crop);
                                         if (fp.score() < .55f) return false;
-                                        var proof = match(aspect, templates, () -> crop);
+                                        var proof = match(aspect, LevelTemplates.ALL, () -> crop);
                                         return fp.score() - proof.score() >= .08f;
                                     }
                                     var proof = match(gray, width, left, top, right, bottom);
@@ -217,7 +218,7 @@ final class NativeDynamicGlyphs {
             java.util.regex.Pattern.compile("ppp|pp|p|mp|mf|f|ff|fff");
 
     private Match match(byte[] gray, int width, int left, int top, int right, int bottom) {
-        return match(gray, width, left, top, right, bottom, templates);
+        return match(gray, width, left, top, right, bottom, LevelTemplates.ALL);
     }
 
     private Match match(

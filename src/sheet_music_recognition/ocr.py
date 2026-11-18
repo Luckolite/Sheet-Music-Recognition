@@ -4,6 +4,7 @@
 
 import os
 import re
+import sys
 from itertools import repeat
 
 import numpy as np
@@ -85,30 +86,68 @@ def _byte_detector_input(preprocess):
     # them with the pinned detector's own arithmetic, including float rounding.
     levels = np.repeat(np.arange(256, dtype=np.uint8)[:, None, None], 3, axis=2)
     lookup = preprocess.normalize(levels).astype(np.float32)
+    tables = [np.ascontiguousarray(lookup[:, 0, index]) for index in range(3)]
 
     def prepare(image):
         resized = preprocess.resize(image)
         if resized is None:
             return None
-        channels = cv2.LUT(resized, lookup)
-        return np.ascontiguousarray(channels.transpose(2, 0, 1))[None]
+        # Write directly to the detector's planar input, reusing one byte channel.
+        height, width = resized.shape[:2]
+        tensor = np.empty((1, 3, height, width), dtype=np.float32)
+        channel = np.empty((height, width), dtype=np.uint8)
+        for index, table in enumerate(tables):
+            cv2.extractChannel(resized, index, dst=channel)
+            cv2.LUT(channel, table, dst=tensor[0, index])
+        return tensor
 
     return prepare
+
+
+def _detector_inference(run, *, fallback=None):
+    ordinary = run if fallback is None else fallback
+    if sys.platform != "win32":
+        return ordinary
+    import platform
+    if platform.machine() != "AMD64":
+        return ordinary
+    import ctypes
+
+    # The pinned text detector contains subnormal convolution weights. Limit
+    # the Windows floating-point mode change to the calling inference thread.
+    control = ctypes.CDLL("ucrtbase")._controlfp_s
+    control.argtypes = [ctypes.POINTER(ctypes.c_uint), ctypes.c_uint, ctypes.c_uint]
+    denormal_mask, flush_denormals = 0x03000000, 0x01000000
+
+    def detect(*args, **kwargs):
+        previous = ctypes.c_uint()
+        current = ctypes.c_uint()
+        if control(ctypes.byref(previous), 0, 0):
+            return ordinary(*args, **kwargs)
+        try:
+            if control(ctypes.byref(current), flush_denormals, denormal_mask):
+                return ordinary(*args, **kwargs)
+            return run(*args, **kwargs)
+        finally:
+            control(ctypes.byref(current), previous.value, denormal_mask)
+
+    return detect
 
 
 class LocalOcr:
     def __init__(self, threads=2):
         try:
-            from rapidocr import RapidOCR
+            from ._ocr_engine import ScorePageOcr
         except ImportError as error:
             raise RuntimeError(
                 "Recognition dependencies are missing. Run: "
                 "pip install --upgrade score-reader"
             ) from error
-        self.engine = RapidOCR(params={
+        self.engine = ScorePageOcr(params={
             "EngineConfig.onnxruntime.intra_op_num_threads": min(threads, os.cpu_count() or 1),
         })
         detector = self.engine.text_det
+        detector.session = _detector_inference(detector.session)
         # With the minimum-side policy the preprocessor is independent of page size.
         if detector.limit_type == "min":
             prepare = _byte_detector_input(detector.get_preprocess(0))

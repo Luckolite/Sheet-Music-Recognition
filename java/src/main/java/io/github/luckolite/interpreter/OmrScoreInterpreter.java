@@ -40661,10 +40661,10 @@ final class OmrScoreInterpreter {
             int center = Math.round(centerY);
             boolean above = requiredSide <= 0 && straightRows.canSupplyVisibleVotes(labels, sampleColumns,
                     Math.max(0, Math.round(centerY - depth) - radius - 1),
-                    Math.min(height - 1, center + radius + 1));
+                    Math.min(height - 1, center + radius + 1), gap);
             boolean below = requiredSide >= 0 && straightRows.canSupplyVisibleVotes(labels, sampleColumns,
                     Math.max(0, center - radius - 1),
-                    Math.min(height - 1, Math.round(centerY + depth) + radius + 1));
+                    Math.min(height - 1, Math.round(centerY + depth) + radius + 1), gap);
             if (!above && !below) return false;
             // Keep the original side constraint for any independent strict-contrast retry.
             if (!above) searchSide = 1;
@@ -40757,25 +40757,9 @@ final class OmrScoreInterpreter {
                                             // Measure the printed stroke center, not whichever edge
                                             // best fits the requested curve. Alternating between the
                                             // top and bottom edges can bend a thick straight rule.
-                                            int inkTop = yy, inkBottom = yy;
-                                            int firstRow = Math.max(0, yy - reach);
-                                            int pixel = at - width;
-                                            while (inkTop > firstRow && (gray[pixel] & 255) <= inkLimit) {
-                                                inkTop--;
-                                                pixel -= width;
-                                            }
-                                            if (yy - inkTop > maximumThickness) continue;
-                                            int lastRow = Math.min(height - 1, yy + reach);
-                                            // One extra ink row is enough to prove excessive thickness.
-                                            if (maximumThickness < (1 << 24) && lastRow - inkTop > maximumThickness)
-                                                lastRow = inkTop + (int) maximumThickness + 1;
-                                            pixel = at + width;
-                                            while (inkBottom < lastRow && (gray[pixel] & 255) <= inkLimit) {
-                                                inkBottom++;
-                                                pixel += width;
-                                            }
-                                            if (inkBottom - inkTop > maximumThickness) continue;
-                                            float strokeCenter = (inkTop + inkBottom) * .5f;
+                                            float strokeCenter = straightRows.strokeCenter(
+                                                    at, yy, height, reach, maximumThickness);
+                                            if (Float.isNaN(strokeCenter)) continue;
                                             if (compact && side * (strokeCenter - centerY) > gap * 1.6f)
                                                 continue;
                                             if (Math.abs(strokeCenter - y) > centerTolerance) continue;

@@ -130,6 +130,7 @@ final class OmrMeasurePostProcessor {
 
     private static List<StaffRun> findStaffs(
             byte[] labels, byte[] gray, int width, int height, SelectedMeasureOrigins origins) {
+        var restBoundaries = PrintedQuarterRestBoundary.forRaster(gray, width, height);
         float slope = estimateStaffSlope(labels, width, height);
         int[] rowStrength = new int[height];
         float centerX = width / 2f;
@@ -234,7 +235,7 @@ final class OmrMeasurePostProcessor {
                 barColumns = findBarlineColumns(
                         labels, gray, width, height, rows, gap, left, width - 1, slope, track);
                 List<Integer> outer = measureBoundaries(
-                        barColumns, gray, width, height, rows, gap, left, width - 1, slope, track);
+                        barColumns, width, rows, gap, left, width - 1, slope, track, restBoundaries);
                 if (outer.size() > 2) {
                     int closing = outer.get(outer.size() - 2);
                     if (closing > right && closing - right < width * .25f) right = closing;
@@ -259,7 +260,7 @@ final class OmrMeasurePostProcessor {
                     barColumns = findBarlineColumns(
                             labels, gray, width, height, rows, gap, left, right, slope, track);
                 List<Integer> boundaries = measureBoundaries(
-                        barColumns, gray, width, height, rows, gap, left, right, slope, track);
+                        barColumns, width, rows, gap, left, right, slope, track, restBoundaries);
                 if (boundaries.size() >= 2) {
                     var accepted = new StaffRun(
                             rows[0], rows[4], gap, left, right, boundaries, slope, track);
@@ -513,13 +514,13 @@ final class OmrMeasurePostProcessor {
             var barColumns = findBarlineColumns(
                     labels, gray, width, height, rows, seed.gap(), left, width - 1, seed.slope(), track);
             List<Integer> outer = measureBoundaries(
-                    barColumns, gray, width, height, rows, seed.gap(), left, width - 1, seed.slope(), track);
+                    barColumns, width, rows, seed.gap(), left, width - 1, seed.slope(), track, restBoundaries);
             if (outer.size() > 2) {
                 int closing = outer.get(outer.size() - 2);
                 if (closing > right && closing - right < width * .25f) right = closing;
             }
             List<Integer> boundaries = measureBoundaries(
-                    barColumns, gray, width, height, rows, seed.gap(), left, right, seed.slope(), track);
+                    barColumns, width, rows, seed.gap(), left, right, seed.slope(), track, restBoundaries);
             if (boundaries.size() < 2) continue;
             StaffRun recovered =
                     new StaffRun(
@@ -1522,7 +1523,8 @@ final class OmrMeasurePostProcessor {
             float slope,
             StaffPitchTrack track) {
         var columns = findBarlineColumns(labels, gray, width, height, seedRows, gap, left, right, slope, track);
-        return measureBoundaries(columns, gray, width, height, seedRows, gap, left, right, slope, track);
+        return measureBoundaries(columns, width, seedRows, gap, left, right, slope, track,
+                PrintedQuarterRestBoundary.forRaster(gray, width, height));
     }
 
     private static BitSet findBarlineColumns(
@@ -1754,8 +1756,8 @@ final class OmrMeasurePostProcessor {
     }
 
     private static List<Integer> measureBoundaries(
-            BitSet columns, byte[] gray, int width, int height, int[] seedRows,
-            float gap, int left, int right, float slope, StaffPitchTrack track) {
+            BitSet columns, int width, int[] seedRows, float gap, int left, int right,
+            float slope, StaffPitchTrack track, PrintedQuarterRestBoundary restBoundaries) {
         List<Integer> boundaries = new ArrayList<>();
         boundaries.add(left);
         int minimumGap = Math.max(Math.round(gap * 2.5f), width / 55);
@@ -1768,14 +1770,13 @@ final class OmrMeasurePostProcessor {
             next = columns.nextSetBit(end + 1);
             if (candidate - boundaries.get(boundaries.size() - 1) < minimumGap) continue;
             if (right - candidate < minimumGap) continue;
-            if (gray != null) {
+            if (restBoundaries != null) {
                 float[] local = track == null ? null : track.at(candidate);
                 float shift = slope * (candidate - width / 2f);
                 float localGap = local == null ? gap : local[1];
                 float localBottom = local == null ? seedRows[4] + shift : local[0];
                 float localTop = local == null ? seedRows[0] + shift : localBottom - localGap * 4;
-                if (PrintedQuarterRestBoundary.owns(
-                        gray, width, height, candidate, localTop, localBottom, localGap)) continue;
+                if (restBoundaries.owns(candidate, localTop, localBottom, localGap)) continue;
             }
             boundaries.add(candidate);
         }

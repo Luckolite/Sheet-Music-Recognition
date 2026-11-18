@@ -114,6 +114,19 @@ public class BundledGlyphResourcesTest {
     }
 
     @Test
+    public void pageWithoutOrnamentBoxesDoesNotRequestTheBundledTemplates() {
+        var glyphs = new PortableOrnamentGlyphs(() -> {
+            throw new AssertionError("No printed ornament to match");
+        });
+        byte[] page = new byte[128 * 96];
+        Arrays.fill(page, (byte) 255);
+        var staff = new PlayingTechniqueDetector.Staff(32, 64, 8, 0, 1);
+        var note = new PortableNoteOrnaments.Anchor(64, 48, 8, 0, 0);
+        assertTrue(PortableNoteOrnaments.detect(
+                glyphs, page, 128, 96, List.of(staff), List.of(note)).isEmpty());
+    }
+
+    @Test
     public void immutableTemplateBackendsAreReused() {
         assertSame(GlyphResources.dynamics(), GlyphResources.dynamics());
         assertSame(GlyphResources.ornaments(), GlyphResources.ornaments());
