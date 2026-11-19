@@ -1004,27 +1004,12 @@ final class PairedTremoloInk {
         int top = Math.max(1, minY - gapPx), bottom = Math.min(h - 2, maxY + gapPx);
         if (top >= bottom) return List.of();
         var lane = new MaximalRawBarExtractor.Lane(laneLeft, laneRight, top, bottom, gapPx);
-        var staffPixels = observedStaffPixels(proof, laneLeft, top, laneRight, bottom, w);
         boolean joined = carrier != null && !carrier.isEmpty();
-        if (joined) staffPixels = carrier;
+        var observed = observedStaffPixels(proof, laneLeft, top, laneRight, bottom, !joined);
+        var staffPixels = joined ? carrier : observed;
         var discovery =
-                joined
-                        ? MaximalRawBarExtractor.discoverJoined(
-                                gray,
-                                w,
-                                h,
-                                lane,
-                                budget[0],
-                                MaximalRawBarExtractor.MAX_SCRATCH_BYTES,
-                                staffPixels)
-                        : MaximalRawBarExtractor.discover(
-                                gray,
-                                w,
-                                h,
-                                lane,
-                                budget[0],
-                                MaximalRawBarExtractor.MAX_SCRATCH_BYTES,
-                                staffPixels);
+                MaximalRawBarExtractor.discoverForMarks(
+                        gray, w, h, lane, budget[0], staffPixels, joined);
         trace("staffJoinedRoute=" + joined + " carrier=" + (carrier == null ? -1 : carrier.size()));
         budget[0] -= discovery.pixelWork();
         trace(
@@ -1626,7 +1611,7 @@ final class PairedTremoloInk {
     }
 
     private static java.util.Set<Integer> observedStaffPixels(
-            ContactProof proof, int left, int top, int right, int bottom, int width) {
+            ContactProof proof, int left, int top, int right, int bottom, boolean needed) {
         if (proof == null) return null;
         var scope = proof.snapshot.scope;
         int scanLeft = Math.max(left, scope.left()), scanRight = Math.min(right, scope.right());
@@ -1637,19 +1622,24 @@ final class PairedTremoloInk {
         try {
             // Set.copyOf materializes a second backing table while the mutable set is live.
             proof.queryBudget.memory(Math.addExact(Math.multiplyExact(area, 64L), 512L));
-            java.util.Set<Integer> owned = new java.util.HashSet<>();
-            for (int y = scanTop; y <= scanBottom; y++)
-                for (int x = scanLeft; x <= scanRight; x++)
-                    if (proof.evidence.ownsObservedNonownerPixel(
-                            proof.snapshot, x, y, proof.queryBudget)) owned.add(y * width + x);
-            trace(
-                    "staffOwnedPixels="
-                            + owned.size()
-                            + " inspected="
-                            + area
-                            + " rows="
-                            + owned.stream().map(p -> p / width).distinct().sorted().toList());
-            return java.util.Set.copyOf(owned);
+            boolean tracing = FringeProfileDiagnostics.enabled();
+            java.util.Set<Integer> owned = needed || tracing ? new java.util.HashSet<>() : null;
+            var rect = new SparseStaffContact.Rect(scanLeft, scanTop, scanRight, scanBottom);
+            proof.evidence.collectObservedNonownerPixels(
+                    proof.snapshot, rect, proof.queryBudget, owned);
+            if (tracing)
+                trace(
+                        "staffOwnedPixels="
+                                + owned.size()
+                                + " inspected="
+                                + area
+                                + " rows="
+                                + owned.stream()
+                                        .map(p -> p / proof.snapshot.width)
+                                        .distinct()
+                                        .sorted()
+                                        .toList());
+            return needed ? java.util.Set.copyOf(owned) : null;
         } catch (RuntimeException unknown) {
             trace("staffMask=UNKNOWN");
             return null;

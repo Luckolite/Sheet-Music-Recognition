@@ -95,8 +95,8 @@ final class PrintedSlurFrames {
                 unprovedSlots.add(tracks.size() - 1);
             }
         }
-        // Optional resource/source refusal drops every new track while preserving legacy proof.
-        if (optionalProof != null && !optionalProof.finish()) {
+        // Revalidate the source only if there are supplemental tracks that could be retained.
+        if (optionalProof != null && unproved < staffs.size() && !optionalProof.finish()) {
             Collections.fill(tracks, null);
             unproved = staffs.size();
             for (int i = 0; i < staffs.size(); i++) unprovedSlots.add(i);

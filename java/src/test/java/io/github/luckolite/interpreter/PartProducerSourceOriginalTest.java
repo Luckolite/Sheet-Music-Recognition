@@ -61,6 +61,19 @@ public final class PartProducerSourceOriginalTest {
     }
 
     @Test
+    public void emptyReaderSourceRetainsItsDigestWithoutBindingAnyReadings() {
+        byte[] gray = new byte[W * H];
+        var source = ScorePageAnnotationSource.fromRawReader(gray, W, H, List.of(), List.of());
+        var captured = ScorePartProducerSource.capture(source, gray, W, H, rows).data();
+        gray[0] = 1;
+        assertEquals(captured, ScorePartProducerSource.capture(source, gray, W, H, rows).data());
+        assertEquals(source.rawSha(), captured.rawSha());
+        assertTrue(captured.words().isEmpty());
+        assertTrue(captured.numbers().isEmpty());
+        assertEquals(0, captured.originalNumberOriginCandidate());
+    }
+
+    @Test
     public void realReaderLabelsAliasesAndNumberRouteRemainSeparate() {
         var page = new Page(false, false, false);
         var before = MeasureNumberReconciler.firstMeasureNumber(rows, page.numbers);

@@ -243,6 +243,12 @@ public final class SheetInterpreter {
             if (label < 0 || label > 5)
                 throw new IllegalArgumentException("Labels must be in 0..5");
         Objects.requireNonNull(annotations);
+        var prefetched = DocumentPageDecoder.matchingGeometry(labels, gray, decoderGray, width, height);
+        if (prefetched != null) {
+            labels = prefetched.labels();
+            gray = prefetched.gray();
+            decoderGray = prefetched.corrected();
+        }
         byte[] tabSourceGray = gray;
         var sourceNumbers = annotations.measureNumbers.stream().map(NumberToken::internal).toList();
         var sourceAnnotations =
@@ -271,8 +277,12 @@ public final class SheetInterpreter {
         byte[] annotationGray = gray;
         if (decoderGray != null)
             gray = TablatureDecoder.withoutTabs(decoderGray, width, height, tabs, true);
-        var selectedOrigins = new SelectedMeasureOrigins();
-        var geometry = NativeDecoderStages.geometry(labels, gray, width, height, selectedOrigins);
+        // Tab exclusion can replace either plane. Its geometry needs a fresh proof.
+        boolean reuseGeometry = prefetched != null
+                && prefetched.labels() == labels && prefetched.geometryGray() == gray;
+        var selectedOrigins = reuseGeometry ? prefetched.origins() : new SelectedMeasureOrigins();
+        var geometry = reuseGeometry ? prefetched.geometry()
+                : NativeDecoderStages.geometry(labels, gray, width, height, selectedOrigins);
         var measures = geometry.measures();
         labels = geometry.labels();
         measures = TablatureDecoder.reconcileMeasures(measures, tabs, width, height);

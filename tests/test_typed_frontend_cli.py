@@ -63,7 +63,7 @@ class TypedFrontendCliTests(unittest.TestCase):
         errors=io.StringIO()
         with patch('sys.argv',args), patch.object(cli,'Interpreter',return_value=self.engine), \
              patch.object(reader,'grayscale',return_value=np.full((8,8),255,dtype=np.uint8)), \
-             patch.object(reader.subprocess,'run',side_effect=self.bridge_run), \
+             patch.object(subprocess,'run',side_effect=self.bridge_run), \
              contextlib.redirect_stderr(errors):
             if reject:
                 with self.assertRaises(SystemExit) as result:cli.main()
@@ -111,7 +111,7 @@ class TypedFrontendCliTests(unittest.TestCase):
                               for p in value['pages']])
         progress = []
         with patch.object(reader,'grayscale',return_value=np.full((8,8),255,dtype=np.uint8)), \
-             patch.object(reader.subprocess,'run',side_effect=self.bridge_run), \
+             patch.object(subprocess,'run',side_effect=self.bridge_run), \
              patch.object(self.engine,'interpret',wraps=self.engine.interpret), \
              patch('sheet_music_recognition.pdf_annotations.tuning_header') as header, \
              patch('sheet_music_recognition.pdf_annotations.tab_words') as native_words:
@@ -237,7 +237,7 @@ class TypedFrontendCliTests(unittest.TestCase):
     def test_direct_reader_without_page_identity_preserves_legacy_unknown_source(self):
         self.fixture=0
         with patch.object(reader,'grayscale',return_value=np.full((8,8),255,dtype=np.uint8)), \
-             patch.object(reader.subprocess,'run',side_effect=self.bridge_run):
+             patch.object(subprocess,'run',side_effect=self.bridge_run):
             page=self.engine.interpret(None,annotations={})
         self.assertEqual([],page['score']['slurSource']['candidates'])
         self.assertEqual([None,None],page['score']['slurSource']['noteOrigins'])

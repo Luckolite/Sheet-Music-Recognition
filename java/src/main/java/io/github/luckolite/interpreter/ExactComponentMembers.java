@@ -439,16 +439,29 @@ final class ExactComponentMembers {
                     || !sealed
                     || (target != 3 && target != 5)
                     || !budget.take(labels.length, (labels.length + 7L) / 8 + 64)) return null;
-            var covered = new BitSet(labels.length);
+            BitSet covered = null;
             for (var original : records.values()) {
                 if (original.target != target) continue;
                 if (!budget.take(original.stats.area, 0)) return null;
+                if (covered == null) covered = new BitSet(labels.length);
                 for (int[] run : original.runs)
                     covered.set(run[0] * width + run[1], run[0] * width + run[2] + 1);
             }
             var unknown = new ArrayList<Integer>();
-            for (int at = 0; at < labels.length; at++) {
-                if (labels[at] != target || covered.get(at)) continue;
+            long packedTarget = (target & 255) * 0x0101010101010101L;
+            int at = 0;
+            for (; at <= labels.length - Long.BYTES; at += Long.BYTES) {
+                long hits = PackedGrayInk.matchingLabelBits(labels, at, packedTarget);
+                while (hits != 0) {
+                    int pixel = at + Long.numberOfTrailingZeros(hits);
+                    hits &= hits - 1;
+                    if (covered != null && covered.get(pixel)) continue;
+                    if (!budget.take(1, 24)) return null;
+                    unknown.add(pixel);
+                }
+            }
+            for (; at < labels.length; at++) {
+                if (labels[at] != target || (covered != null && covered.get(at))) continue;
                 if (!budget.take(1, 24)) return null;
                 unknown.add(at);
             }

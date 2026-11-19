@@ -123,6 +123,29 @@ public final class StaffOpticalReferenceControls {
 
     public static void main(String[] args) {
         var f = fixture(0);
+        var rect = new SparseStaffContact.Rect(40, 17, 150, 90);
+        long area = (long) rect.width() * rect.height();
+        var scalar = new SparseStaffContact.Budget(area, 0);
+        var expected = new HashSet<Integer>();
+        for (int y = rect.top(); y <= rect.bottom(); y++)
+            for (int x = rect.left(); x <= rect.right(); x++)
+                if (f.tracks.ownsObservedNonownerPixel(f.p, x, y, scalar)) expected.add(y * W + x);
+        check(!expected.isEmpty(), "observed_staff_mask_fixture_has_members");
+        var collected = new HashSet<Integer>();
+        var full = new SparseStaffContact.Budget(area, 0);
+        f.tracks.collectObservedNonownerPixels(f.p, rect, full, collected);
+        check(collected.equals(expected) && full.work == 0, "sparse_staff_mask_matches_pixel_queries");
+        var discarded = new SparseStaffContact.Budget(area + 1, 0);
+        f.tracks.collectObservedNonownerPixels(f.p, rect, discarded, null);
+        check(discarded.work == 1, "discarded_staff_mask_keeps_work_debit");
+        var partialWork = new SparseStaffContact.Budget(area - 1, 0);
+        try {
+            f.tracks.collectObservedNonownerPixels(f.p, rect, partialWork, null);
+            throw new AssertionError("staff_mask_must_refuse_when_short_one_unit");
+        } catch (SparseStaffContact.Unknown refused) {
+            check(partialWork.work == 0 && refused.getMessage().equals("WORK"),
+                    "short_staff_mask_consumes_available_work");
+        }
         check(f.field != null, "source_bound_staff_reference_from_both_full_windows");
         check(
                 f.field.hasProfileAt(22) && f.field.background(f.p, 100, 22) == 186,

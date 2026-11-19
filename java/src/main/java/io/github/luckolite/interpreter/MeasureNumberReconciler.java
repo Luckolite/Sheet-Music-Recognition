@@ -264,6 +264,7 @@ final class MeasureNumberReconciler {
     /** Passive receipt of the unchanged number producer. Every unselected rival is retained. */
     static List<ProducerNumber> producerNumberRoutes(
             List<MeasureRegion> input, List<NumberToken> tokens) {
+        if (tokens.isEmpty()) return List.of();
         var layout = rows(input);
         var anchors = trustedAnchors(tokens, layout);
         assignAnchors(layout, anchors);
@@ -316,10 +317,10 @@ final class MeasureNumberReconciler {
     }
 
     static int firstMeasureNumber(List<MeasureRegion> reconciled, List<NumberToken> tokens) {
+        if (tokens == null || tokens.isEmpty()) return 0;
         List<Row> layout = rows(reconciled == null ? List.of() : reconciled);
-        List<NumberToken> anchors = trustedAnchors(tokens == null ? List.of() : tokens, layout);
-        if (anchors.size() < 2)
-            return singleAnchorProvingMeasureOne(layout, tokens == null ? List.of() : tokens);
+        List<NumberToken> anchors = trustedAnchors(tokens, layout);
+        if (anchors.size() < 2) return singleAnchorProvingMeasureOne(layout, tokens);
         assignAnchors(layout, anchors);
         // Several independent system starts can reject one plausible-looking leading glyph.
         // Derive every candidate start from actual reconciled preceding bars, not OCR magnitude.

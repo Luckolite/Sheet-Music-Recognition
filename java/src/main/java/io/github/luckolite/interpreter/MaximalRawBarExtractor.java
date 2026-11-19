@@ -490,15 +490,8 @@ final class MaximalRawBarExtractor {
             long workBudget,
             long scratchBudget,
             java.util.Set<Integer> staffPixels) {
-        return bindIdentity(
-                discoverInternal(
-                        gray, width, height, lane, workBudget, scratchBudget, staffPixels, false),
-                gray,
-                width,
-                height,
-                lane,
-                staffPixels,
-                false);
+        return discoverAndBind(
+                gray, width, height, lane, workBudget, scratchBudget, staffPixels, false, true);
     }
 
     /** Optional foreground co-membership route. Staff pixels are never background. */
@@ -510,17 +503,40 @@ final class MaximalRawBarExtractor {
             long workBudget,
             long scratchBudget,
             java.util.Set<Integer> staffPixels) {
-        if (staffPixels == null || staffPixels.isEmpty())
+        return discoverAndBind(
+                gray, width, height, lane, workBudget, scratchBudget, staffPixels, true, true);
+    }
+
+    /** Tremolo marks need at least two bodies before they can reach ownership proof. */
+    static Discovery discoverForMarks(
+            byte[] gray,
+            int width,
+            int height,
+            Lane lane,
+            long workBudget,
+            Set<Integer> staffPixels,
+            boolean joined) {
+        return discoverAndBind(
+                gray, width, height, lane, workBudget, MAX_SCRATCH_BYTES, staffPixels, joined, false);
+    }
+
+    private static Discovery discoverAndBind(
+            byte[] gray,
+            int width,
+            int height,
+            Lane lane,
+            long workBudget,
+            long scratchBudget,
+            Set<Integer> staffPixels,
+            boolean joined,
+            boolean requireIdentity) {
+        if (joined && (staffPixels == null || staffPixels.isEmpty()))
             return new Discovery(Status.INVALID_INPUT, List.of(), 0);
-        return bindIdentity(
+        Discovery discovery =
                 discoverInternal(
-                        gray, width, height, lane, workBudget, scratchBudget, staffPixels, true),
-                gray,
-                width,
-                height,
-                lane,
-                staffPixels,
-                true);
+                        gray, width, height, lane, workBudget, scratchBudget, staffPixels, joined);
+        if (!requireIdentity && discovery.bodies().size() < 2) return discovery;
+        return bindIdentity(discovery, gray, width, height, lane, staffPixels, joined);
     }
 
     /** Indexes the intercepts that could see a run top within their search radius. */

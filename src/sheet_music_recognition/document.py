@@ -18,6 +18,10 @@ from .boundary_ties import resolve_boundary_ties
 from .clock_context import bind_document
 
 
+class _DecoderPipeError(RuntimeError):
+    pass
+
+
 @contextmanager
 def _document_page_decoder(engine):
     from .reader import Interpreter
@@ -28,36 +32,47 @@ def _document_page_decoder(engine):
         yield decode
         return
 
-    command = [java_executable(), "-Xmx1g", "-cp", str(engine.jar),
-               "io.github.luckolite.interpreter.DocumentPageDecoder"]
+    with _decoder_pipe([java_executable(), "-Xmx1g"], engine.jar) as (_, run_page):
+        yield partial(decode, run_decoder=run_page)
+
+
+@contextmanager
+def _decoder_pipe(java, jar):
+    command = [*java, "-cp", str(jar), "io.github.luckolite.interpreter.DocumentPageDecoder"]
     # A file keeps JVM diagnostics available even if an error exceeds pipe capacity.
     with tempfile.TemporaryFile() as errors, subprocess.Popen(
             command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=errors) as process:
-        def run_page(arguments):
+        def send(arguments):
             packet = bytearray([len(arguments)])
             for argument in arguments:
                 encoded = argument.encode("utf-8")
                 packet.extend(struct.pack(">I", len(encoded)))
                 packet.extend(encoded)
+            process.stdin.write(packet)
+            process.stdin.flush()
+
+        def run_page(arguments):
             try:
-                process.stdin.write(packet)
-                process.stdin.flush()
+                send(arguments)
                 ack = process.stdout.read(1)
-            except BrokenPipeError:
+            except OSError:
+                # Windows can report EINVAL when an exited child closes its pipe.
+                with suppress(OSError):
+                    process.stdin.close()
                 ack = b""
             if ack == b"\x01":
                 return
             if ack:
-                raise RuntimeError("Unexpected document decoder response")
+                raise _DecoderPipeError("Unexpected document decoder response")
             process.wait()
             errors.seek(0)
             message = errors.read().decode(locale.getpreferredencoding(False), errors="replace")
-            raise RuntimeError("Decoder failed: " + (message.strip() or f"exit {process.returncode}"))
+            raise _DecoderPipeError("Decoder failed: " + (message.strip() or f"exit {process.returncode}"))
 
         try:
-            yield partial(decode, run_decoder=run_page)
+            yield send, run_page
         finally:
-            with suppress(BrokenPipeError):
+            with suppress(OSError):
                 process.stdin.close()
 
 

@@ -55,8 +55,7 @@ final class PackedGrayInk {
         long[] bits = null;
         int at = 0;
         for (; at <= labels.length - Long.BYTES; at += Long.BYTES) {
-            long different = (long) PIXEL_WORDS.get(labels, at) ^ repeated;
-            long selected = matchingByteBits(different);
+            long selected = matchingLabelBits(labels, at, repeated);
             if (selected == 0) continue;
             if (bits == null) bits = new long[wordCount];
             bits[at >>> 6] |= selected << at;
@@ -143,6 +142,10 @@ final class PackedGrayInk {
     private static long symbolBits(long labels) {
         long mismatch = labels ^ (0x0101010101010101L * OmrMeasurePostProcessor.SYMBOL);
         return matchingByteBits(mismatch);
+    }
+
+    static long matchingLabelBits(byte[] labels, int offset, long packedTarget) {
+        return matchingByteBits((long) PIXEL_WORDS.get(labels, offset) ^ packedTarget);
     }
 
     private static long matchingByteBits(long mismatch) {

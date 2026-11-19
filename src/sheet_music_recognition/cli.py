@@ -78,7 +78,10 @@ def main():
             from .audio import find_ffmpeg
             find_ffmpeg(args.ffmpeg)  # Fail before expensive recognition if unavailable.
         pages = [int(number) for number in args.pages.split(",")] if args.pages else None
-        engine = Interpreter(args.model, args.threads)
+        # Initialize the bundled model alongside OCR preparation on the first page.
+        engine = Interpreter(
+            args.model, args.threads, _defer_model=args.model is None and annotations is None
+        )
 
         def progress(_completed, _total, source_page):
             print(f"Read page {source_page}", file=sys.stderr)

@@ -38,6 +38,31 @@ public final class LocalAccidentalLineageOriginalTest {
     }
 
     @Test
+    public void omittedGlyphMembersKeepRasterOrderAcrossWordAndTailBoundaries() {
+        for (byte target : new byte[] {3, 5}) {
+            byte[] labels = new byte[17], gray = new byte[labels.length];
+            for (int pixel : new int[] {0, 1, 6, 7, 8, 16}) labels[pixel] = target;
+            labels[2] = (byte) (target | 128);
+            var collector = new ExactComponentMembers.Collector(
+                    gray, labels, 17, 1,
+                    new ExactComponentMembers.Budget(34, 4096),
+                    new ExactComponentMembers.Budget(100, 4096));
+            assertTrue(collector.bindInput(labels, gray, 17, 1));
+            var owned = collector.begin();
+            owned.add(0, 1, 1);
+            owned.add(0, 6, 7);
+            collector.record(new Object(), new ExactComponentMembers.Stats(3, 1, 7, 0, 0, 14 / 3f, 0),
+                    target, owned);
+            assertTrue(collector.seal(new ExactComponentMembers.Budget(34, 4096)));
+            var budget = new ExactComponentMembers.Budget(23, 139);
+            assertArrayEquals(new int[] {0, 8, 16}, collector.unrepresentedGlyphMembers(target, budget));
+            assertEquals(0, budget.work);
+            assertEquals(0, budget.bytes);
+            assertNull(collector.unrepresentedGlyphMembers(target, new ExactComponentMembers.Budget(23, 138)));
+        }
+    }
+
+    @Test
     public void genuineNormalSelectionRetainsActualWinnerAndCompleteOriginalMembers() {
         var p = new SharpPitchAlignmentTest.Page(124, 124);
         var a = analyze(p);

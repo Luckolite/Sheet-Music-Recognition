@@ -7239,12 +7239,19 @@ final class OmrScoreInterpreter {
             ExactComponentMembers.Collector clefMembers,
             List<Component> headerAccidentals) {
         List<DetectedNote> result = new ArrayList<>(notes);
+        if (staffs.isEmpty()) return result;
+        Staff[] noteStaffs = new Staff[result.size()];
+        for (int i = 0; i < result.size(); i++)
+            noteStaffs[i] = staffForHead(labels, gray, width, height, staffs, result.get(i).head);
         Map<Integer, Integer> inherited = new HashMap<>();
         List<AccidentalCandidate> headerPieces = null;
         var cohortBudget =
                 new ExactComponentMembers.Budget(8L * labels.length, 16L * labels.length);
+        // A linked in-row clef needs at least two fragments and a note to follow.
         boolean cohortReady =
-                clefMembers != null
+                glyphs.size() >= 2
+                        && !notes.isEmpty()
+                        && clefMembers != null
                         && headerAccidentals != null
                         && clefMembers.sameInputFrame(labels, gray, width, height)
                         && clefMembers.revalidateForExport(cohortBudget);
@@ -7421,9 +7428,8 @@ final class OmrScoreInterpreter {
             // leaving the large lower curl in CLEF_OR_KEY. Use the same complete
             // bounded header proof as key recognition, only before the first note.
             float firstNoteX = width;
-            for (DetectedNote note : notes)
-                if (staffForHead(labels, gray, width, height, staffs, note.head) == staff)
-                    firstNoteX = Math.min(firstNoteX, note.head.minX);
+            for (int i = 0; i < result.size(); i++)
+                if (noteStaffs[i] == staff) firstNoteX = Math.min(firstNoteX, result.get(i).head.minX);
             if (cohortReady && firstNoteX < width)
                 for (Component complete :
                         inRowTrebleCohorts(
@@ -7493,7 +7499,7 @@ final class OmrScoreInterpreter {
             int initial = inherited.getOrDefault(voice, ScoreNoteEvent.CLEF_UNKNOWN);
             for (int i = 0; i < result.size(); i++) {
                 DetectedNote n = result.get(i);
-                if (staffForHead(labels, gray, width, height, staffs, n.head) != staff) continue;
+                if (noteStaffs[i] != staff) continue;
                 int active = initial;
                 for (ClefGlyph clef : clefs) if (clef.x < n.head.centerX) active = clef.clef;
                 result.set(i, new DetectedNote(n.event.withClef(active), n.head, n.staffGap));

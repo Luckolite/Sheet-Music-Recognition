@@ -116,7 +116,6 @@ final class ScorePartProducerSource {
         var parts = new ArrayList<PartReading>();
         var numberRows = new ArrayList<NumberReading>();
         var unknownHeader = new ArrayList<Integer>();
-        boolean bound = source != null && source.authenticates(gray, w, h);
         long work = 2_000_000, stored = 1_000_000;
         int wordCount = source == null ? 0 : source.words().size(),
                 numberCount = source == null ? 0 : source.numbers().size();
@@ -169,6 +168,8 @@ final class ScorePartProducerSource {
                                     "UNKNOWN_CONTEXT_WORK_BUDGET",
                                     "PART_METER_VOICE_REST_SOURCE_AUTHORITY")));
         }
+        // With no readings to bind, retain the captured SHA without rehashing the page.
+        boolean bound = (wordCount != 0 || numberCount != 0) && source.authenticates(gray, w, h);
         List<ScorePageAnnotationSource.ReaderWord> original =
                 source == null ? List.of() : source.words();
         for (int i = 0; i < original.size(); i++) {

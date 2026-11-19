@@ -356,6 +356,33 @@ final class RawMeasuredStaffTracks {
             if (p != plane) throw new SparseStaffContact.Unknown("STALE_EVIDENCE");
             return observed.get(p.index(x, y));
         }
+
+        /** The caller clips the rectangle to this snapshot before reserving storage. */
+        void collectObservedNonownerPixels(
+                SparseStaffContact.Snapshot p,
+                SparseStaffContact.Rect rect,
+                SparseStaffContact.Budget budget,
+                Set<Integer> output) {
+            if (p != plane) {
+                budget.work(1);
+                throw new SparseStaffContact.Unknown("STALE_EVIDENCE");
+            }
+            long area = (long) rect.width() * rect.height();
+            // A refused scan still uses the available work, as a per-pixel scan would.
+            long charge = Math.min(area, budget.work);
+            budget.work(charge);
+            if (charge != area) throw new SparseStaffContact.Unknown("WORK");
+            if (output == null) return;
+            for (int y = rect.top(); y <= rect.bottom(); y++) {
+                int start = p.index(rect.left(), y);
+                int end = start + rect.width();
+                for (int at = observed.nextSetBit(start);
+                        at >= 0 && at < end;
+                        at = observed.nextSetBit(at + 1)) {
+                    output.add(y * p.width + rect.left() + (at - start));
+                }
+            }
+        }
     }
 
     record Result(Evidence evidence, String refusal) {
