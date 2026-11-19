@@ -157,6 +157,30 @@ class SmallPageJvmTest(unittest.TestCase):
                 self.assertIs(None if startup_fails else run_page,
                               decode.call_args.kwargs.get("run_decoder"))
 
+    def test_medium_page_starts_decoder_without_sending_a_geometry_packet(self):
+        engine = reader.Interpreter.__new__(reader.Interpreter)
+        engine.jar = Path("interpreter.jar")
+        prepared = object()
+        gray = SimpleNamespace(size=1_179_648)
+        send, run = Mock(), Mock()
+
+        def prepare(_image, _width, _annotations, *, prepare_geometry, start_decoder):
+            start_decoder(gray.size)
+            prepare_geometry(gray, None, None)
+            return prepared
+
+        with (patch.object(engine, "_prepare_page", side_effect=prepare),
+              patch.object(engine, "_decode_page", return_value="score") as decode,
+              patch.object(reader, "ready_page_decoder", return_value=nullcontext(["java"])) as ready,
+              patch.object(document, "_decoder_pipe", return_value=nullcontext((send, run))) as launch,
+              patch.object(reader, "write_page") as write_page):
+            self.assertEqual("score", engine.interpret(None))
+        ready.assert_called_once_with(engine.jar, gray.size)
+        launch.assert_called_once_with(["java"], engine.jar)
+        send.assert_not_called()
+        write_page.assert_not_called()
+        self.assertIs(run, decode.call_args.kwargs["run_decoder"])
+
     def test_failed_geometry_pipe_reuses_the_prepared_page_for_ordinary_decode(self):
         engine = reader.Interpreter.__new__(reader.Interpreter)
         engine.jar = Path("interpreter.jar")
@@ -245,11 +269,66 @@ class SmallPageJvmTest(unittest.TestCase):
                     encoding="utf-8",
                 )
                 self.assertEqual(("-XX:TieredStopAtLevel=1",), runtime.small_page_jvm_args(java, 500_000))
-                self.assertEqual((), runtime.small_page_jvm_args(java, 500_001))
+                self.assertEqual(("-XX:TieredStopAtLevel=1",), runtime.small_page_jvm_args(java, 1_200_000))
+                self.assertEqual((), runtime.small_page_jvm_args(java, 1_200_001))
                 with patch.dict(runtime.os.environ, {"JAVA_TOOL_OPTIONS": "-XX:TieredStopAtLevel=3"}):
                     self.assertEqual((), runtime.small_page_jvm_args(java, 483_328))
                 (home / "release").write_text('IMPLEMENTOR="JetBrains s.r.o."\n', encoding="utf-8")
                 self.assertEqual((), runtime.small_page_jvm_args(java, 483_328))
+
+    def test_medium_page_uses_short_compiler_without_training_an_archive(self):
+        with (tempfile.TemporaryDirectory() as profile,
+              patch.dict(runtime.os.environ, {"LOCALAPPDATA": profile}),
+              patch.object(runtime, "small_page_jvm_args", return_value=("-XX:TieredStopAtLevel=1",)),
+              patch.object(runtime, "_run_java") as run,
+              patch.object(runtime, "_run_with_class_archive") as archive):
+            runtime.run_page_decoder("java", "decoder.jar", 1_179_648, ["page", "score", "4", "4", "0"])
+        run.assert_called_once_with(
+            ["java", "-Xmx1g", "-XX:TieredStopAtLevel=1", "-jar", "decoder.jar", "page", "score", "4", "4", "0"])
+        archive.assert_not_called()
+
+    def test_medium_page_reuses_only_a_matching_ready_archive_and_retries_failure(self):
+        with tempfile.TemporaryDirectory() as profile:
+            cache = Path(profile) / "ScoreReader" / "cds-v1"
+            cache.mkdir(parents=True)
+            state = cache / "state"
+            java = Path(profile) / "bin" / "java.exe"
+            jvm = ("-XX:TieredStopAtLevel=1",)
+            options = ("-Xshare:on", "-XX:SharedArchiveFile=test.jsa")
+            good = SimpleNamespace(returncode=0)
+            bad = SimpleNamespace(returncode=1)
+            args = ["page", "score", "4", "4", "0"]
+            command = [java, "-Xmx1g", *jvm, "-jar", "decoder.jar", *args]
+            for saved, launches in (("stale:ready", [()]), ("key:ready", [options, ()])):
+                with self.subTest(saved=saved):
+                    state.write_text(saved, encoding="ascii")
+                    with (patch.dict(runtime.os.environ, {"LOCALAPPDATA": profile}),
+                          patch.object(runtime, "small_page_jvm_args", return_value=jvm),
+                          patch.object(runtime, "_class_archive_slot", return_value=nullcontext((java, "key"))),
+                          patch.object(runtime, "_archive_arguments", return_value=options),
+                          patch.object(runtime, "_run_java", side_effect=lambda _, flags=(): bad if flags else good) as run):
+                        self.assertIs(good, runtime.run_page_decoder(java, "decoder.jar", 1_179_648, args))
+                    self.assertEqual([(command, flags) if flags else (command,) for flags in launches],
+                                     [call.args for call in run.call_args_list])
+                    self.assertEqual(saved, state.read_text(encoding="ascii"))
+
+
+    def test_only_one_shot_worker_can_start_early_on_a_medium_page(self):
+        with (tempfile.TemporaryDirectory() as profile,
+              patch.dict(runtime.os.environ, {"LOCALAPPDATA": profile}),
+              patch.object(runtime.sys, "platform", "win32"),
+              patch.object(runtime, "_archive_marked_ready", return_value=True),
+              patch.object(runtime, "java_executable", return_value="java"),
+              patch.object(runtime, "small_page_jvm_args", return_value=("-XX:TieredStopAtLevel=1",)),
+              patch.object(runtime, "_ready_class_archive",
+                           return_value=nullcontext(("-Xshare:on",))) as lease):
+            with runtime.ready_page_decoder("decoder.jar", 1_179_648) as options:
+                self.assertEqual(["java", "-Xmx1g", "-XX:TieredStopAtLevel=1", "-Xshare:on"], options)
+            with runtime.ready_page_decoder("decoder.jar", 1_179_648, short_tier=False) as options:
+                self.assertIsNone(options)
+            with runtime.ready_page_decoder("decoder.jar", 1_200_001) as options:
+                self.assertIsNone(options)
+            lease.assert_called_once()
 
     def test_requires_the_qualified_temurin_or_openjdk_descriptor(self):
         with tempfile.TemporaryDirectory() as folder:

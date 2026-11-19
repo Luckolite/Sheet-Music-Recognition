@@ -9,7 +9,8 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 import numpy as np
 from PIL import Image
@@ -85,6 +86,34 @@ class BuiltinOcrTests(unittest.TestCase):
             actual = bounded(tensor)
             self.assertEqual((1, 1, height, width), actual.shape)
             np.testing.assert_array_equal(expected.view(np.uint32), actual.view(np.uint32))
+
+    def test_scoped_ocr_reuses_only_identical_pixels_and_rebuilds_annotations(self):
+        owner = Interpreter.__new__(Interpreter)
+        owner.ocr = LocalOcr.__new__(LocalOcr)
+        result = SimpleNamespace(
+            boxes=np.array([[[1, 1], [3, 1], [3, 3], [1, 3]]], dtype=np.float32),
+            txts=["4"], scores=[1.0],
+        )
+        engine = Mock(return_value=result)
+        owner.ocr.engine = engine
+        gray = np.full((8, 8), 200, dtype=np.uint8)
+        with owner.reuse_decoder():
+            first = owner._read_annotations(gray, None)
+            first["words"][0]["text"] = "changed"
+            with owner.reuse_decoder():
+                again = owner._read_annotations(gray.copy(), {"tabWords": [{"text": "7"}]})
+            self.assertEqual("4", again["words"][0]["text"])
+            self.assertEqual([{"text": "7"}], again["tabWords"])
+            engine.assert_called_once()
+            gray[-1, -1] ^= 1
+            owner._read_annotations(gray, None)
+            self.assertEqual(2, engine.call_count)
+            owner.ocr.engine = Mock(return_value=result)
+            owner._read_annotations(gray, None)
+            owner.ocr.engine.assert_called_once()
+        self.assertIsNone(owner._last_page_ocr)
+        owner._read_annotations(gray, None)
+        self.assertEqual(2, owner.ocr.engine.call_count)
 
     def test_unsupported_detector_mode_uses_the_original_model_factory(self):
         from sheet_music_recognition.ocr import _detector_inference

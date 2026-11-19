@@ -12,6 +12,9 @@ import sys
 from pathlib import Path
 
 
+_SHORT_DECODER_MAX_PIXELS = 1_200_000
+_ARCHIVE_TRAIN_AND_GEOMETRY_MAX_PIXELS = 500_000
+
 _SHORT_DECODER_BUILDS = (
     ('IMPLEMENTOR="JetBrains s.r.o."', 'JAVA_RUNTIME_VERSION="21.0.10+-14961533-b1163.108"'),
     ('IMPLEMENTOR="Eclipse Adoptium"', 'JAVA_RUNTIME_VERSION="17.0.20.1+1"'),
@@ -32,7 +35,7 @@ def java_executable():
 
 def small_page_jvm_args(java, pixels):
     """Avoid higher-tier compilation for short runs on qualified HotSpot builds."""
-    if sys.platform != "win32" or not 0 < pixels <= 500_000:
+    if sys.platform != "win32" or not 0 < pixels <= _SHORT_DECODER_MAX_PIXELS:
         return ()
     if any(os.environ.get(name) for name in ("JDK_JAVA_OPTIONS", "JAVA_TOOL_OPTIONS", "_JAVA_OPTIONS")):
         return ()
@@ -51,7 +54,15 @@ def run_page_decoder(java, jar, pixels, arguments):
     command = [java, "-Xmx1g", *short, "-jar", str(jar), *arguments]
     appdata = Path(os.environ.get("LOCALAPPDATA", ""))
     if short and appdata.is_absolute():
-        return _run_with_class_archive(command, java, jar, appdata / "ScoreReader" / "cds-v1")
+        cache = appdata / "ScoreReader" / "cds-v1"
+        if pixels <= _ARCHIVE_TRAIN_AND_GEOMETRY_MAX_PIXELS:
+            return _run_with_class_archive(command, java, jar, cache)
+        if _archive_marked_ready(cache):
+            with _ready_class_archive(java, jar, cache) as options:
+                if options is not None:
+                    result = _run_java(command, options)
+                    if result.returncode == 0:
+                        return result
     return _run_java(command)
 
 
@@ -105,26 +116,15 @@ def _class_archive_slot(java, jar, cache):
             yield java, state
 
 
-@contextmanager
-def ready_page_decoder(jar, pixels, *, short_tier=True):
-    """Hold the current warm archive while a pipe decoder starts."""
-    cache = Path(os.environ.get("LOCALAPPDATA", ""))
-    if sys.platform != "win32" or not 0 < pixels <= 500_000 or not cache.is_absolute():
-        yield None
-        return
-    cache = cache / "ScoreReader" / "cds-v1"
+def _archive_marked_ready(cache):
     try:
-        ready = (cache / "state").read_text(encoding="ascii", errors="replace").endswith(":ready")
-        java = java_executable() if ready else None
-    except (OSError, RuntimeError):
-        java = None
-    if java is None:
-        yield None
-        return
-    short = small_page_jvm_args(java, pixels)
-    if not short:
-        yield None
-        return
+        return (cache / "state").read_text(encoding="ascii", errors="replace").endswith(":ready")
+    except OSError:
+        return False
+
+
+@contextmanager
+def _ready_class_archive(java, jar, cache):
     with _class_archive_slot(java, jar, cache) as slot:
         arguments = None
         if slot is not None:
@@ -134,7 +134,31 @@ def ready_page_decoder(jar, pixels, *, short_tier=True):
                     arguments = _archive_arguments(resolved, cache)
             except OSError:
                 pass
-        yield [java, "-Xmx1g", *(short if short_tier else ()), *arguments] if arguments is not None else None
+        yield arguments
+
+
+@contextmanager
+def ready_page_decoder(jar, pixels, *, short_tier=True):
+    """Hold the current warm archive while a pipe decoder starts."""
+    cache = Path(os.environ.get("LOCALAPPDATA", ""))
+    max_pixels = _SHORT_DECODER_MAX_PIXELS if short_tier else _ARCHIVE_TRAIN_AND_GEOMETRY_MAX_PIXELS
+    if sys.platform != "win32" or not 0 < pixels <= max_pixels or not cache.is_absolute():
+        yield None
+        return
+    cache = cache / "ScoreReader" / "cds-v1"
+    try:
+        java = java_executable() if _archive_marked_ready(cache) else None
+    except (OSError, RuntimeError):
+        java = None
+    if java is None:
+        yield None
+        return
+    short = small_page_jvm_args(java, pixels)
+    if not short:
+        yield None
+        return
+    with _ready_class_archive(java, jar, cache) as options:
+        yield [java, "-Xmx1g", *(short if short_tier else ()), *options] if options is not None else None
 
 
 def _archive_arguments(java, cache):

@@ -69,12 +69,28 @@ class InferenceRuntimeTest(unittest.TestCase):
             def get_output_details(self):
                 return [{"shape": np.array([1, self.height, 320]), "dtype": np.int64, "index": 1}]
 
+            def set_tensor(self, index, tensor):
+                pass
+
+            def invoke(self):
+                pass
+
+            def get_tensor(self, index):
+                return np.zeros((1, self.height, 320), np.int64)
+
         Model.__module__ = "ai_edge_litert.interpreter"
         with patch.object(reader, "inference_interpreter", return_value=Model):
             engine = reader.Interpreter(threads=2, _defer_model=True)
-            for height in (224, 208, 225, 224):
+            for height in (224, 208, 576, 224):
                 pixels = np.full((height, 320), 255, np.uint8)
                 np.testing.assert_array_equal(engine.predict(pixels), np.zeros_like(pixels))
+            self.assertEqual([(304, 2)], loads)
+            self.assertEqual(304, engine._model_height)
+
+            # One off-white pixel on a taller page still needs the original model.
+            taller = np.full((225, 320), 255, np.uint8)
+            taller[-1, -1] = 254
+            engine.predict(taller)
 
         self.assertEqual([(304, 2), (320, 2)], loads)
         self.assertEqual(320, engine._model_height)

@@ -20,7 +20,13 @@ from typing import NamedTuple
 import numpy as np
 from PIL import ExifTags, Image, ImageOps
 from . import _short_arena
-from .runtime import inference_interpreter, java_executable, ready_page_decoder, run_page_decoder
+from .runtime import (
+    _ARCHIVE_TRAIN_AND_GEOMETRY_MAX_PIXELS,
+    inference_interpreter,
+    java_executable,
+    ready_page_decoder,
+    run_page_decoder,
+)
 from .whitening import PaperBackgroundWhitening, WhiteningResult, MODEL_SHA256 as PAPER_FIELD_SHA256, RASTER_POLICY
 
 MODEL_SHA256 = "92ab7c34c27cb704d95f0cde247b3611d1563fdf1c114b9f9817abb18a7b6a93"
@@ -305,9 +311,11 @@ class Interpreter:
             self._decoder_scope = stack
             self._reusable_decoder = None
             self._last_page_prediction = None
+            self._last_page_ocr = None
             try:
                 yield self
             finally:
+                self._last_page_ocr = None
                 self._last_page_prediction = None
                 self._reusable_decoder = None
                 self._decoder_scope = None
@@ -408,6 +416,10 @@ class Interpreter:
         pending = getattr(self, "_pending_model", None)
         compact_path = getattr(self, "_compact_model_path", None)
         if compact_path is not None and _short_arena.required_height(height) > self._model_height:
+            # The qualified model returns only background for a strictly white tile.
+            # A blank spacer can keep the existing compact arena for the next score page.
+            if gray[0, 0] == 255 and gray.min() == 255:
+                return np.zeros_like(gray)
             # Release the short arena before allocating its replacement.
             pending = self._pending_model = (compact_path, True)
             self._compact_model_path = None
@@ -546,7 +558,8 @@ class Interpreter:
                 def prepare_geometry(gray, labels, corrected):
                     nonlocal pipe
                     active = start_decoder(gray.size)
-                    if active is None:
+                    # The pipe can wait for a larger page, but Java only precomputes small geometry.
+                    if active is None or gray.size > _ARCHIVE_TRAIN_AND_GEOMETRY_MAX_PIXELS:
                         return
                     try:
                         send, _ = active
@@ -587,15 +600,34 @@ class Interpreter:
         if not isinstance(key_fifths, int) or not -7 <= key_fifths <= 7:
             raise ValueError("key_fifths must be -7..7")
 
+    def _ocr_words(self, gray):
+        from .ocr import LocalOcr
+
+        if self.ocr is None:
+            self.ocr = LocalOcr(threads=self._threads)
+        read = self.ocr.words
+        if getattr(self, "_decoder_scope", None) is None:
+            return read(gray)
+        eligible = (gray.size <= _REUSABLE_PAGE_PIXELS and type(self.ocr) is LocalOcr
+                    and getattr(read, "__func__", None) is LocalOcr.words)
+        cached = self._last_page_ocr
+        if eligible and cached is not None:
+            ocr_engine, image, words = cached
+            if ocr_engine is self.ocr.engine and np.array_equal(gray, image):
+                return [word.copy() for word in words]
+        self._last_page_ocr = None
+        words = read(gray)
+        if eligible and len(words) <= 256 and sum(len(word["text"]) for word in words) <= 16_384:
+            self._last_page_ocr = self.ocr.engine, gray.copy(), tuple(word.copy() for word in words)
+        return words
+
     def _read_annotations(self, gray, annotations):
-        from .ocr import LocalOcr, page_annotations
+        from .ocr import page_annotations
 
         if gray[0, 0] == 255 and gray.min() == 255:
             words = []
         else:
-            if self.ocr is None:
-                self.ocr = LocalOcr(threads=self._threads)
-            words = self.ocr.words(gray)
+            words = self._ocr_words(gray)
         if annotations is None:
             return page_annotations(words, [])
         return dict(page_annotations(words, annotations["tabWords"]), **annotations)

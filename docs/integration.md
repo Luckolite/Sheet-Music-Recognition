@@ -49,8 +49,9 @@ Reuse one interpreter per worker.
 Use `reuse_decoder()` to keep the Java worker open between reads on the same
 interpreter. The first read starts the worker. With the bundled LiteRT model,
 an identical grayscale page of up to 500,000 pixels can reuse the previous
-segmentation. Each read still uses its own annotations and decoding options.
-Leaving the block closes the worker and clears the saved segmentation.
+segmentation. Built-in OCR can also reuse the words it detected on an
+identical small page. Each read applies its own supplied annotations and decoding
+options. Leaving the block closes the worker and clears the saved page data.
 
 ```python
 from score_reader import Interpreter
