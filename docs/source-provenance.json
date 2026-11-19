@@ -2,7 +2,7 @@
   "november_18_followup_optimization_port": {
     "standalone_optimization_commit": "11e258263744ac5c045197083e2b9b09ece65d6b",
     "qualified_handoff": "7848446a7effe5c568026a6fbc07c4556e4f14d0",
-    "reviewed_app_commit": "b43fa3d33c551b78ece6c36649f77229f0f52047",
+    "reviewed_app_commit": "6e54fa19d9d8c12f409c488da36f10be84d63d1f",
     "recognition": 159,
     "guide": 308,
     "audio": 106,
@@ -3042,9 +3042,9 @@
     },
     "DenseTieArcContinuity.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/DenseTieArcContinuity.java",
-      "source_sha256": "415fd2b0f4d21c555ab5d1f66172bdefe87cf2577b066961ca79f343331bb484",
-      "source_normalized_sha256": "415fd2b0f4d21c555ab5d1f66172bdefe87cf2577b066961ca79f343331bb484",
-      "reviewed_app_commit": "b43fa3d33c551b78ece6c36649f77229f0f52047",
+      "source_sha256": "119ef7d25bf3bae8c2d942857516770df6c39b4992798dc016bf9905c6adf724",
+      "source_normalized_sha256": "119ef7d25bf3bae8c2d942857516770df6c39b4992798dc016bf9905c6adf724",
+      "reviewed_app_commit": "6e54fa19d9d8c12f409c488da36f10be84d63d1f",
       "scoped_reviewed_app_commit": "2c890b216f9fe461e1e364cc9817dd102fbde7b0",
       "standalone_sha256": "ba1545c3e4e74ab1f9f4e0ce013aebc569b935598e93eedd74ad6e3c799c142d",
       "review_note": "Recognition28: returning tie candidates require connected original-column ink; independent adjacent sustained heads may exceed the page-relative distance cap. Existing pitch, voice, written timing, arc and clearance guards remain. Original synthetic controls only; no model or dependencies changed.",
@@ -3052,7 +3052,7 @@
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/DenseTieArcContinuity.java",
       "standalone_normalized_sha256": "ba1545c3e4e74ab1f9f4e0ce013aebc569b935598e93eedd74ad6e3c799c142d",
       "app_optimization_port_review": "Visible shoulder and total vote bounds adapt to the app's established straight-row and continuity arrays.",
-      "optimization_port_review": "Stops a stroke scan as soon as the existing thickness ceiling is exceeded. Android retains its own visible-vote admission and frontier."
+      "optimization_port_review": "Caches thin-stroke reads for one unchanged system-end raster and stops at the existing thickness ceiling. Android retains its own visible-vote admission and frontier."
     },
     "DetachedAnnotationInk.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/DetachedAnnotationInk.java",
@@ -5608,13 +5608,13 @@
         "standalone_lf_sha256": "af1d3947016efcc690381c794ec3de40e791468ea8730295f96baf70b2273130",
         "scope": "Opening two-over-four repair. The production patches match after path normalization. Broader source differences remain subject to review."
       },
-      "source_sha256": "78993b3fe57b1ebd7437544abb9461ee6e3eec62bebc58c0600538a6c38e143e",
+      "source_sha256": "72b72b8ab8a857b61dbd0515ed54b405ee7d98ef5a3036f47a169eafa9e40aae",
       "review_note": "Two independently proved whole-note counters protect an aligned stemless chord from interior shaft pixels, retaining the exterior shaft veto.",
-      "source_normalized_sha256": "78993b3fe57b1ebd7437544abb9461ee6e3eec62bebc58c0600538a6c38e143e",
+      "source_normalized_sha256": "72b72b8ab8a857b61dbd0515ed54b405ee7d98ef5a3036f47a169eafa9e40aae",
       "reviewed_app_state": "Committed recognition130 source integration; cumulative app/Hub worker delivery pending goal completion.",
       "standalone_sha256": "0b7cc93cea537775cebcdeb792ce6cb66ed78df0bfca8d25037a2ec1f54851de",
       "reviewed_app_base_commit": "f35728a8aa54ad905276707014439af44502ea61",
-      "reviewed_app_commit": "b43fa3d33c551b78ece6c36649f77229f0f52047",
+      "reviewed_app_commit": "6e54fa19d9d8c12f409c488da36f10be84d63d1f",
       "scoped_reviewed_app_commit": "5a83c7704ff14579edcf52af5c1ab8e8e719a4d7",
       "license": "Apache-2.0",
       "cue_flag87_review_note": "Original procedural geometry only. Cue-size local glyph gap reuses unchanged own-stem and curved-flag checks. Existing scalar and wire semantics retained; no private raster/model/dependency change.",
@@ -9967,11 +9967,11 @@
     },
     "TripletRhythmDetector.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/TripletRhythmDetector.java",
-      "source_sha256": "68c540d772d969932c28fc51b4c7cdd8ea4220d6b260c9af4f2f367a73abf604",
-      "source_normalized_sha256": "68c540d772d969932c28fc51b4c7cdd8ea4220d6b260c9af4f2f367a73abf604",
+      "source_sha256": "c89a19efaf7fdff9d2015d262ece840e0d67bc2a9ac006306b6d568b31799c18",
+      "source_normalized_sha256": "c89a19efaf7fdff9d2015d262ece840e0d67bc2a9ac006306b6d568b31799c18",
       "review_note": "Shared recognition and playback-direction changes ported with standalone adapters. Redistributable synthetic regressions cover the changed ink and direction rules.",
       "standalone_sha256": "b57255bb87790286ea0722de1f00020ca9dc2d34fc1fc832989830b2403ee44e",
-      "reviewed_app_commit": "b43fa3d33c551b78ece6c36649f77229f0f52047",
+      "reviewed_app_commit": "6e54fa19d9d8c12f409c488da36f10be84d63d1f",
       "reviewed_app_base_commit": "e9ed7bb25697a8d657285ebd9bdef7bb8df15880",
       "scoped_reviewed_app_commit": "cb837eed837cdbe6f36214e34e0079053adae02c",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/TripletRhythmDetector.java",
