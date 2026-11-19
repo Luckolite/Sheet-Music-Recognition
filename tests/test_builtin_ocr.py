@@ -68,6 +68,24 @@ class BuiltinOcrTests(unittest.TestCase):
         self.assertEqual([("1", 1, 0)], seen)
         self.assertEqual(before, caller_value())
 
+    @unittest.skipUnless(sys.platform == "win32" and platform.machine() == "AMD64",
+                         "Windows x64 detector allocator")
+    def test_bound_detector_matches_ordinary_float_scores_at_two_shapes(self):
+        from sheet_music_recognition import _ocr_engine
+
+        with patch.object(_ocr_engine, "_use_bounded_detector", return_value=False):
+            ordinary = LocalOcr(threads=2).engine.text_det.session
+        with patch.object(_ocr_engine, "_bind_detector_output", wraps=_ocr_engine._bind_detector_output) as bind:
+            bounded = LocalOcr(threads=2).engine.text_det.session
+        bind.assert_called_once()
+        random = np.random.default_rng(807)
+        for height, width in ((64, 96), (96, 64)):
+            tensor = random.uniform(-1, 1, size=(1, 3, height, width)).astype(np.float32)
+            expected = ordinary(tensor)
+            actual = bounded(tensor)
+            self.assertEqual((1, 1, height, width), actual.shape)
+            np.testing.assert_array_equal(expected.view(np.uint32), actual.view(np.uint32))
+
     def test_unsupported_detector_mode_uses_the_original_model_factory(self):
         from sheet_music_recognition.ocr import _detector_inference
 

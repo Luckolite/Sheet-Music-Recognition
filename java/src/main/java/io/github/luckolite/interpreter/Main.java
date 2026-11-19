@@ -848,56 +848,97 @@ public final class Main {
         return result;
     }
 
+    private static final ClassValue<java.lang.reflect.RecordComponent[]> JSON_FIELDS =
+            new ClassValue<>() {
+                @Override
+                protected java.lang.reflect.RecordComponent[] computeValue(Class<?> type) {
+                    return type.getRecordComponents();
+                }
+            };
+
     static String json(Object value) throws Exception {
-        if (value == null) return "null";
-        if (value instanceof String s) {
-            var quoted = new StringBuilder("\"");
+        var output = new StringBuilder();
+        appendJson(output, value);
+        return output.toString();
+    }
+
+    private static void appendJson(StringBuilder out, Object value) throws Exception {
+        if (value == null) {
+            out.append("null");
+        } else if (value instanceof String s) {
+            out.append('"');
             for (int i = 0; i < s.length(); i++) {
                 char c = s.charAt(i);
-                if (c == '\\' || c == '\"') quoted.append('\\').append(c);
-                else if (c < 32) quoted.append(String.format(Locale.ROOT, "\\u%04x", (int) c));
-                else quoted.append(c);
+                if (c == '\\' || c == '"') out.append('\\').append(c);
+                else if (c < 32)
+                    out.append("\\u00").append(Character.forDigit(c >>> 4, 16))
+                            .append(Character.forDigit(c & 15, 16));
+                else out.append(c);
             }
-            return quoted.append('"').toString();
-        }
-        if (value instanceof Number n)
-            return Double.isFinite(n.doubleValue()) ? n.toString() : "null";
-        if (value instanceof Boolean) return value.toString();
-        if (value instanceof ScorePlaybackDirection direction
-                && direction.details().equals(ScorePlaybackDirection.Details.legacy()))
-            return "{\"measureBoundary\":"
-                    + direction.measureBoundary()
-                    + ",\"kind\":"
-                    + direction.kind().wireId()
-                    + "}";
-        if (value instanceof ScorePlaybackDirection.Kind kind)
-            return Integer.toString(kind.wireId());
-        if (value instanceof java.util.Optional<?> optional) return json(optional.orElse(null));
-        if (value instanceof Enum<?> enumeration) return json(enumeration.name());
-        var items = new ArrayList<String>();
-        if (value instanceof Map<?, ?> map) {
-            for (var e : map.entrySet())
-                items.add(json(e.getKey().toString()) + ":" + json(e.getValue()));
-            return "{" + String.join(",", items) + "}";
-        }
-        if (value.getClass().isRecord()) {
-            for (var c : value.getClass().getRecordComponents()) {
-                // Absent Kind is the legacy pitched default in the public JSON contract.
+            out.append('"');
+        } else if (value instanceof Number n) {
+            out.append(Double.isFinite(n.doubleValue()) ? n.toString() : "null");
+        } else if (value instanceof Boolean) {
+            out.append(value.toString());
+        } else if (value instanceof ScorePlaybackDirection direction
+                && direction.details().equals(ScorePlaybackDirection.Details.legacy())) {
+            out.append("{\"measureBoundary\":").append(direction.measureBoundary())
+                    .append(",\"kind\":").append(direction.kind().wireId()).append('}');
+        } else if (value instanceof ScorePlaybackDirection.Kind kind) {
+            out.append(kind.wireId());
+        } else if (value instanceof java.util.Optional<?> optional) {
+            appendJson(out, optional.orElse(null));
+        } else if (value instanceof Enum<?> enumeration) {
+            appendJson(out, enumeration.name());
+        } else if (value instanceof Map<?, ?> map) {
+            out.append('{');
+            boolean first = true;
+            for (var entry : map.entrySet()) {
+                if (!first) out.append(',');
+                first = false;
+                appendJson(out, entry.getKey().toString());
+                out.append(':');
+                appendJson(out, entry.getValue());
+            }
+            out.append('}');
+        } else if (value.getClass().isRecord()) {
+            out.append('{');
+            boolean first = true;
+            for (var component : JSON_FIELDS.get(value.getClass())) {
+                String name = component.getName();
+                // An omitted kind is the pitched default in the JSON contract.
                 if (value instanceof ScoreNoteEvent note
                         && note.kind() == ScoreNoteEvent.Kind.PITCHED
-                        && c.getName().equals("kind")) continue;
+                        && name.equals("kind")) continue;
                 if (value instanceof ScoreBeamSource.Group group
                         && group.tupletMark() == null
-                        && c.getName().equals("tupletMark")) continue;
-                items.add(json(c.getName()) + ":" + json(c.getAccessor().invoke(value)));
+                        && name.equals("tupletMark")) continue;
+                if (!first) out.append(',');
+                first = false;
+                appendJson(out, name);
+                out.append(':');
+                appendJson(out, component.getAccessor().invoke(value));
             }
-            return "{" + String.join(",", items) + "}";
+            out.append('}');
+        } else if (value instanceof Iterable<?> items) {
+            out.append('[');
+            boolean first = true;
+            for (var item : items) {
+                if (!first) out.append(',');
+                first = false;
+                appendJson(out, item);
+            }
+            out.append(']');
+        } else if (value.getClass().isArray()) {
+            out.append('[');
+            int size = java.lang.reflect.Array.getLength(value);
+            for (int i = 0; i < size; i++) {
+                if (i > 0) out.append(',');
+                appendJson(out, java.lang.reflect.Array.get(value, i));
+            }
+            out.append(']');
+        } else {
+            throw new IllegalArgumentException("Unsupported JSON value " + value.getClass());
         }
-        if (value instanceof Iterable<?> values) for (var item : values) items.add(json(item));
-        else if (value.getClass().isArray())
-            for (int i = 0; i < java.lang.reflect.Array.getLength(value); i++)
-                items.add(json(java.lang.reflect.Array.get(value, i)));
-        else throw new IllegalArgumentException("Unsupported JSON value " + value.getClass());
-        return "[" + String.join(",", items) + "]";
     }
 }

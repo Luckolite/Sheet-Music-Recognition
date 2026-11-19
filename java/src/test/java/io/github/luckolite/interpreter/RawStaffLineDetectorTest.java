@@ -12,6 +12,22 @@ import static org.junit.Assert.assertEquals;
 
 public class RawStaffLineDetectorTest {
     @Test
+    public void brightBlocksAndMixedTailPreserveTheUnsignedDarkThreshold() {
+        byte[] gray = new byte[80];
+        Arrays.fill(gray, (byte) 192);
+        for (int start = 0; start < 8; start++) {
+            for (int width : new int[] {31, 32, 33, 63, 64, 65}) {
+                assertEquals(0, RawStaffLineDetector.countDarkRow(gray, start, width));
+                gray[start + width - 2] = (byte) 171;
+                gray[start + width - 1] = (byte) 170;
+                assertEquals(1, RawStaffLineDetector.countDarkRow(gray, start, width));
+                gray[start + width - 2] = (byte) 192;
+                gray[start + width - 1] = (byte) 192;
+            }
+        }
+    }
+
+    @Test
     public void periodicBroadShadingDoesNotInventFiveLineStaffs() {
         int width = 600, height = 240;
         byte[] gray = new byte[width * height];

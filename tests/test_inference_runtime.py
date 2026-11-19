@@ -1,5 +1,6 @@
 # Copyright 2026 Luckolite
 # SPDX-License-Identifier: Apache-2.0
+import struct
 import sys
 import unittest
 from types import SimpleNamespace
@@ -44,6 +45,45 @@ class InferenceRuntimeTest(unittest.TestCase):
             factory.assert_called_once_with(bundled=True)
             self.assertEqual(2, engine.runtime.threads)
             self.assertIsNone(engine.ocr)
+
+    def test_short_deferred_runtime_reuses_its_arena_and_expands_for_a_taller_page(self):
+        loads = []
+
+        class Model:
+            refuse_short = False
+
+            def __init__(self, *, num_threads, model_path=None, model_content=None):
+                self.height = 320 if model_content is None else struct.unpack_from("<i", model_content, 1124)[0]
+                loads.append((self.height, num_threads))
+                if self.refuse_short and model_content is not None:
+                    raise RuntimeError("This runtime refused the short arena")
+
+            def allocate_tensors(self):
+                pass
+
+            def get_input_details(self):
+                return [{"shape": np.array([1, 3, self.height, 320]), "dtype": np.float32, "index": 0}]
+
+            def get_output_details(self):
+                return [{"shape": np.array([1, self.height, 320]), "dtype": np.int64, "index": 1}]
+
+        Model.__module__ = "ai_edge_litert.interpreter"
+        with patch.object(reader, "inference_interpreter", return_value=Model):
+            engine = reader.Interpreter(threads=2, _defer_model=True)
+            for height in (224, 208, 225, 224):
+                pixels = np.full((height, 320), 255, np.uint8)
+                np.testing.assert_array_equal(engine.predict(pixels), np.zeros_like(pixels))
+
+        self.assertEqual([(304, 2), (320, 2)], loads)
+        self.assertEqual(320, engine._model_height)
+
+        loads.clear()
+        Model.refuse_short = True
+        with patch.object(reader, "inference_interpreter", return_value=Model):
+            engine = reader.Interpreter(threads=2, _defer_model=True)
+            np.testing.assert_array_equal(engine.predict(pixels), np.zeros_like(pixels))
+        self.assertEqual([(304, 2), (320, 2)], loads)
+        self.assertEqual(320, engine._model_height)
 
     def test_qualified_windows_runtime_is_used_only_for_the_bundled_model(self):
         lite, tf = object(), object()

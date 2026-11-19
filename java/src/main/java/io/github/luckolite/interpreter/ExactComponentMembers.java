@@ -33,23 +33,44 @@ final class ExactComponentMembers {
         }
     }
 
-    /** Two collectors started and sealed together on the same caller-owned read-only planes. */
+    /** Collectors started and sealed together on the same caller-owned read-only planes. */
     static final class CollectorPair {
         final Collector first, second;
+        private final Collector head;
 
         CollectorPair(byte[] raw, byte[] labels, int width, int height,
                 Budget firstAuth, Budget secondAuth, Budget firstSparse, Budget secondSparse) {
-            first = new Collector(raw, labels, width, height, firstAuth, firstSparse);
+            this(null, raw, labels, width, height, firstAuth, secondAuth, firstSparse, secondSparse);
+        }
+
+        CollectorPair(Collector head, Budget firstAuth, Budget secondAuth,
+                Budget firstSparse, Budget secondSparse) {
+            this(head, head.raw, head.labels, head.width, head.height,
+                    firstAuth, secondAuth, firstSparse, secondSparse);
+        }
+
+        private CollectorPair(Collector head, byte[] raw, byte[] labels, int width, int height,
+                Budget firstAuth, Budget secondAuth, Budget firstSparse, Budget secondSparse) {
+            this.head = head;
+            first = new Collector(raw, labels, width, height, firstAuth, firstSparse, head);
             second = new Collector(raw, labels, width, height, secondAuth, secondSparse, first);
         }
 
         void seal(Budget firstAuth, Budget secondAuth) {
+            seal(null, firstAuth, secondAuth);
+        }
+
+        boolean seal(Budget headAuth, Budget firstAuth, Budget secondAuth) {
+            boolean checkHead = head != null && head.prepareSeal(headAuth);
             boolean checkFirst = first.prepareSeal(firstAuth);
             boolean checkSecond = second.prepareSeal(secondAuth);
-            if (!checkFirst && !checkSecond) return;
-            if ((checkFirst ? first : second).unchanged()) return;
-            if (checkFirst) first.invalidate();
-            if (checkSecond) second.invalidate();
+            Collector source = checkHead ? head : checkFirst ? first : checkSecond ? second : null;
+            if (source != null && !source.unchanged()) {
+                if (checkHead) head.invalidate();
+                if (checkFirst) first.invalidate();
+                if (checkSecond) second.invalidate();
+            }
+            return head == null || head.valid;
         }
     }
 

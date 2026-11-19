@@ -8,15 +8,56 @@ from rapidocr import RapidOCR
 from rapidocr.main import CalRecBoxes, LoadImage, TextClassifier, TextDetector, TextRecognizer
 
 
+def _use_bounded_detector(cfg):
+    return (cfg.get("model_path") is None
+            and (cfg.ocr_version.value, cfg.lang_type.value, cfg.model_type.value) == ("PP-OCRv6", "ch", "small")
+            and cfg.task_type.value == "det"
+            and not any(cfg.engine_cfg.get(key, False) for key in
+                        ("use_cuda", "use_dml", "use_cann", "use_coreml")))
+
+
+def _bind_detector_output(engine):
+    import numpy as np
+    from onnxruntime import RunOptions
+
+    session = engine.session
+    input_name = session.get_inputs()[0].name
+    output_name = session.get_outputs()[0].name
+    options = RunOptions()
+    options.add_run_config_entry("memory.enable_memory_arena_shrinkage", "cpu:0")
+
+    def run(tensor):
+        # The default detector returns one score per spatial input position.
+        # RapidOCR preprocesses into a contiguous batch aligned to 32 pixels.
+        if (tensor.ndim != 4 or tensor.shape[:2] != (1, 3) or tensor.dtype != np.float32
+                or not tensor.flags.c_contiguous or any(size < 32 or size % 32 for size in tensor.shape[2:])):
+            return engine(tensor)
+        scores = np.empty((1, 1, *tensor.shape[2:]), np.float32)
+        binding = session.io_binding()
+        binding.bind_cpu_input(input_name, tensor)
+        binding.bind_output(output_name, "cpu", 0, np.float32, scores.shape, scores.ctypes.data)
+        session.run_with_iobinding(binding, options)
+        return scores
+
+    return run
+
+
 def _detector_with_worker_mode(cfg):
     from omegaconf import flag_override
     from rapidocr.inference_engine.onnxruntime.main import OrtInferSession
+
+    bounded = _use_bounded_detector(cfg)
 
     class DetectorSession(OrtInferSession):
         @staticmethod
         def _init_sess_opts(settings):
             options = OrtInferSession._init_sess_opts(settings)
             options.add_session_config_entry("session.set_denormal_as_zero", "1")
+            if bounded:
+                # A cached memory pattern would hold an extra activation slab.
+                options.enable_cpu_mem_arena = True
+                options.enable_mem_pattern = False
+                options.add_session_config_entry("session.use_device_allocator_for_initializers", "1")
             return options
 
     # Keep RapidOCR's model resolution, checksum and provider selection. Its
@@ -25,7 +66,11 @@ def _detector_with_worker_mode(cfg):
     local = cfg.copy()
     with flag_override(local, "allow_objects", True):
         local.session = session
-    return TextDetector(local)
+    detector = TextDetector(local)
+    if bounded and session.get_providers() == ["CPUExecutionProvider"]:
+        # Bind output outside the arena so the run can release unused workspace.
+        detector.session = _bind_detector_output(detector.session)
+    return detector
 
 
 class ScorePageOcr(RapidOCR):

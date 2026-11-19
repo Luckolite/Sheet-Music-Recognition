@@ -19,6 +19,8 @@ final class RawStaffLineDetector {
     private static final VarHandle GRAY_WORDS =
             MethodHandles.byteArrayViewVarHandle(long[].class, ByteOrder.nativeOrder());
     private static final long BYTE_HIGH_BITS = 0x8080808080808080L;
+    // Two set upper bits in every byte prove every sample is at least 192.
+    private static final long BRIGHT_BLOCK_MASK = 0xc0c0c0c0c0c0c0c0L;
     private static final long BRIGHT_LOW_BITS = 0x0101010101010101L * (DARK + 1 - 128);
 
     private RawStaffLineDetector() {}
@@ -67,13 +69,27 @@ final class RawStaffLineDetector {
     }
 
     private static long darkPixels(byte[] gray, int at) {
-        long word = (long) GRAY_WORDS.get(gray, at);
+        return darkLanes((long) GRAY_WORDS.get(gray, at));
+    }
+
+    private static long darkLanes(long word) {
         // Set each high bit before subtracting so no byte can borrow from its neighbor.
         return ~(((word | BYTE_HIGH_BITS) - BRIGHT_LOW_BITS) & word) & BYTE_HIGH_BITS;
     }
 
     static int countDarkRow(byte[] gray, int start, int width) {
         int at = start, end = start + width, strength = 0;
+        for (; at <= end - 4 * Long.BYTES; at += 4 * Long.BYTES) {
+            long first = (long) GRAY_WORDS.get(gray, at);
+            long second = (long) GRAY_WORDS.get(gray, at + Long.BYTES);
+            long third = (long) GRAY_WORDS.get(gray, at + 2 * Long.BYTES);
+            long fourth = (long) GRAY_WORDS.get(gray, at + 3 * Long.BYTES);
+            if (DARK < 192
+                    && (first & second & third & fourth & BRIGHT_BLOCK_MASK) == BRIGHT_BLOCK_MASK)
+                continue;
+            strength += Long.bitCount(darkLanes(first)) + Long.bitCount(darkLanes(second))
+                    + Long.bitCount(darkLanes(third)) + Long.bitCount(darkLanes(fourth));
+        }
         for (; at <= end - Long.BYTES; at += Long.BYTES)
             strength += Long.bitCount(darkPixels(gray, at));
         for (; at < end; at++) {

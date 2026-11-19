@@ -144,6 +144,13 @@ final class OmrScoreInterpreter {
         var restHeadOrigins =
                 new java.util.IdentityHashMap<Component, RestFigureOrigins.HeadOrigin>();
         var memberCollector = tremoloMemberCollector(gray, labels, width, height);
+        var members =
+                new ExactComponentMembers.CollectorPair(
+                        memberCollector,
+                        componentAuthenticationBudget(labels.length),
+                        componentAuthenticationBudget(labels.length),
+                        componentMembershipBudget(),
+                        componentMembershipBudget());
         List<Component> rawHeadComponents =
                 findComponents(
                         labels,
@@ -260,8 +267,30 @@ final class OmrScoreInterpreter {
                                 ledgerHalfUnisonWork)
                         && rawCourtesy.prepay(1, 64)) sharedUpperLedgerRails.put(c, Boolean.TRUE);
             }
-        if (!memberCollector.seal(
-                new ExactComponentMembers.Budget(2L * labels.length + 4096, 4096)))
+        var symbolMembers = members.first;
+        var clefKeyMembers = members.second;
+        List<Component> symbolComponents =
+                findComponents(
+                        labels,
+                        width,
+                        height,
+                        OmrMeasurePostProcessor.SYMBOL,
+                        gray,
+                        null,
+                        symbolMembers);
+        List<Component> clefOrKeyComponents =
+                findComponents(
+                        labels,
+                        width,
+                        height,
+                        OmrMeasurePostProcessor.CLEF_OR_KEY,
+                        gray,
+                        null,
+                        clefKeyMembers);
+        if (!members.seal(
+                componentAuthenticationBudget(labels.length),
+                componentAuthenticationBudget(labels.length),
+                componentAuthenticationBudget(labels.length)))
             if (sharedLedgerBodies != null) sharedLedgerBodies.clear();
         List<Component> recoveredFadedHeads = new ArrayList<>();
         List<Component> recoveredFilledFragmentHeads = new ArrayList<>();
@@ -698,39 +727,6 @@ final class OmrScoreInterpreter {
                 recoveredFadedHeads.add(candidate);
             }
         }
-        var members =
-                new ExactComponentMembers.CollectorPair(
-                        gray,
-                        labels,
-                        width,
-                        height,
-                        componentAuthenticationBudget(labels.length),
-                        componentAuthenticationBudget(labels.length),
-                        componentMembershipBudget(),
-                        componentMembershipBudget());
-        var symbolMembers = members.first;
-        var clefKeyMembers = members.second;
-        List<Component> symbolComponents =
-                findComponents(
-                        labels,
-                        width,
-                        height,
-                        OmrMeasurePostProcessor.SYMBOL,
-                        gray,
-                        null,
-                        symbolMembers);
-        List<Component> clefOrKeyComponents =
-                findComponents(
-                        labels,
-                        width,
-                        height,
-                        OmrMeasurePostProcessor.CLEF_OR_KEY,
-                        gray,
-                        null,
-                        clefKeyMembers);
-        members.seal(
-                componentAuthenticationBudget(labels.length),
-                componentAuthenticationBudget(labels.length));
         var splitAccidentalProofs = new ArrayList<SourceLocalAccidental.SplitAccidental>();
         var originalAccidentalGlyphs = new ArrayList<Object>();
         originalAccidentalGlyphs.addAll(symbolComponents);

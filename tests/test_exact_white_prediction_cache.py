@@ -59,6 +59,49 @@ def original_prediction(owner, gray):
 
 
 class ExactWhitePredictionCacheTest(unittest.TestCase):
+    def test_read_scope_reuses_only_owned_exact_page_buffers(self):
+        class LiteRuntime(FakeRuntime):
+            pass
+
+        LiteRuntime.__module__ = "ai_edge_litert.interpreter"
+        owner = make_reader()
+        owner.runtime = LiteRuntime()
+        owner.edge = reader._tile_edges()
+        owner._sparse_pairs_enabled = True
+        gray = np.full((127, 672), 17, np.uint8)
+        with owner.reuse_decoder():
+            labels = owner._predict_prepared_page(gray)
+            expected = labels.copy()
+            first_calls = owner.runtime.calls
+            labels.fill(255)
+            with owner.reuse_decoder():
+                reused = owner._predict_prepared_page(gray.copy())
+            np.testing.assert_array_equal(expected, reused)
+            self.assertEqual(first_calls, owner.runtime.calls)
+            reused.fill(255)
+            np.testing.assert_array_equal(expected, owner._predict_prepared_page(gray))
+
+            gray[0, 0] = 18
+            changed = owner._predict_prepared_page(gray)
+            self.assertGreater(owner.runtime.calls, first_calls)
+            self.assertFalse(np.array_equal(expected, changed))
+            calls_for_changed = owner.runtime.calls
+
+        self.assertIsNone(owner._last_page_prediction)
+        with owner.reuse_decoder():
+            np.testing.assert_array_equal(changed, owner._predict_prepared_page(gray))
+        self.assertGreater(owner.runtime.calls, calls_for_changed)
+
+    def test_read_scope_does_not_cache_a_custom_stateful_model(self):
+        owner = make_reader(known=False, stateful=True)
+        gray = np.full((119, 212), 17, np.uint8)
+        with owner.reuse_decoder():
+            first = owner._predict_prepared_page(gray)
+            second = owner._predict_prepared_page(gray)
+            self.assertIsNone(owner._last_page_prediction)
+        self.assertEqual(2, owner.runtime.calls)
+        self.assertFalse(np.array_equal(first, second))
+
     def test_arena_reused_after_invalid_prediction_and_padded_tiles(self):
         gray = np.full((127, 910), 255, np.uint8)
         gray[:, 400:405] = 0

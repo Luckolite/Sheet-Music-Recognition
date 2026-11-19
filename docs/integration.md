@@ -44,6 +44,23 @@ Set the initial `meter`, quarter-note `bpm`, and `key_fifths` as needed. The
 progress callback runs after each selected page, before final document assembly.
 Reuse one interpreter per worker.
 
+### Read several documents
+
+Use `reuse_decoder()` to keep the Java worker open between reads on the same
+interpreter. The first read starts the worker. With the bundled LiteRT model,
+an identical grayscale page of up to 500,000 pixels can reuse the previous
+segmentation. Each read still uses its own annotations and decoding options.
+Leaving the block closes the worker and clears the saved segmentation.
+
+```python
+from score_reader import Interpreter
+
+reader = Interpreter()
+with reader.reuse_decoder():
+    violin = reader.interpret_document("violin.pdf")
+    piano = reader.interpret_document("piano.png")
+```
+
 ### Export saved JSON
 
 Export again without running recognition:

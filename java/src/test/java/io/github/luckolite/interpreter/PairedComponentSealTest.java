@@ -43,6 +43,31 @@ public class PairedComponentSealTest {
         assertTrue(pair.second.seal(budget(0)));
     }
 
+    @Test
+    public void joinedSealKeepsTheHeadAndGlyphAuthenticationIndependent() {
+        for (boolean mutateBeforeSeal : new boolean[] {false, true}) {
+            byte[] raw = {1, 2, 3}, labels = {0, 2, 0};
+            var head = new ExactComponentMembers.Collector(
+                    raw, labels, labels.length, 1, budget(6), budget(100));
+            assertTrue(head.bindInput(labels, raw, labels.length, 1));
+            var pair = new ExactComponentMembers.CollectorPair(
+                    head, budget(6), budget(6), budget(100), budget(100));
+            var headSeal = budget(6);
+            var symbolSeal = budget(5);
+            var clefSeal = budget(6);
+            if (mutateBeforeSeal) labels[0] = 2;
+            assertEquals(!mutateBeforeSeal, pair.seal(headSeal, symbolSeal, clefSeal));
+            assertEquals(0, headSeal.work);
+            assertEquals(5, symbolSeal.work);
+            assertEquals(0, clefSeal.work);
+            assertFalse(pair.first.seal(budget(0)));
+            assertEquals(!mutateBeforeSeal, pair.second.seal(budget(0)));
+            raw[2] = 0;
+            assertFalse(head.revalidateForExport(budget(6)));
+            assertFalse(pair.second.revalidateForExport(budget(6)));
+        }
+    }
+
     private static ExactComponentMembers.CollectorPair collect(
             byte[] raw, byte[] labels, ExactComponentMembers.Budget firstAuth) {
         return new ExactComponentMembers.CollectorPair(

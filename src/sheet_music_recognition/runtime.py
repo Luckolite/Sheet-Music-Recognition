@@ -106,8 +106,8 @@ def _class_archive_slot(java, jar, cache):
 
 
 @contextmanager
-def ready_page_decoder(jar, pixels):
-    """Hold the current warm archive while a one-page pipe decoder uses it."""
+def ready_page_decoder(jar, pixels, *, short_tier=True):
+    """Hold the current warm archive while a pipe decoder starts."""
     cache = Path(os.environ.get("LOCALAPPDATA", ""))
     if sys.platform != "win32" or not 0 < pixels <= 500_000 or not cache.is_absolute():
         yield None
@@ -134,7 +134,7 @@ def ready_page_decoder(jar, pixels):
                     arguments = _archive_arguments(resolved, cache)
             except OSError:
                 pass
-        yield [java, "-Xmx1g", *short, *arguments] if arguments is not None else None
+        yield [java, "-Xmx1g", *(short if short_tier else ()), *arguments] if arguments is not None else None
 
 
 def _archive_arguments(java, cache):

@@ -11,13 +11,15 @@ import tempfile
 import zlib
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import ExitStack, nullcontext
+from contextlib import ExitStack, contextmanager, nullcontext
 from functools import lru_cache
 from pathlib import Path
+from threading import Event, Lock
 from typing import NamedTuple
 
 import numpy as np
 from PIL import ExifTags, Image, ImageOps
+from . import _short_arena
 from .runtime import inference_interpreter, java_executable, ready_page_decoder, run_page_decoder
 from .whitening import PaperBackgroundWhitening, WhiteningResult, MODEL_SHA256 as PAPER_FIELD_SHA256, RASTER_POLICY
 
@@ -26,6 +28,7 @@ MODEL_NAME = "music_sheets_v4_float16.tflite"
 _OCR_NUMBER = struct.Struct(">i5f")
 _OCR_METER = struct.Struct(">iii")
 _OCR_WORD_BOUNDS = struct.Struct(">4f")
+_REUSABLE_PAGE_PIXELS = 500_000
 
 
 def tile_starts(size):
@@ -285,35 +288,102 @@ class Interpreter:
         self._threads = threads
         self.edge = _tile_edges()
         self.ocr = None
+        self._decoder_scope = None
+        self._reusable_decoder = None
         self.paper_whitening = PaperBackgroundWhitening(threads=threads)
         self._pending_model = (path, model_path is None) if _defer_model else None
         if self._pending_model is None:
             self._initialize_model(path, bundled=model_path is None)
 
-    def _initialize_model(self, path, bundled):
+    @contextmanager
+    def reuse_decoder(self):
+        """Keep one Java decoder open for a series of reads on this interpreter."""
+        if getattr(self, "_decoder_scope", None) is not None:
+            yield self
+            return
+        with ExitStack() as stack:
+            self._decoder_scope = stack
+            self._reusable_decoder = None
+            self._last_page_prediction = None
+            try:
+                yield self
+            finally:
+                self._last_page_prediction = None
+                self._reusable_decoder = None
+                self._decoder_scope = None
+
+    def _try_reusable_decoder(self, arguments, pixels):
+        scope = getattr(self, "_decoder_scope", None)
+        if scope is None:
+            return False
+
+        from .document import _DecoderPipeError, _decoder_pipe
+
+        try:
+            if self._reusable_decoder is None:
+                # Keep the archive leased until the new worker has responded.
+                # The resident worker keeps normal tiered compilation.
+                with ready_page_decoder(self.jar, pixels, short_tier=False) as options:
+                    command = options or [java_executable(), "-Xmx1g"]
+                    _, decoder = scope.enter_context(_decoder_pipe(command, self.jar))
+                    decoder(arguments)
+                    self._reusable_decoder = decoder
+            else:
+                self._reusable_decoder(arguments)
+        except (OSError, _DecoderPipeError):
+            # Retry using the ordinary decoder and the same prepared page.
+            self._reusable_decoder = None
+            scope.close()
+            return False
+        return True
+
+    def _initialize_model(self, path, bundled, *, visible_height=320):
+        self._last_page_prediction = None
+        requested_height = _short_arena.required_height(visible_height)
+        content = path.read_bytes() if bundled and requested_height <= _short_arena.MAX_ARENA_HEIGHT else None
         digest = hashlib.sha256()
-        with path.open("rb") as model:
-            while chunk := model.read(256 * 1024):
-                digest.update(chunk)
+        if content is None:
+            with path.open("rb") as model:
+                while chunk := model.read(256 * 1024):
+                    digest.update(chunk)
+        else:
+            digest.update(content)
         model_sha256 = digest.hexdigest()
         if bundled and model_sha256 != MODEL_SHA256:
             raise ValueError("Bundled model checksum mismatch")
+
         interpreter = inference_interpreter(bundled=bundled)
-        runtime = interpreter(model_path=str(path), num_threads=self._threads)
-        runtime.allocate_tensors()
-        input_info = runtime.get_input_details()[0]
-        output_info = runtime.get_output_details()[0]
-        if input_info["shape"].tolist() != [1, 3, 320, 320] or input_info["dtype"] != np.float32:
-            raise ValueError("Expected float32 input [1,3,320,320]")
-        if output_info["shape"].tolist() != [1, 320, 320] or output_info["dtype"] != np.int64:
-            raise ValueError("Expected int64 class IDs [1,320,320]")
+        selected_height = 320
+        allocated = None
+        if (content is not None and model_sha256 == _short_arena.MODEL_SHA256
+                and getattr(interpreter, "__module__", None) == "ai_edge_litert.interpreter"):
+            try:
+                allocated = self._allocate_model(
+                    interpreter, requested_height, model_content=_short_arena.specialize(content, requested_height))
+                selected_height = requested_height
+            except (OSError, RuntimeError, ValueError):
+                pass  # The original model remains available on this runtime.
+
+        if allocated is None:
+            allocated = self._allocate_model(interpreter, 320, model_path=str(path))
+        self.runtime, self.input, self.output = allocated
         self.model_sha256 = model_sha256
-        self.runtime = runtime
-        self.input = input_info
-        self.output = output_info
+        self._model_height = selected_height
+        self._compact_model_path = path if selected_height != 320 else None
         # Pairing relies on the spatial support of this exact graph.
         self._sparse_pairs_enabled = bundled and model_sha256 == (
             "92ab7c34c27cb704d95f0cde247b3611d1563fdf1c114b9f9817abb18a7b6a93")
+
+    def _allocate_model(self, interpreter, height, **model):
+        runtime = interpreter(**model, num_threads=self._threads)
+        runtime.allocate_tensors()
+        input_info = runtime.get_input_details()[0]
+        output_info = runtime.get_output_details()[0]
+        if input_info["shape"].tolist() != [1, 3, height, 320] or input_info["dtype"] != np.float32:
+            raise ValueError(f"Expected float32 input [1,3,{height},320]")
+        if output_info["shape"].tolist() != [1, height, 320] or output_info["dtype"] != np.int64:
+            raise ValueError(f"Expected int64 class IDs [1,{height},320]")
+        return runtime, input_info, output_info
 
     def interpret_document(self, source, *, pages=None, meter=(4, 4), bpm=120,
                            key_fifths=0, width=2048, annotations=None, progress=None):
@@ -336,8 +406,14 @@ class Interpreter:
         if not width or not height or gray.size > 20_000_000:
             raise ValueError("Invalid image dimensions")
         pending = getattr(self, "_pending_model", None)
+        compact_path = getattr(self, "_compact_model_path", None)
+        if compact_path is not None and _short_arena.required_height(height) > self._model_height:
+            # Release the short arena before allocating its replacement.
+            pending = self._pending_model = (compact_path, True)
+            self._compact_model_path = None
+            del self.runtime
         if pending is not None:
-            self._initialize_model(*pending)
+            self._initialize_model(*pending, visible_height=height if compact_path is None else 320)
             self._pending_model = None
         labels = np.zeros_like(gray)
         ch, cw = min(320, height), min(320, width)
@@ -445,35 +521,50 @@ class Interpreter:
                   page_index=None, instrument=None):
         """Recognize an image; optional page_index is its zero-based physical source page."""
         self._validate_decode_context(meter, key_fifths, page_index, instrument)
-        if annotations is None:
+        if annotations is None and getattr(self, "_decoder_scope", None) is None:
             from .document import _DecoderPipeError, _decoder_pipe
 
             with ExitStack() as stack:
-                run_decoder = None
+                pipe = None
+                launch_attempted = False
+                launch_lock = Lock()
+
+                def start_decoder(pixels):
+                    nonlocal pipe, launch_attempted
+                    with launch_lock:
+                        if not launch_attempted:
+                            launch_attempted = True
+                            try:
+                                java = stack.enter_context(ready_page_decoder(self.jar, pixels))
+                                if java is not None:
+                                    pipe = stack.enter_context(_decoder_pipe(java, self.jar))
+                            except OSError:
+                                pass  # An optional launch can fall back to the ordinary decoder.
+                        return pipe
 
                 def prepare_geometry(gray, labels, corrected):
-                    nonlocal run_decoder
-                    java = stack.enter_context(ready_page_decoder(self.jar, gray.size))
-                    if java is None:
+                    nonlocal pipe
+                    active = start_decoder(gray.size)
+                    if active is None:
                         return
                     try:
+                        send, _ = active
                         folder = Path(stack.enter_context(tempfile.TemporaryDirectory(
                             prefix="score-reader-geometry-")))
                         page = folder / "geometry.page.gz"
                         write_page(page, labels, gray)
                         correction = _write_decoder_raster(folder, corrected)
-                        send, decode = stack.enter_context(_decoder_pipe(java, self.jar))
                         send((str(page), str(correction) if correction is not None else ""))
-                        run_decoder = decode
                     except OSError:
-                        # The ordinary decoder still has the complete prepared page.
-                        pass
+                        with launch_lock:
+                            pipe = None
 
-                prepared = self._prepare_page(image, width, annotations, prepare_geometry=prepare_geometry)
-                if run_decoder is not None:
+                prepared = self._prepare_page(
+                    image, width, annotations, prepare_geometry=prepare_geometry, start_decoder=start_decoder)
+                if pipe is not None:
                     try:
                         return self._decode_page(
-                            prepared, meter, key_fifths, page_index, instrument, run_decoder=run_decoder)
+                            prepared, meter, key_fifths, page_index, instrument, run_decoder=pipe[1])
                     except _DecoderPipeError:
                         pass
         else:
@@ -507,13 +598,43 @@ class Interpreter:
             return page_annotations(words, [])
         return dict(page_annotations(words, annotations["tabWords"]), **annotations)
 
-    def _prepare_page(self, image, width, annotations, *, prepare_geometry=None):
+    def _predict_prepared_page(self, gray):
+        if getattr(self, "_decoder_scope", None) is None:
+            return self.predict(gray)
+        eligible = (gray.size <= _REUSABLE_PAGE_PIXELS and self.edge is _tile_edges()
+                    and getattr(self.predict, "__func__", None) is Interpreter.predict)
+        cached = self._last_page_prediction
+        if eligible and cached is not None:
+            runtime, image, labels = cached
+            if runtime is self.runtime and np.array_equal(gray, image):
+                return labels.copy()
+        self._last_page_prediction = None
+        labels = self.predict(gray)
+        if (eligible and getattr(self, "_sparse_pairs_enabled", False)
+                and type(self.runtime).__module__ == "ai_edge_litert.interpreter"):
+            # Own both buffers so changes to a prepared page cannot poison later reads.
+            self._last_page_prediction = self.runtime, gray.copy(), labels.copy()
+        return labels
+
+    def _prepare_page(self, image, width, annotations, *, prepare_geometry=None, start_decoder=None):
         gray = grayscale(image, width)
         needs_ocr = annotations is None or ("tabWords" in annotations and "words" not in annotations)
+        prediction_done = Event() if start_decoder is not None else None
+
+        def read_annotations():
+            result = self._read_annotations(gray, annotations)
+            if prediction_done is not None and not prediction_done.is_set():
+                start_decoder(gray.size)
+            return result
+
         executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="score-ocr") if needs_ocr else nullcontext()
         with executor as worker:
-            ocr = worker.submit(self._read_annotations, gray, annotations) if worker is not None else None
-            labels = self.predict(gray)
+            ocr = worker.submit(read_annotations) if worker is not None else None
+            try:
+                labels = self._predict_prepared_page(gray)
+            finally:
+                if prediction_done is not None:
+                    prediction_done.set()
             corrected = self.paper_whitening.correct(gray, labels)
             if ocr is not None:
                 if prepare_geometry is not None and not ocr.done():
@@ -536,12 +657,12 @@ class Interpreter:
                 arguments.extend(["--page-index", str(page_index)])
             if instrument is not None:
                 arguments.extend(["--instrument", instrument])
-            if run_decoder is None:
+            if run_decoder is not None:
+                run_decoder(arguments)
+            elif not self._try_reusable_decoder(arguments, gray.size):
                 run = run_page_decoder(java_executable(), self.jar, gray.size, arguments)
                 if run.returncode:
                     raise RuntimeError("Decoder failed: " + run.stderr.strip())
-            else:
-                run_decoder(arguments)
             result = json.loads(output.read_text(encoding="utf-8"))
         result["paperWhitening"] = dict(policy=RASTER_POLICY, modelSha256=PAPER_FIELD_SHA256,
                                        segmentationRasterSha256=corrected.raw_sha256,

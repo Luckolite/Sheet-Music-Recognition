@@ -2,16 +2,161 @@
 # SPDX-License-Identifier: Apache-2.0
 import tempfile
 import unittest
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from errno import EINVAL
 from pathlib import Path
+from threading import Event
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
+
+import numpy as np
 
 from sheet_music_recognition import document, reader, runtime
 
 
 class SmallPageJvmTest(unittest.TestCase):
+    def test_reusable_decoder_is_lazy_and_closes_after_nested_reads(self):
+        engine = reader.Interpreter.__new__(reader.Interpreter)
+        engine.jar = Path("interpreter.jar")
+        calls = []
+        closed = []
+
+        @contextmanager
+        def pipe(_java, _jar):
+            try:
+                yield calls.append, calls.append
+            finally:
+                closed.append(True)
+
+        with (patch.object(reader, "java_executable", return_value="java"),
+              patch.object(reader, "ready_page_decoder", return_value=nullcontext(None)),
+              patch.object(document, "_decoder_pipe", side_effect=pipe) as launch):
+            with engine.reuse_decoder() as scoped:
+                self.assertIs(scoped, engine)
+                launch.assert_not_called()
+                self.assertTrue(engine._try_reusable_decoder(["first"], 450_000))
+                with engine.reuse_decoder():
+                    self.assertTrue(engine._try_reusable_decoder(["second"], 450_000))
+                self.assertFalse(closed)
+                with document._document_page_decoder(engine) as decode:
+                    self.assertIs(decode.__self__, engine)
+                launch.assert_called_once()
+            self.assertEqual([True], closed)
+            self.assertFalse(engine._try_reusable_decoder(["outside"], 450_000))
+        self.assertEqual([["first"], ["second"]], calls)
+
+    def test_reusable_decoder_releases_the_archive_after_its_first_response(self):
+        engine = reader.Interpreter.__new__(reader.Interpreter)
+        engine.jar = Path("interpreter.jar")
+        archive = ["java", "-Xmx1g", "-Xshare:on", "-XX:SharedArchiveFile=test.jsa"]
+        events = []
+
+        @contextmanager
+        def ready(jar, pixels, *, short_tier):
+            self.assertEqual((engine.jar, 450_000, False), (jar, pixels, short_tier))
+            events.append("lease")
+            try:
+                yield archive
+            finally:
+                events.append("release")
+
+        @contextmanager
+        def pipe(java, _jar):
+            self.assertEqual(archive, java)
+            try:
+                yield None, lambda args: events.append(args[0])
+            finally:
+                events.append("close")
+
+        with (patch.object(reader, "ready_page_decoder", side_effect=ready),
+              patch.object(document, "_decoder_pipe", side_effect=pipe)):
+            with engine.reuse_decoder():
+                self.assertTrue(engine._try_reusable_decoder(["first"], 450_000))
+                self.assertEqual(["lease", "first", "release"], events)
+                self.assertTrue(engine._try_reusable_decoder(["second"], 650_000))
+                self.assertEqual(["lease", "first", "release", "second"], events)
+        self.assertEqual(["lease", "first", "release", "second", "close"], events)
+
+    def test_failed_reusable_decoder_retries_the_same_page_and_reopens(self):
+        engine = reader.Interpreter.__new__(reader.Interpreter)
+        engine.jar = Path("interpreter.jar")
+        engine.model_sha256 = "model"
+        paper = SimpleNamespace(changed=False, raw_sha256="raw", decoder_sha256="raw")
+        prepared = reader._PreparedPage(SimpleNamespace(size=200), None, {}, paper)
+        packet_log = []
+        closed = []
+
+        def worker(arguments):
+            packet_log.append(("worker", arguments))
+            if len(packet_log) == 1:
+                raise document._DecoderPipeError("worker exited")
+            Path(arguments[1]).write_text('{"events": []}', encoding="utf-8")
+
+        def ordinary(_java, _jar, _pixels, arguments):
+            packet_log.append(("ordinary", arguments))
+            Path(arguments[1]).write_text('{"events": []}', encoding="utf-8")
+            return SimpleNamespace(returncode=0)
+
+        @contextmanager
+        def pipe(_java, _jar):
+            try:
+                yield None, worker
+            finally:
+                closed.append(True)
+
+        with (patch.object(reader, "java_executable", return_value="java"),
+              patch.object(reader, "ready_page_decoder", return_value=nullcontext(None)),
+              patch.object(document, "_decoder_pipe", side_effect=pipe) as launch,
+              patch.object(reader, "write_page"),
+              patch.object(reader, "run_page_decoder", side_effect=ordinary)):
+            with engine.reuse_decoder():
+                first = engine._decode_page(prepared, (4, 4), 0, None, None)
+                second = engine._decode_page(prepared, (4, 4), 0, None, None)
+                self.assertEqual(first, second)
+                self.assertEqual(2, launch.call_count)
+                self.assertEqual([True], closed)
+            self.assertEqual([True, True], closed)
+        self.assertEqual(["worker", "ordinary", "worker"], [kind for kind, _ in packet_log])
+        self.assertEqual(packet_log[0][1], packet_log[1][1])
+
+    def test_finished_ocr_launches_one_decoder_while_prediction_is_pending(self):
+        engine = reader.Interpreter.__new__(reader.Interpreter)
+        engine.jar = Path("interpreter.jar")
+        gray = np.full((16, 32), 255, np.uint8)
+        engine.paper_whitening = SimpleNamespace(correct=Mock())
+
+        def run_page(_arguments):
+            pass
+
+        for startup_fails in (False, True):
+            with self.subTest(startup_fails=startup_fails):
+                started = Event()
+
+                def predict(image):
+                    self.assertIs(image, gray)
+                    self.assertTrue(started.wait(5))
+                    return np.zeros_like(image)
+
+                @contextmanager
+                def pipe(_java, _jar):
+                    started.set()
+                    if startup_fails:
+                        raise OSError("startup failed")
+                    yield Mock(), run_page
+
+                with (patch.object(engine, "predict", side_effect=predict),
+                      patch.object(engine, "_read_annotations", return_value={"words": []}),
+                      patch.object(engine, "_decode_page", return_value="score") as decode,
+                      patch.object(reader, "grayscale", return_value=gray),
+                      patch.object(reader, "ready_page_decoder", return_value=nullcontext(["java"])),
+                      patch.object(reader, "write_page"),
+                      patch.object(reader, "_write_decoder_raster", return_value=None),
+                      patch.object(document, "_decoder_pipe", side_effect=pipe) as launch):
+                    self.assertEqual("score", engine.interpret(None))
+                launch.assert_called_once()
+                self.assertIs(None if startup_fails else run_page,
+                              decode.call_args.kwargs.get("run_decoder"))
+
     def test_failed_geometry_pipe_reuses_the_prepared_page_for_ordinary_decode(self):
         engine = reader.Interpreter.__new__(reader.Interpreter)
         engine.jar = Path("interpreter.jar")
@@ -19,7 +164,7 @@ class SmallPageJvmTest(unittest.TestCase):
         sent = []
         calls = []
 
-        def prepare(_image, _width, _annotations, *, prepare_geometry):
+        def prepare(_image, _width, _annotations, *, prepare_geometry, start_decoder):
             prepare_geometry(SimpleNamespace(size=200), None, SimpleNamespace(changed=False))
             return prepared
 

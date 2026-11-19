@@ -28,7 +28,8 @@ def _document_page_decoder(engine):
     from .runtime import java_executable
 
     decode = engine._decode_page
-    if getattr(decode, "__func__", None) is not Interpreter._decode_page:
+    if (getattr(engine, "_decoder_scope", None) is not None
+            or getattr(decode, "__func__", None) is not Interpreter._decode_page):
         yield decode
         return
 
