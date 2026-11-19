@@ -5,10 +5,31 @@ import argparse
 import json
 from pathlib import Path
 import sys
+import logging
+from contextlib import contextmanager
 from .document import interpret_document
 from .reader import Interpreter
 from .midi import write_midi
 from .musicxml import write_musicxml
+
+
+@contextmanager
+def _ocr_diagnostics():
+    # Redirected progress may land on a slow sink. Keep model warnings and
+    # errors, and leave interactive diagnostics at the library's level.
+    if sys.stderr.isatty():
+        yield
+        return
+    logger = logging.getLogger("RapidOCR")
+
+    def warnings_only(record):
+        return record.levelno >= logging.WARNING
+
+    logger.addFilter(warnings_only)
+    try:
+        yield
+    finally:
+        logger.removeFilter(warnings_only)
 
 
 def main():
@@ -62,11 +83,12 @@ def main():
         def progress(_completed, _total, source_page):
             print(f"Read page {source_page}", file=sys.stderr)
 
-        document = interpret_document(
-            engine, args.input, pages=pages, meter=meter, bpm=args.bpm,
-            key_fifths=args.key_fifths, width=args.width,
-            annotations=annotations, progress=progress, instrument=args.instrument,
-        )
+        with _ocr_diagnostics():
+            document = interpret_document(
+                engine, args.input, pages=pages, meter=meter, bpm=args.bpm,
+                key_fifths=args.key_fifths, width=args.width,
+                annotations=annotations, progress=progress, instrument=args.instrument,
+            )
         results = document["pages"]
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(document, indent=2, allow_nan=False) + "\n", encoding="utf-8")

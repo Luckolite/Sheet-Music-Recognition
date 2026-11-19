@@ -10,16 +10,52 @@ final class DenseTieArcContinuity {
     private static final long HIGH_BITS = 0x8080808080808080L;
     private static final long BYTE_ONES = 0x0101010101010101L;
 
+    /** Thin stroke centers from one system-end search on an unchanged raster. */
+    static final class StrokeCache {
+        private static final int SIZE = 512;
+        private int[] pixels, cutoffs, reaches, caps;
+        private float[] centers;
+
+        float center(StraightRows source, int at, int y, int height, int reach, float maximum) {
+            if (pixels == null) {
+                pixels = new int[SIZE];
+                cutoffs = new int[SIZE];
+                reaches = new int[SIZE];
+                caps = new int[SIZE];
+                centers = new float[SIZE];
+            }
+            int cap = Float.floatToRawIntBits(maximum), pixelKey = at + 1;
+            int key = at * 31 + source.inkLimit * 17 + reach * 5 + cap;
+            int slot = ((key ^ (key >>> 16)) * 0x9e3779b9) >>> 23;
+            if (pixels[slot] == pixelKey && cutoffs[slot] == source.inkLimit
+                    && reaches[slot] == reach && caps[slot] == cap) return centers[slot];
+            float result = source.readStroke(at, y, height, reach, maximum);
+            pixels[slot] = pixelKey;
+            cutoffs[slot] = source.inkLimit;
+            reaches[slot] = reach;
+            caps[slot] = cap;
+            centers[slot] = result;
+            return result;
+        }
+    }
+
     static final class StraightRows {
         private final byte[] gray;
         private final int width, left, right, inkLimit, first;
         private final byte[] states;
         private final float minimum;
+        private final StrokeCache strokeCache;
         private int[] previousFrontier, skippedFrontier, nextFrontier;
         private float[] flatColumns;
         private int flatColumnsReady;
 
         StraightRows(byte[] gray, int width, int left, int right, int inkLimit, int first, int last) {
+            this(gray, width, left, right, inkLimit, first, last, null);
+        }
+
+        StraightRows(byte[] gray, int width, int left, int right, int inkLimit, int first, int last,
+                StrokeCache strokeCache) {
+            this.strokeCache = strokeCache;
             this.gray = gray;
             this.width = width;
             this.left = left;
@@ -52,6 +88,11 @@ final class DenseTieArcContinuity {
 
         /** Center of the thresholded vertical stroke, or NaN if it is too thick for a tie. */
         float strokeCenter(int at, int y, int height, int reach, float maximumThickness) {
+            if (strokeCache == null) return readStroke(at, y, height, reach, maximumThickness);
+            return strokeCache.center(this, at, y, height, reach, maximumThickness);
+        }
+
+        private float readStroke(int at, int y, int height, int reach, float maximumThickness) {
             int inkTop = y, inkBottom = y;
             int firstRow = Math.max(0, y - reach);
             int pixel = at - width;

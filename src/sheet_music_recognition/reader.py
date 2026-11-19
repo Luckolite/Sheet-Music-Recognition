@@ -349,8 +349,12 @@ class Interpreter:
             if pairs:
                 paper = getattr(self, "_white_prediction", None)
                 if paper is None:
-                    paper = Interpreter.predict(self, np.full((320, 320), 255, np.uint8))
-                    paper.setflags(write=False)
+                    if bundled and type(self.runtime).__module__ == "ai_edge_litert.interpreter":
+                        # The pinned graph and runtime classify every pixel of a white tile as background.
+                        paper = np.broadcast_to(np.uint8(0), (320, 320))
+                    else:
+                        paper = Interpreter.predict(self, np.full((320, 320), 255, np.uint8))
+                        paper.setflags(write=False)
                     self._white_prediction = paper
         for index, (region, wins) in enumerate(_tile_windows(height, width, self.edge, rows, columns)):
             tile = gray[region]
@@ -379,12 +383,16 @@ class Interpreter:
                 if pair is not None:
                     partner, first_box, second_box = pair
                     tile = np.minimum(tile, gray[regions[partner]])
-                tensor = staging if tensor_view is None else input_buffer()
-                if tensor_view is not None and (ch < 320 or cw < 320):
-                    tensor.fill(255)
-                tensor[0, :, :ch, :cw] = tile
                 if tensor_view is None:
+                    tensor = staging
+                    tensor[0, :, :ch, :cw] = tile
                     self.runtime.set_tensor(self.input["index"], tensor)
+                else:
+                    tensor = input_buffer()
+                    # The pinned bundled graph slices the first channel before normalization.
+                    if ch < 320 or cw < 320:
+                        tensor[0, 0].fill(255)
+                    tensor[0, 0, :ch, :cw] = tile
                 # TFLite may move its arena during invoke. Hold only the getter across calls.
                 del tensor
                 self.runtime.invoke()

@@ -99,7 +99,26 @@ final class SeparatedRestInk {
         return false;
     }
 
+    private static final int EMPTY_CROP_CACHE_SIZE = 1024;
+
+    private record EmptyCrop(long bounds, long ignoredRows, int gapBits) {}
+
     static final class Scratch {
+        private final byte[] readRaster;
+        private final int readWidth, readHeight;
+        private EmptyCrop[] emptyCrops;
+
+        Scratch() {
+            this(null, 0, 0);
+        }
+
+        /** Scope empty results to one scan of an unchanged raster. */
+        Scratch(byte[] readRaster, int readWidth, int readHeight) {
+            this.readRaster = readRaster;
+            this.readWidth = readWidth;
+            this.readHeight = readHeight;
+        }
+
         private byte[] visited = new byte[0];
         private int[] queue = new int[0];
         private int[] crossingRows;
@@ -134,6 +153,45 @@ final class SeparatedRestInk {
     }
 
     static List<Body> find(
+            byte[] gray,
+            int width,
+            int height,
+            int left,
+            int right,
+            int top,
+            int bottom,
+            boolean[] line,
+            float gap,
+            Scratch scratch) {
+        if (scratch.readRaster != gray || gray == null || scratch.readWidth != width
+                || scratch.readHeight != height || line == null || line.length > Long.SIZE
+                || left < 0 || right < left || top < 0 || bottom < top
+                || (left | right | top | bottom) > 65535 || line.length != bottom - top + 1)
+            return findUncached(gray, width, height, left, right, top, bottom, line, gap, scratch);
+
+        long bounds = ((long) left << 48) | ((long) right << 32) | ((long) top << 16) | bottom;
+        long ignoredRows = 0L;
+        for (int i = 0; i < line.length; i++)
+            if (line[i]) ignoredRows |= 1L << i;
+        int gapBits = Float.floatToRawIntBits(gap);
+        int slot = (Long.hashCode(bounds) * 31 + Long.hashCode(ignoredRows) * 17 + gapBits)
+                & (EMPTY_CROP_CACHE_SIZE - 1);
+        var emptyCrops = scratch.emptyCrops;
+        if (emptyCrops != null) {
+            var previous = emptyCrops[slot];
+            if (previous != null && previous.bounds() == bounds && previous.ignoredRows() == ignoredRows
+                    && previous.gapBits() == gapBits) return List.of();
+        }
+
+        var result = findUncached(gray, width, height, left, right, top, bottom, line, gap, scratch);
+        if (result.isEmpty()) {
+            if (emptyCrops == null) scratch.emptyCrops = emptyCrops = new EmptyCrop[EMPTY_CROP_CACHE_SIZE];
+            emptyCrops[slot] = new EmptyCrop(bounds, ignoredRows, gapBits);
+        }
+        return result;
+    }
+
+    private static List<Body> findUncached(
             byte[] gray,
             int width,
             int height,
@@ -286,9 +344,14 @@ final class SeparatedRestInk {
                         eligible = b < rows - 1 && !(r - l + 1 > maximumWidth)
                                 && !(b - seedRow + 1 > maximumHeight);
                     }
-                    if (!eligible && crossingRows != null && rowWords == 1) {
-                        discardComponent(queue, cursor - 1, count, columnBits, columnMask,
-                                rows, crossingRows, remainingInk, scratch);
+                    if (!eligible && crossingRows != null && rowWords <= 2) {
+                        if (rowWords == 1) {
+                            discardComponent(queue, cursor - 1, count, columnBits, columnMask,
+                                    rows, crossingRows, remainingInk, scratch);
+                        } else {
+                            discardWideComponent(queue, cursor - 1, count, columnBits, columnMask,
+                                    rows, crossingRows, remainingInk, scratch);
+                        }
                         break;
                     }
                     if (crossingRows == null) {
@@ -409,6 +472,62 @@ final class SeparatedRestInk {
                 ink[neighbor] &= ~fresh;
                 if (pending[neighbor] == 0) work[active++] = neighbor;
                 pending[neighbor] |= fresh;
+            }
+        }
+    }
+
+    /** Finish discarding a component whose visible rows use two words. */
+    private static void discardWideComponent(int[] work, int first, int count, int columnBits,
+            int columnMask, int rows, int[] crossing, long[] ink, Scratch scratch) {
+        if (scratch.pending == null || scratch.pending.length < rows * 2)
+            scratch.pending = new long[rows * 2];
+        long[] pending = scratch.pending;
+        int active = 0;
+        for (int i = first; i < count; i++) {
+            int pixel = work[i], row = pixel >>> columnBits, base = row * 2;
+            if ((pending[base] | pending[base + 1]) == 0) work[active++] = row;
+            int x = pixel & columnMask;
+            pending[base + (x >>> 6)] |= 1L << x;
+        }
+        while (active > 0) {
+            int row = work[--active], base = row * 2;
+            long waveLow = pending[base], waveHigh = pending[base + 1];
+            long low = waveLow, high = waveHigh;
+            pending[base] = pending[base + 1] = 0;
+            for (;;) {
+                long nextLow = ((waveLow << 1) | (waveLow >>> 1) | (waveHigh << 63)) & ink[base];
+                long nextHigh = ((waveHigh << 1) | (waveHigh >>> 1) | (waveLow >>> 63)) & ink[base + 1];
+                if ((nextLow | nextHigh) == 0) break;
+                ink[base] ^= nextLow;
+                ink[base + 1] ^= nextHigh;
+                low |= nextLow;
+                high |= nextHigh;
+                waveLow = nextLow;
+                waveHigh = nextHigh;
+            }
+            for (int direction = 0; direction < 2; direction++) {
+                int neighbor = crossing[base + direction];
+                if (neighbor < 0) continue;
+                int nextBase = neighbor * 2;
+                if ((ink[nextBase] | ink[nextBase + 1]) == 0) continue;
+                long columnsLow = low, columnsHigh = high;
+                int reach = Math.min(127, Math.abs(neighbor - row));
+                for (int covered = 0; covered < reach;) {
+                    int step = Math.min(reach - covered, Math.min(63, 2 * covered + 1));
+                    long nextLow = columnsLow | (columnsLow << step) | (columnsLow >>> step)
+                            | (columnsHigh << (64 - step));
+                    columnsHigh |= (columnsHigh << step) | (columnsHigh >>> step)
+                            | (columnsLow >>> (64 - step));
+                    columnsLow = nextLow;
+                    covered += step;
+                }
+                long freshLow = columnsLow & ink[nextBase], freshHigh = columnsHigh & ink[nextBase + 1];
+                if ((freshLow | freshHigh) == 0) continue;
+                ink[nextBase] ^= freshLow;
+                ink[nextBase + 1] ^= freshHigh;
+                if ((pending[nextBase] | pending[nextBase + 1]) == 0) work[active++] = neighbor;
+                pending[nextBase] |= freshLow;
+                pending[nextBase + 1] |= freshHigh;
             }
         }
     }

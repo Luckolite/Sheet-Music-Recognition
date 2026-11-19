@@ -616,9 +616,10 @@ final class MaximalRawBarExtractor {
             int groups = 0;
             for (int i = 0; i < count; i++) if (!sameAsLeft[active[i]]) groups++;
             int centers = sections.spanBottom - sections.spanTop + 1 - 2 * sections.radius;
-            // Amortize construction over repeated columns; bound speculative work on tight budgets.
+            // Reuse vertical sections across slope searches, including distinct neighboring columns.
+            // Keep speculative construction bounded when the lane has a tight work budget.
             long allowance = availableWork / 8;
-            if (groups == 0 || groups * 3 > count || centers <= 0 || allowance < (long) groups * centers)
+            if (groups == 0 || centers <= 0 || allowance < (long) groups * centers)
                 return null;
             var plan = new SectionPlan(sections, intercepts, groups);
             for (int i = 0; i < count; i++) {

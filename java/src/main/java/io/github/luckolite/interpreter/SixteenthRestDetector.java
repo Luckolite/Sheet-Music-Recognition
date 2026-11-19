@@ -2037,7 +2037,7 @@ final class SixteenthRestDetector {
                                         s.index(),
                                         s.count()),
                                 (s.top() + s.bottom()) * .5f));
-        var componentScratch = new SeparatedRestInk.Scratch();
+        var componentScratch = new SeparatedRestInk.Scratch(gray, width, height);
         byte[] componentOriginal = null;
         boolean componentOriginalResolved = false;
         RestColumnProjection projection = null;

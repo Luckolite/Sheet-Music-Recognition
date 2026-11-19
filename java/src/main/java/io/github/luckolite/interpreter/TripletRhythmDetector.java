@@ -4039,7 +4039,10 @@ final class TripletRhythmDetector {
                 int origin = row + seedX;
                 if (flood.visited[origin]) continue;
                 if (origin != firstOrigin && (gray[raster + seedX] & 255) > NUMERAL_INK_LIMIT) {
-                    flood.visited[origin] = true;
+                    // Only ink can seed a flood. Bright neighbors are checked when reached.
+                    int next = nextNumeralInk(gray, raster + seedX + 1, raster + localWidth);
+                    if (next < 0) break;
+                    seedX = next - raster - 1;
                     continue;
                 }
                 flood.collect(seedX, seedY, usesComponentShape ? shapeLimit : 0);
@@ -4227,22 +4230,27 @@ final class TripletRhythmDetector {
 
     private static int firstNumeralInk(byte[] gray, int width, int left,
             int top, int bottom, int localWidth) {
-        int words = localWidth - localWidth % Long.BYTES;
         for (int y = top, origin = 0, start = top * width + left; y <= bottom;
                 y++, origin += localWidth, start += width) {
-            int at = start, wordEnd = start + words, end = start + localWidth;
-            for (; at < wordEnd; at += Long.BYTES) {
-                long word = (long) NUMERAL_WORDS.get(gray, at);
-                // With the high bits set before subtracting, no byte borrows from its neighbor.
-                long bright = ((word | NUMERAL_BYTE_HIGH_BITS) - NUMERAL_BRIGHT_LOW_BITS)
-                        & word & NUMERAL_BYTE_HIGH_BITS;
-                if (bright == NUMERAL_BYTE_HIGH_BITS) continue;
-                for (int i = at; i < at + Long.BYTES; i++)
-                    if ((gray[i] & 255) <= NUMERAL_INK_LIMIT) return origin + i - start;
-            }
-            for (; at < end; at++)
-                if ((gray[at] & 255) <= NUMERAL_INK_LIMIT) return origin + at - start;
+            int ink = nextNumeralInk(gray, start, start + localWidth);
+            if (ink >= 0) return origin + ink - start;
         }
+        return -1;
+    }
+
+    private static int nextNumeralInk(byte[] gray, int at, int end) {
+        int wordEnd = end - Long.BYTES;
+        for (; at <= wordEnd; at += Long.BYTES) {
+            long word = (long) NUMERAL_WORDS.get(gray, at);
+            // The high bits prevent a borrow from crossing byte boundaries.
+            long bright = ((word | NUMERAL_BYTE_HIGH_BITS) - NUMERAL_BRIGHT_LOW_BITS)
+                    & word & NUMERAL_BYTE_HIGH_BITS;
+            if (bright == NUMERAL_BYTE_HIGH_BITS) continue;
+            for (int i = at; i < at + Long.BYTES; i++)
+                if ((gray[i] & 255) <= NUMERAL_INK_LIMIT) return i;
+        }
+        for (; at < end; at++)
+            if ((gray[at] & 255) <= NUMERAL_INK_LIMIT) return at;
         return -1;
     }
 

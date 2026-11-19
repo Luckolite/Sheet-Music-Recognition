@@ -184,6 +184,31 @@ class ExactWhitePredictionCacheTest(unittest.TestCase):
         self.assertTrue(np.array_equal(original.predict(gray), paired.predict(gray)))
         self.assertEqual(first_page_calls - 1, paired.runtime.calls - first_page_calls)
 
+    def test_bundled_litert_pair_skips_the_white_reference_inference(self):
+        class PointwiseRuntime(FakeRuntime):
+            def invoke(self):
+                self.calls += 1
+                self.output[0] = (255 - self.input[0, 0]) % 6
+
+        class BundledLiteRt(PointwiseRuntime):
+            __module__ = "ai_edge_litert.interpreter"
+
+        gray = np.full((320, 2403), 255, np.uint8)
+        for index in range(10):
+            y = 3 + index if index % 2 == 0 else 307 - index
+            x = 192 * index + 151
+            gray[y:y + 4, x:x + 7] = 20 + index
+        fallback, known = make_reader(), make_reader()
+        for engine in (fallback, known):
+            engine.edge = reader._tile_edges()
+            engine._sparse_pairs_enabled = True
+        fallback.runtime = PointwiseRuntime()
+        known.runtime = BundledLiteRt()
+
+        np.testing.assert_array_equal(fallback.predict(gray), known.predict(gray))
+        self.assertEqual(fallback.runtime.calls - 1, known.runtime.calls)
+        self.assertFalse(known._white_prediction.flags.writeable)
+
     def test_sparse_pair_limits_and_white_reference_cost(self):
         gray = np.full((320, 320 * 34), 160, np.uint8)
         regions = [(slice(0, 320), slice(i * 320, (i + 1) * 320)) for i in range(34)]

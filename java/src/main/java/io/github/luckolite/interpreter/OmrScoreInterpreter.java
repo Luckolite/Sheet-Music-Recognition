@@ -40136,6 +40136,7 @@ final class OmrScoreInterpreter {
         int minX = Math.max(0, note.head.minX - (outgoing ? inward : reach));
         int maxX = Math.min(width - 1, note.head.maxX + (outgoing ? reach : inward));
         var window = TieShoulderWindow.create(labels, gray, width, height, note.head.centerY, gap, side, minX, maxX);
+        var strokeCache = new DenseTieArcContinuity.StrokeCache();
         for (int band = 0; band < 3; band++) {
             int initial = band == 0 ? step : band == 1 ? inner : deepest;
             float lastClearance = initial == step ? gap * 1.8f : 0;
@@ -40165,7 +40166,7 @@ final class OmrScoreInterpreter {
                             gap,
                             null,
                             205,
-                            side, false, false, null, witness)) return true;
+                            side, false, false, null, witness, strokeCache)) return true;
                 }
             }
         }
@@ -40185,7 +40186,7 @@ final class OmrScoreInterpreter {
                 if (window != null && window.excludes(left, right)) continue;
                 if (hasContinuousTieArc(
                         labels, gray, width, height, left, right, note.head.centerY, gap,
-                        null, outgoing ? 205 : 225, side, true, false, null, witness)) return true;
+                        null, outgoing ? 205 : 225, side, true, false, null, witness, strokeCache)) return true;
             }
         }
         // A short outgoing bow can start above the head before crossing its outer edge.
@@ -40213,7 +40214,7 @@ final class OmrScoreInterpreter {
                             side,
                             true,
                             false,
-                            null, witness)) return true;
+                            null, witness, strokeCache)) return true;
                 }
             }
         }
@@ -40576,6 +40577,8 @@ final class OmrScoreInterpreter {
         static final TieShape[][] SHAPES = tieShapes(.075f, .05f);
     }
 
+    private static final int[] TIE_BIN_ORDER = {0, 4, 1, 2, 3};
+
     private static final class TieArcScratch {
         final int[] sampleColumns = new int[50], paper = new int[63];
         final int[] sampleBases = new int[sampleColumns.length];
@@ -40593,6 +40596,15 @@ final class OmrScoreInterpreter {
             byte[] labels, byte[] gray, int width, int height, int left, int right,
             float centerY, float gap, Component target, int inkLimit, int requiredSide,
             boolean strictContrast, boolean flatProfile, TieFrame frame, SystemTieInk witness) {
+        return hasContinuousTieArc(labels, gray, width, height, left, right, centerY, gap,
+                target, inkLimit, requiredSide, strictContrast, flatProfile, frame, witness, null);
+    }
+
+    private static boolean hasContinuousTieArc(
+            byte[] labels, byte[] gray, int width, int height, int left, int right,
+            float centerY, float gap, Component target, int inkLimit, int requiredSide,
+            boolean strictContrast, boolean flatProfile, TieFrame frame, SystemTieInk witness,
+            DenseTieArcContinuity.StrokeCache strokeCache) {
         // Boundary arc evidence needs raw pixels; semantic-only decoding remains supported.
         if (gray == null || gray.length != (long) width * height) return false;
         TieArcScratch scratch = (strictContrast ? STRICT_TIE_ARC_SCRATCH : TIE_ARC_SCRATCH).get();
@@ -40633,7 +40645,7 @@ final class OmrScoreInterpreter {
         contrastOffsets[2] = Math.max(3, Math.round(gap * .65f));
         var straightRows = new DenseTieArcContinuity.StraightRows(gray, width, left, right, inkLimit,
                 Math.max(0, Math.round(centerY - gap * 3.2f)),
-                Math.min(height - 1, Math.round(centerY + gap * 3.2f)));
+                Math.min(height - 1, Math.round(centerY + gap * 3.2f)), strokeCache);
         int[] bins = scratch.bins, coveredBins = scratch.coveredBins;
         float[] supportedCenters = scratch.supportedCenters, strokeCenters = scratch.strokeCenters;
         float[] residuals = scratch.residuals;
@@ -40703,7 +40715,8 @@ final class OmrScoreInterpreter {
                         float[] ordinates = flatProfile ? shape.flat : shape.parabolic;
                         float offset = shape.offset, bend = shape.bend;
                         int hits = 0, obscured = 0, nonStrong = 0, missing = 0;
-                        for (int bin = 0, sample = 0; bin < 5; bin++) {
+                        for (int bin : TIE_BIN_ORDER) {
+                            int sample = bin * 10;
                             int binHits = 0, binMissing = 0;
                             for (int end = sample + 10; sample < end; sample++) {
                                 int y = Math.round(centerY + sideGap * ordinates[sample]);
@@ -40794,6 +40807,8 @@ final class OmrScoreInterpreter {
                                     if (obscured + missing > 16) continue candidate;
                                 }
                             }
+                            // Every accepted curve has at least three visible votes at each end.
+                            if ((bin == 0 || bin == 4) && binHits < 3) continue candidate;
                             bins[bin] = binHits;
                             coveredBins[bin] = 10 - binMissing;
                         }
@@ -40909,7 +40924,7 @@ final class OmrScoreInterpreter {
                             if (strictProof == null)
                                 strictProof = hasContinuousTieArc(
                                         labels, gray, width, height, left, right, centerY, gap,
-                                        target, inkLimit, requiredSide, true, false, frame);
+                                        target, inkLimit, requiredSide, true, false, frame, null, strokeCache);
                             if (!strictProof) continue;
                         }
                         if (!TieArcBranchInk.outwardStems(

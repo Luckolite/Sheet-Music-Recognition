@@ -139,6 +139,24 @@ final class PrintedSlurContours {
             float lower,
             List<RawBand> members) {}
 
+    /** Endpoints of the raw ink runs in the same column order used by both contour searches. */
+    private static final class ColumnInkBands {
+        private int[] bounds = new int[128];
+        private int used;
+        private boolean limited;
+
+        void add(int columnBase, int first, int last) {
+            if (used == 2 * MAX_RUNS) {
+                limited = true;
+                return;
+            }
+            if (used == bounds.length)
+                bounds = Arrays.copyOf(bounds, Math.min(2 * MAX_RUNS, 2 * bounds.length));
+            bounds[used++] = columnBase + first;
+            bounds[used++] = columnBase + last;
+        }
+    }
+
     private record Frames(float[] bottoms, float[] gaps, boolean shaded, boolean railApex) {}
 
     private PrintedSlurContours() {}
@@ -306,6 +324,7 @@ final class PrintedSlurContours {
         }
         var frames = new Frames(bottoms, gaps, shadedPaper(gray, width, left, top, right, bottom),
                 railApex);
+        var inkBands = new ColumnInkBands();
         var unowned = new HashMap<Integer, List<RawBand>>();
         int unownedCount = 0;
         boolean unownedLimited = false;
@@ -331,6 +350,7 @@ final class PrintedSlurContours {
                 while (y <= bottom
                         && ink(gray, labels, width, height, x, y, base, gap, frames, heads)) y++;
                 int last = y - 1;
+                inkBands.add(x * height, first, last);
                 if (last - first + 1 > maxThickness
                         && (last - first + 1 > gap * 1.4f
                                 || !thinAcross(
@@ -463,10 +483,10 @@ final class PrintedSlurContours {
                 if (rawSink != null) rawSink.accept(bow, component, selected);
             }
         }
-        boolean fallbackLimit =
+        boolean fallbackLimit = inkBands.limited ||
                 orientedFallback(
                         gray, labels, width, height, left, top, right, bottom, track, heads, frames,
-                        bows, rawSink, compactStemWindow);
+                        bows, rawSink, compactStemWindow, inkBands);
         // The optional orientation search can refuse without invalidating the complete
         // primary scan. No later optional candidate should be added from that frame.
         if (fallbackLimit) return new Result(bows, true, Set.of(), Set.of(), true);
@@ -610,27 +630,22 @@ final class PrintedSlurContours {
             HeadEvidence heads,
             Frames frames,
             List<Bow> existing,
-            RawSink sink, boolean compactStemWindow) {
+            RawSink sink, boolean compactStemWindow, ColumnInkBands inkBands) {
         var runs = new ArrayList<Run>();
-        var parents = new int[MAX_RUNS];
+        var parents = new int[inkBands.used / 2];
         var legacy = List.copyOf(existing);
         var planned = new ArrayList<RibbonCandidate>();
         boolean incomplete = false;
         long[] boldWork = {8_000_000};
         var previous = new ArrayList<Integer>();
+        int bandIndex = 0;
         for (int x = left; x <= right; x++) {
             var current = new ArrayList<Integer>();
             float base = frames.bottoms()[x], gap = frames.gaps()[x];
-            for (int y = top; y <= bottom; ) {
-                if (!ink(gray, labels, width, height, x, y, base, gap, frames, heads)) {
-                    y++;
-                    continue;
-                }
-                int first = y;
-                while (y <= bottom
-                        && ink(gray, labels, width, height, x, y, base, gap, frames, heads)) y++;
-                int last = y - 1;
-                if (runs.size() == MAX_RUNS) return true;
+            int columnBase = x * height;
+            while (bandIndex < inkBands.used && inkBands.bounds[bandIndex] < columnBase + height) {
+                int first = inkBands.bounds[bandIndex++] - columnBase;
+                int last = inkBands.bounds[bandIndex++] - columnBase;
                 int id = runs.size();
                 parents[id] = id;
                 var run =
