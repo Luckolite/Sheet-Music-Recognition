@@ -3020,3 +3020,9 @@ Faint shaft contrast can use the nearest actual bilateral paper samples within t
 The anchored local staff proof uses its existing0.8-gap search envelope consistently in final eligibility and both positive/negative necessary intervals. Source-local PrintedBeamRuleCandidates enumerates all eligible five-peak tuples before overlap or interior-peak ranking; competing groups and unfinished funded searches refuse. General staff decoding and retained legacy binding remain unchanged. The new helper is selected explicitly in decoder-sources.txt. Original procedural regressions accompany the paired public port; pending recognition118/Guide299/audio100, no deployment claim.
 
 Standalone MIDI and audio use the existing source-owned numeric tempo clock in linear and repeated playback. A numbered arrangement restart uses the initial tempo until its own printed change. MusicXML follows that tempo boundary and writes schema-valid multiple-rest attributes and parenthesis sizes. The Android writer has the same XML corrections. These changes affect export only. Original decoded regressions use no private score material, and recognition models and Guide records retain their existing identities.
+
+## Bundled meter masks
+
+The compact meter table contains only Bravura digits rendered from the bundled SIL OFL font by `scripts/GenerateMeterGlyphAtlas.java`. The decoder verifies both the font and mask checksums and uses the table only on Windows JDK builds whose masks match the ordinary renderer. Other runtimes and sizes use the ordinary renderer.
+
+After building the Java core, compile the generator against `src/sheet_music_recognition/interpreter.jar` with `javac --release 17 -d <classes>`. Run `io.github.luckolite.interpreter.GenerateMeterGlyphAtlas` with the classes and JAR on the classpath, passing `java/assets/Bravura.otf` and the output path. A verified generator run reproduces the table hash in the glyph manifest.

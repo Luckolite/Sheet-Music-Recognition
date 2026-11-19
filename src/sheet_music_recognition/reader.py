@@ -19,7 +19,7 @@ from typing import NamedTuple
 
 import numpy as np
 from PIL import ExifTags, Image, ImageOps
-from .runtime import inference_interpreter, java_executable
+from .runtime import inference_interpreter, java_executable, small_page_jvm_args
 from .whitening import PaperBackgroundWhitening, WhiteningResult, MODEL_SHA256 as PAPER_FIELD_SHA256, RASTER_POLICY
 
 MODEL_SHA256 = "92ab7c34c27cb704d95f0cde247b3611d1563fdf1c114b9f9817abb18a7b6a93"
@@ -324,6 +324,8 @@ class Interpreter:
         rows = [slice(top, top + ch) for top in tile_starts(height)]
         columns = [slice(left, left + cw) for left in tile_starts(width)]
         bundled = getattr(self, "model_sha256", None) == MODEL_SHA256
+        known_white = (bundled and getattr(self, "_sparse_pairs_enabled", False)
+                       and type(self.runtime).__module__ == "ai_edge_litert.interpreter")
         tensor_view = getattr(self.runtime, "tensor", None) if bundled else None
         if tensor_view is None:
             staging = np.empty((1, 3, 320, 320), dtype=np.float32)
@@ -349,7 +351,7 @@ class Interpreter:
             if pairs:
                 paper = getattr(self, "_white_prediction", None)
                 if paper is None:
-                    if bundled and type(self.runtime).__module__ == "ai_edge_litert.interpreter":
+                    if known_white:
                         # The pinned graph and runtime classify every pixel of a white tile as background.
                         paper = np.broadcast_to(np.uint8(0), (320, 320))
                     else:
@@ -376,6 +378,9 @@ class Interpreter:
                     pixels = tile.copy(order="C")
             if cached is not None:
                 prediction = cached
+            elif known_white and not pairs and tile[0, 0] == 255 and tile.min() == 255:
+                np.copyto(labels[region], 0, where=wins)
+                continue
             else:
                 if pixels is not None:
                     tile = pixels
@@ -479,7 +484,9 @@ class Interpreter:
             if instrument is not None:
                 arguments.extend(["--instrument", instrument])
             if run_decoder is None:
-                command = [java_executable(), "-Xmx1g", "-jar", str(self.jar), *arguments]
+                java = java_executable()
+                command = [java, "-Xmx1g", *small_page_jvm_args(java, gray.size),
+                           "-jar", str(self.jar), *arguments]
                 run = subprocess.run(command, capture_output=True, text=True)
                 if run.returncode:
                     raise RuntimeError("Decoder failed: " + run.stderr.strip())

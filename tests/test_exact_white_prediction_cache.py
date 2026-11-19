@@ -184,7 +184,7 @@ class ExactWhitePredictionCacheTest(unittest.TestCase):
         self.assertTrue(np.array_equal(original.predict(gray), paired.predict(gray)))
         self.assertEqual(first_page_calls - 1, paired.runtime.calls - first_page_calls)
 
-    def test_bundled_litert_pair_skips_the_white_reference_inference(self):
+    def test_bundled_litert_skips_inference_for_white_tiles(self):
         class PointwiseRuntime(FakeRuntime):
             def invoke(self):
                 self.calls += 1
@@ -208,6 +208,13 @@ class ExactWhitePredictionCacheTest(unittest.TestCase):
         np.testing.assert_array_equal(fallback.predict(gray), known.predict(gray))
         self.assertEqual(fallback.runtime.calls - 1, known.runtime.calls)
         self.assertFalse(known._white_prediction.flags.writeable)
+
+        blank = np.full((71, 551), 255, np.uint8)
+        for value, expected_calls in ((255, 0), (254, 1)):
+            blank[13, -1] = value
+            known.runtime.calls = 0
+            np.testing.assert_array_equal(fallback.predict(blank), known.predict(blank))
+            self.assertEqual(expected_calls, known.runtime.calls)
 
     def test_sparse_pair_limits_and_white_reference_cost(self):
         gray = np.full((320, 320 * 34), 160, np.uint8)

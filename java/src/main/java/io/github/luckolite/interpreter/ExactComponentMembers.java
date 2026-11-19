@@ -33,6 +33,26 @@ final class ExactComponentMembers {
         }
     }
 
+    /** Two collectors started and sealed together on the same caller-owned read-only planes. */
+    static final class CollectorPair {
+        final Collector first, second;
+
+        CollectorPair(byte[] raw, byte[] labels, int width, int height,
+                Budget firstAuth, Budget secondAuth, Budget firstSparse, Budget secondSparse) {
+            first = new Collector(raw, labels, width, height, firstAuth, firstSparse);
+            second = new Collector(raw, labels, width, height, secondAuth, secondSparse, first);
+        }
+
+        void seal(Budget firstAuth, Budget secondAuth) {
+            boolean checkFirst = first.prepareSeal(firstAuth);
+            boolean checkSecond = second.prepareSeal(secondAuth);
+            if (!checkFirst && !checkSecond) return;
+            if ((checkFirst ? first : second).unchanged()) return;
+            if (checkFirst) first.invalidate();
+            if (checkSecond) second.invalidate();
+        }
+    }
+
     static final class Collector {
         final int width, height;
         final String rawSha, labelSha;
@@ -43,6 +63,11 @@ final class ExactComponentMembers {
         private final IdentityHashMap<Object, AcceptedProbeHead> accepted = new IdentityHashMap<>();
 
         Collector(byte[] gray, byte[] mask, int w, int h, Budget authentication, Budget sparse) {
+            this(gray, mask, w, h, authentication, sparse, null);
+        }
+
+        private Collector(byte[] gray, byte[] mask, int w, int h, Budget authentication, Budget sparse,
+                Collector sibling) {
             this.width = w;
             this.height = h;
             this.raw = gray;
@@ -60,8 +85,13 @@ final class ExactComponentMembers {
                 labelSha = "";
                 return;
             }
-            rawSha = digest(gray);
-            labelSha = digest(mask);
+            if (sibling != null && sibling.valid) {
+                rawSha = sibling.rawSha;
+                labelSha = sibling.labelSha;
+            } else {
+                rawSha = digest(gray);
+                labelSha = digest(mask);
+            }
         }
 
         boolean sameInputFrame(byte[] mask, byte[] gray, int w, int h) {
@@ -194,16 +224,22 @@ final class ExactComponentMembers {
          * No plane clone/page-sized membership bitmap. Arrays must remain caller-owned read-only.
          */
         boolean seal(Budget authentication) {
-            if (sealed) return valid;
+            if (prepareSeal(authentication) && !unchanged()) invalidate();
+            return valid;
+        }
+
+        private boolean prepareSeal(Budget authentication) {
+            if (sealed) return false;
             sealed = true;
-            if (!valid
-                    || !authentication.take(2L * raw.length, 4096)
-                    || !rawSha.equals(digest(raw))
-                    || !labelSha.equals(digest(labels))) {
+            if (!valid || !authentication.take(2L * raw.length, 4096)) {
                 invalidate();
                 return false;
             }
             return true;
+        }
+
+        private boolean unchanged() {
+            return rawSha.equals(digest(raw)) && labelSha.equals(digest(labels));
         }
 
         boolean revalidateForExport(Budget budget) {

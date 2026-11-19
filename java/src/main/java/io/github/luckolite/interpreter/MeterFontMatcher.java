@@ -3,7 +3,9 @@
 package io.github.luckolite.interpreter;
 
 import java.awt.*;
+import java.awt.font.FontRenderContext;
 import java.awt.image.BufferedImage;
+import java.awt.image.DataBufferByte;
 import java.io.File;
 import java.io.IOException;
 import java.util.Collections;
@@ -18,6 +20,23 @@ public final class MeterFontMatcher {
     public record Reading(String text, float topScore, float bottomScore) {}
     private record FontKey(String glyphs, int size) {}
 
+    private static final class GrayRaster {
+        private static final FontRenderContext MEASURE_CONTEXT;
+        private static final boolean[] INK = new boolean[256];
+
+        static {
+            var image = new BufferedImage(256, 1, BufferedImage.TYPE_BYTE_GRAY);
+            var graphics = image.createGraphics();
+            MEASURE_CONTEXT = graphics.getFontRenderContext();
+            graphics.dispose();
+            // Map every stored sample through the same RGB conversion as the drawn glyph.
+            byte[] samples = ((DataBufferByte) image.getRaster().getDataBuffer()).getData();
+            for (int i = 0; i < samples.length; i++) samples[i] = (byte) i;
+            int[] colors = image.getRGB(0, 0, 256, 1, null, 0, 256);
+            for (int i = 0; i < colors.length; i++) INK[i] = (colors[i] & 255) < 150;
+        }
+    }
+
     private final MeterGlyphMatcher matcher;
 
     public MeterFontMatcher(File file) throws Exception {
@@ -25,55 +44,53 @@ public final class MeterFontMatcher {
     }
 
     private MeterFontMatcher(Font font) {
-        // Reuse small numeral masks across numerator, denominator and crop retries.
-        var masks = Collections.synchronizedMap(new LinkedHashMap<FontKey, MeterGlyphMatcher.Glyph>(
-                256, .75f, true) {
-            @Override
-            protected boolean removeEldestEntry(Map.Entry<FontKey, MeterGlyphMatcher.Glyph> eldest) {
-                return size() > 512;
-            }
-        });
-        matcher =
-                new MeterGlyphMatcher(
-                        (glyphs, size) -> {
-                            var key = new FontKey(glyphs, size);
-                            var cached = masks.get(key);
-                            if (cached != null) return cached;
-                            Font scaled = font.deriveFont((float) size);
-                            BufferedImage scratch =
-                                    new BufferedImage(1, 1, BufferedImage.TYPE_BYTE_GRAY);
-                            Graphics2D measure = scratch.createGraphics();
-                            var bounds =
-                                    scaled.createGlyphVector(measure.getFontRenderContext(), glyphs)
-                                            .getPixelBounds(null, 0, 0);
-                            measure.dispose();
-                            int gw = bounds.width, gh = bounds.height;
-                            if (gw < 1 || gh < 1)
-                                return new MeterGlyphMatcher.Glyph(0, 0, new boolean[0]);
-                            BufferedImage glyph =
-                                    new BufferedImage(gw, gh, BufferedImage.TYPE_BYTE_GRAY);
-                            Graphics2D graphics = glyph.createGraphics();
-                            graphics.setColor(java.awt.Color.WHITE);
-                            graphics.fillRect(0, 0, gw, gh);
-                            graphics.setColor(java.awt.Color.BLACK);
-                            graphics.setFont(scaled);
-                            graphics.setRenderingHint(
-                                    RenderingHints.KEY_TEXT_ANTIALIASING,
-                                    RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
-                            graphics.drawString(glyphs, -bounds.x, -bounds.y);
-                            graphics.dispose();
-                            boolean[] shape = new boolean[gw * gh];
-                            int[] row = new int[gw];
-                            for (int y = 0, dest = 0; y < gh; y++, dest += gw) {
-                                glyph.getRGB(0, y, gw, 1, row, 0, gw);
-                                for (int x = 0; x < gw; x++)
-                                    shape[dest + x] = (row[x] & 255) < 150;
-                            }
+        this(fontRasterizer(font));
+    }
 
-                            var result = new MeterGlyphMatcher.Glyph(gw, gh, shape);
-                            if (shape.length <= 4096) masks.put(key, result);
-                            return result;
+    private MeterFontMatcher(MeterGlyphMatcher.Rasterizer rasterizer) {
+        matcher = new MeterGlyphMatcher(rasterizer);
+    }
+
+    static MeterGlyphMatcher.Rasterizer fontRasterizer(Font font) {
+        // Reuse small numeral masks across numerator, denominator and crop retries.
+        var masks =
+                Collections.synchronizedMap(
+                        new LinkedHashMap<FontKey, MeterGlyphMatcher.Glyph>(256, .75f, true) {
+                            @Override
+                            protected boolean removeEldestEntry(
+                                    Map.Entry<FontKey, MeterGlyphMatcher.Glyph> eldest) {
+                                return size() > 512;
+                            }
                         });
+        return (glyphs, size) -> {
+            var key = new FontKey(glyphs, size);
+            var cached = masks.get(key);
+            if (cached != null) return cached;
+            Font scaled = font.deriveFont((float) size);
+            var bounds =
+                    scaled.createGlyphVector(GrayRaster.MEASURE_CONTEXT, glyphs)
+                            .getPixelBounds(null, 0, 0);
+            int gw = bounds.width, gh = bounds.height;
+            if (gw < 1 || gh < 1) return new MeterGlyphMatcher.Glyph(0, 0, new boolean[0]);
+            BufferedImage glyph = new BufferedImage(gw, gh, BufferedImage.TYPE_BYTE_GRAY);
+            Graphics2D graphics = glyph.createGraphics();
+            graphics.setColor(java.awt.Color.WHITE);
+            graphics.fillRect(0, 0, gw, gh);
+            graphics.setColor(java.awt.Color.BLACK);
+            graphics.setFont(scaled);
+            graphics.setRenderingHint(
+                    RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+            graphics.drawString(glyphs, -bounds.x, -bounds.y);
+            graphics.dispose();
+            boolean[] shape = new boolean[gw * gh];
+            var buffer = (DataBufferByte) glyph.getRaster().getDataBuffer();
+            byte[] samples = buffer.getData();
+            for (int i = 0; i < shape.length; i++) shape[i] = GrayRaster.INK[samples[i] & 255];
+
+            var result = new MeterGlyphMatcher.Glyph(gw, gh, shape);
+            if (shape.length <= 4096) masks.put(key, result);
+            return result;
+        };
     }
 
     public Reading read(int[] p, int w, int h, int m, int f, float g) {
@@ -98,9 +115,23 @@ public final class MeterFontMatcher {
         private static final MeterFontMatcher MATCHER = load();
 
         private static MeterFontMatcher load() {
+            if (MeterFontMatcher.class.getResource("Bravura.otf") == null) return null;
+            var masks = MeterGlyphAtlas.load();
+            if (masks == null) return new MeterFontMatcher(BundledFont.RASTERIZER);
+            return new MeterFontMatcher(
+                    (glyphs, size) -> {
+                        var mask = masks.render(glyphs, size);
+                        return mask != null ? mask : BundledFont.RASTERIZER.render(glyphs, size);
+                    });
+        }
+    }
+
+    private static final class BundledFont {
+        private static final MeterGlyphMatcher.Rasterizer RASTERIZER = load();
+
+        private static MeterGlyphMatcher.Rasterizer load() {
             try (var font = MeterFontMatcher.class.getResourceAsStream("Bravura.otf")) {
-                if (font == null) return null;
-                return new MeterFontMatcher(Font.createFont(Font.TRUETYPE_FONT, font));
+                return fontRasterizer(Font.createFont(Font.TRUETYPE_FONT, font));
             } catch (FontFormatException | IOException e) {
                 throw new IllegalStateException("Cannot load bundled meter font", e);
             }

@@ -14,6 +14,11 @@
   },
   "files": [
     {
+      "path": "meter_templates/bravura.bin",
+      "sha256": "06382a5027c507880eb241c5a58718313e153abd1ee204c3ade9b85da46feafc",
+      "bytes": 107721
+    },
+    {
       "path": "BRAVURA-OFL.txt",
       "sha256": "bdca252186865f3b2c0e76da4a4e335c14ba1d37f80194fca254ddfa88e84fbf",
       "bytes": 4420

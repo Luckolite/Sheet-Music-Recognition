@@ -698,8 +698,18 @@ final class OmrScoreInterpreter {
                 recoveredFadedHeads.add(candidate);
             }
         }
-        var symbolMembers = tremoloMemberCollector(gray, labels, width, height);
-        var clefKeyMembers = tremoloMemberCollector(gray, labels, width, height);
+        var members =
+                new ExactComponentMembers.CollectorPair(
+                        gray,
+                        labels,
+                        width,
+                        height,
+                        componentAuthenticationBudget(labels.length),
+                        componentAuthenticationBudget(labels.length),
+                        componentMembershipBudget(),
+                        componentMembershipBudget());
+        var symbolMembers = members.first;
+        var clefKeyMembers = members.second;
         List<Component> symbolComponents =
                 findComponents(
                         labels,
@@ -718,8 +728,9 @@ final class OmrScoreInterpreter {
                         gray,
                         null,
                         clefKeyMembers);
-        symbolMembers.seal(new ExactComponentMembers.Budget(2L * labels.length + 4096, 4096));
-        clefKeyMembers.seal(new ExactComponentMembers.Budget(2L * labels.length + 4096, 4096));
+        members.seal(
+                componentAuthenticationBudget(labels.length),
+                componentAuthenticationBudget(labels.length));
         var splitAccidentalProofs = new ArrayList<SourceLocalAccidental.SplitAccidental>();
         var originalAccidentalGlyphs = new ArrayList<Object>();
         originalAccidentalGlyphs.addAll(symbolComponents);
@@ -3853,8 +3864,16 @@ final class OmrScoreInterpreter {
                 labels,
                 width,
                 height,
-                new ExactComponentMembers.Budget(2L * planeBytes + 4096, 4096),
-                new ExactComponentMembers.Budget(64_000_000, 128L * 1024 * 1024));
+                componentAuthenticationBudget(planeBytes),
+                componentMembershipBudget());
+    }
+
+    private static ExactComponentMembers.Budget componentAuthenticationBudget(long planeBytes) {
+        return new ExactComponentMembers.Budget(2L * planeBytes + 4096, 4096);
+    }
+
+    private static ExactComponentMembers.Budget componentMembershipBudget() {
+        return new ExactComponentMembers.Budget(64_000_000, 128L * 1024 * 1024);
     }
 
     static List<Integer> tremoloExactFootprint(

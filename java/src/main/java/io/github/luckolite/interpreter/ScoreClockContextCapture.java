@@ -143,11 +143,13 @@ final class ScoreClockContextCapture {
                     finalScore.notes().size(),
                     finalScore.measures().size(),
                     finalScore.rests().size());
-        String raw = digest(gray), semantic = digest(labels);
-        String annotationRaw =
-                annotationGray != null && annotationGray.length == gray.length
-                        ? digest(annotationGray)
-                        : "";
+        String raw = digest(gray);
+        String semantic = labels == gray ? raw : digest(labels);
+        String annotationRaw = "";
+        if (annotationGray == gray) annotationRaw = raw;
+        else if (annotationGray == labels) annotationRaw = semantic;
+        else if (annotationGray != null && annotationGray.length == gray.length)
+            annotationRaw = digest(annotationGray);
         var origin = new Origin("", -1, 0, width, height, raw, semantic, annotationRaw);
         var words = new ArrayList<PartWord>();
         var numbers = new ArrayList<NumberRead>();
