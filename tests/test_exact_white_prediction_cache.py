@@ -20,7 +20,8 @@ class FakeRuntime:
 
     def invoke(self):
         self.calls += 1
-        marker = self.calls if self.stateful else int(self.input.sum(dtype=np.float64)) + 1
+        # The bundled graph uses only channel zero, including on the tensor-view path.
+        marker = self.calls if self.stateful else int(self.input[0, 0].sum(dtype=np.float64)) + 1
         self.output[0] = (self.pattern + marker) % 6
 
     def get_tensor(self, index):
@@ -63,7 +64,7 @@ class ExactWhitePredictionCacheTest(unittest.TestCase):
         gray[:, 400:405] = 0
         owner = make_reader()
         runtime = owner.runtime
-        runtime.input = np.empty((1, 3, 320, 320), np.float32)
+        runtime.input = np.full((1, 3, 320, 320), np.nan, np.float32)
         runtime.tensor = lambda index: (lambda: (runtime.input if index == 0 else runtime.output).view())
         runtime.set_tensor = runtime.get_tensor = lambda *args: self.fail("Unexpected tensor copy")
         invoke = runtime.invoke
