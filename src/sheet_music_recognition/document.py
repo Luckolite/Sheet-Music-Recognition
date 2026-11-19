@@ -78,7 +78,8 @@ def _decoder_pipe(java, jar):
 
 
 def interpret_document(engine, source, *, pages=None, meter=(4, 4), bpm=120,
-                       key_fifths=0, width=2048, annotations=None, progress=None, instrument=None):
+                       key_fifths=0, width=2048, annotations=None, progress=None, instrument=None,
+                       _release_after_prediction=False):
     """Recognize a file. Call progress(completed, total, source_page) after each page."""
     source = Path(source)
     if not 15 <= bpm <= 400:
@@ -117,9 +118,12 @@ def interpret_document(engine, source, *, pages=None, meter=(4, 4), bpm=120,
 
     context = {} if instrument is None else {"instrument": instrument}
 
-    def recognize(image, number, page_annotations):
+    release = {"_release_after_prediction": True} if _release_after_prediction else {}
+
+    def recognize(image, number, page_annotations, last):
         return engine.interpret(image, meter=meter, key_fifths=key, width=width,
-                                page_index=number - 1, annotations=page_annotations, **context)
+                                page_index=number - 1, annotations=page_annotations,
+                                **context, **(release if last else {}))
 
     if source.suffix.lower() == ".pdf":
         try:
@@ -170,7 +174,9 @@ def interpret_document(engine, source, *, pages=None, meter=(4, 4), bpm=120,
                 engine._validate_decode_context(meter, key, selected[0] - 1, instrument)
 
                 def prepare(number, index):
-                    return render(number, index, lambda image, supplied: engine._prepare_page(image, width, supplied))
+                    options = release if index == selected_count - 1 else {}
+                    return render(number, index,
+                                  lambda image, supplied: engine._prepare_page(image, width, supplied, **options))
 
                 prepared = prepare(selected[0], 0)
                 with _document_page_decoder(engine) as decode, ThreadPoolExecutor(
@@ -189,7 +195,8 @@ def interpret_document(engine, source, *, pages=None, meter=(4, 4), bpm=120,
                         accept(pending.result(), number, source_count, selected_count)
             else:
                 for index, number in enumerate(selected):
-                    page = render(number, index, lambda image, supplied: recognize(image, number, supplied))
+                    page = render(number, index, lambda image, supplied: recognize(
+                        image, number, supplied, index == selected_count - 1))
                     accept(page, number, source_count, selected_count)
         finally:
             pdf.close()
@@ -198,7 +205,7 @@ def interpret_document(engine, source, *, pages=None, meter=(4, 4), bpm=120,
             raise ValueError("--pages is for PDF input")
         check_annotations(1)
         with Image.open(io.BytesIO(source_bytes)) as image:
-            page = recognize(image, 1, annotations[0] if annotations is not None else None)
+            page = recognize(image, 1, annotations[0] if annotations is not None else None, True)
             accept(page, 1, 1, 1)
 
     return resolve_boundary_ties({

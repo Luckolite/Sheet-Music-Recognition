@@ -518,9 +518,10 @@ class Interpreter:
         return labels
 
     def interpret(self, image, *, meter=(4, 4), key_fifths=0, width=2048, annotations=None,
-                  page_index=None, instrument=None):
+                  page_index=None, instrument=None, _release_after_prediction=False):
         """Recognize an image; optional page_index is its zero-based physical source page."""
         self._validate_decode_context(meter, key_fifths, page_index, instrument)
+        release = {"_release_after_prediction": True} if _release_after_prediction else {}
         if annotations is None and getattr(self, "_decoder_scope", None) is None:
             from .document import _DecoderPipeError, _decoder_pipe
 
@@ -560,7 +561,8 @@ class Interpreter:
                             pipe = None
 
                 prepared = self._prepare_page(
-                    image, width, annotations, prepare_geometry=prepare_geometry, start_decoder=start_decoder)
+                    image, width, annotations, prepare_geometry=prepare_geometry, start_decoder=start_decoder,
+                    **release)
                 if pipe is not None:
                     try:
                         return self._decode_page(
@@ -568,7 +570,7 @@ class Interpreter:
                     except _DecoderPipeError:
                         pass
         else:
-            prepared = self._prepare_page(image, width, annotations)
+            prepared = self._prepare_page(image, width, annotations, **release)
         return self._decode_page(prepared, meter, key_fifths, page_index, instrument)
 
     @staticmethod
@@ -616,7 +618,8 @@ class Interpreter:
             self._last_page_prediction = self.runtime, gray.copy(), labels.copy()
         return labels
 
-    def _prepare_page(self, image, width, annotations, *, prepare_geometry=None, start_decoder=None):
+    def _prepare_page(self, image, width, annotations, *, prepare_geometry=None, start_decoder=None,
+                      _release_after_prediction=False):
         gray = grayscale(image, width)
         needs_ocr = annotations is None or ("tabWords" in annotations and "words" not in annotations)
         prediction_done = Event() if start_decoder is not None else None
@@ -632,6 +635,15 @@ class Interpreter:
             ocr = worker.submit(read_annotations) if worker is not None else None
             try:
                 labels = self._predict_prepared_page(gray)
+                if (_release_after_prediction and ocr is not None and not ocr.done()
+                        and getattr(self, "_sparse_pairs_enabled", False)
+                        and type(self.runtime).__module__ == "ai_edge_litert.interpreter"):
+                    # The CLI has no later page to predict. Let the detector use the memory
+                    # while preserving the model identity for the score receipt.
+                    self._last_page_prediction = None
+                    self._compact_model_path = None
+                    self._pending_model = (Path(__file__).parent / "data" / MODEL_NAME, True)
+                    del self.runtime
             finally:
                 if prediction_done is not None:
                     prediction_done.set()

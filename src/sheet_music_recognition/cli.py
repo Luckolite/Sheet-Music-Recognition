@@ -79,9 +79,8 @@ def main():
             find_ffmpeg(args.ffmpeg)  # Fail before expensive recognition if unavailable.
         pages = [int(number) for number in args.pages.split(",")] if args.pages else None
         # Initialize the bundled model alongside OCR preparation on the first page.
-        engine = Interpreter(
-            args.model, args.threads, _defer_model=args.model is None and annotations is None
-        )
+        use_deferred_model = args.model is None and annotations is None
+        engine = Interpreter(args.model, args.threads, _defer_model=use_deferred_model)
 
         def progress(_completed, _total, source_page):
             print(f"Read page {source_page}", file=sys.stderr)
@@ -91,6 +90,7 @@ def main():
                 engine, args.input, pages=pages, meter=meter, bpm=args.bpm,
                 key_fifths=args.key_fifths, width=args.width,
                 annotations=annotations, progress=progress, instrument=args.instrument,
+                _release_after_prediction=use_deferred_model,
             )
         results = document["pages"]
         args.output.parent.mkdir(parents=True, exist_ok=True)

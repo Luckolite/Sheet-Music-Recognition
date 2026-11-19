@@ -3,6 +3,8 @@
 import struct
 import sys
 import unittest
+from pathlib import Path
+from threading import Event
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -84,6 +86,40 @@ class InferenceRuntimeTest(unittest.TestCase):
             np.testing.assert_array_equal(engine.predict(pixels), np.zeros_like(pixels))
         self.assertEqual([(304, 2), (320, 2)], loads)
         self.assertEqual(320, engine._model_height)
+
+    def test_final_cli_prediction_can_release_litert_while_ocr_is_pending(self):
+        gray = np.full((8, 8), 255, np.uint8)
+        for release in (False, True):
+            with self.subTest(release=release):
+                engine = reader.Interpreter.__new__(reader.Interpreter)
+                engine.runtime = type("LiteRT", (), {"__module__": "ai_edge_litert.interpreter"})()
+                engine._sparse_pairs_enabled = True
+                engine.model_sha256 = reader.MODEL_SHA256
+                whitening_done = Event()
+
+                def annotations(*_args):
+                    self.assertTrue(whitening_done.wait(5))
+                    return {"words": []}
+
+                def correct(pixels, labels):
+                    try:
+                        self.assertEqual(not release, hasattr(engine, "runtime"))
+                    finally:
+                        whitening_done.set()
+                    return reader.WhiteningResult(pixels, False, "raw", "raw")
+
+                engine.paper_whitening = SimpleNamespace(correct=correct)
+                with (patch.object(reader, "grayscale", return_value=gray),
+                      patch.object(engine, "_read_annotations", side_effect=annotations),
+                      patch.object(engine, "predict", return_value=np.zeros_like(gray))):
+                    prepared = engine._prepare_page(None, 64, None, _release_after_prediction=release)
+
+                np.testing.assert_array_equal(np.zeros_like(gray), prepared.labels)
+                self.assertEqual({"words": []}, prepared.annotations)
+                self.assertEqual(reader.MODEL_SHA256, engine.model_sha256)
+                if release:
+                    self.assertEqual((Path(reader.__file__).parent / "data" / reader.MODEL_NAME, True),
+                                     engine._pending_model)
 
     def test_qualified_windows_runtime_is_used_only_for_the_bundled_model(self):
         lite, tf = object(), object()
