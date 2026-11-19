@@ -1,4 +1,13 @@
 {
+  "november_19_optimization_port": {
+    "standalone_optimization_commit": "e5b64243c6a3e2c0357e326784ba1fdf3b818e9f",
+    "upstream_cutoff": "9824c7209a46cb30b80b25057839ca4f8502e1df",
+    "reviewed_app_commit": "2ef00ff20cb5274a3fb2df122ffed457801909fa",
+    "recognition": 159,
+    "guide": 308,
+    "audio": 106,
+    "scope": "Shared Java recognition optimizations and the applicable Python OCR adapter on Windows. The standalone document pipe, JVM startup control, and LiteRT arena have separate entry points from the installed ONNX worker and Android."
+  },
   "november_18_followup_optimization_port": {
     "standalone_optimization_commit": "11e258263744ac5c045197083e2b9b09ece65d6b",
     "qualified_handoff": "7848446a7effe5c568026a6fbc07c4556e4f14d0",
@@ -1665,6 +1674,61 @@
     }
   },
   "files": {
+    "TremoloSectionSweepTest.java": {
+      "source_path": "app/src/test/java/com/musicsheets/app/pdf/TremoloSectionSweepTest.java",
+      "standalone_path": "java/src/test/java/io/github/luckolite/interpreter/TremoloSectionSweepTest.java",
+      "source_sha256": "6e520b51034facb0e78e43c50ef5579070eedb764f13c6d05b6b2555b7619223",
+      "source_normalized_sha256": "6e520b51034facb0e78e43c50ef5579070eedb764f13c6d05b6b2555b7619223",
+      "standalone_sha256": "515b60f3a36a3ee97740aca1e87851a80649259f42b7ad93f9ebf67804a1fa5d",
+      "standalone_normalized_sha256": "515b60f3a36a3ee97740aca1e87851a80649259f42b7ad93f9ebf67804a1fa5d",
+      "reviewed_app_commit": "2ef00ff20cb5274a3fb2df122ffed457801909fa",
+      "optimization_port_review": "Reviewed procedural control on both platforms.",
+      "license": "Apache-2.0"
+    },
+    "StaffOpticalReferenceControls.java": {
+      "source_path": "app/src/test/java/com/musicsheets/app/pdf/StaffOpticalReferenceControls.java",
+      "standalone_path": "java/src/test/java/io/github/luckolite/interpreter/StaffOpticalReferenceControls.java",
+      "source_sha256": "59d2effa579fb7c60ed14be14e5272245bb090f9449a3ae7820fcca4ecb5e06b",
+      "source_normalized_sha256": "59d2effa579fb7c60ed14be14e5272245bb090f9449a3ae7820fcca4ecb5e06b",
+      "standalone_sha256": "6184e9f3f650c6ccabcbab831e7d2b06e2c61ca3fff375607a7d59abad98f598",
+      "standalone_normalized_sha256": "6184e9f3f650c6ccabcbab831e7d2b06e2c61ca3fff375607a7d59abad98f598",
+      "reviewed_app_commit": "2ef00ff20cb5274a3fb2df122ffed457801909fa",
+      "optimization_port_review": "Reviewed procedural control on both platforms.",
+      "license": "Apache-2.0"
+    },
+    "RawStaffLineDetectorTest.java": {
+      "source_path": "app/src/test/java/com/musicsheets/app/pdf/RawStaffLineDetectorTest.java",
+      "standalone_path": "java/src/test/java/io/github/luckolite/interpreter/RawStaffLineDetectorTest.java",
+      "source_sha256": "dfe9d13d78603fdc8ee33fcc8901ecaf4d031f8268371610948a13902c7be525",
+      "source_normalized_sha256": "dfe9d13d78603fdc8ee33fcc8901ecaf4d031f8268371610948a13902c7be525",
+      "standalone_sha256": "95c25b346b27c23bdddc3f26ccd122bf398d82e6086a7f92b77ff8d63d53af56",
+      "standalone_normalized_sha256": "95c25b346b27c23bdddc3f26ccd122bf398d82e6086a7f92b77ff8d63d53af56",
+      "reviewed_app_commit": "2ef00ff20cb5274a3fb2df122ffed457801909fa",
+      "optimization_port_review": "Reviewed procedural control on both platforms.",
+      "license": "Apache-2.0"
+    },
+    "PartProducerSourceOriginalTest.java": {
+      "source_path": "app/src/test/java/com/musicsheets/app/pdf/PartProducerSourceOriginalTest.java",
+      "standalone_path": "java/src/test/java/io/github/luckolite/interpreter/PartProducerSourceOriginalTest.java",
+      "source_sha256": "8692a754aa123974254e70861245b1c0cdc881fda5f51c1ecd8da4307e550a98",
+      "source_normalized_sha256": "8692a754aa123974254e70861245b1c0cdc881fda5f51c1ecd8da4307e550a98",
+      "standalone_sha256": "a5da77437e4af20dff2e260175c1de326085a03bbf5276f090f1dded02a8fce9",
+      "standalone_normalized_sha256": "a5da77437e4af20dff2e260175c1de326085a03bbf5276f090f1dded02a8fce9",
+      "reviewed_app_commit": "2ef00ff20cb5274a3fb2df122ffed457801909fa",
+      "optimization_port_review": "Reviewed procedural control on both platforms.",
+      "license": "Apache-2.0"
+    },
+    "LocalAccidentalLineageOriginalTest.java": {
+      "source_path": "app/src/test/java/com/musicsheets/app/pdf/LocalAccidentalLineageOriginalTest.java",
+      "standalone_path": "java/src/test/java/io/github/luckolite/interpreter/LocalAccidentalLineageOriginalTest.java",
+      "source_sha256": "e412fc345821999ac727059adee7d2c8c4797d3736b08aff6e1f60908d2d35d6",
+      "source_normalized_sha256": "e412fc345821999ac727059adee7d2c8c4797d3736b08aff6e1f60908d2d35d6",
+      "standalone_sha256": "7c684f227f094736c30d57ffdeb0612c23762aff66b952b34740cb833a5203ef",
+      "standalone_normalized_sha256": "7c684f227f094736c30d57ffdeb0612c23762aff66b952b34740cb833a5203ef",
+      "reviewed_app_commit": "2ef00ff20cb5274a3fb2df122ffed457801909fa",
+      "optimization_port_review": "Reviewed procedural control on both platforms.",
+      "license": "Apache-2.0"
+    },
     "PrintedQuarterRestBoundaryTest.java": {
       "source_path": "app/src/test/java/com/musicsheets/app/pdf/PrintedQuarterRestBoundaryTest.java",
       "standalone_path": "java/src/test/java/io/github/luckolite/interpreter/PrintedQuarterRestBoundaryTest.java",
@@ -1680,23 +1744,24 @@
       "source_path": "app/src/test/java/com/musicsheets/app/pdf/PairedComponentSealTest.java",
       "standalone_path": "java/src/test/java/io/github/luckolite/interpreter/PairedComponentSealTest.java",
       "license": "Apache-2.0",
-      "source_sha256": "88ba09243bdb4ddfb5ea5491017f971342cf258dc2d04b824dd4a9b143b48e55",
-      "source_normalized_sha256": "88ba09243bdb4ddfb5ea5491017f971342cf258dc2d04b824dd4a9b143b48e55",
-      "standalone_sha256": "2ebb271ffdc7133a486118e22aeb59f05fff21e03be465043f37d386b7a43c59",
-      "standalone_normalized_sha256": "2ebb271ffdc7133a486118e22aeb59f05fff21e03be465043f37d386b7a43c59",
-      "reviewed_app_commit": "b43fa3d33c551b78ece6c36649f77229f0f52047",
-      "optimization_port_review": "Procedural regression retained on both platforms."
+      "source_sha256": "a9ec4f6ae293f1893c4a8a0658de99e39001c67fe4376ef00898ca35a07214e7",
+      "source_normalized_sha256": "a9ec4f6ae293f1893c4a8a0658de99e39001c67fe4376ef00898ca35a07214e7",
+      "standalone_sha256": "d5286f2c9b9a13467216af117007499f2e4c87a4b49a92a9f11254358ad8e40e",
+      "standalone_normalized_sha256": "d5286f2c9b9a13467216af117007499f2e4c87a4b49a92a9f11254358ad8e40e",
+      "reviewed_app_commit": "2ef00ff20cb5274a3fb2df122ffed457801909fa",
+      "optimization_port_review": "Reviewed procedural control on both platforms."
     },
     "PackedGrayInk.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/PackedGrayInk.java",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/PackedGrayInk.java",
       "license": "Apache-2.0",
-      "source_sha256": "3222cfef54b71abcfdc0ef559e05eed3266c6b3f4d63d90ca1e4e524d2b0451d",
-      "source_normalized_sha256": "3222cfef54b71abcfdc0ef559e05eed3266c6b3f4d63d90ca1e4e524d2b0451d",
-      "standalone_sha256": "b329e9999343eacdfd16441f760f9748a7ff9777a8115bdebe53b6a66db543d7",
-      "standalone_normalized_sha256": "b329e9999343eacdfd16441f760f9748a7ff9777a8115bdebe53b6a66db543d7",
-      "reviewed_app_commit": "dbf64cc20818bbed28f0fa3a81188490b0965348",
-      "app_optimization_port_review": "Shared ink, label, and contrast masks use portable little-endian reads on Android."
+      "source_sha256": "7cd98757c4212a6ce98d5a4b44acbbb68b543f6123e22f90dffcc49f2ca41ea7",
+      "source_normalized_sha256": "7cd98757c4212a6ce98d5a4b44acbbb68b543f6123e22f90dffcc49f2ca41ea7",
+      "standalone_sha256": "8bcd9489e49833e18014a2134a08e97ccd66d862bc9dc397b7a210efac70a53d",
+      "standalone_normalized_sha256": "8bcd9489e49833e18014a2134a08e97ccd66d862bc9dc397b7a210efac70a53d",
+      "reviewed_app_commit": "2ef00ff20cb5274a3fb2df122ffed457801909fa",
+      "app_optimization_port_review": "Shared ink, label, and contrast masks use portable little-endian reads on Android.",
+      "optimization_port_review": "Shares packed label membership through portable little-endian byte access."
     },
     "PackedInkFlood.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/PackedInkFlood.java",
@@ -3334,13 +3399,13 @@
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/ExactComponentMembers.java",
       "license": "Apache-2.0",
       "review_note": "Reviewed global source-bound interpretation helper with namespace-equivalent standalone code and original procedural regressions. Unknown or conflicting evidence is retained; no score-specific rules, private fixtures or model changes.",
-      "source_sha256": "f2665214ff66d4c088db27702acad30d80d661a5a25e74780540e78b967c139f",
-      "source_normalized_sha256": "f2665214ff66d4c088db27702acad30d80d661a5a25e74780540e78b967c139f",
-      "standalone_sha256": "2275c421b066b685dff95ba6d48885701830fda3f7bc0039573f6bc25b99791a",
-      "standalone_normalized_sha256": "2275c421b066b685dff95ba6d48885701830fda3f7bc0039573f6bc25b99791a",
+      "source_sha256": "e7b0f65d8a279f21b1cbebbae12648bfaf22e7dda3a2d6d3a7512e07ac4a2fcc",
+      "source_normalized_sha256": "e7b0f65d8a279f21b1cbebbae12648bfaf22e7dda3a2d6d3a7512e07ac4a2fcc",
+      "standalone_sha256": "394ca12debed3a5a5555a208ad41c11ec5bbd240a83f8c96729a69690b4739b2",
+      "standalone_normalized_sha256": "394ca12debed3a5a5555a208ad41c11ec5bbd240a83f8c96729a69690b4739b2",
       "current_source_review": "Reviewed current source and standalone counterpart for the cumulative source-bound beam, notation, key, articulation and bounded context batch. Original procedural regressions only; physical source observations and model facts do not establish complete musical authority.",
-      "reviewed_app_commit": "b43fa3d33c551b78ece6c36649f77229f0f52047",
-      "optimization_port_review": "Shares raster authentication across the paired collectors while retaining independent budgets and seal state."
+      "reviewed_app_commit": "2ef00ff20cb5274a3fb2df122ffed457801909fa",
+      "optimization_port_review": "Shares raster signatures within the existing independent collector budgets."
     },
     "ExactCoverCropCache.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/importer/ExactCoverCropCache.java",
@@ -4714,14 +4779,14 @@
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/MaximalRawBarExtractor.java",
       "license": "Apache-2.0",
       "review_note": "Reviewed global source-bound interpretation helper with namespace-equivalent standalone code and original procedural regressions. Unknown or conflicting evidence is retained; no score-specific rules, private fixtures or model changes.",
-      "source_sha256": "13e3fa8608617393575d844aca33e7926055a3bcd288b134dce6c152bd96c7c4",
-      "source_normalized_sha256": "13e3fa8608617393575d844aca33e7926055a3bcd288b134dce6c152bd96c7c4",
-      "standalone_sha256": "e75348408fb2bb6ee9818fdc7b8c06ebacec75a81a23059e66cd20458020dbe0",
-      "standalone_normalized_sha256": "e75348408fb2bb6ee9818fdc7b8c06ebacec75a81a23059e66cd20458020dbe0",
+      "source_sha256": "032f34fd3a27d1746f493113decab27467c4aa62f62196a8f0f33d8378570ea9",
+      "source_normalized_sha256": "032f34fd3a27d1746f493113decab27467c4aa62f62196a8f0f33d8378570ea9",
+      "standalone_sha256": "a25d26cb09a1ba562531c21b46111d1e8b5c0815a85f469c049141c3ee5e32f8",
+      "standalone_normalized_sha256": "a25d26cb09a1ba562531c21b46111d1e8b5c0815a85f469c049141c3ee5e32f8",
       "current_source_review": "Reviewed current source and standalone counterpart for the cumulative source-bound beam, notation, key, articulation and bounded context batch. Original procedural regressions only; physical source observations and model facts do not establish complete musical authority.",
-      "reviewed_app_commit": "b43fa3d33c551b78ece6c36649f77229f0f52047",
+      "reviewed_app_commit": "2ef00ff20cb5274a3fb2df122ffed457801909fa",
       "app_optimization_port_review": "Caches evidence for candidate bar positions while retaining nomination order and source bounds.",
-      "optimization_port_review": "Reuses projection work in the existing shared raw bar extractor."
+      "optimization_port_review": "Reuses bounded row membership and keeps the existing barline witness."
     },
     "MeasureNumberReconciler.java": {
       "unanchored_split_review": {
@@ -4733,16 +4798,17 @@
         "scope": "Unanchored measure-count split guard and raster wiring. Broader source differences remain subject to review."
       },
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/MeasureNumberReconciler.java",
-      "source_sha256": "e0ebe97b5ac464e537f3468a191b0be1f5599d78ecc070fc7a41c3098d610450",
-      "reviewed_app_commit": "1ffb379bed8c76861854ce72e295893868136eb6",
-      "source_normalized_sha256": "e0ebe97b5ac464e537f3468a191b0be1f5599d78ecc070fc7a41c3098d610450",
+      "source_sha256": "0f0c970e09fba52e358e96a7ac64f5ff49c80133c02dba4286303bc5e6a2a8ae",
+      "reviewed_app_commit": "2ef00ff20cb5274a3fb2df122ffed457801909fa",
+      "source_normalized_sha256": "0f0c970e09fba52e358e96a7ac64f5ff49c80133c02dba4286303bc5e6a2a8ae",
       "reviewed_source_state": "Committed paired recognition47/guide286/audio80 sources; final cumulative package, deployment and runtime verification remain pending.",
       "review_note": "Separate zero-offset agreement from at least two trusted printed system starts from an unknown first-measure number.",
       "scoped_reviewed_app_commit": "21815e0e7f8fc53e0cc41b9667eae3f9be85d4f7",
-      "standalone_sha256": "0c5d288e7d232d67615a8a6adbc48595fd78e765c5c117eb54fc369f216ba110",
+      "standalone_sha256": "bdee513333d4866b214d5fa97b04b88bd8ddc1f819cabbeca6cd31d9e78b0ac0",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/MeasureNumberReconciler.java",
-      "standalone_normalized_sha256": "0c5d288e7d232d67615a8a6adbc48595fd78e765c5c117eb54fc369f216ba110",
-      "current_source_review": "Reviewed current source and standalone counterpart for the cumulative source-bound beam, notation, key, articulation and bounded context batch. Original procedural regressions only; physical source observations and model facts do not establish complete musical authority."
+      "standalone_normalized_sha256": "bdee513333d4866b214d5fa97b04b88bd8ddc1f819cabbeca6cd31d9e78b0ac0",
+      "current_source_review": "Reviewed current source and standalone counterpart for the cumulative source-bound beam, notation, key, articulation and bounded context batch. Original procedural regressions only; physical source observations and model facts do not establish complete musical authority.",
+      "optimization_port_review": "Skips row-layout and token routing work when no measure numbers were supplied."
     },
     "MeasureRegion.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/MeasureRegion.java",
@@ -5608,13 +5674,13 @@
         "standalone_lf_sha256": "af1d3947016efcc690381c794ec3de40e791468ea8730295f96baf70b2273130",
         "scope": "Opening two-over-four repair. The production patches match after path normalization. Broader source differences remain subject to review."
       },
-      "source_sha256": "72b72b8ab8a857b61dbd0515ed54b405ee7d98ef5a3036f47a169eafa9e40aae",
+      "source_sha256": "5ffd2ea63ec61b19cfd74011f5b13f744136a2114d0367c0ff1e3c19ee8d06ef",
       "review_note": "Two independently proved whole-note counters protect an aligned stemless chord from interior shaft pixels, retaining the exterior shaft veto.",
-      "source_normalized_sha256": "72b72b8ab8a857b61dbd0515ed54b405ee7d98ef5a3036f47a169eafa9e40aae",
+      "source_normalized_sha256": "5ffd2ea63ec61b19cfd74011f5b13f744136a2114d0367c0ff1e3c19ee8d06ef",
       "reviewed_app_state": "Committed recognition130 source integration; cumulative app/Hub worker delivery pending goal completion.",
-      "standalone_sha256": "0b7cc93cea537775cebcdeb792ce6cb66ed78df0bfca8d25037a2ec1f54851de",
+      "standalone_sha256": "946d1ed82df8d600c43a0b5c83aa72fd3718e9bdd70a6edfa1ee0415159fc94e",
       "reviewed_app_base_commit": "f35728a8aa54ad905276707014439af44502ea61",
-      "reviewed_app_commit": "6e54fa19d9d8c12f409c488da36f10be84d63d1f",
+      "reviewed_app_commit": "2ef00ff20cb5274a3fb2df122ffed457801909fa",
       "scoped_reviewed_app_commit": "5a83c7704ff14579edcf52af5c1ab8e8e719a4d7",
       "license": "Apache-2.0",
       "cue_flag87_review_note": "Original procedural geometry only. Cue-size local glyph gap reuses unchanged own-stem and curved-flag checks. Existing scalar and wire semantics retained; no private raster/model/dependency change.",
@@ -5625,7 +5691,7 @@
       "recognition91_review_note": "Reviewed recognition91: observed terminal ribbon; boundary-crossing hairpin proposal completion (anchor coordinate-span <=4; new 4M proposal budget); complete raw beam following-rest voice. Existing admission fits and 145/225, model, Guide291 and audio97 unchanged. Original procedural tests only.",
       "reviewed_source_state": "committed",
       "release130_review_note": "Reviewed platform adapter; see release130_source_review. No claim of whole-file token parity.",
-      "standalone_normalized_sha256": "0b7cc93cea537775cebcdeb792ce6cb66ed78df0bfca8d25037a2ec1f54851de",
+      "standalone_normalized_sha256": "946d1ed82df8d600c43a0b5c83aa72fd3718e9bdd70a6edfa1ee0415159fc94e",
       "current_source_review": "Allocate bounded shared-ledger caches only after an eligible independently owned remote head; exact split sibling capture retained. Existing cancellation zero-work contract restored;812 focused tests and1373 retained complete native note records preserved. Models, limits and layouts unchanged.",
       "release_transport_review": "For valid blank/no-staff inputs, unavailable context preserves the supplied measure count without inventing source observations or clock authority. The original strict whole-analysis server parity assertion remains enabled; an original two-measure blank control covers the early return. A generic comment replaces an internal review title.",
       "natural_cancellation_review": {
@@ -5680,7 +5746,7 @@
       "curve_performance_review": "Reviewed public decoder optimizations ported to the app and native worker. App-specific callers and processing contracts are preserved.",
       "dense_decode_performance_review": "Desktop reuses ordered tie probe results by sample, raster row and direction. Standalone already has the equivalent bounded probe cache in its own tie loop and keeps that implementation.",
       "app_optimization_port_review": "Reuses packed labels, sampled rows, and rests while retaining exact component memberships and app bounds.",
-      "optimization_port_review": "Reuses paired digests and inspects tie shoulders first while retaining app tie bounds, raster ownership and acceptance branches."
+      "optimization_port_review": "Shares the verified component seal and reuses the existing per-note staff result in header reconciliation."
     },
     "OnnxOcrInference.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/OnnxOcrInference.java",
@@ -5875,18 +5941,19 @@
     },
     "PairedTremoloInk.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/PairedTremoloInk.java",
-      "source_sha256": "cae58c193534a65dfba715c3e7afdb772fd2f7719f9e4c1f2ca786a6d5631fb2",
-      "source_normalized_sha256": "cae58c193534a65dfba715c3e7afdb772fd2f7719f9e4c1f2ca786a6d5631fb2",
-      "standalone_sha256": "ce295d908fc6ca9c254716468e94bc1614017b51b219c01e06b5218256d8bb8b",
+      "source_sha256": "f68733949e52ec7bbfed7f08150e13d9fe3e695d77171f4a0326ab2c8c35e35d",
+      "source_normalized_sha256": "f68733949e52ec7bbfed7f08150e13d9fe3e695d77171f4a0326ab2c8c35e35d",
+      "standalone_sha256": "27cf1785b137c516ea4c51079e089b0d02a37e2ad75f9cad2268420d9b688ee0",
       "reviewed_source_state": "Committed source; 10458 Java and 584 Python tests passed (44 skipped). Paired deployment and whole-library accuracy acceptance pending.",
       "review_note": "Match flank continuity rejection to the minimum admitted stroke thickness, preventing thin staff rules from becoming floating tremolo rails. Original mirrored staff/beam and true floating-stroke fixtures.",
-      "reviewed_app_commit": "36c78456a09ba96802930712da07866e87a4c369",
+      "reviewed_app_commit": "2ef00ff20cb5274a3fb2df122ffed457801909fa",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/PairedTremoloInk.java",
-      "standalone_normalized_sha256": "ce295d908fc6ca9c254716468e94bc1614017b51b219c01e06b5218256d8bb8b",
+      "standalone_normalized_sha256": "27cf1785b137c516ea4c51079e089b0d02a37e2ad75f9cad2268420d9b688ee0",
       "current_source_review": "Reviewed current source and standalone counterpart for the cumulative source-bound beam, notation, key, articulation and bounded context batch. Original procedural regressions only; physical source observations and model facts do not establish complete musical authority.",
       "license": "Apache-2.0",
       "recognition133_review": "Reviewed global ordinary-beam proof, fixed existing interior ray and continuous shaft identity. Original procedural regressions only; standalone adapters retained, no private captures, models or record-layout changes.",
-      "curve_performance_review": "Reviewed public decoder optimizations ported to the app and native worker. App-specific callers and processing contracts are preserved."
+      "curve_performance_review": "Reviewed public decoder optimizations ported to the app and native worker. App-specific callers and processing contracts are preserved.",
+      "optimization_port_review": "Reuses packed labels and row extents in the same tremolo envelope."
     },
     "PaleBeamRecovery.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/PaleBeamRecovery.java",
@@ -7145,18 +7212,19 @@
     },
     "PrintedSlurFrames.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/PrintedSlurFrames.java",
-      "source_sha256": "fc257ed76c7f8bea81726573e080d9b511a39385c00ad8ef057a812761d37e5b",
-      "source_normalized_sha256": "9d9bf469eb11bdf58fe0b52ab0d3d72faefea53cd3fbc9d51b43dc67b3d16040",
+      "source_sha256": "cf37e1baead2a1d505974cb4bce7b90e0f2a30af7d6b57a5b570ba8ee9926abc",
+      "source_normalized_sha256": "cf37e1baead2a1d505974cb4bce7b90e0f2a30af7d6b57a5b570ba8ee9926abc",
       "source_state": "Reviewed preparatory app working-tree source; final functional adoption commit pending",
       "reviewed_source_state": "Committed and hooked source; exact paired helper tokens or Python AST verified. Final packaged app/Hub/worker/device rollout remains pending.",
       "review_note": "Use common independently verified staff frames for geometry-only or timed heads. Repeated systems require unique physical phase; duplicate/stale owners reject. Original procedural controls only; no private scores, library records, masks, model weights or signing material are published.",
-      "reviewed_app_commit": "1c53d7f0b6fd34dace3974e914a3d73b00ce9efc",
+      "reviewed_app_commit": "2ef00ff20cb5274a3fb2df122ffed457801909fa",
       "scoped_reviewed_app_commit": "48c63effa5905c396dde62b847e064573516f047",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/PrintedSlurFrames.java",
       "license": "Apache-2.0",
-      "standalone_sha256": "b4393097ec31d254cf77652a6d4419f3a4bbd4113f38746b23d2eefd1ffc3ea2",
-      "standalone_normalized_sha256": "481a88a9704fede809285907720ee728850375365acbbf603f74b9eab0c53e2a",
-      "whole_staff_slur_review": "Slur-only supplemental capture after complete legacy capture uses unique raw whole-width five-rule/no-sixth proof on failed staff slots. Source-sealed, independently bounded, atomic refusal and valid larger-page legacy preservation. Default frame consumers and existing source IDs remain unchanged; existing broad head-row tolerance confers no new pitch/clock authority."
+      "standalone_sha256": "b76cecd041e9b7238e41368706efe16e6e691b51926224e8a4a7251ced51a575",
+      "standalone_normalized_sha256": "b76cecd041e9b7238e41368706efe16e6e691b51926224e8a4a7251ced51a575",
+      "whole_staff_slur_review": "Slur-only supplemental capture after complete legacy capture uses unique raw whole-width five-rule/no-sixth proof on failed staff slots. Source-sealed, independently bounded, atomic refusal and valid larger-page legacy preservation. Default frame consumers and existing source IDs remain unchanged; existing broad head-row tolerance confers no new pitch/clock authority.",
+      "optimization_port_review": "Keeps the existing frame bounds while trimming repeat work."
     },
     "PrintedSlurOwners.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/PrintedSlurOwners.java",
@@ -7615,13 +7683,14 @@
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/RawMeasuredStaffTracks.java",
       "license": "Apache-2.0",
       "review_note": "Reviewed global source-bound interpretation helper with namespace-equivalent standalone code and original procedural regressions. Unknown or conflicting evidence is retained; no score-specific rules, private fixtures or model changes.",
-      "source_sha256": "1cff2d3b5a8ddf3d88f47c66440b0e1cfe777bd159a75ebdd2820d489171412d",
-      "source_normalized_sha256": "1cff2d3b5a8ddf3d88f47c66440b0e1cfe777bd159a75ebdd2820d489171412d",
-      "standalone_sha256": "a8a81c11a69a154f71248e9066e7a808f6191238493978b0e4c8dcd7b364e60d",
-      "standalone_normalized_sha256": "a8a81c11a69a154f71248e9066e7a808f6191238493978b0e4c8dcd7b364e60d",
+      "source_sha256": "b9368ca81c7bc9f02599588a9a46c43f274c0e7e571731c83369742e110360db",
+      "source_normalized_sha256": "b9368ca81c7bc9f02599588a9a46c43f274c0e7e571731c83369742e110360db",
+      "standalone_sha256": "2537a9a67ddc7b35dbc908f4e6e52b41a2fa561c4b2916861dc991c8f0663996",
+      "standalone_normalized_sha256": "2537a9a67ddc7b35dbc908f4e6e52b41a2fa561c4b2916861dc991c8f0663996",
       "current_source_review": "Reviewed current source and standalone counterpart for the cumulative source-bound beam, notation, key, articulation and bounded context batch. Original procedural regressions only; physical source observations and model facts do not establish complete musical authority.",
-      "reviewed_app_commit": "178cfc4718fd515981ed678997f76a983011dca5",
-      "app_optimization_port_review": "Shares row and strip work in existing measured staff recovery."
+      "reviewed_app_commit": "2ef00ff20cb5274a3fb2df122ffed457801909fa",
+      "app_optimization_port_review": "Shares row and strip work in existing measured staff recovery.",
+      "optimization_port_review": "Reuses in-page staff evidence at the verified call sites."
     },
     "RawNumeralComponents.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/RawNumeralComponents.java",
@@ -7678,13 +7747,13 @@
     },
     "RawStaffLineDetector.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/RawStaffLineDetector.java",
-      "source_sha256": "2b5e3d1bcceba3bc441295e38d10c2ae397a671e82dbaafcf6c45518a6b12923",
-      "source_normalized_sha256": "2b5e3d1bcceba3bc441295e38d10c2ae397a671e82dbaafcf6c45518a6b12923",
+      "source_sha256": "00288a2ddf2a287743008adca5a9a29bb2b6745a091bbe04f0e1180e133e6168",
+      "source_normalized_sha256": "00288a2ddf2a287743008adca5a9a29bb2b6745a091bbe04f0e1180e133e6168",
       "reviewed_app_base_commit": "650d1b3a312dcd7eb58f83945a6a3be321c9b4dd",
       "review_note": "Evaluate existing interior texture rejection on the actual regularized emitted staff frame with independent printed neighbors. Corroborate staff-rule beam bands using complete bilateral staff witnesses, continuous same-rule paths, unchanged mass guards and an independent finite-rail end/body-to-tail veto; clipped evidence abstains. Reject photographic heads only with unchanged off-staff and absent-shaft guards, a continuously shaded body/surround, no thin printed ledger, and no independently bounded body or separate occluding neighbor. Ambiguous clipped neighbor witnesses conservatively preserve heads. Sixty-three original procedural regressions, including real pale whole-head and image-edge counterexamples. No private score pixels, song predicates, model or native record changes.",
       "reviewed_source_state": "working-tree",
-      "standalone_sha256": "54f44f2e58098f34425e288eb2f90f2d1d9613843b346988ffaec03b726ceb9a",
-      "reviewed_app_commit": "178cfc4718fd515981ed678997f76a983011dca5",
+      "standalone_sha256": "a059b58e64a24cc865af93ed1f688f59f4102039ef58a1f9a2adecfa9cdbdce0",
+      "reviewed_app_commit": "2ef00ff20cb5274a3fb2df122ffed457801909fa",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/RawStaffLineDetector.java",
       "literal_faint_quarter_review": {
         "documentation": "docs/literal-faint-quarter-recovery.md",
@@ -7695,8 +7764,9 @@
         "rollout": "Source only; matched cumulative packaging deferred during active goal.",
         "app_commit": "14b533bf0297b0b36b3910858e847bf5012e9a2d"
       },
-      "standalone_normalized_sha256": "54f44f2e58098f34425e288eb2f90f2d1d9613843b346988ffaec03b726ceb9a",
-      "app_optimization_port_review": "Preserves existing app admission and uses packed dark counts and thin-line support checks."
+      "standalone_normalized_sha256": "a059b58e64a24cc865af93ed1f688f59f4102039ef58a1f9a2adecfa9cdbdce0",
+      "app_optimization_port_review": "Preserves existing app admission and uses packed dark counts and thin-line support checks.",
+      "optimization_port_review": "Skips uniformly bright blocks with the existing unsigned ink threshold and API-compatible reads."
     },
     "RawWholeRestVoiceEvidence.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/RawWholeRestVoiceEvidence.java",
@@ -8592,10 +8662,13 @@
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/ScorePartProducerSource.java",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/ScorePartProducerSource.java",
       "license": "Apache-2.0",
-      "source_sha256": "8f98cde5f8b71079c71760d0909c5af271d1ddfaa3fdffd4b7a0c1d0fbba918c",
-      "source_normalized_sha256": "ea1455e6d3566a0d1fdafa70ec14f364df84e472fbd5fa5a3415f3101d478e25",
-      "standalone_sha256": "7fb3087cfb7ef5fc052e3614ae223d19933a3bb23370d611f9ecb00dcf3deeee",
-      "review_note": "Reviewed source-bound observation/endpoint provenance and typed context transport. Partial, missing and contrary requirements remain explicit; observations or geometric models do not select clock policy. Original procedural regressions only; no private score fixtures or model change."
+      "source_sha256": "048d9a52fedb41a10a48b92b158f056604c6e20f71c81df3d49a09f7032fa03e",
+      "source_normalized_sha256": "048d9a52fedb41a10a48b92b158f056604c6e20f71c81df3d49a09f7032fa03e",
+      "standalone_sha256": "5c0dead2e27ea7b5c0821a830da38e476b452fff2e7b0ceb3b977c3eb6fa697f",
+      "review_note": "Reviewed source-bound observation/endpoint provenance and typed context transport. Partial, missing and contrary requirements remain explicit; observations or geometric models do not select clock policy. Original procedural regressions only; no private score fixtures or model change.",
+      "standalone_normalized_sha256": "5c0dead2e27ea7b5c0821a830da38e476b452fff2e7b0ceb3b977c3eb6fa697f",
+      "reviewed_app_commit": "2ef00ff20cb5274a3fb2df122ffed457801909fa",
+      "optimization_port_review": "Keeps annotation authentication on the existing populated path."
     },
     "ScorePedalDetector.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/ScorePedalDetector.java",
