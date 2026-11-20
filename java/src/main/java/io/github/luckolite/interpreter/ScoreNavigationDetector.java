@@ -233,6 +233,11 @@ final class ScoreNavigationDetector {
             var direction = new ScorePlaybackDirection(picked + (outgoing ? 1 : 0), mark.kind());
             if (!result.contains(direction)) result.add(direction);
         }
+        // An unlabelled coda at a To Coda trigger is the sign in that instruction.
+        // A coda at the D.S./D.C. jump boundary can still be its separate destination.
+        result.removeIf(direction -> direction.kind() == ScorePlaybackDirection.Kind.CODA
+                && result.contains(new ScorePlaybackDirection(
+                        direction.measureBoundary(), ScorePlaybackDirection.Kind.TO_CODA)));
         result.sort(
                 Comparator.comparingInt(ScorePlaybackDirection::measureBoundary)
                         .thenComparingInt(d -> d.kind().wireId()));

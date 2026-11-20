@@ -8473,8 +8473,8 @@
     },
     "ScoreNavigationDetector.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/ScoreNavigationDetector.java",
-      "source_sha256": "268ae6457d01ad5867eb55e7ee373a902212713b7cccb66dd6fdc83ffc2f1756",
-      "source_normalized_sha256": "32db9f457e2a9c3a2e1a604bb8765e1f0c679ed46de743a6ee0b0591a1991f01",
+      "source_sha256": "bbcc3ea555066264b2492b753a95b63d7d477ddc475decc20221329b68e46d10",
+      "source_normalized_sha256": "f42f03219e383fded8a0766abf589c07b9b714fae74f986a3c7475f353c5f6c0",
       "review_note": "Shared recognition and playback-direction changes ported with standalone adapters. Redistributable synthetic regressions cover the changed ink and direction rules.",
       "standalone_sha256": "95c4bac807ad3bcf2e9f296029f8b503b5d52dee57e18b8678b961a8aa466f05",
       "reviewed_source_state": "Reviewed barline anchoring for vertically repeated Segno destinations.",

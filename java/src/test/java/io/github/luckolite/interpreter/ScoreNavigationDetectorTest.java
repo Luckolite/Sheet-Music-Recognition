@@ -9,6 +9,15 @@ import static io.github.luckolite.interpreter.ScorePlaybackDirection.Kind.*;
 
 public class ScoreNavigationDetectorTest {
     @Test
+    public void codaSignAtToCodaBoundaryIsTheTriggerRatherThanADestination() {
+        assertEquals(
+                List.of(new ScorePlaybackDirection(2, TO_CODA), new ScorePlaybackDirection(3, CODA)),
+                detect(List.of(word("To Coda", .37f, .46f)), List.of(
+                        new ScoreNavigationDetector.Glyph(CODA, .515f, .15f, .22f),
+                        new ScoreNavigationDetector.Glyph(CODA, .72f, .15f, .22f))));
+    }
+
+    @Test
     public void largeCodaWithLongCrossAnchorsAtTheIncomingBar() {
         int width = 1000, height = 400, centerX = 510, centerY = 64;
         byte[] gray = new byte[width * height];
