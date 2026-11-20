@@ -9,6 +9,26 @@ import static io.github.luckolite.interpreter.ScorePlaybackDirection.Kind.*;
 
 public class ScoreNavigationDetectorTest {
     @Test
+    public void largeCodaWithLongCrossAnchorsAtTheIncomingBar() {
+        int width = 1000, height = 400, centerX = 510, centerY = 64;
+        byte[] gray = new byte[width * height];
+        Arrays.fill(gray, (byte) 255);
+        for (int y = -24; y <= 24; y++) {
+            for (int x = -21; x <= 21; x++) {
+                double radius = Math.hypot(x / 14.0, y / 16.0);
+                if ((radius >= .75 && radius <= 1) || x == 0 || y == 0)
+                    gray[(centerY + y) * width + centerX + x] = 0;
+            }
+        }
+        var glyphs = NavigationCodaGlyphs.detect(gray, width, height, staffs);
+        assertEquals(List.of(new ScorePlaybackDirection(2, CODA)), detect(List.of(), glyphs));
+
+        for (int y = -24; y <= 24; y++)
+            gray[(centerY + y) * width + centerX] = (byte) 255;
+        assertTrue(NavigationCodaGlyphs.detect(gray, width, height, staffs).isEmpty());
+    }
+
+    @Test
     public void verticallyRepeatedSegnosAtDoubleBarOpenTheFollowingMeasure() {
         var staves = List.of(
                 new PlayingTechniqueDetector.Staff(80, 120, 10, 0, 2),

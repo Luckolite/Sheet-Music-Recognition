@@ -22,8 +22,8 @@ final class NavigationCodaGlyphs {
             float gap = staff.gap();
             if (gap < 5 || !Float.isFinite(gap)) continue;
             // Boundary ownership accepts a sign ending six gaps above the staff.
-            // Its full body can extend another four gaps upward; do not clip that proof.
-            int top = Math.max(0, Math.round(staff.top() - gap * 10));
+            // Leave room for the full cross above the ring at that distance.
+            int top = Math.max(0, Math.round(staff.top() - gap * 12));
             int bottom = Math.min(height - 1, Math.round(staff.top() - gap * .5f));
             if (bottom <= top) continue;
             for (int threshold = 80; threshold <= 140; threshold += 60) {
@@ -31,16 +31,11 @@ final class NavigationCodaGlyphs {
                     break;
                 components.scan(gray, width, 0, top, width, bottom + 1, threshold, (l, t, endX, endY, count) -> {
                     int r = endX - 1, b = endY - 1;
-                    float w = r - l + 1, h = b - t + 1;
+                    int w = endX - l, h = endY - t;
                     if (t == top
                             || b == bottom
                             || staff.top() - b > gap * 6
-                            || w < gap
-                            || w > gap * 3.5f
-                            || h < gap * 1.6f
-                            || h > gap * 4.25f
-                            || w / h < .65f
-                            || w / h > 1.15f) return true;
+                            || !CodaGlyphInk.fits(w, h, gap)) return true;
                     if (!CodaGlyphInk.matches(gray, width, height, l, t, r, b, gap))
                         return true;
                     float cx = (l + r) * .5f / width, cy = (t + b) * .5f / height;

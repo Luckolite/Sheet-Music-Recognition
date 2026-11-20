@@ -4,6 +4,15 @@ package io.github.luckolite.interpreter;
 
 /** A coda has a crossed ring enclosing four curved white quadrants. */
 final class CodaGlyphInk {
+    static boolean fits(int width, int height, float gap) {
+        return width >= gap
+                && width <= gap * 4.75f
+                && height >= gap * 1.6f
+                && height <= gap * 5.25f
+                && width / (float) height >= .65f
+                && width / (float) height <= 1.15f;
+    }
+
     static boolean matches(
             byte[] gray,
             int width,
@@ -26,13 +35,7 @@ final class CodaGlyphInk {
                 || !Float.isFinite(gap)
                 || gap < 5) return false;
         int w = right - left + 1, h = bottom - top + 1;
-        if (w < gap
-                || w > gap * 3.5f
-                || h < gap * 1.6f
-                || h > gap * 4.25f
-                || w / (float) h < .65f
-                || w / (float) h > 1.15f
-                || (long) w * h > 65536) return false;
+        if (!fits(w, h, gap) || (long) w * h > 65536) return false;
         // A coda must have both cross strokes before its enclosed paper is examined.
         if (!hasCrossStroke(gray, width, left, top, w, h, 1, width)
                 || !hasCrossStroke(gray, width, left, top, h, w, width, 1)) return false;
