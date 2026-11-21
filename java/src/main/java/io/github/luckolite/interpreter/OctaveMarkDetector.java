@@ -361,6 +361,7 @@ final class OctaveMarkDetector {
                 if (literal == null && right >= 0 && bareEight
                         && bottomAttachedDottedEight(gray, width, height, numeral, gap))
                     literal = new SystemRibbonEnd(right, false, true);
+                right = Math.max(right, closedStraightDottedOctave(gray, width, height, numeral, gap));
                 if (right >= 0)
                     left = closedBeamStart(gray, width, height, word, owner, staffs, measures, notes, left, right);
                 if (right >= 0 && bareEight && literal == null) {
@@ -3290,6 +3291,46 @@ final class OctaveMarkDetector {
 
     private static float dotY(RawNumeralComponents.Component dot) {
         return (dot.top + dot.bottom) * .5f;
+    }
+
+    /** A complete dotted line can outlast the row-based trace after a small scan skew. */
+    private static float closedStraightDottedOctave(
+            byte[] gray, int width, int height, InkBox eight, float gap) {
+        if (gap < 10 || gap > 26 || !bareEightShape(gray, width, eight, gap)) return -1;
+        int left = eight.right + 1;
+        int top = Math.max(0, Math.round(eight.top - gap * .1f));
+        int right = Math.min(width - 1, Math.round(left + gap * 25));
+        int bottom = Math.min(height - 1, Math.round(eight.top + gap * 1.05f));
+        if (left >= right || top >= bottom) return -1;
+        var ink = RawNumeralComponents.capture(
+                gray, width, height, left, top, right, bottom, () -> {}, () -> {});
+        var dots = dottedComponents(ink, gap, .58f);
+        int count = 0;
+        float railY = -1, lastX = -1;
+        RawNumeralComponents.Component last = null;
+        for (var dot : dots) {
+            float x = dotX(dot), y = dotY(dot);
+            if (count == 0) {
+                if (x > left + gap * .85f) break;
+                if (y < eight.top + gap * .06f || y > eight.top + gap * .80f) continue;
+                railY = y;
+            } else {
+                float step = x - lastX;
+                if (Math.abs(y - railY) > gap * .25f || step < gap * .28f) continue;
+                if (step > gap * .91f) break;
+            }
+            count++;
+            lastX = x;
+            last = dot;
+        }
+        if (count < 9 || last == null) return -1;
+        // The terminal dots must descend from the right edge of this same horizontal line.
+        for (int x = last.left; x <= last.right; x++)
+            for (int y = last.top; y <= last.bottom; y++)
+                if ((gray[y * width + x] & 255) < 165
+                        && hasDottedHook(gray, width, height, x, y, 1, gap))
+                    return last.right + gap * .55f;
+        return -1;
     }
 
     private static float dashEnd(

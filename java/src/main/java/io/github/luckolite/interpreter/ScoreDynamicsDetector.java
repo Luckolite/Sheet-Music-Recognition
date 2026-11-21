@@ -284,6 +284,14 @@ final class ScoreDynamicsDetector {
                 x1 = Math.min(width, Math.round(word.right() * width));
         int y0 = Math.max(0, Math.round(word.top() * height)),
                 y1 = Math.min(height, Math.round(word.bottom() * height));
+        if (word.text().strip().equals("F")
+                && croppedChordE(gray, width,
+                        Math.max(0, x0 - Math.round(staff.gap() * .25f)),
+                        Math.max(0, y0 - Math.round(staff.gap() * .25f)),
+                        Math.min(width, x1 + Math.round(staff.gap() * .2f)),
+                        Math.min(y1 + Math.round(staff.gap() * .9f),
+                                Math.round(staff.top() - staff.gap() * .25f)),
+                        staff.gap())) return true;
         int left = x1, right = -1, top = y1, bottom = -1;
         for (int y = y0; y < y1; y++)
             for (int x = x0; x < x1; x++)
@@ -334,6 +342,45 @@ final class ScoreDynamicsDetector {
                 && openRows >= Math.max(1, h * .1f)
                 && lowerArea > 0
                 && lowerInk <= lowerArea * .015f;
+    }
+
+    /** A narrow OCR crop can read the top of an upright E chord as a forte F. */
+    private static boolean croppedChordE(
+            byte[] gray, int width, int x0, int y0, int x1, int y1, float gap) {
+        int left = x1, right = -1, top = y1, bottom = -1;
+        for (int y = y0; y < y1; y++)
+            for (int x = x0; x < x1; x++)
+                if ((gray[y * width + x] & 255) < 145) {
+                    left = Math.min(left, x);
+                    right = Math.max(right, x);
+                    top = Math.min(top, y);
+                    bottom = Math.max(bottom, y);
+                }
+        int w = right - left + 1, h = bottom - top + 1;
+        if (h < gap || h > gap * 2.5f || w < h * .45f || w > h * .87f) return false;
+        boolean upright = false;
+        for (int x = left; x <= left + w * .22f; x++) {
+            int solid = 0;
+            for (int y = top; y <= bottom; y++)
+                if ((gray[y * width + x] & 255) < 145) solid++;
+            upright |= solid >= h * .93f;
+        }
+        if (!upright) return false;
+        int rails = 0, blankBands = 0;
+        for (int y = top; y <= bottom; y++) {
+            int ink = 0, rightInk = 0;
+            for (int x = left; x <= right; x++)
+                if ((gray[y * width + x] & 255) < 145) {
+                    ink++;
+                    if (x - left >= w * .4f) rightInk++;
+                }
+            float row = (y - top) / (float) h;
+            if (ink >= w * .78f)
+                rails |= row < .22f ? 1 : row > .76f ? 4 : row >= .32f && row <= .66f ? 2 : 0;
+            if (rightInk == 0)
+                blankBands |= row >= .22f && row < .37f ? 1 : row >= .60f && row < .76f ? 2 : 0;
+        }
+        return rails == 7 && blankBands == 3;
     }
 
     static float level(String text) {

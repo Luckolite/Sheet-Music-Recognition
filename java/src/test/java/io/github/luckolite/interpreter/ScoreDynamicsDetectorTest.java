@@ -7,6 +7,29 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class ScoreDynamicsDetectorTest {
+    @Test
+    public void clippedChordRootHasThreeRailsAndForteDoesNot() {
+        int width = 160, height = 180;
+        byte[] raster = new byte[width * height];
+        Arrays.fill(raster, (byte) 255);
+        var staff = new PlayingTechniqueDetector.Staff(90, 154, 16, 0, 1);
+        var word = new PlayingTechniqueDetector.Word("F", 48f / width, 29f / height,
+                69f / width, 52f / height);
+        for (int y = 30; y <= 60; y++)
+            Arrays.fill(raster, y * width + 50, y * width + 54, (byte) 0);
+        for (int top : new int[] {30, 44, 57})
+            for (int y = top; y < top + 4; y++)
+                Arrays.fill(raster, y * width + 50, y * width + 69, (byte) 0);
+        assertTrue(ScoreDynamicsDetector.uprightChordF(word, staff, raster, width, height));
+        Arrays.fill(raster, (byte) 255);
+        for (int y = 30; y < 62; y++) {
+            int x = 63 - (y - 30) / 3;
+            Arrays.fill(raster, y * width + x, y * width + x + 3, (byte) 0);
+        }
+        Arrays.fill(raster, 45 * width + 51, 45 * width + 68, (byte) 0);
+        assertFalse(ScoreDynamicsDetector.uprightChordF(word, staff, raster, width, height));
+    }
+
     @org.junit.Test
     public void joinedDynamicAndDirectionRetainBothTokens() {
         org.junit.Assert.assertEquals(

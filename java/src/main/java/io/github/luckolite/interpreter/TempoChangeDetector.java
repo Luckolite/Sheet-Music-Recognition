@@ -223,6 +223,15 @@ final class TempoChangeDetector {
             java.util.Map<MeasureNumberReconciler.NumberToken, Integer> provedEquals,
             java.util.Map<MeasureNumberReconciler.NumberToken, Double> decimalRates,
             DirectionGeometry geometry) {
+        return detectProved(tokens, gray, width, height, measures, provedEquals, decimalRates, geometry, null);
+    }
+
+    private static List<ScoreTempoChange> detectProved(
+            List<MeasureNumberReconciler.NumberToken> tokens,
+            byte[] gray, int width, int height, List<MeasureRegion> measures,
+            java.util.Map<MeasureNumberReconciler.NumberToken, Integer> provedEquals,
+            java.util.Map<MeasureNumberReconciler.NumberToken, Double> decimalRates,
+            DirectionGeometry geometry, List<BeatGlyph> beatGlyphs) {
         if (tokens == null
                 || tokens.isEmpty()
                 || gray == null
@@ -296,6 +305,17 @@ final class TempoChangeDetector {
             if (measureIndex == 0 && token.bottom() <= measure.top()) position = 0f;
             if (position < .22f) position = 0f;
             double unit = printedBeatUnit(token, gray, width, height, equalsLeft);
+            if (beatGlyphs != null) {
+                int digitHeight = printedDigitHeight(token, gray, width, height);
+                int[] light = new int[8], dark = new int[8];
+                double a = printedBeatUnitWithDigitHeight(token, gray, width, height, equalsLeft, 200, digitHeight, light);
+                double b = printedBeatUnitWithDigitHeight(token, gray, width, height, equalsLeft, 165, digitHeight, dark);
+                if (Double.isFinite(a) && Math.abs(a - b) < .001
+                        && Math.abs(light[2] - dark[2]) <= 2 && Math.abs(light[3] - dark[3]) <= 2
+                        && light[7] < measure.top() * height)
+                    beatGlyphs.add(new BeatGlyph(
+                            measureIndex, light[4], light[5], light[6], light[7], light[2], light[3]));
+            }
             result.add(new ScoreTempoChange(measureIndex, position, rate * unit, unit));
         }
         result.sort(
@@ -438,6 +458,45 @@ final class TempoChangeDetector {
         return best;
     }
 
+    record BeatGlyph(int measure, int left, int right, int top, int bottom, int headX, int headY) {}
+
+    static List<ScoreNoteEvent> withoutBeatGlyphs(
+            List<ScoreNoteEvent> notes, List<MeasureRegion> measures,
+            List<BeatGlyph> glyphs, int width, int height) {
+        if (glyphs.isEmpty()) return notes;
+        var filtered = new ArrayList<>(notes);
+        for (var glyph : glyphs) {
+            int owner = -1;
+            for (int i = 0; i < filtered.size(); i++) {
+                var note = filtered.get(i);
+                if (note.measureIndex() != glyph.measure()
+                        || note.kind() != ScoreNoteEvent.Kind.PITCHED
+                        || note.staffStep() < 9 || note.tiedFromPrevious() || note.beamCount() != 0
+                        || (note.articulations() & NoteOrnament.GRACE) != 0) continue;
+                var bar = measures.get(note.measureIndex());
+                float x = (bar.left() + note.positionInMeasure() * (bar.right() - bar.left())) * width;
+                float y = note.pageY() * height;
+                if (x < glyph.left() || x > glyph.right() || y < glyph.top() || y > glyph.bottom()
+                        || Math.abs(x - glyph.headX()) > (glyph.right() - glyph.left()) * .46f
+                        || Math.abs(y - glyph.headY()) > (glyph.bottom() - glyph.top()) * .23f) continue;
+                if (owner >= 0) { owner = -1; break; }
+                owner = i;
+            }
+            if (owner < 0) continue;
+            var alias = filtered.remove(owner);
+            float rests = alias.leadingRestBeats() + alias.followingRestBeats();
+            if (rests > 0 && owner < filtered.size()) {
+                var next = filtered.get(owner);
+                if (next.measureIndex() == alias.measureIndex()
+                        && next.staffIndex() == alias.staffIndex()
+                        && next.staffCount() == alias.staffCount()
+                        && next.leadingRestBeats() < rests)
+                    filtered.set(owner, next.withLeadingRest(rests));
+            }
+        }
+        return filtered.size() == notes.size() ? notes : List.copyOf(filtered);
+    }
+
     static List<ScoreTempoChange> detectWithWords(
             List<MeasureNumberReconciler.NumberToken> tokens,
             List<PlayingTechniqueDetector.Word> words,
@@ -445,6 +504,16 @@ final class TempoChangeDetector {
             int width,
             int height,
             List<MeasureRegion> measures) {
+        return detectWithWords(tokens, words, gray, width, height, measures, null);
+    }
+
+    static List<ScoreTempoChange> detectWithWords(
+            List<MeasureNumberReconciler.NumberToken> tokens,
+            List<PlayingTechniqueDetector.Word> words,
+            byte[] gray,
+            int width,
+            int height,
+            List<MeasureRegion> measures, List<BeatGlyph> beatGlyphs) {
         if (words == null
                 || gray == null
                 || width <= 0
@@ -563,7 +632,7 @@ final class TempoChangeDetector {
             proved.put(accepted, eq);
         }
         var geometry = new DirectionGeometry(gray, width, height, measures);
-        var ordinary = detectProved(all, gray, width, height, measures, proved, decimalRates, geometry);
+        var ordinary = detectProved(all, gray, width, height, measures, proved, decimalRates, geometry, beatGlyphs);
         if (measures == null || measures.isEmpty() || all.isEmpty() || words.isEmpty()
                 || all.size() > 10000 || words.size() > 10000)
             return ordinary;
@@ -1191,6 +1260,11 @@ final class TempoChangeDetector {
             if (anchor != null) {
                 anchor[0] = note[0];
                 if (anchor.length > 1) anchor[1] = stem;
+                if (anchor.length >= 8) {
+                    anchor[2] = cx;
+                    anchor[3] = cy;
+                    System.arraycopy(note, 0, anchor, 4, 4);
+                }
             }
             for (int[] dot : parts) {
                 int dw = dot[1] - dot[0] + 1, dh = dot[3] - dot[2] + 1;

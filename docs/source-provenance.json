@@ -1,4 +1,10 @@
 {
+  "november_21_notation_ownership_port": {
+    "reviewed_app_commit": "79afda0ec2e522e60c6a88e2931b6fb582907afa",
+    "app_recognition": 161,
+    "standalone_recognition": 159,
+    "scope": "Ports metronome head ownership and opening rest preservation, cropped chord roots, flag fragments mistaken for accidental signs, and closed dotted octave lines. SheetInterpreter matches the NativePageGuide and Android flow without importing app adapters."
+  },
   "november_19_optimization_port": {
     "standalone_optimization_commit": "e5b64243c6a3e2c0357e326784ba1fdf3b818e9f",
     "upstream_cutoff": "9824c7209a46cb30b80b25057839ca4f8502e1df",
@@ -4106,8 +4112,8 @@
     },
     "GuideCacheIdentity.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/GuideCacheIdentity.java",
-      "source_sha256": "09cc6da175f2a75bd73024390b3d6a5ae27a9c6bc19a880d1b36ca91187c1234",
-      "source_normalized_sha256": "f57a08d0440a5dd08049de2b3bb9dbe5b97b4289861e30f66a4fec7bb6ffefc1",
+      "source_sha256": "2528829eb2ac89f84253bf6c1dde554b23d6db95623b767771c7a23c38527e16",
+      "source_normalized_sha256": "f3f8babba94e486755913a05b74c1b9797cbc6dd7deecbd0ef1c380eeb205b9b",
       "review_note": "Recognition 155 invalidates existing recognition caches for the terminal metric and stemless whole-chord corrections.",
       "standalone_sha256": "f81502fe7f0d0fd9680d78011dd8af105beaa48fba477d33a5debc7b04b32b32",
       "reviewed_app_commit": "bd726502235465a6d3e91e6f5abdbaada211d4c8",
@@ -5550,8 +5556,8 @@
     },
     "OctaveMarkDetector.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/OctaveMarkDetector.java",
-      "source_sha256": "1f27f9a289bcafdc2efbcc47621bf7619caf4c95b7679f615e0b9c1b703c15ae",
-      "source_normalized_sha256": "1f27f9a289bcafdc2efbcc47621bf7619caf4c95b7679f615e0b9c1b703c15ae",
+      "source_sha256": "f16fe86bd542be6651d7c657a91b30536d8f03e14b7547cd3878c1a08041e15c",
+      "source_normalized_sha256": "dd938da19079dfcd3144a2fcd6c37a47bcad502343af1f761d66678069eabea8",
       "review_note": "Intrinsic octave bass clefs, complete contested ledger ownership, grace accidentals, independently rooted beam/slur separation, and below-staff full octave-word ownership. Original procedural/licensed-font regressions; no private score pixels, model changes or song-specific rules.",
       "reviewed_source_state": "committed",
       "standalone_sha256": "d32e58e18a3ca39b3c71cdb16d22e6102980a9c6ea400ef68725008539b72a30",
@@ -5674,9 +5680,9 @@
         "standalone_lf_sha256": "af1d3947016efcc690381c794ec3de40e791468ea8730295f96baf70b2273130",
         "scope": "Opening two-over-four repair. The production patches match after path normalization. Broader source differences remain subject to review."
       },
-      "source_sha256": "5ffd2ea63ec61b19cfd74011f5b13f744136a2114d0367c0ff1e3c19ee8d06ef",
+      "source_sha256": "90f30c9c01f92e16a5b6bbf9e1402873e38c310275ac5498d483341496f9ca9f",
       "review_note": "Two independently proved whole-note counters protect an aligned stemless chord from interior shaft pixels, retaining the exterior shaft veto.",
-      "source_normalized_sha256": "5ffd2ea63ec61b19cfd74011f5b13f744136a2114d0367c0ff1e3c19ee8d06ef",
+      "source_normalized_sha256": "a259674967c494f6e16e4fa18743d5fa4c590c8ed5d8cb2dcfc34767b2ce9b0d",
       "reviewed_app_state": "Committed recognition130 source integration; cumulative app/Hub worker delivery pending goal completion.",
       "standalone_sha256": "946d1ed82df8d600c43a0b5c83aa72fd3718e9bdd70a6edfa1ee0415159fc94e",
       "reviewed_app_base_commit": "f35728a8aa54ad905276707014439af44502ea61",
@@ -8257,8 +8263,8 @@
     },
     "ScoreDynamicsDetector.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/ScoreDynamicsDetector.java",
-      "source_sha256": "b8ba3ae19d0f212d24d46534871409236b58e8bfe1d88a932357cd30be4f9ab0",
-      "source_normalized_sha256": "b8ba3ae19d0f212d24d46534871409236b58e8bfe1d88a932357cd30be4f9ab0",
+      "source_sha256": "d675b9573eb990ae852177d20e2ae8e1d653730e38a189244fb1eb299576e6a3",
+      "source_normalized_sha256": "4c6b4299cfba549698e8722577c4a3a61c2acc12fe7a5a9a37885a85016b9483",
       "review_note": "Shared recognition and playback-direction changes ported with standalone adapters. Redistributable synthetic regressions cover the changed ink and direction rules.",
       "reviewed_app_base_commit": "650d1b3a312dcd7eb58f83945a6a3be321c9b4dd",
       "reviewed_app_state": "Reviewed recognition108 source committed; cumulative matched rollout deferred during active goal.",
@@ -9249,8 +9255,8 @@
         "scope": "Unanchored measure-count split guard and raster wiring. Broader source differences remain subject to review."
       },
       "source_path": "tools/native-worker/NativePageGuide.java",
-      "source_sha256": "002be2341e6ab3e1ec930d26841b65298ac91b0499a35fa3515ecd2355a6fdfb",
-      "source_normalized_sha256": "002be2341e6ab3e1ec930d26841b65298ac91b0499a35fa3515ecd2355a6fdfb",
+      "source_sha256": "e880aa1f7b0eefe6bb799213bb94d2d2c654f9c35172945df92138f6df4ed3b8",
+      "source_normalized_sha256": "08e3d99d8d2305088550a8c8d5eae5f9c01b5c7ce81f89794e20a4f222dc4d29",
       "standalone_sha256": "d0fe2fa045aad2483a3bf820856cba1bbcd4bb282d887235ab724ec0345023ee",
       "license": "Apache-2.0",
       "review_note": "Shared recognition and playback-direction changes ported with standalone adapters. Redistributable synthetic regressions cover the changed ink and direction rules.",
@@ -9888,8 +9894,8 @@
     },
     "TempoChangeDetector.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/TempoChangeDetector.java",
-      "source_sha256": "9b4e232304dfaccf5c0acf7a36f81d38b40925ae5947ec66c35e3ea0e8ac8137",
-      "source_normalized_sha256": "9b4e232304dfaccf5c0acf7a36f81d38b40925ae5947ec66c35e3ea0e8ac8137",
+      "source_sha256": "8ce3e4dd0cd8bdc0f90f1330385f2320e46cd29049b9f3a6f8ff961ee8a9a98e",
+      "source_normalized_sha256": "b2ac3d64d3a3b772792e4e48f01ba620e48530623ad8a25db3a9c1b4e1759b58",
       "review_note": "Own an elevated complete opening metronome equation through an independently printed part caption, paired header rows, unique staff and clear corridor. Recover clipped meter crop staff geometry only with agreeing bilateral printed-rule witnesses and owned stacked ink. Add blank context around isolated OCR digits without changing source pixels, scale consensus or font thresholds. Sixty-six original procedural and licensed-font regressions; no private score assets, song predicates, model or wire-layout changes.",
       "reviewed_source_state": "working-tree",
       "standalone_sha256": "8b8a9b3ecb0b37992a40a493686883be9e25d6727488895059f1effc21cf0014",
@@ -10346,8 +10352,8 @@
     },
     "guide_writer.py": {
       "source_path": "tools/native-worker/guide_writer.py",
-      "source_sha256": "19eda4f71191786bfa8bb8321d0a25ca2ac346f69d351bc8d0697b757dfb9157",
-      "source_normalized_sha256": "8ea4214d297a6f1e0aa8a12bf29c696f9c23435c3c745305a8881cc73cbeacb7",
+      "source_sha256": "f3acf32464680c189a9a9b3245289b895eec551546076f893c21927a0b17cac8",
+      "source_normalized_sha256": "52116eecb1872de94c621643b7bb9ddb56a8f891645f346e69316f0e645a526f",
       "review_note": "Match the desktop writer recognition 155 marker. Guide302 payload structure is unchanged.",
       "standalone_sha256": "094f0f7614c9150a5d6768ac2c3a6d63188f8f4ec57e9a2d74abd7aeb4419f68",
       "reviewed_app_commit": "bd726502235465a6d3e91e6f5abdbaada211d4c8",

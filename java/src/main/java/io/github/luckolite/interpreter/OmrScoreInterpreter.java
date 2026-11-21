@@ -22879,6 +22879,27 @@ final class OmrScoreInterpreter {
         return false;
     }
 
+    /** A hooked flag may be labelled as a natural between two attacks. */
+    private static boolean naturalOnPreviousFlag(
+            byte[] labels, byte[] gray, int width, int height, Component glyph,
+            Component target, List<Component> heads, float gap) {
+        if (gray == null || heads == null || glyph.maxY - glyph.minY < gap * 2.6f) return false;
+        for (var prior : heads) {
+            if (prior == target || prior.centerX >= target.centerX - gap
+                    || prior.centerX < glyph.minX - gap * 1.3f
+                    || prior.centerY < glyph.maxY - gap * .35f
+                    || prior.centerY > glyph.maxY + gap * 1.2f) continue;
+            int[] stem = attachedRawStem(gray, width, height, prior, gap);
+            if (stem == null || stem[2] != -1
+                    || Math.abs(stem[0] - glyph.minX) > gap * .26f
+                    || Math.abs(stem[1] - glyph.minY) > gap * .8f
+                    || glyph.maxX - stem[0] > gap * 1.25f) continue;
+            if (hasCurvedFlag(labels, gray, width, height, prior, gap, stem[0], stem[1], true))
+                return true;
+        }
+        return false;
+    }
+
     /** A labelled ledger/stem fragment cannot become the accidental of a later attack. */
     private static boolean flatFragmentOnOwnedShaft(
             byte[] gray,
@@ -23285,6 +23306,9 @@ final class OmrScoreInterpreter {
                     && joinsNaturalToHeadAndStaff(
                             labels, gray, width, height, candidates, head, gap, glyph,
                             accidentalFragments.get(glyph))) continue;
+            if (accidental == ScoreNoteEvent.ACCIDENTAL_NATURAL
+                    && naturalOnPreviousFlag(labels, gray, width, height, glyph, head, heads, gap))
+                continue;
             if (accidental == ScoreNoteEvent.ACCIDENTAL_FLAT
                     && flatFragmentOnOwnedShaft(gray, width, height, glyph, head, heads, gap))
                 continue;

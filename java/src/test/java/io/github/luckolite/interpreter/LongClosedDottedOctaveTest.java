@@ -28,6 +28,18 @@ public final class LongClosedDottedOctaveTest {
         assertEquals(0, shifts(gap).get(2).intValue());
     }
 
+    @Test
+    public void closelySpacedDotsContinueToThePrintedTurn() {
+        var raw = source();
+        ink(raw, 63, 70, 865, 111, 255);
+        for (int x = 65; x <= 305; x += 8) ink(raw, x, 74, x + 3, 77, 0);
+        for (int y : new int[] {83, 91, 99}) ink(raw, 305, y, 308, y + 3, 0);
+        assertEquals(List.of(1, 1, 0),
+                OctaveMarkDetector.apply(List.of(), STAFFS, List.of(new MeasureRegion(0, 1, 0, 1)),
+                        List.of(note(90), note(295), note(325)), raw, W, H)
+                        .stream().map(ScoreNoteEvent::octaveShift).toList());
+    }
+
     private static List<Integer> shifts(byte[] raw) {
         return OctaveMarkDetector.apply(
                         List.of(),

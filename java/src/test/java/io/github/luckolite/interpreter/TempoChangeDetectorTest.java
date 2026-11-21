@@ -13,6 +13,20 @@ import static org.junit.Assert.assertArrayEquals;
 
 public final class TempoChangeDetectorTest {
     @Test
+    public void verifiedMetronomeHeadCannotConsumeTheOpeningRest() {
+        var bars = List.of(new MeasureRegion(0, 1, .3f, .8f));
+        var glyph = new TempoChangeDetector.BeatGlyph(0, 20, 26, 4, 22, 23, 19);
+        var alias = new ScoreNoteEvent(0, .23f, 12, 0, 1, .19f, false, 0, 0, 1, 1)
+                .withLeadingRest(2);
+        var entry = new ScoreNoteEvent(0, .50f, 0, 0, 1, .7f, false, 0, 0, 1, 1);
+        var ledgerNote = new ScoreNoteEvent(0, .60f, 12, 0, 1, .24f, false, 0, 0, 1, 1);
+        var notes = List.of(alias, entry, ledgerNote);
+        assertEquals(List.of(entry.withLeadingRest(2), ledgerNote),
+                TempoChangeDetector.withoutBeatGlyphs(notes, bars, List.of(glyph), 100, 100));
+        assertEquals(notes, TempoChangeDetector.withoutBeatGlyphs(notes, bars, List.of(), 100, 100));
+    }
+
+    @Test
     public void openingTempoLineMayStartLeftOfTheFirstBar() {
         int w = 300, h = 240;
         byte[] gray = new byte[w * h];

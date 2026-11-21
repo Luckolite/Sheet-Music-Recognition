@@ -533,6 +533,22 @@ public final class SheetInterpreter {
             tempoWords = new java.util.ArrayList<>(words);
             tempoWords.addAll(ocr.tempoWords(annotationGray, width, height));
         }
+        var beatGlyphs = new java.util.ArrayList<TempoChangeDetector.BeatGlyph>();
+        var tempoChanges = TempoChangeDetector.detectWithWords(
+                        TempoChangeDetector.withIsolatedDigits(
+                                annotations.tempoNumbers.stream()
+                                        .map(NumberToken::internal)
+                                        .toList(),
+                                tempoWords,
+                                gray,
+                                width,
+                                height),
+                        tempoWords,
+                        gray,
+                        width,
+                        height,
+                        measures, beatGlyphs);
+        notes = TempoChangeDetector.withoutBeatGlyphs(notes, measures, beatGlyphs, width, height);
         var decoded =
                 TablatureDecoder.apply(
                         new ScorePageInterpretation(
@@ -540,20 +556,7 @@ public final class SheetInterpreter {
                                         notes,
                                         firstMeasureNumber,
                                         score.keyChanges(),
-                                        TempoChangeDetector.detectWithWords(
-                                                TempoChangeDetector.withIsolatedDigits(
-                                                        annotations.tempoNumbers.stream()
-                                                                .map(NumberToken::internal)
-                                                                .toList(),
-                                                        tempoWords,
-                                                        gray,
-                                                        width,
-                                                        height),
-                                                tempoWords,
-                                                gray,
-                                                width,
-                                                height,
-                                                measures),
+                                        tempoChanges,
                                         meters,
                                         rhythm.rests(),
                                         PlayingTechniqueDetector.detectWithBows(
