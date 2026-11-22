@@ -3,6 +3,7 @@
 package io.github.luckolite.interpreter;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 
 import java.util.Arrays;
 import java.util.List;
@@ -54,6 +55,40 @@ public final class LongClosedDottedOctaveTest {
         var bars = List.of(new MeasureRegion(0, 1, 0, 1));
         assertEquals(List.of(1, 1, 0), OctaveMarkDetector.apply(List.of(), STAFFS, bars, notes, raw, W, H)
                 .stream().map(ScoreNoteEvent::octaveShift).toList());
+    }
+
+    @Test
+    public void longCurvedLineRequiresAReturnBeyondTheFirstScanWindows() throws Exception {
+        var page = new byte[W * H];
+        Arrays.fill(page, (byte) 255);
+        ink(page, 41, 70, 61, 94, 0);
+        ink(page, 47, 73, 55, 79, 255);
+        ink(page, 46, 84, 55, 90, 255);
+        for (int x = 65; x <= 125; x += 10) ink(page, x, 75, x + 5, 79, 0);
+        for (int y = 67; y <= 90; y++) {
+            int x = 128 + Math.round((y - 67) * 1.5f);
+            ink(page, x, y, x + 3, y, 0);
+        }
+        for (int x = 155; x <= 555; x += 10) {
+            int y = 75 + (x - 155) / 100;
+            ink(page, x, y, x + 5, y + 4, 0);
+        }
+        ink(page, 557, 87, 560, 90, 0);
+        ink(page, 557, 96, 560, 99, 0);
+
+        var detector = OctaveMarkDetector.class;
+        var box = Class.forName(detector.getName() + "$InkBox");
+        var constructor = box.getDeclaredConstructor(int.class, int.class, int.class, int.class, int.class);
+        constructor.setAccessible(true);
+        var eight = constructor.newInstance(41, 70, 61, 94, 0);
+        var closure = detector.getDeclaredMethod(
+                "closedCurvedDottedOctave", byte[].class, int.class, int.class, box, float.class);
+        closure.setAccessible(true);
+        float end = (float) closure.invoke(null, page, W, H, eight, 16f);
+        assertTrue("The printed return should end the octave span: " + end,
+                end > 560 && end < 575);
+        ink(page, 553, 84, 563, 106, 255);
+        assertEquals(-1f, (float) closure.invoke(null, page, W, H, eight, 16f), 0f);
     }
 
     private static List<Integer> shifts(byte[] raw) {

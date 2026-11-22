@@ -1,4 +1,10 @@
 {
+  "november_21_long_closed_octave_port": {
+    "reviewed_app_commit": "6d73c1c10adffe2e30cee146850995d52aaeaf47",
+    "app_recognition": 163,
+    "standalone_recognition": 161,
+    "scope": "Extend the bounded scan for a slur-crossed dotted octave rail. A printed downward return remains required. The generated regression contains no private score material."
+  },
   "november_21_practice_staff_and_measure_port": {
     "reviewed_app_commit": "b5a36a0b991852ec95766881ca7da04b64af0ac2",
     "app_recognition": 162,
@@ -4136,10 +4142,10 @@
     },
     "GuideCacheIdentity.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/GuideCacheIdentity.java",
-      "source_sha256": "2291548e1f15dac28bd5e03f01a54e1a00611d52127ace210af3f943044793cc",
-      "source_normalized_sha256": "ae8495991418a471783e6508caf54c9c06c7cf9caef3beec13ca8ecdece5ae00",
+      "source_sha256": "5a9b7f1a20c06814e19259fc3e2d8ba58ff7435ec8fe84871eea868493e0c062",
+      "source_normalized_sha256": "240e40e9add0d7266192453aba38e6e128a28d541cb06971e91dd2651df9c332",
       "review_note": "Recognition 155 invalidates existing recognition caches for the terminal metric and stemless whole-chord corrections.",
-      "standalone_sha256": "f81502fe7f0d0fd9680d78011dd8af105beaa48fba477d33a5debc7b04b32b32",
+      "standalone_sha256": "5b4a9ad83f0528d3b5f7ba053f4302b704ae0e9506501ad1fca31769461b3f15",
       "reviewed_app_commit": "bd726502235465a6d3e91e6f5abdbaada211d4c8",
       "scoped_reviewed_app_commit": "5a83c7704ff14579edcf52af5c1ab8e8e719a4d7",
       "license": "Apache-2.0",
@@ -4198,9 +4204,9 @@
     "GuideCacheIdentityTest.java": {
       "source_path": "app/src/test/java/com/musicsheets/app/pdf/GuideCacheIdentityTest.java",
       "standalone_path": "java/src/test/java/io/github/luckolite/interpreter/GuideCacheIdentityTest.java",
-      "source_sha256": "32729b86a57091643e118188997aa12700f4821a29c2c38076ab01a6d2b9d601",
-      "source_normalized_sha256": "e45c674e59d8c1ffddd5ddc26a9f648b49899a84bc6cdb7756a424f3dd8b5ef2",
-      "standalone_sha256": "64cd1e3bdd4b5ad3b6461c00777310b261bf6d84d6a38fadd071bad4cb997265",
+      "source_sha256": "e8c737e37cf93471899c3255118c4bc6a0b73659d6998a447707c20adb30fd67",
+      "source_normalized_sha256": "258f32b8f7fe2ed1206689e57825a92d0c32eb9d3fa03d47f65ae6a5e8ae22f5",
+      "standalone_sha256": "c142606d5b7be1afe4fbf1fdd36d984c7d0440c8877c5972dacb3c1c5f47c869",
       "license": "Apache-2.0",
       "recognition88_review_note": "Reviewed exact contextual global changes and namespace twins with original synthetic regressions. New helpers are selected explicitly by desktop decoder manifest; no models, private fixtures, schema, wire or audio changes.",
       "reviewed_app_commit": "b954c0cc5f30c21a302a8f65141d0c297d4177c3",
@@ -5580,11 +5586,11 @@
     },
     "OctaveMarkDetector.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/OctaveMarkDetector.java",
-      "source_sha256": "c86d02c09ee9cebdfb1a2fce84391000ab7b06b32c850290b9fdb0e12bc4c638",
-      "source_normalized_sha256": "c86d02c09ee9cebdfb1a2fce84391000ab7b06b32c850290b9fdb0e12bc4c638",
+      "source_sha256": "8fd4987d148a059c6ff8cfb4b431b25b675a5959253d86a9dcac1261660c74a9",
+      "source_normalized_sha256": "8fd4987d148a059c6ff8cfb4b431b25b675a5959253d86a9dcac1261660c74a9",
       "review_note": "Intrinsic octave bass clefs, complete contested ledger ownership, grace accidentals, independently rooted beam/slur separation, and below-staff full octave-word ownership. Original procedural/licensed-font regressions; no private score pixels, model changes or song-specific rules.",
       "reviewed_source_state": "committed",
-      "standalone_sha256": "d32e58e18a3ca39b3c71cdb16d22e6102980a9c6ea400ef68725008539b72a30",
+      "standalone_sha256": "4266e0a5c744389b1635152e7437beeee1b84e5a91afbc65ce0535d1c583aeec",
       "reviewed_app_commit": "dbf64cc20818bbed28f0fa3a81188490b0965348",
       "scoped_reviewed_app_commit": "18fc7383d4cbf646494ee2b9496137b4a59c3b5c",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/OctaveMarkDetector.java",
@@ -10376,10 +10382,10 @@
     },
     "guide_writer.py": {
       "source_path": "tools/native-worker/guide_writer.py",
-      "source_sha256": "a0240a655164f2fba89285941afb3ab44bc4e6021591230dc816f2c79308ea29",
-      "source_normalized_sha256": "2d65e4cee700531bac9041342ff0965fa88992aa923fd1954d9bffa6bbba68be",
+      "source_sha256": "371c3f99e16d0bf930f6ad280c5358507d549de66138a13dc324105049104b5c",
+      "source_normalized_sha256": "4a3778b805026798b0c7d1ec5dfff014e44195c7ae34de4feb154db6bcd6a496",
       "review_note": "Match the desktop writer recognition 155 marker. Guide302 payload structure is unchanged.",
-      "standalone_sha256": "094f0f7614c9150a5d6768ac2c3a6d63188f8f4ec57e9a2d74abd7aeb4419f68",
+      "standalone_sha256": "3b6fb3bb22d6e9f9e92f01fb106d3ac82975c97ed8a6c314a9c441a69b42e7e4",
       "reviewed_app_commit": "bd726502235465a6d3e91e6f5abdbaada211d4c8",
       "license": "Apache-2.0",
       "scoped_reviewed_app_commit": "5a83c7704ff14579edcf52af5c1ab8e8e719a4d7",

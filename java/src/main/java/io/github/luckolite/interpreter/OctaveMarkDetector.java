@@ -3335,7 +3335,8 @@ final class OctaveMarkDetector {
         if (gap < 10 || gap > 24 || !bareEightShape(gray, width, eight, gap)
                 && !(canRepairEight(gray, width, eight, gap) && brokenEightShape(gray, width, eight, gap))) return -1;
         int left = eight.right;
-        int right = Math.min(width - 1, Math.round(left + gap * 26));
+        // A slur-crossed rail may extend across multiple measures before its printed return.
+        int right = Math.min(width - 1, Math.round(left + gap * 42));
         int top = Math.max(0, Math.round(eight.top - gap * 1.55f));
         int bottom = Math.min(height - 1, Math.round(eight.top + gap * 1.25f));
         if (right - left < gap * 6 || bottom <= top) return -1;

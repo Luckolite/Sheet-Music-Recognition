@@ -17,7 +17,7 @@ from . import semantic_wire
 
 
 # Recognition revisions 264/265/266/267/268/269/270/271/272/273/274/275 retain the complete framed 263 record layout.
-RECOGNITION_REVISION = 160
+RECOGNITION_REVISION = 161
 GUIDE_VERSION = 302
 SUPPORTED_GUIDE_VERSIONS = tuple(range(260, 309))
 MAX_GUIDE_BYTES = 128 * 1024 * 1024
