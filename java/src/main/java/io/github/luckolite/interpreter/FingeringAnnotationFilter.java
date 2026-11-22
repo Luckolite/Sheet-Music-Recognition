@@ -1945,6 +1945,73 @@ final class FingeringAnnotationFilter {
     }
 
     /** A printing of matching parenthesized fingerings can seed a stemless beam alias. */
+    /** Reject a simulated head only when matched fingering glyphs and the real beam owners agree. */
+    static List<ScoreNoteEvent> removePairedFingeringAliases(
+            List<PlayingTechniqueDetector.Word> words, List<PlayingTechniqueDetector.Staff> staffs,
+            List<MeasureRegion> measures, List<ScoreNoteEvent> notes, byte[] gray, byte[] raw,
+            int width, int height) {
+        if (gray == null || raw == null || gray.length != raw.length
+                || gray.length != (long) width * height) return notes;
+        var opening = words.stream().filter(w -> w.text() != null && w.text().matches("\\([1-5]")).toList();
+        if (opening.isEmpty()) return notes;
+        var closing = words.stream().filter(w -> w.text() != null && w.text().matches("[1-5]\\)")).toList();
+        if (closing.isEmpty()) return notes;
+        var rejected = new HashSet<ScoreNoteEvent>();
+        for (var alias : notes) {
+            int measure = alias.measureIndex();
+            if (measure < 0 || measure >= measures.size() || !captionGlyphHead(alias, false, -3, -3)
+                    || alias.beamCount() != 2 || alias.unbeamedDurationBeats() != 0) continue;
+            var bar = measures.get(measure);
+            float x = fingeringHeadX(bar, alias, width), y = alias.pageY() * height;
+            for (var open : opening) {
+                if (x < open.left() * width || x > open.right() * width
+                        || y < open.top() * height || y > open.bottom() * height) continue;
+                for (var close : closing) {
+                    if (open.text().charAt(1) != close.text().charAt(0)
+                            || close.left() <= open.right() || close.right() > bar.right()) continue;
+                    for (var staff : staffs) {
+                        float gap = staff.gap(), floor = staff.bottom();
+                        if (staff.count() != 1 || staff.index() != 0 || gap < 10 || gap > 25
+                                || y < floor + gap || y > floor + gap * 1.85f
+                                || Math.abs(open.top() - close.top()) * height > gap * .30f
+                                || (close.left() - open.right()) * width < gap * 7
+                                || (close.left() - open.right()) * width > gap * 13) continue;
+                        var line = notes.stream().filter(n -> n.measureIndex() == measure && n != alias)
+                                .sorted(Comparator.comparingDouble(ScoreNoteEvent::positionInMeasure)).toList();
+                        if (line.size() != 16 || line.stream().anyMatch(n -> n.kind() != ScoreNoteEvent.Kind.PITCHED
+                                || n.beamCount() != 2 || n.stemDirection() != -1 || n.crossStaffBeam())
+                                || !closedWrittenSixteenths(line)) continue;
+                        float closeX = (close.left() + close.right()) * width * .5f;
+                        for (int slot = 0; slot + 6 < line.size(); slot++) {
+                            var first = line.get(slot);
+                            var last = line.get(slot + 6);
+                            if (Math.abs(fingeringHeadX(bar, first, width) - x) > gap * .50f
+                                    || Math.abs(fingeringHeadX(bar, last, width) - closeX) > gap * .50f
+                                    || first.pageY() * height >= floor - gap
+                                    || last.pageY() * height >= floor - gap) continue;
+                            if (pairedFingeringProof(gray, width, height, floor, gap, open, close, x, y)
+                                    && pairedFingeringProof(raw, width, height, floor, gap, open, close, x, y))
+                                rejected.add(alias);
+                        }
+                    }
+                }
+            }
+        }
+        return rejected.isEmpty() ? notes : notes.stream().filter(n -> !rejected.contains(n)).toList();
+    }
+
+    private static boolean pairedFingeringProof(byte[] gray, int width, int height, float floor,
+            float gap, PlayingTechniqueDetector.Word open, PlayingTechniqueDetector.Word close, float x, float y) {
+        var a = parenthesizedDigit(gray, width, height, open, floor, gap, true, true, 0);
+        var b = parenthesizedDigit(gray, width, height, close, floor, gap, false, true, 0);
+        if (a == null || b == null || !ownsTextCenter(a, x, y, width)
+                || !sameDetachedDigit(gray, width, a, b)
+                || printedLedgerAcrossWord(gray, width, height, open.left() * width, open.right() * width, y, gap)
+                || printedStemBeyondWord(gray, width, height, x, y, open.top() * height, open.bottom() * height, gap)) return false;
+        var budget = new PrintedBeamShafts.Budget(12_000);
+        return PrintedBeamShafts.at(gray, width, height, x, y, gap, budget).isEmpty() && !budget.refused();
+    }
+
     static List<ScoreNoteEvent> removeDetachedParentheticalAliases(
             List<PlayingTechniqueDetector.Word> words, List<PlayingTechniqueDetector.Staff> staffs,
             List<MeasureRegion> measures, List<ScoreNoteEvent> notes,
@@ -2054,11 +2121,27 @@ final class FingeringAnnotationFilter {
     private static RawNumeralComponents.Component parenthesizedDigit(
             byte[] plane, int width, int height, PlayingTechniqueDetector.Word word,
             float floor, float gap, boolean opening, boolean closeBesideStaff) {
+        return parenthesizedDigit(plane, width, height, word, floor, gap, opening, closeBesideStaff,
+                closeBesideStaff ? .14f : .20f);
+    }
+
+    private static RawNumeralComponents.Component parenthesizedDigit(
+            byte[] plane, int width, int height, PlayingTechniqueDetector.Word word,
+            float floor, float gap, boolean opening, boolean closeBesideStaff, float clearance) {
         int left = Math.round(word.left() * width), right = Math.round(word.right() * width);
-        int top = Math.max(Math.round(word.top() * height), Math.round(floor + gap * (closeBesideStaff ? .14f : .20f)));
+        int top = Math.max(Math.round(word.top() * height), Math.round(floor + gap * clearance));
         int bottom = Math.round(word.bottom() * height);
         if (left < 0 || right >= width || top < 0 || bottom >= height || left >= right || top >= bottom)
             return null;
+        if (clearance == 0) {
+            while (top < bottom && top <= floor + gap * .3f) {
+                int ink = 0;
+                for (int x = left; x <= right; x++) if ((plane[top * width + x] & 255) < 165) ink++;
+                if (ink < (right - left + 1) * .60f) break;
+                top++;
+            }
+            if (top >= bottom) return null;
+        }
         var glyphs = RawNumeralComponents.capture(plane, width, height, left, top, right, bottom,
                         165, () -> {}, () -> {}).components().stream()
                 .filter(c -> c.size() >= gap * gap * .11f)

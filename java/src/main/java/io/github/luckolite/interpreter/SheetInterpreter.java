@@ -341,6 +341,7 @@ public final class SheetInterpreter {
         var sharpTails = BeamedFlatBarline.joinDottedSharpTails(measures, labels, gray, annotationGray, width, height);
         measures = sharpTails.measures();
         measures = ClosingDyadBarlines.join(measures, labels, gray, annotationGray, width, height);
+        measures = FingeringGuideBarlines.recover(measures, gray, annotationGray, width, height);
         var beforeHarmonicJoin = measures;
         var harmonicJoinedMeasures =
                 HarmonicBeamBarline.join(measures, labels, gray, annotationGray, width, height);
@@ -405,6 +406,8 @@ public final class SheetInterpreter {
         notes = FingeringAnnotationFilter.removeDetachedParentheticalAliases(
                 words, staffs, measures, notes, gray, annotationGray, width, height);
         notes = FingeringAnnotationFilter.removeMergedSegueAliases(
+                words, staffs, measures, notes, gray, annotationGray, width, height);
+        notes = FingeringAnnotationFilter.removePairedFingeringAliases(
                 words, staffs, measures, notes, gray, annotationGray, width, height);
         notes =
                 FingeringAnnotationFilter.apply(

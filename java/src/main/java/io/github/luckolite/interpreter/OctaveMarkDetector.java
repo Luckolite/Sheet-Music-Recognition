@@ -233,8 +233,10 @@ final class OctaveMarkDetector {
                             ? compactDottedReturn(
                                     gray, width, height, numeral, initialUpperOwner.gap())
                             : -1;
+            float downwardEnd = numeral != null && initialUpperOwner != null
+                    ? closedCurvedDottedOctave(gray, width, height, numeral, initialUpperOwner.gap()) : -1;
             boolean closedCompact =
-                    compactEnd >= 0
+                    downwardEnd >= 0 || compactEnd >= 0
                             || provedNumeral
                                     && initialRibbon == null
                                     && completeDottedRibbon(
@@ -362,6 +364,7 @@ final class OctaveMarkDetector {
                         && bottomAttachedDottedEight(gray, width, height, numeral, gap))
                     literal = new SystemRibbonEnd(right, false, true);
                 right = Math.max(right, closedStraightDottedOctave(gray, width, height, numeral, gap));
+                if (owner.equals(initialUpperOwner)) right = Math.max(right, downwardEnd);
                 if (right >= 0)
                     left = closedBeamStart(gray, width, height, word, owner, staffs, measures, notes, left, right);
                 if (right >= 0 && bareEight && literal == null) {
@@ -1061,7 +1064,9 @@ final class OctaveMarkDetector {
                 boxes.sort(Comparator.comparingInt(InkBox::left));
                 boolean[] used = new boolean[boxes.size()];
                 int componentCount = boxes.size();
-                var attachedBoxes = attachedEightBoxes(gray, width, height, top, bottom, gap, below, holeScan, bandInk);
+                var attachedBoxes = new ArrayList<>(attachedEightBoxes(
+                        gray, width, height, top, bottom, gap, below, holeScan, bandInk));
+                if (!below) recoverDottedEightBesideSlur(gray, width, height, gap, boxes, attachedBoxes);
                 var componentBoxes = attachedBoxes.isEmpty()
                         ? java.util.Set.<InkBox>of()
                         : new java.util.HashSet<>(boxes);
@@ -1154,6 +1159,11 @@ final class OctaveMarkDetector {
                                             box.top,
                                             box.bottom,
                                             gap);
+                    float dottedEnd = closedCurvedDottedOctave(gray, width, height, box, gap);
+                    if (dottedEnd >= 0) {
+                        dashRight = Math.max(dashRight, dottedEnd);
+                        hookDirection = 1;
+                    }
                     if (compactReturn >= 0 && hookDirection <= 0) {
                         dashRight = compactReturn;
                         hookDirection = 1;
@@ -3291,6 +3301,124 @@ final class OctaveMarkDetector {
 
     private static float dotY(RawNumeralComponents.Component dot) {
         return (dot.top + dot.bottom) * .5f;
+    }
+
+    private static void recoverDottedEightBesideSlur(
+            byte[] gray, int width, int height, float gap, List<InkBox> inkBoxes,
+            List<InkBox> candidates) {
+        if (gap < 10 || gap > 24) return;
+        for (var slur : inkBoxes) {
+            if (slur.right - slur.left < gap * 2.15f || slur.right - slur.left > 3.6f * gap
+                    || slur.bottom - slur.top < gap * 1.25f || slur.bottom - slur.top > gap * 2.55f)
+                continue;
+            int left = Math.max(0, Math.round(slur.left - gap));
+            int right = Math.min(width - 1, Math.round(slur.right + gap));
+            int top = Math.round(slur.top + gap * .75f);
+            int bottom = Math.min(height - 1, Math.round(slur.bottom + gap * 1.30f));
+            if (left >= right || top >= bottom) continue;
+            var dark = RawNumeralComponents.capture(gray, width, height, left, top, right, bottom,
+                    105, () -> {}, () -> {});
+            for (var component : dark.components()) {
+                if (component.left <= left || component.right >= right || component.top <= top
+                        || component.bottom >= bottom || component.size() < gap * gap * .26f) continue;
+                var eight = new InkBox(component.left, component.top, component.right,
+                        component.bottom, component.size());
+                float endpoint = closedCurvedDottedOctave(gray, width, height, eight, gap);
+                if (endpoint >= 0) candidates.add(eight);
+            }
+        }
+    }
+
+    /** Follow a dense dotted line through a local ink crossing to a proved downward turn. */
+    private static float closedCurvedDottedOctave(
+            byte[] gray, int width, int height, InkBox eight, float gap) {
+        if (gap < 10 || gap > 24 || !bareEightShape(gray, width, eight, gap)
+                && !(canRepairEight(gray, width, eight, gap) && brokenEightShape(gray, width, eight, gap))) return -1;
+        int left = eight.right;
+        int right = Math.min(width - 1, Math.round(left + gap * 26));
+        int top = Math.max(0, Math.round(eight.top - gap * 1.55f));
+        int bottom = Math.min(height - 1, Math.round(eight.top + gap * 1.25f));
+        if (right - left < gap * 6 || bottom <= top) return -1;
+        int step = Math.min(Math.round(gap * 10), 16_384 / (bottom - top + 1) - Math.round(gap) - 2);
+        var dots = new ArrayList<RawNumeralComponents.Component>();
+        // Only collect complete components, with a small shared boundary between windows.
+        for (int x = left; x < right; x += step) {
+            int edge = Math.min(right, x + step + Math.round(gap));
+            var ink = RawNumeralComponents.capture(gray, width, height, x, top, edge, bottom,
+                    () -> {}, () -> {});
+            for (var dot : dottedComponents(ink, gap, .72f)) {
+                if (edge < right && dotX(dot) >= x + step + gap * .5f) continue;
+                if (x > left && dotX(dot) < x + gap * .5f) continue;
+                dots.add(dot);
+            }
+        }
+        dots.sort(Comparator.comparingDouble(OctaveMarkDetector::dotX));
+        float end = -1;
+        for (var first : dots) {
+            float startX = dotX(first), startY = dotY(first);
+            if (startX > left + gap * 1.45f) break;
+            if (startY < eight.top + gap * .10f || startY > eight.top + gap * .85f) continue;
+            var last = first;
+            int count = 1, consecutive = 1, bridges = 0;
+            for (var dot : dots) {
+                float dx = dotX(dot) - dotX(last), dy = Math.abs(dotY(dot) - dotY(last));
+                if (dx < gap * .34f || dy > gap * .22f) continue;
+                if (dx > gap * 2.25f) break;
+                if (dx > gap * .84f) {
+                    if (bridges == 2 || bridges > 0 && consecutive < 3 || !crossesDottedLine(gray, width, height, last, dot, gap))
+                        continue;
+                    consecutive = 0;
+                    bridges++;
+                }
+                last = dot;
+                count++;
+                consecutive++;
+            }
+            if (count < 13 || consecutive < 6 && !(count >= 18 && consecutive == 1 && bridges == 1)) continue;
+            for (int x = last.left; x <= last.right; x++)
+                for (int y = last.top; y <= last.bottom; y++)
+                    if ((gray[y * width + x] & 255) < 165
+                            && dottedDownTurn(gray, width, height, x, y, gap))
+                        end = Math.max(end, last.right + gap * .42f);
+        }
+        return end;
+    }
+
+    private static boolean crossesDottedLine(
+            byte[] gray, int width, int height, RawNumeralComponents.Component before,
+            RawNumeralComponents.Component after, float gap) {
+        int left = before.right, right = after.left;
+        int middle = Math.round((dotY(before) + dotY(after)) * .5f);
+        int top = Math.max(0, Math.round(middle - gap));
+        int bottom = Math.min(height - 1, Math.round(middle + gap));
+        if (left >= right || top >= bottom) return false;
+        var ink = RawNumeralComponents.capture(gray, width, height, left, top, right, bottom,
+                () -> {}, () -> {});
+        for (var component : ink.components())
+            if (component.left <= (left + right) * .5f && component.right >= (left + right) * .5f
+                    && component.top <= middle + gap * .16f && component.bottom >= middle - gap * .16f
+                    && component.bottom - component.top >= gap * .46f) return true;
+        return false;
+    }
+
+    private static boolean dottedDownTurn(byte[] gray, int width, int height, int x, int y, float gap) {
+        // Require two compact runs below the corner in adjacent columns, beyond the last horizontal dot.
+        if (x + 1 >= width || y + gap * 1.85f >= height) return false;
+        for (int column = x; column <= x + 1; column++) {
+            int row = y;
+            int limit = Math.round(y + gap * 1.85f);
+            while (row < limit && (gray[row * width + column] & 255) < 165) row++;
+            if (row - y > gap * .57f) return false;
+            for (int run = 0; run < 2; run++) {
+                int start = row;
+                while (row < limit && (gray[row * width + column] & 255) >= 165) row++;
+                if (row == limit || row - start < 2 || row - start > gap * .55f) return false;
+                start = row;
+                while (row < limit && (gray[row * width + column] & 255) < 165) row++;
+                if (row == limit || row - start < 2 || row - start > gap * .57f) return false;
+            }
+        }
+        return true;
     }
 
     /** A complete dotted line can outlast the row-based trace after a small scan skew. */

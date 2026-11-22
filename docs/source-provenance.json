@@ -1,4 +1,10 @@
 {
+  "november_21_practice_staff_and_measure_port": {
+    "reviewed_app_commit": "b5a36a0b991852ec95766881ca7da04b64af0ac2",
+    "app_recognition": 162,
+    "standalone_recognition": 160,
+    "scope": "Recover dotted octave spans through crossing notation, remove detached paired fingering aliases, restore fingering-guide barlines, and reject harmonic shafts as barlines. The native and Android adapters also retry wrapped triplets after rhythm refinement. Standalone retains its existing late wrap and harmonic tail routes. Guide and audio layouts are unchanged."
+  },
   "november_21_notation_ownership_port": {
     "reviewed_app_commit": "79afda0ec2e522e60c6a88e2931b6fb582907afa",
     "app_recognition": 161,
@@ -1680,6 +1686,24 @@
     }
   },
   "files": {
+    "FingeringGuideBarlines.java": {
+      "source_path": "app/src/main/java/com/musicsheets/app/pdf/FingeringGuideBarlines.java",
+      "source_sha256": "a954cd00a7d72ea10ac790411f8736352979a28099dfc09ab427fd82da8bf4f7",
+      "source_normalized_sha256": "8b30923f29d65f2f53038745b2d182299cd7b9c7a5c6330d3b2b4c5934bfbf4b",
+      "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/FingeringGuideBarlines.java",
+      "reviewed_app_commit": "b5a36a0b991852ec95766881ca7da04b64af0ac2",
+      "license": "Apache-2.0",
+      "review_note": "Shared original barline geometry. The standalone harmonic implementation retains its separate tail-placement adapter."
+    },
+    "HarmonicBeamBarline.java": {
+      "source_path": "app/src/main/java/com/musicsheets/app/pdf/HarmonicBeamBarline.java",
+      "source_sha256": "c727bdeddc9751244e1c1e6b087884ab67b04e1a0c76200ccf9b52acc3ed35af",
+      "source_normalized_sha256": "c727bdeddc9751244e1c1e6b087884ab67b04e1a0c76200ccf9b52acc3ed35af",
+      "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/HarmonicBeamBarline.java",
+      "reviewed_app_commit": "b5a36a0b991852ec95766881ca7da04b64af0ac2",
+      "license": "Apache-2.0",
+      "review_note": "Shared original barline geometry. The standalone harmonic implementation retains its separate tail-placement adapter."
+    },
     "TremoloSectionSweepTest.java": {
       "source_path": "app/src/test/java/com/musicsheets/app/pdf/TremoloSectionSweepTest.java",
       "standalone_path": "java/src/test/java/io/github/luckolite/interpreter/TremoloSectionSweepTest.java",
@@ -3754,9 +3778,9 @@
     },
     "FingeringAnnotationFilter.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/FingeringAnnotationFilter.java",
-      "source_sha256": "15cf5f3209d1073a3056e4fa55ecbeacd50efd1a6a50e1cad0f5c8ccbeaddf5a",
+      "source_sha256": "4fe4bc9718ea2bb00948df978e727fe2f9bee98a2b48cd53294542fa75348ad8",
       "reviewed_app_commit": "650d1b3a312dcd7eb58f83945a6a3be321c9b4dd",
-      "source_normalized_sha256": "15cf5f3209d1073a3056e4fa55ecbeacd50efd1a6a50e1cad0f5c8ccbeaddf5a",
+      "source_normalized_sha256": "4fe4bc9718ea2bb00948df978e727fe2f9bee98a2b48cd53294542fa75348ad8",
       "review_note": "Global physical staff, printed glyph or written owner repair; original procedural regressions. Full executable token parity after the explicit standalone adapter. Historical origin commits are retained; current frozen app bytes are identified by the source hashes. No model, dependency, wire layout or private source material changes.",
       "reviewed_source_state": "Frozen recognition19 app source; package and diagnostics adapter token parity verified",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/FingeringAnnotationFilter.java"
@@ -4112,8 +4136,8 @@
     },
     "GuideCacheIdentity.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/GuideCacheIdentity.java",
-      "source_sha256": "2528829eb2ac89f84253bf6c1dde554b23d6db95623b767771c7a23c38527e16",
-      "source_normalized_sha256": "f3f8babba94e486755913a05b74c1b9797cbc6dd7deecbd0ef1c380eeb205b9b",
+      "source_sha256": "2291548e1f15dac28bd5e03f01a54e1a00611d52127ace210af3f943044793cc",
+      "source_normalized_sha256": "ae8495991418a471783e6508caf54c9c06c7cf9caef3beec13ca8ecdece5ae00",
       "review_note": "Recognition 155 invalidates existing recognition caches for the terminal metric and stemless whole-chord corrections.",
       "standalone_sha256": "f81502fe7f0d0fd9680d78011dd8af105beaa48fba477d33a5debc7b04b32b32",
       "reviewed_app_commit": "bd726502235465a6d3e91e6f5abdbaada211d4c8",
@@ -4174,8 +4198,8 @@
     "GuideCacheIdentityTest.java": {
       "source_path": "app/src/test/java/com/musicsheets/app/pdf/GuideCacheIdentityTest.java",
       "standalone_path": "java/src/test/java/io/github/luckolite/interpreter/GuideCacheIdentityTest.java",
-      "source_sha256": "72c2d202d0a7b89447d196f9210b18d60b1c9fc76e87e072de3cfc95e76afbd2",
-      "source_normalized_sha256": "72c2d202d0a7b89447d196f9210b18d60b1c9fc76e87e072de3cfc95e76afbd2",
+      "source_sha256": "32729b86a57091643e118188997aa12700f4821a29c2c38076ab01a6d2b9d601",
+      "source_normalized_sha256": "e45c674e59d8c1ffddd5ddc26a9f648b49899a84bc6cdb7756a424f3dd8b5ef2",
       "standalone_sha256": "64cd1e3bdd4b5ad3b6461c00777310b261bf6d84d6a38fadd071bad4cb997265",
       "license": "Apache-2.0",
       "recognition88_review_note": "Reviewed exact contextual global changes and namespace twins with original synthetic regressions. New helpers are selected explicitly by desktop decoder manifest; no models, private fixtures, schema, wire or audio changes.",
@@ -5556,8 +5580,8 @@
     },
     "OctaveMarkDetector.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/OctaveMarkDetector.java",
-      "source_sha256": "f16fe86bd542be6651d7c657a91b30536d8f03e14b7547cd3878c1a08041e15c",
-      "source_normalized_sha256": "dd938da19079dfcd3144a2fcd6c37a47bcad502343af1f761d66678069eabea8",
+      "source_sha256": "c86d02c09ee9cebdfb1a2fce84391000ab7b06b32c850290b9fdb0e12bc4c638",
+      "source_normalized_sha256": "c86d02c09ee9cebdfb1a2fce84391000ab7b06b32c850290b9fdb0e12bc4c638",
       "review_note": "Intrinsic octave bass clefs, complete contested ledger ownership, grace accidentals, independently rooted beam/slur separation, and below-staff full octave-word ownership. Original procedural/licensed-font regressions; no private score pixels, model changes or song-specific rules.",
       "reviewed_source_state": "committed",
       "standalone_sha256": "d32e58e18a3ca39b3c71cdb16d22e6102980a9c6ea400ef68725008539b72a30",
@@ -9255,8 +9279,8 @@
         "scope": "Unanchored measure-count split guard and raster wiring. Broader source differences remain subject to review."
       },
       "source_path": "tools/native-worker/NativePageGuide.java",
-      "source_sha256": "e880aa1f7b0eefe6bb799213bb94d2d2c654f9c35172945df92138f6df4ed3b8",
-      "source_normalized_sha256": "08e3d99d8d2305088550a8c8d5eae5f9c01b5c7ce81f89794e20a4f222dc4d29",
+      "source_sha256": "7f7d9856fa9e9d55f544f56e14ce4878ec7aae5213f2b786462362871750550d",
+      "source_normalized_sha256": "7f7d9856fa9e9d55f544f56e14ce4878ec7aae5213f2b786462362871750550d",
       "standalone_sha256": "d0fe2fa045aad2483a3bf820856cba1bbcd4bb282d887235ab724ec0345023ee",
       "license": "Apache-2.0",
       "review_note": "Shared recognition and playback-direction changes ported with standalone adapters. Redistributable synthetic regressions cover the changed ink and direction rules.",
@@ -10352,8 +10376,8 @@
     },
     "guide_writer.py": {
       "source_path": "tools/native-worker/guide_writer.py",
-      "source_sha256": "f3acf32464680c189a9a9b3245289b895eec551546076f893c21927a0b17cac8",
-      "source_normalized_sha256": "52116eecb1872de94c621643b7bb9ddb56a8f891645f346e69316f0e645a526f",
+      "source_sha256": "a0240a655164f2fba89285941afb3ab44bc4e6021591230dc816f2c79308ea29",
+      "source_normalized_sha256": "2d65e4cee700531bac9041342ff0965fa88992aa923fd1954d9bffa6bbba68be",
       "review_note": "Match the desktop writer recognition 155 marker. Guide302 payload structure is unchanged.",
       "standalone_sha256": "094f0f7614c9150a5d6768ac2c3a6d63188f8f4ec57e9a2d74abd7aeb4419f68",
       "reviewed_app_commit": "bd726502235465a6d3e91e6f5abdbaada211d4c8",

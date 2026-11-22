@@ -97,8 +97,8 @@ final class HarmonicBeamBarline {
         if (shaftLeft < 0 || shaftRight - shaftLeft + 1 > gap * .35f) return false;
         int column = (shaftLeft + shaftRight) / 2;
         float head = column + gap * .62f;
-        if (!ArtificialHarmonics.symbolDiamond(labels, gray, width, height, head, top, gap))
-            return false;
+        if (!ArtificialHarmonics.symbolDiamond(labels, gray, width, height, head, top, gap)
+                && !staffCutDiamondNearby(gray, width, head, top, gap)) return false;
         var shafts =
                 PrintedBeamShafts.at(
                         gray, width, height, head, top, gap, new PrintedBeamShafts.Budget(100_000));
@@ -121,6 +121,35 @@ final class HarmonicBeamBarline {
         return PrintedCadenceDurations.boundaryColumn(
                         gray, width, staff, right + gap * .55f, false, false)
                 >= 0;
+    }
+
+    /** A staff rule can close the space between the two visible halves of the counter. */
+    private static boolean staffCutDiamondNearby(byte[] gray, int width, float head, int top, float gap) {
+        for (int dx = -2; dx <= 2; dx++)
+            for (int dy = -2; dy <= 2; dy++)
+                if (staffCutDiamond(gray, width, head + dx, top + dy, gap)) return true;
+        return false;
+    }
+
+    private static boolean staffCutDiamond(byte[] gray, int width, float x, int line, float gap) {
+        int center = Math.round(x), narrow = Math.round(gap * .51f), shoulder = Math.round(gap * .40f);
+        int nearby = Math.round(gap * .23f), tip = Math.round(gap * .64f);
+        int visibleCounter = 0;
+        for (int y = line - Math.round(gap * .28f); y < line; y++) {
+            if ((gray[y * width + center - nearby] & 255) < 155
+                    && (gray[y * width + center + nearby] & 255) < 155
+                    && (gray[y * width + center] & 255) >= 185
+                    && (gray[y * width + center + 1] & 255) >= 185) visibleCounter++;
+        }
+        if (visibleCounter < 2) return false;
+        for (int sign : new int[] {-1, 1}) {
+            int corner = (line + sign * tip) * width + center;
+            int body = (line + sign * nearby) * width + center;
+            if ((gray[corner - narrow] & 255) < 185 || (gray[corner + narrow] & 255) < 185
+                    || (gray[corner] & 255) >= 155 || (gray[body - shoulder] & 255) >= 155
+                    || (gray[body + shoulder] & 255) >= 155) return false;
+        }
+        return true;
     }
 
     record TailRecovery(ScorePageInterpretation score, List<List<ScoreNoteEvent>> tails) {}

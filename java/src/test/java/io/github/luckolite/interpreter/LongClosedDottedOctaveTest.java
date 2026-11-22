@@ -40,6 +40,22 @@ public final class LongClosedDottedOctaveTest {
                         .stream().map(ScoreNoteEvent::octaveShift).toList());
     }
 
+    @Test
+    public void aCurveAcrossTheDotsDoesNotEndAnOctaveLine() {
+        var raw = source();
+        ink(raw, 63, 58, 865, 111, 255);
+        for (int x = 65; x <= 305; x += 8) ink(raw, x, 74, x + 3, 77, 0);
+        for (int y = 64; y <= 89; y++) {
+            int x = 119 + (y - 64) / 2;
+            ink(raw, x, y, x + 3, y, 0);
+        }
+        for (int y : new int[] {83, 91}) ink(raw, 305, y, 308, y + 3, 0);
+        var notes = List.of(note(90), note(295), note(325));
+        var bars = List.of(new MeasureRegion(0, 1, 0, 1));
+        assertEquals(List.of(1, 1, 0), OctaveMarkDetector.apply(List.of(), STAFFS, bars, notes, raw, W, H)
+                .stream().map(ScoreNoteEvent::octaveShift).toList());
+    }
+
     private static List<Integer> shifts(byte[] raw) {
         return OctaveMarkDetector.apply(
                         List.of(),
