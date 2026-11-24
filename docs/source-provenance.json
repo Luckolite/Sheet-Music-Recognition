@@ -1722,13 +1722,13 @@
     },
     "DetachedFingeringThrees.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/DetachedFingeringThrees.java",
-      "source_sha256": "acf653d656f6c5f5eae7c278229eb36c85c739b0fec092d986eb85bed2bdfa8c",
-      "source_normalized_sha256": "acf653d656f6c5f5eae7c278229eb36c85c739b0fec092d986eb85bed2bdfa8c",
+      "source_sha256": "ffe421d499653365a77044dbf7e0210c595b5854ec4e0536a4a17135bbb4ad2e",
+      "source_normalized_sha256": "ffe421d499653365a77044dbf7e0210c595b5854ec4e0536a4a17135bbb4ad2e",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/DetachedFingeringThrees.java",
-      "standalone_normalized_sha256": "dae27d9a28664ddef16bdaaaa0ff6107e16ea33e76d9c265c7d0b5b205e95645",
-      "reviewed_app_commit": "b07709bac8e57c1c2857f283e2d5ecf9236665a2",
+      "standalone_normalized_sha256": "913757384d8a26ee10399db9e9ceff6a0b6f6a82ff258844e49b7de5c1eed55b",
+      "reviewed_app_commit": "140dc5e5faeefee071ddf93d001dc5e612f9f7c0",
       "license": "Apache-2.0",
-      "review_note": "Accepts ordinary stem-tip agreement for the anchored shape-reference check as well as a proved extended trace. Both source planes, independent page glyphs, and closed-eight and enclosure vetoes remain required."
+      "review_note": "A separately bounded contrast shaft check verifies a short downstem interruption. Both planes still require matching independent printed threes and preserve closed-eight and enclosure exclusions."
     },
     "DetachedUpperStemFingerings.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/DetachedUpperStemFingerings.java",

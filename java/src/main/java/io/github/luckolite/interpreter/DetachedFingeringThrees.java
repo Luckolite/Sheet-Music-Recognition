@@ -21,7 +21,7 @@ final class DetachedFingeringThrees {
         }
     }
 
-    private record Window(int left, int top, int right, int bottom, float center, float gap, boolean measuredTip, boolean ordinaryTip) {
+    private record Window(int left, int top, int right, int bottom, float center, float gap, float minimumShaftScore) {
         long area() {
             return (long) (right - left + 1) * (bottom - top + 1);
         }
@@ -148,13 +148,13 @@ final class DetachedFingeringThrees {
 
     private static Window window(byte[] image, int width, int height, PrintedSlurOwners.Location head,
             int stem, float floor, float gap) {
-        return window(image, width, height, head, stem, floor, gap, null);
+        return window(image, width, height, head, stem, floor, gap, null, null);
     }
 
     private static Window window(byte[] image, int width, int height, PrintedSlurOwners.Location head,
-            int stem, float floor, float gap, PrintedBeamShafts.Budget measuredTipWork) {
-        boolean measuredTip = false;
-        boolean ordinaryTip = false;
+            int stem, float floor, float gap, PrintedBeamShafts.Budget measuredTipWork,
+            ContrastProbe contrast) {
+        float minimumShaftScore = 0;
         float center = head.x();
         int top = Math.round(head.y() + gap * .9f), bottom = Math.round(head.y() + gap * 3.7f);
         if (stem == -1) {
@@ -166,9 +166,11 @@ final class DetachedFingeringThrees {
                 int tip = MeasuredStaffFingerings.physicalDownstemEnd(
                         image, width, height, head, shaft, gap, true, measuredTipWork);
                 if (tip >= 0) {
-                    ordinaryTip = Math.abs(shaft.endY() - tip) <= gap * .18f;
-                    measuredTip = !ordinaryTip;
-                    if (measuredTip) top = tip + 1;
+                    boolean ordinaryTip = Math.abs(shaft.endY() - tip) <= gap * .18f;
+                    minimumShaftScore = ordinaryTip ? .70f : .65f;
+                    if (!ordinaryTip) top = tip + 1;
+                } else if (contrast.ownsPrefix(image, width, height, head, shaft, gap)) {
+                    minimumShaftScore = .69f;
                 }
             }
             bottom = Math.round(Math.max(floor + gap * 2.5f, top + gap * 1.85f));
@@ -176,7 +178,25 @@ final class DetachedFingeringThrees {
         int left = Math.round(center - gap * .92f), right = Math.round(center + gap * .92f);
         if (left < 0 || right >= width || top < 0 || bottom >= height || top >= bottom
                 || bottom - top > gap * 6.5f) return null;
-        return new Window(left, top, right, bottom, center, gap, measuredTip, ordinaryTip);
+        return new Window(left, top, right, bottom, center, gap, minimumShaftScore);
+    }
+
+    private record ContrastProbe(PrintedBeamShafts.Budget work, PrintedBeamShaftPixels.Frame frame) {
+        ContrastProbe(byte[] image, int width, int height, PrintedBeamShafts.Budget work) {
+            this(work, new PrintedBeamShaftPixels.Frame(image, image, width, height, 0, work::take, true));
+        }
+
+        boolean ownsPrefix(byte[] image, int width, int height, PrintedSlurOwners.Location head,
+                PairedTremoloInk.Stem trace, float gap) {
+            if (work.refused()) return false;
+            var shafts = PrintedBeamShafts.at(image, width, height, head.x(), head.y(), gap, work, frame);
+            if (work.refused() || shafts.size() != 1) return false;
+            var prefix = shafts.get(0);
+            // A short break between the shaft and the lower ink can hide its connected prefix.
+            int shortfall = trace.endY() - prefix.endY();
+            return prefix.direction() == 1 && shortfall > 0 && shortfall <= gap * .30f
+                    && Math.abs(trace.x() - (prefix.left() + prefix.right()) * .5f) <= gap * .18f;
+        }
     }
 
     private static Box read(byte[] image, int width, int height, PrintedSlurOwners.Location head,
@@ -220,6 +240,10 @@ final class DetachedFingeringThrees {
         var recovered = new ArrayList<PrintedFingeringDigits.Mark>();
         long[] budget = {2_800_000};
         var measuredTipWork = new PrintedBeamShafts.Budget(1_200_000);
+        var contrastWork = new PrintedBeamShafts.Budget(500_000);
+        var rawContrast = new ContrastProbe(raw, width, height, contrastWork);
+        var normalizedContrast = raw == normalized ? rawContrast
+                : new ContrastProbe(normalized, width, height, contrastWork);
         for (var frame : frames) for (var head : frame.heads()) {
             var note = notes.get(head.owner());
             if (occupied.contains(head.owner()) || head.grace() || !eligibleShape(note)) continue;
@@ -229,11 +253,11 @@ final class DetachedFingeringThrees {
                     && Math.abs(other.x() - head.x()) < gap * .8f
                     && Math.abs(other.y() - head.y()) < gap * 3f)) continue;
 
-            var a = window(raw, width, height, head, note.stemDirection(), at[0], gap, measuredTipWork);
+            var a = window(raw, width, height, head, note.stemDirection(), at[0], gap, measuredTipWork, rawContrast);
             var candidates = matching(raw, width, height, a, references, false, budget);
             if (budget[0] < 0) return List.of();
             if (candidates.isEmpty()) continue;
-            var b = window(normalized, width, height, head, note.stemDirection(), at[0], gap, measuredTipWork);
+            var b = window(normalized, width, height, head, note.stemDirection(), at[0], gap, measuredTipWork, normalizedContrast);
             var corroborated = matching(normalized, width, height, b, references, true, budget);
             if (budget[0] < 0) return List.of();
             Box match = null;
@@ -272,9 +296,9 @@ final class DetachedFingeringThrees {
                 if (!tested.add(box)) continue;
                 if (!MatchedDetachedThreeShape.proves(image, width, box.left(), box.top(), box.right(),
                         box.bottom(), references, normalized)
-                        && (!window.measuredTip() && !window.ordinaryTip()
+                        && (window.minimumShaftScore() == 0
                                 || !matchesMeasuredTipThree(image, width, height, box, references, normalized,
-                                        window.ordinaryTip() ? .70f : .65f)))
+                                        window.minimumShaftScore())))
                     continue;
                 if (!hasEnclosure(image, width, height, box, window.gap(), remaining)) matches.add(box);
             }
