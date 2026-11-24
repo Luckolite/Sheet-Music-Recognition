@@ -9,6 +9,10 @@ import java.util.List;
 
 /** Recovers detached fingerings beyond a stem tip using independently retained same-page numeral shapes. */
 final class ShaftMatchedFingerings {
+    private static final int[] SINGLE_LEVEL = {165};
+    private static final int[] ORDINARY_UPPER_LEVELS = {165, 125};
+    private static final int[] RECOVERED_UPPER_LEVELS = {80, 105, 135, 165};
+
     private ShaftMatchedFingerings() {}
 
     private record Box(int left, int top, int right, int bottom) {
@@ -22,7 +26,7 @@ final class ShaftMatchedFingerings {
         }
     }
 
-    private record Reference(Box box, BitSet raw, BitSet normalized) {}
+    private record Reference(Box box, BitSet raw, BitSet normalized, float[] rawShape, float[] normalizedShape) {}
 
     static boolean eligible(ScoreNoteEvent note, boolean above) {
         return note.kind() == ScoreNoteEvent.Kind.PITCHED && note.staffCount() == 1
@@ -57,13 +61,16 @@ final class ShaftMatchedFingerings {
             var rawBits = bits(raw, width, a);
             var normalizedBits = bits(normalized, width, b);
             if (similarity(rawBits, normalizedBits) >= .90f)
-                references.add(new Reference(a, rawBits, normalizedBits));
+                references.add(new Reference(a, rawBits, normalizedBits,
+                        above ? MatchedDetachedThreeShape.vector(raw, width, a.left(), a.top(), a.right(), a.bottom()) : null,
+                        above ? MatchedDetachedThreeShape.vector(normalized, width, b.left(), b.top(), b.right(), b.bottom()) : null));
         }
         if (references.size() < 2) return List.of();
 
         var recovered = new ArrayList<PrintedFingeringDigits.Mark>();
         var boxes = new ArrayList<Box>();
         long[] remaining = {750_000};
+        long[] lighterThresholdBudget = {250_000};
         for (var frame : frames) for (var head : frame.heads()) {
             if (alreadyMarked.contains(head.owner()) || head.grace() || !eligible(notes.get(head.owner()), above))
                 continue;
@@ -75,10 +82,10 @@ final class ShaftMatchedFingerings {
             int top = Math.round(above ? local[0] - gap * 7.5f : head.y() + gap * 1.1f);
             int bottom = Math.round(above ? head.y() - gap * 1.1f : local[0] + gap * 3.5f);
             if (top < 0 || bottom >= height || top >= bottom) continue;
-            var first = find(raw, width, height, head, gap, top, bottom, remaining, references, false, above);
+            var first = find(raw, width, height, head, gap, top, bottom, remaining, lighterThresholdBudget, references, false, above);
             if (remaining[0] < 0) return List.of();
             if (first == null) continue;
-            var second = find(normalized, width, height, head, gap, top, bottom, remaining, references, true, above);
+            var second = find(normalized, width, height, head, gap, top, bottom, remaining, lighterThresholdBudget, references, true, above);
             if (remaining[0] < 0) return List.of();
             if (!first.same(second) || references.stream().anyMatch(ref -> ref.box().intersects(first))
                     || boxes.stream().anyMatch(box -> box.intersects(first))) continue;
@@ -92,7 +99,8 @@ final class ShaftMatchedFingerings {
     }
 
     private static Box find(byte[] image, int width, int height, PrintedSlurOwners.Location head,
-            float gap, int top, int bottom, long[] budget, List<Reference> references, boolean normalized, boolean above) {
+            float gap, int top, int bottom, long[] budget, long[] lighterThresholdBudget,
+            List<Reference> references, boolean normalized, boolean above) {
         var shaft = PairedTremoloInk.stem(image, width, height, head.x(), head.y(), gap, above ? 1 : -1);
         if (shaft == null) return null;
         boolean recoveredTip = false;
@@ -111,10 +119,15 @@ final class ShaftMatchedFingerings {
         long area = (long) (right - left + 1) * (bottom - top + 1);
         if (top >= bottom || area > 16_384) return null;
         Box result = null;
-        int[] levels = recoveredTip ? new int[]{80, 105, 135, 165} : new int[]{165};
+        int[] levels = recoveredTip ? RECOVERED_UPPER_LEVELS : above ? ORDINARY_UPPER_LEVELS : SINGLE_LEVEL;
         for (int level : levels) {
-            budget[0] -= area;
-            if (budget[0] < 0) return null;
+            if (level == 125) {
+                if (result != null || lighterThresholdBudget[0] < area) break;
+                lighterThresholdBudget[0] -= area;
+            } else {
+                budget[0] -= area;
+                if (budget[0] < 0) return null;
+            }
             var graph = RawNumeralComponents.capture(image, width, height, left, top, right, bottom,
                     level, () -> {}, () -> {});
             for (var c : graph.components()) {
@@ -132,7 +145,8 @@ final class ShaftMatchedFingerings {
                     if (score >= .74f) matches++;
                     best = Math.max(best, score);
                 }
-                if (matches < 2 || best < .78f) continue;
+                if ((matches < 2 || best < .78f) && (!above
+                        || !matchesOwnedTwos(image, width, box, references, normalized))) continue;
                 var format = JoinedDigitTemplates.inspect(image, width, height, new BitSet(),
                         c.left, c.top, c.right, c.bottom, () -> {});
                 if (format == null || format.digit() >= 0 && format.digit() != 2
@@ -142,6 +156,20 @@ final class ShaftMatchedFingerings {
             }
         }
         return result;
+    }
+
+    private static boolean matchesOwnedTwos(byte[] gray, int width, Box box,
+            List<Reference> references, boolean normalized) {
+        float[] shape = MatchedDetachedThreeShape.vector(gray, width, box.left(), box.top(), box.right(), box.bottom());
+        float required = Math.max(.84f, JoinedDigitTemplates.maxEightSimilarity(shape) + .12f);
+        int matches = 0;
+        for (var reference : references) {
+            float[] sample = normalized ? reference.normalizedShape() : reference.rawShape();
+            float dot = 0;
+            for (int i = 0; i < shape.length; i++) dot += shape[i] * sample[i];
+            if (dot >= required && ++matches == 2) return true;
+        }
+        return false;
     }
 
     private static Box reference(byte[] gray, int width, int height,

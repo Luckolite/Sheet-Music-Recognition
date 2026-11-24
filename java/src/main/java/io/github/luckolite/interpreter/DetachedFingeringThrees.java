@@ -61,8 +61,11 @@ final class DetachedFingeringThrees {
             if (references.size() < 32)
                 references.add(reference(raw, normalized, width, height, rawWindow, normalizedWindow, a, b));
         }
-        if (references.size() >= 2)
+        if (references.size() >= 2) {
             recovered.addAll(matched(occupied, boxes, references, notes, frames, raw, normalized, width, height));
+            recovered.addAll(DetachedUpperStemFingerings.threes(original, added, recovered,
+                    notes, frames, raw, normalized, width, height, references));
+        }
         return recovered;
     }
 

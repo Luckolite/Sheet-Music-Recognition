@@ -22,6 +22,11 @@ final class MatchedDetachedThreeShape {
                 || !(FingeringThreeInk.opening(raster, stride, null, left, top, width, height, .17f, .46f)
                 || FingeringThreeInk.opening(raster, stride, null, left, top, width, height, .57f, .83f)))
             return false;
+        return matchesReferences(raster, stride, left, top, right, bottom, references, normalized);
+    }
+
+    static boolean matchesReferences(byte[] raster, int stride, int left, int top, int right, int bottom,
+            List<Reference> references, boolean normalized) {
         float[] shape = vector(raster, stride, left, top, right, bottom);
         float required = Math.max(MIN_REFERENCE, JoinedDigitTemplates.maxEightSimilarity(shape) + EIGHT_MARGIN);
         int matches = 0;
