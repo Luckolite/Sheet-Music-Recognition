@@ -1497,6 +1497,13 @@ final class ArtificialHarmonics {
         if (width < minimumDimension || height < minimumDimension
                 || (long) (width - 2) * (height - 2) < minArea) return false;
         int rasterBase = top * w + left;
+        int needed = minArea == 1 ? 1 : 2;
+        // Each occupied row and column of a closed component has a light
+        // run bounded by dark pixels on both sides.
+        if (!hasBoundedLightRuns(gray, rasterBase + w, height - 2, w, width, 1, needed)
+                || !hasBoundedLightRuns(gray, rasterBase + 1, width - 2, 1, height, w, needed))
+            return false;
+
         boolean[] visited = new boolean[width * height];
         int[] queue = null;
         for (int iy = 0; iy < height; iy++)
@@ -1543,6 +1550,27 @@ final class ArtificialHarmonics {
                         && Math.abs(left + sumX / (float) tail - cx) <= r * .4f
                         && Math.abs(top + sumY / (float) tail - cy) <= verticalTolerance) return true;
             }
+        return false;
+    }
+
+
+    private static boolean hasBoundedLightRuns(
+            byte[] gray, int start, int lines, int lineStride,
+            int length, int pixelStride, int needed) {
+        for (int line = 0; line < lines; line++, start += lineStride) {
+            boolean dark = false, boundedStart = false;
+            for (int p = 0, index = start; p < length; p++, index += pixelStride) {
+                if ((gray[index] & 255) < 165) {
+                    if (boundedStart) {
+                        if (--needed == 0) return true;
+                        break;
+                    }
+                    dark = true;
+                } else if (dark) {
+                    boundedStart = true;
+                }
+            }
+        }
         return false;
     }
 

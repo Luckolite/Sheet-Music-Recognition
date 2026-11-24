@@ -5328,6 +5328,7 @@ final class TripletRhythmDetector {
         int radius = Math.round(gap * .4f);
         float maximumInk = Math.max(3, gap * .35f);
         float requiredHits = span * .94f, requiredThin = span * .90f;
+        BracketPrefix prefix = null;
         for (int cy = Math.round(top + gap * .7f);
                 cy <= Math.min(firstY - 1, top + gap * 2.3f);
                 cy++) {
@@ -5375,43 +5376,11 @@ final class TripletRhythmDetector {
                                 - 2;
                 int rows = cut - top + 1;
                 if (rows < gap * .7f || rows > gap * 2.3f) continue;
-                boolean[] seen = new boolean[span * rows];
-                int[] queue = new int[seen.length];
-                for (int seed = 0; seed < seen.length; seed++) {
-                    if (seen[seed] || !dark(gray, width, left + seed % span, top + seed / span))
-                        continue;
-                    int take = 0, size = 1, l = right, r = left, t = cut, b = top;
-                    queue[0] = seed;
-                    seen[seed] = true;
-                    while (take < size) {
-                        int at = queue[take++], x = at % span, y = at / span;
-                        l = Math.min(l, left + x);
-                        r = Math.max(r, left + x);
-                        t = Math.min(t, top + y);
-                        b = Math.max(b, top + y);
-                        for (int dy = -1; dy <= 1; dy++)
-                            for (int dx = -1; dx <= 1; dx++) {
-                                int xx = x + dx, yy = y + dy;
-                                if (xx < 0 || xx >= span || yy < 0 || yy >= rows) continue;
-                                int next = yy * span + xx;
-                                if (!seen[next] && dark(gray, width, left + xx, top + yy)) {
-                                    seen[next] = true;
-                                    queue[size++] = next;
-                                }
-                            }
-                    }
+                if (prefix == null)
+                    prefix = new BracketPrefix(gray, width, left, right, top, span, gap, firstY);
+                for (var box : prefix.at(rows)) {
+                    int l = box.left(), t = box.top(), r = box.right(), b = box.bottom();
                     int gw = r - l + 1, gh = b - t + 1;
-                    if (l <= left
-                            || r >= right
-                            || t != top
-                            || b != cut
-                            || gh < gap * .7f
-                            || gh > gap * 2.3f
-                            || gw < gh * .3f
-                            || gw > gh * .95f
-                            || size < gw * gh * .15f
-                            || size > gw * gh * .7f
-                            || b >= firstY - gap) continue;
                     // A slur can obscure the lower terminal of an italic numeral. The
                     // isolated upper component bounds the crop; all pixels remain original,
                     // and both bracket arms, the complete three shape and ownership still apply.
@@ -5467,6 +5436,137 @@ final class TripletRhythmDetector {
             }
         }
         return null;
+    }
+
+    /** Builds eight-connected runs once and retains ordered glyph bounds at each cut. */
+    private static final class BracketPrefix {
+        private static final int NO_TOP = Integer.MAX_VALUE;
+        private final byte[] gray;
+        private final int width, left, right, top, span;
+        private final float gap, firstY;
+        private final List<List<Glyph>> snapshots = new ArrayList<>();
+        private int[] previous, current;
+        private int previousCount, runCount;
+        private boolean exhausted;
+        private int[] parent = new int[32], area = new int[32], runStart = new int[32],
+                runEnd = new int[32], minX = new int[32], maxX = new int[32],
+                firstTop = new int[32], seenRow = new int[32];
+
+        BracketPrefix(byte[] gray, int width, int left, int right, int top, int span, float gap, float firstY) {
+            this.gray = gray;
+            this.width = width;
+            this.left = left;
+            this.right = right;
+            this.top = top;
+            this.span = span;
+            this.gap = gap;
+            this.firstY = firstY;
+            previous = new int[(span + 1) / 2];
+            current = new int[previous.length];
+        }
+
+        List<Glyph> at(int rows) {
+            while (!exhausted && snapshots.size() < rows) advance(snapshots.size());
+            return snapshots.size() < rows ? List.of() : snapshots.get(rows - 1);
+        }
+
+        private void advance(int y) {
+            int scan = (top + y) * width + left;
+            int x = 0, skip = 0, count = 0;
+            while (x < span) {
+                if ((gray[scan + x] & 255) > NUMERAL_INK_LIMIT) {
+                    x++;
+                    continue;
+                }
+                int start = x++;
+                while (x < span && (gray[scan + x] & 255) <= NUMERAL_INK_LIMIT) x++;
+                int stop = x - 1;
+                int run = add(start, stop, y);
+                current[count++] = run;
+                while (skip < previousCount && runEnd[previous[skip]] < start - 1) skip++;
+                for (int at = skip; at < previousCount && runStart[previous[at]] <= stop + 1; at++)
+                    join(run, previous[at]);
+            }
+            snapshots.add(snapshot(y, count));
+            int[] swap = previous;
+            previous = current;
+            current = swap;
+            previousCount = count;
+        }
+
+        private int add(int start, int stop, int y) {
+            int id = runCount++;
+            if (id == parent.length) {
+                int capacity = id * 2;
+                parent = java.util.Arrays.copyOf(parent, capacity);
+                area = java.util.Arrays.copyOf(area, capacity);
+                runStart = java.util.Arrays.copyOf(runStart, capacity);
+                runEnd = java.util.Arrays.copyOf(runEnd, capacity);
+                minX = java.util.Arrays.copyOf(minX, capacity);
+                maxX = java.util.Arrays.copyOf(maxX, capacity);
+                firstTop = java.util.Arrays.copyOf(firstTop, capacity);
+                seenRow = java.util.Arrays.copyOf(seenRow, capacity);
+            }
+            parent[id] = id;
+            area[id] = stop - start + 1;
+            runStart[id] = minX[id] = start;
+            runEnd[id] = maxX[id] = stop;
+            firstTop[id] = y == 0 ? start : NO_TOP;
+            return id;
+        }
+
+        private int root(int id) {
+            while (parent[id] != id) {
+                parent[id] = parent[parent[id]];
+                id = parent[id];
+            }
+            return id;
+        }
+
+        private void join(int a, int b) {
+            a = root(a);
+            b = root(b);
+            if (a == b) return;
+            if (area[a] < area[b]) {
+                int swap = a;
+                a = b;
+                b = swap;
+            }
+            parent[b] = a;
+            area[a] += area[b];
+            minX[a] = Math.min(minX[a], minX[b]);
+            maxX[a] = Math.max(maxX[a], maxX[b]);
+            firstTop[a] = Math.min(firstTop[a], firstTop[b]);
+        }
+
+        private List<Glyph> snapshot(int y, int count) {
+            int rows = y + 1, cut = top + y;
+            boolean fitsHeight = !(rows < gap * .7f || rows > gap * 2.3f || cut >= firstY - gap);
+            boolean reachesCut = false;
+            ArrayList<Integer> found = null;
+            for (int i = 0; i < count; i++) {
+                int id = root(current[i]);
+                if (firstTop[id] == NO_TOP || seenRow[id] == rows) continue;
+                seenRow[id] = rows;
+                if (minX[id] == 0 || left + maxX[id] >= right) continue;
+                reachesCut = true;
+                if (!fitsHeight) continue;
+                int w = maxX[id] - minX[id] + 1;
+                if (w < rows * .3f || w > rows * .95f
+                        || area[id] < w * rows * .15f || area[id] > w * rows * .7f) continue;
+                if (found == null) found = new ArrayList<>();
+                found.add(id);
+            }
+            // Adding rows cannot reconnect a top seed past the current bottom edge
+            // or detach it from either side of the crop.
+            exhausted = !reachesCut;
+            if (found == null) return List.of();
+            found.sort(Comparator.comparingInt(id -> firstTop[id]));
+            List<Glyph> boxes = new ArrayList<>(found.size());
+            for (int id : found)
+                boxes.add(new Glyph(left + minX[id], top, left + maxX[id], cut));
+            return boxes;
+        }
     }
 
     /**

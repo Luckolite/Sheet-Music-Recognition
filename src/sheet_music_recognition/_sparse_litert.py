@@ -43,6 +43,15 @@ _conv_valid_final = getattr(_native, "sparse_conv_valid_final", None)
 _conv_valid_group = getattr(_native, "sparse_conv_valid_group", None)
 _conv_dilated_group = getattr(_native, "sparse_conv_dilated_group", None)
 _conv_valid_group_tail = getattr(_native, "sparse_conv_valid_group_tail", None)
+_worker_create = getattr(_native, "sparse_worker_create", None)
+_worker_destroy = getattr(_native, "sparse_worker_destroy", None)
+_worker_exchange = getattr(_native, "sparse_worker_exchange", None)
+if _worker_create is not None and _worker_destroy is not None and _worker_exchange is not None:
+    _worker_create.argtypes, _worker_create.restype = [], P
+    _worker_destroy.argtypes, _worker_destroy.restype = [P], None
+    _worker_exchange.argtypes, _worker_exchange.restype = [P], P
+else:
+    _worker_create = None
 for _kernel in (_conv_valid, _wide_conv_valid, _reuse_conv, _conv_valid32,
                 _anchor_conv, _conv_valid_final, _conv_valid_group, _conv_dilated_group,
                 _conv_valid_group_tail):
@@ -167,7 +176,7 @@ def _specialize(original):
 
 class _Session:
     def __init__(self, model, layouts):
-        self.handle = self.delegate = None
+        self.handle = self.delegate = self.worker = None
         self.operators = []
         self.callbacks = []
         self.names = tuple(layouts)
@@ -191,6 +200,8 @@ class _Session:
             self.handle = create(file, opts)
             if not self.handle:
                 raise RuntimeError("Unable to initialize LiteRT")
+            if _worker_create is not None:
+                self.worker = _worker_create()
         except Exception:
             self.close()
             raise
@@ -249,7 +260,19 @@ class _Session:
         check(set_invoke(op, run))
         add(opts, op)
 
+    def run(self):
+        if self.worker is None:
+            return invoke(self.handle)
+        previous = _worker_exchange(self.worker)
+        try:
+            return invoke(self.handle)
+        finally:
+            _worker_exchange(previous)
+
     def close(self):
+        if self.worker is not None:
+            _worker_destroy(self.worker)
+            self.worker = None
         if self.handle:
             delete(self.handle)
             self.handle = None
@@ -331,7 +354,7 @@ class SparseInterpreter:
             try:
                 for n, item in enumerate(self._inputs):
                     np.copyto(self._native.tensor(get_input, n, item), self._staging[item["index"]])
-                check(invoke(self._native.handle))
+                check(self._native.run())
                 return
             except (OSError, RuntimeError, ValueError) as error:
                 self._fallback(error)

@@ -100,6 +100,8 @@ class NativeLiteRtTest(unittest.TestCase):
         with patch.object(self.native, "invoke", side_effect=fail_after_inference):
             b.invoke()
         self.assertIsNone(b._native)
+        if self.native._worker_create is not None:
+            self.assertIsNone(self.native._worker_exchange(None))
         a.invoke()
         self.compare(a, b)
 
@@ -127,6 +129,9 @@ class NativeLiteRtTest(unittest.TestCase):
                 model.invoke()
         self.assertIsNotNone(b._native)
         self.assertEqual(valid.call_count, 1)
+        if self.native._worker_create is not None:
+            self.assertIsNotNone(b._native.worker)
+            self.assertIsNone(self.native._worker_exchange(None))
         self.assertEqual(final.call_count, 1)
         self.assertEqual([call.args[3:5] for call in group.call_args_list], [(54, 54), (102, 102)])
         self.assertEqual([call.args[7] for call in dilated.call_args_list], [2, 4])

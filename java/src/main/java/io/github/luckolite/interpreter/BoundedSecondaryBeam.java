@@ -154,7 +154,10 @@ final class BoundedSecondaryBeam {
 
     private static boolean core(byte[] g, int w, int h, int x, float y, int radius) {
         int center = Math.round(y);
-        for (int d = -radius; d <= radius; d++) if (!dark(g, w, h, x, center + d)) return false;
+        if (x < 0 || x >= w || center < radius || center >= h - radius) return false;
+        int first = center - radius, last = center + radius;
+        for (int row = first, index = first * w + x; row <= last; row++, index += w)
+            if ((g[index] & 255) >= 165) return false;
         return true;
     }
 

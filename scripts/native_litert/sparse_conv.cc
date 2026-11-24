@@ -3,7 +3,9 @@
 #include <immintrin.h>
 #include <algorithm>
 #include <cstdint>
+#include <condition_variable>
 #include <cstring>
+#include <mutex>
 #include <thread>
 #include <vector>
 
@@ -538,8 +540,107 @@ static void conv_valid_final_rows(const float* src, const float* packed, const f
 using ConvolutionRows = void (*)(const float*, const float*, const float*, int, int,
                                  int, int, int, int, int, float*);
 
+
+struct ConvolutionJob {
+    ConvolutionRows rows;
+    const float* input;
+    const float* packed;
+    const float* bias;
+    int height, width, cin, cout, dilation;
+    float* output;
+    unsigned mode;
+    bool second_ok = false;
+
+    bool run(int begin, int end) const noexcept {
+        try {
+            rows(input, packed, bias, height, width, cin, cout, dilation, begin, end, output);
+            return true;
+        } catch (...) {
+            return false;
+        }
+    }
+};
+
+class ConvolutionWorker {
+    std::mutex mutex;
+    std::condition_variable requested, completed;
+    ConvolutionJob* pending = nullptr;
+    bool stopping = false;
+    std::thread worker;
+
+public:
+    ConvolutionWorker() : worker([this] { loop(); }) {}
+    ~ConvolutionWorker() {
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            stopping = true;
+        }
+        requested.notify_one();
+        worker.join();
+    }
+
+    int dispatch(ConvolutionJob& job) {
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            pending = &job;
+        }
+        requested.notify_one();
+        const bool first_ok = job.run(0, job.height / 2);
+        std::unique_lock<std::mutex> lock(mutex);
+        completed.wait(lock, [&] { return !pending; });
+        return first_ok && job.second_ok ? 0 : 1;
+    }
+
+private:
+    void loop() {
+        std::unique_lock<std::mutex> lock(mutex);
+        for (;;) {
+            requested.wait(lock, [&] { return stopping || pending; });
+            if (stopping) return;
+            ConvolutionJob* job = pending;
+            lock.unlock();
+            _mm_setcsr(job->mode);
+            const bool ok = job->run(job->height / 2, job->height);
+            lock.lock();
+            job->second_ok = ok;
+            pending = nullptr;
+            completed.notify_one();
+        }
+    }
+};
+
+static thread_local ConvolutionWorker* active_worker = nullptr;
+
+
+// The installed interpreter owns the worker. The current invocation borrows it on this thread.
+extern "C" __declspec(dllexport)
+void* sparse_worker_create() noexcept {
+    try {
+        return new ConvolutionWorker();
+    } catch (...) {
+        return nullptr;
+    }
+}
+
+extern "C" __declspec(dllexport)
+void sparse_worker_destroy(void* worker) noexcept {
+    delete static_cast<ConvolutionWorker*>(worker);
+}
+
+extern "C" __declspec(dllexport)
+void* sparse_worker_exchange(void* worker) noexcept {
+    auto* previous = active_worker;
+    active_worker = static_cast<ConvolutionWorker*>(worker);
+    return previous;
+}
+
 static int run_workers(ConvolutionRows kernel, const float* input, const float* packed, const float* bias, int height, int width,
                 int cin, int cout, int dilation, float* output) noexcept {
+    if (active_worker) {
+        ConvolutionJob job{kernel, input, packed, bias, height, width, cin, cout, dilation,
+                           output, _mm_getcsr()};
+        return active_worker->dispatch(job);
+    }
     const int mid = height/2;
     const unsigned arithmetic_mode = _mm_getcsr();
     bool second_ok = true;
@@ -607,10 +708,15 @@ int sparse_conv_reuse(const float* input, const float* packed, const float* bias
 }
 
 
+static void conv_valid32_segment_rows(const float*, const float*, const float*,
+        int, int, int, int, int, int, int, float*);
+
 extern "C" __declspec(dllexport)
 int sparse_conv_valid32(const float* input, const float* packed, const float* bias, int height, int width,
                         int cin, int cout, int dilation, float* output) noexcept {
     if (height <= 0 || width <= 0 || cin != 96 || cout != 32 || dilation != 1) return 1;
+    if (height == 194 && width == 194)
+        return run_workers(conv_valid32_segment_rows, input, packed, bias, height, width, cin, cout, dilation, output);
     return run_workers(conv_valid32_rows, input, packed, bias, height, width, cin, cout, dilation, output);
 }
 
@@ -796,10 +902,17 @@ static void rolling_six_rows(const float* input, const float* packed, const floa
     }
 }
 
+static void conv_valid_tap_rows(const float*, const float*, const float*,
+        int, int, int, int, int, int, int, float*);
+
 extern "C" __declspec(dllexport)
 int sparse_conv_valid_group(const float* input, const float* packed, const float* bias,
                        int h, int w, int ic, int oc, int dilation, float* output) noexcept {
     if (h <= 0 || w <= 0 || w % 6 || ic <= 0 || ic % 8 || oc <= 0 || oc % 16 || dilation != 1) return 1;
+    if ((h == 54 && w == 54 && ic == 384 && oc == 128)
+            || (h == 102 && w == 102 && ic == 192 && oc == 64)) {
+        return run_workers(conv_valid_tap_rows, input, packed, bias, h, w, ic, oc, dilation, output);
+    }
     return run_workers(rolling_six_rows<true>, input, packed, bias, h, w, ic, oc, dilation, output);
 }
 
@@ -811,9 +924,394 @@ int sparse_conv_dilated_group(const float* input, const float* packed, const flo
     return run_workers(rolling_six_rows<false>, input, packed, bias, h, w, ic, oc, dilation, output);
 }
 
+static void conv_valid_tail_tap_rows(const float*, const float*, const float*,
+        int, int, int, int, int, int, int, float*);
+
 extern "C" __declspec(dllexport)
 int sparse_conv_valid_group_tail(const float* input, const float* packed, const float* bias,
                        int h, int w, int ic, int oc, int dilation, float* output) noexcept {
     if (h <= 0 || w <= 0 || ic <= 0 || ic % 8 || oc <= 0 || oc % 16 || dilation != 1) return 1;
+    if ((h == 52 && w == 52 && ic == 128 && oc == 128)
+            || (h == 100 && w == 100 && ic == 64 && oc == 64)) {
+        return run_workers(conv_valid_tail_tap_rows, input, packed, bias, h, w, ic, oc, dilation, output);
+    }
     return run_workers(rolling_six_rows<true, false>, input, packed, bias, h, w, ic, oc, dilation, output);
+}
+
+struct SegmentChannels {
+    uint8_t indices[96];
+    int count;
+};
+
+static void collect_segment_channels(SegmentChannels& selected, const float* first, int positions) {
+    constexpr int channels = 96;
+    const auto zero = _mm256_setzero_si256();
+    const auto magnitude = _mm256_set1_epi32(0x7fffffff);
+    selected.count = 0;
+    for (int ci=0; ci<channels; ci+=8) {
+        auto merged = zero;
+        const float* pixel = first + ci;
+        for (int x=0; x<positions; ++x, pixel+=channels)
+            merged = _mm256_or_si256(merged, _mm256_castps_si256(_mm256_loadu_ps(pixel)));
+        auto empty = _mm256_cmpeq_epi32(_mm256_and_si256(merged, magnitude), zero);
+        unsigned bits = static_cast<unsigned>(_mm256_movemask_ps(_mm256_castsi256_ps(empty))) ^ 255u;
+        while (bits) {
+            unsigned long bit;
+            _BitScanForward(&bit, bits);
+            bits &= bits - 1;
+            selected.indices[selected.count++] = static_cast<uint8_t>(ci + bit);
+        }
+    }
+}
+
+static void convolve_segment_triple(const float* source, const float* packed, const float* bias,
+                                    int stride, const SegmentChannels* const* rows, float* output) {
+    constexpr int channels = 96;
+    auto a0 = _mm256_loadu_ps(bias + 0), a1 = _mm256_loadu_ps(bias + 8), a2 = _mm256_loadu_ps(bias + 16), a3 = _mm256_loadu_ps(bias + 24);
+    auto a4 = _mm256_loadu_ps(bias + 0), a5 = _mm256_loadu_ps(bias + 8), a6 = _mm256_loadu_ps(bias + 16), a7 = _mm256_loadu_ps(bias + 24);
+    auto a8 = _mm256_loadu_ps(bias + 0), a9 = _mm256_loadu_ps(bias + 8), a10 = _mm256_loadu_ps(bias + 16), a11 = _mm256_loadu_ps(bias + 24);
+
+    for (int ky=0; ky<3; ++ky) {
+        const float* row = source + static_cast<size_t>(ky)*stride;
+        const SegmentChannels& active = *rows[ky];
+        for (int kx=0; kx<3; ++kx) {
+            const float* first = row + kx*channels;
+            const float* weights = packed + (ky*3+kx)*channels*32;
+            for (int i=0; i<active.count; ++i) {
+                const int ci = active.indices[i];
+                const auto v0 = _mm256_set1_ps(first[ci]);
+                const auto v1 = _mm256_set1_ps(first[channels+ci]);
+                const auto v2 = _mm256_set1_ps(first[2*channels+ci]);
+                const float* w = weights + 32 * ci;
+                const auto w0 = _mm256_loadu_ps(w + 0);
+                a0 = _mm256_fmadd_ps(v0, w0, a0);
+                a4 = _mm256_fmadd_ps(v1, w0, a4);
+                a8 = _mm256_fmadd_ps(v2, w0, a8);
+                const auto w1 = _mm256_loadu_ps(w + 8);
+                a1 = _mm256_fmadd_ps(v0, w1, a1);
+                a5 = _mm256_fmadd_ps(v1, w1, a5);
+                a9 = _mm256_fmadd_ps(v2, w1, a9);
+                const auto w2 = _mm256_loadu_ps(w + 16);
+                a2 = _mm256_fmadd_ps(v0, w2, a2);
+                a6 = _mm256_fmadd_ps(v1, w2, a6);
+                a10 = _mm256_fmadd_ps(v2, w2, a10);
+                const auto w3 = _mm256_loadu_ps(w + 24);
+                a3 = _mm256_fmadd_ps(v0, w3, a3);
+                a7 = _mm256_fmadd_ps(v1, w3, a7);
+                a11 = _mm256_fmadd_ps(v2, w3, a11);
+            }
+        }
+    }
+    const auto zero = _mm256_setzero_ps();
+    _mm256_storeu_ps(output + 0, _mm256_max_ps(a0, zero));
+    _mm256_storeu_ps(output + 8, _mm256_max_ps(a1, zero));
+    _mm256_storeu_ps(output + 16, _mm256_max_ps(a2, zero));
+    _mm256_storeu_ps(output + 24, _mm256_max_ps(a3, zero));
+    _mm256_storeu_ps(output + 32, _mm256_max_ps(a4, zero));
+    _mm256_storeu_ps(output + 40, _mm256_max_ps(a5, zero));
+    _mm256_storeu_ps(output + 48, _mm256_max_ps(a6, zero));
+    _mm256_storeu_ps(output + 56, _mm256_max_ps(a7, zero));
+    _mm256_storeu_ps(output + 64, _mm256_max_ps(a8, zero));
+    _mm256_storeu_ps(output + 72, _mm256_max_ps(a9, zero));
+    _mm256_storeu_ps(output + 80, _mm256_max_ps(a10, zero));
+    _mm256_storeu_ps(output + 88, _mm256_max_ps(a11, zero));
+}
+
+static void conv_valid32_segment_rows(const float* source, const float* weights, const float* bias,
+        int, int width, int channels, int, int, int begin, int end, float* dest) {
+    if (begin >= end) return;
+    constexpr int outputs = 32, segment = 24;
+    const int inputWidth = width + 2;
+    const int stride = inputWidth * channels;
+    // Dense activations use the existing contiguous kernel without building segment lists.
+    const float* sample = source + static_cast<size_t>(begin) * stride;
+    bool possibleSparse = false;
+    for (int ci = 0; ci < channels; ci += 8) {
+        const auto values = _mm256_loadu_ps(sample + ci);
+        auto empty = _mm256_cmp_ps(values, _mm256_setzero_ps(), _CMP_EQ_OQ);
+        if (_mm256_movemask_ps(empty)) {
+            possibleSparse = true;
+            break;
+        }
+    }
+    if (!possibleSparse) {
+        conv_valid32_rows(source, weights, bias, 0, width, channels, outputs, 1, begin, end, dest);
+        return;
+    }
+    for (int left = 0; left < width; left += segment) {
+        const int right = std::min(width, left + segment);
+        SegmentChannels cached[3];
+        const auto collect = [&](int slot, int y) {
+            const float* row = source + (static_cast<size_t>(y) * inputWidth + left) * channels;
+            collect_segment_channels(cached[slot], row, right - left + 2);
+        };
+        for (int ky=0; ky<3; ++ky) collect(ky, begin+ky);
+        int slot = 0;
+        for (int y=begin; y<end; ++y) {
+            const SegmentChannels* active[3] = {&cached[slot], &cached[(slot+1)%3], &cached[(slot+2)%3]};
+            const float* row = source + static_cast<size_t>(y) * stride;
+            float* output = dest + static_cast<size_t>(y) * width * outputs;
+            int x = left;
+            for (; x + 3 <= right; x += 3) {
+                if (active[0]->count == channels && active[1]->count == channels && active[2]->count == channels)
+                    convolve_valid32_block<3>(row+x*channels,weights,bias,inputWidth,channels,output+x*outputs);
+                else
+                    convolve_segment_triple(row+x*channels,weights,bias,stride,active,output+x*outputs);
+            }
+            for (; x < right; ++x)
+                convolve_valid32_block<1>(row+x*channels,weights,bias,inputWidth,channels,output+x*outputs);
+            if (y+1 < end) collect(slot,y+3);
+            slot = (slot+1)%3;
+        }
+    }
+}
+
+struct ValidTapChannels {
+    uint16_t indices[384];
+    int count;
+};
+
+
+static void collect_tap_channels(ValidTapChannels (&active)[3], const float* source, int channels) {
+    const auto zero = _mm256_setzero_si256();
+    const auto magnitude = _mm256_set1_epi32(0x7fffffff);
+    for (auto& entry : active) entry.count = 0;
+    for (int ci = 0; ci < channels; ci += 8) {
+        const float* first = source + ci;
+        const auto load = [&](int i) {
+            return _mm256_castps_si256(_mm256_loadu_ps(first + i * channels));
+        };
+        const auto shared = _mm256_or_si256(_mm256_or_si256(load(2), load(3)),
+                                            _mm256_or_si256(load(4), load(5)));
+        const auto left = load(1), right = load(6);
+        const __m256i outside[] = {_mm256_or_si256(load(0), left),
+                                   _mm256_or_si256(left, right),
+                                   _mm256_or_si256(right, load(7))};
+        for (int tap=0; tap<3; ++tap) {
+            const auto combined = _mm256_and_si256(_mm256_or_si256(shared, outside[tap]), magnitude);
+            const auto empty = _mm256_cmpeq_epi32(combined, zero);
+            unsigned bits = static_cast<unsigned>(_mm256_movemask_ps(_mm256_castsi256_ps(empty))) ^ 255u;
+            while (bits) {
+                unsigned long lane;
+                _BitScanForward(&lane, bits);
+                bits &= bits - 1;
+                active[tap].indices[active[tap].count++] = static_cast<uint16_t>(ci + lane);
+            }
+        }
+    }
+}
+
+static void convolve_segment_six(const float* source, const float* packed, const float* bias,
+        int stride, int channels, int outputs, const ValidTapChannels* const* rows, float* output) {
+    const auto zero = _mm256_setzero_ps();
+    for (int co = 0; co < outputs; co += 16) {
+        const float* weights = packed + static_cast<size_t>(co) * 9 * channels;
+        const auto b0 = _mm256_loadu_ps(bias + co);
+        const auto b1 = _mm256_loadu_ps(bias + co + 8);
+        auto lo0 = b0, hi0 = b1;
+        auto lo1 = b0, hi1 = b1;
+        auto lo2 = b0, hi2 = b1;
+        auto lo3 = b0, hi3 = b1;
+        auto lo4 = b0, hi4 = b1;
+        auto lo5 = b0, hi5 = b1;
+
+        for (int ky=0; ky<3; ++ky) {
+            const float* row = source + static_cast<size_t>(ky) * stride;
+            for (int kx=0; kx<3; ++kx) {
+                const ValidTapChannels& active = rows[ky][kx];
+                const float* first = row + kx*channels;
+                const float* tap = weights + (ky*3+kx)*channels*16;
+                for (int i=0; i<active.count; ++i) {
+                    const int ci = active.indices[i];
+                    const auto w0 = _mm256_loadu_ps(tap + 16*ci);
+                    const auto w1 = _mm256_loadu_ps(tap + 16*ci + 8);
+                    const auto v0 = _mm256_set1_ps(first[0*channels + ci]);
+                    lo0 = _mm256_fmadd_ps(v0, w0, lo0);
+                    hi0 = _mm256_fmadd_ps(v0, w1, hi0);
+                    const auto v1 = _mm256_set1_ps(first[1*channels + ci]);
+                    lo1 = _mm256_fmadd_ps(v1, w0, lo1);
+                    hi1 = _mm256_fmadd_ps(v1, w1, hi1);
+                    const auto v2 = _mm256_set1_ps(first[2*channels + ci]);
+                    lo2 = _mm256_fmadd_ps(v2, w0, lo2);
+                    hi2 = _mm256_fmadd_ps(v2, w1, hi2);
+                    const auto v3 = _mm256_set1_ps(first[3*channels + ci]);
+                    lo3 = _mm256_fmadd_ps(v3, w0, lo3);
+                    hi3 = _mm256_fmadd_ps(v3, w1, hi3);
+                    const auto v4 = _mm256_set1_ps(first[4*channels + ci]);
+                    lo4 = _mm256_fmadd_ps(v4, w0, lo4);
+                    hi4 = _mm256_fmadd_ps(v4, w1, hi4);
+                    const auto v5 = _mm256_set1_ps(first[5*channels + ci]);
+                    lo5 = _mm256_fmadd_ps(v5, w0, lo5);
+                    hi5 = _mm256_fmadd_ps(v5, w1, hi5);
+                }
+            }
+        }
+        _mm256_storeu_ps(output + 0*outputs + co, _mm256_max_ps(lo0,zero));
+        _mm256_storeu_ps(output + 0*outputs + co + 8, _mm256_max_ps(hi0,zero));
+        _mm256_storeu_ps(output + 1*outputs + co, _mm256_max_ps(lo1,zero));
+        _mm256_storeu_ps(output + 1*outputs + co + 8, _mm256_max_ps(hi1,zero));
+        _mm256_storeu_ps(output + 2*outputs + co, _mm256_max_ps(lo2,zero));
+        _mm256_storeu_ps(output + 2*outputs + co + 8, _mm256_max_ps(hi2,zero));
+        _mm256_storeu_ps(output + 3*outputs + co, _mm256_max_ps(lo3,zero));
+        _mm256_storeu_ps(output + 3*outputs + co + 8, _mm256_max_ps(hi3,zero));
+        _mm256_storeu_ps(output + 4*outputs + co, _mm256_max_ps(lo4,zero));
+        _mm256_storeu_ps(output + 4*outputs + co + 8, _mm256_max_ps(hi4,zero));
+        _mm256_storeu_ps(output + 5*outputs + co, _mm256_max_ps(lo5,zero));
+        _mm256_storeu_ps(output + 5*outputs + co + 8, _mm256_max_ps(hi5,zero));
+    }
+}
+
+static void conv_valid_tap_rows(const float* source, const float* weights, const float* bias,
+        int, int width, int channels, int outputs, int, int begin, int end, float* dest) {
+    if (begin >= end) return;
+    const int inputWidth = width + 2;
+    const int stride = inputWidth * channels;
+    for (int left = 0; left < width; left += 6) {
+        ValidTapChannels cached[3][3];
+        const auto collect = [&](int slot, int y) {
+            const float* row = source + (static_cast<size_t>(y) * inputWidth + left) * channels;
+            collect_tap_channels(cached[slot], row, channels);
+        };
+        for (int ky=0; ky<3; ++ky) collect(ky, begin+ky);
+        int slot = 0;
+        for (int y=begin; y<end; ++y) {
+            const ValidTapChannels* active[3] = {cached[slot], cached[(slot+1)%3], cached[(slot+2)%3]};
+            const float* row = source + static_cast<size_t>(y) * stride;
+            float* output = dest + static_cast<size_t>(y) * width * outputs;
+            convolve_segment_six(row+left*channels,weights,bias,stride,channels,outputs,active,output+left*outputs);
+            if (y+1 < end) collect(slot,y+3);
+            slot = (slot+1)%3;
+        }
+    }
+}
+
+struct IndexedTap {
+    ValidTapChannels active;
+    const float* pixels[6];
+};
+
+static void collect_valid_tail_taps(IndexedTap (&taps)[3], const float* row, const float* fallback,
+        int left, int channels, int remaining) {
+    const auto zero = _mm256_setzero_si256();
+    const auto magnitude = _mm256_set1_epi32(0x7fffffff);
+    for (int tap=0; tap<3; ++tap) {
+        auto& entry = taps[tap];
+        entry.active.count = 0;
+        const int first = left + tap;
+        for (int x=0; x<6; ++x) {
+            const int col = first + x;
+            entry.pixels[x] = x < remaining ? row + col*channels : fallback;
+        }
+        for (int ci=0; ci<channels; ci+=8) {
+            auto mask = zero;
+            for (const float* pixel : entry.pixels)
+                mask = _mm256_or_si256(mask, _mm256_castps_si256(_mm256_loadu_ps(pixel+ci)));
+            auto empty = _mm256_cmpeq_epi32(_mm256_and_si256(mask,magnitude),zero);
+            unsigned bits = static_cast<unsigned>(_mm256_movemask_ps(_mm256_castsi256_ps(empty))) ^ 255u;
+            while (bits) {
+                unsigned long lane;
+                _BitScanForward(&lane, bits);
+                bits &= bits-1;
+                entry.active.indices[entry.active.count++] = static_cast<uint16_t>(ci+lane);
+            }
+        }
+    }
+}
+
+static void convolve_valid_tail_taps(const float* packed, const float* bias,
+        int channels, int outputs, int remaining, const IndexedTap* const* rows, float* output) {
+    const auto zero = _mm256_setzero_ps();
+    for (int co = 0; co < outputs; co += 16) {
+        const float* weights = packed + static_cast<size_t>(co) * 9 * channels;
+        const auto b0 = _mm256_loadu_ps(bias + co);
+        const auto b1 = _mm256_loadu_ps(bias + co + 8);
+        auto lo0 = b0, hi0 = b1;
+        auto lo1 = b0, hi1 = b1;
+        auto lo2 = b0, hi2 = b1;
+        auto lo3 = b0, hi3 = b1;
+        auto lo4 = b0, hi4 = b1;
+        auto lo5 = b0, hi5 = b1;
+
+        for (int ky=0; ky<3; ++ky) {
+            for (int kx=0; kx<3; ++kx) {
+                const auto& source = rows[ky][kx];
+                const auto& active = source.active;
+                const float* tap = weights + (ky*3+kx)*channels*16;
+                for (int i=0; i<active.count; ++i) {
+                    const int ci = active.indices[i];
+                    const auto w0 = _mm256_loadu_ps(tap + 16*ci);
+                    const auto w1 = _mm256_loadu_ps(tap + 16*ci + 8);
+                    const auto v0 = _mm256_set1_ps(source.pixels[0][ci]);
+                    lo0 = _mm256_fmadd_ps(v0, w0, lo0);
+                    hi0 = _mm256_fmadd_ps(v0, w1, hi0);
+                    const auto v1 = _mm256_set1_ps(source.pixels[1][ci]);
+                    lo1 = _mm256_fmadd_ps(v1, w0, lo1);
+                    hi1 = _mm256_fmadd_ps(v1, w1, hi1);
+                    const auto v2 = _mm256_set1_ps(source.pixels[2][ci]);
+                    lo2 = _mm256_fmadd_ps(v2, w0, lo2);
+                    hi2 = _mm256_fmadd_ps(v2, w1, hi2);
+                    const auto v3 = _mm256_set1_ps(source.pixels[3][ci]);
+                    lo3 = _mm256_fmadd_ps(v3, w0, lo3);
+                    hi3 = _mm256_fmadd_ps(v3, w1, hi3);
+                    const auto v4 = _mm256_set1_ps(source.pixels[4][ci]);
+                    lo4 = _mm256_fmadd_ps(v4, w0, lo4);
+                    hi4 = _mm256_fmadd_ps(v4, w1, hi4);
+                    const auto v5 = _mm256_set1_ps(source.pixels[5][ci]);
+                    lo5 = _mm256_fmadd_ps(v5, w0, lo5);
+                    hi5 = _mm256_fmadd_ps(v5, w1, hi5);
+                }
+            }
+        }
+        if (remaining > 0) {
+            _mm256_storeu_ps(output + 0*outputs + co, _mm256_max_ps(lo0,zero));
+            _mm256_storeu_ps(output + 0*outputs + co + 8, _mm256_max_ps(hi0,zero));
+        }
+        if (remaining > 1) {
+            _mm256_storeu_ps(output + 1*outputs + co, _mm256_max_ps(lo1,zero));
+            _mm256_storeu_ps(output + 1*outputs + co + 8, _mm256_max_ps(hi1,zero));
+        }
+        if (remaining > 2) {
+            _mm256_storeu_ps(output + 2*outputs + co, _mm256_max_ps(lo2,zero));
+            _mm256_storeu_ps(output + 2*outputs + co + 8, _mm256_max_ps(hi2,zero));
+        }
+        if (remaining > 3) {
+            _mm256_storeu_ps(output + 3*outputs + co, _mm256_max_ps(lo3,zero));
+            _mm256_storeu_ps(output + 3*outputs + co + 8, _mm256_max_ps(hi3,zero));
+        }
+        if (remaining > 4) {
+            _mm256_storeu_ps(output + 4*outputs + co, _mm256_max_ps(lo4,zero));
+            _mm256_storeu_ps(output + 4*outputs + co + 8, _mm256_max_ps(hi4,zero));
+        }
+        if (remaining > 5) {
+            _mm256_storeu_ps(output + 5*outputs + co, _mm256_max_ps(lo5,zero));
+            _mm256_storeu_ps(output + 5*outputs + co + 8, _mm256_max_ps(hi5,zero));
+        }
+    }
+}
+
+
+
+static void conv_valid_tail_tap_rows(const float* source, const float* weights, const float* bias,
+        int, int width, int channels, int outputs, int, int begin,int end,float* dest) {
+    if (begin >= end) return;
+    const float zeroPixel[384]{};
+    for (int left=0; left<width; left+=6) {
+        const int remaining = std::min(width-left,6);
+        IndexedTap cached[3][3];
+        auto collect = [&](int slot, int row) {
+            const float* pixels = source + static_cast<size_t>(row)*(width+2)*channels;
+            collect_valid_tail_taps(cached[slot], pixels, zeroPixel, left, channels, remaining);
+        };
+        collect(0, begin);
+        collect(1, begin+1);
+        collect(2, begin+2);
+        int slot=0;
+        for (int y=begin; y<end; ++y) {
+            const IndexedTap* active[3] = {cached[slot],cached[(slot+1)%3],cached[(slot+2)%3]};
+            float* output = dest + (static_cast<size_t>(y)*width+left)*outputs;
+            convolve_valid_tail_taps(weights,bias,channels,outputs,remaining,active,output);
+            if (y+1 < end) collect(slot,y+3);
+            slot=(slot+1)%3;
+        }
+    }
 }

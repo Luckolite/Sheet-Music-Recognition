@@ -8,6 +8,9 @@ import java.nio.ByteOrder;
 
 /** Small local contrast/rule-cleaned windows for retrying an already bounded numeral search. */
 final class TupletNumeralInk {
+    private static final byte PAPER = (byte) 255;
+    private static final byte ERASED_RULE = (byte) 254;
+
     private TupletNumeralInk() {}
 
     private static final VarHandle PIXEL_WORD = MethodHandles.byteArrayViewVarHandle(
@@ -201,24 +204,28 @@ final class TupletNumeralInk {
             y += repeat;
         }
         if (!anyInk) return new Window(pixels, ww, hh, left, top, possibleEdges);
-        byte[] original = ruleEdges && possibleEdges ? pixels.clone() : null;
-        if (original != null) removeLevelRuleEdges(pixels, original, ww, hh, maxEdgeStroke, occupancy);
+        boolean changed = ruleEdges && possibleEdges
+                && levelRuleEdges(pixels, ww, hh, maxEdgeStroke, occupancy, false);
         int maxLevelStroke = Math.max(2, Math.round(gap * .23f));
         for (int y = firstLevelRow; y < hh - 1; y++) {
             if (occupancy[y] < minimum) continue;
             int end = y;
             while (end + 1 < hh - 1 && occupancy[end + 1] >= minimum) end++;
             if (end - y + 1 <= maxLevelStroke) {
-                if (original == null) original = pixels.clone();
                 int above = (y - 1) * ww, below = (end + 1) * ww;
-                int crossing = original[above] == 0 || original[below] == 0 ? 1 : 0;
+                int crossing = pixels[above] != PAPER || pixels[below] != PAPER ? 1 : 0;
                 for (int x = 0; x < ww; x++) {
                     int next = x + 1;
                     crossing = (crossing << 1) & 7;
-                    if (next < ww && (original[above + next] == 0 || original[below + next] == 0))
+                    if (next < ww && (pixels[above + next] != PAPER || pixels[below + next] != PAPER))
                         crossing |= 1;
-                    if (crossing == 0)
-                        for (int at = above + ww + x; at < below; at += ww) pixels[at] = (byte) 255;
+                    if (crossing == 0) {
+                        for (int at = above + ww + x; at < below; at += ww) {
+                            if (pixels[at] != 0) continue;
+                            pixels[at] = ERASED_RULE;
+                            changed = true;
+                        }
+                    }
                 }
             }
             y = end;
@@ -226,8 +233,8 @@ final class TupletNumeralInk {
         // Both passes erase level rules using the same original mask. Only an edge
         // erasure still visible after that step could change the sloped-rule input.
         if (!ruleEdges && possibleEdges)
-            possibleEdges = levelRuleEdges(pixels, original == null ? pixels : original,
-                    ww, hh, maxEdgeStroke, occupancy, true);
+            possibleEdges = levelRuleEdges(pixels, ww, hh, maxEdgeStroke, occupancy, true);
+        if (changed) restorePaper(pixels);
         removeSlopedRulesWithThickness(pixels, ww, hh, maxEdgeStroke);
         return new Window(pixels, ww, hh, left, top, possibleEdges);
     }
@@ -236,12 +243,19 @@ final class TupletNumeralInk {
         return Math.max(2, Math.round(gap * .30f));
     }
 
-    private static void removeLevelRuleEdges(
-            byte[] pixels, byte[] original, int w, int h, int max, int[] occupancy) {
-        levelRuleEdges(pixels, original, w, h, max, occupancy, false);
+    // A removed byte still encodes the original dark pixel until both level passes end.
+    private static void restorePaper(byte[] pixels) {
+        int at = 0;
+        for (; at <= pixels.length - Long.BYTES; at += Long.BYTES) {
+            long word = (long) PIXEL_WORD.get(pixels, at);
+            PIXEL_WORD.set(pixels, at, word | ((word & HIGH_BIT) >>> 7));
+        }
+        for (; at < pixels.length; at++) {
+            if (pixels[at] == ERASED_RULE) pixels[at] = PAPER;
+        }
     }
 
-    private static boolean levelRuleEdges(byte[] pixels, byte[] original, int w, int h,
+    private static boolean levelRuleEdges(byte[] pixels, int w, int h,
             int max, int[] occupancy, boolean checkOnly) {
         int first = max + 2, end = h - max - 2;
         if (first >= end || w <= 2) return false;
@@ -255,11 +269,11 @@ final class TupletNumeralInk {
             if (nonThin > nonThinLimit) continue;
             for (int x = 0; x < w; x++) {
                 firstPixels[x] = -1;
-                if (original[row + x] != 0) continue;
+                if (pixels[row + x] == PAPER) continue;
                 int top = cy, bottom = cy;
-                while (top > cy - max && original[(top - 1) * w + x] == 0) top--;
+                while (top > cy - max && pixels[(top - 1) * w + x] != PAPER) top--;
                 int lastThin = top + max - 1;
-                while (bottom <= lastThin && original[(bottom + 1) * w + x] == 0) bottom++;
+                while (bottom <= lastThin && pixels[(bottom + 1) * w + x] != PAPER) bottom++;
                 if (bottom > lastThin) {
                     if (++nonThin > nonThinLimit) continue candidate;
                     continue;
@@ -273,12 +287,12 @@ final class TupletNumeralInk {
                 int above = start - w, below = stop + w;
                 boolean continuation = false;
                 for (int dx = -1; dx <= 1 && !continuation; dx++)
-                    continuation = original[above + dx] == 0 || original[below + dx] == 0;
+                    continuation = pixels[above + dx] != PAPER || pixels[below + dx] != PAPER;
                 if (continuation) continue;
                 for (int at = start; at <= stop; at += w) {
                     if (pixels[at] != 0) continue;
                     if (checkOnly) return true;
-                    pixels[at] = (byte) 255;
+                    pixels[at] = ERASED_RULE;
                     changed = true;
                 }
             }

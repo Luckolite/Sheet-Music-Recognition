@@ -177,6 +177,11 @@ final class VerifiedStaffTieRidge {
                     Arrays.fill(relative, Float.NaN);
                     int hits = 0, obscured = 0, strong = 0, paperCount = 0;
                     for (int i = 0; i < 50; i++) {
+                        // Each unprocessed column can supply at most one hit or obscured vote.
+                        int remaining = 50 - i;
+                        if (i - hits - obscured > 2 || obscured > 14
+                                || hits + remaining < 36 || strong + remaining < 30)
+                            continue candidate;
                         float t = (i + .5f) / 50f;
                         int target =
                                 Math.round(
