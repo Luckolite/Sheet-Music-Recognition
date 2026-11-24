@@ -1124,8 +1124,11 @@ public final class SheetInterpreter {
             }
         }
         var printedDoubleSharps = new java.util.ArrayList<>(doubleSharpBeams.doubleSharps());
+        var cleanedDottedOctaves = ClosedDottedSixteenths.restoreSideInkDottedOctaves(
+                terminalCadence, inheritedMeter, labels, gray, annotationGray, width, height, physicalPage,
+                provedDyadAccidentals::add);
         var recoveredClosingOctave = ClosingOctaveSixteenths.restoreThreeBeat(
-                terminalCadence, inheritedMeter, labels, gray, annotationGray, width, height);
+                cleanedDottedOctaves, inheritedMeter, labels, gray, annotationGray, width, height);
         var opening = ClosedSixteenthDyads.restoreStraightOpeningDyadQuartets(
                 recoveredClosingOctave, inheritedMeter, gray, annotationGray, width, height, physicalPage);
         var straight = ClosedSixteenthDyads.restoreStraightDottedQuartets(
