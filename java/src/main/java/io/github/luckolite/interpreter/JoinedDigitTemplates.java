@@ -389,12 +389,21 @@ final class JoinedDigitTemplates {
     }
 
     static float maxMaskedRival(float[] samples, BitSet visible, float observedMass, long[] remaining) {
-        int cells = visible.cardinality();
         float best = -1;
+        for (float score : maskedScores(samples, visible, observedMass, 2, remaining))
+            best = Math.max(best, score);
+        return best;
+    }
+
+    static float[] maskedScores(float[] samples, BitSet visible, float observedMass,
+            int ignoredDigit, long[] remaining) {
+        int cells = visible.cardinality();
+        float[] scores = new float[10];
+        Arrays.fill(scores, -1);
         for (var numeral : NUMERALS) {
-            if (numeral.digit() == 2) continue;
+            if (numeral.digit() == ignoredDigit) continue;
             remaining[0] -= cells;
-            if (remaining[0] < 0) return best;
+            if (remaining[0] < 0) return scores;
             float dot = 0, normSquared = 0;
             for (int i = visible.nextSetBit(0); i >= 0; i = visible.nextSetBit(i + 1)) {
                 boolean dark = (numeral.bits()[i / 8] & (1 << (i % 8))) != 0;
@@ -403,9 +412,10 @@ final class JoinedDigitTemplates {
                 normSquared += weight * weight;
             }
             if (normSquared > 0 && observedMass > 0)
-                best = Math.max(best, dot / (float) Math.sqrt(normSquared * observedMass));
+                scores[numeral.digit()] = Math.max(scores[numeral.digit()],
+                        dot / (float) Math.sqrt(normSquared * observedMass));
         }
-        return best;
+        return scores;
     }
 
     record Reading(

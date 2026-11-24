@@ -129,10 +129,11 @@ final class ShaftMatchedFingerings {
                 float[] local = frame.track().at(head.x());
                 float gap = local[1];
                 if (gap < 10 || gap > 24 || adjacentHead(frame.heads(), head, gap)) continue;
-                if (!RuleOverlaidFingerings.belowTwo(raw, normalized, width, height, head, frame.track(),
-                        local[0], gap, bottomRulePixels, rawTwos, normalizedTwos)) continue;
+                int digit = RuleOverlaidFingerings.below(raw, normalized, width, height, head, frame.track(),
+                        local[0], gap, bottomRulePixels, rawTwos, normalizedTwos);
+                if (digit < 0) continue;
                 alreadyMarked.add(head.owner());
-                recovered.add(new PrintedFingeringDigits.Mark(head.owner(), 2, PrintedFingeringDigits.Placement.BELOW));
+                recovered.add(new PrintedFingeringDigits.Mark(head.owner(), digit, PrintedFingeringDigits.Placement.BELOW));
             }
         }
         return recovered;

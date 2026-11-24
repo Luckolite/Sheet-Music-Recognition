@@ -3,8 +3,6 @@
 package io.github.luckolite.interpreter;
 
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertTrue;
 
 import java.util.Arrays;
 import java.util.List;
@@ -40,22 +38,45 @@ public final class RuleOverlaidFingeringsTest {
         List<float[]> references = List.of(
                 MatchedDetachedThreeShape.vector(raw, WIDTH, 87, 174, 97, 192),
                 MatchedDetachedThreeShape.vector(two(1), WIDTH, 88, 174, 98, 192));
-        for (int y = FLOOR - 4 * GAP; y <= FLOOR; y += GAP)
-            fill(raw, 56, 185, y - 1, y + 1, 0);
-        fill(raw, 91, 93, 115, 157, 0);
-        fill(raw, 71, 153, 153, 157, 0);
-        fill(raw, 92, 107, 111, 119, 0);
+        drawDownstemStaff(raw);
         var head = new PrintedSlurOwners.GeometryHead(0, 100, 115, 0, 1);
         var track = StaffPitchTrack.fromVerifiedSamples(
                 List.of(new float[] {60, FLOOR, GAP}, new float[] {180, FLOOR, GAP}));
-        assertTrue(RuleOverlaidFingerings.belowTwo(raw, raw, WIDTH, HEIGHT, head, track, FLOOR, GAP,
+        assertEquals(2, RuleOverlaidFingerings.below(raw, raw, WIDTH, HEIGHT, head, track, FLOOR, GAP,
                 new long[] {100_000}, references, references));
-        assertFalse(RuleOverlaidFingerings.belowTwo(raw, raw, WIDTH, HEIGHT, head, track, FLOOR, GAP,
+        assertEquals(-1, RuleOverlaidFingerings.below(raw, raw, WIDTH, HEIGHT, head, track, FLOOR, GAP,
                 new long[] {100_000}, references.subList(0, 1), references));
         byte[] broken = raw.clone();
         fill(broken, 90, 94, 139, 149, 255);
-        assertFalse(RuleOverlaidFingerings.belowTwo(raw, broken, WIDTH, HEIGHT, head, track, FLOOR, GAP,
+        assertEquals(-1, RuleOverlaidFingerings.below(raw, broken, WIDTH, HEIGHT, head, track, FLOOR, GAP,
                 new long[] {100_000}, references, references));
+    }
+
+    @Test
+    public void lowerOneNeedsBothItsSerifAndFootInBothRasters() {
+        byte[] raw = new byte[WIDTH * HEIGHT];
+        Arrays.fill(raw, (byte) 255);
+        drawDownstemStaff(raw);
+        drawOne(raw, -16, 64);
+        var head = new PrintedSlurOwners.GeometryHead(0, 100, 115, 0, 1);
+        var track = StaffPitchTrack.fromVerifiedSamples(
+                List.of(new float[] {60, FLOOR, GAP}, new float[] {180, FLOOR, GAP}));
+        assertEquals(1, RuleOverlaidFingerings.below(raw, raw, WIDTH, HEIGHT, head, track, FLOOR, GAP,
+                new long[] {100_000}, List.of(), List.of()));
+        byte[] withoutFoot = raw.clone();
+        fill(withoutFoot, 86, 99, 190, 195, 255);
+        assertEquals(-1, RuleOverlaidFingerings.below(raw, withoutFoot, WIDTH, HEIGHT, head, track, FLOOR, GAP,
+                new long[] {100_000}, List.of(), List.of()));
+        assertEquals(-1, RuleOverlaidFingerings.below(withoutFoot, raw, WIDTH, HEIGHT, head, track, FLOOR, GAP,
+                new long[] {100_000}, List.of(), List.of()));
+    }
+
+    private static void drawDownstemStaff(byte[] gray) {
+        for (int y = FLOOR - 4 * GAP; y <= FLOOR; y += GAP)
+            fill(gray, 56, 185, y - 1, y + 1, 0);
+        fill(gray, 91, 93, 115, 157, 0);
+        fill(gray, 71, 153, 153, 157, 0);
+        fill(gray, 92, 107, 111, 119, 0);
     }
 
     private static byte[] two(int shift) {
@@ -88,16 +109,18 @@ public final class RuleOverlaidFingeringsTest {
         fill(gray, 107, 109, 144, 190, 0);
         fill(gray, 74, 169, 144, 148, 0);
         fill(gray, 91, 107, 187, 193, 0);
-        if (numeral) {
-            // Draw a serif, stem, and foot across the top staff rule.
-            for (int y = 111; y <= 115; y++) fill(gray, 107 - (y - 111), 109, y, y, 0);
-            fill(gray, 104, 109, 116, 116, 0);
-            fill(gray, 106, 109, 117, 126, 0);
-            fill(gray, 105, 110, 127, 127, 0);
-            fill(gray, 104, 111, 128, 128, 0);
-            fill(gray, 103, 112, 129, 130, 0);
-        }
+        if (numeral) drawOne(gray, 0, 0);
         return gray;
+    }
+
+    private static void drawOne(byte[] gray, int dx, int dy) {
+        for (int y = 111; y <= 115; y++)
+            fill(gray, 107 - (y - 111) + dx, 109 + dx, y + dy, y + dy, 0);
+        fill(gray, 104 + dx, 109 + dx, 116 + dy, 116 + dy, 0);
+        fill(gray, 106 + dx, 109 + dx, 117 + dy, 126 + dy, 0);
+        fill(gray, 105 + dx, 110 + dx, 127 + dy, 127 + dy, 0);
+        fill(gray, 104 + dx, 111 + dx, 128 + dy, 128 + dy, 0);
+        fill(gray, 103 + dx, 112 + dx, 129 + dy, 130 + dy, 0);
     }
 
     private static void fill(byte[] gray, int left, int right, int top, int bottom, int value) {
