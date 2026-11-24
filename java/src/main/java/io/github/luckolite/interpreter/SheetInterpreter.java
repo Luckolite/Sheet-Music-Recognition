@@ -351,6 +351,8 @@ public final class SheetInterpreter {
                 HarmonicBeamBarline.join(measures, labels, gray, annotationGray, width, height);
         measures = TerminalHollowHarmonicBarline.join(
                 harmonicJoinedMeasures, labels, gray, annotationGray, width, height);
+        measures = ClosedLedgerThirdRow.recoverBoundaries(
+                measures, labels, annotationGray, gray, width, height);
         var tripleRuns =
                 MidstaffSixteenthTripleBars.recover(
                         measures, labels, gray, annotationGray, width, height);

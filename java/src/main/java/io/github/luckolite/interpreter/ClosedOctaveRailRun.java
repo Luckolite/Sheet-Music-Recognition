@@ -45,7 +45,8 @@ final class ClosedOctaveRailRun {
         if (!score.meterChanges().isEmpty() && score.meterChanges().get(0).measureIndex() == 0)
             meter = score.meterChanges().get(0);
         var bar = score.measures().get(0);
-        if (meter == null || meter.numerator() != 4 || meter.denominator() != 4 || bar.cadenceQuarterBeats() != 0
+        if (meter != null && (meter.numerator() != 4 || meter.denominator() != 4)
+                || bar.cadenceQuarterBeats() != 0
                 || score.rests().stream().anyMatch(r -> r.measureIndex() == 0)) return score;
         float width = (bar.right() - bar.left()) * w;
         float gap = (bar.bottom() - bar.top()) * h / 8.2f;
@@ -60,6 +61,7 @@ final class ClosedOctaveRailRun {
             heads.add(new Head(i, note, bar.left() * w + width * note.positionInMeasure(), note.pageY() * h));
         }
         if (heads.size() != 30) return score;
+        if (meter == null && !hasCompleteFollowingOctaveBar(score, w, h, gap)) return score;
         heads.sort(Comparator.comparingDouble(Head::x));
         var columns = new ArrayList<Column>(16);
         int hole = -1;
@@ -135,6 +137,60 @@ final class ClosedOctaveRailRun {
             beam.add(new ClosedSixteenthDyads.Head(owner, repaired.get(owner), head.x, head.y));
         }
         return result.withBeamSource(ClosedSixteenthDyads.projectDoubleRails(result.beamSource(), page, beam));
+    }
+
+    /** An adjacent closed sixteenth-octave bar supplies four beats when page context is unavailable. */
+    private static boolean hasCompleteFollowingOctaveBar(
+            ScorePageInterpretation score, int width, int height, float gap) {
+        if (score.measures().size() < 2
+                || score.meterChanges().stream().anyMatch(meter -> meter.measureIndex() <= 1)
+                || score.rests().stream().anyMatch(rest -> rest.measureIndex() == 1)) return false;
+        var first = score.measures().get(0);
+        var peer = score.measures().get(1);
+        float peerGap = (peer.bottom() - peer.top()) * height / 8.2f;
+        if (peer.cadenceQuarterBeats() != 0 || Math.abs(first.top() - peer.top()) * height > gap * .35f
+                || Math.abs(peerGap - gap) > gap * .10f
+                || (peer.left() - first.right()) * width < 0
+                || (peer.left() - first.right()) * width > gap * 1.8f) return false;
+        float peerWidth = (peer.right() - peer.left()) * width;
+        var notes = score.notes().stream().filter(note -> note.measureIndex() == 1)
+                .sorted(Comparator.comparingDouble(ScoreNoteEvent::positionInMeasure)).toList();
+        if (notes.size() != 32) return false;
+        var clockOwners = new ArrayList<ScoreNoteEvent>(16);
+        boolean borrowedUpperBeam = false;
+        for (int i = 0; i < notes.size(); i += 2) {
+            var firstHead = notes.get(i);
+            var secondHead = notes.get(i + 1);
+            var upper = firstHead.pageY() < secondHead.pageY() ? firstHead : secondHead;
+            var lower = upper == firstHead ? secondHead : firstHead;
+            if (!ordinaryHead(upper.withArticulations(upper.articulations() & ~NoteArticulation.ARTICULATIONS))
+                    || !ordinaryHead(lower.withArticulations(lower.articulations() & ~NoteArticulation.ARTICULATIONS))
+                    || !sixteenth(lower)
+                    || lower.stemDirection() != -1 || upper.stemDirection() > 0
+                    || upper.writtenAccidental() != lower.writtenAccidental()
+                    || Math.abs(firstHead.staffStep() - secondHead.staffStep()) != 7
+                    || Math.abs(Math.abs(firstHead.pageY() - secondHead.pageY()) * height - 3.5f * peerGap)
+                        > .29f * peerGap
+                    || (secondHead.positionInMeasure() - firstHead.positionInMeasure()) * peerWidth
+                        > .24f * peerGap) return false;
+            if (!sixteenth(upper)) {
+                if (borrowedUpperBeam || upper.beamCount() != 1 || upper.unbeamedDurationBeats() != 0)
+                    return false;
+                borrowedUpperBeam = true;
+            }
+            clockOwners.add(lower);
+            if (i > 0) {
+                float spacing = (firstHead.positionInMeasure() - notes.get(i - 2).positionInMeasure())
+                        * peerWidth / peerGap;
+                if (spacing < 1.85f || spacing > 2.85f) return false;
+            }
+        }
+        for (int i = 0; i < clockOwners.size(); i++) {
+            var placement = ScoreNoteTiming.writtenPlacement(clockOwners.get(i), clockOwners, 4f).orElse(null);
+            if (placement == null || Math.abs(placement.onsetBeats() - i * .25) > 1e-6
+                    || Math.abs(placement.durationBeats() - .25) > 1e-6) return false;
+        }
+        return true;
     }
 
     private static Head openingHead(byte[] labels, int w, int h, MeasureRegion bar, Head before, Head after, float gap) {

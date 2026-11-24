@@ -15,6 +15,87 @@ final class ClosedLedgerThirdRow {
     private record Pair(Head upper, Head lower) {}
     private record Kept(int index, float x, float y, ScoreNoteEvent note) {}
 
+    /** Restore a suppressed separator after a complete run of printed ledger thirds. */
+    static List<MeasureRegion> recoverBoundaries(List<MeasureRegion> measures,
+            byte[] labels, byte[] raw, byte[] gray, int w, int h) {
+        if (raw == null || gray == null || labels == null || labels.length != (long) w * h
+                || raw.length != labels.length || gray.length != labels.length) return measures;
+        ArrayList<MeasureRegion> result = null;
+        for (int i = 0; i < measures.size(); i++) {
+            var region = measures.get(i);
+            float left = region.left() * w, right = region.right() * w;
+            float gap = (region.bottom() - region.top()) * h / 8.2f;
+            if (region.cadenceQuarterBeats() != 0 || gap < 12 || gap > 24
+                    || right - left <= 34 * gap) {
+                if (result != null) result.add(region);
+                continue;
+            }
+            float floor = region.bottom() * h - 2.1f * gap;
+            var staff = new PlayingTechniqueDetector.Staff(floor - 4 * gap, floor, gap, 0, 1);
+            var leading = ledgerBar(region, labels, raw, gray, w, h, staff);
+            if (leading == null) {
+                if (result != null) result.add(region);
+                continue;
+            }
+            if (result == null) result = new ArrayList<>(measures.subList(0, i));
+            result.add(leading);
+            float nextLeft = leading.right() + Math.round(gap * 1.10f) / (float) w;
+            result.add(new MeasureRegion(nextLeft, region.right(), region.top(), region.bottom()));
+        }
+        return result == null ? measures : List.copyOf(result);
+    }
+
+    private static MeasureRegion ledgerBar(MeasureRegion region, byte[] labels, byte[] raw, byte[] gray,
+            int w, int h, PlayingTechniqueDetector.Staff staff) {
+        float gap = staff.gap();
+        int left = Math.round(region.left() * w), right = Math.round(region.right() * w);
+        int clearance = Math.round(gap * .55f);
+        int top = Math.round(staff.top()), bottom = Math.round(staff.bottom());
+        if (left < 0 || right >= w || top < 0 || bottom >= h) return null;
+        int last = Math.min(left + Math.round(34 * gap) + clearance, right - Math.round(5 * gap));
+        MeasureRegion winner = null;
+        int previous = -1;
+        for (int hint = left + Math.round(25 * gap) + clearance; hint <= last; hint += 3) {
+            int cut = PrintedCadenceDurations.boundaryColumn(gray, w, staff, hint, true, false);
+            if (cut < 0 || cut == previous) continue;
+            previous = cut;
+            int sourceCut = PrintedCadenceDurations.boundaryColumn(raw, w, staff, hint, true, false);
+            if (Math.abs(sourceCut - cut) > 2
+                    || DottedDyadMeasureSeparator.continuesBeyondStaff(gray, w, h, cut, top, bottom, gap)
+                    || DottedDyadMeasureSeparator.continuesBeyondStaff(raw, w, h, sourceCut, top, bottom, gap))
+                continue;
+            var candidate = alignPrintedLedgerBar(region, (cut - clearance) / (float) w,
+                    labels, raw, gray, w, h, gap);
+            if (candidate == null) continue;
+            if (winner != null && Math.abs(winner.right() * w - candidate.right() * w) > 3)
+                return null;
+            winner = candidate;
+        }
+        return winner;
+    }
+
+    private static MeasureRegion alignPrintedLedgerBar(MeasureRegion region, float right,
+            byte[] labels, byte[] raw, byte[] gray, int w, int h, float gap) {
+        // Staff geometry can shift by a few raster pixels after segmentation.
+        // Only accept nearby bounds when the labelled pairs and both ink planes agree.
+        int tolerance = Math.max(1, Math.round(gap * .19f));
+        for (int change = 0; change <= tolerance; change++) {
+            for (int topExpansion = 0; topExpansion <= change; topExpansion++) {
+                int bottomExpansion = change - topExpansion;
+                var candidate = new MeasureRegion(region.left(), right,
+                        region.top() - topExpansion / (float) h,
+                        region.bottom() + bottomExpansion / (float) h);
+                float candidateGap = (candidate.bottom() - candidate.top()) * h / 8.2f;
+                float floor = candidate.bottom() * h - 2.1f * candidateGap;
+                var pairs = columns(labels, w, h, candidate, floor, candidateGap);
+                if (pairs.size() == 16
+                        && printedRow(raw, w, h, candidate, pairs, floor, candidateGap)
+                        && printedRow(gray, w, h, candidate, pairs, floor, candidateGap)) return candidate;
+            }
+        }
+        return null;
+    }
+
     static ScorePageInterpretation repair(ScorePageInterpretation score, ScoreMeterChange inherited,
             byte[] labels, byte[] raw, byte[] gray, int w, int h, int page,
             Consumer<SourceLocalAccidental.ProvedMark> printed) {
@@ -43,9 +124,28 @@ final class ClosedLedgerThirdRow {
             Consumer<SourceLocalAccidental.ProvedMark> printed) {
         var notes = score.notes();
         var existing = new ArrayList<Kept>();
+        int unsupportedWhole = -1;
+        float floor = bar.bottom() * h - 2.1f * gap;
         for (int i = 0; i < notes.size(); i++) {
             var n = notes.get(i);
             if (n.measureIndex() != measure) continue;
+            float x = (bar.left() + n.positionInMeasure() * (bar.right() - bar.left())) * w;
+            float y = n.pageY() * h;
+            if (n.kind() == ScoreNoteEvent.Kind.PITCHED && n.staffIndex() == 0 && n.staffCount() == 1
+                    && n.clefBottomDiatonic() == ScoreNoteEvent.CLEF_TREBLE && n.stemDirection() == 0
+                    && n.beamCount() == 0 && n.unbeamedDurationBeats() == 4 && n.augmentationDots() == 0
+                    && n.tupletDivisor() == 1 && n.visualSize() == ScoreNoteEvent.VisualSize.FULL
+                    && n.leadingRestBeats() == 0 && n.followingRestBeats() == 0 && !n.tiedFromPrevious()
+                    && n.boundaryTies() == 0 && n.articulations() == 0 && !n.crossStaffBeam()
+                    && n.octaveShift() == 0 && n.harmonicSemitones() == 0 && n.openStringTouch() == null
+                    && y >= floor + gap * .25f && y <= floor + gap
+                    && !PrintedCadenceDurations.hollowPocket(raw, w, h, x, y, gap)
+                    && !PrintedCadenceDurations.hollowPocket(gray, w, h, x, y, gap)
+                    && score.beamSource().noteOrigins().get(i).isEmpty()) {
+                if (unsupportedWhole >= 0) return score;
+                unsupportedWhole = i;
+                continue;
+            }
             if (n.kind() != ScoreNoteEvent.Kind.PITCHED || n.staffCount() != 1 || n.staffIndex() != 0
                     || n.clefBottomDiatonic() != ScoreNoteEvent.CLEF_TREBLE || n.stemDirection() != -1
                     || n.beamCount() != 2 || n.unbeamedDurationBeats() != 0 || n.augmentationDots() != 0
@@ -54,15 +154,14 @@ final class ClosedLedgerThirdRow {
                     || n.octaveShift() != 0 || n.harmonicSemitones() != 0 || n.openStringTouch() != null
                     || n.visualSize() != ScoreNoteEvent.VisualSize.FULL
                     || score.beamSource().noteOrigins().get(i).isPresent()) return score;
-            float x = (bar.left() + n.positionInMeasure() * (bar.right() - bar.left())) * w;
-            existing.add(new Kept(i, x, n.pageY() * h, n));
+            existing.add(new Kept(i, x, y, n));
         }
         if (existing.size() < 24 || existing.size() >= 32) return score;
-        float floor = bar.bottom() * h - 2.1f * gap;
         var pairs = columns(labels, w, h, bar, floor, gap);
         if (pairs.size() != 16 || !printedRow(raw, w, h, bar, pairs, floor, gap)
                 || !printedRow(gray, w, h, bar, pairs, floor, gap)) return score;
         var replaced = new HashSet<Integer>();
+        if (unsupportedWhole >= 0) replaced.add(unsupportedWhole);
         var owners = new HashSet<Integer>();
         var result = new ArrayList<ScoreNoteEvent>(32);
         var remap = new ArrayList<Integer>(32);

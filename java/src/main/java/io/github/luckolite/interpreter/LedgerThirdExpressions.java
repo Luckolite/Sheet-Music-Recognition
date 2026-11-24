@@ -90,7 +90,7 @@ final class LedgerThirdExpressions {
                 var lower = lowers.get(i);
                 for (var ink : List.of(raw, gray))
                     stack &= digit(ink, w, h, upper.x, upper.y, gap, above[i], false)
-                            && digit(ink, w, h, lower.x, floor, gap, below[i], true);
+                            && ruledDigit(ink, w, h, lower.x, floor, gap, below[i]);
             }
             if (stack) for (int i = 0; i < 2; i++) {
                 fingers.add(new PrintedFingeringDigits.Mark(uppers.get(i).index, above[i],
@@ -149,6 +149,18 @@ final class LedgerThirdExpressions {
             if (a + (b - a) * t - centers[Math.round((span - 1) * t)] < .53f * gap) return null;
         }
         return new Arc(c.left, a, c.right, b);
+    }
+
+    private static boolean ruledDigit(byte[] ink, int width, int height, float x,
+            float floor, float gap, int wanted) {
+        if (digit(ink, width, height, x, floor, gap, wanted, true)) return true;
+        var rules = PrintedDirectionStaff.printedRules(ink, width, height, x, floor, gap);
+        if (rules == null || Math.abs(rules[0] - floor) > .23f * gap
+                || Math.abs(rules[1] - gap) > .09f * gap) return false;
+        // Beam-heavy geometry rounds the staff bottom differently from the
+        // short ruling under the digit. Keep the ruled crop on the printed staff.
+        return digit(ink, width, height, x, rules[0], gap, wanted, true)
+                || digit(ink, width, height, x, rules[0] + .085f * gap, gap, wanted, true);
     }
 
     private static boolean digit(byte[] ink, int w, int h, float x, float y, float gap, int wanted, boolean ruled) {
