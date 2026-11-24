@@ -121,6 +121,19 @@ final class ShaftMatchedFingerings {
                 alreadyMarked.add(head.owner());
                 recovered.add(new PrintedFingeringDigits.Mark(head.owner(), digit, PrintedFingeringDigits.Placement.ABOVE));
             }
+            long[] bottomRulePixels = {1_300_000};
+            for (var frame : frames) for (var head : frame.heads()) {
+                if (bottomRulePixels[0] < 0) return recovered;
+                if (alreadyMarked.contains(head.owner()) || head.grace() || !eligible(notes.get(head.owner()), false))
+                    continue;
+                float[] local = frame.track().at(head.x());
+                float gap = local[1];
+                if (gap < 10 || gap > 24 || adjacentHead(frame.heads(), head, gap)) continue;
+                if (!RuleOverlaidFingerings.belowTwo(raw, normalized, width, height, head, frame.track(),
+                        local[0], gap, bottomRulePixels, rawTwos, normalizedTwos)) continue;
+                alreadyMarked.add(head.owner());
+                recovered.add(new PrintedFingeringDigits.Mark(head.owner(), 2, PrintedFingeringDigits.Placement.BELOW));
+            }
         }
         return recovered;
     }

@@ -388,6 +388,26 @@ final class JoinedDigitTemplates {
         return best;
     }
 
+    static float maxMaskedRival(float[] samples, BitSet visible, float observedMass, long[] remaining) {
+        int cells = visible.cardinality();
+        float best = -1;
+        for (var numeral : NUMERALS) {
+            if (numeral.digit() == 2) continue;
+            remaining[0] -= cells;
+            if (remaining[0] < 0) return best;
+            float dot = 0, normSquared = 0;
+            for (int i = visible.nextSetBit(0); i >= 0; i = visible.nextSetBit(i + 1)) {
+                boolean dark = (numeral.bits()[i / 8] & (1 << (i % 8))) != 0;
+                int weight = dark ? 128 : -127;
+                dot += samples[i] * weight;
+                normSquared += weight * weight;
+            }
+            if (normSquared > 0 && observedMass > 0)
+                best = Math.max(best, dot / (float) Math.sqrt(normSquared * observedMass));
+        }
+        return best;
+    }
+
     record Reading(
             int digit,
             float best,

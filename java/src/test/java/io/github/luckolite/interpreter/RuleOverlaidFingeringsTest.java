@@ -3,6 +3,8 @@
 package io.github.luckolite.interpreter;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 
 import java.util.Arrays;
 import java.util.List;
@@ -30,6 +32,45 @@ public final class RuleOverlaidFingeringsTest {
             assertEquals(-1, read(full, missing));
             assertEquals(-1, read(missing, full));
         }
+    }
+
+    @Test
+    public void lowerTwoNeedsTwoIndependentShapesAndAnOwnedStem() {
+        byte[] raw = two(0);
+        List<float[]> references = List.of(
+                MatchedDetachedThreeShape.vector(raw, WIDTH, 87, 174, 97, 192),
+                MatchedDetachedThreeShape.vector(two(1), WIDTH, 88, 174, 98, 192));
+        for (int y = FLOOR - 4 * GAP; y <= FLOOR; y += GAP)
+            fill(raw, 56, 185, y - 1, y + 1, 0);
+        fill(raw, 91, 93, 115, 157, 0);
+        fill(raw, 71, 153, 153, 157, 0);
+        fill(raw, 92, 107, 111, 119, 0);
+        var head = new PrintedSlurOwners.GeometryHead(0, 100, 115, 0, 1);
+        var track = StaffPitchTrack.fromVerifiedSamples(
+                List.of(new float[] {60, FLOOR, GAP}, new float[] {180, FLOOR, GAP}));
+        assertTrue(RuleOverlaidFingerings.belowTwo(raw, raw, WIDTH, HEIGHT, head, track, FLOOR, GAP,
+                new long[] {100_000}, references, references));
+        assertFalse(RuleOverlaidFingerings.belowTwo(raw, raw, WIDTH, HEIGHT, head, track, FLOOR, GAP,
+                new long[] {100_000}, references.subList(0, 1), references));
+        byte[] broken = raw.clone();
+        fill(broken, 90, 94, 139, 149, 255);
+        assertFalse(RuleOverlaidFingerings.belowTwo(raw, broken, WIDTH, HEIGHT, head, track, FLOOR, GAP,
+                new long[] {100_000}, references, references));
+    }
+
+    private static byte[] two(int shift) {
+        String[] rows = {
+                "   ######   ", "  ########  ", " ########## ", " ###    ####", " ##      ###",
+                "         ###", "         ###", "        ####", "        ### ", "       #### ",
+                "      ####  ", "     ####   ", "    ####    ", "   ####     ", "  ####     #",
+                " ####     ##", " ###########", " ###########", " ########## "
+        };
+        byte[] gray = new byte[WIDTH * HEIGHT];
+        Arrays.fill(gray, (byte) 255);
+        for (int y = 0; y < rows.length; y++)
+            for (int x = 0; x < rows[y].length(); x++)
+                if (rows[y].charAt(x) == '#') gray[(174 + y) * WIDTH + 86 + shift + x] = 0;
+        return gray;
     }
 
     private static int read(byte[] raw, byte[] normalized) {

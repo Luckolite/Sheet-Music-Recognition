@@ -1702,13 +1702,13 @@
   "files": {
     "RuleOverlaidFingerings.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/RuleOverlaidFingerings.java",
-      "source_sha256": "8462076c21ba1f0b5f89c21bd646b5903beba75d1dac8b4a7897e20706d93421",
-      "source_normalized_sha256": "8462076c21ba1f0b5f89c21bd646b5903beba75d1dac8b4a7897e20706d93421",
+      "source_sha256": "25255859eb293fdda44c6b88140c6d82a468d7633f1290a49900c4e9611ace4f",
+      "source_normalized_sha256": "25255859eb293fdda44c6b88140c6d82a468d7633f1290a49900c4e9611ace4f",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/RuleOverlaidFingerings.java",
-      "standalone_normalized_sha256": "f3e5d5ea75c0a9d27574e679f4d9be9c6119035ed304862b576260181972dddc",
-      "reviewed_app_commit": "d9bc3ee11e8c05693bf33bd3b13992174d5a03fd",
+      "standalone_normalized_sha256": "92d1149bbbd0de0df364f1c4e10ccda17f7c623293540d9f138cfa1890480cd8",
+      "reviewed_app_commit": "7b070e3ecfbbb9b746fe0f91788d65922a10a939",
       "license": "Apache-2.0",
-      "review_note": "Use a witnessed upper rule and matching physical stem to recover crossed upper ones and twos. Weak twos match two independently retained shapes with the same rows excluded on both raster planes."
+      "review_note": "Recover lower twos with witnessed rule masking, a nearby owned stem tip, and independent reference and rival shapes on both image planes."
     },
     "MeasuredStaffFingerings.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/MeasuredStaffFingerings.java",
@@ -1722,13 +1722,13 @@
     },
     "ShaftMatchedFingerings.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/ShaftMatchedFingerings.java",
-      "source_sha256": "0c9ab76d0a1e56be984d517f67eb1f9f87db01b6891df7c7f5d536aca5a1ff30",
-      "source_normalized_sha256": "0c9ab76d0a1e56be984d517f67eb1f9f87db01b6891df7c7f5d536aca5a1ff30",
+      "source_sha256": "0d18583160393a8de16dc8bd76020668b00ecf537486f118d7a64fb6a75ebb96",
+      "source_normalized_sha256": "0d18583160393a8de16dc8bd76020668b00ecf537486f118d7a64fb6a75ebb96",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/ShaftMatchedFingerings.java",
-      "standalone_normalized_sha256": "714b6ccb16aa3bf6607b887827bb2ba72375bcef28e0788b28ec4e6971cc83cc",
-      "reviewed_app_commit": "d9bc3ee11e8c05693bf33bd3b13992174d5a03fd",
+      "standalone_normalized_sha256": "9c260b59b6c48e30f945c398f2f2c3c7e49e327dadd5b520d188ec086713534b",
+      "reviewed_app_commit": "7b070e3ecfbbb9b746fe0f91788d65922a10a939",
       "license": "Apache-2.0",
-      "review_note": "Reuse independently retained and detached-only numeral shapes when a later upper rule recovery cannot resolve a two from the visible ink alone."
+      "review_note": "Share previously retained and detached-only two shapes across upper and lower ruled recovery with separate search quotas."
     },
     "DetachedFingeringThrees.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/DetachedFingeringThrees.java",
@@ -4665,16 +4665,18 @@
     },
     "JoinedDigitTemplates.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/JoinedDigitTemplates.java",
-      "source_sha256": "e39e347f4076c7ee78cf47bd4b4557ee50e8b16594d74559ed2d34e86d8a71fc",
-      "source_normalized_sha256": "e39e347f4076c7ee78cf47bd4b4557ee50e8b16594d74559ed2d34e86d8a71fc",
+      "source_sha256": "ca6c5270d96b6f01f599716bd14f784257772082e9dc9c48fd57c0f7b4793a93",
+      "source_normalized_sha256": "ca6c5270d96b6f01f599716bd14f784257772082e9dc9c48fd57c0f7b4793a93",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/JoinedDigitTemplates.java",
       "standalone_sha256": "186fd8aea4f94ae8dc4b9dcecabc306b8aa370a5cb5f6b154cb72a7eb90665e4",
       "license": "Apache-2.0",
-      "review_note": "Shared source130 helper with namespace-only executable token adaptation, explicit native decoder selection and source-free original regressions. No model, private score, device, signing or app-history data.",
+      "review_note": "Compare known rival shapes over the same visible pixels as the retained fingering references.",
       "november_24_flesch_app_review": {
         "app_commit": "d0622b051dfaa40ad1ac76a2cd1ed7072186bb90",
         "scope": "Shared portable source evidence with namespace and source-wire adaptation."
-      }
+      },
+      "standalone_normalized_sha256": "01cb92d2f3150c6ca70b43d67db0d8ad3528f8c427f056d8aa79943a0197c972",
+      "reviewed_app_commit": "7b070e3ecfbbb9b746fe0f91788d65922a10a939"
     },
     "JoinedLaneWorkBudget.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/JoinedLaneWorkBudget.java",

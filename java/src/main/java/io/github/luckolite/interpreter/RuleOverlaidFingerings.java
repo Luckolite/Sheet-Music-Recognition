@@ -29,9 +29,9 @@ final class RuleOverlaidFingerings {
             long[] remaining) {
         if (head.y() > floor - gap * 4f
                 || !(track.verifiedAt(head.x()) || track.verifiedAt(head.x() - 2f * gap))) return -1;
-        var other = find(normalized, width, height, head, floor, gap, remaining, false, null);
+        var other = find(normalized, width, height, head, floor, gap, remaining, false, false, null);
         if (other == null) return -1;
-        var original = find(raw, width, height, head, floor, gap, remaining, false, null);
+        var original = find(raw, width, height, head, floor, gap, remaining, false, false, null);
         return other.same(original) ? other.digit() : -1;
     }
 
@@ -41,8 +41,8 @@ final class RuleOverlaidFingerings {
             long[] remaining) {
         if (head.y() > floor - gap * 4f
                 || !(track.verifiedAt(head.x()) || track.verifiedAt(head.x() - 2f * gap))) return false;
-        var other = find(normalized, width, height, head, floor, gap, remaining, true, null);
-        return other != null && other.same(find(raw, width, height, head, floor, gap, remaining, true, null));
+        var other = find(normalized, width, height, head, floor, gap, remaining, true, false, null);
+        return other != null && other.same(find(raw, width, height, head, floor, gap, remaining, true, false, null));
     }
 
     static int above(byte[] raw, byte[] normalized, int width, int height,
@@ -51,16 +51,25 @@ final class RuleOverlaidFingerings {
         if (head.y() < floor
                 || !(track.verifiedAt(head.x()) || track.verifiedAt(head.x() - 2f * gap))) return -1;
         float ceiling = floor - 4f * gap;
-        var candidate = find(normalized, width, height, head, ceiling, gap, remaining, false, normalizedTwos);
+        var candidate = find(normalized, width, height, head, ceiling, gap, remaining, false, true, normalizedTwos);
         if (candidate == null) return -1;
-        var original = find(raw, width, height, head, ceiling, gap, remaining, false, rawTwos);
+        var original = find(raw, width, height, head, ceiling, gap, remaining, false, true, rawTwos);
         return candidate.same(original) ? candidate.digit() : -1;
+    }
+
+    static boolean belowTwo(byte[] raw, byte[] normalized, int width, int height,
+            PrintedSlurOwners.Location head, StaffPitchTrack track, float floor, float gap,
+            long[] remaining, List<float[]> rawTwos, List<float[]> normalizedTwos) {
+        if (head.y() > floor - gap * 4f
+                || !(track.verifiedAt(head.x()) || track.verifiedAt(head.x() - 2f * gap))) return false;
+        var other = find(normalized, width, height, head, floor, gap, remaining, false, false, normalizedTwos);
+        return other != null && other.same(find(raw, width, height, head, floor, gap, remaining, false, false, rawTwos));
     }
 
     private static Glyph find(
             byte[] raster, int width, int height, PrintedSlurOwners.Location head,
-            float staffEdge, float gap, long[] remaining, boolean threeOnly, List<float[]> upperTwos) {
-        boolean above = upperTwos != null;
+            float staffEdge, float gap, long[] remaining, boolean threeOnly, boolean above, List<float[]> referenceTwos) {
+        boolean lowerTwoOnly = referenceTwos != null && !above;
         var shaft = PairedTremoloInk.stem(raster, width, height, head.x(), head.y(), gap, above ? 1 : -1);
         if (shaft == null) return null;
         int left = Math.round(shaft.x() - gap * .9f);
@@ -117,7 +126,7 @@ final class RuleOverlaidFingerings {
                     if (rule.get(y)) continue;
                     // A thin edge row can vanish beside a witnessed rule.
                     // Leave that row unmasked so the shape proof still sees the missing ink.
-                    if ((above || threeOnly) && !bridgedRuleEdge
+                    if ((referenceTwos != null || threeOnly) && !bridgedRuleEdge
                             && (rule.get(y + 1) || y - end > 1 && rule.get(y - 1))) {
                         bridgedRuleEdge = true;
                         continue;
@@ -134,7 +143,7 @@ final class RuleOverlaidFingerings {
             int h = end - begin + 1, w = high - low + 1;
             float center = (low + high) * .5f;
             if (obscured.size() < 2 || obscured.size() > gap * .32f
-                    || above && obscured.get(obscured.size() - 1) - obscured.get(0) + 1 != obscured.size()
+                    || referenceTwos != null && obscured.get(obscured.size() - 1) - obscured.get(0) + 1 != obscured.size()
                     || begin == top || end == bottom || w < gap * .38f || w > gap * 1.12f
                     || h < gap * .80f || h > gap * 1.53f || Math.abs(center - shaft.x()) > gap * (above ? .30f : .46f)
                     || mass < w * h * .24f) continue;
@@ -149,8 +158,14 @@ final class RuleOverlaidFingerings {
                     continue;
                 digit = 3;
             }
+            if (lowerTwoOnly) {
+                if (begin - shaft.endY() > gap * 2.05f || digit >= 0 && digit != 2
+                        || !matchesMaskedTwos(raster, width, low, begin, high, end, obscured, referenceTwos, remaining, true))
+                    continue;
+                digit = 2;
+            }
             if (above && digit < 0 && reading.scores()[2] == reading.best()
-                    && matchesMaskedTwos(raster, width, low, begin, high, end, obscured, upperTwos, remaining))
+                    && matchesMaskedTwos(raster, width, low, begin, high, end, obscured, referenceTwos, remaining, false))
                 digit = 2;
             if (digit < 1 || digit > (above ? 2 : 4)) continue;
             if (result != null) return null;
@@ -160,7 +175,7 @@ final class RuleOverlaidFingerings {
     }
 
     private static boolean matchesMaskedTwos(byte[] raster, int stride, int left, int top, int right, int bottom,
-            List<Integer> rules, List<float[]> references, long[] remaining) {
+            List<Integer> rules, List<float[]> references, long[] remaining, boolean compareRivals) {
         float[] shape = MatchedDetachedThreeShape.vector(raster, stride, left, top, right, bottom);
         remaining[0] -= (long) shape.length * references.size();
         if (remaining[0] < 0) return false;
@@ -178,14 +193,24 @@ final class RuleOverlaidFingerings {
             }
         }
         int matches = 0;
-        float required = .84f * .84f * observedMass;
+        float required = .84f;
+        float minimumSquared = required * required * observedMass;
         for (var reference : references) {
             float dot = 0, referenceMass = 0;
             for (int i = visible.nextSetBit(0); i >= 0; i = visible.nextSetBit(i + 1)) {
                 dot += shape[i] * reference[i];
                 referenceMass += reference[i] * reference[i];
             }
-            if (dot > 0 && dot * dot >= required * referenceMass && ++matches == 2) return true;
+            if (dot <= 0 || dot * dot < minimumSquared * referenceMass) continue;
+            if (compareRivals) {
+                float rival = JoinedDigitTemplates.maxMaskedRival(shape, visible, observedMass, remaining);
+                if (remaining[0] < 0) return false;
+                required = Math.max(required, rival + .09f);
+                minimumSquared = required * required * observedMass;
+                compareRivals = false;
+                if (dot * dot < minimumSquared * referenceMass) continue;
+            }
+            if (++matches == 2) return true;
         }
         return false;
     }
