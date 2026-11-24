@@ -13,7 +13,8 @@ final class ClosedMixedHarmonicQuarters {
     private ClosedMixedHarmonicQuarters() {}
 
     record Head(float x, float y, int staffStep, int midi, int openString, int soundingMidi, int accidental) {}
-    record Recovery(int bar, int owner, Head firstLower, Head firstUpper, Head secondUpper, int thirdMidi) {}
+    record Recovery(int bar, int owner, Head firstLower, Head firstUpper, Head secondUpper,
+                    int touchMidi, int harmonicSemitones) {}
     private record Shaft(int x, int tip) {}
 
     static List<Recovery> capture(ScorePageInterpretation score, byte[] labels, byte[] raw,
@@ -42,12 +43,19 @@ final class ClosedMixedHarmonicQuarters {
             if (score.rests().stream().anyMatch(r -> r.measureIndex() == bar)) continue;
             int owner = owners[i];
             var note = score.notes().get(owner);
-            if (!stopped(note) || hasBeamOwner(score, owner)) continue;
-            var a = prove(note, owner, bars.get(i - 1), bars.get(i), bars.get(i + 1),
-                    labels, raw, w, h, keys[i]);
+            boolean fourth = stoppedFourth(note);
+            if ((!fourth && !stopped(note)) || hasBeamOwner(score, owner)) continue;
+            var a = fourth
+                    ? proveFourth(note, owner, bars.get(i - 1), bars.get(i), bars.get(i + 1),
+                            labels, raw, w, h, keys[i])
+                    : prove(note, owner, bars.get(i - 1), bars.get(i), bars.get(i + 1),
+                            labels, raw, w, h, keys[i]);
             if (a == null) continue;
-            var b = prove(note, owner, bars.get(i - 1), bars.get(i), bars.get(i + 1),
-                    labels, normalized, w, h, keys[i]);
+            var b = fourth
+                    ? proveFourth(note, owner, bars.get(i - 1), bars.get(i), bars.get(i + 1),
+                            labels, normalized, w, h, keys[i])
+                    : prove(note, owner, bars.get(i - 1), bars.get(i), bars.get(i + 1),
+                            labels, normalized, w, h, keys[i]);
             if (a.equals(b)) found.add(a);
         }
         return List.copyOf(found);
@@ -63,16 +71,23 @@ final class ClosedMixedHarmonicQuarters {
             var upper = recovery.secondUpper;
             var touch = new ScoreNoteEvent.OpenStringTouch(
                     upper.staffStep, upper.y / height, upper.accidental);
-            notes.set(recovery.owner, quarter(note.measureIndex(), note.positionInMeasure(), note.staffStep(),
-                    note.pageY(), 0).withHarmonicSemitones(28).withOpenStringTouch(touch));
             var stopped = events.get(recovery.owner);
+            boolean fourth = recovery.harmonicSemitones() == 24;
+            int stoppedMidi = recovery.touchMidi() - (fourth ? 5 : 4);
+            notes.set(recovery.owner, quarter(note.measureIndex(), note.positionInMeasure(), note.staffStep(),
+                    note.pageY(), note.writtenAccidental())
+                    .withHarmonicSemitones(recovery.harmonicSemitones()).withOpenStringTouch(touch));
             stopped.put("startBeat", starts[recovery.bar] + 1);
             stopped.put("durationBeats", 1.0);
             stopped.put("durationFallback", false);
-            stopped.put("writtenMidi", recovery.thirdMidi - 4);
-            stopped.put("harmonicTouchMidi", recovery.thirdMidi);
-            stopped.put("midi", recovery.thirdMidi + 24);
-            stopped.put("artificialHarmonicThird", true);
+            stopped.put("writtenMidi", stoppedMidi);
+            stopped.put("harmonicTouchMidi", recovery.touchMidi());
+            stopped.put("midi", stoppedMidi + recovery.harmonicSemitones());
+            stopped.put(fourth ? "artificialHarmonicFourth" : "artificialHarmonicThird", true);
+            if (fourth) {
+                stopped.put("compoundHarmonicFourth", true);
+                stopped.remove("octaveShift");
+            }
             stopped.put("mixedHarmonicQuarter", true);
             stopped.remove("writtenPlacement");
             for (var head : List.of(recovery.firstLower, recovery.firstUpper)) {
@@ -119,6 +134,18 @@ final class ClosedMixedHarmonicQuarters {
                 && n.augmentationDots() == 0 && n.harmonicSemitones() == 0 && n.openStringTouch() == null
                 && n.boundaryTies() == 0 && !n.tiedFromPrevious() && !n.crossStaffBeam() && n.articulations() == 0
                 && n.octaveShift() == 0 && n.leadingRestBeats() == 0 && n.followingRestBeats() == 0;
+    }
+
+    private static boolean stoppedFourth(ScoreNoteEvent n) {
+        return n.kind() == ScoreNoteEvent.Kind.PITCHED && n.clefBottomDiatonic() == ScoreNoteEvent.CLEF_TREBLE
+                && n.staffIndex() == 0 && n.staffCount() == 1 && n.visualSize() == ScoreNoteEvent.VisualSize.FULL
+                && n.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_FROM_KEY && n.stemDirection() == -1
+                && n.staffStep() >= 0 && n.staffStep() <= 4 && n.octaveShift() == 2
+                && n.unbeamedDurationBeats() == ScoreNoteEvent.DURATION_QUARTER && n.beamCount() == 0
+                && n.tupletDivisor() == 1 && n.tupletNormalNotes() == 1 && n.augmentationDots() == 0
+                && n.harmonicSemitones() == 0 && n.openStringTouch() == null
+                && n.boundaryTies() == 0 && !n.tiedFromPrevious() && !n.crossStaffBeam() && n.articulations() == 0
+                && n.leadingRestBeats() == 0 && n.followingRestBeats() == 0;
     }
 
     private static boolean hasBeamOwner(ScorePageInterpretation score, int index) {
@@ -184,7 +211,78 @@ final class ClosedMixedHarmonicQuarters {
         if (first == null || second == null || third == null || first.openString == second.openString
                 || first.midi != base + 1 || third.openString != second.openString
                 || middle - base != 4 || base + 28 > 127) return null;
-        return new Recovery(n.measureIndex(), owner, first, second, third, middle);
+        return new Recovery(n.measureIndex(), owner, first, second, third, middle, 28);
+    }
+
+    /** The quarter on the second shaft carries a stopped fourth and an upper natural touch. */
+    private static Recovery proveFourth(ScoreNoteEvent stop, int owner, MeasureRegion previous,
+            MeasureRegion bar, MeasureRegion next, byte[] labels, byte[] gray, int w, int h, int key) {
+        float nominal = (bar.bottom() - bar.top()) * h / 8.2f;
+        float left = bar.left() * w, right = bar.right() * w, span = right - left;
+        if (nominal < 12 || nominal > 23 || span < nominal * 9.5f || span > nominal * 12.5f
+                || Math.abs(bar.bottom() - previous.bottom()) * h > nominal * .24f
+                || Math.abs(bar.bottom() - next.bottom()) * h > nominal * .24f
+                || stop.positionInMeasure() < .62f || stop.positionInMeasure() > .74f) return null;
+        var fit = PrintedDirectionStaff.printedRules(
+                gray, w, h, right - nominal * 1.8f, bar.bottom() * h - nominal * 2.1f, nominal);
+        if (fit == null || Math.abs(fit[1] - nominal) > nominal * .1f) return null;
+        float floor = fit[0], gap = fit[1];
+        var staff = new PlayingTechniqueDetector.Staff(floor - 4 * gap, floor, gap, 0, 1);
+        int opening = PrintedCadenceDurations.boundaryColumn(
+                gray, w, staff, (previous.right() * w + left) * .5f, true, false);
+        int closing = PrintedCadenceDurations.boundaryColumn(
+                gray, w, staff, (right + next.left() * w) * .5f, true, false);
+        if (opening < 0 || closing - opening < gap * 11 || closing - opening > gap * 13.3f) return null;
+
+        float x2 = left + stop.positionInMeasure() * span, y = stop.pageY() * h;
+        int step = stop.staffStep();
+        float middleY = floor - (step + 3) * gap * .5f;
+        float firstHighY = floor - (step + 8) * gap * .5f, secondHighY = floor - (step + 6) * gap * .5f;
+        if (Math.abs(floor - step * gap * .5f - y) > gap * .23f || !filledCore(gray, w, x2, y, gap))
+            return null;
+        var firstShaft = shaft(gray, w, h, opening + gap * 1.85f, opening + gap * 3.4f, middleY, staff);
+        if (firstShaft == null) return null;
+        float x1 = firstShaft.x() + gap * .48f;
+        if (x2 - x1 < gap * 4.55f || x2 - x1 > gap * 5.55f
+                || !PrintedCadenceDurations.emptyOutsideChord(gray, w, staff, opening, closing, x1, x2, true)
+                || !clearBetween(gray, w, staff, x1 + gap * 1.35f, x2 - gap * 2.17f)
+                || !ArtificialHarmonics.shaftCrossedDiamond(gray, w, h, x1, middleY, gap, firstShaft.x(), -1, true)
+                || !LedgerCrossedHarmonicDiamond.proved(labels, gray, w, h, x1, firstHighY, gap, firstShaft.x(), -1)
+                || !ArtificialHarmonics.unflaggedQuarterTip(
+                        gray, w, h, firstShaft.x(), firstHighY, middleY, firstShaft.tip(), -1, staff)
+                || DetachedHarmonicZero.above(gray, w, h, x1, firstHighY, gap, false) == null
+                || DetachedHarmonicZero.below(gray, w, h, x1, firstShaft.tip(), gap) == null
+                || DetachedHarmonicZero.above(gray, w, h, x2, secondHighY, gap, false) == null)
+            return null;
+        var budget = new PrintedBeamShafts.Budget(70_000);
+        var shafts = PrintedBeamShafts.at(gray, w, h, x2, y, gap, budget);
+        if (budget.refused() || shafts.size() != 1 || shafts.get(0).direction() != 1) return null;
+        var secondShaft = shafts.get(0);
+        if (DetachedHarmonicZero.below(gray, w, h, x2, secondShaft.endY(), gap) != null) return null;
+        boolean secondProved = false;
+        for (int col = secondShaft.left(); col <= secondShaft.right(); col++) {
+            if (ArtificialHarmonics.shaftCrossedDiamond(gray, w, h, x2, middleY, gap, col, -1, true)
+                    && (ArtificialHarmonics.shaftCrossedDiamond(gray, w, h, x2, secondHighY, gap, col, -1, true)
+                        || LedgerCrossedHarmonicDiamond.proved(labels, gray, w, h, x2, secondHighY, gap, col, -1))
+                    && ArtificialHarmonics.unflaggedQuarterTip(
+                            gray, w, h, col, secondHighY, y, secondShaft.endY(), -1, staff)) {
+                secondProved = true;
+                break;
+            }
+        }
+        if (!secondProved) return null;
+
+        int fromKey = ScoreNoteEvent.ACCIDENTAL_FROM_KEY;
+        var lower = natural(x1, middleY, step + 3, fromKey, key);
+        var upper = natural(x1, firstHighY, step + 8, fromKey, key);
+        var partner = natural(x2, secondHighY, step + 6, fromKey, key);
+        int written = ScoreTiePitchGuard.writtenMidi(stop.diatonicPitchIdentity(), fromKey, key);
+        if (lower == null || upper == null || partner == null
+                || lower.openString() == upper.openString() || partner.openString() != lower.openString()
+                || partner.soundingMidi() != lower.soundingMidi() || partner.midi() <= lower.midi()
+                || lower.midi() - written != 5 || written + 24 > 127
+                || partner.soundingMidi() == written + 24) return null;
+        return new Recovery(stop.measureIndex(), owner, lower, upper, partner, lower.midi(), 24);
     }
 
     private static Head natural(float x, float y, int step, int accidental, int key) {

@@ -130,6 +130,26 @@ final class DoubleSharpGlyph {
         return false;
     }
 
+    /** A compact cross may include a short spur from an adjoining ledger or shaft. */
+    static Crop isolatedRawCrop(byte[] gray, byte[] source, int width, int height, Crop crop, float gap) {
+        if (gray == null || source == null || gray.length != (long) width * height
+                || source.length != gray.length) return null;
+        int trim = Math.max(1, Math.round(gap * .22f));
+        // Limit the combined removal to a short fringe and keep nearly all of the known glyph.
+        for (int amount = 0; amount <= trim; amount++)
+            for (int left = 0; left <= amount; left++)
+                for (int top = 0; top <= amount - left; top++)
+                    for (int right = 0; right <= amount - left - top; right++) {
+                        int bottom = amount - left - top - right;
+                        var core = new Crop(crop.left + left, crop.top + top,
+                                crop.right - right, crop.bottom - bottom);
+                        if (matchesRaw(gray, width, height, core.left, core.top, core.right, core.bottom, gap)
+                                && matchesRaw(source, width, height,
+                                        core.left, core.top, core.right, core.bottom, gap)) return core;
+                    }
+        return null;
+    }
+
     static boolean matches(
             byte[] pixels,
             int width,

@@ -70,6 +70,13 @@ final class ClosedHarmonicTriplets {
             List<ScoreNoteEvent> notes, List<ScoreRestEvent> rests, List<MeasureRegion> measures,
             List<ScoreMeterChange> meters, ScoreMeterChange inherited, byte[] source,
             int width, int height) {
+        return capture(notes, rests, measures, meters, inherited, source, null, width, height);
+    }
+
+    static Capture capture(
+            List<ScoreNoteEvent> notes, List<ScoreRestEvent> rests, List<MeasureRegion> measures,
+            List<ScoreMeterChange> meters, ScoreMeterChange inherited, byte[] source, byte[] normalized,
+            int width, int height) {
         if (notes.isEmpty() || width < 3 || height < 3 || source == null
                 || source.length != (long) width * height) return new Capture(notes, List.of());
         var byMeasure = new ArrayList<List<Integer>>(measures.size());
@@ -99,9 +106,20 @@ final class ClosedHarmonicTriplets {
                     .sorted(Comparator.comparingDouble(i -> notes.get(i).positionInMeasure())).toList();
             var line = ordinals.stream().map(notes::get).toList();
             var rows = UnnumberedTripletInk.sourceRows(here, measures, height);
-            var adjusted = prove(line, here, next, cadence, source, width, height, rows);
+            float gap = (here.bottom() - here.top()) * height / 8.2f;
+            float span = (here.right() - here.left()) * width;
+            boolean wideOpening = bar > 0 && normalized != null && normalized.length == source.length
+                    && here.top() - measures.get(bar - 1).bottom() >= 2.2f * gap / height
+                    && span >= 39 * gap && span <= 45 * gap;
+            var adjusted = prove(line, here, next, cadence, source, width, height, rows, wideOpening);
             if (adjusted == null || adjusted.notes().equals(line)) continue;
-            if (adjusted.engravingClear()) bars.add(ordinals);
+            boolean engraving = adjusted.engravingClear();
+            if (wideOpening && normalized != source) {
+                var proof = prove(line, here, next, cadence, normalized, width, height, rows, true);
+                if (proof == null || !proof.notes().equals(adjusted.notes())) continue;
+                engraving &= proof.engravingClear();
+            }
+            if (engraving) bars.add(ordinals);
             if (result == null) result = new ArrayList<>(notes);
             for (int i = 0; i < ordinals.size(); i++) result.set(ordinals.get(i), adjusted.notes().get(i));
         }
@@ -121,10 +139,14 @@ final class ClosedHarmonicTriplets {
 
     private static Proved prove(
             List<ScoreNoteEvent> line, MeasureRegion bar, MeasureRegion following,
-            ScoreNoteEvent cadence, byte[] source, int w, int h, UnnumberedTripletInk.Rows rows) {
+            ScoreNoteEvent cadence, byte[] source, int w, int h, UnnumberedTripletInk.Rows rows,
+            boolean wideOpening) {
         float gap = (bar.bottom() - bar.top()) * h / 8.2f;
         float span = (bar.right() - bar.left()) * w;
-        if (gap < 10 || gap > 25 || span < gap * 22f || span > gap * 28f) return null;
+        if (gap < 10 || gap > 25 || !wideOpening && (span < gap * 22f || span > gap * 28f))
+            return null;
+        float minSpacing = gap * (wideOpening ? 2.8f : 1.5f);
+        float maxSpacing = gap * (wideOpening ? 4.4f : 2.6f);
         float[] xs = new float[12], ys = new float[12];
         var shafts = new ArrayList<PrintedBeamShafts.Shaft>(12);
         var budget = new PrintedBeamShafts.Budget(425_000);
@@ -148,7 +170,7 @@ final class ClosedHarmonicTriplets {
             if (current.size() != 1 || current.get(0).direction() != -note.stemDirection()) return null;
             var shaft = current.get(0);
             if (i > 0) {
-                if (xs[i] - xs[i-1] < gap * 1.5f || xs[i] - xs[i-1] > gap * 2.6f
+                if (xs[i] - xs[i-1] < minSpacing || xs[i] - xs[i-1] > maxSpacing
                         || SystemQuarterCadence.directHarmonicRail(
                                 source, w, h, shafts.get(i-1), shaft, gap) != (i % 3 != 0)) return null;
                 if (line.get(i-1).augmentationDots() != 0) {
@@ -161,7 +183,10 @@ final class ClosedHarmonicTriplets {
             }
             shafts.add(shaft);
         }
-        if (!WrappedMeasureBoundaries.confirmsClosedTripletBar(source, w, h, bar, xs[0], xs[11]))
+        if (wideOpening) {
+            if (!WrappedMeasureBoundaries.confirmsOpeningTripletBar(
+                    source, w, h, List.of(bar, following), xs[0], xs[11], true, true)) return null;
+        } else if (!WrappedMeasureBoundaries.confirmsClosedTripletBar(source, w, h, bar, xs[0], xs[11]))
             return null;
         float lastX = (following.left()+cadence.positionInMeasure()*(following.right()-following.left()))*w;
         float lastY = cadence.pageY()*h;
@@ -199,7 +224,7 @@ final class ClosedHarmonicTriplets {
     }
 
     /** A second thick rail must not be discarded when an older label counts only one. */
-    private static boolean containsAdditionalRail(
+    static boolean containsAdditionalRail(
             byte[] source, int width, int height, PrintedBeamShafts.Shaft a,
             PrintedBeamShafts.Shaft b, float gap) {
         int from=(a.left()+a.right())/2, to=(b.left()+b.right())/2;

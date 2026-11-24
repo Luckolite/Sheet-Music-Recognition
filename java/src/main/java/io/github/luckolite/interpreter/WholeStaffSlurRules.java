@@ -97,6 +97,7 @@ final class WholeStaffSlurRules {
                 var prior = cache.get(key);
                 if (prior != null) return prior.orElse(null);
                 var result = scan(this, staff);
+                if (result == null) result = sampledTrack(this, staff);
                 take(1, 128);
                 cache.put(key, Optional.ofNullable(result));
                 return result;
@@ -135,7 +136,7 @@ final class WholeStaffSlurRules {
                 || legacy.unboundOwners().isEmpty()) return unchanged;
         var additional =
                 PrintedSlurFrames.prepareSupplemental(
-                        gray, width, height, staffs, score.notes(), heads, legacy);
+                        gray, width, height, staffs, score.notes(), heads, legacy, score.measures());
         if (additional.frames().isEmpty()) return unchanged;
         var observed =
                 geometryOnly
@@ -162,6 +163,7 @@ final class WholeStaffSlurRules {
         var spans = new ArrayList<>(captured.source().spans());
         var candidates = new ArrayList<>(captured.source().candidates());
         for (var s : observed.source().spans())
+            if (!isBeamCurve(s, gray, width, height, additional.frames(), score.notes()))
             spans.add(
                     new ScoreSlurPages.Span(
                             "whole-staff:" + s.id(),
@@ -171,6 +173,7 @@ final class WholeStaffSlurRules {
                             s.lineType(),
                             s.evidence()));
         for (var s : observed.source().candidates())
+            if (!isBeamCurve(s, gray, width, height, additional.frames(), score.notes()))
             candidates.add(
                     new ScoreSlurPages.Span(
                             "whole-staff:" + s.id(),
@@ -195,6 +198,116 @@ final class WholeStaffSlurRules {
                 new PrintedSlurPageCapture.Result(source, statuses, false, captured.declined(), mergePageEdges(captured, observed)),
                 Set.copyOf(unbound),
                 legacy.unprovedStaffs() - (staffs.size() - additional.unprovedStaffs()));
+    }
+
+    /** A downstem beam inside the staff cannot also label its upper-ledger heads as a slur. */
+    private static <T extends PrintedSlurOwners.Location> boolean isBeamCurve(
+            ScoreSlurPages.Span span, byte[] gray, int width, int height,
+            List<PrintedSlurPageCapture.Frame<T>> frames, List<ScoreNoteEvent> notes) {
+        if (span.placement() != ScoreSlurSpan.Placement.BELOW || span.evidence().size() != 1) return false;
+        int start = span.start().noteIndex(), end = span.end().noteIndex();
+        if (start < 0 || end >= notes.size() || start + 1 != end
+                || notes.get(start).staffStep() < 10 || notes.get(end).staffStep() < 10
+                || notes.get(start).stemDirection() != -1 || notes.get(end).stemDirection() != -1
+                || notes.get(start).measureIndex() != notes.get(end).measureIndex()
+                || notes.get(start).beamCount() < 1 || notes.get(end).beamCount() < 1) return false;
+        var arc = span.evidence().get(0);
+        for (var frame : frames) {
+            T left = null, right = null;
+            for (var head : frame.heads()) {
+                if (head.owner() == start) left = head;
+                if (head.owner() == end) right = head;
+            }
+            if (left == null || right == null) continue;
+            var track = frame.track();
+            float[] floor = track.at(left.x());
+            float gap = floor[1];
+            if (arc.startY() * height < floor[0] - 4.25f * gap
+                    || arc.endY() * height < track.at(right.x())[0] - 4.25f * gap)
+                return false;
+            var budget = new PrintedBeamShafts.Budget(60_000);
+            var a = PrintedBeamShafts.at(gray, width, height, left.x(), left.y(), gap, budget);
+            var b = PrintedBeamShafts.at(gray, width, height, right.x(), right.y(), gap, budget);
+            if (budget.refused() || a.size() != 1 || b.size() != 1
+                    || a.get(0).direction() != 1 || b.get(0).direction() != 1) return false;
+            var sa = a.get(0);
+            var sb = b.get(0);
+            return Math.abs(arc.startX() * width - (sa.left() + sa.right()) * .5f) <= .55f * gap
+                    && Math.abs(arc.endX() * width - (sb.left() + sb.right()) * .5f) <= .55f * gap
+                    && Math.abs(arc.startY() * height - sa.endY()) <= .62f * gap
+                    && Math.abs(arc.endY() * height - sb.endY()) <= .62f * gap
+                    && WrappedEighthTriplets.trackedRailCount(gray, width, height, track, sa, sb,
+                            gap, Math.min(2, Math.min(notes.get(start).beamCount(), notes.get(end).beamCount())));
+        }
+        return false;
+    }
+
+    /** Sample real local five-rule groups when mild slope spreads a page-wide projection. */
+    private static StaffPitchTrack sampledTrack(Page page, PlayingTechniqueDetector.Staff staff) {
+        float gap = staff.gap(), width = page.width;
+        if (staff.count() != 1 || gap < 10 || gap > 24 || width < gap * 40) return null;
+        float left = Math.max(gap * 6, width * .10f);
+        float right = Math.min(width - gap * 6, width * .94f);
+        var samples = new ArrayList<float[]>();
+        float[] previous = null;
+        for (int i = 0; i <= 12; i++) {
+            float x = left + (right - left) * i / 12;
+            long pixels = (long) Math.ceil((gap * 11 + 3) * (gap * 8 + 3));
+            page.take(160 * pixels, 4 * pixels + 512);
+            float[] rule = PrintedDirectionStaff.printedRules(
+                    page.raw, page.width, page.height, x, staff.bottom(), gap);
+            if (rule == null) continue;
+            if (Math.abs(rule[0] - staff.bottom()) > gap * .38f
+                    || Math.abs(rule[1] - gap) > gap * .07f
+                    || previous != null
+                            && (Math.abs(rule[0] - previous[1]) > gap * .20f
+                                    || Math.abs(rule[1] - previous[2]) > gap * .07f
+                                    || x - previous[0] > (right - left) * .27f))
+                return null;
+            previous = new float[] {x, rule[0], rule[1]};
+            samples.add(previous);
+        }
+        if (samples.size() < 7 || samples.get(0)[0] > left + (right - left) * .17f
+                || samples.get(samples.size() - 1)[0] < right - (right - left) * .17f)
+            return null;
+        float minBottom = Float.POSITIVE_INFINITY, maxBottom = Float.NEGATIVE_INFINITY;
+        for (var sample : samples) {
+            minBottom = Math.min(minBottom, sample[1]);
+            maxBottom = Math.max(maxBottom, sample[1]);
+        }
+        // This path supplies varying printed phase after the flat proof failed.
+        if (maxBottom - minBottom < gap * .04f) return null;
+        var track = StaffPitchTrack.fromVerifiedSamples(samples);
+        return sampledRulesAreUnique(page, track, gap) ? track : null;
+    }
+
+    /** Confirm all five curved rails and veto a sixth using the original contrast law. */
+    private static boolean sampledRulesAreUnique(Page page, StaffPitchTrack track, float gap) {
+        int radius = Math.max(1, Math.round(gap * .20f));
+        int flank = Math.max(2, Math.round(gap * .32f));
+        page.take(7L * page.width * (2L * radius + 1) * 4 + page.width * 24L,
+                32L * page.width + 128);
+        int[] hits = new int[7];
+        for (int x = 0; x < page.width; x++) {
+            if (!track.verifiedAt(x)) continue;
+            float[] frame = track.at(x);
+            for (int i = 0; i < hits.length; i++) {
+                int center = Math.round(frame[0] - (5 - i) * frame[1]);
+                for (int y = Math.max(flank, center - radius);
+                        y <= Math.min(page.height - 1 - flank, center + radius); y++) {
+                    int pixel = y * page.width + x;
+                    int ink = page.raw[pixel] & 255;
+                    if (ink <= 225 && (page.raw[pixel - flank * page.width] & 255) >= ink + 12
+                            && (page.raw[pixel + flank * page.width] & 255) >= ink + 12) {
+                        hits[i]++;
+                        break;
+                    }
+                }
+            }
+        }
+        if (hits[0] >= page.width * .60f || hits[6] >= page.width * .60f) return false;
+        for (int i = 1; i <= 5; i++) if (hits[i] < page.width * .60f) return false;
+        return true;
     }
 
     private static StaffPitchTrack scan(Page p, PlayingTechniqueDetector.Staff seed) {

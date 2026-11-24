@@ -24,6 +24,50 @@ public final class PaleCounterOctaveTest {
         assertEquals(List.of(0, 0, 0, 0), shifts(page));
     }
 
+    @Test
+    public void shortPaleRibbonNeedsARealDownwardTerminal() {
+        int width = 720;
+        var page = new byte[width * HEIGHT];
+        Arrays.fill(page, (byte) 255);
+        var original = source();
+        for (int y = 62; y <= 88; y++)
+            System.arraycopy(original, y * WIDTH + 100, page, y * width + 100, 23);
+        for (int x = 126; x <= 576; x += 9)
+            for (int y = 68; y <= 72; y++)
+                Arrays.fill(page, y * width + x, y * width + x + 6, (byte) 0);
+        for (int y = 72; y <= 82; y++)
+            Arrays.fill(page, y * width + 579, y * width + 582, (byte) 0);
+        for (int y : new int[] {88, 96, 104})
+            for (int row = y; row <= y + 3; row++)
+                Arrays.fill(page, row * width + 579, row * width + 582, (byte) 0);
+
+        assertEquals(List.of(0, 1, 1, 0), shortRibbonShifts(page, width));
+        var notes = List.of(137, 565).stream().map(x -> shortRibbonNote(x, width)).toList();
+        var spans = new java.util.ArrayList<OctaveMarkDetector.StaffSpan>();
+        OctaveMarkDetector.apply(List.of(), shortRibbonStaff(), List.of(new MeasureRegion(0, 1, 0, 1)),
+                notes, page, width, HEIGHT, spans);
+        assertEquals(List.of(new OctaveMarkDetector.StaffSpan(0, 0, 0, 1, 1)), spans);
+
+        for (int y = 73; y < 108; y++)
+            Arrays.fill(page, y * width + 579, y * width + 582, (byte) 255);
+        assertEquals(List.of(0, 0, 0, 0), shortRibbonShifts(page, width));
+    }
+
+    private static List<Integer> shortRibbonShifts(byte[] page, int width) {
+        var notes = List.of(70, 137, 565, 621).stream().map(x -> shortRibbonNote(x, width)).toList();
+        return OctaveMarkDetector.apply(List.of(), shortRibbonStaff(), List.of(new MeasureRegion(0, 1, 0, 1)),
+                notes, page, width, HEIGHT).stream().map(ScoreNoteEvent::octaveShift).toList();
+    }
+
+    private static ScoreNoteEvent shortRibbonNote(int x, int width) {
+        return new ScoreNoteEvent(0, x / (float) width, 2, 0, 1, 152f / HEIGHT,
+                false, 0, 1, 2, 0, 1);
+    }
+
+    private static List<PlayingTechniqueDetector.Staff> shortRibbonStaff() {
+        return List.of(new PlayingTechniqueDetector.Staff(130, 194, 16, 0, 1));
+    }
+
     private static List<Integer> shifts(byte[] raw) {
         return OctaveMarkDetector.apply(
                         List.of(),

@@ -5,8 +5,11 @@ package io.github.luckolite.interpreter;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import org.junit.Test;
 
 public class UpperLedgerSpaceBeamOwnershipTest {
@@ -262,32 +265,22 @@ public class UpperLedgerSpaceBeamOwnershipTest {
                 shift == 0
                         ? owner
                         : staffShape.newInstance(precedingBottom - 4 * GAP, precedingBottom, GAP);
-        var probe =
-                outer.getDeclaredMethod(
-                        gate,
-                        byte[].class,
-                        byte[].class,
-                        byte[].class,
-                        int.class,
-                        int.class,
-                        component,
-                        staff,
-                        staff,
-                        List.class,
-                        List.class);
+        var parameters = new ArrayList<Class<?>>(List.of(
+                byte[].class, byte[].class, byte[].class, int.class, int.class,
+                component, staff, staff, List.class, List.class));
+        var arguments = new ArrayList<Object>(List.of(
+                labels, gray, raw, WIDTH, HEIGHT, heads[ownerIndex],
+                physical, owner, List.of(owner), List.of(heads)));
+        if (gate.equals("upperLedgerHeadOnSingleRail")) {
+            parameters.add(List.class);
+            arguments.add(List.of());
+        }
+        if (gate.equals("closedDoubleRailUpperLedger")) {
+            parameters.add(Set.class);
+            arguments.add(new HashSet<>());
+        }
+        var probe = outer.getDeclaredMethod(gate, parameters.toArray(Class<?>[]::new));
         probe.setAccessible(true);
-        return (boolean)
-                probe.invoke(
-                        null,
-                        labels,
-                        gray,
-                        raw,
-                        WIDTH,
-                        HEIGHT,
-                        heads[ownerIndex],
-                        physical,
-                        owner,
-                        List.of(owner),
-                        List.of(heads));
+        return (boolean) probe.invoke(null, arguments.toArray());
     }
 }

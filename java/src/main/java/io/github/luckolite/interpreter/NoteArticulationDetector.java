@@ -138,7 +138,7 @@ final class NoteArticulationDetector {
 
     record FermataMark(int noteIndex, float x, float y, boolean inverted) {}
 
-    record BowMark(int owner, int technique) {}
+    record BowMark(int owner, int technique, ScoreTechniqueChange.BowPlacement placement) {}
 
     /** Complete finite raw bow bodies, with unique attack ownership. Never articulation bits. */
     static List<BowMark> bowMarks(
@@ -205,6 +205,16 @@ final class NoteArticulationDetector {
         work += (long) componentCount * notes.size() * 9 + notes.size() + 32;
         if (work > 256_000_000L) return List.of();
         int[] geometryPeers = new int[notes.size()];
+        var lowerAnchors = new ArrayList<Integer>();
+        for (int i = 0; i < notes.size(); i++) {
+            var note = notes.get(i);
+            var event = events.get(i);
+            if (note.staff >= 0 && note.staff < staffs.size() && note.gap >= 10 && note.gap <= 24
+                    && note.y - staffs.get(note.staff).bottom() >= 1.20f * note.gap
+                    && event.kind() == ScoreNoteEvent.Kind.PITCHED
+                    && event.visualSize() == ScoreNoteEvent.VisualSize.FULL && event.staffCount() == 1)
+                lowerAnchors.add(i);
+        }
         List<BowMark> result = new ArrayList<>();
         for (Glyph g : glyphs) {
             int owner = -1, geometryCount = 0;
@@ -218,7 +228,7 @@ final class NoteArticulationDetector {
             if (work > 256_000_000L) return List.of();
             float glyphWidth = g.right - g.left + 1, glyphHeight = g.bottom - g.top + 1;
             float aspect = glyphHeight / glyphWidth;
-            if (aspect < .65f || aspect > 2.2f) continue;
+            if (aspect < .65f || aspect > 2.45f) continue;
             double tipEdge = g.bottom - (g.bottom - g.top) * .15;
             double tip = 0;
             int tips = 0;
@@ -325,6 +335,15 @@ final class NoteArticulationDetector {
                         } else owner = i;
                     }
             }
+            if (owner < 0 && !ambiguous && aspect <= 1.5f && !lowerAnchors.isEmpty()
+                    && glyphWidth >= 9 && glyphWidth <= 35 && glyphHeight >= 10 && glyphHeight <= 40) {
+                work += 12L * lowerAnchors.size() + 24L * g.count + 64L * glyphHeight + 128;
+                if (work > 256_000_000L) return List.of();
+                int below = invertedLowerBowOwner(g, width, notes, events, lowerAnchors);
+                if (below >= 0)
+                    result.add(new BowMark(below, ScoreTechniqueChange.DOWN_BOW,
+                            ScoreTechniqueChange.BowPlacement.BELOW));
+            }
             if (owner < 0 || ambiguous) continue;
             Anchor n = notes.get(owner);
             // This includes every glyph the existing directionText grammar can use:
@@ -369,7 +388,7 @@ final class NoteArticulationDetector {
                     || !printedBodyContrast(g, gray, width, height)
                     || directionText(g, context, n.gap, labels)) continue;
             boolean down =
-                    !tipQualified
+                    aspect <= 2.2f && !tipQualified
                             && (completeDownBowShape(g, width) || measuredDownBowShape(g, width));
             if (!down && !capMeasured) {
                 work += completeUpBowCapWork(g);
@@ -390,7 +409,8 @@ final class NoteArticulationDetector {
             result.add(
                     new BowMark(
                             owner,
-                            up ? ScoreTechniqueChange.UP_BOW : ScoreTechniqueChange.DOWN_BOW));
+                            up ? ScoreTechniqueChange.UP_BOW : ScoreTechniqueChange.DOWN_BOW,
+                            ScoreTechniqueChange.BowPlacement.ABOVE));
         }
         // Conflicting directions abstain. Index exact attacks once; no quadratic
         // rescan of every output component against all other components.
@@ -399,10 +419,41 @@ final class NoteArticulationDetector {
         for (var mark : result) {
             var key = ScoreTechniqueChange.attackOf(events.get(mark.owner));
             var prior = unique.putIfAbsent(key, mark);
-            if (prior != null && prior.technique != mark.technique) conflicts.add(key);
+            if (prior == null) continue;
+            if (prior.technique() != mark.technique()) conflicts.add(key);
+            else if (prior.placement() != mark.placement())
+                unique.put(key, new BowMark(prior.owner(), prior.technique(), null));
         }
         conflicts.forEach(unique::remove);
         return List.copyOf(unique.values());
+    }
+
+    /** An inverted square bow beneath an isolated low attack opens away from the staff. */
+    private static int invertedLowerBowOwner(Glyph glyph, int width, List<Anchor> notes,
+            List<ScoreNoteEvent> events, List<Integer> lowerAnchors) {
+        int found = -1;
+        for (int i : lowerAnchors) {
+            Anchor note = notes.get(i);
+            float gap = note.gap;
+            float offset = glyph.top - note.y;
+            if (offset < .55f * gap || offset > .92f * gap
+                    || Math.abs(glyph.x() - note.x) > .38f * gap
+                    || glyph.right - glyph.left + 1 < .9f * gap
+                    || glyph.right - glyph.left + 1 > 1.45f * gap
+                    || glyph.bottom - glyph.top + 1 < 1.05f * gap
+                    || glyph.bottom - glyph.top + 1 > 1.65f * gap) continue;
+            if (found >= 0 && !ScoreTechniqueChange.attackOf(events.get(found))
+                    .equals(ScoreTechniqueChange.attackOf(events.get(i)))) return -1;
+            found = i;
+        }
+        if (found < 0) return -1;
+        int[] pixels = new int[glyph.count];
+        for (int i = 0; i < pixels.length; i++) {
+            int p = glyph.pixels[i], row = p / width, col = p % width;
+            pixels[i] = (glyph.top + glyph.bottom - row) * width + col;
+        }
+        var reflected = new Glyph(glyph.left, glyph.top, glyph.right, glyph.bottom, glyph.count, pixels);
+        return completeDownBowShape(reflected, width) || measuredDownBowShape(reflected, width) ? found : -1;
     }
 
     /** The same independently proved roof that shelters a dot also preserves its hold symbol. */

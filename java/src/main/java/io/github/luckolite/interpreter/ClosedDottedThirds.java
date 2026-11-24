@@ -104,6 +104,7 @@ final class ClosedDottedThirds {
         var meter = inherited;
         int nextMeter = 0;
         var removed = new java.util.BitSet(notes.size());
+        var repaired = new ArrayList<>(notes);
         var beams = score.beamSource();
         for (int index = 0; index < rows.size(); index++) {
             while (nextMeter < score.meterChanges().size()
@@ -115,23 +116,134 @@ final class ClosedDottedThirds {
                     || score.rests().stream().anyMatch(r -> r.measureIndex() == m)) continue;
             var bar = score.measures().get(index);
             if (bar.cadenceQuarterBeats() != 0) continue;
-            var mark = denseInterstitialMark(row, bar, gray, original, width, height);
+            var denseMark = denseInterstitialMark(row, bar, gray, original, width, height);
+            var mark = denseMark == null
+                    ? joinedQuarterFragment(row, bar, gray, original, width, height, repaired)
+                    : denseMark;
             if (mark == null) continue;
             removed.set(mark.index);
             var owners = row.stream().filter(h -> h != mark).sorted(Comparator.comparingDouble(Head::x))
                     .map(Head::index).toList();
             beams = ClosedDottedSixteenths.captureRestoredDyadBeams(
-                    beams, notes, owners, bar, gray, original, width, height, physicalPage);
+                    beams, repaired, owners, bar, gray, original, width, height, physicalPage);
         }
         if (removed.isEmpty()) return score;
         var kept = new ArrayList<ScoreNoteEvent>();
         var sourceIndices = new ArrayList<Integer>();
         for (int i = 0; i < notes.size(); i++) {
             if (removed.get(i)) continue;
-            kept.add(notes.get(i));
+            kept.add(repaired.get(i));
             sourceIndices.add(i);
         }
         return score.withBeamSource(beams).withNotes(kept, sourceIndices);
+    }
+
+    private static Head joinedQuarterFragment(List<Head> row, MeasureRegion bar,
+            byte[] gray, byte[] original, int width, int height, List<ScoreNoteEvent> repaired) {
+        var stemless = row.stream().filter(h -> h.note.stemDirection() == 0).toList();
+        if (stemless.size() != 1) return null;
+        var mark = stemless.get(0);
+        var n = mark.note;
+        if (n.kind() != ScoreNoteEvent.Kind.PITCHED || n.staffIndex() != 0 || n.staffCount() != 1
+                || n.visualSize() != ScoreNoteEvent.VisualSize.FULL || n.beamCount() != 0
+                || n.unbeamedDurationBeats() != 1 || n.augmentationDots() != 0 || n.articulations() != 0
+                || n.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_FROM_KEY || n.harmonicSemitones() != 0
+                || n.openStringTouch() != null || n.tiedFromPrevious() || n.boundaryTies() != 0
+                || n.leadingRestBeats() != 0 || n.followingRestBeats() != 0 || n.tupletDivisor() != 1)
+            return null;
+        float gap = (bar.bottom() - bar.top()) * height / 8.2f;
+        float left = bar.left() * width, right = bar.right() * width;
+        if (gap < 10 || gap > 26 || right - left < 31 * gap || right - left > 45 * gap) return null;
+        var owners = row.stream().filter(h -> h != mark).sorted(Comparator.comparingDouble(Head::x)).toList();
+        var attacks = new ArrayList<Dyad>(16);
+        for (int i = 0; i < owners.size(); i += 2) {
+            var a = owners.get(i);
+            var b = owners.get(i + 1);
+            var pair = a.y < b.y ? new Dyad(a, b) : new Dyad(b, a);
+            boolean dotted = i % 4 == 0;
+            if (b.x - a.x > .2f * gap
+                    || pair.lower.y - pair.upper.y < .83f * gap || pair.lower.y - pair.upper.y > 1.24f * gap
+                    || pair.upper.note.staffStep() - pair.lower.note.staffStep() != 2) return null;
+            for (var head : List.of(a, b)) {
+                if (!ordinary(head.note) || head.note.stemDirection() != -1
+                        || head.note.clefBottomDiatonic() != owners.get(0).note.clefBottomDiatonic()
+                        || head.note.augmentationDots() != (dotted ? 1 : 0)
+                        || head.note.beamCount() != 2 && (dotted || head.note.beamCount() != 3)) return null;
+            }
+            if (a.note.beamCount() != b.note.beamCount()) return null;
+            attacks.add(pair);
+        }
+        if (attacks.get(0).x() - left < gap || right - attacks.get(attacks.size() - 1).x() > 1.9f * gap
+                || !provesQuarterFragment(gray, width, height, bar, mark, attacks, gap)
+                || !provesQuarterFragment(original, width, height, bar, mark, attacks, gap)) return null;
+        for (int i = 1; i < attacks.size(); i += 2) {
+            var pair = attacks.get(i);
+            if (pair.upper.note.beamCount() != 2) continue;
+            for (var head : List.of(pair.upper, pair.lower))
+                repaired.set(head.index, ClosingTripletRhythm.beamedValue(head.note, 3));
+        }
+        return mark;
+    }
+
+    private static boolean provesQuarterFragment(byte[] gray, int width, int height,
+            MeasureRegion bar, Head fragment, List<Dyad> attacks, float gap) {
+        if (!ClosedDottedSixteenths.hasClosingRule(gray, width, height, bar)) return false;
+        var budget = new PrintedBeamShafts.Budget(440_000);
+        if (!PrintedBeamShafts.at(gray, width, height, fragment.x, fragment.y, gap, budget).isEmpty())
+            return false;
+        PrintedBeamShafts.Shaft previous = null;
+        int claims = 0;
+        for (int i = 0; i < attacks.size(); i++) {
+            var pair = attacks.get(i);
+            var upper = PrintedBeamShafts.at(gray, width, height, pair.upper.x, pair.upper.y, gap, budget);
+            var lower = PrintedBeamShafts.at(gray, width, height, pair.lower.x, pair.lower.y, gap, budget);
+            if (upper.size() != 1 || lower.size() != 1 || budget.refused()) return false;
+            var top = upper.get(0);
+            var shaft = lower.get(0);
+            if (top.direction() != 1 || shaft.direction() != 1
+                    || Math.max(top.left(), shaft.left()) > Math.min(top.right(), shaft.right())
+                    || Math.abs(top.endY() - shaft.endY()) > 2) return false;
+            float following = i + 1 < attacks.size() ? attacks.get(i + 1).x() : bar.right() * width;
+            if (i + 1 < attacks.size() && (following - pair.x() < gap * 1.75f
+                    || following - pair.x() > gap * 3.4f)) return false;
+            boolean dotted = (i & 1) == 0;
+            if ((dot(gray, width, height, pair.upper, following, gap)
+                    || dot(gray, width, height, pair.lower, following, gap)) != dotted) return false;
+            if (previous != null && !WrappedEighthTriplets.matchesBeamRails(
+                    gray, width, height, previous, shaft, gap, i % 4 == 0 ? 0 : 2)) return false;
+            if (!dotted) {
+                var peer = attacks.get(i - 1);
+                if (!provedHook(gray, width, height, peer, pair, gap)
+                        && !OwnedTertiaryBeamlets.provesBackwardHookOnJoinedRails(gray, width, height,
+                                pair.upper.x, pair.upper.y, peer.upper.x, peer.upper.y, gap)
+                        && !OwnedTertiaryBeamlets.provesJoinedClosingDyadHook(gray, width, height,
+                                pair.lower.x, pair.lower.y, pair.upper.x, pair.upper.y,
+                                peer.upper.x, peer.upper.y, peer.lower.x, peer.lower.y, gap, budget)) return false;
+                if (coveredByFollowingRail(gray, width, height, fragment, peer, pair, shaft, gap)) claims++;
+            }
+            previous = shaft;
+        }
+        return claims == 1 && !budget.refused();
+    }
+
+    private static boolean coveredByFollowingRail(byte[] gray, int width, int height, Head mark,
+            Dyad prior, Dyad following, PrintedBeamShafts.Shaft shaft, float gap) {
+        int axis = (shaft.left() + shaft.right()) / 2;
+        if (mark.x - prior.x() < gap || following.x() - mark.x < gap * .74f
+                || axis - mark.x < gap * .20f || axis - mark.x > gap * .55f
+                || shaft.endY() - mark.y < gap * .35f || shaft.endY() - mark.y > gap * .75f
+                || mark.y - following.lower.y < gap * 2.8f) return false;
+        int cx = Math.round(mark.x), cy = Math.round(mark.y);
+        int half = Math.round(gap * .22f), vertical = Math.round(gap * .48f);
+        if (cx - half < 0 || cx + half >= width || cy - vertical < 0 || cy + vertical >= height) return false;
+        int columns = 0;
+        for (int x = cx - half; x <= cx + half; x++) {
+            int hits = 0;
+            for (int y = cy - vertical; y <= cy + vertical; y++)
+                if ((gray[y * width + x] & 255) < 155) hits++;
+            if (hits >= (2 * vertical + 1) * .86f) columns++;
+        }
+        return columns >= (2 * half + 1) * .8f;
     }
 
     private static Head denseInterstitialMark(List<Head> row, MeasureRegion bar,

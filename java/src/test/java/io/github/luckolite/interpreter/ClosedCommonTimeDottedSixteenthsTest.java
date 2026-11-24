@@ -109,6 +109,62 @@ public class ClosedCommonTimeDottedSixteenthsTest {
                         score, meter, gray, noHook, W, H));
     }
 
+    @Test
+    public void closedDottedPairsBeforeHalfDistinguishHookFromAugmentationDot() {
+        byte[] gray = new byte[W * H];
+        Arrays.fill(gray, (byte) 255);
+        for (int line = STAFF_BOTTOM - 64; line <= STAFF_BOTTOM; line += 16)
+            paint(gray, 75, 1080, line, line, (byte) 0);
+        int right = 542, first = 161, spacing = 40, half = first + spacing * 8;
+        paint(gray, right, right + 2, STAFF_BOTTOM - 64, STAFF_BOTTOM, (byte) 0);
+        var notes = new ArrayList<ScoreNoteEvent>();
+        for (int slot = 0; slot < 8; slot++) {
+            int x = first + slot * spacing;
+            int axis = x + 9;
+            boolean dotted = slot % 2 == 0;
+            paint(gray, x - 9, x + 9, STAFF_BOTTOM - 5, STAFF_BOTTOM + 5, (byte) 0);
+            paint(gray, axis - 1, axis + 1, 230, STAFF_BOTTOM, (byte) 0);
+            if (dotted) {
+                paint(gray, x + 19, x + 23, STAFF_BOTTOM - 10, STAFF_BOTTOM - 6, (byte) 0);
+                paint(gray, axis - 1, axis + spacing + 1, 230, 238, (byte) 0);
+                paint(gray, axis - 1, axis + spacing + 1, 244, 252, (byte) 0);
+            } else {
+                paint(gray, axis - 13, axis + 1, 256, 265, (byte) 0);
+            }
+            notes.add(cadenceNote(x, STAFF_BOTTOM, right, 0, dotted || slot == 1 ? 1 : 0,
+                    dotted || slot == 1 ? 2 : 3, 0));
+        }
+        int halfY = STAFF_BOTTOM - 8;
+        paint(gray, half - 9, half + 8, halfY - 5, halfY + 5, (byte) 0);
+        paint(gray, half - 6, half + 5, halfY - 3, halfY + 3, (byte) 255);
+        paint(gray, half + 7, half + 9, 230, halfY, (byte) 0);
+        notes.add(cadenceNote(half, halfY, right, 1, 0, 0, 2));
+        var bar = new MeasureRegion(LEFT / (float) W, right / (float) W, 199f / H, 330f / H);
+        var score = new ScorePageInterpretation(List.of(bar), notes);
+        var meter = new ScoreMeterChange(0, 4, 4);
+        var result = ClosedDottedSixteenths.applyClosedMonophonicHooks(score, meter, gray, gray, W, H);
+        assertEquals(3, result.notes().get(1).beamCount());
+        assertEquals(0, result.notes().get(1).augmentationDots());
+        assertEquals(2, ScoreNoteTiming.writtenPlacement(result.notes().get(8), result.notes(), 4)
+                .orElseThrow().onsetBeats(), 0);
+        assertEquals(notes.subList(2, 9), result.notes().subList(2, 9));
+
+        var trueDot = gray.clone();
+        int owner = first + spacing;
+        paint(trueDot, owner + 19, owner + 23, STAFF_BOTTOM - 10, STAFF_BOTTOM - 6, (byte) 0);
+        assertSame(score, ClosedDottedSixteenths.applyClosedMonophonicHooks(score, meter, gray, trueDot, W, H));
+        var noHook = gray.clone();
+        paint(noHook, owner - 5, owner + 5, 256, 265, (byte) 255);
+        assertSame(score, ClosedDottedSixteenths.applyClosedMonophonicHooks(score, meter, gray, noHook, W, H));
+    }
+
+    private static ScoreNoteEvent cadenceNote(int x, int y, int right, int step, int dots, int beams, int base) {
+        return new ScoreNoteEvent(
+                0, (x - LEFT) / (float) (right - LEFT), step, 0, 1, y / (float) H,
+                false, dots, beams, ScoreNoteEvent.ACCIDENTAL_FROM_KEY, base, 1, 0, 0,
+                ScoreNoteEvent.CLEF_TREBLE, false, 0, false, 0, 0, 1, 1, ScoreNoteEvent.Kind.PITCHED);
+    }
+
     private static ScorePageInterpretation apply(ScorePageInterpretation score, byte[] gray) {
         return ClosedDottedSixteenths.apply(score, gray, W, H);
     }

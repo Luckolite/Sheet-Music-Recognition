@@ -8,7 +8,20 @@ final class InnerBeamShaftEnd {
 
     static boolean proves(byte[] raw, int width, float gap, int[] mask,
             int[] earlier, int[] previous, int[] last) {
-        return proves(raw, width, gap, mask, earlier, previous, last, .3f);
+        return proves(raw, width, gap, mask, earlier, previous, last, .3f, 2f);
+    }
+
+    /** The inner band can be near a staff line that lengthens the detected tip. */
+    static boolean provesCompactOctaveEndpoint(
+            byte[] raw, int width, float gap, int[] mask,
+            int[] earlier, int[] previous, int[] last) {
+        int min = Math.max(1, Math.round(gap * .12f));
+        int max = Math.max(min, Math.round(gap * .23f));
+        for (int excess = min; excess <= max; excess++) {
+            int[] end = {last[0], last[1] - excess, last[2]};
+            if (proves(raw, width, gap, mask, earlier, previous, end)) return true;
+        }
+        return false;
     }
 
     static boolean provesLedgerEndpoint(
@@ -19,8 +32,14 @@ final class InnerBeamShaftEnd {
             int[] earlier,
             int[] previous,
             int[] last) {
-        return proves(raw, width, gap, mask, earlier, previous, last, .33f);
+        return proves(raw, width, gap, mask, earlier, previous, last, .33f, 2f);
     }
+
+    static boolean provesSmallStaffTip(
+            byte[] raw, int width, float gap, int[] mask, int[] earlier, int[] previous, int[] last) {
+        return proves(raw, width, gap, mask, earlier, previous, last, .30f, 1.875f);
+    }
+
 
     private static boolean proves(
             byte[] raw,
@@ -30,12 +49,12 @@ final class InnerBeamShaftEnd {
             int[] earlier,
             int[] previous,
             int[] last,
-            float rightOverhang) {
+            float rightOverhang, float minimumShaftGap) {
         int padding = Math.max(2, Math.round(gap * .34f));
         int radius = Math.max(2, Math.round(gap * .14f));
         int x0 = earlier[0], x1 = previous[0], x2 = last[0];
-        if (x1 - x0 < gap * 2 || x1 - x0 > gap * 4
-                || x2 - x1 < gap * 2 || x2 - x1 > gap * 4
+        if (x1 - x0 < gap * minimumShaftGap || x1 - x0 > gap * 4
+                || x2 - x1 < gap * minimumShaftGap || x2 - x1 > gap * 4
                 || Math.abs(last[1] - previous[1]) > (x2 - x1) * .29f
                 || Math.abs(previous[1] - earlier[1]) > (x1 - x0) * .29f) return false;
 

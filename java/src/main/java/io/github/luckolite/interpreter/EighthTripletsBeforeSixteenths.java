@@ -14,19 +14,25 @@ import java.util.stream.IntStream;
 final class EighthTripletsBeforeSixteenths {
     private EighthTripletsBeforeSixteenths() {}
 
-    private record BeamRun(List<Integer> owners, List<Integer> originalOwners) {
+    private record BeamRun(List<Integer> owners, List<Integer> originalOwners, int unnumberedTriplets) {
         BeamRun(List<Integer> owners) {
-            this(owners, owners);
+            this(owners, owners, 0);
         }
     }
 
-    record Capture(ScorePageInterpretation score, List<List<BeamRun>> transitions, List<BeamRun> straightBars) {
+    record Capture(
+            ScorePageInterpretation score,
+            List<List<BeamRun>> transitions,
+            List<BeamRun> straightBars,
+            List<BeamRun> wideMixedBars,
+            List<ScoreNoteEvent> printedSharpOwners,
+            List<ScoreNoteEvent> printedFingeringThreeOwners) {
         Capture(ScorePageInterpretation score, List<List<BeamRun>> transitions) {
-            this(score, transitions, List.of());
+            this(score, transitions, List.of(), List.of(), List.of(), List.of());
         }
 
         ScorePageInterpretation projectBeams(ScorePageInterpretation retained, int page) {
-            if (transitions.isEmpty() && straightBars.isEmpty()
+            if (transitions.isEmpty() && straightBars.isEmpty() && wideMixedBars.isEmpty()
                     || page < 0
                     || !score.measures().equals(retained.measures())
                     || score.notes().size() != retained.notes().size()) return retained;
@@ -85,7 +91,69 @@ final class EighthTripletsBeforeSixteenths {
                     : new ScoreBeamSource(groups, source.detachedColumns(), origins);
             for (var bar : straightBars)
                 projected = projectStraightBar(retained, page, projected, bar);
+            for (var bar : wideMixedBars)
+                projected = replaceWideMixedBar(retained, page, projected, bar);
             return projected.equals(source) ? retained : retained.withBeamSource(projected);
+        }
+
+        private ScoreBeamSource replaceWideMixedBar(
+                ScorePageInterpretation retained, int page, ScoreBeamSource source, BeamRun bar) {
+            var origins = source.noteOrigins();
+            var counts = new HashMap<ScoreBeamSource.Anchor, Integer>();
+            for (var origin : origins) origin.ifPresent(a -> counts.merge(a, 1, Integer::sum));
+            var ordered = new ArrayList<ScoreBeamSource.Anchor>(bar.owners().size());
+            for (int i = 0; i < bar.owners().size(); i++) {
+                int owner = bar.owners().get(i);
+                var origin = origins.get(owner).orElse(null);
+                var note = retained.notes().get(owner);
+                var proved = score.notes().get(owner);
+                if (origin == null || origin.pageIndex() != page
+                        || origin.noteIndex() != bar.originalOwners().get(i)
+                        || counts.getOrDefault(origin, 0) != 1
+                        || note.measureIndex() != proved.measureIndex()
+                        || note.positionInMeasure() != proved.positionInMeasure()
+                        || note.pageY() != proved.pageY()
+                        || note.staffIndex() != proved.staffIndex()
+                        || note.beamCount() != proved.beamCount()
+                        || note.tupletDivisor() != proved.tupletDivisor()
+                        || note.tupletNormalNotes() != proved.tupletNormalNotes()) return source;
+                ordered.add(origin);
+            }
+            var owned = new HashSet<>(ordered);
+            var groups = new ArrayList<ScoreBeamSource.Group>();
+            var marked = new HashMap<List<ScoreBeamSource.Anchor>, ScoreBeamSource.TupletMark>();
+            var ids = new HashSet<String>();
+            for (var group : source.groups()) {
+                var members = group.columns().stream().flatMap(c -> c.members().stream()).toList();
+                if (members.stream().noneMatch(owned::contains)) {
+                    groups.add(group);
+                    ids.add(group.id());
+                } else if (!owned.containsAll(members)) {
+                    return source;
+                } else if (group.tupletMark() != null) {
+                    marked.put(members, group.tupletMark());
+                }
+            }
+            var detached = new ArrayList<ScoreBeamSource.Column>();
+            for (var column : source.detachedColumns()) {
+                if (column.members().stream().noneMatch(owned::contains)) detached.add(column);
+                else if (!owned.containsAll(column.members())) return source;
+            }
+            int first = 0;
+            for (int size : new int[] {3, 3, 4, 4}) {
+                String id = "printed-beam:" + page + ":" + ordered.get(first).noteIndex();
+                if (!ids.add(id)) return source;
+                var members = ordered.subList(first, first + size);
+                var columns = members.stream()
+                        .map(anchor -> new ScoreBeamSource.Column(List.of(anchor))).toList();
+                var mark = marked.remove(members);
+                if (mark == null && size == 3 && (bar.unnumberedTriplets() & (1 << (first / 3))) != 0)
+                    mark = ScoreBeamSource.TupletMark.UNNUMBERED;
+                groups.add(new ScoreBeamSource.Group(id, columns,
+                        Collections.nCopies(size - 1, size == 3 ? 1 : 3), List.of(), mark));
+                first += size;
+            }
+            return marked.isEmpty() ? new ScoreBeamSource(groups, detached, origins) : source;
         }
 
         private ScoreBeamSource projectStraightBar(
@@ -109,13 +177,21 @@ final class EighthTripletsBeforeSixteenths {
 
     static Capture capture(
             ScorePageInterpretation score, byte[] source, byte[] normalized, int width, int height) {
+        return capture(score, source, normalized, width, height, null);
+    }
+
+    static Capture capture(
+            ScorePageInterpretation score, byte[] source, byte[] normalized, int width, int height,
+            ScoreMeterChange inheritedMeter) {
+        boolean inheritedOpening = inheritedMeter != null && inheritedMeter.measureIndex() == 0;
         if (width < 1
                 || height < 1
                 || source == null
                 || source.length != (long) width * height
                 || score.measures().size() < 2
-                || score.meterChanges().isEmpty()) return new Capture(score, List.of());
+                || score.meterChanges().isEmpty() && !inheritedOpening) return new Capture(score, List.of());
         var notes = new ArrayList<>(score.notes());
+        var printedSharpOwners = new ArrayList<ScoreNoteEvent>();
         var bars = score.measures();
         var owners = new ArrayList<List<Integer>>(bars.size());
         for (int i = 0; i < bars.size(); i++) owners.add(new ArrayList<>());
@@ -129,12 +205,15 @@ final class EighthTripletsBeforeSixteenths {
                 numerators[m.measureIndex()] = m.numerator();
                 denominators[m.measureIndex()] = m.denominator();
             }
-        int numerator = 0, denominator = 0;
+        int numerator = inheritedOpening ? inheritedMeter.numerator() : 0;
+        int denominator = inheritedOpening ? inheritedMeter.denominator() : 0;
         boolean previousCommon = false;
         var transitions = new ArrayList<List<BeamRun>>();
         var straightBars = new ArrayList<BeamRun>();
+        var wideMixedBars = new ArrayList<BeamRun>();
         boolean timingChanged = false;
         var beamAliases = new HashSet<Integer>();
+        var printedFingeringThreeOwners = new ArrayList<ScoreNoteEvent>();
         for (int i = 0; i < bars.size(); i++) {
             if (denominators[i] != 0) {
                 numerator = numerators[i];
@@ -146,17 +225,112 @@ final class EighthTripletsBeforeSixteenths {
                     score, notes, owners.get(i - 1), owners.get(i), i, source, width, height);
             boolean upperLedger = sameMeter && !transition && ownsUpperLedgerTransition(
                     score, notes, owners.get(i - 1), owners.get(i), i, source, normalized, width, height);
-            if (transition || sameMeter && !upperLedger && ownsClosedSystemOpening(
-                    score, notes, owners.get(i), i, source, normalized, width, height)) {
+            boolean ordinaryOpening = sameMeter && !transition && !upperLedger
+                    && ownsClosedSystemOpening(score, notes, owners.get(i), i, source, normalized, width, height);
+            boolean wideOpening = sameMeter && !transition && !upperLedger && !ordinaryOpening
+                    && ownsWideAccidentalOpening(score, notes, owners.get(i), i, source, normalized, width, height);
+            if (sameMeter && !transition && !upperLedger && !ordinaryOpening && !wideOpening)
+                wideOpening = ownsSplitShaftOpening(score, notes, owners.get(i), i, source, normalized, width, height);
+            boolean ruledOpening = sameMeter && !transition && !upperLedger && !ordinaryOpening && !wideOpening
+                    && restoreRuledOpeningShaft(score, notes, owners.get(i), i, source, normalized, width, height);
+            wideOpening |= ruledOpening;
+            boolean interruptedUpstaff = sameMeter && !transition && !upperLedger && !ordinaryOpening
+                    && !wideOpening && restoreInterruptedUpstaff(
+                            score, notes, owners.get(i), i, source, normalized, width, height);
+            wideOpening |= interruptedUpstaff;
+            boolean fadedDownstaff = sameMeter && !transition && !upperLedger && !ordinaryOpening
+                    && !wideOpening && restoreFadedDownstaff(
+                            score, notes, owners.get(i), i, source, normalized, width, height);
+            wideOpening |= fadedDownstaff;
+            boolean restoredSecondary = sameMeter && !transition && !upperLedger && !ordinaryOpening
+                    && !wideOpening && restoreInitialSecondaryRail(
+                            score, notes, owners.get(i), i, source, normalized, width, height);
+            wideOpening |= restoredSecondary;
+            boolean detachedTerminal = false;
+            if (sameMeter && !transition && !upperLedger && !ordinaryOpening && !wideOpening) {
+                var ordered = owners.get(i);
+                if (ordered.size() == 14) {
+                    int terminal = ordered.get(13);
+                    var terminalNote = notes.get(terminal);
+                    if (terminalNote.stemDirection() == 0
+                            && notes.get(ordered.get(12)).stemDirection() == -1) {
+                        var bar = bars.get(i);
+                        float x = (bar.left() + terminalNote.positionInMeasure() * (bar.right() - bar.left())) * width;
+                        float y = terminalNote.pageY() * height;
+                        float gap = (bar.bottom() - bar.top()) * height / 8.2f;
+                        var rawShaft = DetachedClosingDownshaft.measure(source, width, height, x, y, gap);
+                        var normalizedShaft = DetachedClosingDownshaft.measure(normalized, width, height, x, y, gap);
+                        if (rawShaft != null && rawShaft.equals(normalizedShaft)) {
+                            notes.set(terminal, terminalNote.withStemDirection(-1));
+                            ordinaryOpening = ownsClosedSystemOpening(
+                                    score, notes, ordered, i, source, normalized, width, height);
+                            wideOpening = !ordinaryOpening && ownsWideAccidentalOpening(
+                                    score, notes, ordered, i, source, normalized, width, height);
+                            detachedTerminal = ordinaryOpening || wideOpening;
+                            if (!detachedTerminal) notes.set(terminal, terminalNote);
+                        }
+                    }
+                }
+            }
+            boolean ruledAlias = false;
+            if (sameMeter && !transition && !upperLedger && !ordinaryOpening && !wideOpening
+                    && owners.get(i).size() == 15) {
+                var ordered = new ArrayList<>(owners.get(i));
+                ordered.sort(Comparator.comparingDouble(index -> notes.get(index).positionInMeasure()));
+                int alias = ordered.remove(13);
+                if (RuledTripletFingeringAlias.proves(source, normalized, width, height, bars.get(i),
+                            notes.get(alias), notes.get(ordered.get(13)))
+                        && (ownsClosedSystemOpening(score, notes, ordered, i, source, normalized, width, height)
+                            || ownsWideAccidentalOpening(score, notes, ordered, i, source, normalized, width, height))) {
+                    owners.set(i, ordered);
+                    beamAliases.add(alias);
+                    printedFingeringThreeOwners.add(notes.get(ordered.get(13)));
+                    ruledAlias = true;
+                    wideOpening = true;
+                }
+            }
+            if (transition || ordinaryOpening || wideOpening) {
                 timingChanged = true;
                 var ordered = owners.get(i);
                 for (int index : ordered.subList(0, 6))
                     notes.set(index, notes.get(index).withTupletRatio(3, 2));
-                // The single rails establish timing, but do not prove a printed tuplet mark.
-                transitions.add(
-                        List.of(
-                                new BeamRun(List.copyOf(ordered.subList(6, 10))),
-                                new BeamRun(List.copyOf(ordered.subList(10, 14)))));
+                if (ordinaryOpening) {
+                    var sharps = MixedTripletSharpPitches.restore(
+                            notes, ordered, bars.get(i), source, normalized, width, height);
+                    for (int index : ordered) notes.set(index, sharps.notes().get(index));
+                    for (int index : sharps.printedSharpOwners()) printedSharpOwners.add(notes.get(index));
+                }
+                // A verified beam is independent of a printed tuplet numeral or bracket.
+                boolean ledgerHandoff = ordinaryOpening && WrappedEighthTriplets.ownsInterruptedLedgerHandoff(
+                        source, normalized, width, height, bars.get(i), notes.get(ordered.get(5)));
+                boolean detachedQuartet = ordinaryOpening && WrappedEighthTriplets.ownsDetachedClosingQuartet(
+                        source, normalized, width, height, bars.get(i), notes.get(ordered.get(10)));
+                int unnumbered = 0;
+                if (ruledOpening) {
+                    unnumbered = WrappedEighthTriplets.unnumberedRuledOpeningTriplets(
+                            source, normalized, width, height, bars, notes, i, ordered);
+                } else if (interruptedUpstaff) {
+                    unnumbered = WrappedEighthTriplets.unnumberedInterruptedUpstaffTriplets(
+                            source, normalized, width, height, bars, notes, i, ordered);
+                } else if (fadedDownstaff) {
+                    unnumbered = WrappedEighthTriplets.unnumberedFadedDownstaffTriplets(
+                            source, normalized, width, height, bars, notes, i, ordered);
+                } else if (restoredSecondary) {
+                    unnumbered = WrappedEighthTriplets.unnumberedInterruptedUpstaffTriplets(
+                            source, normalized, width, height, bars, notes, i, ordered);
+                } else if (wideOpening || detachedTerminal || ordinaryOpening) {
+                    unnumbered = WrappedEighthTriplets.unnumberedMixedTriplets(
+                            source, normalized, width, height, bars, notes, i, ordered,
+                            ruledAlias || ledgerHandoff || detachedQuartet, ledgerHandoff);
+                }
+                if (wideOpening || detachedTerminal || ledgerHandoff || detachedQuartet || unnumbered != 0) {
+                    var retained = List.copyOf(ordered);
+                    wideMixedBars.add(new BeamRun(retained, retained, unnumbered));
+                } else {
+                    transitions.add(List.of(
+                            new BeamRun(List.copyOf(ordered.subList(6, 10))),
+                            new BeamRun(List.copyOf(ordered.subList(10, 14)))));
+                }
             } else if (upperLedger) {
                 timingChanged = true;
                 for (int index : owners.get(i - 1))
@@ -184,17 +358,13 @@ final class EighthTripletsBeforeSixteenths {
             previousCommon = common;
         }
         if (!timingChanged) return new Capture(score, List.of());
-        if (!beamAliases.isEmpty()) {
-            // Existing score provenance is reindexed through the retained ownership map.
-            var retained = IntStream.range(0, notes.size()).filter(i -> !beamAliases.contains(i)).boxed().toList();
-            return new Capture(score.withNotes(retained.stream().map(notes::get).toList(), retained),
-                    reindex(transitions, retained, notes.size()),
-                    reindex(List.of(straightBars), retained, notes.size()).get(0));
-        }
-        return new Capture(
-                score.withNotes(notes, IntStream.range(0, notes.size()).boxed().toList())
-                        .withClockContextSource(score.clockContextSource()),
-                List.copyOf(transitions), List.copyOf(straightBars));
+        var retained = IntStream.range(0, notes.size()).filter(i -> !beamAliases.contains(i)).boxed().toList();
+        var captured = score.withNotes(retained.stream().map(notes::get).toList(), retained);
+        if (beamAliases.isEmpty()) captured = captured.withClockContextSource(score.clockContextSource());
+        return new Capture(captured, reindex(transitions, retained, score.beamSource()),
+                reindex(List.of(straightBars), retained, score.beamSource()).get(0),
+                reindex(List.of(wideMixedBars), retained, score.beamSource()).get(0),
+                List.copyOf(printedSharpOwners), List.copyOf(printedFingeringThreeOwners));
     }
 
     private static boolean ownsClosedTransition(
@@ -262,13 +432,19 @@ final class EighthTripletsBeforeSixteenths {
     }
 
     private static List<List<BeamRun>> reindex(
-            List<List<BeamRun>> transitions, List<Integer> retained, int oldSize) {
+            List<List<BeamRun>> transitions, List<Integer> retained, ScoreBeamSource beamSource) {
         if (transitions.isEmpty()) return transitions;
-        int[] newIndices = new int[oldSize];
+        var origins = beamSource.noteOrigins();
+        int[] newIndices = new int[origins.size()];
         for (int i = 0; i < retained.size(); i++) newIndices[retained.get(i)] = i;
-        return transitions.stream().map(transition -> transition.stream().map(run ->
-                new BeamRun(run.owners().stream().map(i -> newIndices[i]).toList(), run.originalOwners()))
-                .toList()).toList();
+        return transitions.stream().map(transition -> transition.stream().map(run -> {
+            var remapped = run.owners().stream().map(i -> newIndices[i]).toList();
+            // Beam source acquired after this capture assigns anchors to the edited score.
+            var expectedOrigins = IntStream.range(0, remapped.size()).mapToObj(i ->
+                    origins.get(run.owners().get(i)).map(ScoreBeamSource.Anchor::noteIndex)
+                            .orElse(remapped.get(i))).toList();
+            return new BeamRun(remapped, expectedOrigins, run.unnumberedTriplets());
+        }).toList()).toList();
     }
 
     private static boolean ownsBeamAliasInTransition(
@@ -356,6 +532,158 @@ final class EighthTripletsBeforeSixteenths {
                         normalized, width, height, bars, measure, notes, owners, true);
     }
 
+    private static boolean ownsWideAccidentalOpening(
+            ScorePageInterpretation score, List<ScoreNoteEvent> notes, List<Integer> owners,
+            int bar, byte[] raw, byte[] normalized, int width, int height) {
+        if (owners.size() != 14 || !ownsClosedSystemExtent(
+                score, notes, owners, bar, raw, normalized, width, height, true)) return false;
+        var region = score.measures().get(bar);
+        int clef = notes.get(owners.get(0)).clefBottomDiatonic();
+        for (int i = 0; i < owners.size(); i++)
+            if (!ordinary(notes.get(owners.get(i)), i < 6 ? 1 : 2, clef)
+                    || notes.get(owners.get(i)).stemDirection() != -1) return false;
+        if (WrappedEighthTriplets.provesClosedWideMixedRails(raw, width, height, region, notes, owners)
+                && WrappedEighthTriplets.provesClosedWideMixedRails(normalized, width, height, region, notes, owners))
+            return true;
+        var bars = score.measures();
+        return MixedUpperLedgerBeamSource.printedRails(raw, width, height, bars, bar, notes, owners)
+                && MixedUpperLedgerBeamSource.printedRails(normalized, width, height, bars, bar, notes, owners);
+    }
+
+    private static boolean ownsSplitShaftOpening(
+            ScorePageInterpretation score, List<ScoreNoteEvent> notes, List<Integer> owners,
+            int bar, byte[] raw, byte[] normalized, int width, int height) {
+        if (owners.size() != 14 || !ownsClosedSystemExtent(
+                score, notes, owners, bar, raw, normalized, width, height, true)) return false;
+        var region = score.measures().get(bar);
+        int clef = notes.get(owners.get(0)).clefBottomDiatonic();
+        for (int i = 0; i < owners.size(); i++)
+            if (!ordinary(notes.get(owners.get(i)), i < 6 ? 1 : 2, clef)) return false;
+        float left = region.left() * width;
+        float span = (region.right() - region.left()) * width;
+        float gap = (region.bottom() - region.top()) * height / 8.2f;
+        for (int i = 1; i < 6; i += 3) {
+            var note = notes.get(owners.get(i));
+            if (note.stemDirection() != -1) continue;
+            float x = left + span * note.positionInMeasure(), y = note.pageY() * height;
+            var split = SplitOpeningDownshaft.measure(raw, width, height, x, y, gap);
+            if (split != null && split.equals(SplitOpeningDownshaft.measure(normalized, width, height, x, y, gap)))
+                return WrappedEighthTriplets.provesClosedSystemMixedRails(raw, width, height, region, notes, owners)
+                        && WrappedEighthTriplets.provesClosedSystemMixedRails(
+                                normalized, width, height, region, notes, owners);
+        }
+        return false;
+    }
+
+    private static boolean restoreRuledOpeningShaft(
+            ScorePageInterpretation score, List<ScoreNoteEvent> notes, List<Integer> owners,
+            int measure, byte[] raw, byte[] normalized, int width, int height) {
+        if (owners.size() != 14 || normalized == null || normalized.length != raw.length) return false;
+        owners.sort(Comparator.comparingDouble(index -> notes.get(index).positionInMeasure()));
+        int first = owners.get(0);
+        var reported = notes.get(first);
+        if (reported.stemDirection() != 0 || reported.beamCount() != 2
+                || reported.staffStep() < 1 || reported.staffStep() > 5) return false;
+        var repaired = reported.withBeamAndStem(1, -1);
+        if (!ordinary(repaired, 1, reported.clefBottomDiatonic())) return false;
+        var bar = score.measures().get(measure);
+        float x = (bar.left() + (bar.right() - bar.left()) * reported.positionInMeasure()) * width;
+        float y = reported.pageY() * height, gap = (bar.bottom() - bar.top()) * height / 8.2f;
+        var shaft = RuledOpeningDownshaft.measure(raw, width, height, bar, x, y, gap);
+        if (shaft == null || !shaft.equals(
+                RuledOpeningDownshaft.measure(normalized, width, height, bar, x, y, gap))) return false;
+        notes.set(first, repaired);
+        if (ownsClosedSystemOpening(score, notes, owners, measure, raw, normalized, width, height))
+            return true;
+        notes.set(first, reported);
+        return false;
+    }
+
+    private static boolean restoreFadedDownstaff(
+            ScorePageInterpretation score, List<ScoreNoteEvent> notes, List<Integer> owners, int measure,
+            byte[] raw, byte[] normalized, int width, int height) {
+        if (owners.size() != 14) return false;
+        var bar = score.measures().get(measure);
+        int clef = notes.get(owners.get(0)).clefBottomDiatonic();
+        float left = bar.left() * width, span = (bar.right() - bar.left()) * width;
+        float gap = (bar.bottom() - bar.top()) * height / 8.2f;
+        var replacements = new HashMap<Integer, ScoreNoteEvent>();
+        for (int slot = 0; slot < owners.size(); slot++) {
+            int index = owners.get(slot);
+            var note = notes.get(index);
+            if (note.stemDirection() == 0 && slot >= 6) {
+                float x = left + span * note.positionInMeasure(), y = note.pageY() * height;
+                var stem = FadedTripletDownshaft.measure(raw, width, height, x, y, gap);
+                if (stem == null || !stem.equals(FadedTripletDownshaft.measure(normalized, width, height, x, y, gap)))
+                    return false;
+                note = note.withStemDirection(-1);
+                replacements.put(index, note);
+            }
+            if (note.stemDirection() != -1 || !ordinary(note, slot < 6 ? 1 : 2, clef)) return false;
+        }
+        if (replacements.size() < 2 || !ownsClosedSystemExtent(
+                score, notes, owners, measure, raw, normalized, width, height, false)) return false;
+        var candidate = new ArrayList<>(notes);
+        replacements.forEach(candidate::set);
+        if (!WrappedEighthTriplets.provesFadedDownstaffMixedRails(raw, width, height, bar, candidate, owners)
+                || !WrappedEighthTriplets.provesFadedDownstaffMixedRails(
+                        normalized, width, height, bar, candidate, owners)) return false;
+        replacements.forEach(notes::set);
+        return true;
+    }
+
+    private static boolean restoreInterruptedUpstaff(
+            ScorePageInterpretation score, List<ScoreNoteEvent> notes, List<Integer> owners,
+            int measure, byte[] raw, byte[] normalized, int width, int height) {
+        if (owners.size() != 14 || normalized == null || normalized.length != raw.length
+                || !ownsClosedSystemExtent(score, notes, owners, measure, raw, normalized, width, height)) return false;
+        var unknown = new ArrayList<Integer>();
+        int clef = notes.get(owners.get(0)).clefBottomDiatonic();
+        for (int i = 0; i < owners.size(); i++) {
+            int owner = owners.get(i);
+            var note = notes.get(owner);
+            if (i >= 6 && note.stemDirection() == 0) unknown.add(owner);
+            else if (note.stemDirection() != 1) return false;
+            if (!ordinary(note.withStemDirection(1), i < 6 ? 1 : 2, clef)) return false;
+        }
+        if (unknown.isEmpty() || unknown.size() > 2) return false;
+        var bar = score.measures().get(measure);
+        float gap = (bar.bottom() - bar.top()) * height / 8.2f;
+        var originalTrack = WrappedMeasureBoundaries.closedTripletStaff(raw, width, height, bar);
+        var normalizedTrack = WrappedMeasureBoundaries.closedTripletStaff(normalized, width, height, bar);
+        for (int owner : unknown) {
+            var note = notes.get(owner);
+            float x = (bar.left() + (bar.right() - bar.left()) * note.positionInMeasure()) * width;
+            float y = note.pageY() * height;
+            var shaft = InterruptedUpstaffShaft.measure(raw, width, height, x, y, gap, originalTrack);
+            if (shaft == null || !shaft.equals(InterruptedUpstaffShaft.measure(
+                    normalized, width, height, x, y, gap, normalizedTrack))) return false;
+        }
+        for (int owner : unknown) notes.set(owner, notes.get(owner).withStemDirection(1));
+        if (WrappedEighthTriplets.provesInterruptedUpstaffMixedRails(raw, width, height, bar, notes, owners)
+                && WrappedEighthTriplets.provesInterruptedUpstaffMixedRails(
+                        normalized, width, height, bar, notes, owners)) return true;
+        for (int owner : unknown) notes.set(owner, notes.get(owner).withStemDirection(0));
+        return false;
+    }
+
+    private static boolean restoreInitialSecondaryRail(
+            ScorePageInterpretation score, List<ScoreNoteEvent> notes, List<Integer> owners,
+            int measure, byte[] raw, byte[] normalized, int width, int height) {
+        if (owners.size() != 14 || !ownsClosedSystemExtent(
+                score, notes, owners, measure, raw, normalized, width, height)) return false;
+        int owner = owners.get(6);
+        var firstSixteenth = notes.get(owner);
+        if (firstSixteenth.beamCount() != 1 || firstSixteenth.stemDirection() != 1) return false;
+
+        // Check all four groups, including the second rail through the first sixteenth,
+        // before replacing the one conflicting beam count.
+        notes.set(owner, firstSixteenth.withBeamAndStem(2, 1));
+        if (ownsClosedSystemOpening(score, notes, owners, measure, raw, normalized, width, height)) return true;
+        notes.set(owner, firstSixteenth);
+        return false;
+    }
+
     private static boolean ownsClosedSystemOpening(
             ScorePageInterpretation score, List<ScoreNoteEvent> notes, List<Integer> owners,
             int bar, byte[] raw, byte[] normalized, int width, int height) {
@@ -393,18 +721,35 @@ final class EighthTripletsBeforeSixteenths {
         if (region.cadenceQuarterBeats() != 0 || gap < 10 || gap > 25
                 || (region.top() - previous.bottom()) * height < gap * 2.35f
                 || Math.abs(following.top() - region.top()) * height > gap * .40f
-                || boundaryPocket < gap * .55f || boundaryPocket > gap * 1.75f) return false;
+                // The two region edges are independently rounded to scan pixels.
+                || boundaryPocket + 1 < gap * .55f || boundaryPocket > gap * 1.75f) return false;
         owners.sort(Comparator.comparingDouble(i -> notes.get(i).positionInMeasure()));
         var first = notes.get(owners.get(0));
         var last = notes.get(owners.get(owners.size() - 1));
         if (first.positionInMeasure() < .035f || first.positionInMeasure() > .18f
                 || last.positionInMeasure() < .86f || last.positionInMeasure() > .985f) return false;
         float end = (region.left() + (region.right() - region.left()) * last.positionInMeasure()) * width;
+        if (boundaryPocket < gap * .55f)
+            return printedNarrowOpeningEdge(raw, width, height, region, following, end, gap)
+                    && printedNarrowOpeningEdge(normalized, width, height, region, following, end, gap);
         if (sampledEdge)
             return WrappedMeasureBoundaries.confirmsSampledClosingEdge(raw, width, height, region, end)
                     && WrappedMeasureBoundaries.confirmsSampledClosingEdge(normalized, width, height, region, end);
         return WrappedMeasureBoundaries.confirmsInitialStaffBarClosingEdge(raw, width, height, region, end)
                 && WrappedMeasureBoundaries.confirmsInitialStaffBarClosingEdge(normalized, width, height, region, end);
+    }
+
+    private static boolean printedNarrowOpeningEdge(byte[] ink, int width, int height,
+            MeasureRegion bar, MeasureRegion following, float lastX, float gap) {
+        float edge = (bar.right() + following.left()) * width * .5f;
+        if (edge - lastX < 1.15f * gap || edge - lastX > 2.2f * gap) return false;
+        float floor = bar.bottom() * height - gap * 2.1f;
+        var rules = PrintedDirectionStaff.printedRules(
+                ink, width, height, following.right() * width - 1.15f * gap, floor, gap);
+        if (rules == null || Math.abs(rules[0] - floor) > gap * .55f
+                || Math.abs(rules[1] - gap) > gap * .12f) return false;
+        var staff = new PlayingTechniqueDetector.Staff(rules[0] - 4 * rules[1], rules[0], rules[1], 0, 1);
+        return ClosedSixteenthPairBeforeHalf.ownedSeparator(ink, width, height, staff, edge);
     }
 
     private static boolean normalizeStraightOpening(

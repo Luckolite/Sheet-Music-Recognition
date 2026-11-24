@@ -26,6 +26,12 @@ final class PrintedBarlineStyles {
     static List<Style> capture(
             byte[] gray, int width, int height, List<MeasureRegion> measures,
             List<Integer> continuations) {
+        return capture(gray, null, width, height, measures, continuations);
+    }
+
+    static List<Style> capture(
+            byte[] gray, byte[] source, int width, int height, List<MeasureRegion> measures,
+            List<Integer> continuations) {
         if (gray == null || gray.length != (long) width * height || measures.isEmpty())
             return List.of();
         var staffs = RawStaffLineDetector.detect(gray, width, height);
@@ -60,8 +66,21 @@ final class PrintedBarlineStyles {
                 local = TerminalDirectionRails.read(
                         gray, width, height, right - gap * 2, hint, gap,
                         region.left(), region.right());
-            if (local == null) continue;
-            var style = styleAt(gray, width, height, boundary, right, interior, local);
+            var style = local == null ? null : styleAt(gray, width, height, boundary, right, interior, local, false);
+            float slot = right - region.left() * width;
+            if (style == null && source != null && source.length == gray.length && interior
+                    && region.cadenceQuarterBeats() == 1 && slot >= gap * 2.75f && slot <= gap * 4.25f
+                    && boundary - right >= gap * .35f && boundary - right <= gap * .71f) {
+                var rails = DottedDyadMeasureSeparator.localRails(
+                        gray, width, height, Math.round(right - .55f * gap), hint, gap);
+                var sourceRails = DottedDyadMeasureSeparator.localRails(
+                        source, width, height, Math.round(right - .55f * gap), hint, gap);
+                if (rails != null && sourceRails != null && Math.abs(rails[0] - sourceRails[0]) <= 1
+                        && Math.abs(rails[1] - sourceRails[1]) <= .25f
+                        && "light-light".equals(styleAt(gray, width, height, boundary, right, true, rails, true))
+                        && "light-light".equals(styleAt(source, width, height, boundary, right, true, sourceRails, true)))
+                    style = "light-light";
+            }
             if (style == null) continue;
             if (i > 0) {
                 var prior = measures.get(i - 1);
@@ -74,7 +93,7 @@ final class PrintedBarlineStyles {
     }
 
     private static String styleAt(byte[] gray, int width, int height, float boundary,
-            float regionRight, boolean interior, float[] rails) {
+            float regionRight, boolean interior, float[] rails, boolean compactCadence) {
         float gap = rails[1], bottom = rails[0], top = bottom - 4 * gap;
         int a = Math.round(top), b = Math.round(bottom);
         int left = Math.round(boundary - 1.1f * gap);
@@ -95,12 +114,14 @@ final class PrintedBarlineStyles {
         var outer = strokes.get(1);
         float spacing = outer.center() - thin.center();
         float mean = (outer.center() + thin.center()) * .5f;
+        float lightWidth = Math.max(3, gap * (compactCadence ? .46f : .28f));
         if (spacing < gap * .27f || spacing > gap * .9f
-                || thin.width() > Math.max(3, gap * .28f)
+                || thin.width() > lightWidth
                 || thin.first() == left || outer.last() == right
                 || Math.abs(mean - boundary) > gap * .66f
                 || Math.abs(outer.center() - regionRight) > gap * 1.25f
-                || !clearSeam(gray, width, (thin.last() + outer.first()) / 2, top, gap))
+                || !clearSeam(gray, width, (thin.last() + outer.first()) / 2, top, gap)
+                        && (interior || !clearTerminalSeam(gray, width, top, gap, thin, outer)))
             return null;
         if (!OmrMeasurePostProcessor.verticalRuleAt(gray, width, Math.round(thin.center()), a, b, gap)
                 || !OmrMeasurePostProcessor.verticalRuleAt(gray, width, Math.round(outer.center()), a, b, gap)
@@ -118,8 +139,8 @@ final class PrintedBarlineStyles {
             return repeat.get(thin.first(), outer.last() + 1).isEmpty()
                     ? "light-heavy" : null;
         }
-        return Math.abs(outer.width() - thin.width()) <= Math.max(1, gap * .11f)
-                        && outer.width() <= Math.max(3, gap * .28f)
+        return Math.abs(outer.width() - thin.width()) <= Math.max(1, gap * (compactCadence ? .18f : .11f))
+                        && outer.width() <= lightWidth
                 ? "light-light" : null;
     }
 
@@ -140,6 +161,16 @@ final class PrintedBarlineStyles {
             if ((gray[Math.round(top + (s + .5f) * gap) * width + x] & 255) < 205)
                 return false;
         return true;
+    }
+
+    /** Terminal stroke fringes can cover the left half of an otherwise open seam. */
+    private static boolean clearTerminalSeam(byte[] gray, int width, float top, float gap,
+            Stroke inner, Stroke outer) {
+        if (!endsStaff(gray, width, outer.last(), top, gap)) return false;
+        for (int x = inner.last() + 1; x < outer.first(); x++) {
+            if (clearSeam(gray, width, x, top, gap)) return true;
+        }
+        return false;
     }
 
     private static boolean endsStaff(byte[] gray, int width, int edge, float top, float gap) {

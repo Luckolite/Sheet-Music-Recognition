@@ -31,6 +31,46 @@ public final class DoubleSharpArmOwnershipTest {
     }
 
     @Test
+    public void semanticSpillTowardsTheNextStemDoesNotTurnTheCrossArmIntoAnAttack() throws Exception {
+        var plate = new Plate();
+        var scope = OmrScoreInterpreter.class;
+        var component = Class.forName(scope.getName() + "$Component");
+        var componentCtor = component.getDeclaredConstructor(
+                int.class, int.class, int.class, int.class, int.class, float.class, float.class);
+        componentCtor.setAccessible(true);
+        var arm = componentCtor.newInstance(
+                44, CROSS_X + 10, CROSS_X + 17, CROSS_Y, CROSS_Y + 7,
+                CROSS_X + 13.5f, CROSS_Y + 3.5f);
+        var owner = componentCtor.newInstance(
+                276, HEAD_X - 11, HEAD_X + 11, HEAD_Y - 8, HEAD_Y + 8,
+                (float) HEAD_X, (float) HEAD_Y);
+        var joined = componentCtor.newInstance(
+                191, CROSS_X, HEAD_X - 11, CROSS_Y, CROSS_Y + 20,
+                CROSS_X + 10f, CROSS_Y + 10f);
+        var candidate = Class.forName(scope.getName() + "$AccidentalCandidate")
+                .getDeclaredConstructor(component, byte.class);
+        candidate.setAccessible(true);
+        var candidates = List.of(candidate.newInstance(joined, (byte) 0));
+        var findStaff = scope.getDeclaredMethod(
+                "findStaffs", byte[].class, byte[].class, int.class, int.class, List.class);
+        findStaff.setAccessible(true);
+        var staffs = findStaff.invoke(null, plate.labels, plate.gray, WIDTH, HEIGHT, Plate.BARS);
+        var remove = scope.getDeclaredMethod(
+                "doubleSharpArmHeads", byte[].class, byte[].class, int.class, int.class,
+                List.class, List.class, List.class);
+        remove.setAccessible(true);
+        assertEquals(List.of(arm), remove.invoke(null, plate.gray, plate.gray.clone(),
+                WIDTH, HEIGHT, List.of(arm, owner), staffs, candidates));
+
+        var incomplete = plate.gray.clone();
+        for (int y = CROSS_Y; y < CROSS_Y + 8; y++) {
+            Arrays.fill(incomplete, y * WIDTH + CROSS_X, y * WIDTH + CROSS_X + 9, (byte) 255);
+        }
+        assertEquals(List.of(), remove.invoke(null, plate.gray, incomplete,
+                WIDTH, HEIGHT, List.of(arm, owner), staffs, candidates));
+    }
+
+    @Test
     public void missingInkInOnePlaneRetainsIndependentHeadEvidence() {
         var plate = new Plate();
         byte[] incomplete = plate.gray.clone();

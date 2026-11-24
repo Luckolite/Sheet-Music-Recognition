@@ -156,6 +156,8 @@ public class ScoreNoteEventKindTest {
         var pitched = source.withKind(ScoreNoteEvent.Kind.PITCHED);
         assertCopy(pitched, pitched.withWrittenAccidental(ScoreNoteEvent.ACCIDENTAL_FLAT),
                 Map.of("writtenAccidental", ScoreNoteEvent.ACCIDENTAL_FLAT));
+        assertCopy(source, source.withStaffStep(source.staffStep() + 1), Map.of("staffStep", source.staffStep() + 1));
+        assertCopy(source, source.withBeamAndStem(3, -1), Map.of("beamCount", 3, "stemDirection", -1));
         var touch = new ScoreNoteEvent.OpenStringTouch(4, .5f, 0);
         assertCopy(pitched, pitched.withHarmonicSemitones(24), Map.of("harmonicSemitones", 24));
         assertCopy(pitched, pitched.withOpenStringTouch(touch), Map.of("openStringTouch", touch));
@@ -172,6 +174,8 @@ public class ScoreNoteEventKindTest {
                 "Each copy method needs a retention control",
                 Set.of(
                         "withStemDirection",
+                        "withStaffStep",
+                        "withBeamAndStem",
                         "withTupletRatio",
                         "withBoundaryTies",
                         "withOctaveShift",

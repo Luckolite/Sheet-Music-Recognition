@@ -14,7 +14,7 @@ final class OpenStringHarmonics {
 
     private record Mark(float x, float y) {}
     private record Candidate(int owner, int step, ArtificialHarmonics.TouchHead head) {}
-    private record Pitch(int open, int sounding) {}
+    record Pitch(int open, int sounding) {}
     record Recovery(int owner, ScoreNoteEvent note, int openMidi, int touchMidi, int soundingMidi) {}
 
     static ScorePageInterpretation capture(
@@ -113,7 +113,7 @@ final class OpenStringHarmonics {
                 ? proof.shaft() : -1;
     }
 
-    private static int fourthPartnerShaft(byte[] ink, int width, int height, MeasureRegion region,
+    static int fourthPartnerShaft(byte[] ink, int width, int height, MeasureRegion region,
             ScoreNoteEvent base, float x) {
         if (x < 40 || x > width - 40) return -1;
         float nominal = (region.bottom() - region.top()) * height / 8.2f;
@@ -218,7 +218,7 @@ final class OpenStringHarmonics {
         return pitch == null ? -1 : pitch.sounding();
     }
 
-    private static Pitch sounding(int touch) {
+    static Pitch sounding(int touch) {
         Pitch pitch = null;
         for (int string : VIOLIN_STRINGS) {
             int partial = switch (touch - string) {

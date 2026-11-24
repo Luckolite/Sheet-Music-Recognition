@@ -65,7 +65,7 @@ class SharedFourthTests(unittest.TestCase):
             else:
                 for event in case['events']:
                     event['startBeat'] = 1.
-            self.assertEqual({}, musicxml._shared_artificial_fourths(case, source))
+            self.assertEqual(({}, {}), musicxml._shared_artificial_fourths(case, source))
 
     def test_incompatible_owner_remains_ineligible(self):
         page = shared_fourths()
@@ -84,7 +84,7 @@ class SharedFourthTests(unittest.TestCase):
                     fake = dict(alternative['events'][0], sourceNoteIndex=2,
                                 artificialHarmonicFourth=False, midi=85)
                     alternative['events'].append(fake)
-                self.assertEqual({},musicxml._shared_artificial_fourths(alternative, alternative['score']['notes']))
+                self.assertEqual(({}, {}), musicxml._shared_artificial_fourths(alternative, alternative['score']['notes']))
 
 if __name__=='__main__':
     unittest.main()

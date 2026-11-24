@@ -2,39 +2,49 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.github.luckolite.interpreter;
 
-/** An unbroken pair of rails meets all three independently owned downstems. */
+/** Unbroken beam rails connect independently owned stems. */
 final class LinkedFilledThirds {
     private LinkedFilledThirds() {}
 
     static boolean joined(byte[] gray, int width, float gap, int[] a, int[] b) {
-        return joined(gray, width, gap, a, b, false);
+        return joined(gray, width, gap, a, b, false, 1);
     }
 
     static boolean ends(byte[] gray, int width, float gap, int[] a, int[] b) {
-        return joined(gray, width, gap, a, b, true);
+        return joined(gray, width, gap, a, b, true, 1);
     }
 
-    private static boolean joined(byte[] gray, int width, float gap, int[] a, int[] b, boolean closing) {
+    static boolean joinedUp(byte[] gray, int width, float gap, int[] a, int[] b) {
+        return joined(gray, width, gap, a, b, false, -1);
+    }
+
+    static boolean endsUp(byte[] gray, int width, float gap, int[] a, int[] b) {
+        return joined(gray, width, gap, a, b, true, -1);
+    }
+
+    private static boolean joined(byte[] gray, int width, float gap, int[] a, int[] b,
+            boolean closing, int direction) {
         int span = b[0] - a[0];
         if (span < gap * 1.8f || span > gap * 3.15f
                 || Math.abs(a[1] - b[1]) > span * .29f) return false;
         int margin = Math.round(gap * .34f);
         int first = a[0] + margin, last = b[0] - margin;
         int radius = Math.max(2, Math.round(gap * .12f));
+        float paperFraction = direction < 0 && closing ? .30f : .35f;
         for (int outer = Math.round(gap * .16f); outer <= gap * .44f; outer++) {
             for (int separation = Math.round(gap * .62f); separation <= gap; separation++) {
                 int paired = 0, paper = 0;
                 for (int x = first; x <= last; x++) {
                     float projected = a[1] + (b[1] - a[1]) * (x - a[0]) / (float) span;
-                    if (thick(gray, width, x, Math.round(projected - outer), radius)
-                            && thick(gray, width, x, Math.round(projected - outer - separation), radius))
+                    if (thick(gray, width, x, Math.round(projected - direction * outer), radius)
+                            && thick(gray, width, x, Math.round(projected - direction * (outer + separation)), radius))
                         paired++;
-                    if (tone(gray, width, x, Math.round(projected - outer - .5f * separation)) > 170)
+                    if (tone(gray, width, x, Math.round(projected - direction * (outer + .5f * separation))) > 170)
                         paper++;
                 }
                 int attempted = last - first + 1;
-                if (paired >= attempted * .94f && paper >= attempted * .35f
-                        && (!closing || clearsEnd(gray, width, gap, a, b, outer, separation, radius)))
+                if (paired >= attempted * .94f && paper >= attempted * paperFraction
+                        && (!closing || clearsEnd(gray, width, gap, a, b, outer, separation, radius, direction)))
                     return true;
             }
         }
@@ -42,13 +52,13 @@ final class LinkedFilledThirds {
     }
 
     private static boolean clearsEnd(byte[] gray, int width, float gap, int[] a, int[] b,
-            int outer, int separation, int radius) {
+            int outer, int separation, int radius, int direction) {
         int count = 0, clear = 0;
         for (int x = b[0] + Math.round(gap * .30f); x < b[0] + Math.round(gap * 1.36f); x++) {
             float y = b[1] + (b[1] - a[1]) * (x - b[0]) / (float) (b[0] - a[0]);
             count++;
-            if (!thick(gray, width, x, Math.round(y - outer), radius)
-                    && !thick(gray, width, x, Math.round(y - outer - separation), radius)) clear++;
+            if (!thick(gray, width, x, Math.round(y - direction * outer), radius)
+                    && !thick(gray, width, x, Math.round(y - direction * (outer + separation)), radius)) clear++;
         }
         return clear >= count * .90f;
     }

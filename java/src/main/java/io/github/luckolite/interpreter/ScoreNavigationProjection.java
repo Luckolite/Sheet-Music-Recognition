@@ -255,13 +255,7 @@ public final class ScoreNavigationProjection {
                 }
                 for (var t : orderedTechniques)
                     if (inside(t.measureIndex(), run))
-                        techniques.add(
-                                new ScoreTechniqueChange(
-                                        run.map(t.measureIndex()),
-                                        t.positionInMeasure(),
-                                        t.staffIndex(),
-                                        t.staffCount(),
-                                        t.technique()));
+                        techniques.add(t.withMeasureIndex(run.map(t.measureIndex())));
             }
         }
         // An a-tempo checkpoint can refer to a ramp on an earlier source run. Select its

@@ -109,4 +109,30 @@ public final class InnerBeamShaftEndTest {
         for (int y = center - radius; y <= center + radius; y++)
             raw[y * WIDTH + x] = (byte) color;
     }
+    @Test
+    public void smallStaffTipAllowsCloserShaftsAndKeepsTheWholeMaskInside() {
+        byte[] fixture = new byte[WIDTH * HEIGHT];
+        Arrays.fill(fixture, (byte) 255);
+        int[] shorterTerminal = {108, 87, 1};
+        drawRails(fixture, EARLIER, PREVIOUS, false);
+        drawRails(fixture, PREVIOUS, shorterTerminal, false);
+        int[] fragment = IntStream.rangeClosed(102, 107)
+                .map(x -> (tip(PREVIOUS, shorterTerminal, x) - 5) * WIDTH + x).toArray();
+        assertEquals(false, InnerBeamShaftEnd.proves(
+                fixture, WIDTH, GAP, fragment, EARLIER, PREVIOUS, shorterTerminal));
+        assertEquals(true, InnerBeamShaftEnd.provesSmallStaffTip(
+                fixture, WIDTH, GAP, fragment, EARLIER, PREVIOUS, shorterTerminal));
+
+        int[] outside = Arrays.copyOf(fragment, fragment.length + 1);
+        outside[fragment.length] = 59 * WIDTH + 107;
+        fixture[outside[fragment.length]] = 0;
+        assertEquals(false, InnerBeamShaftEnd.provesSmallStaffTip(
+                fixture, WIDTH, GAP, outside, EARLIER, PREVIOUS, shorterTerminal));
+
+        for (int x = 43; x < 73; x++) paint(fixture, x, tip(EARLIER, PREVIOUS, x) - 17, 5, 255);
+        assertEquals(false, InnerBeamShaftEnd.provesSmallStaffTip(
+                fixture, WIDTH, GAP, fragment, EARLIER, PREVIOUS, shorterTerminal));
+    }
+
+
 }

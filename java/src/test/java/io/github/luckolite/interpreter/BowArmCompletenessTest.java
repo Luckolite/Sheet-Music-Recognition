@@ -156,7 +156,7 @@ public class BowArmCompletenessTest {
 
     static void up(int kind) {
         assertEquals(
-                List.of(new ScoreTechniqueChange(0, .5f, 0, 1, ScoreTechniqueChange.UP_BOW)),
+                List.of(new ScoreTechniqueChange(0, .5f, 0, 1, ScoreTechniqueChange.UP_BOW, ScoreTechniqueChange.BowPlacement.ABOVE)),
                 read(kind));
     }
 

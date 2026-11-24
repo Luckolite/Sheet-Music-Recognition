@@ -34,7 +34,7 @@ final class PrintedSlurFrames {
             List<PlayingTechniqueDetector.Staff> staffs,
             List<ScoreNoteEvent> notes,
             List<T> heads) {
-        return prepareInternal(gray, width, height, staffs, notes, heads, null);
+        return prepareInternal(gray, width, height, staffs, notes, heads, null, List.of());
     }
 
     static <T extends PrintedSlurOwners.Location> Result<T> prepareSupplemental(
@@ -45,6 +45,12 @@ final class PrintedSlurFrames {
             List<ScoreNoteEvent> notes,
             List<T> heads,
             Result<?> legacy) {
+        return prepareSupplemental(gray, width, height, staffs, notes, heads, legacy, List.of());
+    }
+
+    static <T extends PrintedSlurOwners.Location> Result<T> prepareSupplemental(
+            byte[] gray, int width, int height, List<PlayingTechniqueDetector.Staff> staffs,
+            List<ScoreNoteEvent> notes, List<T> heads, Result<?> legacy, List<MeasureRegion> measures) {
         return prepareInternal(
                 gray,
                 width,
@@ -52,7 +58,30 @@ final class PrintedSlurFrames {
                 staffs,
                 notes,
                 heads.stream().filter(h -> legacy.unboundOwners().contains(h.owner())).toList(),
-                legacy.unprovedStaffSlots());
+                legacy.unprovedStaffSlots(), measures);
+    }
+
+    private static MeasureRegion lastMeasure(List<MeasureRegion> measures,
+            PlayingTechniqueDetector.Staff staff, int height) {
+        if (staff.count() != 1) return null;
+        MeasureRegion last = null;
+        for (var measure : measures) {
+            if (measure.top() * height > staff.top() || measure.bottom() * height < staff.bottom())
+                continue;
+            if (last == null || measure.right() > last.right()) last = measure;
+        }
+        return last;
+    }
+
+    private static float[] provedTerminalHeadFrame(byte[] gray, int width, int height, float x,
+            MeasureRegion terminal, float[] surrounding) {
+        float gap = surrounding[1];
+        if (gap < 10 || gap > 24) return null;
+        float[] rules = PrintedDirectionStaff.printedRules(gray, width, height, x, surrounding[0], gap);
+        if (rules == null) rules = TerminalDirectionRails.read(gray, width, height, x,
+                surrounding[0], gap, terminal.left(), terminal.right());
+        return rules != null && Math.abs(rules[0] - surrounding[0]) <= gap * .15f
+                && Math.abs(rules[1] - gap) <= gap * .05f ? rules : null;
     }
 
     static <T extends PrintedSlurOwners.Location> Result<T> prepareInternal(
@@ -62,7 +91,7 @@ final class PrintedSlurFrames {
             List<PlayingTechniqueDetector.Staff> staffs,
             List<ScoreNoteEvent> notes,
             List<T> heads,
-            Set<Integer> supplementalSlots) {
+            Set<Integer> supplementalSlots, List<MeasureRegion> measures) {
         if (width <= 0 || height <= 0 || gray == null || gray.length != (long) width * height)
             throw new IllegalArgumentException("Invalid printed frame raster");
         Objects.requireNonNull(staffs);
@@ -103,6 +132,7 @@ final class PrintedSlurFrames {
         }
         var seen = new HashSet<Integer>();
         var unbound = new HashSet<Integer>();
+        int terminalChecks = 0;
         for (var head : heads) {
             if (head.owner() >= notes.size()
                     || !seen.add(head.owner())
@@ -122,7 +152,25 @@ final class PrintedSlurFrames {
                         || staff.count() != head.staffCount()) continue;
                 float[] local = track.at(head.x());
                 float predicted = local[0] - note.staffStep() * local[1] * .5f;
-                if (Math.abs(head.y() - predicted) > local[1] * .45f) continue;
+                float offset = head.y() - predicted;
+                if (Math.abs(offset) > local[1] * .45f) {
+                    if (supplementalSlots == null || staff.count() != 1
+                            || offset < 0 || offset > local[1] * .80f) continue;
+                    if (!track.verifiedAt(head.x())) {
+                        if (terminalChecks >= 8 || note.staffStep() < 13
+                                || note.measureIndex() < 0 || note.measureIndex() >= measures.size())
+                            continue;
+                        var last = lastMeasure(measures, staff, height);
+                        if (last == null || last != measures.get(note.measureIndex())
+                                || head.x() < last.left() * width || head.x() > last.right() * width)
+                            continue;
+                        terminalChecks++;
+                        local = provedTerminalHeadFrame(gray, width, height, head.x(), last, local);
+                        if (local == null) continue;
+                    }
+                    if (!OmrScoreInterpreter.compressedLedgerBeamPhase(gray, width, height,
+                            head.x(), head.y(), local[0], local[1], note.staffStep())) continue;
+                }
                 if (owner >= 0) {
                     owner = -2;
                     break;

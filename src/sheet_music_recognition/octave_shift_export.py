@@ -228,18 +228,19 @@ def apply(root, owned, measure_pages=None, printed_staff_spans=None):
             if type(shift) is not int or not -2 <= shift <= 2:
                 raise ValueError('Invalid retained octave shift')
             old = active.get(voice)
-            if old is not None and (old[0] != shift or old[1] != staff):
+            if old is not None:
                 previous = old[3]
-                prior_bar, next_bar = parents[previous], parents[note]
-                previous_page = source_page(prior_bar)
-                current_page = source_page(next_bar)
-                # End the previous page's octave at its last owned note when
-                # the same voice starts the next page with a different scope.
+                previous_page = source_page(parents[previous])
+                current_page = source_page(parents[note])
                 page_turn = (previous_page is not None and current_page is not None
                              and current_page > previous_page)
-                direction(previous if page_turn else note, old, True, after=page_turn)
-                used.remove(old[2])
-                del active[voice]
+                # Voice numbers can be reused across pages with no occurrence
+                # of that voice between them. A local octave cannot span the gap.
+                skipped_page = page_turn and current_page > previous_page + 1
+                if skipped_page or old[0] != shift or old[1] != staff:
+                    direction(previous if page_turn else note, old, True, after=page_turn)
+                    used.remove(old[2])
+                    del active[voice]
             if shift:
                 continuing = voice in active
                 number = numbers[voice]

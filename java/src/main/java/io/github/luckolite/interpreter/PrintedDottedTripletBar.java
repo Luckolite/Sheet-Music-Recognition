@@ -4,6 +4,7 @@ package io.github.luckolite.interpreter;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 
 /** Repairs a complete six-beat dotted-triplet bar with two proved borrowed beam heads. */
@@ -24,10 +25,17 @@ final class PrintedDottedTripletBar {
     static ScorePageInterpretation apply(
             ScorePageInterpretation score, ScoreMeterChange inherited,
             byte[] gray, byte[] raw, int width, int height) {
+        return apply(score, inherited, gray, raw, width, height, null);
+    }
+
+    static ScorePageInterpretation apply(
+            ScorePageInterpretation score, ScoreMeterChange inherited,
+            byte[] gray, byte[] raw, int width, int height, byte[] labels) {
         if (gray == null || gray.length != (long) width*height || width < 256 || height < 128)
             return score;
         var raster = new Raster(gray, width, height);
         var notes = score.notes();
+        var beams = score.beamSource();
         var perBar = new ArrayList<List<Head>>(score.measures().size());
         for (int i = 0; i < score.measures().size(); i++) perBar.add(new ArrayList<>());
         for (int owner = 0; owner < notes.size(); owner++) {
@@ -40,6 +48,7 @@ final class PrintedDottedTripletBar {
         var rewrite = new ScoreNoteEvent[notes.size()];
         var excludedRests = new ArrayList<ScoreRestEvent>();
         boolean changed = false;
+        var numberedOwners = new ArrayList<Head>();
         int nextMeter = 0;
         var meter = inherited;
         for (int barIndex=0; barIndex<perBar.size(); barIndex++) {
@@ -113,8 +122,24 @@ final class PrintedDottedTripletBar {
                 var lane = heads.stream().sorted(Comparator.comparingDouble(Head::x)).toList();
                 boolean openingSixFour = index == 0 && meter.numerator() == 6 && meter.measureIndex() == 0
                         && !score.meterChanges().isEmpty() && score.meterChanges().get(0).equals(meter);
-                if (qualifiedAliasedMonophonic(raster, new Raster(raw, width, height),
-                        score.measures(), index, lane, openingSixFour, false)) {
+                var original = new Raster(raw, width, height);
+                boolean internalSixFour = meter.numerator() == 6
+                        && provesInternalMeter(raw, gray, labels, width, height, score.measures(), index, notes, meter)
+                        && qualifiedAliasedMonophonic(raster, original, score.measures(),
+                                index, lane, false, true, true, -1);
+                if (internalSixFour) {
+                    var marks = dottedEngraving(raster, original, score.measures(), index, lane, true);
+                    if (!marks.isEmpty()) {
+                        var complete = completeDottedEngraving(beams, lane, heads, marks);
+                        if (complete != beams) numberedOwners.add(lane.get(1));
+                        beams = complete;
+                    }
+                }
+                if (internalSixFour || qualifiedAliasedMonophonic(raster, original,
+                        score.measures(), index, lane, openingSixFour, false)
+                        || meter.numerator() == 4
+                            && qualifiedStaffAttachedGroups(raster, new Raster(raw, width, height),
+                                    score.measures().get(index), lane)) {
                     for (int slot = 0; slot < lane.size(); slot++) {
                         var n = lane.get(slot);
                         rewrite[n.owner] = withRhythm(n.note, slot % 3 == 0 ? 1 : 0, slot % 3 == 1 ? 2 : 1, 3, 2);
@@ -134,6 +159,31 @@ final class PrintedDottedTripletBar {
                                 new Raster(raw, width, height),
                                 score.measures().get(barIndex),
                                 heads);
+                if (triplets == null && heads.size() == 13 && labels != null && labels.length == gray.length) {
+                    var kept = heads.stream().filter(h -> h.note.stemDirection() == -1)
+                            .sorted(Comparator.comparingDouble(Head::x)).toList();
+                    var masks = heads.stream().filter(h -> h.note.stemDirection() != -1).toList();
+                    if (kept.size() == 12 && masks.size() == 1 && staffAttachedHookGuest(masks.get(0).note)
+                            && qualifiedStaffAttachedGroups(raster, new Raster(raw, width, height),
+                                    score.measures().get(barIndex), kept, masks.get(0), labels)) {
+                        triplets = new ArrayList<>(kept.size());
+                        for (int slot = 0; slot < kept.size(); slot++) {
+                            var head = kept.get(slot);
+                            triplets.add(new Head(head.owner, withRhythm(head.note,
+                                    slot % 3 == 0 ? 1 : 0, slot % 3 == 1 ? 2 : 1, 3, 2), head.x, head.y));
+                        }
+                    }
+                }
+                if (triplets == null && heads.size() == 13
+                        && provesInternalMeter(raw, gray, labels, width, height, score.measures(), index, notes, meter)) {
+                    triplets = internalOpeningHookAlias(raster, new Raster(raw, width, height), score.measures(),
+                            index, heads);
+                    if (triplets != null) {
+                        var marks = dottedEngraving(raster, new Raster(raw, width, height),
+                                score.measures(), index, triplets, false);
+                        if (!marks.isEmpty()) beams = completeDottedEngraving(beams, triplets, heads, marks);
+                    }
+                }
                 if (triplets != null) {
                     for (var head : heads) remove[head.owner] = true;
                     for (int slot = 0; slot < triplets.size(); slot++) {
@@ -159,12 +209,22 @@ final class PrintedDottedTripletBar {
                 }
                 continue;
             }
-            boolean mixed = meter.numerator() == 4 && heads.size() == 16;
+            boolean mixed = meter.numerator() == 4 && (heads.size() == 15 || heads.size() == 16);
             if (mixed || meter.numerator() == 6 && heads.size() == 20) {
                 if (score.rests().stream().anyMatch(r -> r.measureIndex() == index)) continue;
             } else continue;
             if (mixed) {
-                var kept = qualifiedMixedRun(raster, score.measures().get(barIndex), heads);
+                var bar = score.measures().get(barIndex);
+                var kept = heads.size() == 16 ? qualifiedMixedRun(raster, bar, heads) : null;
+                boolean recoveredRibbon = kept == null;
+                if (recoveredRibbon && raw != null && raw.length == gray.length) {
+                    kept = mixedRibbonRun(raster, new Raster(raw, width, height), bar, heads);
+                    if (kept != null) {
+                        var projected = mixedRibbonBeams(beams, kept, heads);
+                        if (projected == beams) continue;
+                        beams = projected;
+                    }
+                }
                 if (kept == null) continue;
                 for (var head : heads) remove[head.owner] = true;
                 for (int slot = 0; slot < kept.size(); slot++) {
@@ -172,6 +232,8 @@ final class PrintedDottedTripletBar {
                     remove[head.owner] = false;
                     if (slot < 6)
                         rewrite[head.owner] = withTriplet(head.note, slot % 3 == 0 ? 1 : 0);
+                    else if (recoveredRibbon && (slot & 1) == 1)
+                        rewrite[head.owner] = withRhythm(head.note, 0, 3, 1, 1);
                 }
                 changed = true;
                 continue;
@@ -196,7 +258,10 @@ final class PrintedDottedTripletBar {
             owners.add(i);
             edited.add(rewrite[i]==null ? notes.get(i) : rewrite[i]);
         }
-        var changedNotes = score.withNotes(edited, owners);
+        var changedNotes = score.withBeamSource(beams).withNotes(edited, owners);
+        if (!numberedOwners.isEmpty()) changedNotes = changedNotes.withExpressiveEvents(
+                changedNotes.expressiveEvents().stream().filter(event ->
+                        numberedOwners.stream().noneMatch(owner -> numeralFermataAlias(event, owner, width))).toList());
         if (excludedRests.isEmpty()) return changedNotes;
         return changedNotes.withRests(
                 changedNotes.rests().stream().filter(rest -> !excludedRests.contains(rest)).toList());
@@ -590,6 +655,10 @@ final class PrintedDottedTripletBar {
     }
 
     private static boolean ordinaryRhythm(ScoreNoteEvent n) {
+        return ordinaryRhythm(n, false);
+    }
+
+    private static boolean ordinaryRhythm(ScoreNoteEvent n, boolean allowGraceAlias) {
         return n.kind() == ScoreNoteEvent.Kind.PITCHED
                 && n.staffIndex() == 0
                 && n.staffCount() == 1
@@ -602,7 +671,7 @@ final class PrintedDottedTripletBar {
                 && n.followingRestBeats() == 0
                 && !n.tiedFromPrevious()
                 && n.boundaryTies() == 0
-                && (n.articulations() & NoteOrnament.GRACE) == 0
+                && (allowGraceAlias || (n.articulations() & NoteOrnament.GRACE) == 0)
                 && n.clefBottomDiatonic() != ScoreNoteEvent.CLEF_UNKNOWN;
     }
 
@@ -714,6 +783,14 @@ final class PrintedDottedTripletBar {
                         || note.stemDirection() == 0
                                 && note.beamCount() == 2
                                 && note.unbeamedDurationBeats() == 0);
+    }
+
+    private static boolean staffAttachedHookGuest(ScoreNoteEvent note) {
+        return beamGuest(note)
+                || note.articulations() == NoteOrnament.GRACE && ordinaryRhythm(note, true)
+                        && note.augmentationDots() == 0 && note.stemDirection() == 1
+                        && note.beamCount() == 1 && note.unbeamedDurationBeats() == 0
+                        && note.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_FROM_KEY;
     }
 
     private static boolean ownsTripletBeamGuest(
@@ -832,6 +909,11 @@ final class PrintedDottedTripletBar {
         if (first == null || following == null || Math.abs(first.b.x - following.a.x) > gap * .14f
                 || Math.abs(first.b.y - following.a.y) > gap * .14f
                 || !downstemSecondaryHook(raster, track, a, b, c, gap)) return false;
+        return ownedShortHookMask(raster, track, b, mask, first, gap, .21f);
+    }
+
+    private static boolean ownedShortHookMask(
+            Raster raster, StaffPitchTrack track, Head b, Head mask, Bridge first, float gap, float tipTolerance) {
         int shaft = first.b.x;
         if (shaft - mask.x < gap * .30f || shaft - mask.x > gap * .85f
                 || mask.y - first.center(mask.x) < -gap * .95f
@@ -842,7 +924,7 @@ final class PrintedDottedTripletBar {
         if (reverse.size() != 1 || budget.refused()) return false;
         var witness = reverse.get(0);
         if (witness.direction() != -1 || shaft < witness.left() - 1 || shaft > witness.right() + 1
-                || Math.abs(witness.endY() - b.y) > gap * .21f) return false;
+                || Math.abs(witness.endY() - b.y) > gap * tipTolerance) return false;
 
         int x0 = Math.round(mask.x), y0 = Math.round(mask.y), radius = Math.round(gap * .53f);
         int core = Math.round(gap * .22f), visible = 0;
@@ -867,6 +949,12 @@ final class PrintedDottedTripletBar {
     private static boolean qualifiedAliasedMonophonic(
             Raster normal, Raster raw, List<MeasureRegion> regions, int index, List<Head> heads,
             boolean openingSixFour, boolean provedMask) {
+        return qualifiedAliasedMonophonic(normal, raw, regions, index, heads, openingSixFour, provedMask, false, -1);
+    }
+
+    private static boolean qualifiedAliasedMonophonic(
+            Raster normal, Raster raw, List<MeasureRegion> regions, int index, List<Head> heads,
+            boolean openingSixFour, boolean provedMask, boolean internalMeter, int verifiedHookOwner) {
         var bar = regions.get(index);
         if (bar.cadenceQuarterBeats() != 0) return false;
         float gap = (bar.bottom() - bar.top()) * normal.height / 8.2f;
@@ -903,17 +991,25 @@ final class PrintedDottedTripletBar {
         if (openingAlias ? aliases != 0 : aliases == 0 && !provedMask) return false;
         for (var raster : List.of(normal, raw)) {
             var track = staffTrack(raster, bar, gap);
-            if (track == null || !barline(raster, right, track.at(right))) return false;
-            if (!(openingAlias ? WrappedMeasureBoundaries.confirmsOpeningTripletBar(
+            if (track == null && internalMeter) track = WrappedMeasureBoundaries.verifiedTripletStaff(
+                    raster.ink, raster.width, raster.height, bar, true);
+            if (track == null) return false;
+            if (internalMeter) {
+                if (!WrappedMeasureBoundaries.confirmsInitialStaffBarClosingEdge(
+                        raster.ink, raster.width, raster.height, bar, heads.get(last).x, track)) return false;
+            } else if (!barline(raster, right, track.at(right)) || !(openingAlias ? WrappedMeasureBoundaries.confirmsOpeningTripletBar(
                     raster.ink, raster.width, raster.height, regions, heads.get(0).x, heads.get(last).x, true)
                     : barline(raster, left, track.at(left)))) return false;
             for (int i = 0; i < heads.size(); i += 3) {
                 var a = heads.get(i); var b = heads.get(i + 1); var c = heads.get(i + 2);
                 float local = track.at(b.x)[1];
                 int direction = b.note.stemDirection();
+                boolean nearDot = internalMeter && a.note.augmentationDots() == 0
+                        && b.note.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_FLAT
+                        && compactOffRuleDot(raster, track, a, local);
                 if (b.x - a.x < local * 1.9f || b.x - a.x > local * 3.85f
                         || c.x - b.x < local * 1.3f || c.x - b.x > local * 3.1f
-                        || !dot(raster, a, b, local)
+                        || !dot(raster, a, b, local) && !nearDot
                         || (dot(raster, b, c, local) && !(provedMask && flatOwnsTripletGap(raster, b, c, local)))
                         || !tripletPrimaryLink(raster, track, a, b, local, direction, provedMask)
                         || !tripletPrimaryLink(raster, track, b, c, local, direction, provedMask))
@@ -921,12 +1017,13 @@ final class PrintedDottedTripletBar {
                 if (openingAlias && i == 0 && !openingStaccatoTriplet(raster, track, a, b, c, local))
                     return false;
                 if (a.note.augmentationDots() == 2 && !oneDetachedAugmentationDot(raster, a, b.x, local)) return false;
-                if (provedMask && a.note.augmentationDots() == 0 && !detachedDot(raster, a, b.x, local))
+                if (provedMask && a.note.augmentationDots() == 0 && !nearDot && !detachedDot(raster, a, b.x, local))
                     return false;
                 if (provedMask && b.note.augmentationDots() == 1
                         && !neighborStaccatosOwnDot(raster, b, c, local))
                     return false;
-                if (b.note.beamCount() == 1 && !missedHook(raster, track, a, b, c, local)) return false;
+                if (b.note.beamCount() == 1 && b.owner != verifiedHookOwner
+                        && !missedHook(raster, track, a, b, c, local)) return false;
                 if (i + 3 < heads.size()) {
                     var following = heads.get(i + 3);
                     if (dot(raster, c, following, local)
@@ -937,6 +1034,262 @@ final class PrintedDottedTripletBar {
             }
         }
         return true;
+    }
+
+    private static List<Head> internalOpeningHookAlias(Raster normalized, Raster raw,
+            List<MeasureRegion> regions, int index, List<Head> candidates) {
+        var region = regions.get(index);
+        float estimatedGap = (region.bottom() - region.top()) * raw.height / 8.2f;
+        var order = candidates.stream().sorted(Comparator.comparingDouble(Head::x)).toList();
+        List<Head> result = null;
+        for (int slot = 1; slot + 2 < order.size(); slot += 3) {
+            var first = order.get(slot - 1);
+            var guest = order.get(slot);
+            var middle = order.get(slot + 1);
+            var last = order.get(slot + 2);
+            if (!staffAttachedHookGuest(guest.note) || middle.note.beamCount() != 1
+                    || middle.note.stemDirection() != -1
+                    || middle.x - guest.x < .8f * estimatedGap || middle.x - guest.x > 1.2f * estimatedGap)
+                continue;
+            if (!internalOpeningHook(normalized, region, first, middle, last, guest)
+                    || !internalOpeningHook(raw, region, first, middle, last, guest)) continue;
+            var retained = new ArrayList<>(order);
+            retained.remove(slot);
+            if (!qualifiedAliasedMonophonic(normalized, raw, regions, index, retained,
+                    false, true, true, middle.owner)) continue;
+            if (result != null) return null;
+            retained.set(slot, new Head(middle.owner, withRhythm(middle.note, 0, 2, 3, 2), middle.x, middle.y));
+            result = retained;
+        }
+        return result;
+    }
+
+    private static List<ScoreBeamSource.TupletMark> dottedEngraving(Raster normalized, Raster raw,
+            List<MeasureRegion> regions, int index, List<Head> lane, boolean numberedOpening) {
+        var bar = regions.get(index);
+        var marks = new ArrayList<ScoreBeamSource.TupletMark>();
+        for (var plane : List.of(raw, normalized)) {
+            var track = WrappedMeasureBoundaries.verifiedTripletStaff(plane.ink, plane.width, plane.height, bar, true);
+            if (track == null) return List.of();
+            var rows = UnnumberedTripletInk.sourceRows(bar, regions, plane.height);
+            for (int i = 0; i < lane.size(); i += 3) {
+                var a = lane.get(i);
+                var b = lane.get(i + 1);
+                var c = lane.get(i + 2);
+                float gap = track.at(b.x)[1];
+                var first = bridge(plane, track, a, b, gap, numberedOpening ? 9f : 5.4f);
+                var following = bridge(plane, track, b, c, gap, numberedOpening ? 9f : 5.4f);
+                var shafts = new ArrayList<PrintedBeamShafts.Shaft>();
+                var quota = new PrintedBeamShafts.Budget(180_000);
+                for (int slot = 0; slot < 3; slot++) {
+                    var head = lane.get(i + slot);
+                    var evidence = PrintedBeamShafts.at(plane.ink, plane.width, plane.height, head.x, head.y, gap, quota);
+                    if (quota.refused() || evidence.size() > 1) return List.of();
+                    if (evidence.size() == 1) shafts.add(evidence.get(0));
+                    else if (numberedOpening && first != null && following != null
+                            && Math.abs(first.b.x - following.a.x) <= .16f * gap
+                            && Math.abs(first.b.y - following.a.y) <= .18f * gap) {
+                        var tip = slot == 0 ? first.a : slot == 1 ? first.b : following.b;
+                        shafts.add(new PrintedBeamShafts.Shaft(tip.x, tip.x, Math.round(head.y), tip.y,
+                                tip.travel, List.of(new PrintedBeamShafts.Column(tip.x, tip.y))));
+                    } else return List.of();
+                }
+                if (first == null && numberedOpening) {
+                    var x = shafts.get(0);
+                    var y = shafts.get(1);
+                    if (x.direction() == 1 && y.direction() == 1
+                            && tripletPrimaryLink(plane, track, a, b, gap, -1, false)) {
+                        var lead = new Shaft(x.left(), x.endY(), 1, 1);
+                        var middle = new Shaft(y.left(), y.endY(), 1, 1);
+                        for (int inset = Math.round(.23f * gap); inset <= Math.round(.52f * gap); inset++) {
+                            var candidate = new Bridge(lead, middle, inset, gap);
+                            if (backwardHook(plane, track, candidate, .52f, 1.40f, .19f)) {
+                                first = candidate;
+                                break;
+                            }
+                        }
+                    }
+                }
+                if (first == null || !backwardHook(plane, track, first, .52f, 1.40f, .19f)) return List.of();
+                boolean numbered = numberedOpening && i == 0;
+                if (numbered) {
+                    if (!ruleCrossedOpeningThree(plane, track, first, b.x, gap)) return List.of();
+                } else {
+                    float[] x = {a.x, b.x, c.x}, y = {a.y, b.y, c.y};
+                    if (!UnnumberedTripletInk.clearWithTrackedBows(
+                            plane.ink, plane.width, plane.height, gap, x, y, shafts, rows, track)
+                            && !(numberedOpening && UnnumberedTripletInk.clearRuledFingeringBands(
+                                plane.ink, plane.width, plane.height, gap, x, y,
+                                Math.min(a.y, Math.min(b.y, c.y)), Math.max(a.y, Math.max(b.y, c.y)),
+                                shafts.stream().mapToInt(PrintedBeamShafts.Shaft::endY).min().orElseThrow(),
+                                shafts.stream().mapToInt(PrintedBeamShafts.Shaft::endY).max().orElseThrow(),
+                                rows, track))) return List.of();
+                }
+                if (plane == raw) marks.add(numbered ? ScoreBeamSource.TupletMark.NUMBERED
+                        : ScoreBeamSource.TupletMark.UNNUMBERED);
+            }
+        }
+        return List.copyOf(marks);
+    }
+
+    private static boolean numeralFermataAlias(ScoreExpressiveEvent e, Head owner, int width) {
+        var note = owner.note;
+        String target = "printed-attack:" + note.measureIndex() + ":" + note.staffIndex() + ":"
+                + note.staffCount() + ":" + Float.floatToIntBits(note.positionInMeasure());
+        return e.kind() == ScoreExpressiveEvent.Kind.FERMATA && e.targetEventId().filter(target::equals).isPresent()
+                && e.evidence().stream().allMatch(v -> "fermata-raw-ink".equals(v.sourceId())
+                    && Math.abs(v.visualX() * width - owner.x) < width * .003f);
+    }
+
+    private static boolean ruleCrossedOpeningThree(Raster plane, StaffPitchTrack track, Bridge beam,
+            float owner, float gap) {
+        if (beam.b.travel != -1) return false;
+        int l = Math.round(owner - .92f * gap), r = Math.round(owner + .95f * gap);
+        if (l - Math.round(gap) < 0 || r + Math.round(gap) >= plane.width) return false;
+        var rails = track.at(owner);
+        for (int index = 0; index < 5; index++) {
+            int rule = Math.round(rails[0] - index * rails[1]);
+            float clearance = beam.center(owner) - rule;
+            if (clearance < .8f * gap || clearance > 1.28f * gap) continue;
+            int first = rule, last = rule;
+            while (first > rule - 2 && continuousNumberRule(plane, l, r, first - 1)) first--;
+            while (last < rule + 2 && continuousNumberRule(plane, l, r, last + 1)) last++;
+            if (last - first + 1 < 2 || last - first + 1 > .23f * gap
+                    || !continuousNumberRule(plane, l, r, rule)) continue;
+            int top = Math.round(first - .82f * gap);
+            int bottom = Math.min(Math.round(last + .56f * gap), Math.round(beam.center(owner) - .38f * gap));
+            if (top < 0 || bottom >= plane.height || last >= bottom) continue;
+            var upper = RawNumeralComponents.captureLongWindow(
+                    plane.ink, plane.width, plane.height, l, top, r, first - 1, 145).components().stream()
+                    .filter(g -> g.size() >= gap * gap * .065f).toList();
+            if (upper.size() != 2) continue;
+            var curl = upper.stream().max(Comparator.comparingInt(g -> g.size())).orElseThrow();
+            var cap = upper.get(0) == curl ? upper.get(1) : upper.get(0);
+            if (curl.left <= l || curl.right >= r || curl.top <= top || curl.bottom != first - 1
+                    || curl.right - curl.left + 1 < .73f * gap || curl.bottom - curl.top + 1 < .59f * gap
+                    || cap.right - cap.left + 1 > .38f * gap || cap.bottom - cap.top + 1 > .54f * gap
+                    || Math.abs((cap.left + cap.right) * .5f - owner) > .25f * gap
+                    || cap.bottom > first - .25f * gap) continue;
+            for (var lower : RawNumeralComponents.captureLongWindow(
+                    plane.ink, plane.width, plane.height, l, last + 1, r, bottom, 145).components()) {
+                if (lower.left <= l || lower.right >= r || lower.top != last + 1
+                        || lower.right - lower.left + 1 < .83f * gap || lower.right - lower.left + 1 > 1.24f * gap
+                        || lower.bottom - lower.top + 1 < .43f * gap || Math.abs(lower.right - curl.right) > .25f * gap)
+                    continue;
+                int pocketRows = 0;
+                for (int y = lower.top; y < lower.bottom; y++) {
+                    for (int x = lower.left + 2; x < lower.right - 2; x++) {
+                        if (!plane.dark(x - 1, y) || plane.dark(x, y)) continue;
+                        int right = x + 1;
+                        while (right < lower.right && !plane.dark(right, y)) right++;
+                        if (right - x >= 2 && right - x <= .34f * gap && right < lower.right) {
+                            pocketRows++;
+                            break;
+                        }
+                    }
+                }
+                if (pocketRows >= 2) return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean continuousNumberRule(Raster plane, int left, int right, int row) {
+        int ink = 0;
+        for (int x = left - 4; x <= right + 4; x++) if (plane.dark(x, row)) ink++;
+        return ink >= .94f * (right - left + 9);
+    }
+
+    private static ScoreBeamSource completeDottedEngraving(
+            ScoreBeamSource source, List<Head> lane, List<Head> all, List<ScoreBeamSource.TupletMark> marks) {
+        var anchors = lane.stream().map(h -> source.noteOrigins().get(h.owner).orElse(null)).toList();
+        if (anchors.contains(null)) return source;
+        int page = anchors.get(0).pageIndex();
+        if (anchors.stream().anyMatch(a -> a.pageIndex() != page)) return source;
+        var local = new HashSet<ScoreBeamSource.Anchor>();
+        for (var h : all)
+            if (!source.noteOrigins().get(h.owner).map(local::add).orElse(true)) return source;
+        var used = new HashSet<>(local);
+        for (var origin : source.noteOrigins())
+            if (origin.isPresent() && local.contains(origin.get()) && !used.remove(origin.get())) return source;
+        var groups = new ArrayList<ScoreBeamSource.Group>();
+        for (var group : source.groups()) {
+            var members = group.columns().stream().flatMap(c -> c.members().stream()).toList();
+            if (members.stream().noneMatch(local::contains)) groups.add(group);
+            else if (!local.containsAll(members) || group.tupletMark() != null) return source;
+        }
+        var detached = new ArrayList<ScoreBeamSource.Column>();
+        for (var column : source.detachedColumns()) {
+            if (column.members().stream().noneMatch(local::contains)) detached.add(column);
+            else if (!local.containsAll(column.members())) return source;
+        }
+        for (int i = 0; i < anchors.size(); i += 3) {
+            var columns = anchors.subList(i, i + 3).stream().map(a -> new ScoreBeamSource.Column(List.of(a))).toList();
+            String id = "printed-beam:" + page + ":" + anchors.get(i).noteIndex();
+            if (groups.stream().anyMatch(g -> g.id().equals(id))) return source;
+            var hooks = List.of(new ScoreBeamSource.Hook(1, 2, ScoreBeamSource.Direction.BACKWARD));
+            groups.add(new ScoreBeamSource.Group(id, columns, List.of(1, 1), hooks, marks.get(i / 3)));
+        }
+        return new ScoreBeamSource(groups, detached, source.noteOrigins());
+    }
+
+    private static boolean internalOpeningHook(Raster plane, MeasureRegion bar, Head a, Head b, Head c,
+            Head guest) {
+        var track = WrappedMeasureBoundaries.verifiedTripletStaff(plane.ink, plane.width, plane.height, bar, true);
+        if (track == null) return false;
+        float gap = track.at(b.x)[1];
+        var first = bridge(plane, track, a, b, gap);
+        var second = bridge(plane, track, b, c, gap);
+        if (first == null || second == null || Math.abs(first.b.x - second.a.x) > .14f * gap
+                || Math.abs(first.b.y - second.a.y) > .14f * gap
+                || !ownedShortHookMask(plane, track, b, guest, first, gap, .36f)) return false;
+        return backwardHook(plane, track, first, .78f, 1.28f, .20f);
+    }
+
+    private static boolean backwardHook(Raster plane, StaffPitchTrack track, Bridge first,
+            float minDepth, float maxDepth, float ruleMargin) {
+        // A short ledge attaches to the middle stem, inward from the primary beam.
+        float gap = first.gap;
+        int shaft = first.b.x, tip = Math.round(first.center(shaft));
+        float slope = (first.b.y - first.a.y) / (float) (first.b.x - first.a.x);
+        int near = Math.round(.27f * gap), far = Math.round(.62f * gap), remote = Math.round(1.17f * gap);
+        for (int d = Math.round(minDepth * gap); d <= Math.round(maxDepth * gap); d++) {
+            int depth = -first.b.travel * d;
+            float y = tip - slope * far + depth;
+            if (!nearRule(track.at(shaft - far), y, ruleMargin)
+                    && hookCore(plane, shaft, tip, slope, depth, near, far)
+                    && !hookCore(plane, shaft, tip, slope, depth, remote, remote + 2)) return true;
+        }
+        return false;
+    }
+
+    private static boolean provesInternalMeter(byte[] raw, byte[] normalized, byte[] labels, int width,
+            int height, List<MeasureRegion> bars, int index, List<ScoreNoteEvent> notes, ScoreMeterChange meter) {
+        if (labels == null || labels.length != raw.length || index < 1 || meter.measureIndex() != index)
+            return false;
+        var bar = bars.get(index);
+        float gap = (bar.bottom() - bar.top()) * height / 8.2f;
+        return (bar.top() - bars.get(index - 1).bottom()) * height > 2f * gap
+                && MeterFontMatcher.standaloneReadings(labels, raw, width, height, bars, notes).contains(meter)
+                && MeterFontMatcher.standaloneReadings(labels, normalized, width, height, bars, notes).contains(meter);
+    }
+
+    private static boolean compactOffRuleDot(Raster plane, StaffPitchTrack track, Head head, float gap) {
+        if (!nearRule(track.at(head.x), head.y, .13f)) return false;
+        int left = Math.round(head.x + .60f * gap), right = Math.round(head.x + 1.05f * gap);
+        int top = Math.round(head.y - .93f * gap), bottom = Math.round(head.y - .36f * gap);
+        if (left < 0 || top < 0 || right >= plane.width || bottom >= plane.height) return false;
+        var glyphs = RawNumeralComponents.captureLongWindow(
+                plane.ink, plane.width, plane.height, left, top, right, bottom, 155).components();
+        int found = 0;
+        for (var g : glyphs) {
+            int w = g.right - g.left + 1, h = g.bottom - g.top + 1;
+            if (g.left <= left || g.right >= right || g.top <= top || g.bottom >= bottom
+                    || w < .23f * gap || h < .23f * gap || w > .49f * gap || h > .49f * gap
+                    || g.size() < .70f * w * h) continue;
+            found++;
+        }
+        return found == 1;
     }
 
     private static boolean tripletPrimaryLink(
@@ -1040,6 +1393,120 @@ final class PrintedDottedTripletBar {
                 && hasOnlySecondaryHook(raster.ink, raster.width, raster.height, first.get(0), middle.get(0), gap);
     }
 
+    /** Recheck directly owned hooks and ledger contact before accepting beam-count aliases. */
+    private static boolean qualifiedStaffAttachedGroups(Raster normal, Raster raw, MeasureRegion bar,
+            List<Head> heads) {
+        return qualifiedStaffAttachedGroups(normal, raw, bar, heads, null, null);
+    }
+
+    private static boolean qualifiedStaffAttachedGroups(Raster normal, Raster raw, MeasureRegion bar,
+            List<Head> heads, Head mask, byte[] labels) {
+        if (bar.cadenceQuarterBeats() != 0) return false;
+        float estimate = (bar.bottom() - bar.top()) * raw.height / 8.2f;
+        float left = bar.left() * raw.width, right = bar.right() * raw.width;
+        if (estimate < 10 || estimate > 26 || right - left < estimate * 23 || right - left > estimate * (mask == null ? 33 : 36)
+                || heads.get(0).x - left < estimate * .65f
+                || right - heads.get(heads.size() - 1).x < estimate * .75f) return false;
+        int clef = heads.get(0).note.clefBottomDiatonic();
+        int corrections = 0;
+        for (int i = 0; i < heads.size(); i++) {
+            var note = heads.get(i).note;
+            if (!ordinary(note) || note.clefBottomDiatonic() != clef || note.unbeamedDurationBeats() != 0
+                    || note.stemDirection() != -1 || (note.augmentationDots() != (i % 3 == 0 ? 1 : 0)
+                            && !(mask != null && i == 0 && note.augmentationDots() == 0)))
+                return false;
+            if (note.beamCount() == (i % 3 == 1 ? 2 : 1)) continue;
+            if (i % 3 == 0 || note.beamCount() < 1 || note.beamCount() > 2 || ++corrections > 2) return false;
+        }
+        if (corrections == 0) return false;
+        for (Raster plane : List.of(normal, raw)) {
+            var track = staffTrack(plane, bar, estimate);
+            if (track == null || !barline(plane, left, track.at(left)) || !barline(plane, right, track.at(right)))
+                return false;
+            var shafts = new ArrayList<PrintedBeamShafts.Shaft>();
+            var budget = new PrintedBeamShafts.Budget(300_000);
+            boolean longShaft = false;
+            for (var head : heads) {
+                float gap = track.at(head.x)[1];
+                var owned = PrintedBeamShafts.at(plane.ink, plane.width, plane.height, head.x, head.y, gap, budget);
+                if (owned.isEmpty() && mask != null && !longShaft && !budget.refused()) {
+                    var contrast = new PrintedBeamShaftPixels.Frame(
+                            plane.ink, plane.ink, plane.width, plane.height, 0, budget::take, true);
+                    owned = PrintedBeamShafts.atAll(
+                            plane.ink, plane.width, plane.height, head.x, head.y, gap, budget, contrast);
+                    if (owned.size() != 1 || owned.get(0).endY() - head.y < gap * 7) return false;
+                    longShaft = true;
+                }
+                if (owned.size() != 1 || owned.get(0).direction() != 1 || budget.refused()) return false;
+                shafts.add(owned.get(0));
+            }
+            boolean hasRuledDot = false;
+            int maskOwners = 0;
+            for (int i = 0; i < heads.size(); i += 3) {
+                var a = heads.get(i);
+                var b = heads.get(i + 1);
+                var c = heads.get(i + 2);
+                float gap = track.at(b.x)[1];
+                if (b.x - a.x < gap * 1.9f || b.x - a.x > gap * 3.8f
+                        || c.x - b.x < gap * 1.3f || c.x - b.x > gap * 3.1f
+                        || !dot(plane, a, b, gap)
+                        || !WrappedEighthTriplets.matchesBeamRails(plane.ink, plane.width, plane.height,
+                                shafts.get(i), shafts.get(i + 1), gap, 1)
+                        || !WrappedEighthTriplets.matchesBeamRails(plane.ink, plane.width, plane.height,
+                                shafts.get(i + 1), shafts.get(i + 2), gap, 1)
+                        || !staffAttachedSecondaryHook(plane, track, shafts.get(i),
+                                shafts.get(i + 1), shafts.get(i + 2), gap)) return false;
+                if (dot(plane, b, c, gap)) {
+                    var core = WrappedTripletDotInk.uniqueCore(plane.ink, plane.width, plane.height, b.x, b.y,
+                            c.x, gap);
+                    if (core == null || !(WrappedEighthTriplets.headConnectedLedger(
+                            plane.ink, plane.width, plane.height, b.x, b.y, core, gap, .38f)
+                            || mask != null && c.note.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_NATURAL
+                                && WrappedEighthTriplets.naturalOwnsDot(
+                                        plane.ink, labels, plane.width, plane.height, core, c.x, c.y, gap)))
+                        return false;
+                    hasRuledDot = true;
+                }
+                if (mask != null && mask.x > a.x && mask.x < b.x) {
+                    var first = shaftTip(shafts.get(i));
+                    var second = shaftTip(shafts.get(i + 1));
+                    var bridge = new Bridge(first, second, gap * .20f, gap);
+                    if (!ownedShortHookMask(plane, track, b, mask, bridge, gap, .27f)) return false;
+                    maskOwners++;
+                }
+                if (i + 3 < heads.size() && !SeparateBeamGroups.between(
+                        plane.ink, plane.width, plane.height, c.x, c.y,
+                        heads.get(i + 3).x, heads.get(i + 3).y, gap)
+                        && !WrappedEighthTriplets.matchesBeamRails(plane.ink, plane.width, plane.height,
+                                shafts.get(i + 2), shafts.get(i + 3), gap, 0)) return false;
+            }
+            // A short hook can mimic a note even when every owning shaft has its ordinary length.
+            if ((mask == null || longShaft) && !hasRuledDot || mask != null && maskOwners != 1)
+                return false;
+        }
+        return true;
+    }
+
+    private static Shaft shaftTip(PrintedBeamShafts.Shaft source) {
+        return new Shaft((source.left() + source.right()) / 2, source.endY(), source.direction(), 1);
+    }
+
+    private static boolean staffAttachedSecondaryHook(Raster plane, StaffPitchTrack track,
+            PrintedBeamShafts.Shaft first, PrintedBeamShafts.Shaft middle, PrintedBeamShafts.Shaft last, float gap) {
+        float slope = (last.endY() - first.endY()) / (float) (last.left() - first.left());
+        int near = Math.round(gap * .28f), far = Math.round(gap * .63f), remote = Math.round(gap * 1.07f);
+        for (var shaft : middle.columns()) {
+            int x = shaft.x(), tip = shaft.endY();
+            for (int depth = Math.round(gap * .80f); depth <= Math.round(gap * 1.28f); depth++) {
+                int y = Math.round(tip - slope * far) - depth;
+                if (!nearRule(track.at(x - far), y, .18f)
+                        && hookCore(plane, x, tip, slope, -depth, near, far)
+                        && !hookCore(plane, x, tip, slope, -depth, remote, remote + 2)) return true;
+            }
+        }
+        return false;
+    }
+
     /** Four separate dotted triplets fill a closed common-time bar. */
     private static boolean qualifiedFourGroups(Raster corrected, Raster raw, MeasureRegion bar, List<Head> heads) {
         float gap = (bar.bottom() - bar.top()) * raw.height / 8.2f;
@@ -1050,13 +1517,17 @@ final class PrintedDottedTripletBar {
                 || right - heads.get(11).x < gap * .75f || right - heads.get(11).x > gap * 3.15f)
             return false;
         int clef = heads.get(0).note.clefBottomDiatonic();
+        int unreportedDot = -1;
         for (int i = 0; i < heads.size(); i++) {
             var note = heads.get(i).note;
             int slot = i % 3;
             if (!ordinary(note) || note.unbeamedDurationBeats() != 0
                     || note.clefBottomDiatonic() != clef || note.beamCount() != (slot == 1 ? 2 : 1)
-                    || note.stemDirection() != heads.get(i - slot).note.stemDirection()
-                    || slot == 0 && note.augmentationDots() < 1) return false;
+                    || note.stemDirection() != heads.get(i - slot).note.stemDirection()) return false;
+            if (slot == 0 && note.augmentationDots() == 0) {
+                if (unreportedDot >= 0) return false;
+                unreportedDot = i;
+            }
         }
         for (Raster plane : List.of(raw, corrected)) {
             var track = staffTrack(plane, bar, gap);
@@ -1081,11 +1552,22 @@ final class PrintedDottedTripletBar {
                 if (following.x - c.x < local * 1.65f || following.x - c.x > local * 3.2f
                         || dot(plane, c, following, local)
                         || !SeparateBeamGroups.between(
-                                plane.ink, plane.width, plane.height, c.x, c.y, following.x, following.y, local))
+                                plane.ink, plane.width, plane.height, c.x, c.y, following.x, following.y, local)
+                                  && (i + 3 != unreportedDot || !provesTripletRailGap(plane, c, following, local)))
                     return false;
             }
         }
         return true;
+    }
+
+    private static boolean provesTripletRailGap(Raster plane, Head left, Head right, float gap) {
+        var budget = new PrintedBeamShafts.Budget(60_000);
+        var before = PrintedBeamShafts.at(plane.ink, plane.width, plane.height, left.x, left.y, gap, budget);
+        var after = PrintedBeamShafts.at(plane.ink, plane.width, plane.height, right.x, right.y, gap, budget);
+        return !budget.refused() && before.size() == 1 && after.size() == 1
+                && before.get(0).direction() == after.get(0).direction()
+                && WrappedEighthTriplets.matchesBeamRails(
+                        plane.ink, plane.width, plane.height, before.get(0), after.get(0), gap, 0);
     }
 
     /** Two separated dotted triplets followed by four dotted-sixteenth and hook pairs. */
@@ -1222,6 +1704,210 @@ final class PrintedDottedTripletBar {
         return safe;
     }
 
+    /** Two separated dotted triplets precede two double-rail quartets with reversed beam masks. */
+    private static List<Head> mixedRibbonRun(
+            Raster corrected, Raster raw, MeasureRegion bar, List<Head> row) {
+        var kept = row.stream().filter(h -> h.note.stemDirection() == -1)
+                .sorted(Comparator.comparingDouble(Head::x)).toList();
+        var fragments = row.stream().filter(h -> h.note.stemDirection() == 1)
+                .sorted(Comparator.comparingDouble(Head::x)).toList();
+        float gap = (bar.bottom() - bar.top()) * raw.height / 8.2f;
+        float left = bar.left() * raw.width, right = bar.right() * raw.width;
+        if (kept.size() != 14 || fragments.isEmpty() || fragments.size() > 2 || bar.cadenceQuarterBeats() != 0
+                || gap < 10 || gap > 27 || right - left < gap * 36 || right - left > gap * 46
+                || kept.get(0).x - left < gap * 1.7f || kept.get(0).x - left > gap * 3.35f
+                || right - kept.get(kept.size() - 1).x < gap || right - kept.get(kept.size() - 1).x > gap * 2.4f)
+            return null;
+        int clef = kept.get(0).note.clefBottomDiatonic(), absentLead = 0, missingHooks = 0;
+        for (int i = 0; i < kept.size(); i++) {
+            var head = kept.get(i);
+            var n = head.note;
+            if (!ordinaryRhythm(n) || n.clefBottomDiatonic() != clef || n.unbeamedDurationBeats() != 0)
+                return null;
+            if (i > 0) {
+                float advance = head.x - kept.get(i - 1).x;
+                if (advance < gap * 1.65f || advance > gap * 4.4f) return null;
+            }
+            if (i < 6) {
+                int slot = i % 3;
+                if (n.beamCount() != (slot == 1 ? 2 : 1) || n.augmentationDots() > (slot == 0 ? 1 : 0))
+                    return null;
+                if (slot == 0 && n.augmentationDots() == 0) absentLead++;
+            } else {
+                boolean longValue = (i & 1) == 0;
+                if (n.augmentationDots() != (longValue ? 1 : 0)
+                        || (longValue ? n.beamCount() != 2 : n.beamCount() < 1 || n.beamCount() > 3))
+                    return null;
+                if (!longValue && n.beamCount() < 3) missingHooks++;
+            }
+        }
+        boolean singleHook = fragments.size() == 1;
+        if (absentLead != (singleHook ? 0 : 1) || missingHooks < 1) return null;
+        for (int i = 0; i < fragments.size(); i++) {
+            var n = fragments.get(i).note;
+            if (!ordinaryRhythm(n) || n.clefBottomDiatonic() != clef || n.augmentationDots() != 0
+                    || n.articulations() != 0 || n.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_FROM_KEY
+                    || n.beamCount() != (singleHook ? 2 : i == 0 ? 1 : 0) || n.unbeamedDurationBeats() != i) return null;
+        }
+        return provesMixedRibbon(corrected, bar, kept, fragments, gap)
+                && provesMixedRibbon(raw, bar, kept, fragments, gap) ? kept : null;
+    }
+
+    private static boolean provesMixedRibbon(Raster p, MeasureRegion bar, List<Head> row,
+            List<Head> fragments, float gap) {
+        var track = staffTrack(p, bar, gap);
+        float right = bar.right() * p.width;
+        if (track == null || !barline(p, right, track.at(right))) return false;
+        gap = track.at((bar.left() + bar.right()) * p.width * .5f)[1];
+        var budget = new PrintedBeamShafts.Budget(560_000);
+        var shafts = new ArrayList<PrintedBeamShafts.Shaft>();
+        for (var h : row) {
+            var actual = PrintedBeamShafts.at(p.ink, p.width, p.height, h.x, h.y, gap, budget);
+            if (actual.size() != 1 || actual.get(0).direction() != 1 || budget.refused())
+                return false;
+            shafts.add(actual.get(0));
+        }
+        for (int i = 1; i < row.size(); i++) {
+            var a = shafts.get(i - 1);
+            var b = shafts.get(i);
+            int rails = i == 3 || i == 6 || i == 10 ? 0 : i < 6 ? 1 : 2;
+            if (!WrappedEighthTriplets.matchesBeamRails(p.ink, p.width, p.height, a, b, gap, rails))
+                return false;
+            if (i < 6 && i % 3 == 1) {
+                var first = row.get(i - 1);
+                var middle = row.get(i);
+                var last = row.get(i + 1);
+                if (!(first.note.augmentationDots() == 1
+                                ? detachedDot(p, first, middle.x, gap)
+                                : highDetachedDot(p, track, first, middle, gap))
+                        || dot(p, middle, last, gap)
+                        || !(downstemSecondaryHook(p, track, first, middle, last, gap)
+                                || staffAttachedSecondaryHook(p, track, a, b, shafts.get(i + 1), gap)))
+                    return false;
+            } else if (i >= 6 && (i & 1) == 1) {
+                if (!dot(p, row.get(i - 1), row.get(i), gap)
+                        || !(OwnedTertiaryBeamlets.provesBackwardHookForShafts(
+                                        p.ink, p.width, p.height, b, a, gap)
+                                || ClosedDottedHookCadence.staffJoinedBackwardHook(
+                                        p.ink, p.width, p.height, b, gap))) return false;
+            }
+        }
+        if (fragments.size() == 1) {
+            var fragment = fragments.get(0);
+            return staffJoinedTertiaryOwns(p, track, fragment, row.get(9), shafts.get(9), gap, budget)
+                    ^ staffJoinedTertiaryOwns(p, track, fragment, row.get(13), shafts.get(13), gap, budget);
+        }
+        int proved = 0;
+        for (int i : new int[] {9, 13}) {
+            var fragment = fragments.get(proved);
+            if (!reversedRibbonOwns(p, fragment, row.get(i), shafts.get(i), gap, budget)) return false;
+            proved++;
+        }
+        return true;
+    }
+
+    /** The staff and a backward third-rail hook can resemble a second head on one shaft. */
+    private static boolean staffJoinedTertiaryOwns(
+            Raster p, StaffPitchTrack track, Head fragment, Head owner,
+            PrintedBeamShafts.Shaft shaft, float gap, PrintedBeamShafts.Budget budget) {
+        int axis = (shaft.left() + shaft.right()) / 2;
+        float inset = axis - fragment.x, depth = shaft.endY() - fragment.y;
+        float separation = fragment.y - owner.y;
+        if (inset < gap * .36f || inset > gap * .69f
+                || depth < gap * 1.36f || depth > gap * 1.85f
+                || separation < gap * 2.55f || separation > gap * 3.2f
+                || !ClosedDottedHookCadence.staffJoinedBackwardHook(
+                        p.ink, p.width, p.height, shaft, gap)) return false;
+        var apparent = PrintedBeamShafts.at(p.ink, p.width, p.height, fragment.x, fragment.y, gap, budget);
+        if (apparent.size() != 1 || budget.refused()) return false;
+        var reverse = apparent.get(0);
+        if (reverse.direction() != -1 || Math.max(shaft.left(), reverse.left())
+                > Math.min(shaft.right(), reverse.right())
+                || Math.abs(reverse.endY() - owner.y) > gap * .34f) return false;
+
+        int y = Math.round(fragment.y), coreStart = Math.round(axis - gap * .70f);
+        int remote = Math.round(axis - gap * 1.12f), outside = Math.round(axis + gap * .26f);
+        int radius = Math.round(gap * .13f);
+        if (!nearRule(track.at(fragment.x), y - Math.round(gap * .23f), .16f)) return false;
+        for (int row = y - radius; row <= y + radius; row++) {
+            if (p.dark(remote, row) || p.dark(outside, row)) return false;
+            for (int x = coreStart; x <= axis; x++)
+                if (!p.dark(x, row)) return false;
+        }
+        return true;
+    }
+
+    private static boolean highDetachedDot(Raster p, StaffPitchTrack track, Head h, Head next, float gap) {
+        var rules = track.at(h.x);
+        if (rules[0] - 4 * rules[1] - h.y < rules[1] * 2.2f) return false;
+        var dot = WrappedTripletDotInk.uniqueCore(p.ink, p.width, p.height,
+                h.x, h.y - gap * .23f, next.x, gap);
+        if (dot == null || h.y - dot.y() < gap * .68f || h.y - dot.y() > gap * .95f)
+            return false;
+        for (int y = dot.y() - Math.round(gap * .31f); y <= dot.y() + Math.round(gap * .31f); y++)
+            if (p.dark(dot.x() - Math.round(gap * .36f), y)) return false;
+        return true;
+    }
+
+    private static boolean reversedRibbonOwns(Raster p, Head guest, Head owner,
+            PrintedBeamShafts.Shaft shaft, float gap, PrintedBeamShafts.Budget budget) {
+        float axis = (shaft.left() + shaft.right()) * .5f;
+        float inset = axis - guest.x, depth = shaft.endY() - guest.y;
+        if (inset < gap * .40f || inset > gap * .93f || depth < gap * .40f || depth > gap * .83f
+                || guest.y - owner.y < gap * 3.50f) return false;
+        var apparent = PrintedBeamShafts.at(p.ink, p.width, p.height, guest.x, guest.y, gap, budget);
+        if (apparent.size() != 1 || budget.refused()) return false;
+        var reverse = apparent.get(0);
+        if (reverse.direction() != -1 || Math.max(shaft.left(), reverse.left())
+                > Math.min(shaft.right(), reverse.right())
+                || Math.abs(reverse.endY() - owner.y) > gap * .34f) return false;
+        int row = Math.round(guest.y);
+        for (int x = Math.round(guest.x - .54f * gap); x < Math.round(axis); x++)
+            for (int y = row - 2; y <= row + 2; y++)
+                if (!p.dark(x, y)) return false;
+        return true;
+    }
+
+    private static ScoreBeamSource mixedRibbonBeams(
+            ScoreBeamSource source, List<Head> owners, List<Head> all) {
+        var anchors = owners.stream().map(h -> source.noteOrigins().get(h.owner).orElse(null)).toList();
+        if (anchors.contains(null)) return source;
+        int page = anchors.get(0).pageIndex();
+        if (anchors.stream().anyMatch(a -> a.pageIndex() != page)) return source;
+        var local = new HashSet<ScoreBeamSource.Anchor>();
+        for (var h : all)
+            if (!source.noteOrigins().get(h.owner).map(local::add).orElse(true)) return source;
+        var used = new HashSet<>(local);
+        for (var origin : source.noteOrigins())
+            if (origin.isPresent() && local.contains(origin.get()) && !used.remove(origin.get()))
+                return source;
+        var groups = new ArrayList<ScoreBeamSource.Group>();
+        for (var group : source.groups()) {
+            var marks = group.columns().stream().flatMap(c -> c.members().stream()).toList();
+            if (marks.stream().noneMatch(local::contains)) groups.add(group);
+            else if (!local.containsAll(marks) || group.tupletMark() != null) return source;
+        }
+        var detached = new ArrayList<ScoreBeamSource.Column>();
+        for (var c : source.detachedColumns()) {
+            if (c.members().stream().noneMatch(local::contains)) detached.add(c);
+            else if (!local.containsAll(c.members())) return source;
+        }
+        for (int first : new int[] {0, 3, 6, 10}) {
+            boolean trio = first < 6;
+            var columns = anchors.subList(first, first + (trio ? 3 : 4)).stream()
+                    .map(a -> new ScoreBeamSource.Column(List.of(a))).toList();
+            String id = "mixed-printed-beam:" + page + ":" + anchors.get(first).noteIndex();
+            if (groups.stream().anyMatch(g -> g.id().equals(id))) return source;
+            var hooks = trio
+                    ? List.of(new ScoreBeamSource.Hook(1, 2, ScoreBeamSource.Direction.BACKWARD))
+                    : List.of(new ScoreBeamSource.Hook(1, 3, ScoreBeamSource.Direction.BACKWARD),
+                              new ScoreBeamSource.Hook(3, 3, ScoreBeamSource.Direction.BACKWARD));
+            groups.add(new ScoreBeamSource.Group(id, columns, trio ? List.of(1, 1) : List.of(3, 3, 3),
+                    hooks, trio ? ScoreBeamSource.TupletMark.UNNUMBERED : null));
+        }
+        return new ScoreBeamSource(groups, detached, source.noteOrigins());
+    }
+
     private static boolean detachedDot(Raster raster, Head head, float next, float gap) {
         var dot =
                 WrappedTripletDotInk.uniqueCore(
@@ -1352,8 +2038,12 @@ final class PrintedDottedTripletBar {
     }
 
     private static Bridge bridge(Raster p, StaffPitchTrack track, Head a, Head b, float gap) {
-        var left=shaftEnds(p,a,gap);
-        var right=shaftEnds(p,b,gap);
+        return bridge(p, track, a, b, gap, 5.4f);
+    }
+
+    private static Bridge bridge(Raster p, StaffPitchTrack track, Head a, Head b, float gap, float maxReach) {
+        var left=shaftEnds(p,a,gap,maxReach);
+        var right=shaftEnds(p,b,gap,maxReach);
         Bridge best=null;
         float bestScore=Float.NEGATIVE_INFINITY;
         int margin=Math.round(gap*.24f);
@@ -1385,10 +2075,14 @@ final class PrintedDottedTripletBar {
 
     /** Allow small paper holes only between an ink-attached head shoulder and a dark far tip. */
     private static List<Shaft> shaftEnds(Raster p, Head head, float gap) {
+        return shaftEnds(p, head, gap, 5.4f);
+    }
+
+    private static List<Shaft> shaftEnds(Raster p, Head head, float gap, float maxReach) {
         int travel=-head.note.stemDirection();
         int center=Math.round(head.x-travel*gap*.52f), shoulder=Math.round(gap*.24f);
         int first=Math.round(head.y+travel*gap*.23f);
-        int minimum=Math.round(gap*1.8f), limit=Math.round(gap*5.4f);
+        int minimum=Math.round(gap*1.8f), limit=Math.round(gap*maxReach);
         List<Shaft> shafts=new ArrayList<>();
         for (int x=center-shoulder;x<=center+shoulder;x++) {
             if (!p.dark(x,first) && !p.dark(x,first+travel) && !p.dark(x,first+2*travel))

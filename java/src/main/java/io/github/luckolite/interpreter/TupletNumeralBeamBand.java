@@ -30,7 +30,7 @@ final class TupletNumeralBeamBand {
             if (pixel < 0 || x < 0 || x >= w || y < 0 || y >= h) return false;
             ink[y * w + x] = true;
         }
-        return three(ink, w, 0, 0, w, h, -1, -1, true);
+        return three(ink, w, 0, 0, w, h, -1, -1, true, false);
     }
 
     static boolean matches(
@@ -45,6 +45,19 @@ final class TupletNumeralBeamBand {
             float lineTop,
             float gap,
             int threshold) {
+        return matches(gray, width, height, x, first, last, scanTop, scanBottom, lineTop, gap, threshold, false);
+    }
+
+    /** The staff can conceal the lower right turn of an italic three above a proved beam. */
+    static boolean matchesOverVerifiedBeam(
+            byte[] gray, int width, int height, int x, int scanTop, int scanBottom, float lineTop, float gap) {
+        int y = Math.round(lineTop);
+        return matches(gray, width, height, x, y - 1, y + 1, scanTop, scanBottom, lineTop, gap, 165, true);
+    }
+
+    private static boolean matches(
+            byte[] gray, int width, int height, int x, int first, int last, int scanTop, int scanBottom,
+            float lineTop, float gap, int threshold, boolean verifiedBeam) {
         if (gray == null
                 || gray.length != width * height
                 || gap < 8
@@ -127,7 +140,7 @@ final class TupletNumeralBeamBand {
                     || maxY < ruleLast) continue;
             boolean above = edge == lineTop;
             if (above ? ruleFirst - minY < gh * .60f : maxY - ruleLast < gh * .60f) continue;
-            if (!three(ink, w, minX, minY, gw, gh, ruleFirst, ruleLast)) continue;
+            if (!three(ink, w, minX, minY, gw, gh, ruleFirst, ruleLast, false, verifiedBeam)) continue;
             int glyphTop = top + minY, glyphBottom = top + maxY;
             if (independentBeam(
                     gray,
@@ -197,20 +210,9 @@ final class TupletNumeralBeamBand {
             int w,
             int h,
             int ruleFirst,
-            int ruleLast) {
-        return three(ink, stride, left, top, w, h, ruleFirst, ruleLast, false);
-    }
-
-    private static boolean three(
-            boolean[] ink,
-            int stride,
-            int left,
-            int top,
-            int w,
-            int h,
-            int ruleFirst,
             int ruleLast,
-            boolean detached) {
+            boolean detached,
+            boolean verifiedBeam) {
         int[] min = new int[h], max = new int[h];
         Arrays.fill(min, w);
         Arrays.fill(max, -1);
@@ -250,7 +252,7 @@ final class TupletNumeralBeamBand {
         return upperOpen >= required
                 && lowerOpen >= required
                 && upperEdge - waist >= indentation
-                && lowerEdge - waist >= (detached ? 0 : indentation)
+                && lowerEdge - waist >= (detached || verifiedBeam ? 0 : indentation)
                 && lowerEdge - foot >= indentation;
     }
 

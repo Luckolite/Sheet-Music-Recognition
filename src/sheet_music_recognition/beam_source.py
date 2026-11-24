@@ -6,7 +6,8 @@ import struct
 MAX = 1_000_000
 MAX_BYTES = 32 * 1024 * 1024
 DIRECTIONS = ('FORWARD', 'BACKWARD')
-_TUPLET_MARKS = ('NUMBERED', 'UNNUMBERED')
+_GUIDE_TUPLET_MARKS = ('NUMBERED', 'UNNUMBERED')
+_TUPLET_MARKS = _GUIDE_TUPLET_MARKS + ('NUMBERED_CURVED_BELOW',)
 _JAVA_SPACES = frozenset(range(9,14)) | frozenset(range(28,33)) | {0x1680,0x2028,0x2029,0x205f,0x3000} | frozenset(range(0x2000,0x2007)) | frozenset(range(0x2008,0x200b))
 
 
@@ -123,7 +124,9 @@ def encode_source(source, note_count, engraved_tuplets=False):
         for h in g['hooks']: put('iii',h['columnIndex'],h['level'],DIRECTIONS.index(h['direction']))
         mark = g.get('tupletMark')
         if engraved_tuplets:
-            put('B', 0 if mark is None else _TUPLET_MARKS.index(mark) + 1)
+            # Older guide readers retain the number with their existing appearance.
+            wire_mark = 'NUMBERED' if mark == 'NUMBERED_CURVED_BELOW' else mark
+            put('B', 0 if wire_mark is None else _GUIDE_TUPLET_MARKS.index(wire_mark) + 1)
         elif mark is not None:
             raise ValueError('Guide beam frame cannot preserve engraved tuplet marks')
     put('i',len(source['detachedColumns']))
@@ -163,9 +166,9 @@ def decode_source(data, note_count, engraved_tuplets=False):
             c,level,d=take('iii');_int(d,0,1);hooks.append(dict(columnIndex=c,level=level,direction=DIRECTIONS[d]))
         group = dict(id=name, columns=cs, bridges=bridges, hooks=hooks)
         if engraved_tuplets:
-            code = _int(take('B')[0], 0, len(_TUPLET_MARKS))
+            code = _int(take('B')[0], 0, len(_GUIDE_TUPLET_MARKS))
             if code:
-                group['tupletMark'] = _TUPLET_MARKS[code - 1]
+                group['tupletMark'] = _GUIDE_TUPLET_MARKS[code - 1]
         groups.append(group)
     nd=count()
     if total+nd>MAX: raise ValueError('Too many beam columns')

@@ -71,6 +71,159 @@ final class OwnedTertiaryBeamlets {
         return result;
     }
 
+    /** Complete alternating dyads can own short third hooks inside a longer shared beam. */
+    static List<Integer> recoverInteriorDyads(
+            byte[] raw, byte[] normalized, int width, int height, List<Head> heads) {
+        return recoverAlternatingDyadRhythm(raw, normalized, width, height, heads, false);
+    }
+
+    /** Both neighboring short hooks establish the missing second rail of a dotted dyad. */
+    static List<Integer> recoverDottedDyadRails(
+            byte[] raw, byte[] normalized, int width, int height, List<Head> heads) {
+        return recoverAlternatingDyadRhythm(raw, normalized, width, height, heads, true);
+    }
+
+    private static List<Integer> recoverAlternatingDyadRhythm(
+            byte[] raw, byte[] normalized, int width, int height, List<Head> heads, boolean dottedOwner) {
+        if (raw == null || normalized == null || raw.length != (long) width * height
+                || normalized.length != raw.length || heads.size() < 10) return List.of();
+        var columns = new ArrayList<Column>();
+        for (int i = 0; i < heads.size(); ) {
+            int end = i + 1;
+            while (end < heads.size() && sameColumn(heads.get(i), heads.get(end))) end++;
+            columns.add(end - i == 2 ? new Column(heads.get(i), heads.get(i + 1)) : null);
+            i = end;
+        }
+        var rawStaffs = RawStaffLineDetector.detect(raw, width, height);
+        var normalizedStaffs = RawStaffLineDetector.detect(normalized, width, height);
+        var rawBudget = new PrintedBeamShafts.Budget(2_000_000);
+        var normalizedBudget = new PrintedBeamShafts.Budget(2_000_000);
+        var result = new ArrayList<Integer>();
+        for (int i = 2; i + 2 < columns.size(); i++) {
+            var owner = columns.get(i);
+            if (!alternatingDyad(owner, dottedOwner, dottedOwner ? 1 : 2)
+                    || owner.first.note.beamCount() != (dottedOwner ? 1 : 2)) continue;
+            boolean complete = true;
+            for (int at = i - 2; at <= i + 2; at++) {
+                var column = columns.get(at);
+                boolean dotted = (Math.abs(at - i) % 2 == 1) != dottedOwner;
+                if (!alternatingDyad(column, dotted, at == i && dottedOwner ? 1 : 2)
+                        || !sameStaff(owner.first, column.first)
+                        || column.first.note.clefBottomDiatonic() != owner.first.note.clefBottomDiatonic()) {
+                    complete = false;
+                    break;
+                }
+            }
+            if (!complete) continue;
+            var firstStaff = staff(rawStaffs, owner);
+            var secondStaff = staff(normalizedStaffs, owner);
+            if (firstStaff == null || secondStaff == null
+                    || Math.abs(firstStaff.gap() - secondStaff.gap()) > owner.gap() * .12f
+                    || Math.abs(firstStaff.bottom() - secondStaff.bottom()) > owner.gap() * .2f)
+                continue;
+            for (int at = i - 2; at <= i + 2; at++) {
+                var column = columns.get(at);
+                if (staff(rawStaffs, column) != firstStaff
+                        || staff(normalizedStaffs, column) != secondStaff) {
+                    complete = false;
+                    break;
+                }
+                if (at > i - 2) {
+                    float spacing = column.x() - columns.get(at - 1).x();
+                    if (spacing < firstStaff.gap() * 1.7f || spacing > firstStaff.gap() * 4.2f) {
+                        complete = false;
+                        break;
+                    }
+                }
+            }
+            if (!complete) continue;
+            if (alternatingDyadProof(raw, width, height, columns, i, firstStaff.gap(), rawBudget, dottedOwner)
+                    && alternatingDyadProof(normalized, width, height, columns, i,
+                            secondStaff.gap(), normalizedBudget, dottedOwner)) {
+                result.add(owner.first.index);
+                result.add(owner.second.index);
+            }
+            if (rawBudget.refused() || normalizedBudget.refused()) return List.of();
+        }
+        return List.copyOf(result);
+    }
+
+    private static boolean alternatingDyad(Column column, boolean dotted, int minimumBeams) {
+        return usable(column, false, minimumBeams) && column.gap() <= 27
+                && column.first.note.stemDirection() == -1 && column.second.note.stemDirection() == -1
+                && Math.abs(column.first.note.staffStep() - column.second.note.staffStep()) == 2
+                && column.first.note.augmentationDots() == (dotted ? 1 : 0)
+                && (!dotted || column.first.note.beamCount() <= 2);
+    }
+
+    private static boolean alternatingDyadProof(
+            byte[] gray, int width, int height, List<Column> columns, int owner, float gap,
+            PrintedBeamShafts.Budget budget, boolean dottedOwner) {
+        if (!dottedOwner)
+            return interiorDyadHook(gray, width, height, columns.get(owner), columns.get(owner - 1), gap, budget);
+        return interiorDyadHook(gray, width, height, columns.get(owner - 1), columns.get(owner - 2), gap, budget)
+                && interiorDyadHook(gray, width, height, columns.get(owner + 1), columns.get(owner), gap, budget);
+    }
+
+    private static boolean interiorDyadHook(
+            byte[] gray, int width, int height, Column owner, Column peer, float gap,
+            PrintedBeamShafts.Budget budget) {
+        var lower = owner.first.y > owner.second.y ? owner.first : owner.second;
+        var upper = owner.first.y > owner.second.y ? owner.second : owner.first;
+        var peerLower = peer.first.y > peer.second.y ? peer.first : peer.second;
+        var lowerShafts = PrintedBeamShafts.at(gray, width, height, lower.x, lower.y, gap, budget);
+        var upperShafts = PrintedBeamShafts.at(gray, width, height, upper.x, upper.y, gap, budget);
+        var peerShafts = PrintedBeamShafts.at(gray, width, height, peerLower.x, peerLower.y, gap, budget);
+        if (budget.refused() || lowerShafts.size() != 1 || upperShafts.size() != 1 || peerShafts.size() != 1)
+            return false;
+        var own = lowerShafts.get(0);
+        var upperShaft = upperShafts.get(0);
+        var preceding = peerShafts.get(0);
+        if (own.direction() != 1 || upperShaft.direction() != 1 || preceding.direction() != 1
+                || own.endY() - lower.y < gap * 2.5f) return false;
+        boolean common = own.columns().stream().anyMatch(a -> upperShaft.columns().stream()
+                .anyMatch(b -> a.x() == b.x() && a.endY() == b.endY()));
+        return common && provesBackwardHookForShafts(gray, width, height, own, preceding, gap)
+                && !proveSide(gray, width, height, downwardAxes(preceding), downwardAxes(own), gap, 1);
+    }
+
+    static ScorePageInterpretation applyInteriorRhythm(
+            ScorePageInterpretation score, byte[] raw, byte[] normalized, int width, int height) {
+        var notes = score.notes();
+        var heads = new ArrayList<Head>(notes.size());
+        for (int i = 0; i < notes.size(); i++) {
+            var note = notes.get(i);
+            var region = score.measures().get(note.measureIndex());
+            float x = (region.left() + note.positionInMeasure() * (region.right() - region.left())) * width;
+            float gap = (region.bottom() - region.top()) * height / 8.2f;
+            heads.add(new Head(i, note, x, note.pageY() * height, gap));
+        }
+        var rebuilt = new ArrayList<>(notes);
+        var second = recoverDottedDyadRails(raw, normalized, width, height, heads);
+        for (int index : second) {
+            var before = heads.get(index);
+            var note = withBeamCount(before.note, 2);
+            rebuilt.set(index, note);
+            heads.set(index, new Head(index, note, before.x, before.y, before.gap));
+        }
+        var third = recoverInteriorDyads(raw, normalized, width, height, heads);
+        for (int index : third) rebuilt.set(index, withBeamCount(rebuilt.get(index), 3));
+        if (second.isEmpty() && third.isEmpty()) return score;
+        var retained = java.util.stream.IntStream.range(0, notes.size()).boxed().toList();
+        return score.withNotes(rebuilt, retained).withClockContextSource(score.clockContextSource());
+    }
+
+    private static ScoreNoteEvent withBeamCount(ScoreNoteEvent note, int count) {
+        return new ScoreNoteEvent(
+                note.measureIndex(), note.positionInMeasure(), note.staffStep(), note.staffIndex(),
+                note.staffCount(), note.pageY(), note.tiedFromPrevious(), note.augmentationDots(), count,
+                note.writtenAccidental(), note.unbeamedDurationBeats(), note.tupletDivisor(),
+                note.followingRestBeats(), note.articulations(), note.clefBottomDiatonic(),
+                note.crossStaffBeam(), note.leadingRestBeats(), note.compactOpening(),
+                note.octaveShift(), note.boundaryTies(), note.tupletNormalNotes(), note.stemDirection(),
+                note.kind(), note.visualSize(), note.harmonicSemitones(), note.openStringTouch());
+    }
+
     static ScorePageInterpretation applyMonophonic(
             ScorePageInterpretation score, byte[] gray, int width, int height) {
         var notes = score.notes();
@@ -239,11 +392,15 @@ final class OwnedTertiaryBeamlets {
     }
 
     private static boolean usable(Column column, boolean owner) {
+        return usable(column, owner, 2);
+    }
+
+    private static boolean usable(Column column, boolean owner, int minimumBeams) {
         if (column == null || column.gap() < 8) return false;
         var a = column.first.note;
         var b = column.second.note;
         if (a.staffCount() != 1
-                || a.beamCount() != b.beamCount() || a.beamCount() < 2 || a.beamCount() > 3
+                || a.beamCount() != b.beamCount() || a.beamCount() < minimumBeams || a.beamCount() > 3
                 || a.augmentationDots() != b.augmentationDots()
                 || a.clefBottomDiatonic() != b.clefBottomDiatonic()
                 || a.staffStep() == b.staffStep()) return false;
@@ -449,6 +606,38 @@ final class OwnedTertiaryBeamlets {
         return false;
     }
 
+    /** A short beamlet fused to the true shaft can acquire a competing upward stem label. */
+    static boolean ownsShaftSideOctaveHookAlias(byte[] ink, int width, int height, float x, float y,
+            float lowerX, float lowerY, float upperX, float upperY, float peerX, float peerY, float gap) {
+        float depth = y - lowerY;
+        if (gap < 10 || gap > 26 || depth < 2.85f * gap || depth > 3.45f * gap
+                || lowerX - x < .49f * gap || lowerX - x > .95f * gap) return false;
+        var budget = new PrintedBeamShafts.Budget(190_000);
+        var owners = PrintedBeamShafts.at(ink, width, height, upperX, upperY, gap, budget);
+        var peers = PrintedBeamShafts.at(ink, width, height, peerX, peerY, gap, budget);
+        var rival = PrintedBeamShafts.at(ink, width, height, x, y, gap, budget);
+        if (owners.size() != 1 || peers.size() != 1 || !rival.isEmpty() || budget.refused()) return false;
+        var owner = owners.get(0);
+        if (owner.direction() != 1 || peers.get(0).direction() != 1
+                || !provesBackwardHookForShafts(ink, width, height, owner, peers.get(0), gap)) return false;
+        int axis = Math.round((owner.left() + owner.right()) * .5f);
+        if (Math.abs(axis - x) > .23f * gap || owner.endY() - y < 1.1f * gap
+                || owner.endY() - y > 1.55f * gap) return false;
+        int cut = Math.round(y), margin = Math.round(.20f * gap);
+        int cutLeft = axis - Math.round(.6f * gap), cutRight = axis + Math.round(.7f * gap);
+        if (cutLeft < 0 || cutRight >= width || cut - margin < 0 || cut + margin >= height) return false;
+        int clean = 0;
+        for (int row = cut - margin; row <= cut + margin; row++) {
+            if (!ink(ink, width, height, axis, row)) continue;
+            int left = 0, right = 0;
+            for (int col = cutLeft; col < axis - 2; col++) if (ink(ink, width, height, col, row)) left++;
+            for (int col = axis + margin; col <= cutRight; col++) if (ink(ink, width, height, col, row)) right++;
+            if (left >= Math.round(.37f * gap) && right <= 1) clean++;
+        }
+        return clean >= Math.ceil(.29f * gap);
+    }
+
+
     /** The hook sits below the lower head but borrows the shaft up to the upper head. */
     static boolean ownsReversedOctaveHook(
             byte[] gray,
@@ -487,6 +676,110 @@ final class OwnedTertiaryBeamlets {
         return false;
     }
 
+
+    /** Proves a backward hook whose short left lobe is fused to a staff rule. */
+    static boolean provesStaffRuleHookAliasRibbon(byte[] gray, int width, int height, float gap,
+            List<ClosedOctaveBeamSource.Attack> attacks, float followingX, float x, float y) {
+        if (attacks.size() != 4 || gap < 12 || gap > 24) return false;
+        var budget = new PrintedBeamShafts.Budget(260_000);
+        var axes = new java.util.ArrayList<Axis>(4);
+        for (var attack : attacks) {
+            var axis = staffRuleAliasAxis(gray, width, height, gap, attack, budget);
+            if (axis == null) return false;
+            axes.add(axis);
+        }
+        var last = attacks.get(3);
+        var own = axes.get(3);
+        var reverse = PrintedBeamShafts.at(gray, width, height, x, y, gap, budget);
+        if (reverse.size() != 1 || budget.refused()) return false;
+        var shaft = reverse.get(0);
+        float depth = (y - last.lowerY()) / gap;
+        float rise = (shaft.endY() - last.upperY()) / gap;
+        float advance = (last.lowerX() - x) / gap;
+        if (depth < 2.58f || depth > 2.86f || advance < .82f || advance > 1.10f
+                || shaft.direction() != -1 || rise < .65f || rise > 1.3f
+                || own.x < shaft.left() - 1 || own.x > shaft.right() + 1
+                || own.tip - y < 1.30f * gap || own.tip - y > 1.75f * gap
+                || !hookLobeOverStaffRule(gray, width, height, own, x, y, gap)) return false;
+        for (int i = 1; i < axes.size(); i++) {
+            var left = axes.get(i - 1);
+            var right = axes.get(i);
+            int span = right.x - left.x;
+            float slope = (right.tip - left.tip) / (float) span;
+            if (span < gap * 1.3f || span > gap * 3.8f || Math.abs(slope) > .36f
+                    || !doubleRails(gray, width, height, right, left, slope, gap, true)) return false;
+        }
+        return hook(gray, width, height, axes.get(1), gap, -1)
+                && hook(gray, width, height, own, gap, -1)
+                && ribbonStopsBefore(gray, width, height, new StaffLineHookAxes(own, axes.get(2)), gap, followingX);
+    }
+
+    private static Axis staffRuleAliasAxis(byte[] gray, int width, int height, float gap,
+            ClosedOctaveBeamSource.Attack attack, PrintedBeamShafts.Budget budget) {
+        var upper = PrintedBeamShafts.at(gray, width, height, attack.upperX(), attack.upperY(), gap, budget);
+        var lower = PrintedBeamShafts.at(gray, width, height, attack.lowerX(), attack.lowerY(), gap, budget);
+        if (lower.size() != 1 || lower.get(0).direction() != 1 || upper.size() > 1
+                || !upper.isEmpty() && upper.get(0).direction() != 1) return null;
+        int left = Integer.MAX_VALUE, right = -1, tip = -1;
+        for (var column : lower.get(0).columns()) {
+            boolean linked = upper.isEmpty()
+                    ? linksThinDownstem(gray, width, height, gap, attack, column.x())
+                    : upper.get(0).columns().contains(column);
+            if (!linked || column.endY() - attack.lowerY() < 2.85f * gap) continue;
+            if (tip != -1 && tip != column.endY()) return null;
+            tip = column.endY();
+            left = Math.min(left, column.x());
+            right = Math.max(right, column.x());
+        }
+        return tip == -1 ? null : new Axis((left + right + 1) / 2, tip, 1);
+    }
+
+    private static boolean linksThinDownstem(byte[] gray, int width, int height, float gap,
+            ClosedOctaveBeamSource.Attack attack, int x) {
+        float advance = attack.upperX() - x;
+        if (advance < gap * .46f || advance > gap * .83f) return false;
+        int start = Math.round(attack.upperY() + gap * .20f), end = Math.round(attack.lowerY());
+        if (!ink(gray, width, height, x + 2, start) || !ink(gray, width, height, x + 2, end))
+            return false;
+        int dark = 0, open = 0;
+        for (int y = start; y <= end; y++) {
+            if (ink(gray, width, height, x - 1, y) || ink(gray, width, height, x, y)
+                    || ink(gray, width, height, x + 1, y)) {
+                dark++;
+                open = 0;
+            } else if (++open > 2) return false;
+        }
+        return dark >= (end - start + 1) * .9f;
+    }
+
+    private static boolean hookLobeOverStaffRule(
+            byte[] gray, int width, int height, Axis shaft, float x, float y, float gap) {
+        int center = Math.round(x);
+        int row = Math.round(y);
+        int edge = Math.round(gap * 1.25f);
+        if (center - edge < 0 || shaft.x + edge >= width) return false;
+        int rule = row + Math.round(gap * .13f);
+        for (; rule <= row + Math.round(gap * .42f); rule++) {
+            int paper = 0;
+            for (int px = center - edge; px <= shaft.x + edge; px++)
+                if (!ink(gray, width, height, px, rule)) paper++;
+            if (paper <= 2) break;
+        }
+        if (rule > row + Math.round(gap * .42f)) return false;
+        int left = center;
+        while (left > center - edge && ink(gray, width, height, left - 1, row)) left--;
+        if (center - left < gap * .36f || center - left > gap * .68f) return false;
+        for (int px = left; px <= shaft.x; px++)
+            if (!ink(gray, width, height, px, row) || !ink(gray, width, height, px, row + 1))
+                return false;
+        int roof = row;
+        while (roof >= row - Math.round(.55f * gap) && ink(gray, width, height, center, roof)) roof--;
+        if (row - roof < .14f * gap || row - roof > .49f * gap) return false;
+        int outside = shaft.x + Math.round(.48f * gap);
+        for (int py = roof; py < rule - 1; py++)
+            if (ink(gray, width, height, outside, py)) return false;
+        return true;
+    }
 
     /** A long downstroke can make its backward third hook look like an upward note on the top rule. */
     static boolean ownsHighLedgerHookOnStaffLine(
@@ -567,9 +860,20 @@ final class OwnedTertiaryBeamlets {
         var owners = PrintedBeamShafts.at(gray, width, height, x, y, gap, budget);
         var peers = PrintedBeamShafts.at(gray, width, height, peerX, peerY, gap, budget);
         if (owners.size() != 1 || peers.size() != 1 || budget.refused()) return false;
-        for (var owner : downwardAxes(owners.get(0))) {
+        return joinedRailHookForShafts(gray, width, height, owners.get(0), peers.get(0), gap);
+    }
+
+    static boolean provesBackwardHookForShafts(byte[] gray, int width, int height,
+            PrintedBeamShafts.Shaft own, PrintedBeamShafts.Shaft peerShaft, float gap) {
+        return proveSide(gray, width, height, downwardAxes(own), downwardAxes(peerShaft), gap, -1, true)
+                || joinedRailHookForShafts(gray, width, height, own, peerShaft, gap);
+    }
+
+    private static boolean joinedRailHookForShafts(byte[] gray, int width, int height,
+            PrintedBeamShafts.Shaft own, PrintedBeamShafts.Shaft peerShaft, float gap) {
+        for (var owner : downwardAxes(own)) {
             if (!hook(gray, width, height, owner, gap, -1)) continue;
-            for (var peer : downwardAxes(peers.get(0))) {
+            for (var peer : downwardAxes(peerShaft)) {
                 int distance = owner.x - peer.x;
                 if (distance < gap * 1.7f || distance > gap * 4.2f) continue;
                 float slope = (owner.tip - peer.tip) / (float) distance;
@@ -1046,6 +1350,14 @@ final class OwnedTertiaryBeamlets {
                     gray, width, height, own, slope, previous[0] + margin, stem[0] - margin, depth))
                 return true;
         }
+        return false;
+    }
+
+    static boolean hasShortHook(byte[] gray, int width, int height,
+            PrintedBeamShafts.Shaft shaft, float gap, int side) {
+        for (int x = shaft.left(); x <= shaft.right(); x++)
+            if (hook(gray, width, height, new Axis(x, shaft.endY(), shaft.direction()), gap, side))
+                return true;
         return false;
     }
 

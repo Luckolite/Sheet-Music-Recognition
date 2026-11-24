@@ -182,8 +182,12 @@ public final class SheetInterpreter {
             SourceLocalAccidental accidentalSource,
             List<MeasureRegion> accidentalMeasures,
             List<ScoreNoteEvent> provedSharpOwners,
+            List<ScoreNoteEvent> provedDoubleSharpOwners,
+            List<SourceLocalAccidental.ProvedMark> provedDyadAccidentals,
             List<List<ScoreNoteEvent>> harmonicTails,
-            List<OctaveMarkDetector.StaffSpan> printedOctaveSpans) {}
+            List<OctaveMarkDetector.StaffSpan> printedOctaveSpans,
+            List<ArtificialHarmonics.BeamedTouch> beamedTouches,
+            List<ScoreNoteEvent> printedFingeringThreeOwners) {}
 
     static AnalyzedPage analyzeWithPrintedSources(
             byte[] labels, byte[] gray, int width, int height, Annotations annotations,
@@ -359,6 +363,10 @@ public final class SheetInterpreter {
         final var retainedRegions = measures;
         var rejectedLedgerRows = retainedRegions == fittedWithOverlaps ? List.<MeasureRegion>of()
                 : fittedWithOverlaps.stream().filter(region -> !retainedRegions.contains(region)).toList();
+        measures = PrintedMeasureRhythmGuard.rejectFingeringGuideRows(
+                measures, gray, annotationGray, width, height);
+        measures = InlineSixteenthQuarterCadence.restoreIsolated(
+                rawMeasures, measures, labels, gray, annotationGray, width, height);
         measures = InterruptedStaffHeader.discard(
                 measures, labels, gray, annotationGray, width, height);
         recognizedRests.reindexed(measures);
@@ -399,11 +407,13 @@ public final class SheetInterpreter {
         var printedOctaveSpans = new java.util.ArrayList<OctaveMarkDetector.StaffSpan>();
         notes = OctaveMarkDetector.apply(
                 words, staffs, measures, notes, annotationGray, width, height, printedOctaveSpans,
-                clockAnalysis.clockProducerSource().accidentalCarries());
+                clockAnalysis.clockProducerSource().accidentalCarries(), gray);
         notes =
                 FingeringAnnotationFilter.removeWholeFingeringAliases(
                         words, staffs, measures, notes, gray, annotationGray, width, height);
         notes = FingeringAnnotationFilter.removeDetachedParentheticalAliases(
+                words, staffs, measures, notes, gray, annotationGray, width, height);
+        notes = FingeringAnnotationFilter.removeStandaloneSegueBeamAliases(
                 words, staffs, measures, notes, gray, annotationGray, width, height);
         notes = FingeringAnnotationFilter.removeMergedSegueAliases(
                 words, staffs, measures, notes, gray, annotationGray, width, height);
@@ -443,8 +453,10 @@ public final class SheetInterpreter {
                             ScoreDynamicsDetector.alignStaffs(ornamentStaffs, notes, height));
         }
         notes = SixteenthBeamRailAlias.remove(notes, measures, gray, annotationGray, width, height);
+        var beamedTouches = new java.util.ArrayList<ArtificialHarmonics.BeamedTouch>();
         notes = ArtificialHarmonics.apply(
-                labels, gray, annotationGray, width, height, measures, notes, staffs);
+                labels, gray, annotationGray, width, height, measures, notes, staffs,
+                clockAnalysis.clockProducerSource().accidentalCarries(), beamedTouches);
         notes =
                 ArtificialHarmonics.removeWholeTouchAliases(
                         notes, measures, labels, gray, annotationGray, width, height);
@@ -528,6 +540,12 @@ public final class SheetInterpreter {
                         annotationGray,
                         width,
                         height);
+        notes = SixteenthBeamRailAlias.removeClosingThirdAliases(
+                notes, measures, meters, inheritedMeter, gray, annotationGray, width, height);
+        notes = ClosedMonophonicSixteenths.restoreClosingRail(
+                notes, measures, meters, inheritedMeter, gray, annotationGray, width, height);
+        notes = SixteenthBeamRailAlias.removeBeforeHalfAliases(
+                notes, measures, meters, inheritedMeter, gray, annotationGray, width, height);
         var dynamicDetection =
                 ScoreDynamicsDetector.detectWithEvidence(
                         dynamicWords, staffs, measures, notes, gray, width, height);
@@ -637,12 +655,21 @@ public final class SheetInterpreter {
                 TripletRhythmDetector.ordinarySixteenthDyadBars(finalScore.notes(), finalScore.rests(),
                         finalScore.measures(), finalScore.meterChanges(), gray, width, height),
                 java.util.stream.IntStream.range(0, finalScore.notes().size()).boxed().toList());
+        var repairedDyadBars = new java.util.ArrayList<Integer>();
+        var provedDyadClock = TripletRhythmDetector.closeClippedDyadQuartets(
+                finalScore.notes(), finalScore.rests(), finalScore.measures(), finalScore.meterChanges(),
+                inheritedMeter, gray, annotationGray, width, height, repairedDyadBars);
+        finalScore = finalScore.withNotes(provedDyadClock,
+                java.util.stream.IntStream.range(0, finalScore.notes().size()).boxed().toList());
         var openingRest = WrappedEighthTriplets.closeOpeningSixFourNumeralRest(
                 finalScore, labels, gray, annotationGray, width, height);
         finalScore = openingRest.score();
         var numeralAliasTriplets = WrappedEighthTriplets.closeNumeralAliasBars(
                 finalScore, words, gray, annotationGray, width, height);
         finalScore = numeralAliasTriplets.score();
+        var reversedUpstem = WrappedEighthTriplets.closeReversedUpstemTripletBars(
+                finalScore, inheritedMeter, gray, annotationGray, width, height);
+        finalScore = reversedUpstem.score();
         var neighborRecoveredTripletBars = new java.util.ArrayList<Integer>();
         var closedTriplets =
                 WrappedEighthTriplets.closeQuarterBeatBars(
@@ -656,6 +683,14 @@ public final class SheetInterpreter {
                         labels,
                         annotationGray,
                         neighborRecoveredTripletBars);
+        var retainedRailOwners = ClosedOctaveTripletBars.retainedRailOwners(
+                closedTriplets, finalScore.measures(), gray, annotationGray, width, height);
+        if (!retainedRailOwners.isEmpty()) {
+            var retained = new java.util.ArrayList<ScoreNoteEvent>(retainedRailOwners.size());
+            for (int owner : retainedRailOwners) retained.add(closedTriplets.get(owner));
+            closedTriplets = List.copyOf(retained);
+            finalScore = finalScore.withNotes(closedTriplets, retainedRailOwners);
+        }
         var closedOctaves =
                 ClosedOctaveTripletBars.capture(
                         closedTriplets,
@@ -673,8 +708,12 @@ public final class SheetInterpreter {
         if (closedTriplets != finalScore.notes())
             finalScore = finalScore.withNotes(closedTriplets,
                     java.util.stream.IntStream.range(0, closedTriplets.size()).boxed().toList());
+        var upperLedgerTriplets =
+                HighLedgerTripletBars.capture(finalScore, inheritedMeter, labels, gray, annotationGray, width, height);
+        finalScore = upperLedgerTriplets.score();
         var mixedBeamTransition =
-                EighthTripletsBeforeSixteenths.capture(finalScore, annotationGray, gray, width, height);
+                EighthTripletsBeforeSixteenths.capture(
+                        finalScore, annotationGray, gray, width, height, inheritedMeter);
         finalScore = mixedBeamTransition.score();
         finalScore =
                 OpeningBeamPickup.apply(
@@ -692,6 +731,8 @@ public final class SheetInterpreter {
                         ? techniqueWords
                         : ocr.expressionWords(
                                 techniqueWords, dynamicAcquisition, annotationGray, width, height);
+        expressionWords = SegueAccidentalOverlap.correct(
+                expressionWords, finalScore, annotationGray, gray, width, height);
         var withExpressions =
                 ScoreExpressionDetector.apply(
                         ScoreFermataDetector.withFermatas(
@@ -839,7 +880,7 @@ public final class SheetInterpreter {
                 ClosedHarmonicTriplets.capture(
                         finalInterpretation.notes(), finalInterpretation.rests(),
                         finalInterpretation.measures(), finalInterpretation.meterChanges(),
-                        inheritedMeter, annotationGray, width, height);
+                        inheritedMeter, annotationGray, gray, width, height);
         if (harmonicTriplets.notes() != finalInterpretation.notes())
             finalInterpretation = finalInterpretation.withNotes(
                     harmonicTriplets.notes(),
@@ -855,6 +896,8 @@ public final class SheetInterpreter {
                             staffs,
                             physicalPage,
                             phrasePending);
+        finalInterpretation = TripletRhythmDetector.projectClippedDyadQuartets(
+                finalInterpretation, provedDyadClock, repairedDyadBars, physicalPage, width, height);
         finalInterpretation = WrappedEighthTriplets.completeRestoredTripletBeams(
                 finalInterpretation, numeralAliasTriplets.repairedBars(), gray, annotationGray, width, height);
         finalInterpretation = WrappedEighthTriplets.projectNeighborBoundedTripletBeams(
@@ -871,22 +914,34 @@ public final class SheetInterpreter {
                         words,
                         physicalPage);
         finalInterpretation = WrappedEighthTriplets.projectClosedSixFourTripletBeams(
-                finalInterpretation, gray, annotationGray, width, height, words, physicalPage);
+                finalInterpretation, gray, annotationGray, width, height, words, physicalPage, labels);
+        finalInterpretation = upperLedgerTriplets.markUnnumbered(finalInterpretation);
+        finalInterpretation = WrappedEighthTriplets.projectReversedUpstemTripletBeams(
+                finalInterpretation, gray, annotationGray, width, height, words, reversedUpstem.measures());
         finalInterpretation = harmonicTriplets.projectBeams(finalInterpretation, physicalPage);
         finalInterpretation = closedOctaves.projectBeams(finalInterpretation, physicalPage);
+        finalInterpretation = closedOctaves.projectSlurs(
+                finalInterpretation, physicalPage, annotationGray, gray, labels, width, height);
+        finalInterpretation = PrintedTripletTransitionSlurs.apply(
+                finalInterpretation, physicalPage, annotationGray, gray, labels, width, height);
         finalInterpretation = mixedBeamTransition.projectBeams(finalInterpretation, physicalPage);
+        finalInterpretation = MixedUpperLedgerBeamSource.apply(
+                finalInterpretation, annotationGray, gray, width, height);
         var accidentalTriplets =
                 WrappedEighthTriplets.closeAccidentalMarkedTripletBars(
                         finalInterpretation, labels, gray, width, height);
         finalInterpretation = accidentalTriplets.score();
+        finalInterpretation = WrappedEighthTriplets.closeDottedCommonTimeWithFlat(
+                finalInterpretation, inheritedMeter, labels, gray, annotationGray, width, height);
         finalInterpretation =
                 PrintedPassOmission.apply(
                         finalInterpretation, words, staffs, gray, width, height, physicalPage);
         finalInterpretation =
                 PrintedDottedTripletBar.apply(
-                        finalInterpretation, null, gray, annotationGray, width, height);
+                        finalInterpretation, null, gray, annotationGray, width, height, labels);
         finalInterpretation =
                 TerminalDottedCadenceHooks.apply(finalInterpretation, null, gray, width, height);
+        var provedDyadAccidentals = new java.util.ArrayList<SourceLocalAccidental.ProvedMark>();
         finalInterpretation =
                 ClosedSixteenthDyads.apply(
                         finalInterpretation,
@@ -895,8 +950,13 @@ public final class SheetInterpreter {
                         annotationGray,
                         width,
                         height,
-                        physicalPage);
+                        physicalPage,
+                        provedDyadAccidentals::add);
+        finalInterpretation = ClosedOctaveRailRun.recover(
+                finalInterpretation, inheritedMeter, labels, gray, annotationGray, width, height, physicalPage);
         finalInterpretation = ClosedDottedSixteenths.apply(finalInterpretation, gray, width, height);
+        finalInterpretation = ClosedDottedHookCadence.apply(
+                finalInterpretation, gray, annotationGray, width, height, physicalPage);
         finalInterpretation = ClosedDottedSixteenths.applyOpeningWideDyadHooks(
                 finalInterpretation, gray, annotationGray, width, height, physicalPage);
         finalInterpretation = ClosedDottedThirds.removeDenseInsertedMarks(
@@ -917,6 +977,8 @@ public final class SheetInterpreter {
         finalInterpretation =
                 ClosedDottedSixteenths.applyReversedOctaveHook(
                         finalInterpretation, inheritedMeter, labels, gray, width, height);
+        finalInterpretation = ClosedDottedSixteenths.applyStaffSideTerminalHooks(
+                finalInterpretation, inheritedMeter, gray, annotationGray, width, height, physicalPage);
         finalInterpretation = ClosedDoubleHarmonicQuarters.removeOwnedTouchHalves(
                 finalInterpretation, gray, annotationGray, width, height);
         finalInterpretation =
@@ -928,6 +990,14 @@ public final class SheetInterpreter {
         finalInterpretation =
                 DottedOpeningBeamHooks.apply(
                         finalInterpretation, gray, annotationGray, width, height);
+        finalInterpretation = ClosedDottedSixteenths.restoreDottedSixthLedgerOpening(
+                finalInterpretation, inheritedMeter, labels, gray, annotationGray, width, height);
+        finalInterpretation = ClosedDottedSixteenths.restoreClosedDottedSixthHooks(
+                finalInterpretation, inheritedMeter, gray, annotationGray, width, height, physicalPage);
+        finalInterpretation = ClosedDottedSixteenths.restoreStaffRuleHookOctaves(
+                finalInterpretation, inheritedMeter, gray, annotationGray, width, height, physicalPage);
+        finalInterpretation = ClosedDottedSixteenths.restoreDottedOctaveClock(
+                finalInterpretation, inheritedMeter, gray, annotationGray, width, height, physicalPage);
         finalInterpretation =
                 ClosedDottedSixteenths.restoreUnclaimedOctaveBeamGroups(
                         finalInterpretation, inheritedMeter, gray, annotationGray, width, height,
@@ -958,8 +1028,23 @@ public final class SheetInterpreter {
                     finalInterpretation, annotationGray, gray, width, height);
         finalInterpretation = TerminalSharedArtificialHarmonics.close(
                 finalInterpretation, gray, annotationGray, width, height, initialKeyFifths);
+        finalInterpretation = StaffClosingLedgerQuarter.reassign(
+                finalInterpretation, gray, annotationGray, width, height);
         finalInterpretation = ArtificialHarmonics.recoverClosedQuarterTouches(
-                finalInterpretation, labels, gray, annotationGray, width, height);
+                finalInterpretation, labels, gray, annotationGray, width, height,
+                standardViolin ? initialKeyFifths : null);
+        if (standardViolin && initialKeyFifths != null)
+            finalInterpretation = ClosedDownstemCompoundQuarters.recover(
+                    finalInterpretation, gray, annotationGray, width, height, initialKeyFifths);
+        if (standardViolin && initialKeyFifths != null)
+            finalInterpretation = ClosedUpstemHarmonicChange.recover(
+                    finalInterpretation, gray, annotationGray, width, height, initialKeyFifths);
+        if (standardViolin && initialKeyFifths != null)
+            finalInterpretation = ClosedDoubleHarmonicQuarters.recoverHeaderedStack(
+                    finalInterpretation, labels, gray, annotationGray, width, height, initialKeyFifths);
+        if (standardViolin && initialKeyFifths != null)
+            finalInterpretation = ClosedDoubleHarmonicQuarters.recoverMixedStemStack(
+                    finalInterpretation, labels, gray, annotationGray, width, height, initialKeyFifths);
         finalInterpretation = ClosingTripletRhythm.restoreBeforeSixFour(
                 finalInterpretation, inheritedMeter, labels, gray, annotationGray, width, height, physicalPage);
         finalInterpretation = OpeningOctaveTriplets.close(
@@ -967,6 +1052,33 @@ public final class SheetInterpreter {
         finalInterpretation =
                 ClosedNinthBeamBar.restore(
                         finalInterpretation, gray, annotationGray, width, height, physicalPage);
+        finalInterpretation = BeamedArtificialFourths.removeCompactTripletTouchAlias(
+                finalInterpretation, inheritedMeter, labels, annotationGray, gray, width, height);
+        finalInterpretation = ClosedMonophonicSixteenths.removeBorrowedRailEighth(
+                finalInterpretation, inheritedMeter, gray, annotationGray, width, height);
+        finalInterpretation = ClosedMonophonicSixteenths.restorePrintedGroups(
+                finalInterpretation, inheritedMeter, gray, annotationGray, width, height);
+        finalInterpretation = ClosedMonophonicSixteenths.restoreWrittenClock(
+                finalInterpretation, inheritedMeter, words, gray, annotationGray, width, height);
+        finalInterpretation = ClosedArpeggioTriplets.restore(
+                finalInterpretation, inheritedMeter, gray, annotationGray, width, height);
+        finalInterpretation = ClosedMixedBeamClock.restore(
+                finalInterpretation, inheritedMeter, words, gray, annotationGray, width, height);
+        finalInterpretation = InlineStraightOctaveTriples.restoreChromaticClock(
+                finalInterpretation, inheritedMeter, gray, annotationGray, width, height);
+        finalInterpretation = ClosingOctaveSixteenths.restore(
+                finalInterpretation, inheritedMeter, labels, gray, annotationGray, width, height);
+        finalInterpretation = WrappedEighthTriplets.restoreClosedLedgerTriplets(
+                finalInterpretation, labels, gray, annotationGray, width, height, words, physicalPage);
+        var doubleSharpBeams = ClosedDoubleSharpBeams.restore(
+                finalInterpretation, inheritedMeter, gray, annotationGray, width, height, physicalPage);
+        finalInterpretation = doubleSharpBeams.score();
+        finalInterpretation = ClosedDoubleHarmonicQuarters.recoverMergedThirdTouch(
+                finalInterpretation, labels, gray, annotationGray, width, height, initialKeyFifths);
+        finalInterpretation = ClosedSixteenthDyads.restoreStackedSharpCancellation(
+                finalInterpretation, gray, annotationGray, width, height, provedDyadAccidentals::add);
+        finalInterpretation = OpeningTripletNumeral.projectCurvedLowerMarks(
+                finalInterpretation, labels, annotationGray, gray, width, height);
         finalInterpretation =
                 finalInterpretation.withClockContextSource(
                         ScoreClockContextCapture.capture(
@@ -990,17 +1102,79 @@ public final class SheetInterpreter {
                         touches, labels, gray, width, height, rejectedLedgerRows, annotationGray);
         cadences = ClosedLedgerHalfDyad.capture(cadences, annotationGray, width, height);
         var provedSharpOwners = new java.util.ArrayList<>(accidentalTriplets.sharpOwners());
+        provedSharpOwners.addAll(mixedBeamTransition.printedSharpOwners());
         provedSharpOwners.addAll(sharpTails.printedSharpOwners(clockAnalysis.notes(), measures, width, height));
         var terminalCadence = TerminalMixedHarmonicCadence.capture(
                 cadences, labels, annotationGray, gray, width, height);
+        // Late corrections can establish the harmonic pitches or the following quarter cadence.
+        // Recheck only when the early harmonic proof saw different note or measure data.
+        if (!terminalCadence.notes().equals(harmonicTriplets.notes()) || !terminalCadence.measures().equals(measures)) {
+            var restored = ClosedHarmonicTriplets.capture(
+                    terminalCadence.notes(), terminalCadence.rests(), terminalCadence.measures(),
+                    terminalCadence.meterChanges(), inheritedMeter, annotationGray, gray, width, height);
+            if (restored.notes() != terminalCadence.notes()) {
+                terminalCadence = terminalCadence.withNotes(restored.notes(),
+                        java.util.stream.IntStream.range(0, restored.notes().size()).boxed().toList());
+                terminalCadence = restored.projectBeams(terminalCadence, physicalPage);
+                terminalCadence = terminalCadence.withClockContextSource(
+                        ScoreClockContextCapture.capture(labels, gray, width, height, terminalCadence,
+                                clockAnalysis, clockPartSource, meterEvidence.provenance(), tabSourceGray));
+            }
+        }
+        var printedDoubleSharps = new java.util.ArrayList<>(doubleSharpBeams.doubleSharps());
+        var opening = ClosedSixteenthDyads.restoreStraightOpeningDyadQuartets(
+                terminalCadence, inheritedMeter, gray, annotationGray, width, height, physicalPage);
+        var straight = ClosedSixteenthDyads.restoreStraightDottedQuartets(
+                opening, inheritedMeter, gray, annotationGray, width, height, printedDoubleSharps::add);
+        straight = ClosedSixteenthDyads.retainPhaseVerifiedSixths(
+                straight, gray, annotationGray, width, height, physicalPage, provedDyadAccidentals::add);
+        if (straight != terminalCadence)
+            terminalCadence = straight.withClockContextSource(
+                    ScoreClockContextCapture.capture(labels, gray, width, height, straight,
+                            clockAnalysis, clockPartSource, meterEvidence.provenance(), tabSourceGray));
+        terminalCadence = ClosedSixteenthDyads.retainCrossCutOpeningOctaves(
+                terminalCadence, gray, annotationGray, labels, width, height, physicalPage);
+        terminalCadence = ClosedSixteenthDyads.retainAttachedOctaveQuartets(
+                terminalCadence, gray, annotationGray, width, height, physicalPage);
+        var ledgerThirds = ClosedLedgerThirdRow.repair(terminalCadence, inheritedMeter, labels,
+                annotationGray, gray, width, height, physicalPage, provedDyadAccidentals::add);
+        if (ledgerThirds != terminalCadence)
+            terminalCadence = ledgerThirds.withClockContextSource(ScoreClockContextCapture.capture(
+                    labels, gray, width, height, ledgerThirds, clockAnalysis,
+                    clockPartSource, meterEvidence.provenance(), tabSourceGray));
+        terminalCadence = PrintedAccidentalSpineRecovery.reconcileLedgerSigns(
+                terminalCadence, annotationGray, gray, width, height, provedDyadAccidentals::add);
+        terminalCadence = PrintedAccidentalSpineRecovery.reconcileDyadSigns(
+                terminalCadence, labels, annotationGray, gray, width, height, provedDyadAccidentals::add);
+        terminalCadence = PrintedAccidentalSpineRecovery.reconcileDyadFlats(
+                terminalCadence, labels, annotationGray, gray, width, height, provedDyadAccidentals::add);
+        terminalCadence = PrintedAccidentalSpineRecovery.reconcileLedgerNaturals(
+                terminalCadence, labels, annotationGray, gray, width, height, provedDyadAccidentals::add);
+        terminalCadence = PrintedAccidentalSpineRecovery.reconcileSpacedThirds(
+                terminalCadence, labels, annotationGray, gray, width, height, provedDyadAccidentals::add);
+        terminalCadence = BeamedDoubleFlatCarry.reconcile(
+                terminalCadence, gray, annotationGray, width, height, provedDyadAccidentals::add)
+                .withClockContextSource(terminalCadence.clockContextSource());
+        terminalCadence = CompactDyadOctaveSpan.repair(
+                terminalCadence, staffs, annotationGray, gray, width, height, printedOctaveSpans,
+                provedDyadAccidentals::add).withClockContextSource(terminalCadence.clockContextSource());
+        terminalCadence = PairedOctaveAccidentalCarry.repair(
+                terminalCadence, staffs, annotationGray, gray, width, height, printedOctaveSpans,
+                provedDyadAccidentals::add).withClockContextSource(terminalCadence.clockContextSource());
+        terminalCadence = ClosedLedgerHalfDyad.captureTerminalSpaceSixth(
+                terminalCadence, annotationGray, gray, width, height);
+        var phrasing = PrintedStaccatoSlurs.apply(
+                terminalCadence, physicalPage, labels, gray, annotationGray, width, height);
         return new AnalyzedPage(
-                PrintedStaccatoSlurs.apply(
-                        terminalCadence, physicalPage, gray, annotationGray, width, height),
+                OpeningPortatoSixteenths.restore(phrasing, gray, annotationGray, width, height),
                 clockAnalysis.notes(),
                 clockAnalysis.clockProducerSource().localAccidentals(),
                 measures,
                 List.copyOf(provedSharpOwners),
+                List.copyOf(printedDoubleSharps),
+                List.copyOf(provedDyadAccidentals),
                 harmonicTail.tails(),
-                List.copyOf(printedOctaveSpans));
+                List.copyOf(printedOctaveSpans), List.copyOf(beamedTouches),
+                mixedBeamTransition.printedFingeringThreeOwners());
     }
 }

@@ -48,7 +48,8 @@ final class ScoreTiePitchGuard {
                         score.slurSource(),
                         score.openingPickup(),
                         score.tremoloSource()).withBeamSource(score.beamSource())
-                .carryMultiRestGroupsFrom(score);
+                .carryMultiRestGroupsFrom(score)
+                .withClockContextSource(score.clockContextSource());
     }
 
     private static List<ScoreNoteEvent> apply(

@@ -30,7 +30,7 @@ final class ClosingTripletRhythm {
         if (indices.size() == 7) {
             var dotted = dottedClosingHalf(score, meter, gray, width, height, bar, indices);
             if (dotted != score) return dotted;
-            return closingHalf(score, meter, labels, gray, width, height, barIndex, bar, indices);
+            return closingHalf(score, meter, labels, gray, width, height, barIndex, bar, indices, false);
         }
         if (indices.size() != 10) return score;
         float[] xs = new float[10], ys = new float[10];
@@ -113,9 +113,9 @@ final class ClosingTripletRhythm {
                     .toList();
             if (owners.size() != 7) continue;
             var bar = regions.get(i);
-            var fixed = closingHalf(score, previous, labels, gray, width, height, i, bar, owners);
-            if (fixed == score
-                    || closingHalf(score, previous, labels, original, width, height, i, bar, owners) == score)
+            var fixed = closingHalf(score, previous, labels, gray, width, height, i, bar, owners, true);
+            var rawFixed = closingHalf(score, previous, labels, original, width, height, i, bar, owners, true);
+            if (fixed == score || rawFixed == score || !fixed.notes().equals(rawFixed.notes()))
                 continue;
             if (normalReadings == null) {
                 normalReadings = MeterFontMatcher.standaloneReadings(labels, gray, width, height, regions, notes);
@@ -311,14 +311,19 @@ final class ClosingTripletRhythm {
 
     private static ScorePageInterpretation closingHalf(
             ScorePageInterpretation score, ScoreMeterChange meter, byte[] labels, byte[] gray,
-            int width, int height, int barIndex, MeasureRegion bar, List<Integer> indices) {
+            int width, int height, int barIndex, MeasureRegion bar, List<Integer> indices,
+            boolean allowBrokenShafts) {
         if (gray == null || gray.length != (long) width * height) return score;
         var notes = score.notes();
         float[] x = new float[7], y = new float[7];
+        boolean brokenShafts = false;
         for (int i = 0; i < indices.size(); i++) {
             var note = notes.get(indices.get(i));
+            boolean suspect = allowBrokenShafts && i == 3
+                    && note.beamCount() == 2 && note.stemDirection() == 0;
+            brokenShafts |= suspect;
             if (note.kind() != ScoreNoteEvent.Kind.PITCHED || note.staffCount() != 1
-                    || note.crossStaffBeam() || note.beamCount() != (i < 6 ? 1 : 0)
+                    || note.crossStaffBeam() || !suspect && note.beamCount() != (i < 6 ? 1 : 0)
                     || i == 6 && note.unbeamedDurationBeats() != 2
                     || note.augmentationDots() != 0 || note.tupletDivisor() != 1
                     || note.leadingRestBeats() != 0 || note.followingRestBeats() != 0
@@ -337,16 +342,80 @@ final class ClosingTripletRhythm {
                 continue;
             if (!doubleRule(gray, width, height, owner, edge)) continue;
             int first = tripletDirection(gray, width, height, x, y, gap, 0);
-            int second = tripletDirection(gray, width, height, x, y, gap, 3);
-            if (first == 0 || second == 0 || first == second
+            int second = brokenShafts
+                    ? brokenUpstemTriplet(gray, width, height, x, y, gap, 3)
+                    : tripletDirection(gray, width, height, x, y, gap, 3);
+            if (first == 0 || second == 0 || first == second && !brokenShafts
                     && !SeparateBeamGroups.between(gray, width, height, x[2], y[2], x[3], y[3], gap))
                 continue;
+            if (brokenShafts && (first != 1 || notes.get(indices.get(4)).stemDirection() != 1
+                    || notes.get(indices.get(5)).stemDirection() != 1)) continue;
             var result = new ArrayList<>(notes);
             for (int i : indices.subList(0, 6)) result.set(i, notes.get(i).withTupletRatio(3, 2));
+            if (brokenShafts) {
+                int suspect = indices.get(3);
+                result.set(suspect, singleBeam(result.get(suspect)).withStemDirection(1));
+            }
             return score.withNotes(result, IntStream.range(0, notes.size()).boxed().toList())
                     .withClockContextSource(score.clockContextSource());
         }
         return score;
+    }
+
+    private record SplitShaft(PrintedBeamShafts.Shaft shaft, int gapStart) {}
+
+    private static int brokenUpstemTriplet(
+            byte[] gray, int width, int height, float[] x, float[] y, float gap, int first) {
+        var left = splitUpstem(gray, width, height, x[first], y[first], gap);
+        var middle = splitUpstem(gray, width, height, x[first + 1], y[first + 1], gap);
+        if (left == null || middle == null
+                || Math.abs(left.gapStart() - middle.gapStart()) > 1) return 0;
+        var budget = new PrintedBeamShafts.Budget(30_000);
+        var last = PrintedBeamShafts.at(gray, width, height, x[first + 2], y[first + 2], gap, budget);
+        if (last.size() != 1 || last.get(0).direction() != -1 || budget.refused()) return 0;
+        var preceding = PrintedBeamShafts.at(gray, width, height, x[first - 1], y[first - 1], gap, budget);
+        if (preceding.size() != 1 || preceding.get(0).direction() != -1 || budget.refused()) return 0;
+        var a = preceding.get(0);
+        var b = left.shaft();
+        if (!SeparateBeamGroups.clearBetweenTips(gray, width, height,
+                new SeparateBeamGroups.Tip(a.right(), a.endY(), -1),
+                new SeparateBeamGroups.Tip(b.left(), b.endY(), -1), gap)) return 0;
+        return WrappedEighthTriplets.matchesBeamRails(gray, width, height, left.shaft(), middle.shaft(), gap, 1)
+                && WrappedEighthTriplets.matchesBeamRails(gray, width, height, middle.shaft(), last.get(0), gap, 1)
+                ? 1 : 0;
+    }
+
+    /** A light stripe may interrupt aligned shafts. Require real ink above and below it. */
+    private static SplitShaft splitUpstem(
+            byte[] gray, int width, int height, float x, float y, float gap) {
+        int center = Math.round(x + .6f * gap), start = Math.round(y) - Math.round(.2f * gap);
+        int reach = Math.round(.2f * gap), limit = Math.round(y - 4.5f * gap);
+        if (center - reach < 0 || center + reach >= width || limit < 0 || start >= height) return null;
+        var columns = new ArrayList<PrintedBeamShafts.Column>();
+        int commonStart = -1, commonEnd = -1, tip = start;
+        for (int col = center - reach; col <= center + reach; col++) {
+            int row = start;
+            while (row > limit && (gray[row * width + col] & 255) < 165) row--;
+            int gapStart = row;
+            if (start - row < .32f * gap) continue;
+            while (row > limit && (gray[row * width + col] & 255) >= 165) row--;
+            int gapEnd = row;
+            int missing = gapStart - gapEnd;
+            if (missing < 2 || missing > .49f * gap) continue;
+            while (row > limit && (gray[row * width + col] & 255) < 165) row--;
+            if (gapEnd - row < 1.15f * gap || row == limit) continue;
+            if (!columns.isEmpty() && (col != columns.get(columns.size() - 1).x() + 1
+                    || Math.abs(gapStart - commonStart) > 1 || Math.abs(gapEnd - commonEnd) > 2))
+                return null;
+            commonStart = gapStart;
+            commonEnd = gapEnd;
+            tip = Math.min(tip, row + 1);
+            columns.add(new PrintedBeamShafts.Column(col, row + 1));
+        }
+        if (columns.isEmpty() || columns.size() > .3f * gap) return null;
+        var shaft = new PrintedBeamShafts.Shaft(columns.get(0).x(),
+                columns.get(columns.size() - 1).x(), start, tip, -1, columns);
+        return new SplitShaft(shaft, commonStart);
     }
 
     private static boolean doubleRule(

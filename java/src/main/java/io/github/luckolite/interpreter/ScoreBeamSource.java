@@ -33,8 +33,14 @@ public record ScoreBeamSource(
 
     public enum Direction { FORWARD, BACKWARD }
 
-    /** Engraved numeral presence for a confirmed primary-beam triplet. */
-    public enum TupletMark { NUMBERED, UNNUMBERED }
+    /** Source appearance of a confirmed primary-beam triplet. */
+    public enum TupletMark {
+        NUMBERED, UNNUMBERED, NUMBERED_CURVED_BELOW;
+
+        public boolean numbered() {
+            return this != UNNUMBERED;
+        }
+    }
 
     public record Hook(int columnIndex, int level, Direction direction) {
         public Hook {

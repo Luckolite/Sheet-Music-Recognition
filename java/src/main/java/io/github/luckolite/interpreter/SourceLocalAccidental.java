@@ -43,6 +43,12 @@ final class SourceLocalAccidental {
         }
     }
 
+    record ProvedMark(ScoreNoteEvent note, int accidental, boolean naturalPrefix) {
+        ProvedMark(ScoreNoteEvent note, boolean naturalPrefix) {
+            this(note, note.writtenAccidental(), naturalPrefix);
+        }
+    }
+
     record PrintedMark(int noteIndex, int accidental, Boolean naturalPrefix) {
         PrintedMark(int noteIndex, int accidental) {
             this(noteIndex, accidental, null);
@@ -757,6 +763,18 @@ final class SourceLocalAccidental {
 
     static List<PrintedMark> includeClosedTripletSharps(
             List<PrintedMark> marks, List<ScoreNoteEvent> proved, List<ScoreNoteEvent> retained) {
+        return includeProvedLocalMarks(marks, proved, retained, ScoreNoteEvent.ACCIDENTAL_SHARP);
+    }
+
+    static List<PrintedMark> includeProvedLocalMarks(
+            List<PrintedMark> marks, List<ScoreNoteEvent> proved, List<ScoreNoteEvent> retained, int accidental) {
+        if (proved.isEmpty()) return marks;
+        return includeProvedLocalMarks(marks, proved.stream()
+                .map(note -> new ProvedMark(note, accidental, false)).toList(), retained);
+    }
+
+    static List<PrintedMark> includeProvedLocalMarks(
+            List<PrintedMark> marks, List<ProvedMark> proved, List<ScoreNoteEvent> retained) {
         if (proved.isEmpty()) return marks;
         var owners = new HashMap<NoteLocation, Integer>();
         for (int i = 0; i < retained.size(); i++)
@@ -764,15 +782,236 @@ final class SourceLocalAccidental {
                 owners.merge(new NoteLocation(retained.get(i)), i, (a, b) -> -1);
         var combined = new TreeMap<Integer, PrintedMark>();
         for (var mark : marks) combined.put(mark.noteIndex(), mark);
-        for (var note : proved) {
+        for (var proof : proved) {
+            var note = proof.note();
             int index = owners.getOrDefault(new NoteLocation(note), -1);
-            if (index >= 0
-                    && retained.get(index).writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_SHARP
-                    && retained.get(index).clefBottomDiatonic() == note.clefBottomDiatonic())
-                combined.putIfAbsent(
-                        index, new PrintedMark(index, ScoreNoteEvent.ACCIDENTAL_SHARP));
+            int accidental = proof.accidental();
+            if (index < 0 || retained.get(index).writtenAccidental() != accidental
+                    || retained.get(index).clefBottomDiatonic() != note.clefBottomDiatonic()) continue;
+            var existing = combined.get(index);
+            boolean prefix = proof.naturalPrefix() && accidental == ScoreNoteEvent.ACCIDENTAL_SHARP;
+            if (existing == null || prefix && existing.accidental() == accidental)
+                combined.put(index, new PrintedMark(index, accidental, prefix ? Boolean.TRUE : null));
         }
         return List.copyOf(combined.values());
+    }
+
+    /** A proved natural and a new printed sharp can share the same written pitch in a bar. */
+    static List<PrintedMark> retainBeamedSharpRestatements(
+            List<PrintedMark> known, List<ScoreNoteEvent> notes, List<MeasureRegion> measures,
+            byte[] source, byte[] normalized, int width, int height) {
+        if (source == null || normalized == null || source.length != (long) width * height
+                || source.length != normalized.length
+                || known.stream().noneMatch(mark -> mark.accidental() == ScoreNoteEvent.ACCIDENTAL_NATURAL))
+            return known;
+        var marks = new TreeMap<Integer, PrintedMark>();
+        for (var mark : known) marks.put(mark.noteIndex(), mark);
+        var naturals = new java.util.HashSet<Integer>();
+        int bar = -1;
+        float preceding = Float.NEGATIVE_INFINITY;
+        for (int i = 0; i < notes.size(); i++) {
+            var note = notes.get(i);
+            if (note.measureIndex() != bar) {
+                bar = note.measureIndex();
+                naturals.clear();
+                preceding = Float.NEGATIVE_INFINITY;
+            }
+            if (bar < 0 || bar >= measures.size() || note.staffCount() != 1
+                    || note.kind() != ScoreNoteEvent.Kind.PITCHED) continue;
+            var box = measures.get(bar);
+            float x = (box.left() + note.positionInMeasure() * (box.right() - box.left())) * width;
+            float y = note.pageY() * height;
+            float gap = (box.bottom() - box.top()) * height / 8.2f;
+            int pitch = note.diatonicPitchIdentity();
+            var knownMark = marks.get(i);
+            if (knownMark != null && knownMark.accidental() == ScoreNoteEvent.ACCIDENTAL_NATURAL)
+                naturals.add(pitch);
+            if (note.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_SHARP && naturals.contains(pitch)) {
+                if (knownMark != null || note.beamCount() == 1 && note.stemDirection() != 0
+                        && !note.tiedFromPrevious() && x - preceding >= gap * 2f
+                        && OmrScoreInterpreter.printedStoppedHarmonicSharp(source, width, height, x, y, gap)
+                        && OmrScoreInterpreter.printedStoppedHarmonicSharp(
+                                normalized, width, height, x, y, gap)) {
+                    marks.putIfAbsent(i, new PrintedMark(i, ScoreNoteEvent.ACCIDENTAL_SHARP));
+                    naturals.remove(pitch);
+                }
+            }
+            preceding = x;
+        }
+        return marks.size() == known.size() ? known : List.copyOf(marks.values());
+    }
+
+    /** Keep a printed flat even when the effective pitch already agrees with the key. */
+    static List<PrintedMark> retainSingleStaffTripletFlats(List<PrintedMark> known, List<ScoreNoteEvent> notes,
+            List<MeasureRegion> measures, byte[] labels, byte[] raw, byte[] gray, int width, int height) {
+        if (labels == null || raw == null || gray == null || labels.length != (long) width * height
+                || raw.length != labels.length || gray.length != labels.length) return known;
+        var marks = new TreeMap<Integer, PrintedMark>();
+        for (var mark : known) marks.put(mark.noteIndex(), mark);
+        for (int i = 0; i < notes.size(); i++) {
+            var n = notes.get(i);
+            int m = n.measureIndex();
+            if (marks.containsKey(i) || m < 0 || m >= measures.size()
+                    || n.kind() != ScoreNoteEvent.Kind.PITCHED || n.staffCount() != 1
+                    || n.visualSize() != ScoreNoteEvent.VisualSize.FULL || n.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_FLAT
+                    || n.beamCount() != 1 || Math.abs(n.stemDirection()) != 1
+                    || n.tupletDivisor() != 3 || n.tupletNormalNotes() != 2
+                    || n.tiedFromPrevious() || n.boundaryTies() != 0 || n.crossStaffBeam()
+                    || n.harmonicSemitones() != 0 || n.openStringTouch() != null) continue;
+            var box = measures.get(m);
+            float gap = (box.bottom() - box.top()) * height / 8.2f;
+            float span = (box.right() - box.left()) * width;
+            float x = box.left() * width + n.positionInMeasure() * span, y = n.pageY() * height;
+            if (i > 0 && notes.get(i - 1).measureIndex() == m
+                    && (n.positionInMeasure() - notes.get(i - 1).positionInMeasure()) * span < gap * 2.15f)
+                continue;
+            int left = Math.round(x - 1.85f * gap), right = Math.round(x - .72f * gap);
+            int top = Math.round(y - 1.80f * gap), bottom = Math.round(y + .85f * gap);
+            var lower = i + 1 < notes.size() ? notes.get(i + 1) : null;
+            float barLeft = box.left() * width;
+            boolean paired = lower != null && lower.measureIndex() == m && lower.staffCount() == n.staffCount()
+                    && lower.staffIndex() == n.staffIndex() && lower.stemDirection() == -1
+                    && n.stemDirection() == -1 && lower.beamCount() == 1 && lower.tupletDivisor() == 3
+                    && lower.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_FLAT
+                    && n.staffStep() - lower.staffStep() == 7
+                    && Math.abs(n.positionInMeasure() - lower.positionInMeasure()) * span <= .22f * gap
+                    && ClosedOctaveTripletBars.provedFarFlat(raw, gray, width, height, barLeft, span, gap, n)
+                    && ClosedOctaveTripletBars.provedFarFlat(raw, gray, width, height, barLeft, span, gap, lower);
+            if (paired || PrintedFlatGlyph.matchesOwnedInk(labels, raw, width, height, x, y, gap)
+                    && PrintedFlatGlyph.matchesOwnedInk(labels, gray, width, height, x, y, gap)
+                    && PrintedFlatGlyph.matches(raw, width, height, left, top, right, bottom, gap)
+                    && PrintedFlatGlyph.matches(gray, width, height, left, top, right, bottom, gap))
+                marks.put(i, new PrintedMark(i, ScoreNoteEvent.ACCIDENTAL_FLAT));
+        }
+        return marks.size() == known.size() ? known : List.copyOf(marks.values());
+    }
+
+    /** Keep separately printed flat and natural signs on both notes of a beamed octave. */
+    static List<PrintedMark> retainBeamedOctaveAccidentals(List<PrintedMark> known, List<ScoreNoteEvent> notes,
+            List<MeasureRegion> measures, byte[] labels, byte[] raw, byte[] gray, int width, int height) {
+        if (labels == null || raw == null || gray == null || labels.length != (long) width * height
+                || raw.length != labels.length || gray.length != labels.length) return known;
+        var marks = new TreeMap<Integer, PrintedMark>();
+        for (var mark : known) marks.put(mark.noteIndex(), mark);
+        for (int i = 0; i + 1 < notes.size(); i++) {
+            var a = notes.get(i);
+            var b = notes.get(i + 1);
+            int bar = a.measureIndex();
+            int sign = a.writtenAccidental();
+            if (sign != ScoreNoteEvent.ACCIDENTAL_FLAT && sign != ScoreNoteEvent.ACCIDENTAL_NATURAL
+                    || b.writtenAccidental() != sign || !beamedOctaveHead(a) || !beamedOctaveHead(b)
+                    || b.measureIndex() != bar
+                    || bar < 0 || bar >= measures.size() || a.clefBottomDiatonic() != b.clefBottomDiatonic()
+                    || Math.abs(a.staffStep() - b.staffStep()) != 7
+                    || marks.containsKey(i) && marks.containsKey(i + 1)) continue;
+            var box = measures.get(bar);
+            float gap = (box.bottom() - box.top()) * height / 8.2f;
+            float left = box.left() * width, span = (box.right() - box.left()) * width;
+            float ax = left + a.positionInMeasure() * span, bx = left + b.positionInMeasure() * span;
+            float ay = a.pageY() * height, by = b.pageY() * height;
+            var prior = i > 0 ? notes.get(i - 1) : null;
+            if (gap < 12 || gap > 24 || Math.abs(ax - bx) > .27f * gap
+                    || Math.abs(Math.abs(ay - by) - 3.5f * gap) > .30f * gap
+                    || prior != null && prior.measureIndex() == bar
+                        && Math.min(ax, bx) - (left + prior.positionInMeasure() * span) < 2.32f * gap)
+                continue;
+            if (Math.abs(ax - bx) > .23f * gap
+                    && (!sharedOctaveAccidentalShaft(raw, width, height, ax, ay, bx, by, gap)
+                        || !sharedOctaveAccidentalShaft(gray, width, height, ax, ay, bx, by, gap)))
+                continue;
+            int firstLine = Math.round(box.bottom() * height - 6.1f * gap);
+            if (!ownsOctaveAccidental(sign, labels, raw, width, height, ax, ay, gap, firstLine)
+                    || !ownsOctaveAccidental(sign, labels, gray, width, height, ax, ay, gap, firstLine)
+                    || !ownsOctaveAccidental(sign, labels, raw, width, height, bx, by, gap, firstLine)
+                    || !ownsOctaveAccidental(sign, labels, gray, width, height, bx, by, gap, firstLine)) continue;
+            marks.putIfAbsent(i, new PrintedMark(i, sign));
+            marks.putIfAbsent(i + 1, new PrintedMark(i + 1, sign));
+            i++;
+        }
+        return marks.size() == known.size() ? known : List.copyOf(marks.values());
+    }
+
+    /** Retain a detached natural on the upper head of a high beamed sixth with a separately owned sharp. */
+    static List<PrintedMark> retainLedgerSixthNaturals(List<PrintedMark> known, List<ScoreNoteEvent> notes,
+            List<MeasureRegion> measures, byte[] raw, byte[] gray, int width, int height) {
+        if (raw == null || gray == null || raw.length != (long) width * height || gray.length != raw.length)
+            return known;
+        var marks = new TreeMap<Integer, PrintedMark>();
+        for (var mark : known) marks.put(mark.noteIndex(), mark);
+        for (var sign : known) {
+            int lower = sign.noteIndex();
+            if (sign.accidental() != ScoreNoteEvent.ACCIDENTAL_SHARP || lower < 1 || lower >= notes.size())
+                continue;
+            int upper = lower - 1;
+            var low = notes.get(lower);
+            var high = notes.get(upper);
+            int bar = high.measureIndex();
+            if (marks.containsKey(upper) || high.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_NATURAL
+                    || low.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_SHARP
+                    || high.staffStep() < 15 || high.staffStep() - low.staffStep() != 5
+                    || low.measureIndex() != bar || bar < 0 || bar >= measures.size()
+                    || high.clefBottomDiatonic() != low.clefBottomDiatonic()
+                    || !beamedOctaveHead(high) || !beamedOctaveHead(low)) continue;
+            var region = measures.get(bar);
+            float span = (region.right() - region.left()) * width;
+            float hx = region.left() * width + high.positionInMeasure() * span;
+            float lx = region.left() * width + low.positionInMeasure() * span;
+            float hy = high.pageY() * height, ly = low.pageY() * height;
+            float gap = (region.bottom() - region.top()) * height / 8.2f;
+            if (gap < 12 || gap > 24 || Math.abs(hx - lx) > .20f * gap
+                    || Math.abs(ly - hy - 2.5f * gap) > .25f * gap) continue;
+            int left = Math.round(hx - 2.06f * gap), right = Math.round(hx - .86f * gap);
+            if (!OmrScoreInterpreter.provesBoundedNaturalInk(raw, width, height, hx, hy, gap, left, right)
+                    || !OmrScoreInterpreter.provesBoundedNaturalInk(gray, width, height, hx, hy, gap, left, right)
+                    || !sharedOctaveAccidentalShaft(raw, width, height, hx, hy, lx, ly, gap)
+                    || !sharedOctaveAccidentalShaft(gray, width, height, hx, hy, lx, ly, gap)) continue;
+            marks.put(upper, new PrintedMark(upper, ScoreNoteEvent.ACCIDENTAL_NATURAL));
+        }
+        return marks.size() == known.size() ? known : List.copyOf(marks.values());
+    }
+
+    private static boolean beamedOctaveHead(ScoreNoteEvent note) {
+        return note.kind() == ScoreNoteEvent.Kind.PITCHED && note.staffIndex() == 0 && note.staffCount() == 1
+                && note.visualSize() == ScoreNoteEvent.VisualSize.FULL && note.stemDirection() == -1
+                && note.beamCount() == 2 && note.unbeamedDurationBeats() == 0 && note.tupletDivisor() == 1
+                && !note.tiedFromPrevious() && note.boundaryTies() == 0 && !note.crossStaffBeam()
+                && note.harmonicSemitones() == 0 && note.openStringTouch() == null;
+    }
+
+    private static boolean sharedOctaveAccidentalShaft(byte[] gray, int width, int height,
+            float ax, float ay, float bx, float by, float gap) {
+        var budget = new PrintedBeamShafts.Budget(60_000);
+        var first = PrintedBeamShafts.at(gray, width, height, ax, ay, gap, budget);
+        var second = PrintedBeamShafts.at(gray, width, height, bx, by, gap, budget);
+        if (budget.refused() || first.size() != 1 || second.size() != 1) return false;
+        var a = first.get(0);
+        var b = second.get(0);
+        return a.direction() == 1 && b.direction() == 1 && a.left() <= b.right() && b.left() <= a.right()
+                && Math.abs(a.endY() - b.endY()) <= .28f * gap;
+    }
+
+
+    private static boolean ownsOctaveAccidental(int sign, byte[] labels, byte[] gray, int width, int height,
+            float x, float y, float gap, int firstLine) {
+        if (sign == ScoreNoteEvent.ACCIDENTAL_FLAT)
+            return PrintedFlatGlyph.matchesOwnedInk(labels, gray, width, height, x, y, gap);
+        int l = Math.round(x - 2.03f * gap), r = Math.round(x - .72f * gap);
+        int top = Math.round(y - 2.1f * gap), bottom = Math.round(y + 2.1f * gap);
+        int left = l - Math.round(.19f * gap), right = r + Math.round(.125f * gap);
+        if (left < 0 || right >= width || top < 0 || bottom >= height) return false;
+        int w = right - left + 1, h = bottom - top + 1;
+        byte[] glyph = new byte[w * h];
+        java.util.Arrays.fill(glyph, (byte) 255);
+        for (int row = 0; row < h; row++)
+            for (int col = 0; col < w; col++) {
+                int at = (row + top) * width + left + col;
+                if (labels[at] == OmrMeasurePostProcessor.CLEF_OR_KEY) glyph[row * w + col] = gray[at];
+            }
+        for (int a = 0; a <= l - left + Math.round(.375f * gap); a++)
+            for (int b = r - left - Math.round(.31f * gap); b < w; b++)
+                if (OmrScoreInterpreter.provesNaturalMeterInk(
+                        glyph, w, h, a, b, y - top, gap, firstLine - top)) return true;
+        return false;
     }
 
     private boolean ambiguousVerticalOwner(

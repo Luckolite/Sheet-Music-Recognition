@@ -8,11 +8,21 @@ final class LedgerCrossedHarmonicDiamond {
 
     static boolean proved(byte[] labels, byte[] gray, int w, int h,
             float x, float y, float gap, int shaft, int direction) {
+        return proved(labels, gray, w, h, x, y, gap, shaft, direction, 1.03f);
+    }
+
+    static boolean compact(byte[] labels, byte[] gray, int w, int h,
+            float x, float y, float gap, int shaft, int direction) {
+        return proved(labels, gray, w, h, x, y, gap, shaft, direction, .88f);
+    }
+
+    private static boolean proved(byte[] labels, byte[] gray, int w, int h,
+            float x, float y, float gap, int shaft, int direction, float span) {
         if (labels == null || gray == null || labels.length != (long) w * h || gray.length != labels.length
                 || !Float.isFinite(x) || !Float.isFinite(y) || !Float.isFinite(gap)
                 || gap < 10 || gap > 26 || (direction != 1 && direction != -1)) return false;
         int cx = Math.round(x), cy = Math.round(y);
-        int radius = Math.round(gap * 1.03f), rise = Math.round(gap * .8f);
+        int radius = Math.round(gap * span), rise = Math.round(gap * .8f);
         if (cx - radius < 0 || cx + radius >= w || cy - rise < 0 || cy + rise >= h
                 || (shaft - cx) * direction < gap * .32f
                 || (shaft - cx) * direction > gap * .75f) return false;

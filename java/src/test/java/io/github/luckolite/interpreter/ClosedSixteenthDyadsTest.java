@@ -27,6 +27,48 @@ public class ClosedSixteenthDyadsTest {
         assertFollowingStaccato(5);
     }
 
+    @Test
+    public void printedDoubleSharpsCannotSupplyDotsToThePreviousOctave() {
+        var meter = new ScoreMeterChange(0, 4, 4);
+        var bar = new MeasureRegion(85f / WIDTH, 950f / WIDTH, 188f / HEIGHT, 319f / HEIGHT);
+        var notes = new ArrayList<ScoreNoteEvent>();
+        byte[] ink = new byte[WIDTH * HEIGHT];
+        Arrays.fill(ink, (byte) 255);
+        for (int slot = 0; slot < 16; slot++) {
+            int x = 120 + 52 * slot;
+            for (int y : new int[] {224, 280}) {
+                notes.add(new ScoreNoteEvent(0, (x - 85) / 865f, (STAFF_BOTTOM - y) / 8,
+                                0, 1, (float) y / HEIGHT, false, slot == 0 ? 1 : 0, 2,
+                                slot == 1 ? ScoreNoteEvent.ACCIDENTAL_DOUBLE_SHARP
+                                        : ScoreNoteEvent.ACCIDENTAL_FROM_KEY, 0)
+                        .withClef(ScoreNoteEvent.CLEF_TREBLE).withStemDirection(-1));
+                draw(ink, x - 8, x + 8, y - 4, y + 4, (byte) 0);
+            }
+        }
+        for (int centerY : new int[] {224, 280}) {
+            for (int dy = -7; dy <= 7; dy++) {
+                for (int dx = -7; dx <= 7; dx++) {
+                    if (Math.abs(dx - dy) <= 2 || Math.abs(dx + dy) <= 2)
+                        ink[(centerY + dy) * WIDTH + 147 + dx] = 0;
+                }
+            }
+        }
+        var score = new ScorePageInterpretation(List.of(bar), notes);
+        var after = ClosedSixteenthDyads.apply(score, meter, ink, ink.clone(), WIDTH, HEIGHT);
+        assertEquals(0, after.notes().get(0).augmentationDots());
+        assertEquals(0, after.notes().get(1).augmentationDots());
+        assertEquals(notes.subList(2, notes.size()), after.notes().subList(2, notes.size()));
+
+        var erased = ink.clone();
+        draw(erased, 140, 154, 217, 231, (byte) 255);
+        assertSame(score, ClosedSixteenthDyads.apply(score, meter, ink, erased, WIDTH, HEIGHT));
+        var separateDot = ink.clone();
+        draw(separateDot, 133, 136, 220, 224, (byte) 0);
+        assertSame(score, ClosedSixteenthDyads.apply(score, meter, separateDot, ink, WIDTH, HEIGHT));
+        assertSame(score, ClosedSixteenthDyads.apply(
+                score, new ScoreMeterChange(0, 3, 4), ink, ink, WIDTH, HEIGHT));
+    }
+
     private static void assertFollowingStaccato(int interval) {
         var ink = new byte[WIDTH * HEIGHT];
         Arrays.fill(ink, (byte) 255);
@@ -428,6 +470,49 @@ public class ClosedSixteenthDyadsTest {
                 ClosedSixteenthDyads.apply(
                                 wrongClock, meter, printedBar, missingRule, WIDTH, HEIGHT, 8)
                         .notes());
+
+        var falseOpeningDots = new ArrayList<>(notes);
+        for (int i = 0; i < 2; i++) {
+            var n = notes.get(i);
+            falseOpeningDots.set(i, new ScoreNoteEvent(
+                    n.measureIndex(), n.positionInMeasure(), n.staffStep(), n.staffIndex(), n.staffCount(),
+                    n.pageY(), false, 1, 2, ScoreNoteEvent.ACCIDENTAL_FROM_KEY, 0, 1, 0, 0,
+                    n.clefBottomDiatonic(), false, 0, false, 0, 0, 1, -1, n.kind(), n.visualSize(), 0, null));
+        }
+        var openingRegion = new MeasureRegion(
+                region.left(), region.right(), region.top() - 4.5f / HEIGHT, region.bottom() - 4.5f / HEIGHT);
+        var dottedOpening = new ScorePageInterpretation(List.of(openingRegion), falseOpeningDots);
+        var openingInk = printedBar.clone();
+        for (int y = STAFF_BOTTOM - 4 * GAP; y <= STAFF_BOTTOM; y += GAP)
+            draw(openingInk, right + 10, right + 28, y, y, (byte) 0);
+        int tip = PRIMARY - 20;
+        draw(openingInk, LEFT, right, STAFF_BOTTOM + 1, PRIMARY + 3, (byte) 255);
+        for (int slot = 0; slot < 16; slot++) {
+            int x = FIRST + slot * advance - 9;
+            draw(openingInk, x, x + 2, STAFF_BOTTOM + 1, tip + 2, (byte) 0);
+            if (slot % 4 != 0) continue;
+            int end = x + 3 * advance + 2;
+            draw(openingInk, x, end, tip - 2, tip + 2, (byte) 0);
+            draw(openingInk, x, end, tip - 16, tip - 12, (byte) 0);
+        }
+
+        var fleck = openingInk.clone();
+        draw(fleck, FIRST + 16, FIRST + 16, lower, lower, (byte) 0);
+        var fixedOpening = ClosedSixteenthDyads.apply(dottedOpening, meter, fleck, fleck, WIDTH, HEIGHT, 8);
+        assertEquals(0, fixedOpening.notes().get(0).augmentationDots());
+        assertEquals(0, fixedOpening.notes().get(1).augmentationDots());
+        assertEquals(notes, fixedOpening.notes());
+        assertEquals(4, fixedOpening.beamSource().groups().size());
+        var realDot = openingInk.clone();
+        draw(realDot, FIRST + 14, FIRST + 19, lower - 2, lower + 2, (byte) 0);
+        draw(realDot, FIRST + 15, FIRST + 18, lower - 3, lower + 3, (byte) 0);
+        assertEquals(falseOpeningDots, ClosedSixteenthDyads.apply(
+                dottedOpening, meter, fleck, realDot, WIDTH, HEIGHT, 8).notes());
+        var noBoundary = openingInk.clone();
+        draw(noBoundary, right - 1, right + 1, STAFF_BOTTOM - 4 * GAP, STAFF_BOTTOM, (byte) 255);
+        assertEquals(falseOpeningDots, ClosedSixteenthDyads.apply(
+                dottedOpening, meter, fleck, noBoundary, WIDTH, HEIGHT, 8).notes());
+
 
         var enteringRail = ink.clone();
         draw(enteringRail, FIRST - 26, FIRST - 9, PRIMARY - 2, PRIMARY + 2, (byte) 0);

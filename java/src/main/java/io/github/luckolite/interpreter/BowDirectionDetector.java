@@ -59,7 +59,7 @@ final class BowDirectionDetector {
                             n.positionInMeasure(),
                             n.staffIndex(),
                             n.staffCount(),
-                            mark.technique()));
+                            mark.technique(), mark.placement()));
         }
         return List.copyOf(result);
     }

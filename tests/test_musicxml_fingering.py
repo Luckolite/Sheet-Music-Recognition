@@ -23,7 +23,7 @@ class PrintedFingeringTests(unittest.TestCase):
             path = Path(folder) / 'score.musicxml'
             write_musicxml(dict(pages=[page]), path)
             first, second = ET.parse(path).getroot().findall('part/measure')
-        self.assertEqual({0: (0, 'below')}, retained(page))
+        self.assertEqual({0: (('0', 'below'),)}, retained(page))
         self.assertIsNotNone(first.find('note[tie]'))
         fingerings = first.findall('note/notations/technical/fingering')
         self.assertEqual([('0', 'below')], [(f.text, f.get('placement')) for f in fingerings])

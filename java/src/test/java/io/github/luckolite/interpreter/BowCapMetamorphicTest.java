@@ -47,7 +47,7 @@ public final class BowCapMetamorphicTest {
         for (int y = 0; y < h; y++)
             for (int x = 0; x < w; x++) m[y * w + (w - 1 - x)] = in[y * w + x];
         assertEquals(
-                List.of(new ScoreTechniqueChange(0, .5f, 0, 1, ScoreTechniqueChange.UP_BOW)),
+                List.of(new ScoreTechniqueChange(0, .5f, 0, 1, ScoreTechniqueChange.UP_BOW, ScoreTechniqueChange.BowPlacement.ABOVE)),
                 detect(m, w, h, 1));
     }
 
@@ -55,7 +55,7 @@ public final class BowCapMetamorphicTest {
     public void doubledRasterCapRemainsUpBow() {
         int w = BowArmCompletenessTest.W, h = BowArmCompletenessTest.H;
         assertEquals(
-                List.of(new ScoreTechniqueChange(0, .5f, 0, 1, ScoreTechniqueChange.UP_BOW)),
+                List.of(new ScoreTechniqueChange(0, .5f, 0, 1, ScoreTechniqueChange.UP_BOW, ScoreTechniqueChange.BowPlacement.ABOVE)),
                 detect(doubled(base()), w * 2, h * 2, 2));
     }
 
@@ -63,7 +63,7 @@ public final class BowCapMetamorphicTest {
     public void doubledRasterUnmodifiedThickVRemainsUpBow() {
         int w = BowArmCompletenessTest.W, h = BowArmCompletenessTest.H;
         assertEquals(
-                List.of(new ScoreTechniqueChange(0, .5f, 0, 1, ScoreTechniqueChange.UP_BOW)),
+                List.of(new ScoreTechniqueChange(0, .5f, 0, 1, ScoreTechniqueChange.UP_BOW, ScoreTechniqueChange.BowPlacement.ABOVE)),
                 detect(doubled(BowArmCompletenessTest.scene(9)), w * 2, h * 2, 2));
     }
 
@@ -134,7 +134,7 @@ public final class BowCapMetamorphicTest {
                         "scale=" + scale + " mirror=" + mirror,
                         List.of(
                                 new NoteArticulationDetector.BowMark(
-                                        0, ScoreTechniqueChange.UP_BOW)),
+                                        0, ScoreTechniqueChange.UP_BOW, ScoreTechniqueChange.BowPlacement.ABOVE)),
                         skewCap(scale, mirror, 0));
     }
 
@@ -155,7 +155,7 @@ public final class BowCapMetamorphicTest {
                         "scale=" + scale + " mirror=" + mirror,
                         List.of(
                                 new NoteArticulationDetector.BowMark(
-                                        0, ScoreTechniqueChange.UP_BOW)),
+                                        0, ScoreTechniqueChange.UP_BOW, ScoreTechniqueChange.BowPlacement.ABOVE)),
                         skewCap(scale, mirror, 2));
     }
 }

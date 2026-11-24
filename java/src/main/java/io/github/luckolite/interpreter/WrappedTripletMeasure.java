@@ -24,6 +24,20 @@ final class WrappedTripletMeasure {
             float[] beats,
             byte[] labels,
             int[] keys) {
+        return capture(score, inherited, gray, null, width, height, beats, labels, keys, List.of());
+    }
+
+    static Proof capture(
+            ScorePageInterpretation score,
+            ScoreMeterChange inherited,
+            byte[] gray,
+            byte[] original,
+            int width,
+            int height,
+            float[] beats,
+            byte[] labels,
+            int[] keys,
+            List<PlayingTechniqueDetector.Word> words) {
         var written = new Timing[score.notes().size()];
         if (gray == null || gray.length != (long) width * height || beats.length < 4)
             return new Proof(score, List.of(), written);
@@ -32,6 +46,7 @@ final class WrappedTripletMeasure {
         for (int i = 0; i < beats.length; i++) byMeasure.add(new ArrayList<>());
         for (int i = 0; i < notes.size(); i++) byMeasure.get(notes.get(i).measureIndex()).add(i);
         var regions = score.measures();
+        var beamProjection = score;
         var continuations = new ArrayList<Integer>();
         var meter = inherited;
         int nextMeter = 0;
@@ -157,8 +172,12 @@ final class WrappedTripletMeasure {
                     assign(predecessor, notes, written, true);
                 } else {
                     var preceding = WrappedEighthTriplets.closedNaturalPredecessor(
-                            gray, width, height, regions, i - 1, notes, byMeasure.get(i - 1), labels);
-                    if (preceding != null) assign(preceding, notes, written, true);
+                            gray, original, width, height, regions, i - 1, notes, byMeasure.get(i - 1), labels);
+                    if (preceding != null) {
+                        assign(preceding, notes, written, true);
+                        beamProjection = WrappedEighthTriplets.projectPredecessorBeams(
+                                beamProjection, i - 1, preceding, labels, gray, original, width, height, words);
+                    }
                 }
             }
             beats[i] = 3;
@@ -166,7 +185,7 @@ final class WrappedTripletMeasure {
             continuations.add(i+1);
         }
         if (continuations.isEmpty()) return new Proof(score, List.of(), written);
-        return new Proof(score.withNotes(notes, IntStream.range(0, notes.size()).boxed().toList())
+        return new Proof(beamProjection.withNotes(notes, IntStream.range(0, notes.size()).boxed().toList())
                 .withClockContextSource(score.clockContextSource()), List.copyOf(continuations), written);
     }
 

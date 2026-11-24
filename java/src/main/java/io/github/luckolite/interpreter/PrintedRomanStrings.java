@@ -44,6 +44,13 @@ final class PrintedRomanStrings {
             byte[] gray, int width, int height, List<SheetInterpreter.Word> words,
             ScorePageInterpretation score, List<Map<String, Object>> events,
             Supplier<List<PlayingTechniqueDetector.Staff>> staffSource) {
+        return capture(gray, null, width, height, words, score, events, staffSource);
+    }
+
+    static List<Mark> capture(
+            byte[] gray, byte[] original, int width, int height, List<SheetInterpreter.Word> words,
+            ScorePageInterpretation score, List<Map<String, Object>> events,
+            Supplier<List<PlayingTechniqueDetector.Staff>> staffSource) {
         if (gray == null || gray.length != (long) width * height || words.isEmpty()) {
             return List.of();
         }
@@ -52,7 +59,10 @@ final class PrintedRomanStrings {
                 (double) w.left() * width, (double) w.top() * height,
                 (double) w.right() * width, (double) w.bottom() * height))
                 .sorted(Comparator.comparingDouble(Word::l)).toList();
-        if (boxes.stream().noneMatch(w -> LITERALS.contains(w.text()))) return List.of();
+        var provedColumns = original == null || original.length != gray.length
+                ? java.util.Set.<Long>of() : octaveTripletColumns(score);
+        if (boxes.stream().noneMatch(w -> LITERALS.contains(w.text())
+                || !provedColumns.isEmpty() && "ΠIII".equals(w.text()))) return List.of();
         var staffs = staffSource.get();
         if (staffs.isEmpty()) return List.of();
 
@@ -91,18 +101,23 @@ final class PrintedRomanStrings {
                     nearby.add(box);
                 }
             }
-            if (nearby.stream().noneMatch(w -> LITERALS.contains(w.text()))) continue;
+            boolean provedColumn = provedColumns.contains(columnKey(higher.owner(), lower.owner()));
+            boolean exactWord = nearby.stream().anyMatch(w -> LITERALS.contains(w.text()));
+            if (!exactWord && (!provedColumn || nearby.stream().noneMatch(w -> "ΠIII".equals(w.text()))))
+                continue;
             var ink = glyphs(gray, width, height, x, y, gap);
             if (ink.size() != 2) continue;
             var above = ink.get(0);
             var below = ink.get(1);
             if (!stackedRows(above, below, gap)
                     || blocksOtherStaff(staffs, staff, above.bounds())
-                    || blocksOtherStaff(staffs, staff, below.bounds())
-                    || !qualifyOcr(above, below, nearby, gap)) continue;
+                    || blocksOtherStaff(staffs, staff, below.bounds())) continue;
+            boolean agrees = provedColumn && ink.equals(glyphs(original, width, height, x, y, gap));
+            if (!qualifyOcr(above, below, nearby, gap) && (!agrees
+                    || !qualifyMergedPi(above, below, nearby, gap))) continue;
             int higherFloor = OPEN_MIDI[above.shafts() - 1], lowerFloor = OPEN_MIDI[below.shafts() - 1];
             if (higher.midi() >= higherFloor && lower.midi() >= lowerFloor) {
-                pairs.add(new Pair(higher, lower, above, below, lower.midi() < higherFloor));
+                pairs.add(new Pair(higher, lower, above, below, lower.midi() < higherFloor || agrees));
             }
         }
         var contested = new HashSet<Integer>();
@@ -123,6 +138,39 @@ final class PrintedRomanStrings {
         }
         marks.sort(Comparator.comparingInt(Mark::noteIndex));
         return List.copyOf(marks);
+    }
+
+    private static java.util.Set<Long> octaveTripletColumns(ScorePageInterpretation score) {
+        var columns = new HashSet<Long>();
+        for (var group : score.beamSource().resolve().groups()) {
+            if (group.source().tupletMark() != ScoreBeamSource.TupletMark.UNNUMBERED
+                    || !group.source().bridges().equals(List.of(1, 1)) || !group.source().hooks().isEmpty()
+                    || group.columns().size() != 3) continue;
+            for (var column : group.columns()) {
+                if (!column.ambiguous() && column.owners().size() == 2)
+                    columns.add(columnKey(column.owners().get(0), column.owners().get(1)));
+            }
+        }
+        return columns;
+    }
+
+    private static long columnKey(int first, int second) {
+        return ((long) Math.min(first, second) << 32) | (Math.max(first, second) & 0xffffffffL);
+    }
+
+    private static boolean qualifyMergedPi(ShaftGroup high, ShaftGroup low, List<Word> words, double gap) {
+        if (high.shafts() != 2 || low.shafts() != 3) return false;
+        int candidates = 0;
+        for (var word : words) {
+            if (!word.contains(high.bounds()) && !word.contains(low.bounds())) continue;
+            if (!"ΠIII".equals(word.text())
+                    || word.l() > Math.min(high.bounds().left(), low.bounds().left())
+                    || word.r() < Math.max(high.bounds().right(), low.bounds().right())
+                    || word.t() > high.bounds().top() || word.b() < low.bounds().bottom()
+                    || word.r() - word.l() > 3.8 * gap || word.b() - word.t() > 5 * gap) return false;
+            candidates++;
+        }
+        return candidates == 1;
     }
 
     /** A later accidental can borrow a serif from a stacked string mark above the previous head. */
@@ -220,6 +268,20 @@ final class PrintedRomanStrings {
             first = last;
         }
         return bands;
+    }
+
+    static boolean hasRomanSerifs(RawNumeralComponents.Component component, int width, float gap) {
+        var box = new Box(component.left, component.top, component.right + 1, component.bottom + 1);
+        return between(box.height(), 1.04 * gap, 1.8 * gap)
+                && between(box.width(), .36 * gap, 2.55 * gap)
+                && shafts(component, box, width, gap) > 0;
+    }
+
+    static boolean hasJoinedThreeSerifs(RawNumeralComponents.Component component, int width, float gap) {
+        var box = new Box(component.left, component.top, component.right + 1, component.bottom + 1);
+        return between(box.height(), 1.1 * gap, 1.8 * gap)
+                && between(box.width(), 1.9 * gap, 2.45 * gap)
+                && shafts(component, box, width, gap) == 3;
     }
 
     private static int shafts(RawNumeralComponents.Component component, Box box, int rasterWidth, double gap) {

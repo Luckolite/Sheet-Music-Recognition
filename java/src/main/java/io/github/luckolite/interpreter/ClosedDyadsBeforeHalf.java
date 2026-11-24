@@ -164,12 +164,18 @@ final class ClosedDyadsBeforeHalf {
 
     private static boolean sharpOwnsDotGap(
             byte[] gray, int width, int height, float gap, Head previous, Head next) {
+        return sharpOwnsDotGap(gray, width, height, gap, previous.x, previous.y, next.x, next.y);
+    }
+
+    static boolean sharpOwnsDotGap(
+            byte[] gray, int width, int height, float gap,
+            float previousX, float previousY, float nextX, float nextY) {
         int margin = Math.round(gap * .43f);
-        int from = Math.round(previous.x + gap * 1.14f);
-        int to = Math.round(next.x - gap * 1.14f);
-        int ymin = Math.round(next.y - gap * .43f), ymax = Math.round(next.y + gap * .21f);
-        int dotLeft = Math.round(previous.x + gap * .82f), dotTop = Math.round(previous.y - gap * .69f);
-        int dotBottom = Math.round(previous.y + gap * .30f);
+        int from = Math.round(previousX + gap * 1.14f);
+        int to = Math.round(nextX - gap * 1.14f);
+        int ymin = Math.round(nextY - gap * .43f), ymax = Math.round(nextY + gap * .21f);
+        int dotLeft = Math.round(previousX + gap * .82f), dotTop = Math.round(previousY - gap * .69f);
+        int dotBottom = Math.round(previousY + gap * .30f);
         if (from > to || dotLeft < 2 || to + margin + 2 >= width || dotTop < 2
                 || ymin <= margin + 2 || ymax + margin + 2 >= height || dotBottom + 2 >= height)
             return false;
@@ -184,7 +190,7 @@ final class ClosedDyadsBeforeHalf {
         return false;
     }
 
-    private static boolean noSeparateDot(
+    static boolean noSeparateDot(
             byte[] gray, int width, int left, int right, int top, int bottom) {
         for (int x = left; x + 2 < right; x++) {
             for (int y = top; y < bottom; y++) {

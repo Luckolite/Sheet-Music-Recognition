@@ -42,6 +42,74 @@ final class InlineSixteenthQuarterCadence {
         return repaired == null ? measures : List.copyOf(repaired);
     }
 
+    /** Number reconciliation may flatten an already isolated printed quarter into the next bar. */
+    static List<MeasureRegion> restoreIsolated(
+            List<MeasureRegion> raw, List<MeasureRegion> fitted,
+            byte[] labels, byte[] gray, byte[] original, int width, int height) {
+        if (gray == null || original == null || labels == null || gray.length != (long) width * height
+                || original.length != gray.length || labels.length != gray.length) return fitted;
+        List<MeasureRegion> rebuilt = null;
+        for (int i = 1; i + 1 < raw.size(); i++) {
+            var before = raw.get(i - 1);
+            var pocket = raw.get(i);
+            var after = raw.get(i + 1);
+            float gap = (pocket.bottom() - pocket.top()) * height / 8.2f;
+            float l = pocket.left() * width, r = pocket.right() * width;
+            if (gap < 11 || gap > 24 || (r - l) < gap * 2.75f || (r - l) > gap * 4.25f
+                    || (before.right() - before.left()) * width < gap * 23
+                    || (after.right() - after.left()) * width < gap * 23
+                    || (pocket.left() - before.right()) * width < gap * .7f
+                    || (pocket.left() - before.right()) * width > gap * 1.42f
+                    || (after.left() - pocket.right()) * width < gap * .7f
+                    || (after.left() - pocket.right()) * width > gap * 1.42f
+                    || Math.abs(pocket.top() - before.top()) * height > gap * .25f
+                    || Math.abs(pocket.top() - after.top()) * height > gap * .25f
+                    || pocket.cadenceQuarterBeats() != 0) continue;
+            var list = rebuilt == null ? fitted : rebuilt;
+            int owner = list.indexOf(new MeasureRegion(
+                    pocket.left(), after.right(), Math.min(pocket.top(), after.top()),
+                    Math.max(pocket.bottom(), after.bottom())));
+            if (owner < 0 || !list.contains(before)) continue;
+            int doubleRule = isolatedDivider(gray, width, height, before, pocket, after, gap);
+            if (doubleRule < 0 || doubleRule != isolatedDivider(original, width, height, before, pocket, after, gap))
+                continue;
+            var notes = OmrScoreInterpreter.analyze(labels, gray, width, height, List.of(pocket), original);
+            if (notes.notes().size() != 2 || !notes.rests().isEmpty()) continue;
+            var a = notes.notes().get(0);
+            var b = notes.notes().get(notes.notes().size() - 1);
+            if (!plain(a, true, 1) || !plain(b, true, 1)
+                    || Math.abs(a.staffStep() - b.staffStep()) != 5) continue;
+            float ax = l + a.positionInMeasure() * (r - l);
+            float bx = l + b.positionInMeasure() * (r - l);
+            if (Math.abs(ax - bx) > gap * .20f || ax - l < gap * .8f || doubleRule - ax < gap * 1.65f
+                    || !sharedStem(gray, width, height, ax, a.pageY() * height, bx, b.pageY() * height, gap, 1)
+                    || !sharedStem(original, width, height, ax, a.pageY() * height, bx, b.pageY() * height, gap, 1))
+                continue;
+            if (rebuilt == null) rebuilt = new ArrayList<>(fitted);
+            rebuilt.set(owner, after);
+            rebuilt.add(owner, new MeasureRegion(pocket.left(), pocket.right(), pocket.top(), pocket.bottom(), 1));
+        }
+        return rebuilt == null ? fitted : List.copyOf(rebuilt);
+    }
+
+    private static int isolatedDivider(
+            byte[] gray, int width, int height, MeasureRegion before, MeasureRegion pocket,
+            MeasureRegion after, float gap) {
+        float left = pocket.left() * width, right = pocket.right() * width;
+        float hint = pocket.bottom() * height - 2.1f * gap;
+        var lines = DottedDyadMeasureSeparator.localRails(gray, width, height,
+                Math.round(right - .55f * gap), hint, gap);
+        if (lines == null) return -1;
+        int top = Math.round(lines[0] - 4 * lines[1]), bottom = Math.round(lines[0]);
+        int columns = 0;
+        for (int x = Math.round(before.right() * width); x <= Math.round(left); x++)
+            if (isRule(gray, width, height, x, top, bottom, lines[1])) columns++;
+        if (columns < 2 || columns > gap * .78f) return -1;
+        var staff = new PlayingTechniqueDetector.Staff(top, bottom, lines[1], 0, 1);
+        return PrintedCadenceDurations.boundaryColumn(
+                gray, width, staff, (right + after.left() * width) * .5f, false, false);
+    }
+
     private static List<MeasureRegion> split(
             MeasureRegion region,
             MeasureRegion next,

@@ -58,8 +58,8 @@ public final class ScoreBeamSourceWire {
             out.writeInt(g.bridges().size());for(int mask:g.bridges())out.writeInt(mask);
             out.writeInt(g.hooks().size());for(var h:g.hooks()){out.writeInt(h.columnIndex());out.writeInt(h.level());out.writeInt(h.direction().ordinal());}
             if (engravedTuplets) {
-                int code = g.tupletMark() == null ? 0
-                        : g.tupletMark() == ScoreBeamSource.TupletMark.NUMBERED ? 1 : 2;
+                // Existing Guide frames retain the number. Bracket style is a JSON/MusicXML fact.
+                int code = g.tupletMark() == null ? 0 : g.tupletMark().numbered() ? 1 : 2;
                 out.writeByte(code);
             } else if (g.tupletMark() != null) {
                 throw new IOException("Guide beam frame cannot preserve engraved tuplet marks");

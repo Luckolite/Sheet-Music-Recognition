@@ -301,6 +301,170 @@ final class TripletRhythmDetector {
         return revised == null ? notes : revised;
     }
 
+    /** A missing endpoint rail and a borrowed tuplet must agree with the whole printed bar. */
+    static List<ScoreNoteEvent> closeClippedDyadQuartets(
+            List<ScoreNoteEvent> notes, List<ScoreRestEvent> rests, List<MeasureRegion> measures,
+            List<ScoreMeterChange> meters, ScoreMeterChange inherited,
+            byte[] gray, byte[] raw, int width, int height) {
+        return closeClippedDyadQuartets(notes, rests, measures, meters, inherited,
+                gray, raw, width, height, null);
+    }
+
+    static List<ScoreNoteEvent> closeClippedDyadQuartets(
+            List<ScoreNoteEvent> notes, List<ScoreRestEvent> rests, List<MeasureRegion> measures,
+            List<ScoreMeterChange> meters, ScoreMeterChange inherited,
+            byte[] gray, byte[] raw, int width, int height, List<Integer> repairedBars) {
+        if (gray == null || raw == null || gray.length != (long) width * height || raw.length != gray.length)
+            return notes;
+        var groups = onsets(notes);
+        ArrayList<ScoreNoteEvent> revised = null;
+        for (int begin = 0; begin < groups.size();) {
+            int measure = notes.get(groups.get(begin).indices().get(0)).measureIndex();
+            int end = begin + 1;
+            while (end < groups.size() && notes.get(groups.get(end).indices().get(0)).measureIndex() == measure)
+                end++;
+            var meter = meterAt(meters, measure).orElse(inherited);
+            if (end - begin == 16 && measure >= 0 && measure < measures.size() && meter != null
+                    && meter.numerator() == 4 && meter.denominator() == 4
+                    && rests.stream().noneMatch(rest -> rest.measureIndex() == measure)) {
+                var row = groups.subList(begin, end);
+                var bar = measures.get(measure);
+                int[] repairs = clippedDyadSlots(notes, row, bar);
+                if (repairs != null
+                        && provesClippedDyads(notes, row, measures, bar, repairs, gray, width, height)
+                        && provesClippedDyads(notes, row, measures, bar, repairs, raw, width, height)) {
+                    if (revised == null) revised = new ArrayList<>(notes);
+                    if (repairedBars != null) repairedBars.add(measure);
+                    for (int slot = repairs[0]; slot < repairs[0] + 3; slot++)
+                        for (int owner : row.get(slot).indices())
+                            revised.set(owner, notes.get(owner).withTupletRatio(1, 1));
+                    if (repairs[1] >= 0) for (int owner : row.get(repairs[1]).indices()) {
+                        var n = revised.get(owner);
+                        revised.set(owner, n.withBeamAndStem(2, n.stemDirection()));
+                    }
+                }
+            }
+            begin = end;
+        }
+        return revised == null ? notes : List.copyOf(revised);
+    }
+
+    static ScorePageInterpretation projectClippedDyadQuartets(
+            ScorePageInterpretation score, List<ScoreNoteEvent> proof, List<Integer> repairedBars,
+            int page, int width, int height) {
+        if (page < 0 || repairedBars.isEmpty()) return score;
+        var source = score.beamSource();
+        var notes = score.notes();
+        for (int measure : repairedBars) {
+            var positions = proof.stream().filter(n -> n.measureIndex() == measure)
+                    .map(n -> List.of(n.positionInMeasure(), n.pageY())).toList();
+            var pitches = new ArrayList<ClosedSixteenthDyads.Head>(32);
+            var bar = score.measures().get(measure);
+            for (int i = 0; i < notes.size(); i++) {
+                var note = notes.get(i);
+                if (note.measureIndex() != measure) continue;
+                float x = (bar.left() + (bar.right() - bar.left()) * note.positionInMeasure()) * width;
+                pitches.add(new ClosedSixteenthDyads.Head(i, note, x, note.pageY() * height));
+            }
+            if (pitches.size() != 32 || !pitches.stream().map(ClosedSixteenthDyads.Head::note)
+                    .map(n -> List.of(n.positionInMeasure(), n.pageY())).toList().equals(positions)
+                    || pitches.stream().map(ClosedSixteenthDyads.Head::note)
+                            .anyMatch(n -> n.beamCount() != 2 || n.tupletDivisor() != 1)) continue;
+            var beams = ClosedSixteenthDyads.projectDoubleRails(source, page, pitches);
+            if (beams == source)
+                beams = ClosedSixteenthDyads.completeProvedDyadQuartets(source, page, pitches);
+            source = beams;
+        }
+        return source == score.beamSource() ? score : score.withBeamSource(source);
+    }
+
+    private static int[] clippedDyadSlots(List<ScoreNoteEvent> notes, List<Onset> groups, MeasureRegion bar) {
+        if (bar.cadenceQuarterBeats() != 0) return null;
+        int triplet = -1, hits = 0, clipped = -1;
+        for (int i = 0; i < groups.size(); i++) {
+            var pair = groups.get(i).indices();
+            if (pair.size() != 2) return null;
+            var first = notes.get(pair.get(0));
+            if (first.tupletDivisor() == 3) {
+                if (triplet < 0) triplet = i;
+                if (i != triplet + hits || ++hits > 3) return null;
+            } else if (first.tupletDivisor() != 1) return null;
+            if (first.beamCount() == 1) {
+                if (clipped >= 0 || i % 4 != 3) return null;
+                clipped = i;
+            } else if (first.beamCount() != 2) return null;
+            var stem = notes.get(groups.get(i / 4 * 4).indices().get(0)).stemDirection();
+            for (int index : pair) {
+                var n = notes.get(index);
+                if (n.staffCount() != 1 || n.staffIndex() != 0 || n.tiedFromPrevious()
+                        || n.boundaryTies() != 0 || n.kind() != ScoreNoteEvent.Kind.PITCHED
+                        || n.visualSize() != ScoreNoteEvent.VisualSize.FULL || n.crossStaffBeam()
+                        || n.harmonicSemitones() != 0 || n.openStringTouch() != null
+                        || n.leadingRestBeats() != 0 || n.followingRestBeats() != 0
+                        || n.augmentationDots() != 0 || n.unbeamedDurationBeats() != 0
+                        || (n.articulations() & NoteOrnament.GRACE) != 0 || stem == 0
+                        || n.stemDirection() != stem || n.beamCount() != first.beamCount()
+                        || n.tupletDivisor() != first.tupletDivisor()
+                        || n.tupletNormalNotes() != (first.tupletDivisor() == 3 ? 2 : 1)) return null;
+            }
+        }
+        return triplet >= 0 && hits == 3 && triplet % 4 <= 1 && (clipped >= 0 || triplet == 13)
+                ? new int[] {triplet, clipped} : null;
+    }
+
+    private static boolean provesClippedDyads(List<ScoreNoteEvent> notes, List<Onset> groups,
+            List<MeasureRegion> measures, MeasureRegion bar, int[] repair, byte[] ink, int width, int height) {
+        int start = repair[0];
+        float gap = (bar.bottom() - bar.top()) * height / 8;
+        float left = bar.left() * width, span = (bar.right() - bar.left()) * width;
+        float floor = bar.bottom() * height - 2 * gap;
+        var first = notes.get(groups.get(start).indices().get(0));
+        float x1 = left + groups.get(start).position() * span;
+        float x2 = left + groups.get(start + 1).position() * span;
+        float x3 = left + groups.get(start + 2).position() * span;
+        float top = (float) groups.subList(start, start + 3).stream().mapToDouble(Onset::top).min().orElseThrow() * height;
+        float bottom = (float) groups.subList(start, start + 3).stream().mapToDouble(Onset::bottom).max().orElseThrow() * height;
+        var digit = findOwnedNumeral(ink, width, height, x1, x3, top, bottom, gap, true,
+                Float.NaN, Float.NaN, 3, true, false, first, notes, bar, measures);
+        float digitOffset = digit == null ? Float.POSITIVE_INFINITY
+                : Math.abs((digit.left() + digit.right()) * .5f - x2);
+        boolean requireRightRule = repair[1] < 0;
+        if (requireRightRule ? digitOffset > .30f * gap : digitOffset < .63f * gap) return false;
+        if (digit != null && bracketArm(ink, width, height, Math.round(x1 - .3f * gap), digit.left() - 2,
+                        digit.top(), digit.bottom(), .25f * gap)
+                   && bracketArm(ink, width, height, digit.right() + 2, Math.round(x3 + .3f * gap),
+                        digit.top(), digit.bottom(), .25f * gap)) return false;
+        int rightRule = -1;
+        if (requireRightRule) {
+            int measure = first.measureIndex();
+            if (measure + 1 >= measures.size()) return false;
+            var next = measures.get(measure + 1);
+            float edge = (bar.right() + next.left()) * width * .5f;
+            if (Math.abs(next.top() - bar.top()) * height > .25f * gap
+                    || next.left() <= bar.right() || (next.left() - bar.right()) * width > 1.6f * gap)
+                return false;
+            var rails = DottedDyadMeasureSeparator.localRails(ink, width, height, Math.round(edge), floor, gap);
+            if (rails == null) return false;
+            var staff = new PlayingTechniqueDetector.Staff(rails[0] - 4 * rails[1], rails[0], rails[1], 0, 1);
+            rightRule = ClosedSixteenthPairBeforeHalf.ownedSeparatorCenter(ink, width, height, staff, edge);
+            if (rightRule < 0) return false;
+        }
+        for (int q = 0; q < groups.size(); q += 4) {
+            var heads = new ClosedFourDyadBeam.Head[4];
+            for (int j = 0; j < 4; j++) {
+                var onset = groups.get(q + j);
+                heads[j] = new ClosedFourDyadBeam.Head(left + onset.position() * span,
+                        onset.top() * height, onset.bottom() * height);
+            }
+            int stem = notes.get(groups.get(q).indices().get(0)).stemDirection();
+            boolean proved = requireRightRule && q == 12
+                    ? ClosedFourDyadBeam.provesBeforeStaffRule(ink, width, height, heads, gap, floor, -stem, rightRule)
+                    : ClosedFourDyadBeam.provesAcrossDistinctStaffRules(ink, width, height, heads, gap, floor, -stem);
+            if (!proved) return false;
+        }
+        return true;
+    }
+
     private static boolean completeOrdinaryDyads(List<ScoreNoteEvent> notes, List<Onset> groups,
             List<MeasureRegion> measures, MeasureRegion bar, byte[] gray, int width, int height) {
         if (bar.cadenceQuarterBeats() != 0) return false;
@@ -973,6 +1137,13 @@ final class TripletRhythmDetector {
                                         numeral.top(),
                                         numeral.bottom(),
                                         gap * .25f);
+                if (bracket
+                        && first.staffCount() == 1 && first.beamCount() == 2 && first.stemDirection() == -1
+                        && a.indices().size() == 1 && b.indices().size() == 1 && c.indices().size() == 1
+                        && i + 3 < groups.size()
+                        && ruledFingeringBracket(gray, width, height, gap, region, numeral,
+                                x1, x2, x3, a, b, c, groups.get(i + 3), result, virtualStart, printedStaffs))
+                    continue;
                 if (!bracket && first.staffCount() == 1 && first.beamCount() == 2
                         && first.stemDirection() == 1
                         && Math.abs((numeral.left() + numeral.right()) * .5f - x2) <= gap * .23f
@@ -1185,6 +1356,21 @@ final class TripletRhythmDetector {
                                                 new float[] {x1, x2, x3, xx},
                                                 new float[] {a.top() * height, b.top() * height,
                                                         c.top() * height, fourth.top() * height})
+                                || alignedOnBeamSide && stem == 1 && adjacent == i + 3
+                                        && extra.beamCount() == 2 && extra.stemDirection() == 1
+                                        && extra.tupletDivisor() == 1 && extra.augmentationDots() == 0
+                                        && (extra.articulations() & NoteOrnament.GRACE) == 0
+                                        && pairedFingersAroundOpeningBeam(gray, width, height, numeral, gap,
+                                                new float[] {x1, x2, x3, xx},
+                                                new float[] {a.top() * height, b.top() * height,
+                                                        c.top() * height, fourth.top() * height})
+                                || alignedOnBeamSide && stem == -1
+                                        && extra.beamCount() == 2 && extra.stemDirection() == -1
+                                        && extra.tupletDivisor() == 1 && extra.augmentationDots() == 0
+                                        && (extra.articulations() & NoteOrnament.GRACE) == 0
+                                        && lowerFingerRowOnFourBeams(gray, width, height, numeral, gap,
+                                                x1, a.top() * height, x2, b.top() * height,
+                                                x3, c.top() * height, xx, fourth.top() * height)
                                 || alignedOnBeamSide
                                         && extra.beamCount() == 2
                                         && extra.augmentationDots() == 0
@@ -1205,6 +1391,11 @@ final class TripletRhythmDetector {
                     }
                     if (fingering) continue;
                 }
+                if (!bracket && !recoveredJoined && first.staffCount() == 1
+                        && first.beamCount() == 2 && first.stemDirection() == -1
+                        && Math.abs((numeral.left() + numeral.right()) * .5f - x2) < .34f * gap
+                        && fingersBesideClosedDoubleBeam(gray, width, height, region, gap,
+                                numeral, groups, result, i, virtualStart)) continue;
                 // Vertically stacked small numbers assign fingers to chord tones.
                 // They do not turn the surrounding three chord attacks into a tuplet.
                 if (a.indices().size() > 1
@@ -4433,6 +4624,87 @@ final class TripletRhythmDetector {
         return false;
     }
 
+    /** A head-aligned fingering must not shorten a proved four-note double beam. */
+    private static boolean fingersBesideClosedDoubleBeam(byte[] gray, int width, int height,
+            MeasureRegion region, float gap, Glyph digit, List<Onset> groups,
+            List<ScoreNoteEvent> notes, int start, int virtualStart) {
+        float headY = groups.get(start + 1).top() * height;
+        boolean above = headY - digit.bottom() >= 1.2f * gap
+                && headY - digit.top() <= 3.1f * gap;
+        boolean below = digit.top() - headY >= 3.2f * gap
+                && digit.bottom() - headY <= 7.6f * gap
+                && clippedOpeningFingerParenthesis(gray, width, height, gap, digit);
+        if (!above && !below) return false;
+
+        int begin = above ? start + 1 : start;
+        if (begin == 0 || begin + 3 >= groups.size()) return false;
+        float floor = region.bottom() * height - 2.1f * gap;
+        var staff = StaffPitchTrack.forPrintedSlurs(gray, width, height, floor - 4 * gap, floor, gap);
+        if (staff == null) return false;
+        var budget = new PrintedBeamShafts.Budget(45_000);
+        PrintedBeamShafts.Shaft previous = null;
+        int measure = notes.get(groups.get(start).indices().get(0)).measureIndex();
+        for (int i = begin - 1; i < begin + 4; i++) {
+            var onset = groups.get(i);
+            if (onset.indices().size() != 1 || onset.indices().get(0) >= virtualStart) return false;
+            var note = notes.get(onset.indices().get(0));
+            if (note.measureIndex() != measure || note.stemDirection() != -1
+                    || !ClosedMonophonicSixteenths.regularQuartetHead(note)
+                    || note.augmentationDots() != 0 || note.tupletDivisor() != 1) return false;
+            float x = (region.left() + (region.right() - region.left()) * onset.position()) * width;
+            var shafts = PrintedBeamShafts.at(gray, width, height, x, note.pageY() * height, gap, budget);
+            if (shafts.size() != 1 || shafts.get(0).direction() != 1) return false;
+            var shaft = shafts.get(0);
+            if (previous != null) {
+                boolean agrees = i == begin
+                        ? WrappedEighthTriplets.cutBetweenRecoveredGroups(
+                                gray, width, height, region, previous, shaft, gap)
+                        : WrappedEighthTriplets.matchesExactlyTwoBeamRails(
+                                gray, width, height, previous, shaft, gap, staff);
+                if (!agrees) return false;
+            }
+            previous = shaft;
+        }
+        return !budget.refused();
+    }
+
+    /** A lower opening parenthesis can touch the staff rule above the numeral. */
+    private static boolean clippedOpeningFingerParenthesis(
+            byte[] gray, int width, int height, float gap, Glyph digit) {
+        int left = digit.left() - Math.round(gap * 1.06f), right = digit.left() - 2;
+        int first = digit.top() - Math.round(gap * .72f);
+        int bottom = digit.bottom() + Math.round(gap * .5f);
+        if (left < 0 || first < 0 || bottom >= height || right >= width) return false;
+        int rule = -1;
+        for (int y = first; y <= digit.top() - Math.round(gap * .18f); y++) {
+            int dark = 0;
+            for (int x = left; x <= right; x++) if ((gray[y * width + x] & 255) < 139) dark++;
+            if (dark >= .85f * (right - left + 1)) rule = y;
+        }
+        if (rule < 0) return false;
+        var ink = RawNumeralComponents.capture(
+                gray, width, height, left, rule + 1, right, bottom, 155, () -> {}, () -> {});
+        for (var part : ink.components()) {
+            float h = part.bottom - part.top + 1, w = part.right - part.left + 1;
+            if (part.top > rule + 2 || part.left <= left || part.right >= right
+                    || part.bottom < digit.bottom() - .34f * gap || part.bottom >= bottom
+                    || h < .97f * gap || h > 1.95f * gap || w < .23f * gap || w > .70f * gap
+                    || part.size() > .24f * h * gap) continue;
+            float[] centers = new float[3];
+            int[] count = new int[3];
+            for (int i = 0; i < part.size(); i++) {
+                int pixel = part.pixel(i);
+                int band = Math.min(2, (int) ((pixel / width - part.top) * 3 / h));
+                centers[band] += pixel % width;
+                count[band]++;
+            }
+            if (count[0] == 0 || count[1] == 0 || count[2] == 0) continue;
+            float upper = centers[0] / count[0], center = centers[1] / count[1], lower = centers[2] / count[2];
+            if (upper - center >= .12f * gap && lower >= center - .04f * gap) return true;
+        }
+        return false;
+    }
+
     private static boolean pairedStaffJoinedFingering(
             byte[] gray, int width, int height, float gap, Glyph digit, List<MeasureRegion> measures, int measure) {
         if (gap < 8 || gap > 24 || measure <= 0
@@ -4587,11 +4859,16 @@ final class TripletRhythmDetector {
 
     private static boolean pairedFingeringRails(
             byte[] gray, int width, int height, float gap, float[] xs, float[] ys) {
+        return pairedFingeringRails(gray, width, height, gap, xs, ys, 1);
+    }
+
+    private static boolean pairedFingeringRails(
+            byte[] gray, int width, int height, float gap, float[] xs, float[] ys, int shaftDirection) {
         var budget = new PrintedBeamShafts.Budget(60_000);
         PrintedBeamShafts.Shaft last = null;
         for (int i = 0; i < xs.length; i++) {
             var choices = PrintedBeamShafts.at(gray, width, height, xs[i], ys[i], gap, budget);
-            if (choices.size() != 1 || choices.get(0).direction() != 1) return false;
+            if (choices.size() != 1 || choices.get(0).direction() != shaftDirection) return false;
             var next = choices.get(0);
             if (last != null && !WrappedEighthTriplets.matchesBeamRails(gray, width, height, last, next, gap, 2))
                 return false;
@@ -4638,6 +4915,81 @@ final class TripletRhythmDetector {
                 && digit.top > top && digit.bottom < bottom && fingerOne(gray, width, digit));
     }
 
+    /** The middle 3 belongs to a fingering row when it repeats below an intact quartet. */
+    private static boolean pairedFingersAroundOpeningBeam(byte[] gray, int width, int height,
+            Glyph three, float gap, float[] xs, float[] ys) {
+        int glyphHeight = three.bottom() - three.top() + 1;
+        int upperTop = Math.round(three.top() - .66f * gap);
+        int upperBottom = Math.round(three.bottom() + .59f * gap);
+        int lowerTop = Math.round(ys[1] + 2.30f * gap);
+        int lowerBottom = Math.round(ys[1] + 4.25f * gap);
+        var left = detachedFingerNear(gray, width, height, xs[0], upperTop, upperBottom, glyphHeight, gap);
+        var right = detachedFingerNear(gray, width, height, xs[2], upperTop, upperBottom, glyphHeight, gap);
+        var repeat = detachedFingerNear(gray, width, height, xs[1], lowerTop, lowerBottom, glyphHeight, gap);
+        return left != null && (fingerTwo(gray, width, left) || fingerOne(gray, width, left))
+                && right != null && looksLikeFingerFour(gray, width, right.size(),
+                        right.left, right.right, right.top, right.bottom)
+                && repeat != null && isIsolatedThree(repeat, width)
+                && pairedFingeringRails(gray, width, height, gap, xs, ys, -1);
+    }
+
+    private static RawNumeralComponents.Component detachedFingerNear(byte[] gray, int width, int height,
+            float x, int top, int bottom, int glyphHeight, float gap) {
+        int left = Math.round(x - 1.08f * gap), right = Math.round(x + 1.08f * gap);
+        if (left < 0 || right >= width || top < 0 || bottom >= height) return null;
+        var ink = RawNumeralComponents.capture(gray, width, height, left, top, right, bottom, () -> {}, () -> {});
+        RawNumeralComponents.Component found = null;
+        for (var part : ink.components()) {
+            int h = part.bottom - part.top + 1, w = part.right - part.left + 1;
+            if (part.left <= left || part.right >= right || part.top <= top || part.bottom >= bottom
+                    || Math.abs((part.left + part.right) * .5f - x) > .53f * gap
+                    || h < glyphHeight * .74f || h > glyphHeight * 1.28f
+                    || w < h * .25f || w > h * 1.05f) continue;
+            if (found != null) return null;
+            found = part;
+        }
+        return found;
+    }
+
+    /** A row of individually aligned fingers below a double beam can include repeated threes. */
+    private static boolean lowerFingerRowOnFourBeams(
+            byte[] gray, int width, int height, Glyph numeral, float gap,
+            float x1, float y1, float x2, float y2, float x3, float y3, float extra, float extraY) {
+        if (numeral.top() - Math.max(Math.max(y1, y2), Math.max(y3, extraY)) < 4.5f * gap
+                || Math.abs((numeral.left() + numeral.right()) * .5f - x2) > .32f * gap) return false;
+        float[] xs = extra < x1 ? new float[] {extra, x1, x2, x3} : new float[] {x1, x2, x3, extra};
+        float[] ys = extra < x1 ? new float[] {extraY, y1, y2, y3} : new float[] {y1, y2, y3, extraY};
+        int left = Math.round(xs[0] - .85f * gap), right = Math.round(xs[3] + .85f * gap);
+        int top = Math.round(numeral.top() - .56f * gap), bottom = Math.round(numeral.bottom() + .56f * gap);
+        if (left < 0 || right >= width || top < 0 || bottom >= height) return false;
+        int glyphHeight = numeral.bottom() - numeral.top() + 1;
+        var ink = RawNumeralComponents.capture(gray, width, height, left, top, right, bottom, () -> {}, () -> {});
+        boolean hasDistinctFinger = false;
+        for (float owner : xs) {
+            if (owner == x2) continue;
+            boolean found = false;
+            for (var digit : ink.components()) {
+                int h = digit.bottom - digit.top + 1, w = digit.right - digit.left + 1;
+                if (digit.left <= left || digit.right >= right || digit.top <= top || digit.bottom >= bottom
+                        || Math.abs((digit.left + digit.right) * .5f - owner) > .49f * gap
+                        || Math.abs(digit.bottom - numeral.bottom()) > .39f * gap
+                        || h < glyphHeight * .73f || h > glyphHeight * 1.27f
+                        || w < h * .28f || w > h * .98f) continue;
+                boolean otherFinger = looksLikeTwo(gray, width, digit.size(), digit.left, digit.right,
+                        digit.top, digit.bottom)
+                        || looksLikeFingerFour(gray, width, digit.size(), digit.left, digit.right,
+                                digit.top, digit.bottom)
+                        || fingerOne(gray, width, digit);
+                if (!otherFinger && !isIsolatedThree(digit, width)) continue;
+                if (found) return false;
+                found = true;
+                hasDistinctFinger |= otherFinger;
+            }
+            if (!found) return false;
+        }
+        return hasDistinctFinger && pairedFingeringRails(gray, width, height, gap, xs, ys);
+    }
+
     private static boolean fingerSequence(
             byte[] gray,
             int width,
@@ -4656,6 +5008,9 @@ final class TripletRhythmDetector {
             float extraY) {
         float[] xs = extra < a ? new float[] {extra, a, b, c} : new float[] {a, b, c, extra};
         float[] ys = extra < a ? new float[] {extraY, ay, by, cy} : new float[] {ay, by, cy, extraY};
+        if (digitSide == -1 && stem == 1 && extra < a
+                && beamSideFingerSequence(gray, width, height, numeral, gap, xs, ys))
+            return true;
         int glyphHeight = numeral.bottom() - numeral.top() + 1;
         int left = Math.round(xs[0] - gap * .85f), right = Math.round(xs[3] + gap * .85f);
         int top = Math.round(numeral.top() - gap * 1.1f);
@@ -4693,6 +5048,50 @@ final class TripletRhythmDetector {
             }
         }
         return otherDigits >= 2;
+    }
+
+    /** A run of upper fingering digits may follow the shafts of an intact double beam. */
+    private static boolean beamSideFingerSequence(
+            byte[] gray, int width, int height, Glyph numeral, float gap, float[] xs, float[] ys) {
+        int glyphHeight = numeral.bottom() - numeral.top() + 1;
+        if (Math.abs((numeral.left() + numeral.right()) * .5f - xs[2]) > gap * .36f) return false;
+        int left = Math.round(xs[0] - gap * .86f), right = Math.round(xs[3] + gap * 1.2f);
+        int top = Math.round(numeral.top() - gap), bottom = Math.round(numeral.bottom() + gap * 1.15f);
+        if (left < 0 || right >= width || top < 0 || bottom >= height
+                || (long) (right - left + 1) * (bottom - top + 1) > 16384)
+            return false;
+        var ink = RawNumeralComponents.capture(gray, width, height, left, top, right, bottom,
+                () -> {}, () -> {});
+        var budget = new PrintedBeamShafts.Budget(80_000);
+        PrintedBeamShafts.Shaft previous = null;
+        boolean earlierDigit = false, terminalFour = false;
+        for (int i = 0; i < xs.length; i++) {
+            var shafts = PrintedBeamShafts.at(gray, width, height, xs[i], ys[i], gap, budget);
+            if (shafts.size() != 1 || shafts.get(0).direction() != -1) return false;
+            var shaft = shafts.get(0);
+            if (previous != null
+                    && !WrappedEighthTriplets.matchesBeamRails(gray, width, height, previous, shaft, gap, 2))
+                return false;
+            previous = shaft;
+            if (i == 2) continue;
+            for (var mark : ink.components()) {
+                if (mark.left <= left || mark.right >= right || mark.top <= top || mark.bottom >= bottom)
+                    continue;
+                float x = (mark.left + mark.right) * .5f;
+                int h = mark.bottom - mark.top + 1, w = mark.right - mark.left + 1;
+                if (x < xs[i] - gap * .42f || x > shaft.right() + gap * .26f
+                        || Math.abs(mark.bottom - numeral.bottom()) > gap
+                        || shaft.endY() - mark.bottom < Math.round(gap * .12f)
+                        || h < glyphHeight * .75f || h > glyphHeight * 1.25f
+                        || w < h * .28f || w > h * .95f) continue;
+                if (i < 2 && (fingerOne(gray, width, mark) || fingerTwo(gray, width, mark)))
+                    earlierDigit = true;
+                if (i == 3 && looksLikeFingerFour(
+                        gray, width, mark.size(), mark.left, mark.right, mark.top, mark.bottom))
+                    terminalFour = true;
+            }
+        }
+        return earlierDigit && terminalFour;
     }
 
     static boolean fingerOne(byte[] gray, int width, RawNumeralComponents.Component glyph) {
@@ -5183,6 +5582,85 @@ final class TripletRhythmDetector {
         int bottom = Math.min(height - 1, numeral.bottom() + Math.round(gap * .25f));
         return staffRuleArm(gray, width, rules, left, numeral.left() - 2, top, bottom, gap)
                 && staffRuleArm(gray, width, rules, numeral.right() + 2, right, top, bottom, gap);
+    }
+
+    /** A large lower annotation can borrow both arms from one measured staff rule. */
+    private static boolean ruledFingeringBracket(
+            byte[] gray, int width, int height, float gap, MeasureRegion region, Glyph numeral,
+            float x1, float x2, float x3, Onset a, Onset b, Onset c, Onset following,
+            List<ScoreNoteEvent> notes, int virtualStart, PrintedStaffs printedStaffs) {
+        if (gap < 10 || gap > 26 || Math.abs((numeral.left() + numeral.right()) * .5f - x2) > gap * .28f
+                || following.indices().isEmpty())
+            return false;
+        var first = notes.get(a.indices().get(0));
+        ScoreNoteEvent fourth = null;
+        for (int index : following.indices()) {
+            if (index >= virtualStart) continue;
+            if (fourth != null) return false;
+            fourth = notes.get(index);
+        }
+        if (fourth == null || !sameVoice(first, fourth) || fourth.beamCount() != 2 || fourth.tupletDivisor() != 1
+                || fourth.stemDirection() != first.stemDirection() || fourth.augmentationDots() != 0
+                || (fourth.articulations() & NoteOrnament.GRACE) != 0)
+            return false;
+        float x4 = (region.left() + fourth.positionInMeasure() * (region.right() - region.left())) * width;
+        if (x4 - x3 < gap || x4 - x3 > gap * 2.9f) return false;
+        int floor = -1;
+        float estimatedFloor = region.bottom() * height - 2.1f * gap;
+        for (var staff : printedStaffs.detect(gray, width, height)) {
+            if (Math.abs(staff.bottom() - estimatedFloor) > gap * .45f
+                    || Math.abs(staff.gap() - gap) > gap * .22f)
+                continue;
+            if (floor >= 0) return false;
+            floor = Math.round(staff.bottom());
+        }
+        if (floor < 0 || numeral.top() > floor - gap * .24f
+                || numeral.bottom() < floor + gap || numeral.bottom() - numeral.top() < gap * 1.8f)
+            return false;
+        int left = Math.max(0, Math.round(x1 - gap * .3f));
+        int right = Math.min(width - 1, Math.round(x3 + gap * .3f));
+        int pad = Math.round(gap * .125f);
+        int top = Math.max(0, numeral.top() - pad);
+        int bottom = Math.min(height - 1, numeral.bottom() + pad);
+        int before = ruledBracketArm(gray, width, left, numeral.left() - 2, top, bottom, floor, gap);
+        int after = ruledBracketArm(gray, width, numeral.right() + 2, right, top, bottom, floor, gap);
+        if (before < 0 || after < 0 || before + after == 0)
+            return false;
+        float[] xs = {x1, x2, x3, x4};
+        float[] ys = {a.top() * height, b.top() * height, c.top() * height, fourth.pageY() * height};
+        var budget = new PrintedBeamShafts.Budget(70_000);
+        PrintedBeamShafts.Shaft previous = null;
+        for (int i = 0; i < xs.length; i++) {
+            var shafts = PrintedBeamShafts.at(gray, width, height, xs[i], ys[i], gap, budget);
+            if (shafts.size() != 1 || shafts.get(0).direction() != 1) return false;
+            var shaft = shafts.get(0);
+            if (previous != null
+                    && !WrappedEighthTriplets.matchesBeamRails(gray, width, height, previous, shaft, gap, 2))
+                return i < 3 && WrappedEighthTriplets.matchesRailBridge(
+                        gray, width, height, previous, shaft, gap, false);
+            previous = shaft;
+        }
+        return true;
+    }
+
+    // -1: no measured rule, 0: a rule plus independent support, 1: only the rule provides an arm.
+    private static int ruledBracketArm(
+            byte[] gray, int width, int left, int right, int top, int bottom, int rule, float gap) {
+        int columns = right - left + 1;
+        if (columns < gap * 1.15f) return -1;
+        int ruleColumns = 0, otherColumns = 0;
+        for (int x = left; x <= right; x++) {
+            boolean onRule = false, other = false;
+            for (int y = top; y <= bottom; y++) {
+                if (!dark(gray, width, x, y)) continue;
+                if (Math.abs(y - rule) <= gap * .19f) onRule = true;
+                else other = true;
+            }
+            if (onRule) ruleColumns++;
+            if (other) otherColumns++;
+        }
+        if (ruleColumns < columns * .93f) return -1;
+        return otherColumns <= columns * .52f ? 1 : 0;
     }
 
     private static boolean staffRuleArm(

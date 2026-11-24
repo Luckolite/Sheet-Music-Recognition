@@ -1918,7 +1918,15 @@ public final class PrintedBeamSource {
                     gap = (float) frame.gap();
                 }
             }
-            if (Math.abs(head.y() - (bottom - note.staffStep() * gap * .5f)) > gap * .45f) continue;
+            float residual = head.y() - (bottom - note.staffStep() * gap * .5f);
+            if (Math.abs(residual) > gap * .45f) {
+                if (residual < 0 || residual > gap * .80f || note.staffCount() != 1
+                        || note.staffStep() < 13 || note.staffStep() > 24 || note.beamCount() < 1)
+                    continue;
+                budget.take(24_000);
+                if (!OmrScoreInterpreter.compressedLedgerBeamPhase(raw, w, h,
+                        head.x(), head.y(), bottom, gap, note.staffStep())) continue;
+            }
             if (found != null) {
                 if (ambiguity != null) ambiguity.ambiguous = true;
                 return null;

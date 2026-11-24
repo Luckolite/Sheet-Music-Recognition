@@ -213,6 +213,12 @@ public final class NaturalHarmonicRingProof {
             int minDiameter,
             int maxDiameter,
             Budget budget) {
+        return rings(gray, width, height, roi, cutoff, minDiameter, maxDiameter, 1.28, budget);
+    }
+
+    static List<Ring> rings(
+            byte[] gray, int width, int height, Box roi, int cutoff, int minDiameter,
+            int maxDiameter, double maximumAspectRatio, Budget budget) {
         checkImage(gray, width, height, roi);
         if (cutoff < 0 || cutoff > 255 || minDiameter < 3 || maxDiameter < minDiameter)
             throw new IllegalArgumentException("Invalid ring limits");
@@ -236,7 +242,7 @@ public final class NaturalHarmonicRingProof {
                 if (Math.min(bounds.width(), bounds.height()) < minDiameter
                         || Math.max(bounds.width(), bounds.height()) > maxDiameter
                         || Math.max(bounds.width(), bounds.height())
-                                > 1.28 * Math.min(bounds.width(), bounds.height())) continue;
+                                > maximumAspectRatio * Math.min(bounds.width(), bounds.height())) continue;
                 int boxArea = area(bounds);
                 float ratio = (float) count / boxArea;
                 if (ratio < .12f || ratio > .72f) continue;

@@ -35,14 +35,11 @@ class OctaveSourcePageTest(unittest.TestCase):
         apply(root, owned, pages)
         self.assertEqual([["down", "stop"], [], ["down", "stop"]], [shifts(bar) for bar in bars])
 
-    def test_same_shift_stays_byte_identical_even_with_an_unoccupied_page(self):
+    def test_same_shift_on_either_side_of_an_unoccupied_page_uses_two_spans(self):
         notes = [(0, 4, 2), (1, 1, 0), (2, 4, 2)]
         root, bars, owned, pages = scene([0, 1, 2], notes)
-        legacy, _, legacy_owned, _ = scene([0, 1, 2], notes)
         apply(root, owned, pages)
-        apply(legacy, legacy_owned)
-        self.assertEqual([["down"], [], ["stop"]], [shifts(bar) for bar in bars])
-        self.assertEqual(ET.tostring(legacy), ET.tostring(root))
+        self.assertEqual([["down", "stop"], [], ["down", "stop"]], [shifts(bar) for bar in bars])
 
     def test_adjacent_page_continuation_stays_byte_identical(self):
         notes = [(0, 4, 2), (1, 4, 2), (2, 4, 0)]

@@ -18,19 +18,41 @@ final class PrintedRuleInkOwnership {
                 || gap < 8 || gap > Math.min(width, height) * .25f) return false;
         float phase = (center - staffTop) / gap;
         int rule = Math.round(phase);
-        if (rule >= 0 && rule <= 4 || Math.abs(phase - rule) > .18f) return false;
+        float phaseError = Math.abs(phase - rule);
+        if (rule >= 0 && rule <= 4 || phaseError > .26f) return false;
         int reach = Math.round(gap * 1.6f);
         int tolerance = Math.round(gap * .12f);
         if (x - reach < 0 || x + reach >= width || !wideRule(
                 gray, width, height, x, center, slope, threshold, reach, tolerance)) return false;
+        int supported = 0;
         for (int direction : new int[] {-1, 1}) {
             float adjacent = center + direction * gap;
             float space = (center + adjacent) * .5f;
-            if (wideRule(gray, width, height, x, adjacent, slope, threshold, reach, tolerance)
-                    && !wideRule(gray, width, height, x, space, slope, threshold, reach, tolerance))
-                return true;
+            if (!wideRule(gray, width, height, x, adjacent, slope, threshold, reach, tolerance)
+                    || wideRule(gray, width, height, x, space, slope, threshold, reach, tolerance)) continue;
+            if (phaseError <= .18f) return true;
+            supported++;
         }
-        return false;
+        // An extrapolated phase can drift at the staff edge. Both adjacent rules and the
+        // actual staff boundary must independently support the wider tolerance.
+        float boundary = rule < 0 ? staffTop : staffTop + 4 * gap;
+        return supported == 2
+                && wideRule(gray, width, height, x, boundary, slope, threshold, reach, tolerance)
+                && levelLedgerEdges(gray, width, height, x, center, gap, slope);
+    }
+
+    private static boolean levelLedgerEdges(
+            byte[] gray, int w, int h, int x, float center, float gap, float slope) {
+        var sampler = new RuleSampler();
+        float lower = Float.POSITIVE_INFINITY, upper = Float.NEGATIVE_INFINITY;
+        for (float offset : NEAR_OFFSETS) {
+            int dx = Math.round(offset * gap);
+            if (!sampler.sample(gray, w, h, x + dx, center + slope * dx, gap, .43f)) return false;
+            float height = sampler.center - slope * dx;
+            lower = Math.min(lower, height);
+            upper = Math.max(upper, height);
+        }
+        return upper - lower <= .16f * gap;
     }
 
     private static boolean wideRule(

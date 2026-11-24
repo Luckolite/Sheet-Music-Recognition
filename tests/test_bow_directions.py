@@ -22,6 +22,15 @@ class BowConsumers(unittest.TestCase):
  def test_exact_attack_technical_not_words(self):
   for t,tag in [(6,'up-bow'),(7,'down-bow')]:
    s=score();s['techniqueChanges']=[bow(s,t)];r=self.xml(doc(s));self.assertEqual(1,len(r.findall('.//notations/technical/'+tag)));self.assertFalse(r.findall('.//words'))
+ def test_placed_bow_retains_side_on_the_owned_attack(self):
+  for technique, side, tag in [(6, 'ABOVE', 'up-bow'), (7, 'BELOW', 'down-bow')]:
+   s=score(); s['techniqueChanges']=[dict(bow(s,technique), placement=side)]
+   marks=self.xml(doc(s)).findall('.//'+tag)
+   self.assertEqual([side.lower()],[mark.get('placement') for mark in marks])
+ def test_conflicting_placement_preserves_bow(self):
+  s=score(); s['techniqueChanges']=[dict(bow(s), placement=side) for side in ('ABOVE','BELOW')]
+  marks=self.xml(doc(s)).findall('.//up-bow')
+  self.assertEqual([None],[mark.get('placement') for mark in marks])
  def test_tied_fragment_not_repeated(self):
   s=score();s['techniqueChanges']=[bow(s)];r=self.xml(doc(s,[dict(measureIndex=0,staffIndex=0,staffCount=1,midi=60,startBeat=3.,durationBeats=2.,sourceNoteIndex=0)]));self.assertEqual(1,len(r.findall('.//up-bow')))
  def test_chord_shares_one_sign(self):

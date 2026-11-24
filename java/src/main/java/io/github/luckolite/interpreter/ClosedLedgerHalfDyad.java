@@ -58,6 +58,96 @@ final class ClosedLedgerHalfDyad {
                 score.tremoloSource(), score.multiRestGroups(), score.beamSource(), score.clockContextSource());
     }
 
+    /** Preserve the pitch of a hollow sixth sitting in the space below two short ledgers. */
+    static ScorePageInterpretation captureTerminalSpaceSixth(ScorePageInterpretation score,
+            byte[] raw, byte[] normalized, int width, int height) {
+        if (raw == null || normalized == null || raw.length != (long) width * height
+                || normalized.length != raw.length) return score;
+        var notes = score.notes();
+        ArrayList<ScoreNoteEvent> edited = null;
+        for (int i = 1; i + 3 < notes.size(); i++) {
+            var a = notes.get(i);
+            var b = notes.get(i + 1);
+            int m = a.measureIndex();
+            if (m < 0 || m + 1 >= score.measures().size() || b.measureIndex() != m
+                    || !plainHalf(a, 0, 1) || !plainHalf(b, 0, 1)
+                    || a.stemDirection() != 1 || b.stemDirection() != 1) continue;
+            int lowOwner = a.pageY() > b.pageY() ? i : i + 1;
+            var low = notes.get(lowOwner);
+            var high = lowOwner == i ? b : a;
+            if (low.staffStep() != -6 || high.staffStep() != 0
+                    || low.clefBottomDiatonic() != high.clefBottomDiatonic()) continue;
+            var c = notes.get(i + 2);
+            var d = notes.get(i + 3);
+            var nextLow = c.pageY() > d.pageY() ? c : d;
+            var nextHigh = nextLow == c ? d : c;
+            if (c.measureIndex() != m + 1 || d.measureIndex() != m + 1
+                    || !repeatsWrittenSixth(high, nextHigh, 0) || !repeatsWrittenSixth(low, nextLow, -5)) continue;
+            var bar = score.measures().get(m);
+            var next = score.measures().get(m + 1);
+            float gap = (bar.bottom() - bar.top()) * height / 8.2f;
+            float x = headX(bar, low, width), y = low.pageY() * height;
+            float ax = headX(bar, high, width), ay = high.pageY() * height;
+            float nx = headX(next, nextHigh, width);
+            if (gap < 12 || gap > 23 || x < 4 * gap || x + 4 * gap >= width
+                    || ay < 5 * gap || y + 2 * gap >= height
+                    || Math.abs(x - ax) > .20f * gap
+                    || Math.abs(nx - headX(next, nextLow, width)) > .23f * gap
+                    || nx - x < 3 * gap || nx - x > 10 * gap
+                    || Math.abs(ay - nextHigh.pageY() * height) > .19f * gap
+                    || Math.abs(y - nextLow.pageY() * height) > .25f * gap
+                    || y - ay < 2.42f * gap || y - ay > 2.76f * gap) continue;
+            if (!provesSpaceSixth(raw, width, height, bar, x, y, ax, ay, gap)
+                    || !provesSpaceSixth(normalized, width, height, bar, x, y, ax, ay, gap)) continue;
+            if (edited == null) edited = new ArrayList<>(notes);
+            edited.set(lowOwner, singleStaff(low, -5, low.clefBottomDiatonic()));
+        }
+        return edited == null ? score : score.withNotes(edited,
+                java.util.stream.IntStream.range(0, notes.size()).boxed().toList())
+                .withClockContextSource(score.clockContextSource());
+    }
+
+    private static boolean repeatsWrittenSixth(ScoreNoteEvent prior, ScoreNoteEvent next, int step) {
+        return next.staffStep() == step && next.clefBottomDiatonic() == prior.clefBottomDiatonic()
+                && next.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_FROM_KEY
+                && next.stemDirection() == 1 && ClosedMonophonicSixteenths.regularQuartetHead(next);
+    }
+
+    private static float headX(MeasureRegion bar, ScoreNoteEvent note, int width) {
+        return (bar.left() + (bar.right() - bar.left()) * note.positionInMeasure()) * width;
+    }
+
+    private static boolean provesSpaceSixth(byte[] ink, int width, int height, MeasureRegion bar,
+            float x, float y, float ax, float ay, float nominal) {
+        var rails = PrintedDirectionStaff.printedRules(ink, width, height, x,
+                bar.bottom() * height - 2.1f * nominal, nominal);
+        if (rails == null || Math.abs(rails[0] - ay) > .22f * rails[1]
+                || Math.abs(rails[1] - nominal) > .12f * nominal) return false;
+        float gap = rails[1];
+        if (sharedShaft(ink, width, ax, ay, x, y, gap) < 0
+                || !hollow(ink, width, ax, ay, gap) || !hollow(ink, width, x, y, gap)) return false;
+        int first = ledgerAt(ink, width, x, rails[0] + gap, gap);
+        int second = ledgerAt(ink, width, x, rails[0] + 2 * gap, gap);
+        return first >= 0 && second >= 0 && Math.abs(second - first - gap) <= .18f * gap
+                && y - second >= .48f * gap && y - second <= .86f * gap
+                && ledgerAt(ink, width, x, rails[0] + 3 * gap, gap) < 0;
+    }
+
+    private static int ledgerAt(byte[] ink, int width, float x, float y, float gap) {
+        int left = Math.round(x - gap), right = Math.round(x + gap);
+        int first = -1, last = -1;
+        for (int row = Math.round(y - .27f * gap); row <= Math.round(y + .27f * gap); row++) {
+            int covered = 0;
+            for (int col = left; col <= right; col++) if (dark(ink, width, col, row)) covered++;
+            if (covered < (right - left + 1) * .85f) continue;
+            if (first < 0) first = row;
+            if (last >= 0 && row != last + 1) return -1;
+            last = row;
+        }
+        return first >= 0 && last - first + 1 >= 2 && last - first + 1 <= .38f * gap
+                ? Math.round((first + last) * .5f) : -1;
+    }
+
     private static ScoreNoteEvent singleStaff(ScoreNoteEvent n, int step, int clef) {
         return new ScoreNoteEvent(n.measureIndex(), n.positionInMeasure(), step, 0, 1, n.pageY(),
                 n.tiedFromPrevious(), n.augmentationDots(), n.beamCount(), n.writtenAccidental(),
@@ -68,9 +158,13 @@ final class ClosedLedgerHalfDyad {
     }
 
     private static boolean plainHalf(ScoreNoteEvent note, int staff) {
+        return plainHalf(note, staff, 2);
+    }
+
+    private static boolean plainHalf(ScoreNoteEvent note, int staff, int staffCount) {
         return note.kind() == ScoreNoteEvent.Kind.PITCHED
                 && note.visualSize() == ScoreNoteEvent.VisualSize.FULL
-                && note.staffIndex() == staff && note.staffCount() == 2 && !note.crossStaffBeam()
+                && note.staffIndex() == staff && note.staffCount() == staffCount && !note.crossStaffBeam()
                 && note.unbeamedDurationBeats() == 2 && note.beamCount() == 0
                 && note.augmentationDots() == 0 && note.tupletDivisor() == 1 && !note.tiedFromPrevious()
                 && note.boundaryTies() == 0 && note.leadingRestBeats() == 0 && note.followingRestBeats() == 0
@@ -222,7 +316,7 @@ final class ClosedLedgerHalfDyad {
         return false;
     }
 
-    private static boolean hollow(byte[] ink,int w,float x,float y,float gap) {
+    static boolean hollow(byte[] ink,int w,float x,float y,float gap) {
         int rx=Math.round(gap*.89f), ry=Math.round(gap*.73f);
         int width=2*rx+1, height=2*ry+1, size=width*height;
         int left=Math.round(x)-rx, top=Math.round(y)-ry;

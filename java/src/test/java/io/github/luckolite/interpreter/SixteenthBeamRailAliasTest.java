@@ -26,6 +26,21 @@ public class SixteenthBeamRailAliasTest {
     }
 
     @Test
+    public void completeTripleTimeOctavesDropAStemlessThirdRailReading() {
+        var notes = new ArrayList<>(notes().subList(0, 24));
+        int alias = FIRST + ADVANCE * 3 / 2;
+        notes.add(head(alias, TAIL - 8, 0, 3, 0));
+        var printed = page();
+        assertEquals(notes.subList(0, 24), resolve(notes, printed, printed, 3));
+        assertEquals(notes, resolve(notes, printed, printed, 4));
+
+        var independent = printed.clone();
+        paint(independent, alias - 11, TAIL - 9, alias - 7, TAIL + 39, 0);
+        assertEquals(notes, resolve(notes, independent, printed, 3));
+        assertEquals(notes, resolve(notes, printed, independent, 3));
+    }
+
+    @Test
     public void missingRailOrIndependentShaftOnEitherPlaneKeepsTheReading() {
         var notes = notes();
         var printed = page();

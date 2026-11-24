@@ -31,6 +31,7 @@ public final class ScoreExpressionDetector {
     }
 
     private static final String SOURCE = "printed-expression-word";
+    private static final String LEDGER_CAPTION = "printed-expression-ledger-caption";
     private static final String SYMBOL = "printed-expression-symbol";
     private static final String TARGET = "expression-column:";
     private static final String REST_TARGET = "expression-rest-column:";
@@ -94,8 +95,7 @@ public final class ScoreExpressionDetector {
         var printedBindings = new HashSet<PrintedBinding>();
         for (var existing : events) {
             var printed =
-                    existing.evidence().stream()
-                            .filter(e -> e.sourceId().equals(SOURCE) || e.sourceId().equals(SYMBOL))
+                    existing.evidence().stream().filter(ScoreExpressionDetector::isColumnEvidence)
                             .toList();
             if (printed.isEmpty()) continue;
             var current = column(existing);
@@ -119,7 +119,10 @@ public final class ScoreExpressionDetector {
         }
         for (var original : words) {
             var coda = codaCharacterCaption(score, original, staffs, gray, width, height);
-            var word = coda == null ? original : coda.word();
+            var candidate = coda == null ? original : coda.word();
+            boolean shortBowCaption = shortBowCaptionText(candidate.text()) != null;
+            var word = shortBowCaption ? provedShortBowCaption(candidate, gray, width, height) : candidate;
+            if (word == null) continue;
             boolean admitted = EnglishCharacterOcrContext.admitted(word);
             boolean stackedCharacter = !admitted
                     && EnglishCharacterOcrContext.stackedCharacter(word.text());
@@ -128,8 +131,10 @@ public final class ScoreExpressionDetector {
             if (coveredPedalWord(word, words) || coveredVibratoWord(word, words)) continue;
             var caption = PrintedTempoCaption.from(word, score);
             String directionText = caption == null ? word.text() : caption.text();
-            var directions =
-                    ExpressiveDirectionText.parse(directionText).stream()
+            var directions = shortBowCaption
+                    ? List.of(new ExpressiveDirectionText.Direction(
+                            Kind.UNRESOLVED_DIRECTION, Strength.UNSPECIFIED, word.text(), ""))
+                    : ExpressiveDirectionText.parse(directionText).stream()
                             .filter(d -> KINDS.contains(d.kind()))
                             .toList();
             if (directions.isEmpty() && caption != null)
@@ -145,12 +150,12 @@ public final class ScoreExpressionDetector {
                     directions.stream()
                             .allMatch(d -> d.kind() == Kind.BREATH || d.kind() == Kind.CAESURA);
             float x = word.left() * width;
-            boolean bowCaption = ExpressiveDirectionText.isBowCaption(directionText);
+            boolean bowCaption = shortBowCaption || ExpressiveDirectionText.isBowCaption(directionText);
             var captionStaff = bowCaption
                     ? bowCaptionOwner(score, staffs, word, gray, width, height) : null;
             if (bowCaption && captionStaff == null) continue;
             var staff =
-                    bowCaption ? captionStaff : PrintedDirectionStaff.at(
+                    bowCaption ? captionStaff.staff() : PrintedDirectionStaff.at(
                             staffs,
                             score.measures(),
                             score.notes(),
@@ -369,14 +374,9 @@ public final class ScoreExpressionDetector {
                                 Optional.of(target),
                                 direction.strength(),
                                 direction.qualifierText(),
-                                List.of(
-                                        new Evidence(
-                                                symbols.contains(word) ? SYMBOL : SOURCE,
-                                                0,
-                                                word.left(),
-                                                anchor.staff(),
-                                                anchor.count(),
-                                                direction.printedText()))));
+                                expressionEvidence(word, captionStaff, symbols, height,
+                                        anchor.staff(), anchor.count(), direction.printedText())));
+
             }
         }
         return PrintedTempoSpans.apply(
@@ -564,33 +564,145 @@ public final class ScoreExpressionDetector {
         return matched != null;
     }
 
-    private static PlayingTechniqueDetector.Staff bowCaptionOwner(
+    private static String shortBowCaptionText(String token) {
+        if (ExpressiveDirectionText.isShortBowCaption(token)) return token;
+        String text = token.strip();
+        if (!text.endsWith("1")) return null;
+        String prefix = text.substring(0, text.length() - 1).stripTrailing();
+        return ExpressiveDirectionText.isShortBowCaption(prefix) ? prefix : null;
+    }
+
+    /** Padded OCR boxes can include a staff line or neighboring note below the caption. */
+    private static PlayingTechniqueDetector.Word provedShortBowCaption(
+            PlayingTechniqueDetector.Word word, byte[] ink, int width, int height) {
+        String literal = shortBowCaptionText(word.text());
+        if (literal == null) return null;
+        var proof = provedShortBowCaption(word, literal, ink, width, height, 165);
+        // The dark contour can separate a descender from a neighboring beam's antialias fringe.
+        return proof != null ? proof : provedShortBowCaption(word, literal, ink, width, height, 135);
+    }
+
+    private static PlayingTechniqueDetector.Word provedShortBowCaption(
+            PlayingTechniqueDetector.Word word, String literal, byte[] ink, int width, int height, int threshold) {
+        if (ink == null || ink.length != (long) width * height) return null;
+        int left = Math.round(word.left() * width), right = Math.round(word.right() * width);
+        int top = Math.round(word.top() * height), bottom = Math.round(word.bottom() * height);
+        int w = right - left + 1, h = bottom - top + 1;
+        if (left < 0 || right >= width || top < 0 || bottom >= height
+                || w < 7 || h < 7 || (long) w * h > 15000) return null;
+        var inkOwners = RawNumeralComponents.captureLongWindow(ink, width, height, left, top, right, bottom, threshold);
+        var glyphs = inkOwners.components().stream()
+                .filter(c -> c.left > left && c.right < right && c.top > top && c.bottom < bottom && c.size() >= 5)
+                .toList();
+        int expectedLetters = literal.strip().equalsIgnoreCase("m.") ? 1 : 2;
+        boolean mergedFingering = !literal.equals(word.text());
+        PlayingTechniqueDetector.Word result = null;
+        for (var dot : glyphs) {
+            int dotWidth = dot.right - dot.left + 1, dotHeight = dot.bottom - dot.top + 1;
+            if (dot.left < left + w * .38f || dotWidth < 2 || dotHeight < 2
+                    || dotWidth > h * .23f || dotHeight > h * .23f
+                    || dotWidth > dotHeight * 1.8f || dotHeight > dotWidth * 1.8f
+                    || dot.size() < dotWidth * dotHeight * .55f) continue;
+            var letters = glyphs.stream().filter(c -> c.right < dot.left
+                    && c.bottom - c.top + 1 >= h * .29f
+                    && c.right - c.left + 1 >= h * .11f
+                    && c.top <= dot.top - .15f * h
+                    && c.bottom >= dot.top - .09f * h && c.bottom <= dot.bottom + .39f * h).toList();
+            if (letters.size() != expectedLetters) continue;
+            int baseline = letters.stream().mapToInt(c -> c.bottom).min().orElseThrow();
+            if (Math.abs((dot.top + dot.bottom) * .5f - baseline) > .11f * h) continue;
+            int first = letters.stream().mapToInt(c -> c.left).min().orElseThrow();
+            int lastLetter = letters.stream().mapToInt(c -> c.right).max().orElseThrow();
+            int head = letters.stream().mapToInt(c -> c.top).min().orElseThrow();
+            int foot = Math.max(dot.bottom, letters.stream().mapToInt(c -> c.bottom).max().orElseThrow());
+            var trailing = glyphs.stream().filter(c -> c.left > dot.right
+                    && c.top <= dot.top && c.bottom >= head && c.bottom - c.top >= .28f * h).toList();
+            if (dot.left - lastLetter > .31f * h || dot.right - first < w * .35f
+                    || (mergedFingering ? trailing.size() != 1
+                            || !separateTrailingOne(ink, width, height, dot, trailing.get(0), h)
+                            : !trailing.isEmpty())) continue;
+            if (result != null) return null;
+            result = new PlayingTechniqueDetector.Word(literal, first / (float) width, head / (float) height,
+                    (dot.right + 1) / (float) width, (foot + 1) / (float) height, word.admission());
+        }
+        return result;
+    }
+
+    /** A combined OCR token only contributes the words if the following one has its own ink. */
+    private static boolean separateTrailingOne(byte[] ink, int width, int height, RawNumeralComponents.Component dot,
+            RawNumeralComponents.Component digit, int tokenHeight) {
+        float gap = digit.left - dot.right;
+        if (gap < tokenHeight * .10f || gap > tokenHeight * .60f
+                || Math.abs(digit.bottom - dot.bottom) > tokenHeight * .14f) return false;
+        if (UnnumberedTripletInk.isUnambiguousOne(ink, width, digit)) return true;
+        var reading = JoinedDigitTemplates.inspect(ink, width, height, new BitSet(),
+                digit.left, digit.top, digit.right, digit.bottom, () -> {});
+        return reading != null && reading.digit() == 1 && reading.best() >= .64f
+                && reading.best() - reading.runner() >= .09f;
+    }
+
+    private static List<Evidence> expressionEvidence(PlayingTechniqueDetector.Word word,
+            BowCaptionStaff caption, Set<PlayingTechniqueDetector.Word> symbols, int height,
+            int staff, int count, String text) {
+        var primary = new Evidence(symbols.contains(word) ? SYMBOL
+                : caption != null && caption.ledgerSupported() ? LEDGER_CAPTION : SOURCE,
+                0, word.left(), staff, count, text);
+        if (caption == null || !"segue".equalsIgnoreCase(text)
+                || word.top() * height < caption.staff().bottom() + .25f * caption.staff().gap())
+            return List.of(primary);
+        return List.of(primary, new Evidence("printed-expression-below-bow-caption",
+                primary.pageIndex(), primary.visualX(), staff, count, text));
+    }
+
+    private record BowCaptionStaff(PlayingTechniqueDetector.Staff staff, boolean ledgerSupported) {}
+
+    private static BowCaptionStaff bowCaptionOwner(
             ScorePageInterpretation score, List<PlayingTechniqueDetector.Staff> staffs,
             PlayingTechniqueDetector.Word word, byte[] gray, int width, int height) {
         float x = word.left() * width, right = word.right() * width;
         float top = word.top() * height, bottom = word.bottom() * height;
         if (gray == null || !ScoreDynamicsDetector.containsInk(word, gray, width, height)) return null;
-        PlayingTechniqueDetector.Staff owner = null;
+        BowCaptionStaff owner = null;
         float best = Float.POSITIVE_INFINITY;
         for (var staff : staffs) {
             float gap = staff.gap();
             float clearance = bottom <= staff.top() ? staff.top() - bottom
                     : top >= staff.bottom() ? top - staff.bottom() : -1;
-            if (gap < 6 || clearance < gap * .25f
+            boolean shortCaption = ExpressiveDirectionText.isShortBowCaption(word.text());
+            float minimumClearance = shortCaption ? .04f : .25f;
+            if (gap < 6 || clearance < gap * minimumClearance
                     || top >= staff.bottom() && clearance > gap * 5
                     || bottom - top > gap * 3.5f || right - x > gap * 25) continue;
             var nearbyAttack = captionAttack(score, staff, width, height, x, right);
+            if (bottom < staff.top() && nearbyAttack != null)
+                nearbyAttack = upperCaptionHead(score, nearbyAttack, staff.gap(), width);
+            if (shortCaption && top >= staff.bottom()
+                    && (nearbyAttack == null || top - nearbyAttack.pageY() * height > gap * 5)) continue;
             boolean ledgerCaption = nearbyAttack != null && bottom < staff.top()
                     && staff.top() - nearbyAttack.pageY() * height >= gap * 2
                     && nearbyAttack.pageY() * height - bottom <= gap * 3;
-            if (clearance > gap * 5 && !ledgerCaption) continue;
+            // A rising ledger-note run can bring the later heads close to a high caption.
+            // Use them to establish the staff, while retaining the caption's leftmost attack.
+            float ledgerDistance = !ledgerCaption && clearance > gap * 5 && nearbyAttack != null
+                    && bottom < staff.top() ? ledgerCaptionDistance(score, staff, nearbyAttack,
+                            width, height, x, right, bottom) : Float.POSITIVE_INFINITY;
+            if (clearance > gap * 5 && !ledgerCaption && !Float.isFinite(ledgerDistance)) continue;
+            ledgerCaption |= Float.isFinite(ledgerDistance);
+            boolean directlyAbove = shortCaption && nearbyAttack != null && bottom < staff.top();
+            if (directlyAbove) {
+                var measure = score.measures().get(nearbyAttack.measureIndex());
+                float noteX = (measure.left() + nearbyAttack.positionInMeasure()
+                        * (measure.right() - measure.left())) * width;
+                directlyAbove = noteX >= x && noteX <= right;
+            }
             float firstSample = Float.NaN;
             PlayingTechniqueDetector.Staff proof = null;
+            boolean verifiedPair = false;
             float[] samples = {0, 1, 2, 3, 4, 5, 6, 7, 8, -1, -2, .5f, 1.5f, 2.5f,
                     3.5f, 4.5f, 5.5f, 6.5f, 7.5f, -3, -3.5f, -4, -4.5f, -5,
-                    8.5f, 9, 9.5f, 10, 10.5f, 11, 11.5f, 12, 12.5f, 13};
+                    8.5f, 9, 9.5f, 10, 10.5f, 11, 11.5f, 12, 12.5f, 13, 13.5f, 14, 14.5f, 15};
             for (float delta : samples) {
-                if (!ledgerCaption && (delta < -2 || delta > 8)) break;
+                if (!directlyAbove && (!ledgerCaption && (delta < -2 || delta > 8) || delta > 13)) break;
                 float sample = x + gap * delta;
                 var local = PrintedDirectionStaff.local(
                         staff, score.measures(), score.notes(), gray, width, height, sample);
@@ -603,7 +715,9 @@ public final class ScoreExpressionDetector {
                         && Math.abs(proof.gap() - local.gap()) <= gap * .1f) {
                     var attack = captionAttack(score, proof, width, height, x, right);
                     if (attack == null) break;
-                    float distance = clearance / gap;
+                    if (bottom < proof.top()) attack = upperCaptionHead(score, attack, proof.gap(), width);
+                    verifiedPair = true;
+                    float distance = Math.min(clearance / gap, ledgerDistance);
                     if (bottom < proof.top() && attack.pageY() * height < proof.top()) {
                         var measure = score.measures().get(attack.measureIndex());
                         float attackX = (measure.left() + attack.positionInMeasure()
@@ -616,14 +730,101 @@ public final class ScoreExpressionDetector {
                     }
                     if (distance <= 5 && distance < best) {
                         best = distance;
-                        owner = proof;
+                        owner = new BowCaptionStaff(proof, Float.isFinite(ledgerDistance));
                     }
                     break;
+                }
+            }
+            if (!verifiedPair && ledgerDistance < best) {
+                var distant = surroundingCaptionStaff(score, staff, gray, width, height, x, right);
+                if (distant != null) {
+                    best = ledgerDistance;
+                    owner = new BowCaptionStaff(distant, true);
+                }
+            }
+            if (!verifiedPair && directlyAbove && clearance / gap < best) {
+                float headClearance = nearbyAttack.pageY() * height - bottom;
+                if (headClearance >= gap * .25f && headClearance <= gap * 5) {
+                    var distant = surroundingCaptionStaff(score, staff, gray, width, height, x, right);
+                    if (distant != null) {
+                        best = clearance / gap;
+                        owner = new BowCaptionStaff(distant, false);
+                    }
                 }
             }
         }
         return owner;
     }
+
+    private static float ledgerCaptionDistance(ScorePageInterpretation score,
+            PlayingTechniqueDetector.Staff staff, ScoreNoteEvent first, int width, int height,
+            float left, float right, float lowerEdge) {
+        float gap = staff.gap();
+        var measure = score.measures().get(first.measureIndex());
+        float firstX = (measure.left() + first.positionInMeasure() * (measure.right() - measure.left())) * width;
+        if (firstX < left || firstX > left + gap * 2.5f) return Float.POSITIVE_INFINITY;
+        float distance = Float.POSITIVE_INFINITY;
+        var supportColumns = new java.util.HashSet<Integer>();
+        for (var note : score.notes()) {
+            if (note.measureIndex() != first.measureIndex() || note.staffIndex() != staff.index()
+                    || note.staffCount() != staff.count() || note.crossStaffBeam()
+                    || note.kind() != ScoreNoteEvent.Kind.PITCHED || note.visualSize() != ScoreNoteEvent.VisualSize.FULL
+                    || (note.articulations() & NoteOrnament.GRACE) != 0) continue;
+            float x = (measure.left() + note.positionInMeasure() * (measure.right() - measure.left())) * width;
+            float y = note.pageY() * height;
+            float clearance = y - lowerEdge;
+            if (x <= firstX || x > right || staff.top() - y < gap * 2
+                    || clearance < gap * .25f || clearance > gap * 3.3f) continue;
+            supportColumns.add(Math.round(x));
+            distance = Math.min(distance, clearance / gap);
+        }
+        return supportColumns.size() >= 2 ? distance : Float.POSITIVE_INFINITY;
+    }
+
+    /** Dense notes can obscure the rules around a caption; bracket its attack with agreeing staff ink. */
+    private static PlayingTechniqueDetector.Staff surroundingCaptionStaff(
+            ScorePageInterpretation score, PlayingTechniqueDetector.Staff staff, byte[] gray,
+            int width, int height, float x, float right) {
+        float gap = staff.gap();
+        PlayingTechniqueDetector.Staff left = null;
+        for (float delta = 1; delta <= 35; delta += .5f) {
+            left = PrintedDirectionStaff.local(staff, score.measures(), score.notes(), gray, width, height,
+                    x - gap * delta);
+            if (left != null) break;
+        }
+        if (left == null) return null;
+        for (float delta = 1; delta <= 35; delta += .5f) {
+            float sample = x + gap * delta;
+            if (sample < right) continue;
+            var other = PrintedDirectionStaff.local(staff, score.measures(), score.notes(), gray, width, height,
+                    sample);
+            if (other != null && Math.abs(left.bottom() - other.bottom()) <= gap * .30f
+                    && Math.abs(left.gap() - other.gap()) <= gap * .10f)
+                return new PlayingTechniqueDetector.Staff((left.top() + other.top()) * .5f,
+                        (left.bottom() + other.bottom()) * .5f, (left.gap() + other.gap()) * .5f,
+                        staff.index(), staff.count());
+        }
+        return null;
+    }
+
+    /** Height evidence for a caption above a chord belongs to that chord's upper head. */
+    private static ScoreNoteEvent upperCaptionHead(
+            ScorePageInterpretation score, ScoreNoteEvent attack, float gap, int width) {
+        var region = score.measures().get(attack.measureIndex());
+        float advance = (region.right() - region.left()) * width;
+        var highest = attack;
+        for (var member : score.notes()) {
+            if (member.measureIndex() != attack.measureIndex() || member.staffIndex() != attack.staffIndex()
+                    || member.staffCount() != attack.staffCount() || member.crossStaffBeam()
+                    || member.kind() != ScoreNoteEvent.Kind.PITCHED
+                    || (member.articulations() & NoteOrnament.GRACE) != 0
+                    || Math.abs(member.positionInMeasure() - attack.positionInMeasure()) * advance > .16f * gap)
+                continue;
+            if (member.pageY() < highest.pageY()) highest = member;
+        }
+        return highest;
+    }
+
     private static ScoreNoteEvent captionAttack(
             ScorePageInterpretation score, PlayingTechniqueDetector.Staff staff,
             int width, int height, float left, float right) {
@@ -942,13 +1143,14 @@ public final class ScoreExpressionDetector {
                 + Float.floatToIntBits(position);
     }
 
+    private static boolean isColumnEvidence(Evidence evidence) {
+        String source = evidence.sourceId();
+        return source.equals(SOURCE) || source.equals(LEDGER_CAPTION) || source.equals(SYMBOL);
+    }
+
     private static Optional<Column> column(ScoreExpressiveEvent event) {
         if (!KINDS.contains(event.kind())
-                || event.evidence().stream()
-                                .noneMatch(
-                                        e ->
-                                                e.sourceId().equals(SOURCE)
-                                                        || e.sourceId().equals(SYMBOL))
+                || event.evidence().stream().noneMatch(ScoreExpressionDetector::isColumnEvidence)
                         && !PrintedCueSize.owns(event)
                 || event.targetEventId().isEmpty()
                 || !(event.targetEventId().get().startsWith(TARGET)
@@ -1160,30 +1362,7 @@ public final class ScoreExpressionDetector {
                                                                         || pedalCaption
                                                                         || PrintedCueSize.owns(
                                                                                 event)
-                                                                        || event.kind()
-                                                                                        == Kind
-                                                                                                .UNRESOLVED_DIRECTION
-                                                                                && event
-                                                                                        .evidence()
-                                                                                        .stream()
-                                                                                        .anyMatch(
-                                                                                                v ->
-                                                                                                        v.sourceId()
-                                                                                                                        .equals(
-                                                                                                                                SOURCE)
-                                                                                                                && v
-                                                                                                                                .staffIndex()
-                                                                                                                        == event
-                                                                                                                                .staffIndex()
-                                                                                                                && v
-                                                                                                                                .staffCount()
-                                                                                                                        == event
-                                                                                                                                .staffCount()
-                                                                                                                && SuddenDynamicText
-                                                                                                                        .parse(
-                                                                                                                                v
-                                                                                                                                        .printedText())
-                                                                                                                        .isPresent())
+                                                                        || ownedPartDirection(event)
                                                                 ? Scope.PART
                                                                 : Scope.SCORE)
                                         : Scope.UNRESOLVED,
@@ -1196,6 +1375,15 @@ public final class ScoreExpressionDetector {
             }
         }
         return score.withExpressiveEvents(events);
+    }
+
+    private static boolean ownedPartDirection(ScoreExpressiveEvent event) {
+        return event.kind() == Kind.UNRESOLVED_DIRECTION && event.evidence().stream().anyMatch(v ->
+                v.staffIndex() == event.staffIndex() && v.staffCount() == event.staffCount()
+                        && (v.sourceId().equals(LEDGER_CAPTION)
+                            || v.sourceId().equals(SOURCE) && (SuddenDynamicText.parse(v.printedText()).isPresent()
+                                || ExpressiveDirectionText.isShortBowCaption(v.printedText())
+                                || "segue".equalsIgnoreCase(v.printedText()))));
     }
 
     public static List<Integer> targetIndices(

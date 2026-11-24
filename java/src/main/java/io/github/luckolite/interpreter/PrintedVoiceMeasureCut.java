@@ -184,12 +184,30 @@ final class PrintedVoiceMeasureCut {
             if (proved) hits.add(x);
     }
 
-        if (physicalOnly
-                && !hits.isEmpty()
-                && hits.get(hits.size() - 1) - hits.get(0) > gap * .65f) {
+        if (!hits.isEmpty()) {
             var budget = new PrintedBeamShafts.Budget(120_000);
+            int initialHits = hits.size();
             hits.removeIf(x -> ownedShaft(x, voice, gray, w, h, left, span, gap, budget));
             if (budget.refused()) return null;
+            if (physicalOnly && initialHits > 0 && hits.isEmpty()) {
+                for (int x = from; x <= to; x++) {
+                    final int candidate = x;
+                    float[] local = curve == null ? new float[] {staff.bottom(), gap} : curve.at(x - left);
+                    int bottomRule = Math.round(top + local[0]);
+                    int topRule = Math.round(top + local[0] - 4 * local[1]);
+                    if (!OmrMeasurePostProcessor.verticalRuleAt(
+                                    gray, w, x, topRule, bottomRule, local[1])
+                            || voice.stream().anyMatch(n -> Math.abs(
+                                    left + n.positionInMeasure() * span - candidate) < gap)
+                            || extendsBeyondStaff(gray, w, h, x, topRule, local[1], 0, limit)
+                            || ClosedHeadBarlineGuard.attached(gray, w, h, x, topRule, bottomRule, local[1])
+                            || ownedShaft(x, voice, gray, w, h, left, span, gap, budget)) continue;
+                    hits.add(x);
+                }
+                if (budget.refused() || hits.size() < 2) return null;
+                for (int i = 1; i < hits.size(); i++)
+                    if (hits.get(i) != hits.get(i - 1) + 1) return null;
+            }
         }
         if (hits.isEmpty() || hits.get(hits.size() - 1) - hits.get(0) > gap * .65f) return null;
         return hits.get(hits.size() / 2) / (float) w;

@@ -44,6 +44,23 @@ final class UnnumberedTripletInk {
             byte[] ink, int width, int height, float gap, float first, float last,
             float headTop, float headBottom, float shaftTip, Rows rows, StaffPitchTrack track,
             boolean verifyContinuingStroke, List<PlayingTechniqueDetector.Word> directions) {
+        return bracketBesideBeam(ink,width,height,gap,first,last,headTop,headBottom,shaftTip,rows,track,
+                verifyContinuingStroke,directions,null,null);
+    }
+
+    private static boolean bracketBesideBeam(
+            byte[] ink, int width, int height, float gap, float first, float last,
+            float headTop, float headBottom, float shaftTip, Rows rows, StaffPitchTrack track,
+            boolean verifyContinuingStroke, List<PlayingTechniqueDetector.Word> directions, float[] headsX, float[] headsY) {
+        return bracketBesideBeam(ink, width, height, gap, first, last, headTop, headBottom, shaftTip,
+                rows, track, verifyContinuingStroke, directions, headsX, headsY, false);
+    }
+
+    private static boolean bracketBesideBeam(
+            byte[] ink, int width, int height, float gap, float first, float last,
+            float headTop, float headBottom, float shaftTip, Rows rows, StaffPitchTrack track,
+            boolean verifyContinuingStroke, List<PlayingTechniqueDetector.Word> directions,
+            float[] headsX, float[] headsY, boolean octaveMarks) {
         int margin = Math.round(2.5f * gap);
         int left = Math.round(first - gap), right = Math.round(last + gap);
         float upper = Math.min(headTop, shaftTip), lower = Math.max(headBottom, shaftTip);
@@ -53,7 +70,15 @@ final class UnnumberedTripletInk {
         var mask = trackedStaffMask(ink, width, height, left, right, top, bottom, track, gap);
         var window = new Window(ink, width, left, top, right - left + 1, bottom - top + 1, mask);
         return window.bracket(window.staffRows(margin, gap), first, last, headTop,
-                lower, upper, lower, gap, rows, verifyContinuingStroke, directions);
+                lower, upper, lower, gap, rows, verifyContinuingStroke, directions, track, headsX, headsY, octaveMarks);
+    }
+
+    /** Optional marks in a broad harmonic triplet, after its literal rail is established. */
+    static boolean clearWideHarmonic(byte[] ink, int width, int height, float gap,
+            float[] headsX, float[] headsY, List<PrintedBeamShafts.Shaft> shafts,
+            Rows sourceRows, StaffPitchTrack staffTrack) {
+        return staffTrack != null && clear(ink, width, height, gap, headsX, headsY, shafts,
+                sourceRows, staffTrack, List.of(), null, false, true, false);
     }
 
     /** Some complete primary rails lie beside printed fingering along a staff rule. */
@@ -83,9 +108,18 @@ final class UnnumberedTripletInk {
             float first, float last, float headTop, float headBottom, int tipTop, int tipBottom,
             Rows rows, StaffPitchTrack track, PlayingTechniqueDetector.Word fingeringTwo,
             List<AccidentalHead> accidentalHeads, List<PlayingTechniqueDetector.Word> directions) {
+        return clearFingeringBands(source, w, h, gap, first, last, headTop, headBottom,
+                tipTop, tipBottom, rows, track, fingeringTwo, accidentalHeads, directions, false);
+    }
+
+    static boolean clearFingeringBands(byte[] source, int w, int h, float gap,
+            float first, float last, float headTop, float headBottom, int tipTop, int tipBottom,
+            Rows rows, StaffPitchTrack track, PlayingTechniqueDetector.Word fingeringTwo,
+            List<AccidentalHead> accidentalHeads, List<PlayingTechniqueDetector.Word> directions,
+            boolean octaveMarks) {
         if (track == null) return false;
         if (bracketBesideBeam(
-                source, w, h, gap, first, last, headTop, headBottom, tipBottom, rows, track, true, directions)) return false;
+                source, w, h, gap, first, last, headTop, headBottom, tipBottom, rows, track, true, directions, null, null, octaveMarks)) return false;
         int top = Math.max(rows.first(), Math.round(headTop - gap * 4.8f));
         int above = Math.min(rows.last(), Math.round(headTop - gap * .22f));
         int below = Math.max(rows.first(), tipTop - Math.round(gap * .21f));
@@ -94,6 +128,23 @@ final class UnnumberedTripletInk {
         if (start < 0 || stop >= w || top >= above || below >= bottom) return false;
         return hasOnlyFingeringInk(source, w, h, start, stop, top, above, first, last, gap, fingeringTwo, accidentalHeads, directions, track)
                 && hasOnlyFingeringInk(source, w, h, start, stop, below, bottom, first, last, gap, null);
+    }
+
+    static boolean clearRuledFingeringBands(byte[] source, int w, int h, float gap,
+            float[] headsX, float[] headsY, float headTop, float headBottom, int tipTop, int tipBottom,
+            Rows rows, StaffPitchTrack track) {
+        float first = headsX[0], last = headsX[2];
+        if (bracketBesideBeam(source,w,h,gap,first,last,headTop,headBottom,tipBottom,rows,track,
+                             true,List.of(),headsX,headsY)) return false;
+        int top = Math.max(rows.first(), Math.round(headTop - gap * 4.8f));
+        int above = Math.min(rows.last(), Math.round(headTop - gap * .22f));
+        int below = Math.max(rows.first(), tipTop - Math.round(gap * .21f));
+        int bottom = Math.min(rows.last(), Math.round(tipBottom + gap * 3f));
+        int start = Math.round(first - gap), stop = Math.round(last + gap);
+        return start >= 0 && stop < w && below < bottom
+                && (top >= above || hasOnlyFingeringInk(source,w,h,start,stop,top,above,first,last,gap,null,
+                            List.of(),List.of(),track))
+                && hasOnlyFingeringInk(source,w,h,start,stop,below,bottom,first,last,gap,null);
     }
 
     static boolean hasOnlyFingeringInk(byte[] source, int w, int h, int left, int right, int top,
@@ -114,6 +165,7 @@ final class UnnumberedTripletInk {
                     || span < gap * .34f || span > gap * 1.5f
                     || height < gap * .76f || height > gap * 2.35f) continue;
             if (!isUnambiguousOne(source, w, glyph)
+                    && !(staff != null && restoresClippedFingeringOne(source, w, h, glyph, bottom, gap))
                     && !isUnambiguousTwo(source, w, glyph)
                     && !ownedBoldTwo(source, w, h, glyph, fingeringTwo)
                     && !ownedClippedAccidental(source, w, h, glyph, bottom, gap, accidentalHeads, staff)
@@ -121,6 +173,37 @@ final class UnnumberedTripletInk {
                             glyph.left, glyph.top, glyph.right, glyph.bottom)) return false;
         }
         return true;
+    }
+
+    private static boolean restoresClippedFingeringOne(byte[] source, int width, int height,
+            RawNumeralComponents.Component clipped, int bottom, float gap) {
+        if (clipped.bottom != bottom) return false;
+        int collar = Math.max(2, Math.round(.36f * gap));
+        int left = clipped.left - collar, right = clipped.right + collar;
+        int top = clipped.top - 2, end = bottom + collar;
+        if (left < 0 || right >= width || top < 0 || end >= height) return false;
+        var nearby = RawNumeralComponents.captureLongWindow(source, width, height, left, top, right, end);
+        for (var whole : nearby.components()) {
+            if (whole.top == clipped.top && whole.left > left && whole.left <= clipped.left
+                    && whole.right < right && whole.right >= clipped.right
+                    && whole.bottom > bottom && whole.bottom < end
+                    && whole.bottom - whole.top + 1 <= 1.65f * gap
+                    && isUnambiguousOne(source, width, whole)
+                    && containsClippedComponent(whole, clipped, width, bottom)) return true;
+        }
+        return false;
+    }
+
+    private static boolean containsClippedComponent(RawNumeralComponents.Component whole,
+            RawNumeralComponents.Component clipped, int width, int bottom) {
+        int clippedPixels = 0;
+        boolean sameSeed = false;
+        for (int i = 0; i < whole.size(); i++) {
+            int pixel = whole.pixel(i);
+            if (pixel / width <= bottom) clippedPixels++;
+            if (pixel == clipped.pixel(0)) sameSeed = true;
+        }
+        return sameSeed && clippedPixels == clipped.size();
     }
 
     private static boolean coveredByBowCaption(List<PlayingTechniqueDetector.Word> words,
@@ -186,7 +269,7 @@ final class UnnumberedTripletInk {
         return pocket >= 3 && base >= 2;
     }
 
-    private static boolean isUnambiguousOne(byte[] source, int width, RawNumeralComponents.Component glyph) {
+    static boolean isUnambiguousOne(byte[] source, int width, RawNumeralComponents.Component glyph) {
         if (!TripletRhythmDetector.fingerOne(source, width, glyph)) return false;
         int tall = glyph.bottom - glyph.top + 1, wide = glyph.right - glyph.left + 1;
         int crossbar = 0;
@@ -235,6 +318,13 @@ final class UnnumberedTripletInk {
         return staff != null && clear(ink,width,height,gap,headsX,headsY,shafts,sourceRows,staff,words);
     }
 
+    static boolean clearWithTrackedBows(byte[] ink, int width, int height, float gap,
+            float[] headsX, float[] headsY, List<PrintedBeamShafts.Shaft> shafts, Rows sourceRows,
+            StaffPitchTrack staffTrack) {
+        return staffTrack != null && clear(ink, width, height, gap, headsX, headsY, shafts, sourceRows,
+                staffTrack, List.of(), null, false, false, false, true);
+    }
+
     static boolean clearFollowing(byte[] ink, int width, int height, float gap,
             float[] headsX, float[] headsY, List<PrintedBeamShafts.Shaft> shafts, Rows sourceRows,
             StaffPitchTrack staffTrack, List<PlayingTechniqueDetector.Word> words, List<Head> lowerHeads) {
@@ -250,9 +340,41 @@ final class UnnumberedTripletInk {
         return clear(ink, width, height, gap, headsX, headsY, shafts, sourceRows, staffTrack, words, null);
     }
 
+    static boolean clearOctaveWithTrackedStaff(
+            byte[] ink, int width, int height, float gap, float[] headsX, float[] headsY,
+            List<PrintedBeamShafts.Shaft> shafts, Rows sourceRows, StaffPitchTrack staffTrack,
+            List<PlayingTechniqueDetector.Word> words, boolean closedRails) {
+        return staffTrack != null && clear(ink, width, height, gap, headsX, headsY, shafts,
+                sourceRows, staffTrack, words, null, true, false, closedRails);
+    }
+
     private static boolean clear(byte[] ink, int width, int height, float gap,
             float[] headsX, float[] headsY, List<PrintedBeamShafts.Shaft> shafts, Rows sourceRows,
             StaffPitchTrack staffTrack, List<PlayingTechniqueDetector.Word> words, List<Head> lowerHeads) {
+        return clear(ink, width, height, gap, headsX, headsY, shafts, sourceRows,
+                staffTrack, words, lowerHeads, false);
+    }
+
+    private static boolean clear(byte[] ink, int width, int height, float gap,
+            float[] headsX, float[] headsY, List<PrintedBeamShafts.Shaft> shafts, Rows sourceRows,
+            StaffPitchTrack staffTrack, List<PlayingTechniqueDetector.Word> words, List<Head> lowerHeads,
+            boolean octaveFingering) {
+        return clear(ink, width, height, gap, headsX, headsY, shafts, sourceRows,
+                staffTrack, words, lowerHeads, octaveFingering, false, false);
+    }
+
+    private static boolean clear(byte[] ink, int width, int height, float gap,
+            float[] headsX, float[] headsY, List<PrintedBeamShafts.Shaft> shafts, Rows sourceRows,
+            StaffPitchTrack staffTrack, List<PlayingTechniqueDetector.Word> words, List<Head> lowerHeads,
+            boolean octaveFingering, boolean wideHarmonic, boolean closedRails) {
+        return clear(ink, width, height, gap, headsX, headsY, shafts, sourceRows, staffTrack,
+                words, lowerHeads, octaveFingering, wideHarmonic, closedRails, false);
+    }
+
+    private static boolean clear(byte[] ink, int width, int height, float gap,
+            float[] headsX, float[] headsY, List<PrintedBeamShafts.Shaft> shafts, Rows sourceRows,
+            StaffPitchTrack staffTrack, List<PlayingTechniqueDetector.Word> words, List<Head> lowerHeads,
+            boolean octaveFingering, boolean wideHarmonic, boolean closedRails, boolean allowBow) {
         if (ink == null || width < 1 || height < 1 || ink.length != (long) width * height
                 || !Float.isFinite(gap) || gap < 10 || gap > 25
                 || headsX.length != 3 || headsY.length != 3 || shafts.size() != 3) return false;
@@ -265,7 +387,9 @@ final class UnnumberedTripletInk {
         if (Math.abs(travel) != 1 || shafts.stream().anyMatch(s -> s.direction() != travel)) return false;
         float lo = (first.left() + first.right()) * .5f;
         float hi = (last.left() + last.right()) * .5f;
-        if (hi - lo < gap * 2.8f || hi - lo > gap * 5.5f) return false;
+        boolean wideOctave = closedRails && octaveFingering && travel < 0 && hi - lo > gap * 5.95f;
+        float maxSpan = wideHarmonic ? 8.8f : wideOctave || octaveFingering && !closedRails ? 6.8f : octaveFingering ? 5.95f : 5.5f;
+        if (hi - lo < gap * (wideHarmonic ? 5.6f : 2.8f) || hi - lo > gap * maxSpan) return false;
         float topHead = Math.min(headsY[0], Math.min(headsY[1], headsY[2]));
         float bottomHead = Math.max(headsY[0], Math.max(headsY[1], headsY[2]));
         float top = Math.min(topHead, shafts.stream().mapToInt(PrintedBeamShafts.Shaft::endY).min().orElseThrow());
@@ -277,6 +401,8 @@ final class UnnumberedTripletInk {
         boolean[] verifiedStaff = trackedStaffMask(ink, width, height, left, right, start, end, staffTrack, gap);
         var window = new Window(ink, width, left, start, right - left + 1, end - start + 1, verifiedStaff);
         boolean[] staff = window.staffRows(tailRadius, gap);
+        List<BeamFingeringStack> beamFingerings = octaveFingering && travel > 0
+                ? beamFingeringStacks(ink, width, height, words, shafts, gap) : List.of();
         for (int x = Math.round(lo + .15f * (hi - lo)); x <= Math.round(lo + .85f * (hi - lo)); x++) {
             float beam = first.endY() + (last.endY() - first.endY()) * (x - lo) / (hi - lo);
             boolean joined = true;
@@ -285,10 +411,23 @@ final class UnnumberedTripletInk {
                     joined = false;
                     break;
                 }
-            if (joined) return false;
+            if (joined && octaveFingering) {
+                // The run alone can start at an independent fingering below the beam.
+                // Require an actual connection before treating it as a prolongation of the beam.
+                for (int offset = 1; offset < Math.round(.25f * gap); offset++) {
+                    if (!window.dark(x, Math.round(beam) + travel * offset, staff)) {
+                        joined = false;
+                        break;
+                    }
+                }
+            }
+            if (joined && !ownsBeamFingeringContact(beamFingerings, x) && !(octaveFingering && travel > 0
+                    && separatedBeamFingeringOne(window, x, Math.round(beam), gap, shafts))) return false;
         }
         if (window.bracket(staff, Math.min(lo, headsX[0]), Math.max(hi, headsX[2]),
-                topHead, bottomHead, top, bottom, gap, sourceRows)) return false;
+                topHead, bottomHead, top, bottom, gap, sourceRows, octaveFingering,
+                words, staffTrack, headsX, headsY, octaveFingering)) return false;
+        boolean ownedStack = false;
         int cells = window.width * window.height;
         boolean[] used = new boolean[cells];
         int[] queue = new int[cells];
@@ -337,8 +476,48 @@ final class UnnumberedTripletInk {
             }
             if (markBand && ownedReturningCurve(queue, size, window, minX, maxX, shafts, travel, gap,
                     lowerHeads != null ? headsX : null)) continue;
-            if (travel > 0 && markBand && ownedBowCaption(
+            if (wideHarmonic && travel > 0 && headBand && !markBand
+                    && Math.abs(minX - headsX[0]) <= gap * .48f
+                    && Math.abs(maxX - headsX[2]) <= gap * .55f
+                    && thinReturningProfile(queue, size, window, minX, maxX, false, gap)) continue;
+            if (wideHarmonic && headBand && !markBand && inkWidth >= gap * .78f
+                    && inkWidth <= gap * 1.5f && inkHeight >= gap * .12f && inkHeight <= gap * .43f
+                    && size >= .78f * inkWidth * inkHeight
+                    && ownsHarmonicTenuto(center, minY, maxY, headsX, headsY, travel, gap)) continue;
+            if (octaveFingering && headBand && !markBand
+                    && ownsSegueBeforeOctave(ink, width, height, gap, minX, minY, maxX, maxY, words))
+                continue;
+            if (travel > 0 && markBand && ownedDirectionCaption(
                     ink,width,height,gap,minX,minY,maxX,maxY,words)) continue;
+            if (octaveFingering && travel < 0 && headBand && !markBand
+                    && ownsStackedOpenString(ink,width,height,words,minX,minY,maxX,maxY,headsX,headsY,gap)) {
+                ownedStack = true;
+                continue;
+            }
+            if (octaveFingering && headBand && !markBand && travel < 0
+                    && ownsSplitStackedFingering(ink, width, height, words,
+                            minX, minY, maxX, maxY, headsX, headsY, gap)) continue;
+            if (octaveFingering && headBand && !markBand && travel < 0
+                    && ownsSplitRomanBelowHeads(ink, width, height, words,
+                            minX, minY, maxX, maxY, headsX, headsY, gap)) continue;
+            if (octaveFingering && markBand && !headBand && travel > 0
+                    && ownsBeamFingeringComponent(beamFingerings, minX, minY, maxX, maxY)) continue;
+            if (octaveFingering && ownsOctaveAnnotation(ink, width, height, words,
+                    queue, size, window, minX, minY, maxX, maxY, headBand, headsX, shafts, gap)) continue;
+            if (octaveFingering && markBand && !headBand && travel > 0
+                    && ownsRuledFingeringOne(window, staff, minX, minY, maxX, maxY, gap, shafts, used)) continue;
+            if (octaveFingering && markBand && !headBand && travel > 0
+                    && ownsRuledFingeringTwo(window, used, words, minX, minY, maxX, maxY, gap, shafts)) continue;
+            if (octaveFingering && markBand && !headBand && minY == maxY && travel > 0
+                    && ownsStaffFringe(window, staff, minX, maxX, minY, size, gap)) continue;
+            if (octaveFingering && markBand && !headBand && travel < 0
+                    && ownsBeamSideTenutoRow(window, minX, minY, maxX, maxY, size, shafts, gap)) continue;
+            if (octaveFingering && headBand && !markBand
+                    && window.ownsDottedRibbonGlyph(minX, minY, maxX, maxY, gap, words)) continue;
+            if (allowBow && markBand && !headBand && travel < 0
+                    && (centeredUpBow(queue, size, window, minX, maxX, minY, maxY, headsX[1], gap)
+                        || centeredOpenString(ink, width, height, minX, maxX, minY, maxY, headsX[1], gap)))
+                continue;
             if (inkWidth > .58f * gap || inkHeight > .58f * gap || size < .74f * inkWidth * inkHeight)
                 return false;
             boolean dot = false;
@@ -349,7 +528,724 @@ final class UnnumberedTripletInk {
             }
             if (!dot) return false;
         }
+        return !wideOctave || ownedStack
+                || isolatedOpeningOctaveFingeringOne(ink, width, height, words, headsX[1], headsY[1], gap);
+    }
+
+    private static boolean centeredOpenString(byte[] ink, int width, int height,
+            int left, int right, int top, int bottom, float owner, float gap) {
+        int w = right - left + 1, h = bottom - top + 1;
+        if (w < .59f * gap || w > 1.04f * gap || h < .83f * gap || h > 1.28f * gap
+                || Math.abs((left + right) * .5f - owner) > .30f * gap) return false;
+        var zero = JoinedDigitTemplates.inspect(
+                ink, width, height, new java.util.BitSet(), left, top, right, bottom, () -> {});
+        if (zero == null || zero.digit() != 0 || zero.scores()[0] < .58f
+                || zero.scores()[0] - zero.runner() < .10f) return false;
+        int center = (left + right) / 2;
+        int hollow = 0;
+        for (int y = top + h / 4; y <= bottom - h / 4; y++) {
+            if ((ink[y * width + center] & 255) < 165) continue;
+            int a = center, b = center;
+            while (a >= left && (ink[y * width + a] & 255) >= 165) a--;
+            while (b <= right && (ink[y * width + b] & 255) >= 165) b++;
+            if (a >= left && b <= right && b - a - 1 >= .34f * w) hollow++;
+        }
+        if (hollow < h / 2) return false;
+        boolean upper = false, lower = false;
+        for (int y = 0; y <= h / 4; y++) {
+            upper |= (ink[(top + y) * width + center] & 255) < 165;
+            lower |= (ink[(bottom - y) * width + center] & 255) < 165;
+        }
+        return upper && lower;
+    }
+
+    private static boolean centeredUpBow(int[] pixels, int size, Window window,
+            int left, int right, int top, int bottom, float owner, float gap) {
+        int w = right - left + 1, h = bottom - top + 1;
+        if (w < .74f * gap || w > 1.28f * gap || h < 1.65f * gap || h > 2.25f * gap
+                || Math.abs((left + right) * .5f - owner) > .27f * gap) return false;
+        int[] rowMin = new int[h], rowMax = new int[h], rowCount = new int[h];
+        java.util.Arrays.fill(rowMin, right + 1);
+        for (int i = 0; i < size; i++) {
+            int p = pixels[i], x = p % window.width + window.left;
+            int y = p / window.width + window.top - top;
+            rowMin[y] = Math.min(rowMin[y], x);
+            rowMax[y] = Math.max(rowMax[y], x);
+            rowCount[y]++;
+        }
+        int spread = 0, joined = 0;
+        for (int y = h / 8; y < h / 2; y++)
+            if (rowMin[y] < owner - .22f * gap && rowMax[y] > owner + .13f * gap
+                    && rowCount[y] <= .62f * (rowMax[y] - rowMin[y] + 1)) spread++;
+        for (int y = h * 3 / 4; y < h; y++)
+            if (rowCount[y] > 0 && rowMax[y] - rowMin[y] + 1 <= .46f * gap
+                    && rowCount[y] >= .72f * (rowMax[y] - rowMin[y] + 1)) joined++;
+        return spread >= h / 6 && joined >= h / 7 && rowCount[h - 1] > 0
+                && Math.abs((rowMin[h - 1] + rowMax[h - 1]) * .5f - owner) < .26f * gap;
+    }
+
+    private static boolean isolatedOpeningOctaveFingeringOne(byte[] ink, int width, int height,
+            List<PlayingTechniqueDetector.Word> words, float x, float y, float gap) {
+        for (var word : words) {
+            if (!"1".equals(word.text())) continue;
+            int left = (int) Math.floor(word.left() * width), right = (int) Math.ceil(word.right() * width);
+            int top = (int) Math.floor(word.top() * height), bottom = (int) Math.ceil(word.bottom() * height);
+            if (Math.abs((left + right) * .5f - x) > .25f * gap
+                    || top - y < .55f * gap || top - y > 1.1f * gap
+                    || right - left > 1.3f * gap || bottom - top > 1.6f * gap
+                    || left < 0 || right >= width || top < 0 || bottom >= height) continue;
+            var glyphs = RawNumeralComponents.captureLongWindow(ink, width, height, left, top, right, bottom)
+                    .components().stream().filter(c -> c.size() >= 10).toList();
+            if (glyphs.size() != 1) continue;
+            var glyph = glyphs.get(0);
+            if (glyph.left > left && glyph.right < right && glyph.top > top && glyph.bottom < bottom
+                    && glyph.bottom - glyph.top + 1 >= .75f * gap
+                    && TripletRhythmDetector.fingerOne(ink, width, glyph)) return true;
+        }
+        return false;
+    }
+
+    private record BeamFingeringStack(int owner, String digits, int[] high, int[] low) {}
+
+    private static List<BeamFingeringStack> beamFingeringStacks(byte[] ink, int width, int height,
+            List<PlayingTechniqueDetector.Word> words, List<PrintedBeamShafts.Shaft> shafts, float gap) {
+        var stacks = new java.util.ArrayList<BeamFingeringStack>();
+        var first = shafts.get(0);
+        var last = shafts.get(2);
+        float left = (first.left() + first.right()) * .5f;
+        float right = (last.left() + last.right()) * .5f;
+        float slope = (last.endY() - first.endY()) / (right - left);
+        for (var word : words) {
+            String text = word.text();
+            if (!"31".equals(text) && !"42".equals(text)) continue;
+            int x0 = Math.round(word.left() * width), x1 = Math.round(word.right() * width);
+            int y0 = Math.round(word.top() * height), y1 = Math.round(word.bottom() * height);
+            if (x0 < left - .75f * gap || x1 > right + 1.8f * gap || x0 < 0 || x1 >= width
+                    || y0 < 0 || y1 >= height || x1 - x0 > 2.25f * gap
+                    || y1 - y0 < 2.65f * gap || y1 - y0 > 3.65f * gap) continue;
+            float center = (x0 + x1) * .5f;
+            int owner = -1;
+            for (int i = 0; i < shafts.size(); i++) {
+                var shaft = shafts.get(i);
+                float offset = center - (shaft.left() + shaft.right()) * .5f;
+                if (offset >= -.28f * gap && offset <= 1.30f * gap
+                        && y0 >= shaft.endY() - .98f * gap && y0 <= shaft.endY() + .65f * gap) owner = i;
+            }
+            if (owner < 0) continue;
+            int split = (y0 + y1) / 2;
+            int[][] bands = {{x1,y1,x0,y0},{x1,y1,x0,y0}};
+            int scanLeft = owner == 2 && center > right + .44f * gap
+                    ? Math.max(x0, (int) Math.ceil(right + .20f * gap)) : x0;
+            int scanRight = owner == 2 && center > right + .44f * gap
+                    ? Math.min(x1, Math.round(center + .62f * gap)) : x1;
+            int digitTop = y0;
+            if (scanLeft != x0 && scanRight - scanLeft >= .85f * gap) {
+                int strong = 0, blank = 0;
+                for (int yy = y0; yy <= y0 + .67f * gap; yy++) {
+                    int dark = 0;
+                    for (int xx = scanLeft; xx <= scanRight; xx++)
+                        if ((ink[yy * width + xx] & 255) < 165) dark++;
+                    if (dark >= .90f * (scanRight - scanLeft + 1)) strong++;
+                    if (strong == 0) continue;
+                    blank = dark == 0 ? blank + 1 : 0;
+                    if (blank == 3) {
+                        digitTop = yy + 1;
+                        break;
+                    }
+                }
+            }
+            for (int xx = scanLeft; xx <= scanRight; xx++) {
+                int stop = Math.round(first.endY() + slope * (xx - left));
+                int startRow = xx > right + .14f * gap ? digitTop : Math.max(y0, stop + 2);
+                for (int yy = startRow; yy <= y1; yy++) {
+                    if ((ink[yy * width + xx] & 255) >= 165
+                            || owner == 2 && xx > right + .14f * gap && yy < y0 + .40f * gap
+                            && FlagRootStaffRule.matches(ink, width, height, yy, Math.round(center), gap, 165))
+                        continue;
+                    int[] b = bands[yy < split ? 0 : 1];
+                    b[0] = Math.min(b[0], xx);
+                    b[1] = Math.min(b[1], yy);
+                    b[2] = Math.max(b[2], xx);
+                    b[3] = Math.max(b[3], yy);
+                }
+            }
+            int upper = text.charAt(0) - '0', lower = text.charAt(1) - '0';
+            if (Math.abs(bands[0][0] + bands[0][2] - bands[1][0] - bands[1][2]) > .85f * gap
+                    || !matchesBeamFingeringDigit(ink, width, height, bands[0], upper, gap)
+                    || !matchesBeamFingeringDigit(ink, width, height, bands[1], lower, gap)) continue;
+            stacks.add(new BeamFingeringStack(owner, text, bands[0], bands[1]));
+        }
+        return List.copyOf(stacks);
+    }
+
+    private static boolean matchesBeamFingeringDigit(byte[] ink, int width, int height,
+            int[] box, int digit, float gap) {
+        int across = box[2] - box[0] + 1, tall = box[3] - box[1] + 1;
+        if (across < .40f * gap || across > 1.22f * gap || tall < .82f * gap || tall > 1.45f * gap)
+            return false;
+        var reading = JoinedDigitTemplates.inspect(ink, width, height, new java.util.BitSet(),
+                box[0], box[1], box[2], box[3], () -> {});
+        if (reading == null) return false;
+        if (reading.digit() == digit) return true;
+        float[] scores = reading.scores();
+        if (digit == 2) return scores[2] >= .58f && scores[2] - scores[3] >= .05f
+                && scores[2] - scores[9] >= .025f;
+        if (digit != 3 || scores[3] < .63f || scores[3] + .027f < scores[8]
+                || scores[3] - scores[5] < .015f) return false;
+        return openFingeringBowl(ink, width, box, .32f, .46f)
+                && openFingeringBowl(ink, width, box, .51f, .66f);
+    }
+
+    private static boolean openFingeringBowl(byte[] ink, int width, int[] box, float first, float last) {
+        int wide = box[2] - box[0] + 1, tall = box[3] - box[1] + 1;
+        for (int y = box[1] + Math.round(first * tall); y <= box[1] + Math.round(last * tall); y++) {
+            int clear = 0, dark = 0;
+            for (int x = box[0]; x <= box[2]; x++) {
+                int value = ink[y * width + x] & 255;
+                if (x < box[0] + .44f * wide && value >= 183) clear++;
+                if (x >= box[0] + .50f * wide && value < 165) dark++;
+            }
+            if (clear >= .145f * wide && dark >= .18f * wide) return true;
+        }
+        return false;
+    }
+
+    private static boolean ownsBeamFingeringContact(List<BeamFingeringStack> words, int x) {
+        for (var word : words) {
+            if (x < word.high()[0] || x > word.high()[2]) continue;
+            if (words.stream().anyMatch(other -> other.owner() != word.owner()
+                    && other.digits().equals(word.digits()))) return true;
+        }
+        return false;
+    }
+
+    private static boolean ownsBeamFingeringComponent(List<BeamFingeringStack> words,
+            int left, int top, int right, int bottom) {
+        for (var word : words)
+            for (int[] band : List.of(word.high(), word.low()))
+                if (left >= band[0] - 1 && right <= band[2] + 1
+                        && top >= band[1] - 1 && bottom <= band[3] + 1) return true;
+        return false;
+    }
+
+    private static boolean ownsSplitStackedFingering(byte[] ink, int width, int height,
+            List<PlayingTechniqueDetector.Word> words, int left, int top, int right, int bottom,
+            float[] headsX, float[] headsY, float gap) {
+        float x = (left + right) * .5f;
+        int owner = -1;
+        for (int i = 0; i < headsX.length; i++) {
+            if (Math.abs(x - headsX[i]) > .42f * gap) continue;
+            if (owner >= 0 || top - headsY[i] < 1.25f * gap || top - headsY[i] > 3.2f * gap) return false;
+            owner = i;
+        }
+        if (owner < 0) return false;
+        for (var word : words) {
+            String text = word.text();
+            if (text.length() != 2 || text.charAt(0) < '1' || text.charAt(0) > '4'
+                    || text.charAt(1) != '2') continue;
+            int x0 = Math.round(word.left() * width), x1 = Math.round(word.right() * width);
+            int y0 = Math.round(word.top() * height), y1 = Math.round(word.bottom() * height);
+            if (x0 < 0 || x1 >= width || y0 < 0 || y1 >= height
+                    || x0 >= left || right >= x1 || y0 >= top || bottom >= y1
+                    || x1 - x0 > 2.05f * gap || y1 - y0 > 3.7f * gap
+                    || Math.abs((x0 + x1) * .5f - headsX[owner]) > .35f * gap) continue;
+
+            // Separate the printed rows by the clear interval between the two glyphs.
+            int[][] bands = {{x1, y1, x0, y0}, {x1, y1, x0, y0}};
+            int split = (y0 + y1) / 2;
+            if (split - y0 < gap || y1 - split < gap) continue;
+            int firstRow = Math.max(y0, (int) Math.ceil(headsY[owner] + .62f * gap));
+            for (int yy = firstRow; yy <= y1; yy++)
+                for (int xx = x0; xx <= x1; xx++) {
+                    if ((ink[yy * width + xx] & 255) >= 165) continue;
+                    int[] b = bands[yy < split ? 0 : 1];
+                    b[0] = Math.min(b[0], xx);
+                    b[1] = Math.min(b[1], yy);
+                    b[2] = Math.max(b[2], xx);
+                    b[3] = Math.max(b[3], yy);
+                }
+            var upper = bands[0];
+            var lower = bands[1];
+            if (lower[1] - upper[3] < .18f * gap || lower[1] - upper[3] > .72f * gap
+                    || Math.abs(upper[0] + upper[2] - lower[0] - lower[2]) > .58f * gap
+                    || (top < lower[1] - 1 || bottom > lower[3] + 1)
+                            && (top < upper[1] - 1 || bottom > upper[3] + 1))
+                continue;
+            if (matchesStackedFingeringDigit(ink, width, height, upper, text.charAt(0) - '0', gap)
+                    && matchesStackedFingeringDigit(ink, width, height, lower, 2, gap)) return true;
+        }
+        return false;
+    }
+
+    private static boolean ownsSplitRomanBelowHeads(byte[] ink, int width, int height,
+            List<PlayingTechniqueDetector.Word> words, int left, int top, int right, int bottom,
+            float[] headsX, float[] headsY, float gap) {
+        if (bottom - top < 1.12f * gap || bottom - top > 1.9f * gap
+                || right - left < .45f * gap || right - left > .87f * gap) return false;
+        for (var word : words) {
+            if (!"II".equals(word.text())) continue;
+            int x0 = (int)Math.floor(word.left() * width), x1 = (int)Math.ceil(word.right() * width);
+            int y0 = (int)Math.floor(word.top() * height), y1 = (int)Math.ceil(word.bottom() * height);
+            if (x0 < 0 || x1 >= width || y0 < 0 || y1 >= height || x0 >= left
+                    || x1 <= right || y0 >= top || y1 <= bottom
+                    || x1 - x0 > 2.55f * gap || y1 - y0 > 2.9f * gap) continue;
+            float x = (x0 + x1) * .5f;
+            boolean between = false;
+            for (int i = 1; i < headsX.length; i++) {
+                float highHead = Math.min(headsY[i - 1], headsY[i]);
+                float lowHead = Math.max(headsY[i - 1], headsY[i]);
+                if (x > headsX[i - 1] + .45f * gap && x < headsX[i] - .45f * gap
+                        && top - lowHead > 1.4f * gap && bottom - highHead < 7.9f * gap)
+                    between = true;
+            }
+            if (!between) continue;
+            var letters = RawNumeralComponents.captureLongWindow(ink, width, height, x0, y0, x1, y1)
+                    .components().stream()
+                    .filter(g -> !(g.top == y1 && g.bottom == y1)
+                            && !(g.top >= bottom + .15f * gap && g.bottom == y1))
+                    .sorted(java.util.Comparator.comparingInt(g -> g.left)).toList();
+            if (letters.size() != 2) continue;
+            var a = letters.get(0);
+            var b = letters.get(1);
+            int blank = b.left - a.right - 1;
+            if (blank < 1 || blank > .35f * gap || Math.abs(a.top - b.top) > 2
+                    || Math.abs(a.bottom - b.bottom) > 2
+                    || Math.abs((a.right - a.left) - (b.right - b.left)) > 2) continue;
+            if ((Math.abs(a.left - left) > 1 || Math.abs(a.right - right) > 1)
+                    && (Math.abs(b.left - left) > 1 || Math.abs(b.right - right) > 1)) continue;
+            if (PrintedRomanStrings.hasRomanSerifs(a, width, gap)
+                    && PrintedRomanStrings.hasRomanSerifs(b, width, gap)) return true;
+        }
+        return false;
+    }
+
+    private static boolean matchesStackedFingeringDigit(byte[] ink, int width, int height,
+            int[] box, int digit, float gap) {
+        int w = box[2] - box[0] + 1, h = box[3] - box[1] + 1;
+        if (w < .51f * gap || w > 1.18f * gap || h < .85f * gap || h > 1.35f * gap) return false;
+        var candidate = JoinedDigitTemplates.inspect(ink, width, height, new java.util.BitSet(),
+                box[0], box[1], box[2], box[3], () -> {});
+        if (candidate == null) return false;
+        float[] similarity = candidate.scores();
+        return candidate.digit() == digit || digit == 2 && similarity[2] >= .66f
+                && similarity[2] - similarity[3] >= .05f && similarity[2] - similarity[9] >= .03f;
+    }
+
+    private static boolean ownsStackedOpenString(byte[] ink, int width, int height,
+            List<PlayingTechniqueDetector.Word> words, int left, int top, int right, int bottom,
+            float[] headsX, float[] headsY, float gap) {
+        int across = right - left + 1, tall = bottom - top + 1;
+        if (across < .65f * gap || across > 1.12f * gap
+                || tall < .85f * gap || tall > 1.35f * gap) return false;
+        float x = (left + right) * .5f;
+        int owner = -1;
+        for (int i = 0; i < headsX.length; i++) {
+            if (Math.abs(x - headsX[i]) > .38f * gap) continue;
+            if (owner >= 0 || top - headsY[i] < 1.9f * gap || top - headsY[i] > 2.6f * gap)
+                return false;
+            owner = i;
+        }
+        if (owner < 0) return false;
+        var zero = JoinedDigitTemplates.inspect(ink, width, height, new java.util.BitSet(),
+                left, top, right, bottom, () -> {});
+        if (zero == null || zero.digit() != 0 || zero.scores()[0] < .73f
+                || zero.scores()[0] - zero.runner() < .13f) return false;
+        for (var word : words) {
+            if (!"20".equals(word.text()) || word.left() * width >= left || word.right() * width <= right
+                    || word.top() * height >= top || word.bottom() * height <= bottom
+                    || (word.right() - word.left()) * width > 2.4f * gap
+                    || (word.bottom() - word.top()) * height > 3.9f * gap) continue;
+            int edge = Math.round(gap * .48f);
+            int x0 = left - edge, x1 = right + edge, y0 = top - Math.round(1.64f * gap);
+            if (x0 < 0 || x1 >= width || y0 < 0) return false;
+            var above = RawNumeralComponents.captureLongWindow(ink, width, height, x0, y0, x1, top - 1);
+            for (var digit : above.components()) {
+                if (digit.top <= y0 || digit.left <= x0 || digit.right >= x1
+                        || Math.abs((digit.left + digit.right) * .5f - x) > .21f * gap
+                        || top - digit.bottom < .15f * gap || top - digit.bottom > .52f * gap
+                        || digit.bottom - digit.top + 1 < .83f * gap
+                        || digit.bottom - digit.top + 1 > 1.35f * gap) continue;
+                if (isUnambiguousTwo(ink, width, digit)
+                        || matchesStackedFingeringDigit(ink, width, height,
+                                new int[]{digit.left, digit.top, digit.right, digit.bottom}, 2, gap))
+                    return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean ownsRuledFingeringOne(Window window, boolean[] staff,
+            int left, int top, int right, int bottom, float gap, List<PrintedBeamShafts.Shaft> shafts, boolean[] used) {
+        int w = right - left + 1, h = bottom - top + 1;
+        if (w < .42f * gap || w > .72f * gap || h < .55f * gap || h > .83f * gap) return false;
+        int center = right - w / 4;
+        int matches = 0;
+        for (var shaft : shafts) {
+            float offset = center - (shaft.left() + shaft.right()) * .5f;
+            float separation = top - shaft.endY();
+            if (offset >= .20f * gap && offset <= .57f * gap
+                    && separation >= .28f * gap && separation <= .98f * gap) matches++;
+        }
+        if (matches != 1 || !window.dark(center, top, staff)
+                || window.dark(left + 1, top, staff) || !window.dark(left + 1, top + h / 2, staff)
+                || window.dark(left + 1, bottom, staff)) return false;
+        int row = bottom + 1;
+                int flank = Math.round(.38f * gap);
+        if (left - flank < window.left || right + flank >= window.left + window.width) return false;
+        while (row < window.top + window.height) {
+            int before = 0, after = 0;
+            for (int d = 1; d <= flank; d++) {
+                if ((window.plane[row * window.stride + left - d] & 255) < 188) before++;
+                if ((window.plane[row * window.stride + right + d] & 255) < 188) after++;
+            }
+            if (Math.min(before, after) < flank - 1) {
+                if (row == bottom + 1 && before == 0 && after == 0
+                        && (window.plane[row * window.stride + center] & 255) < 188) {
+                    row++;
+                    continue;
+                }
+                break;
+            }
+            row++;
+        }
+        int crossing = row - bottom - 1;
+        if (crossing < 2 || crossing > 1 + Math.round(.24f * gap)
+                || row + 5 >= window.top + window.height
+                || right + 3 >= window.left + window.width) return false;
+        int base = row, cropRight = right + 2;
+        int limit = Math.min(row + Math.round(.40f * gap), window.top + window.height);
+        while (base < limit && (window.plane[base * window.stride + center] & 255) < 188) {
+            if ((window.plane[base * window.stride + left - 1] & 255) < 188
+                    || (window.plane[base * window.stride + cropRight + 1] & 255) < 188) return false;
+            base++;
+        }
+        if (base - row < 4 || base >= limit) return false;
+        var mask = new java.util.BitSet();
+        for (int y = bottom + 1; y < row; y++) {
+            // Keep a partial glyph row while masking only the verified continuous rules.
+            if ((window.plane[y * window.stride + left - flank] & 255) < 188
+                    && (window.plane[y * window.stride + right + flank] & 255) < 188)
+                mask.set(y * window.stride + left, y * window.stride + cropRight + 1);
+        }
+        var digit = JoinedDigitTemplates.inspect(window.plane, window.stride,
+                window.plane.length / window.stride, mask, left, top, cropRight, base - 1, () -> {});
+        if (digit == null || digit.digit() != 1) return false;
+        for (int y = row; y < base; y++) {
+            for (int x = left; x <= cropRight; x++)
+                used[(y - window.top) * window.width + x - window.left] = true;
+        }
         return true;
+    }
+
+    private static boolean ownsStaffFringe(Window window, boolean[] staff, int left, int right,
+            int row, int count, float gap) {
+        int length = right - left + 1;
+        if (length < .40f * gap || length > .72f * gap || count < length - 1) return false;
+        int extension = Math.round(1.24f * gap);
+        int low = left - extension, high = right + extension;
+        if (low < window.left || high >= window.left + window.width
+                || row + 2 >= window.top + window.height) return false;
+        int center = (left + right) / 2;
+        return strongRun(window, row + 1, low, high)
+                && strongRun(window, row + 2, low, high)
+                && !window.dark(center, row + 1, staff)
+                && !window.dark(center, row + 2, staff);
+    }
+
+    private static boolean ownsRuledFingeringTwo(Window window, boolean[] used,
+            List<PlayingTechniqueDetector.Word> words, int left, int top, int right, int bottom,
+            float gap, List<PrintedBeamShafts.Shaft> shafts) {
+        int glyphWidth = right - left + 1, upperHeight = bottom - top + 1;
+        if (glyphWidth < .68f * gap || glyphWidth > 1.02f * gap
+                || upperHeight < .21f * gap || upperHeight > .44f * gap) return false;
+        int shaftOwners = 0;
+        for (var shaft : shafts) {
+            float dx = (left + right - shaft.left() - shaft.right()) * .5f;
+            float dy = top - shaft.endY();
+            if (dx >= .18f * gap && dx <= .72f * gap
+                    && dy >= .17f * gap && dy <= .65f * gap) shaftOwners++;
+        }
+        if (shaftOwners != 1) return false;
+
+        int flank = Math.round(.42f * gap);
+        int first = bottom + 1, last = first;
+        int stop = window.top + window.height;
+        if (left - flank < window.left || right + flank >= window.left + window.width
+                || first + Math.round(gap * 1.5f) >= stop) return false;
+        if (!strongRun(window, first, left - flank, right + flank)) first++;
+        last = first;
+        while (last < stop && strongRun(window, last, left - flank, right + flank)) last++;
+        if (last - first < 2 || last - first > Math.round(gap * .30f)) return false;
+        // A short fringe may be solid across the glyph and its flanks without reaching the outer rule.
+        if (strongRun(window, last, left - 3, right + 3)) last++;
+        int cropRight = right + 1, end = last;
+        int limit = Math.min(stop, top + Math.round(gap * 1.4f));
+        while (end < limit) {
+            int dark = 0;
+            for (int x = left; x <= cropRight; x++) {
+                if ((window.plane[end * window.stride + x] & 255) < 188) dark++;
+            }
+            if (dark < 2) break;
+            if ((window.plane[end * window.stride + left - 2] & 255) < 188
+                    || (window.plane[end * window.stride + cropRight + 2] & 255) < 188) return false;
+            end++;
+        }
+        if (end >= limit || end - top < .95f * gap || end - last < .42f * gap) return false;
+        int h = window.plane.length / window.stride, corroborating = 0;
+        for (var word : words) {
+            if (!"2 2 2".equals(word.text()) || word.left() * window.stride > left
+                    || word.right() * window.stride < cropRight
+                    || word.top() * h > top || word.bottom() * h < end - 1
+                    || (word.right() - word.left()) * window.stride > 8f * gap
+                    || (word.bottom() - word.top()) * h > 2.6f * gap) continue;
+            corroborating++;
+        }
+        if (corroborating != 1) return false;
+        var rule = new java.util.BitSet();
+        for (int y = first; y < last; y++)
+            rule.set(y * window.stride + left, y * window.stride + cropRight + 1);
+        var reading = JoinedDigitTemplates.inspect(window.plane, window.stride, h, rule,
+                left, top, cropRight, end - 1, () -> {});
+        if (reading == null || reading.scores()[2] < .62f
+                || reading.scores()[2] - reading.runner() < .035f) return false;
+        for (int y = last; y < end; y++)
+            for (int x = left; x <= cropRight; x++)
+                used[(y - window.top) * window.width + x - window.left] = true;
+        return true;
+    }
+
+    private static boolean strongRun(Window window, int row, int left, int right) {
+        int dark = 0;
+        for (int x = left; x <= right; x++)
+            if ((window.plane[row * window.stride + x] & 255) < 188) dark++;
+        return dark >= right - left - 1;
+    }
+
+    private static boolean ownsBeamSideTenutoRow(Window window, int left, int top,
+            int right, int bottom, int size, List<PrintedBeamShafts.Shaft> shafts, float gap) {
+        int width = right - left + 1, height = bottom - top + 1;
+        if (width < gap * .93f || width > gap * 1.5f || height < gap * .21f || height > gap * .47f
+                || size < width * height * .73f) return false;
+        float center = (left + right) * .5f;
+        boolean attached = false;
+        for (var shaft : shafts) {
+            float axis = (shaft.left() + shaft.right()) * .5f;
+            if (center < axis - .74f * gap || center > axis - .13f * gap) continue;
+            if (shaft.endY() - bottom >= .19f * gap && shaft.endY() - top <= .92f * gap) attached = true;
+        }
+        if (!attached) return false;
+        return beamSideTenutoRows(window.plane, window.stride, shafts, gap);
+    }
+
+    static boolean beamSideTenutoRows(byte[] plane, int stride,
+            List<PrintedBeamShafts.Shaft> shafts, float gap) {
+        if (shafts.size() != 3) return false;
+        int height = plane.length / stride;
+        for (var shaft : shafts) {
+            float axis = (shaft.left() + shaft.right()) * .5f;
+            int a = Math.round(axis - gap * 1.31f), b = Math.round(axis + gap * .49f);
+            int y0 = shaft.endY() - Math.round(.94f * gap), y1 = shaft.endY() - Math.round(.19f * gap);
+            if (a < 0 || b >= stride || y0 < 0 || y1 >= height) return false;
+            int enough = 0, consecutive = 0;
+            for (int y = y0; y <= y1; y++) {
+                int run = 0, longest = 0;
+                for (int x = a; x <= b; x++) {
+                    run = (plane[y * stride + x] & 255) < 188 ? run + 1 : 0;
+                    longest = Math.max(longest, run);
+                }
+                consecutive = longest >= gap * .93f && longest <= gap * 1.5f ? consecutive + 1 : 0;
+                enough = Math.max(enough, consecutive);
+            }
+            if (enough < Math.round(gap * .23f) || enough > Math.round(gap * .49f)) return false;
+        }
+        return true;
+    }
+
+    private static boolean separatedBeamFingeringOne(Window window, int x, int rail, float gap,
+            List<PrintedBeamShafts.Shaft> shafts) {
+        int pad = Math.round(gap * 1.04f), left = x - pad, right = x + pad;
+        int top = rail - Math.round(.43f * gap), bottom = rail + Math.round(1.55f * gap);
+        int height = window.plane.length / window.stride;
+        if (left < 0 || right >= window.stride || top < 0 || bottom >= height) return false;
+        var marks = RawNumeralComponents.capture(window.plane, window.stride, height,
+                left, top, right, bottom, 197, () -> {}, () -> {});
+        int hits = 0;
+        for (var mark : marks.components()) {
+            int w = mark.right - mark.left + 1, h = mark.bottom - mark.top + 1;
+            if (mark.left <= left || mark.right >= right || mark.top <= top || mark.bottom >= bottom
+                    || x < mark.left || x > mark.right || w < .52f * gap || w > .94f * gap
+                    || h < .96f * gap || h > 1.35f * gap || mark.size() < w * h * .50f) continue;
+            int owners = 0;
+            for (var shaft : shafts) {
+                float center = (mark.left + mark.right - shaft.left() - shaft.right()) * .5f;
+                if (Math.abs(center) <= .63f * gap
+                        && Math.abs(mark.top - shaft.endY()) < .85f * gap) owners++;
+            }
+            if (owners != 1) continue;
+            var fit = JoinedDigitTemplates.inspect(window.plane, window.stride, height,
+                    new java.util.BitSet(), mark.left, mark.top, mark.right, mark.bottom, () -> {});
+            if (fit != null && fit.digit() == 1) hits++;
+        }
+        return hits == 1;
+    }
+
+    private static boolean ownsHarmonicTenuto(float x, int top, int bottom,
+            float[] headsX, float[] stopsY, int direction, float gap) {
+        int owners = 0;
+        for (int i = 0; i < headsX.length; i++) {
+            if (Math.abs(x - headsX[i]) > gap * .26f) continue;
+            float clearance = direction > 0 ? stopsY[i] - bottom : top - stopsY[i];
+            if (clearance >= gap * (direction > 0 ? 2.25f : .65f)
+                    && clearance <= gap * (direction > 0 ? 3.2f : 1.75f)) owners++;
+        }
+        return owners == 1;
+    }
+
+    private static boolean ownsOctaveAnnotation(byte[] ink, int width, int height,
+            List<PlayingTechniqueDetector.Word> words, int[] pixels, int count, Window window,
+            int left, int top, int right, int bottom, boolean headBand, float[] headsX,
+            List<PrintedBeamShafts.Shaft> shafts, float gap) {
+        int glyphWidth = right - left + 1, glyphHeight = bottom - top + 1;
+        if (glyphHeight < .78f * gap || glyphHeight > 1.9f * gap || glyphWidth < .38f * gap
+                || glyphWidth > 2.45f * gap) return false;
+        var center = (left + right) * .5f;
+        boolean nearHead = false;
+        for (int i = 0; i < headsX.length; i++) {
+            var shaft = shafts.get(i);
+            float ownerX = headBand ? headsX[i] : (shaft.left() + shaft.right()) * .5f;
+            if (Math.abs(ownerX - center) <= .62f * gap) nearHead = true;
+        }
+        if (!headBand && ownsWideBeamFingeringOne(ink, width, height, words, left, top, right, bottom, shafts, gap))
+            return true;
+        if (!nearHead && headBand && glyphWidth >= 1.25f * gap && glyphWidth <= 1.55f * gap) {
+            int owners = 0;
+            for (float headX : headsX) if (Math.abs(headX - center) <= .76f * gap) owners++;
+            if (owners == 1 && PrintedRomanStrings.hasRomanSerifs(
+                    component(pixels, count, window, width, left, top, right, bottom), width, gap)) return true;
+        }
+        if (!headBand && ownsSeparatedRomanSerifs(ink, width, height, left, top, right,
+                bottom, shafts, gap)) return true;
+        if (!nearHead) return false;
+        if (glyphWidth >= 1.65f * gap) {
+            // The broad printed IV has two letter strokes inside its retained OCR box.
+            for (var word : words)
+                if ("IV".equals(word.text()) && word.left() * width <= left && word.right() * width > right
+                        && word.top() * height <= top && word.bottom() * height > bottom
+                        && (word.right() - word.left()) * width <= 3.3f * gap
+                        && (word.bottom() - word.top()) * height <= 2.6f * gap) return true;
+            if (headBand || glyphWidth < 1.9f * gap) return false;
+            var glyph = component(pixels, count, window, width, left, top, right, bottom);
+            return PrintedRomanStrings.hasJoinedThreeSerifs(glyph, width, gap);
+        }
+        var glyph = component(pixels, count, window, width, left, top, right, bottom);
+        if (!headBand && glyphWidth >= .6f * gap && glyphWidth <= .98f * gap
+                && glyphHeight >= .95f * gap && glyphHeight <= 1.3f * gap) {
+            var reading = JoinedDigitTemplates.inspect(ink, width, height, new java.util.BitSet(),
+                    left, top, right, bottom, () -> {});
+            if (reading != null && reading.digit() == 1) return true;
+        }
+        if (isUnambiguousOne(ink, width, glyph) || isUnambiguousTwo(ink, width, glyph)
+                || headBand && PrintedRomanStrings.hasRomanSerifs(glyph, width, gap)) return true;
+        if (!headBand && glyphWidth >= .65f * gap && glyphWidth <= 1.2f * gap
+                && glyphHeight <= 1.2f * gap && count >= .61f * glyphWidth * glyphHeight) {
+            var reading = JoinedDigitTemplates.inspect(ink, width, height, new java.util.BitSet(),
+                    left, top, right, bottom, () -> {});
+            if (reading != null) {
+                if (reading.digit() == 2) return true;
+                var scores = reading.scores();
+                boolean shapedTwo = scores[2] >= .64f && scores[2] - scores[3] >= .05f
+                        && scores[2] - scores[9] >= .032f;
+                if (shapedTwo) {
+                    for (var word : words) {
+                        if ("2".equals(word.text()) && word.left() * width < left
+                                && word.right() * width > right && word.top() * height < top
+                                && word.bottom() * height > bottom
+                                && (word.right() - word.left()) * width <= 1.7f * gap
+                                && (word.bottom() - word.top()) * height <= 2.1f * gap) return true;
+                    }
+                }
+            }
+        }
+        for (var word : words)
+            if ("2".equals(word.text()) && ownedBoldTwo(ink, width, height, glyph, word)) return true;
+        return false;
+    }
+
+    private static boolean ownsSeparatedRomanSerifs(byte[] ink, int width, int height,
+            int left, int top, int right, int bottom, List<PrintedBeamShafts.Shaft> shafts, float gap) {
+        int wide = right - left + 1, tall = bottom - top + 1;
+        if (shafts.get(0).direction() != -1 || wide < .53f * gap || wide > .87f * gap
+                || tall < 1.26f * gap || tall > 1.64f * gap) return false;
+        int pad = Math.round(2.25f * gap);
+        int x0 = left - pad, x1 = right + pad, y0 = top - 3, y1 = bottom + 3;
+        if (x0 < 0 || x1 >= width || y0 < 0 || y1 >= height) return false;
+        var letters = new java.util.ArrayList<RawNumeralComponents.Component>();
+        for (var glyph : RawNumeralComponents.captureLongWindow(ink, width, height, x0, y0, x1, y1).components()) {
+            if (glyph.left <= x0 || glyph.right >= x1
+                    || Math.abs(glyph.top - top) > 2 || Math.abs(glyph.bottom - bottom) > 2
+                    || Math.abs(glyph.right - glyph.left + 1 - wide) > 2
+                    || !PrintedRomanStrings.hasRomanSerifs(glyph, width, gap)) continue;
+            letters.add(glyph);
+        }
+        letters.sort(java.util.Comparator.comparingInt(g -> g.left));
+        if (letters.size() < 2 || letters.size() > 3
+                || letters.stream().noneMatch(g -> Math.abs(g.left - left) <= 1
+                        && Math.abs(g.right - right) <= 1)) return false;
+        for (int i = 1; i < letters.size(); i++) {
+            int blank = letters.get(i).left - letters.get(i - 1).right - 1;
+            if (blank < 1 || blank > .28f * gap) return false;
+        }
+        float center = (letters.get(0).left + letters.get(letters.size() - 1).right) * .5f;
+        return shafts.stream().filter(s -> Math.abs(center - (s.left() + s.right()) * .5f) <= .8f * gap
+                && s.endY() - bottom >= .1f * gap && s.endY() - bottom <= 1.55f * gap).count() == 1;
+    }
+
+    private static RawNumeralComponents.Component component(int[] pixels, int count, Window window,
+            int width, int left, int top, int right, int bottom) {
+        int[] raw = new int[count];
+        for (int i = 0; i < count; i++)
+            raw[i] = (pixels[i] / window.width + window.top) * width + pixels[i] % window.width + window.left;
+        return new RawNumeralComponents.Component(raw, count, left, top, right, bottom);
+    }
+
+    private static boolean ownsWideBeamFingeringOne(byte[] ink, int width, int height,
+            List<PlayingTechniqueDetector.Word> words, int left, int top, int right, int bottom,
+            List<PrintedBeamShafts.Shaft> shafts, float gap) {
+        int w = right - left + 1, h = bottom - top + 1;
+        if (w <= .65f * h || w > .83f * h || w > gap || h < 1.07f * gap || h > 1.4f * gap) return false;
+        int ocr = 0, owners = 0;
+        for (var word : words) {
+            if ("1".equals(word.text()) && word.left() * width <= left && word.right() * width >= right
+                    && word.top() * height <= top && word.bottom() * height >= bottom
+                    && (word.right() - word.left()) * width <= 2f * gap
+                    && (word.bottom() - word.top()) * height <= 2f * gap) ocr++;
+        }
+        if (ocr > 1) return false;
+        for (var shaft : shafts) {
+            float dx = Math.abs((left + right - shaft.left() - shaft.right()) * .5f);
+            if (dx <= .77f * gap && Math.abs(top - shaft.endY()) <= .85f * gap) owners++;
+        }
+        if (owners != 1) return false;
+        int spines = 0, barRows = 0;
+        for (int x = left + 2; x <= right - 1; x++) {
+            int filled = 0;
+            for (int y = top + 1; y < bottom; y++)
+                if ((ink[y * width + x] & 255) <= 165) filled++;
+            if (filled >= h * .78f) spines++;
+        }
+        for (int y = top + Math.round(h * .43f); y <= top + Math.round(h * .66f); y++) {
+            int filled = 0;
+            for (int x = left; x <= right; x++)
+                if ((ink[y * width + x] & 255) <= 165) filled++;
+            if (filled >= w * .78f) barRows++;
+        }
+        if (spines < 2 || spines > .54f * w || barRows >= 2) return false;
+        var reading = JoinedDigitTemplates.inspect(ink, width, height, new java.util.BitSet(),
+                left, top, right, bottom, () -> {});
+        if (reading == null) return false;
+        float one = reading.scores()[1], margin = one - reading.runner();
+        return ocr == 1 ? one >= .46f && margin >= (one >= .50f ? .01f : .019f)
+                : one >= .56f && margin >= .05f;
     }
 
     private static boolean memberOwnsLowerHead(int[] pixels, int size, Window window, int left, int right,
@@ -370,11 +1266,36 @@ final class UnnumberedTripletInk {
         return false;
     }
 
-    private static boolean ownedBowCaption(
+    private static boolean ownsSegueBeforeOctave(byte[] raw, int width, int height, float gap,
+            int minX, int minY, int maxX, int maxY, List<PlayingTechniqueDetector.Word> words) {
+        for (var word : words) {
+            if (!CrossedDyadOctaveRibbon.isSegueEight(word) || word.left() * width >= minX
+                    || word.top() * height >= minY || word.bottom() * height <= maxY) continue;
+            int last = Math.round(word.right() * width);
+            int firstDot = last - Math.round(.60f * gap);
+            int firstRow = Math.round(word.top() * height + .64f * gap);
+            for (int row = firstRow; row <= firstRow + Math.round(.40f * gap); row++) {
+                int digit = CrossedDyadOctaveRibbon.recognizedLeadingEight(
+                        raw, width, height, firstDot, row, gap, List.of(word));
+                if (digit < 0) continue;
+                float captionEnd = digit - gap * .78f;
+                float captionBottom = Math.min(word.bottom() * height, word.top() * height + gap * 2.95f);
+                if (captionEnd <= maxX || captionBottom <= maxY) break;
+                var caption = new PlayingTechniqueDetector.Word("segue", word.left(), word.top(),
+                        captionEnd / width, captionBottom / height);
+                if (ownedDirectionCaption(raw, width, height, gap, minX, minY, maxX, maxY,
+                        List.of(caption))) return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean ownedDirectionCaption(
             byte[] raw, int width, int height, float gap, int minX, int minY, int maxX, int maxY,
             List<PlayingTechniqueDetector.Word> words) {
         for (var word : words) {
-            if (!ExpressiveDirectionText.isBowCaption(word.text())) continue;
+            if (!ExpressiveDirectionText.isBowCaption(word.text())
+                    && !word.text().strip().equalsIgnoreCase("segue")) continue;
             int l = Math.round(word.left() * width), r = Math.round(word.right() * width);
             int t = Math.round(word.top() * height), b = Math.round(word.bottom() * height);
             if (l < 0 || r >= width || t < 0 || b >= height
@@ -421,6 +1342,11 @@ final class UnnumberedTripletInk {
                     && left - headsX[i] <= gap * .62f && headsX[i + 1] - right <= gap * .73f) owned = true;
         }
         if (!owned) return false;
+        return thinReturningProfile(pixels, size, window, left, right, travel > 0, gap);
+    }
+
+    private static boolean thinReturningProfile(int[] pixels, int size, Window window,
+            int left, int right, boolean invert, float gap) {
         int length = right - left + 1;
         int[] low = new int[length], high = new int[length], counts = new int[length];
         Arrays.fill(low, Integer.MAX_VALUE);
@@ -428,7 +1354,7 @@ final class UnnumberedTripletInk {
         for (int i = 0; i < size; i++) {
             int x = pixels[i] % window.width + window.left - left;
             int y = pixels[i] / window.width;
-            if (travel > 0) y = window.height - 1 - y;
+            if (invert) y = window.height - 1 - y;
             low[x] = Math.min(low[x], y);
             high[x] = Math.max(high[x], y);
             counts[x]++;
@@ -443,6 +1369,36 @@ final class UnnumberedTripletInk {
             if (counts[i] > gap * .36f * Math.hypot(1, slope)) return false;
         }
         return PrintedSlurContours.completeReturningProfile(low, high, 0, length - 1, gap);
+    }
+
+    /** A separate centered numeral can be joined to a staff rule at this print scale. */
+    static boolean centeredThree(byte[] gray, int width, int height, float x,
+            float top, float bottom, float gap, Rows rows, StaffPitchTrack staff) {
+        int l = Math.round(x - gap * 1.05f), r = Math.round(x + gap * 1.05f);
+        int t = Math.max(rows.first(), Math.round(top));
+        int b = Math.min(rows.last(), Math.round(bottom));
+        if (l < 0 || r >= width || t < 0 || b >= height || t >= b) return false;
+        int span = r - l + 1, depth = b - t + 1;
+        var mask = trackedStaffMask(gray, width, height, l, r, t, b, staff, gap);
+        var crop = new byte[span * depth];
+        for (int row = 0; row < depth; row++) {
+            for (int col = 0; col < span; col++) {
+                int dst = row * span + col;
+                crop[dst] = mask != null && mask[dst] ? (byte) 255 : gray[(t + row) * width + l + col];
+            }
+        }
+        var ink = RawNumeralComponents.capture(crop, span, depth, 0, 0, span - 1, depth - 1, 165, () -> {}, () -> {});
+        for (var glyph : ink.components()) {
+            int w = glyph.right - glyph.left + 1, h = glyph.bottom - glyph.top + 1;
+            if (glyph.left <= 0 || glyph.right >= span - 1 || glyph.top <= 0 || glyph.bottom >= depth - 1
+                    || w < gap * .36f || w > gap * 1.35f || h < gap * .72f || h > gap * 2.18f
+                    || Math.abs(l + (glyph.left + glyph.right) * .5f - x) > gap * .65f) continue;
+            if (TripletRhythmDetector.isIsolatedThree(glyph, span)) return true;
+            var shape = JoinedDigitTemplates.inspect(crop, span, depth, new java.util.BitSet(),
+                    glyph.left, glyph.top, glyph.right, glyph.bottom, () -> {});
+            if (shape != null && shape.digit() == 3) return true;
+        }
+        return false;
     }
 
     private static boolean[] trackedStaffMask(byte[] raw, int w, int h, int left, int right,
@@ -531,12 +1487,22 @@ final class UnnumberedTripletInk {
 
         private boolean bracket(boolean[] staff, float start, float end, float headTop,
                 float headBottom, float upper, float lower, float gap, Rows sourceRows) {
-            return bracket(staff, start, end, headTop, headBottom, upper, lower, gap, sourceRows, false, List.of());
+            return bracket(staff, start, end, headTop, headBottom, upper, lower, gap, sourceRows,
+                    false, List.of(), null, null, null);
         }
 
         private boolean bracket(boolean[] staff, float start, float end, float headTop,
                 float headBottom, float upper, float lower, float gap, Rows sourceRows,
-                boolean verifyContinuingStroke, List<PlayingTechniqueDetector.Word> directions) {
+                boolean verifyContinuingStroke, List<PlayingTechniqueDetector.Word> directions,
+                StaffPitchTrack track, float[] headsX, float[] headsY) {
+            return bracket(staff, start, end, headTop, headBottom, upper, lower, gap, sourceRows,
+                    verifyContinuingStroke, directions, track, headsX, headsY, false);
+        }
+
+        private boolean bracket(boolean[] staff, float start, float end, float headTop,
+                float headBottom, float upper, float lower, float gap, Rows sourceRows,
+                boolean verifyContinuingStroke, List<PlayingTechniqueDetector.Word> directions,
+                StaffPitchTrack track, float[] headsX, float[] headsY, boolean octaveMarks) {
             float middle = (start + end) * .5f;
             int a = Math.round(start - gap * .32f), b = Math.round(middle - gap * .72f);
             int c = Math.round(middle + gap * .72f), d = Math.round(end + gap * .32f);
@@ -548,11 +1514,110 @@ final class UnnumberedTripletInk {
                 for (int slope = -2; slope <= 2; slope++)
                     if (arm(staff, y, middle, slope * .06f, a, b)
                             && arm(staff, y, middle, slope * .06f, c, d)
+                            && !(track != null && continuedStaffFringe(track, y, middle, slope * .06f, a, d, gap)
+                                    && !hasProtrudingStaffTick(start, end, gap, y, middle, slope * .06f, a, d))
+                            && !(headsX != null && slope == 0
+                                    && ownsTopStaffAndHeads(track,y,a,d,gap,headsX,headsY))
+                            && (!octaveMarks
+                                    || !dottedRibbonOwnsArm(staff, y, middle, slope * .06f, a, b, c, d, gap)
+                                    && !archOwnsBracketArm(staff, y, middle, slope * .06f, a, b, c, d, gap))
                             && (!verifyContinuingStroke || !continuingStroke(
                                     staff, start, end, gap, y, middle, slope * .06f, a, b, c, d, directions)))
                         return true;
             }
             return false;
+        }
+
+        /** The untracked outer staff can still continue through the apparent bracket arms. */
+        private boolean continuedStaffFringe(StaffPitchTrack track, int y, float middle, float slope,
+                int first, int last, float gap) {
+            int tail = Math.round(1.35f * gap), step = Math.max(2, Math.round(.3f * gap));
+            int from = first - tail, to = last + tail;
+            if (from < 0 || to >= stride) return false;
+            for (int anchor : new int[]{from + step, to - step}) {
+                if (!track.verifiedAt(anchor) || !track.verifiedAt(anchor - step)
+                        || !track.verifiedAt(anchor + step)) continue;
+                var frame = track.at(anchor);
+                for (int rule = 0; rule < 5; rule++) {
+                    int core = Math.round(frame[0] - rule * frame[1]);
+                    if (core < 1 || core + 1 >= plane.length / stride
+                            || Math.abs(core - y) > Math.max(2, Math.round(.18f * gap))) continue;
+                    if (ownsStaffFringe(from, to, first, last, y, core, middle, slope, gap)) return true;
+                }
+            }
+            return false;
+        }
+
+        /** A verified reference from the same staff and its parallel second rule disambiguate a top edge. */
+        private boolean ownsTopStaffAndHeads(StaffPitchTrack track, int row, int first, int last, float gap,
+                                             float[] headsX, float[] headsY) {
+            if (track == null || !track.verified()) return false;
+            int from = first - Math.round(1.25f * gap), to = last + Math.round(1.25f * gap);
+            if (from < 0 || to >= stride) return false;
+            var frame = track.at(from);
+            int core = Math.round(frame[0] - 4 * frame[1]);
+            if (Math.abs(core-row) > .24f*gap || core < gap || core+gap+3 >= plane.length/stride) return false;
+            int second = core+Math.round(frame[1]);
+            for (int x=from;x<=to;x++) {
+                if (!nearRule(x,core) || !nearRule(x,second)) return false;
+            }
+            int vertical = Math.round(gap * .62f);
+            for (int x=first;x<=last;x++) {
+                for (int side : new int[]{-1,1}) {
+                    int end = row+side*vertical, k=row;
+                    while (k!=end && (plane[k*stride+x]&255)<205) k+=side;
+                    if (k!=end || (plane[k*stride+x]&255)>=205) continue;
+                    boolean owned=false;
+                    if (side==1) for (int i=0;i<headsX.length;i++) {
+                        if (Math.abs(x-headsX[i])<=.68f*gap && Math.abs(end-headsY[i])<=.62f*gap
+                                && FilledSparseBeamHead.completeInterior(plane,stride,plane.length/stride,
+                                        headsX[i],headsY[i],gap)) owned=true;
+                    }
+                    if (!owned) return false;
+                }
+            }
+            return true;
+        }
+
+        private boolean nearRule(int x,int center) {
+            for (int y=center-2;y<=center+2;y++) if ((plane[y*stride+x]&255)<205) return true;
+            return false;
+        }
+
+        private boolean hasProtrudingStaffTick(float start, float end, float gap, int row,
+                float middle, float slope, int left, int right) {
+            int reach = Math.max(5, Math.round(.58f * gap));
+            for (int x = left; x <= right; x++) {
+                if (Math.abs(x - start) > .45f * gap && Math.abs(x - end) > .45f * gap) continue;
+                int center = row + Math.round(slope * (x - middle));
+                for (int direction : new int[]{-1, 1}) {
+                    int distance = 0;
+                    while (distance <= reach && center + distance * direction >= top
+                            && center + distance * direction < top + height
+                            && (plane[(center + distance * direction) * stride + x] & 255) < 205) distance++;
+                    if (distance > reach) return true;
+                }
+            }
+            return false;
+        }
+
+        private boolean ownsStaffFringe(int from, int to, int first, int last, int y, int core,
+                float middle, float slope, float gap) {
+            int linked = 0, visible = 0;
+            for (int x = from; x <= to; x++) {
+                if ((plane[(core - 1) * stride + x] & 255) >= 205
+                        && (plane[core * stride + x] & 255) >= 205
+                        && (plane[(core + 1) * stride + x] & 255) >= 205) return false;
+                int sample = y + Math.round(slope * (x - middle));
+                if (x < first || x > last || sample < top || sample >= top + height
+                        || (plane[sample * stride + x] & 255) >= 205) continue;
+                visible++;
+                if (Math.abs(sample - core) > Math.max(3, Math.round(.24f * gap))) continue;
+                int towards = Integer.signum(core - sample);
+                while (Math.abs(sample - core) > 1 && (plane[sample * stride + x] & 255) < 205) sample += towards;
+                if (Math.abs(sample - core) <= 1 && (plane[sample * stride + x] & 255) < 205) linked++;
+            }
+            return visible > 0 && linked >= .94f * visible;
         }
 
         /** Require source ownership of both arm traces by one continuing stroke. */
@@ -588,7 +1653,7 @@ final class UnnumberedTripletInk {
             for (var ink : components) {
                 boolean extendsLeft = start - ink.left >= gap * 1.25f;
                 boolean extendsRight = ink.right - end >= gap * 1.25f;
-                if (ink.left > a || ink.right < d || !extendsLeft && !extendsRight)
+                if (ink.left > b || ink.right < c || !extendsLeft && !extendsRight)
                     continue;
                 int[] high = new int[ink.right - ink.left + 1], low = new int[high.length];
                 Arrays.fill(high, sheetHeight);
@@ -610,10 +1675,39 @@ final class UnnumberedTripletInk {
                         thin = false;
                         break;
                     }
-                if ((thin || extendsLeft && extendsRight || smoothCurvedStroke(high, low, gap))
+                if ((thin || extendsLeft && extendsRight || smoothCurvedStroke(high, low, gap)
+                            || smoothAttachedSlurEdge(high, low, gap))
                         && !hasBracketTick(staff, start, end, gap, y, middle, slope, a, d)) return true;
             }
             return false;
+        }
+
+        /** Follow the outside edge when clef-free note or fingering ink joins a thin arch from inside. */
+        private static boolean smoothAttachedSlurEdge(int[] upper, int[] lower, float gap) {
+            int width = upper.length;
+            if (width < gap * 7) return false;
+            int inset = Math.max(1, Math.round(gap * .18f));
+            int end = width - 1 - inset;
+            int middle = width / 2;
+            if (upper[inset] - upper[middle] < .38f * gap
+                    || upper[end] - upper[middle] < .62f * gap) return false;
+            int narrowOutside = 0;
+            int outwardSteps = 0;
+            int sideColumns = 0;
+            for (int i = inset; i <= end; i++) {
+                int thickness = lower[i] - upper[i] + 1;
+                if (thickness < 1 || thickness > gap * 2.1f
+                        || i > inset && Math.abs(upper[i] - upper[i - 1]) > gap * .29f) return false;
+                if (i > inset) {
+                    int step = upper[i] - upper[i - 1];
+                    if (i < middle && step > 0 || i > middle && step < 0) outwardSteps++;
+                }
+                if (i < width * .30f || i > width * .70f) {
+                    sideColumns++;
+                    if (thickness <= gap * .38f) narrowOutside++;
+                }
+            }
+            return narrowOutside >= .54f * sideColumns && outwardSteps <= .09f * (end - inset);
         }
 
         /** A continuous slur can supply both apparent arms across the next staff row. */
@@ -642,8 +1736,12 @@ final class UnnumberedTripletInk {
         private boolean sharesBowCaption(List<PlayingTechniqueDetector.Word> words, int first,
                 int last, int y, float middle, float slope, float gap) {
             float firstRow = y + slope * (first - middle), lastRow = y + slope * (last - middle);
-            return coveredByBowCaption(words, stride, plane.length / stride, gap,
-                    first, Math.min(firstRow, lastRow), last, Math.max(firstRow, lastRow));
+            if (coveredByBowCaption(words, stride, plane.length / stride, gap,
+                    first, Math.min(firstRow, lastRow), last, Math.max(firstRow, lastRow))) return true;
+            return ownedDirectionCaption(plane, stride, plane.length / stride, gap, first,
+                    (int) Math.floor(Math.min(firstRow, lastRow)), last,
+                    (int) Math.ceil(Math.max(firstRow, lastRow)), words.stream()
+                            .filter(word -> word.text().strip().equalsIgnoreCase("segue")).toList());
         }
 
         /** An octave numeral owns the repeated dashes that continue beyond this candidate bracket. */
@@ -701,6 +1799,144 @@ final class UnnumberedTripletInk {
                 }
             }
             return dots >= 9 && across >= 3 && dots - across >= 3;
+        }
+
+        private boolean archOwnsBracketArm(boolean[] staff, int y, float middle, float slope,
+                int a, int b, int c, int d, float gap) {
+            int step = Math.max(1, Math.round(.21f * gap));
+            int h = plane.length / stride;
+            // A continuing curved stroke can cross one arm while a nearby annotation supplies the other.
+            for (int side = 0; side < 2; side++) {
+                int left = side == 0 ? a : c, right = side == 0 ? b : d;
+                int edge = side == 0 ? left : right;
+                int low = edge - Math.round((side == 0 ? 2.4f : .4f) * gap);
+                int high = edge + Math.round((side == 0 ? .4f : 1.25f) * gap);
+                for (int cx = low; cx <= high; cx += step) {
+                    for (int apex = y - Math.round(1.0f * gap); apex <= y + Math.round(.16f * gap); apex++) {
+                        for (float bend : new float[]{.46f, .59f, .72f, .85f}) {
+                            if (!followsSlurArch(cx, apex, gap, bend, h)) continue;
+                            int residual = 0, explained = 0;
+                            for (int x = left; x <= right; x++) {
+                                int row = y + Math.round(slope * (x - middle));
+                                if (!dark(x, row, staff)) continue;
+                                float distance = (x - cx) / gap;
+                                float expected = apex + bend * gap * distance * distance / 9;
+                                if (Math.abs(row - expected) > .19f * gap) residual++;
+                                else explained++;
+                            }
+                            if (explained >= Math.round(.65f * gap)
+                                    && residual < .63f * (right - left + 1)) return true;
+                        }
+                    }
+                }
+            }
+            return false;
+        }
+
+        private boolean followsSlurArch(int cx, int apex, float gap, float bend, int height) {
+            int hits = 0, missing = 0, left = 0, right = 0;
+            int tolerance = Math.max(1, Math.round(.085f * gap));
+            for (int k = -8; k <= 8; k++) {
+                float d = k * .43f;
+                int x = Math.round(cx + d * gap), y = Math.round(apex + bend * gap * d * d / 9);
+                if (x < 0 || x >= stride || y - tolerance < 0 || y + tolerance >= height) return false;
+                boolean traced = false;
+                for (int yy = y - tolerance; yy <= y + tolerance; yy++)
+                    if ((plane[yy * stride + x] & 255) < 171) traced = true;
+                missing = traced ? 0 : missing + 1;
+                if (missing > 1) return false;
+                if (traced) {
+                    hits++;
+                    if (k <= -5) left++;
+                    if (k >= 5) right++;
+                }
+            }
+            return hits >= 15 && left >= 3 && right >= 3;
+        }
+
+        private boolean dottedRibbonOwnsArm(boolean[] staff, int y, float middle, float slope,
+                int a, int b, int c, int d, float gap) {
+            if (Math.abs(slope) > .06) return false;
+            int begin = Math.max(0, a - Math.round(2.1f * gap));
+            int end = Math.min(stride - 1, d + Math.round(2.1f * gap));
+            var dots = ribbonDots(y, gap, begin, end);
+            var owned = new java.util.BitSet();
+            int leftDots = 0, rightDots = 0, adjacent = 0;
+            for (int i = 0; i < dots.size(); i++) {
+                var dot = dots.get(i);
+                if (i > 0) {
+                    if (adjacentRibbonDots(dots.get(i - 1), dot, gap)) adjacent++;
+                }
+                if (dot.right >= a && dot.left <= b) leftDots++;
+                if (dot.right >= c && dot.left <= d) rightDots++;
+                for (int k = 0; k < dot.size(); k++) owned.set(dot.pixel(k));
+            }
+            return dots.size() >= 9 && adjacent >= 7 && leftDots >= 2 && rightDots >= 2
+                    && (!otherArmInk(staff, y, middle, slope, a, b, owned)
+                        || !otherArmInk(staff, y, middle, slope, c, d, owned));
+        }
+
+        private List<RawNumeralComponents.Component> ribbonDots(int y, float gap, int begin, int end) {
+            int sheetHeight = plane.length / stride;
+            int top = Math.max(0, y - Math.round(.62f * gap)), bottom = Math.min(sheetHeight - 1,
+                    y + Math.round(.62f * gap));
+            var marks = RawNumeralComponents.capture(plane, stride, sheetHeight,
+                    begin, top, end, bottom, 201, () -> {}, () -> {}).components();
+            var dots = new java.util.ArrayList<RawNumeralComponents.Component>();
+            for (var mark : marks) {
+                int length = mark.right - mark.left + 1, height = mark.bottom - mark.top + 1;
+                if (mark.left <= begin || mark.top <= top || mark.right >= end || mark.bottom >= bottom
+                        || length < .13f * gap || length > .65f * gap
+                        || height < .11f * gap || height > .44f * gap
+                        || Math.abs((mark.bottom + mark.top) * .5f - y) > .16f * gap
+                        || mark.size() < .56f * length * height) continue;
+                dots.add(mark);
+            }
+            dots.sort(java.util.Comparator.comparingInt(dot -> dot.left));
+            return dots;
+        }
+
+        private boolean otherArmInk(boolean[] staff, int y, float middle, float slope,
+                int left, int right, java.util.BitSet owned) {
+            int ink = 0;
+            for (int x = left; x <= right; x++) {
+                int row = y + Math.round(slope * (x - middle));
+                if (dark(x, row, staff) && !owned.get(row * stride + x)) ink++;
+            }
+            return ink >= .63f * (right - left + 1);
+        }
+
+        private boolean ownsDottedRibbonGlyph(int left, int first, int right, int last, float gap,
+                List<PlayingTechniqueDetector.Word> words) {
+            int width = right - left + 1, height = last - first + 1;
+            if (width < .13f * gap || width > .65f * gap || height < .11f * gap || height > .44f * gap)
+                return false;
+            int row = (first + last + 1) / 2, center = (left + right) / 2;
+            int radius = Math.round(3.65f * gap);
+            int begin = Math.max(0, center - radius), end = Math.min(stride - 1, center + radius);
+            var dots = ribbonDots(row, gap, begin, end);
+            int earlier = 0, later = 0, adjacent = 0;
+            boolean owned = false;
+            for (int i = 0; i < dots.size(); i++) {
+                var dot = dots.get(i);
+                if (dot.right < left) earlier++;
+                if (dot.left > right) later++;
+                if (Math.abs(dot.left-left) <= 1 && Math.abs(dot.right-right) <= 1
+                        && Math.abs(dot.top-first) <= 1 && Math.abs(dot.bottom-last) <= 1)
+                    owned = true;
+                if (i > 0 && adjacentRibbonDots(dots.get(i-1), dot, gap)) adjacent++;
+            }
+            if (!owned) return false;
+            if (earlier >= 2 && later >= 2 && dots.size() >= 9 && adjacent >= 7) return true;
+            return earlier <= 1 && later >= 6 && adjacent == dots.size() - 1
+                    && CrossedDyadOctaveRibbon.recognizedLeadingEight(
+                            plane, stride, plane.length / stride, dots.get(0).left, row, gap, words) >= 0;
+        }
+
+        private static boolean adjacentRibbonDots(RawNumeralComponents.Component first,
+                RawNumeralComponents.Component next, float gap) {
+            float pitch = (next.left + next.right - first.left - first.right) * .5f;
+            return pitch >= .37f * gap && pitch <= .88f * gap;
         }
 
         private boolean hasBracketTick(

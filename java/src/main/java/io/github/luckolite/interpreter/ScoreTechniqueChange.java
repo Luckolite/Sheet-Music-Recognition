@@ -5,7 +5,19 @@ package io.github.luckolite.interpreter;
 
 /** Persistent playing instruction for one printed staff; positions are in engraving space. */
 public record ScoreTechniqueChange(
-        int measureIndex, float positionInMeasure, int staffIndex, int staffCount, int technique) {
+        int measureIndex, float positionInMeasure, int staffIndex, int staffCount, int technique,
+        BowPlacement placement) {
+    public enum BowPlacement { ABOVE, BELOW }
+
+    public ScoreTechniqueChange(int measureIndex, float positionInMeasure, int staffIndex,
+            int staffCount, int technique) {
+        this(measureIndex, positionInMeasure, staffIndex, staffCount, technique, null);
+    }
+
+    ScoreTechniqueChange withMeasureIndex(int index) {
+        return new ScoreTechniqueChange(index, positionInMeasure, staffIndex, staffCount, technique, placement);
+    }
+
     public static final int ARCO = 0, PIZZICATO = 1;
     public static final int CANTABILE = 2, SOSTENUTO = 3, MARCATO = 4, ORDINARIO = 5;
     public static final int UP_BOW = 6, DOWN_BOW = 7;
@@ -62,7 +74,8 @@ public record ScoreTechniqueChange(
                 || staffIndex < 0
                 || staffIndex >= staffCount
                 || technique < 0
-                || technique > DOWN_BOW)
+                || technique > DOWN_BOW
+                || placement != null && !isBow(technique))
             throw new IllegalArgumentException("Invalid playing-technique change");
     }
 }

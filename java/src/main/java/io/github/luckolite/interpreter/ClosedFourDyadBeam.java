@@ -95,10 +95,25 @@ final class ClosedFourDyadBeam {
                 staffBottom, allowInnerRailStaffCrossing, leftRule, steppedIndex, 0);
     }
 
+    static boolean provesBeforeStaffRule(byte[] gray, int width, int height, Head[] heads,
+            float gap, float staffBottom, int direction, int rightRule) {
+        return Float.isFinite(staffBottom) && rightRule >= 0
+                && proves(gray, width, height, heads, gap, direction, 4.7f, staffBottom,
+                        false, -1, -1, 2, rightRule);
+    }
+
     private static boolean proves(
             byte[] gray, int width, int height, Head[] heads, float gap, int direction,
             float maximumSpacing, float staffBottom, boolean allowInnerRailStaffCrossing,
             int leftRule, int steppedIndex, int staffRuleSpans) {
+        return proves(gray, width, height, heads, gap, direction, maximumSpacing, staffBottom,
+                allowInnerRailStaffCrossing, leftRule, steppedIndex, staffRuleSpans, -1);
+    }
+
+    private static boolean proves(
+            byte[] gray, int width, int height, Head[] heads, float gap, int direction,
+            float maximumSpacing, float staffBottom, boolean allowInnerRailStaffCrossing,
+            int leftRule, int steppedIndex, int staffRuleSpans, int rightRule) {
         boolean allStaffRules = staffRuleSpans > 0;
 
         if (gap < 8 || gap > 32 || direction == 0) return false;
@@ -134,7 +149,7 @@ final class ClosedFourDyadBeam {
         if (Math.abs(slope) > .4f) return false;
         for (int offset = 1; offset <= Math.round(gap * .30f); offset++) {
             float center = stems[0].topTip - direction * offset;
-            if (!closed(gray, width, height, x0, x1, center, slope, gap, allStaffRules ? staffBottom : Float.NaN, leftRule, allStaffRules)) continue;
+            if (!closed(gray, width, height, x0, x1, center, slope, gap, allStaffRules ? staffBottom : Float.NaN, leftRule, rightRule, allStaffRules)) continue;
             for (int sep = Math.round(gap * .45f); sep <= Math.round(gap * 1.05f); sep++) {
                 float inner = center - direction * sep;
                 if (closed(
@@ -149,7 +164,7 @@ final class ClosedFourDyadBeam {
                                 allStaffRules || allowInnerRailStaffCrossing && direction == 1
                                         ? staffBottom
                                         : Float.NaN,
-                                leftRule,
+                                leftRule, rightRule,
                                 allStaffRules)
                         && separated(
                                 gray,
@@ -251,7 +266,7 @@ final class ClosedFourDyadBeam {
 
     /** Both chord heads reach the primary rail in an intact two-sixteenth and eighth close. */
     static boolean provesIntactTwoSixteenthsAndEighth(
-            byte[] gray, int width, int height, Head[] heads, float gap) {
+            byte[] gray, int width, int height, Head[] heads, float gap, int direction) {
         if (heads.length != 3 || gap < 12 || gap > 23) return false;
         var budget = new PrintedBeamShafts.Budget(100_000);
         int[] x = new int[3], tip = new int[3];
@@ -266,27 +281,27 @@ final class ClosedFourDyadBeam {
             var a = upper.get(0);
             var b = lower.get(0);
             int left = Math.max(a.left(), b.left()), right = Math.min(a.right(), b.right());
-            if (a.direction() != 1 || b.direction() != 1 || left > right
+            if (a.direction() != direction || b.direction() != direction || left > right
                     || Math.abs(a.endY() - b.endY()) > gap * .18f) return false;
             x[i] = (left + right) / 2;
-            tip[i] = Math.min(a.endY(), b.endY());
+            tip[i] = direction > 0 ? Math.min(a.endY(), b.endY()) : Math.max(a.endY(), b.endY());
         }
         float slope = (tip[2] - tip[0]) / (float) (x[2] - x[0]);
         if (Math.abs(slope) > .32f || Math.abs(tip[0] + slope * (x[1] - x[0]) - tip[1]) > gap * .22f)
             return false;
         int pad = Math.round(gap * .34f), reach = Math.round(gap * .75f);
         for (int inset = Math.round(gap * .08f); inset <= Math.round(gap * .32f); inset++) {
-            float primary = tip[0] - inset;
+            float primary = tip[0] - direction * inset;
             if (coverage(gray, width, height, x[0], x[0] + pad, x[2] - pad, primary, slope, 2) < .94f
                     || coverage(gray, width, height, x[0], x[0] - reach, x[0] - pad, primary, slope, 2) > .18f
                     || coverage(gray, width, height, x[0], x[2] + pad, x[2] + reach, primary, slope, 2) > .18f)
                 continue;
             for (int depth = Math.round(gap * .52f); depth <= Math.round(gap * 1.10f); depth++) {
-                float secondary = primary - depth;
+                float secondary = primary - direction * depth;
                 if (coverage(gray, width, height, x[0], x[0] + pad, x[1] - pad, secondary, slope, 2) >= .91f
                         && coverage(gray, width, height, x[0], x[1] + pad, x[2] - pad, secondary, slope, 2) <= .22f
                         && coverage(gray, width, height, x[0], x[0] + pad, x[1] - pad,
-                                primary - depth * .5f, slope, 0) <= .50f)
+                                primary - direction * depth * .5f, slope, 0) <= .50f)
                     return true;
             }
         }
@@ -337,7 +352,7 @@ final class ClosedFourDyadBeam {
             float slope,
             float gap,
             float staffBottom,
-            int leftRule, boolean allStaffRules) {
+            int leftRule, int rightRule, boolean allStaffRules) {
         int radius = Math.max(1, Math.round(gap * .075f));
         int full = 0;
         for (int x = first; x <= last; x++)
@@ -357,6 +372,9 @@ final class ClosedFourDyadBeam {
                 if (side < 0 && leftRule >= 0 && first - leftRule >= gap * .6f
                         && first - leftRule <= gap * 1.5f && Math.abs(x - leftRule) <= gap * .23f)
                     continue;
+                if (side > 0 && rightRule >= 0 && rightRule - last >= gap * .6f
+                        && rightRule - last <= gap * 1.5f && Math.abs(x - rightRule) <= gap * .23f)
+                    continue;
                 boolean onRule = allStaffRules
                         ? printedStaffRule(gray, width, height, x, row, staffBottom, gap)
                         : Math.abs(row - staffBottom) <= gap * .17f;
@@ -366,6 +384,11 @@ final class ClosedFourDyadBeam {
             if (again > (end - begin + 1) * .20f) return false;
         }
         return allStaffRules || staffPixels <= Math.round(gap * .20f);
+    }
+
+    static boolean sharesSteppedDownstem(byte[] ink, int width,
+            PrintedBeamShafts.Shaft upper, PrintedBeamShafts.Shaft lower, float gap) {
+        return steppedStem(ink, width, upper, lower, gap, 1) != null;
     }
 
     private static Stem steppedStem(byte[] gray, int width, PrintedBeamShafts.Shaft above,

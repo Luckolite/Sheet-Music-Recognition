@@ -939,6 +939,85 @@ final class PrintedMeasureRhythmGuard {
                 .toList();
     }
 
+    /** Parallel fingering guides above a proved staff can seed an overlapping empty reading. */
+    static List<MeasureRegion> rejectFingeringGuideRows(
+            List<MeasureRegion> regions, byte[] gray, byte[] raw, int width, int height) {
+        if (gray == null || raw == null || gray.length != (long) width * height
+                || raw.length != gray.length || regions.size() < 4) return regions;
+        List<RawStaffLineDetector.StaffLines> printedGray = null;
+        List<RawStaffLineDetector.StaffLines> printedRaw = null;
+        List<MeasureRegion> kept = null;
+        for (int i = 0; i < regions.size(); i++) {
+            var proposal = regions.get(i);
+            float top = proposal.top() * height;
+            float gap = (proposal.bottom() - proposal.top()) * height / 8.2f;
+            float left = proposal.left() * width, right = proposal.right() * width;
+            boolean guide = false;
+            if (proposal.cadenceQuarterBeats() == 0 && gap >= 12 && gap <= 23
+                    && right - left >= gap * 65 && i + 3 < regions.size()) {
+                var next = regions.get(i + 1);
+                float offset = next.top() * height - top;
+                if (offset >= gap * 4.3f && offset <= gap * 5.5f
+                        && Math.abs(regions.get(i + 2).top() - next.top()) * height <= gap * .4f
+                        && Math.abs(regions.get(i + 3).top() - next.top()) * height <= gap * .4f
+                        && next.left() < proposal.left() && regions.get(i + 3).right() > proposal.right()
+                        && pairedGuideInk(gray, width, height, left, right, top, gap)
+                        && pairedGuideInk(raw, width, height, left, right, top, gap)) {
+                    if (printedGray == null) {
+                        printedGray = RawStaffLineDetector.detect(gray, width, height);
+                        printedRaw = RawStaffLineDetector.detect(raw, width, height);
+                    }
+                    float lowerGap = (next.bottom() - next.top()) * height / 8.2f;
+                    float lowerTop = next.top() * height + 2.1f * lowerGap;
+                    guide = staffBelowGuide(printedGray, top + gap * 2.1f, lowerTop, gap)
+                            && staffBelowGuide(printedRaw, top + gap * 2.1f, lowerTop, gap);
+                }
+            }
+            if (guide) {
+                if (kept == null) kept = new ArrayList<>(regions.subList(0, i));
+            } else if (kept != null) kept.add(proposal);
+        }
+        return kept == null ? regions : List.copyOf(kept);
+    }
+
+    private static boolean pairedGuideInk(byte[] gray, int width, int height,
+            float left, float right, float top, float gap) {
+        // The right part of a raised fingering guide is nearly horizontal. Its two
+        // rules are separate and much thinner than a beam or a complete staff.
+        int x0 = Math.round(left + (right - left) * .46f);
+        int x1 = Math.round(left + (right - left) * .64f);
+        int y0 = Math.round(top + gap * .95f), y1 = Math.round(top + gap * 4.2f);
+        if (x0 < 0 || x1 >= width || y0 < 0 || y1 >= height) return false;
+        int first = -1, second = -1, thickness = 0;
+        int count = 0;
+        for (int y = y0; y <= y1; y++) {
+            int dark = 0;
+            for (int x = x0; x <= x1; x++) if ((gray[y * width + x] & 255) < 160) dark++;
+            boolean ink = dark >= (x1 - x0 + 1) * .72f;
+            if (!ink) {
+                thickness = 0;
+                continue;
+            }
+            if (thickness++ == 0) {
+                if (++count == 1) first = y;
+                else if (count == 2) second = y;
+                else return false;
+            }
+            if (thickness > gap * .32f) return false;
+        }
+        return count == 2 && second - first >= gap * 1.14f && second - first <= gap * 1.45f;
+    }
+
+    private static boolean staffBelowGuide(List<RawStaffLineDetector.StaffLines> printed,
+            float upperTop, float lowerTop, float gap) {
+        boolean lower = false;
+        for (var staff : printed) {
+            if (Math.abs(staff.top() - upperTop) <= gap * .65f) return false;
+            if (Math.abs(staff.top() - lowerTop) <= gap * .65f) lower = true;
+        }
+        return lower;
+    }
+
     /** A wide region across several proved lower measures can be built from their ledger lines. */
     static List<MeasureRegion> rejectUpperLedgerRows(
             List<MeasureRegion> regions, byte[] gray, int width, int height) {

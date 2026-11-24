@@ -108,20 +108,37 @@ final class WrappedTripletDotInk {
 
     static boolean singleFlatOwns(
             byte[] gray, int width, int height, Center core, float noteX, float noteY, float gap) {
+        return singleFlatOwns(gray, width, height, core, noteX, noteY, gap, false);
+    }
+
+    static boolean compactSingleFlatOwns(byte[] gray, int width, int height,
+            Center core, float noteX, float noteY, float gap) {
+        return singleFlatOwns(gray, width, height, core, noteX, noteY, gap, true);
+    }
+
+    private static boolean singleFlatOwns(byte[] gray, int width, int height,
+            Center core, float noteX, float noteY, float gap, boolean compactBowl) {
+        float minimumBefore = compactBowl ? 1.2f : 1.4f;
+        float minimumBelow = compactBowl ? .20f : .45f;
         float before = noteX - core.x(), below = core.y() - noteY;
-        if (before < gap * 1.4f || before > gap * 1.95f || below < gap * .45f || below > gap * .78f)
-            return false;
+        if (before < gap * minimumBefore || before > gap * 1.95f
+                || below < gap * minimumBelow || below > gap * .78f) return false;
         int left = core.x() - Math.round(gap * .49f);
         int right = core.x() + Math.round(gap * .45f);
         int top = core.y() - Math.round(gap * 1.96f);
-        int bottom = core.y() + Math.round(gap * .49f);
-        if (!PrintedFlatGlyph.matches(gray, width, height, left, top, right, bottom, gap))
-            return false;
+        int bottom = core.y() + Math.round(gap * (compactBowl ? .20f : .49f));
+        if (!PrintedFlatGlyph.matches(gray, width, height, left, top, right, bottom, gap)) return false;
         int spineTop = core.y() - Math.round(gap * 1.75f);
-        for (int spine = left; spine <= core.x(); spine++)
-            if (flatSpine(gray, width, spine, spineTop, core.y())
-                    && count(gray, width, spine, core.x(), core.y(), core.y(), 155)
-                            == core.x() - spine + 1) return true;
+        int contact = compactBowl ? Math.round(gap * .13f) : 0;
+        for (int spine = left; spine < core.x(); spine++) {
+            if (!flatSpine(gray, width, spine, spineTop, core.y())) continue;
+            for (int row = core.y(); row <= core.y() + contact; row++) {
+                if (count(gray, width, core.x(), core.x(), core.y(), row, 155) != row - core.y() + 1)
+                    break;
+                if (count(gray, width, spine, core.x(), row, row, 155) == core.x() - spine + 1
+                        && (!compactBowl || (gray[row * width + right] & 255) >= 155)) return true;
+            }
+        }
         return false;
     }
 
@@ -151,9 +168,94 @@ final class WrappedTripletDotInk {
         return false;
     }
 
+    /** Prove that the exact core belongs to a nearby single flat, excluding staff contact. */
+    static boolean connectedFlatOwns(byte[] labels, byte[] gray, int width, int height,
+            Center core, float noteX, float noteY, float gap) {
+        float before = noteX - core.x(), below = core.y() - noteY;
+        if (before < gap * 1.35f || before > gap * 2.1f || below < gap * .25f || below > gap * .8f
+                || labels[core.y() * width + core.x()] != OmrMeasurePostProcessor.CLEF_OR_KEY) return false;
+        if (compactSingleFlatOwns(gray, width, height, core, noteX, noteY, gap)
+                && PrintedFlatGlyph.matchesOwnedInk(labels, gray, width, height, noteX, noteY, gap)) return true;
+
+        int left = Math.max(0, Math.round(noteX - gap * 3.1f));
+        int right = Math.min(width - 1, Math.round(noteX - gap * .65f));
+        int top = Math.max(0, Math.round(noteY - gap * 2.7f));
+        int bottom = Math.min(height - 1, Math.round(noteY + gap * 1.5f));
+        int w = right - left + 1, h = bottom - top + 1;
+        var ink = new byte[w * h];
+        java.util.Arrays.fill(ink, (byte) 255);
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                int at = (top + y) * width + left + x;
+                if (labels[at] == OmrMeasurePostProcessor.CLEF_OR_KEY) ink[y * w + x] = gray[at];
+            }
+        }
+        int seed = (core.y() - top) * w + core.x() - left;
+        var parts = RawNumeralComponents.capture(ink, w, h, 0, 0, w - 1, h - 1, 165, () -> {}, () -> {});
+        for (var part : parts.components()) {
+            for (int i = 0; i < part.size(); i++) {
+                if (part.pixel(i) != seed) continue;
+                java.util.Arrays.fill(ink, (byte) 255);
+                for (int j = 0; j < part.size(); j++) ink[part.pixel(j)] = 0;
+                return PrintedFlatGlyph.matches(
+                        ink, w, h, part.left, part.top, part.right, part.bottom, gap);
+            }
+        }
+        return false;
+    }
+
     private static boolean ownedInk(byte[] labels, byte[] gray, int width, int x, int y) {
         int offset = y * width + x;
         return labels[offset] == OmrMeasurePostProcessor.CLEF_OR_KEY && (gray[offset] & 255) < 155;
+    }
+
+    /** Separate contacting flat bowls while keeping the original core in the left glyph. */
+    static boolean splitFlatPairOwns(byte[] labels, byte[] gray, int width, int height,
+            Center core, float noteX, float noteY, float gap) {
+        float before = noteX - core.x(), below = core.y() - noteY;
+        if (before < gap * 1.75f || before > gap * 2.6f || below < 0 || below > gap * .95f
+                || labels[core.y() * width + core.x()] != OmrMeasurePostProcessor.CLEF_OR_KEY) return false;
+        int left = Math.max(0, Math.round(noteX - gap * 3.75f));
+        int right = Math.min(width - 1, Math.round(noteX - gap * .42f));
+        int top = Math.max(0, Math.round(noteY - gap * 2.5f));
+        int bottom = Math.min(height - 1, Math.round(noteY + gap * 1.65f));
+        int w = right - left + 1, h = bottom - top + 1;
+        var ink = new byte[w * h];
+        java.util.Arrays.fill(ink, (byte) 255);
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                int at = (top + y) * width + left + x;
+                if (labels[at] == OmrMeasurePostProcessor.CLEF_OR_KEY) ink[y * w + x] = gray[at];
+            }
+        }
+        int seedX = core.x() - left, seedPixel = (core.y() - top) * w + seedX;
+        int firstCut = seedX + Math.round(gap * .24f);
+        int lastCut = Math.min(w - 2, seedX + Math.round(gap * .93f));
+        var isolated = new byte[w * h];
+        for (int cut = firstCut; cut <= lastCut; cut++) {
+            var leftComponents =
+                    RawNumeralComponents.capture(ink, w, h, 0, 0, cut - 1, h - 1, 165, () -> {}, () -> {});
+            for (var leftPart : leftComponents.components()) {
+                boolean containsCore = false;
+                for (int i = 0; i < leftPart.size(); i++) containsCore |= leftPart.pixel(i) == seedPixel;
+                if (!containsCore || !isolatedFlat(isolated, w, h, leftPart, gap)) continue;
+                var rightComponents =
+                        RawNumeralComponents.capture(ink, w, h, cut, 0, w - 1, h - 1, 165, () -> {}, () -> {});
+                for (var rightPart : rightComponents.components()) {
+                    float spacing = rightPart.left - leftPart.left;
+                    if (spacing >= gap * .77f && spacing <= gap * 1.25f
+                            && isolatedFlat(isolated, w, h, rightPart, gap)) return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static boolean isolatedFlat(byte[] ink, int width, int height, RawNumeralComponents.Component part,
+            float gap) {
+        java.util.Arrays.fill(ink, (byte) 255);
+        for (int i = 0; i < part.size(); i++) ink[part.pixel(i)] = 0;
+        return PrintedFlatGlyph.matches(ink, width, height, part.left, part.top, part.right, part.bottom, gap);
     }
 
     private static boolean flatSpine(byte[] gray, int width, int x, int top, int bottom) {

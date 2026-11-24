@@ -98,6 +98,19 @@ public final class CrossedDottedOctaveSpanTest {
                 assigned.stream().map(ScoreNoteEvent::writtenAccidental).toList());
     }
 
+    @Test
+    public void priorLocalNaturalReturnsAfterAnInterveningFlatInTheOctavePassage() {
+        var earlyNatural = carryNote(.12f, 10).withWrittenAccidental(ScoreNoteEvent.ACCIDENTAL_NATURAL);
+        var octaveFlat = carryNote(.35f, 10).withWrittenAccidental(ScoreNoteEvent.ACCIDENTAL_FLAT);
+        var inheritedFlat = carryNote(.75f, 10).withWrittenAccidental(ScoreNoteEvent.ACCIDENTAL_FLAT);
+        var sources = List.of(earlyNatural, octaveFlat, inheritedFlat);
+        var assigned = new java.util.ArrayList<>(sources);
+        assigned.set(1, octaveFlat.withOctaveShift(1));
+        OctaveAccidentalCarry.clearAtRangeBoundary(sources, assigned,
+                new boolean[] {false, true, false}, List.of(new OctaveAccidentalCarry(octaveFlat, inheritedFlat)));
+        assertEquals(List.of(0, -1, 0), assigned.stream().map(ScoreNoteEvent::writtenAccidental).toList());
+    }
+
     private static ScoreNoteEvent carryNote(float x, int step) {
         return new ScoreNoteEvent(0, x, step, 0, 1, .70f - step * .02f, false)
                 .withStemDirection(-1).withWrittenAccidental(ScoreNoteEvent.ACCIDENTAL_SHARP);

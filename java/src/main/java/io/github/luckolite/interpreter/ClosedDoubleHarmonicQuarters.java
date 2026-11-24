@@ -45,6 +45,1238 @@ final class ClosedDoubleHarmonicQuarters {
                 : score.withNotes(renewed, IntStream.range(0, renewed.size()).boxed().toList());
     }
 
+
+    /**
+     * A shaft, two stopped quarters and their touch heads can merge at the
+     * first major-third diamond. Remove its unstemmed eighth-note alias.
+     */
+    static ScorePageInterpretation recoverMergedThirdTouch(
+            ScorePageInterpretation score, byte[] labels, byte[] normalized, byte[] raw,
+            int width, int height, Integer inheritedKey) {
+        if (raw == null || normalized == null || labels == null || raw.length != (long) width * height
+                || normalized.length != raw.length || labels.length != raw.length) return score;
+        var bars = score.measures();
+        var notes = new ArrayList<>(score.notes());
+        var removed = new java.util.HashSet<Integer>();
+        ScoreMeterChange meter = null;
+        int section = 0;
+        for (int measure = 1; measure + 1 < bars.size(); measure++) {
+            while (section < score.meterChanges().size()
+                    && score.meterChanges().get(section).measureIndex() <= measure)
+                meter = score.meterChanges().get(section++);
+            if (meter == null || meter.numerator() != 2 || meter.denominator() != 4) continue;
+            var region = bars.get(measure);
+            float gap = (region.bottom() - region.top()) * height / 8.2f;
+            float span = (region.right() - region.left()) * width;
+            final int index = measure;
+            if (gap < 12 || gap > 23 || span < 7.8f * gap || span > 10.2f * gap
+                    || region.cadenceQuarterBeats() != 0
+                    || Math.abs(region.top() - bars.get(measure - 1).top()) * height > .32f * gap
+                    || Math.abs(region.top() - bars.get(measure + 1).top()) * height > .32f * gap
+                    || score.rests().stream().anyMatch(rest -> rest.measureIndex() == index)) continue;
+            var local = local(score, measure, width, height);
+            if (local.size() != 5) continue;
+            var alias = local.get(0);
+            var a = local.get(1);
+            var b = local.get(2);
+            var c = local.get(3);
+            var d = local.get(4);
+            var up = a.y() < b.y() ? a : b;
+            var low = up == a ? b : a;
+            var down = c.y() < d.y() ? c : d;
+            var bottom = down == c ? d : c;
+            var n = alias.note();
+            if (!ordinary(n) || n.stemDirection() != 0 || n.beamCount() != 1
+                    || n.unbeamedDurationBeats() != 0 || n.articulations() != 0
+                    || n.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_FROM_KEY
+                    || n.harmonicSemitones() != 0 || n.octaveShift() != 0 || n.openStringTouch() != null
+                    || n.staffStep() != low.note().staffStep() + 2
+                    || low.x() - alias.x() < .14f * gap || low.x() - alias.x() > .44f * gap
+                    || low.y() - alias.y() < .97f * gap || low.y() - alias.y() > 1.35f * gap
+                    || hasNoteSourceControl(score, alias.index())
+                    || !compoundQuarterPair(up, low, 1, gap) || !compoundQuarterPair(down, bottom, -1, gap)
+                    || bottom.x() - low.x() < 3.75f * gap || bottom.x() - low.x() > 4.85f * gap) continue;
+            int key = keyAt(score, measure, inheritedKey == null ? 0 : inheritedKey);
+            if (!printedMajorThird(low.note(), key) || !printedMajorThird(bottom.note(), key)
+                    || !printedFourth(up.note(), key) || !printedFourth(down.note(), key)) continue;
+            if (!mergedTouchThirds(labels, raw, width, height, bars, measure, gap, alias, up, low, down, bottom)
+                    || !mergedTouchThirds(labels, normalized, width, height, bars, measure,
+                            gap, alias, up, low, down, bottom)) continue;
+            removed.add(alias.index());
+            notes.set(up.index(), harmonicQuarter(up.note(), 1, 24));
+            notes.set(low.index(), harmonicQuarter(low.note(), 1, 28));
+            notes.set(down.index(), harmonicQuarter(down.note(), -1, 24));
+            notes.set(bottom.index(), harmonicQuarter(bottom.note(), -1, 28));
+        }
+        if (removed.isEmpty()) return score;
+        var owners = IntStream.range(0, notes.size()).filter(i -> !removed.contains(i)).boxed().toList();
+        return score.withNotes(owners.stream().map(notes::get).toList(), owners);
+    }
+
+    private static boolean compoundQuarterPair(Owner upper, Owner lower, int direction, float gap) {
+        if (upper.note().staffStep() - lower.note().staffStep() != 4
+                || Math.abs(upper.x() - lower.x()) > .16f * gap
+                || lower.y() - upper.y() < 1.85f * gap || lower.y() - upper.y() > 2.28f * gap) return false;
+        for (var owner : List.of(upper, lower)) {
+            var note = owner.note();
+            if (!ordinary(note) || !quarter(note) || note.clefBottomDiatonic() != ScoreNoteEvent.CLEF_TREBLE
+                    || note.stemDirection() != direction || note.articulations() != 0
+                    || note.openStringTouch() != null || note.harmonicSemitones() != 0
+                            && note.harmonicSemitones() != (owner == upper ? 24 : 28)) return false;
+        }
+        return true;
+    }
+
+    private static boolean mergedTouchThirds(byte[] labels, byte[] ink, int width, int height,
+            List<MeasureRegion> bars, int measure, float nominal, Owner alias,
+            Owner firstUpper, Owner firstLower, Owner lastUpper, Owner lastLower) {
+        var bar = bars.get(measure);
+        var fit = PrintedDirectionStaff.printedRules(ink, width, height,
+                (bar.left() + bar.right()) * width * .5f, bar.bottom() * height - 2.1f * nominal, nominal);
+        if (fit == null) return false;
+        float floor = fit[0], gap = fit[1];
+        var staff = new PlayingTechniqueDetector.Staff(floor - 4 * gap, floor, gap, 0, 1);
+        if (!interiorRule(ink, width, height, staff, bars.get(measure - 1), bar)
+                || !interiorRule(ink, width, height, staff, bar, bars.get(measure + 1))
+                || filledStaffHead(ink, width, height, alias, staff)
+                || List.of(firstUpper, firstLower, lastUpper, lastLower).stream()
+                        .anyMatch(head -> !filledStaffHead(ink, width, height, head, staff))) return false;
+        var up = compoundQuarterShaft(labels, ink, width, height, staff, firstUpper, firstLower, 1, alias);
+        var down = compoundQuarterShaft(labels, ink, width, height, staff, lastUpper, lastLower, -1, null);
+        return up != null && down != null && paperSeparatesAttacks(ink, width, height, up, down, staff)
+                && PrintedCadenceDurations.emptyOutsideChord(ink, width, staff, bar.left() * width,
+                        bar.right() * width, firstLower.x(), lastLower.x(), false);
+    }
+
+    private static Attack compoundQuarterShaft(byte[] labels, byte[] ink, int width, int height,
+            PlayingTechniqueDetector.Staff staff, Owner upper, Owner lower, int direction, Owner alias) {
+        float gap = staff.gap();
+        var tip = direction > 0 ? upper : lower;
+        var shafts = PrintedBeamShafts.at(ink, width, height, tip.x(), tip.y(), gap,
+                new PrintedBeamShafts.Budget(72_000));
+        if (shafts.size() != 1 || shafts.get(0).direction() != -direction) return null;
+        var shaft = shafts.get(0);
+        float highY = upper.y() - 1.5f * gap;
+        float lowY = alias == null ? lower.y() - gap : alias.y();
+        if (!labeledTouch(labels, ink, width, height, upper.x(), highY, gap)
+                || alias == null && !labeledTouch(labels, ink, width, height, lower.x(), lowY, gap)) return null;
+        for (int col = shaft.left(); col <= shaft.right(); col++) {
+            if (!headJoinsShaft(ink, width, upper, col, gap) || !headJoinsShaft(ink, width, lower, col, gap)
+                    || !darkSpine(ink, width, height, col, Math.round(upper.y()), Math.round(lower.y()), .94f)
+                    || alias != null && !mergedCounter(ink, width, height, lower.x(), alias.y(), gap, col)
+                    || !ArtificialHarmonics.unflaggedQuarterTip(ink, width, height, col, highY,
+                            tip.y(), shaft.endY(), direction, staff)) continue;
+            return new Attack(upper, lower, col, shaft.endY(), direction);
+        }
+        return null;
+    }
+
+    static void retainOpposedThirdRoles(ScorePageInterpretation score, List<Map<String, Object>> events,
+            int width, int height, float[] beats, double[] starts, int[] keys) {
+        if (score.notes().size() != events.size()) return;
+        var bars = score.measures();
+        for (int measure = 1; measure + 1 < bars.size(); measure++) {
+            if (beats[measure] != 2) continue;
+            var region = bars.get(measure);
+            float gap = (region.bottom() - region.top()) * height / 8.2f;
+            if (gap < 12 || gap > 23) continue;
+            var row = local(score, measure, width, height);
+            if (row.size() != 4) continue;
+            var a = row.get(0);
+            var b = row.get(1);
+            var c = row.get(2);
+            var d = row.get(3);
+            var up = a.y() < b.y() ? a : b;
+            var low = up == a ? b : a;
+            var down = c.y() < d.y() ? c : d;
+            var bottom = down == c ? d : c;
+            if (!compoundQuarterPair(up, low, 1, gap) || !compoundQuarterPair(down, bottom, -1, gap)
+                    || bottom.x() - low.x() < 3.75f * gap || bottom.x() - low.x() > 4.85f * gap
+                    || !provedThirdRole(up, events, starts[measure], 24)
+                    || !provedThirdRole(low, events, starts[measure], 28)
+                    || !provedThirdRole(down, events, starts[measure] + 1, 24)
+                    || !provedThirdRole(bottom, events, starts[measure] + 1, 28)) continue;
+            int key = keys[measure];
+            if (!printedFourth(up.note(), key) || !printedMajorThird(low.note(), key)
+                    || !printedFourth(down.note(), key) || !printedMajorThird(bottom.note(), key)) continue;
+            for (var first : List.of(up, low))
+                writeStackRole(events.get(first.index()), first, starts[measure], key, 1, false);
+            for (var last : List.of(down, bottom))
+                writeStackRole(events.get(last.index()), last, starts[measure] + 1, key, -1, false);
+        }
+    }
+
+    private static boolean provedThirdRole(
+            Owner owner, List<Map<String, Object>> events, double onset, int harmonics) {
+        var event = events.get(owner.index());
+        return owner.note().harmonicSemitones() == harmonics && owner.note().octaveShift() == 0
+                && Integer.valueOf(owner.index()).equals(event.get("sourceNoteIndex"))
+                && Double.valueOf(onset).equals(event.get("startBeat"))
+                && Double.valueOf(1).equals(event.get("durationBeats"))
+                && Boolean.FALSE.equals(event.get("durationFallback"));
+    }
+
+    private static boolean labeledTouch(byte[] labels, byte[] ink, int width, int height,
+            float x, float y, float gap) {
+        return ArtificialHarmonics.symbolDiamond(labels, ink, width, height, x, y, gap)
+                && ArtificialHarmonics.enclosedCounter(ink, width, height, x, y, .69f * gap, .23f * gap);
+    }
+
+    private static boolean mergedCounter(byte[] ink, int width, int height, float x, float y, float gap, int stem) {
+        if (!ArtificialHarmonics.enclosedCounter(ink, width, height, x, y, .69f * gap, .23f * gap))
+            return false;
+        // The measured counter slants toward the upper shaft as it drops.
+        float top = boundedPaperCenter(ink, width, x, Math.round(y - .10f * gap), gap, stem);
+        float bottom = boundedPaperCenter(ink, width, x, Math.round(y + .10f * gap), gap, stem);
+        return Float.isFinite(top) && Float.isFinite(bottom)
+                && bottom - top >= .17f * gap && bottom - top <= .39f * gap;
+    }
+
+    private record HeaderedStack(Attack first, Attack second, Owner alias) {}
+
+    /** A late 2/4 header can contain two complete upstem harmonic pairs after the clef and meter. */
+    static ScorePageInterpretation recoverHeaderedStack(
+            ScorePageInterpretation score, byte[] labels, byte[] normalized, byte[] raw,
+            int width, int height, int initialKey) {
+        int bar = stackedHeaderBar(score);
+        if (bar < 0) return score;
+        var stack = headeredStack(score, labels, normalized, raw, width, height, bar, true);
+        if (stack == null || !headeredStackPitches(stack, keyAt(score, bar, initialKey))) return score;
+        var notes = new ArrayList<>(score.notes());
+        for (var member : List.of(stack.first().upper(), stack.first().lower(), stack.second().upper()))
+            notes.set(member.index(), harmonicQuarter(member.note(), 1, 24));
+        var lower = stack.second().lower();
+        notes.set(lower.index(), harmonicQuarter(
+                lower.note().withWrittenAccidental(ScoreNoteEvent.ACCIDENTAL_DOUBLE_FLAT), 1, 28));
+        var owners = IntStream.range(0, notes.size()).filter(i -> i != stack.alias().index()).boxed().toList();
+        return score.withNotes(owners.stream().map(notes::get).toList(), owners);
+    }
+
+    static void retainHeaderedStackRoles(
+            ScorePageInterpretation score, List<Map<String, Object>> events, List<PlayingTechniqueDetector.Word> words,
+            byte[] labels, byte[] raw, byte[] normalized, int width, int height,
+            float[] beats, double[] starts, int[] keys, List<SourceLocalAccidental.PrintedMark> marks) {
+        int bar = stackedHeaderBar(score);
+        if (bar < 0 || beats[bar] != 2 || events.size() != score.notes().size()) return;
+        var stack = headeredStack(score, labels, normalized, raw, width, height, bar, false);
+        if (stack == null || !headeredStackPitches(stack, keys[bar])) return;
+        var a = stack.first();
+        var b = stack.second();
+        if (List.of(a.upper(), a.lower(), b.upper(), b.lower()).stream().anyMatch(owner ->
+                !Integer.valueOf(owner.index()).equals(events.get(owner.index()).get("sourceNoteIndex")))) return;
+        for (var chord : List.of(a, b)) {
+            for (var owner : List.of(chord.upper(), chord.lower()))
+                writeStackRole(events.get(owner.index()), owner, starts[bar] + (chord == a ? 0 : 1),
+                        keys[bar], 1, chord == a);
+        }
+        marks.add(new SourceLocalAccidental.PrintedMark(b.lower().index(), ScoreNoteEvent.ACCIDENTAL_DOUBLE_FLAT));
+        float gap = (score.measures().get(bar).bottom() - score.measures().get(bar).top()) * height / 8.2f;
+        for (var chord : List.of(a, b)) {
+            float x = chord.lower().x();
+            var upper = PrintedFingeringDigits.harmonicStack(words, raw, normalized, width, height, x,
+                    chord.end() - gap * 3.45f, chord.end() + gap * .45f, gap);
+            var lower = quarterFingers(words, raw, normalized, width, height, gap, chord, false);
+            if (upper != null && upper.provedTouch())
+                events.get(chord.upper().index()).put("compoundHarmonicFingering", upper.fingering("above"));
+            if (lower != null && (lower.provedTouch() || chord == b && matchesFollowingThree(
+                    score, words, raw, normalized, width, height, gap, bar + 1, lower)))
+                events.get(chord.lower().index()).put("compoundHarmonicFingering", lower.fingering("below"));
+        }
+    }
+
+    private static void writeStackRole(Map<String, Object> event, Owner owner,
+            double onset, int key, int direction, boolean opposite) {
+        int semitones = owner.note().harmonicSemitones();
+        int base = ScoreTiePitchGuard.writtenMidi(owner.note().diatonicPitchIdentity(),
+                owner.note().writtenAccidental(), key);
+        event.remove("octaveShift");
+        event.remove("writtenPlacement");
+        event.put("midi", base + semitones);
+        event.put("writtenMidi", base);
+        event.put("harmonicTouchMidi", base + (semitones == 28 ? 4 : 5));
+        event.put(semitones == 28 ? "artificialHarmonicThird" : "artificialHarmonicFourth", true);
+        event.put(direction > 0 ? "sharedUpstemHarmonicQuarter" : "sharedDownstemHarmonicQuarter", true);
+        event.put("startBeat", onset);
+        event.put("durationBeats", 1.0);
+        event.put("durationFallback", false);
+        if (opposite) event.put("oppositeShaftHarmonicQuarter", true);
+    }
+
+
+    static ScorePageInterpretation recoverMixedStemStack(
+            ScorePageInterpretation score, byte[] labels, byte[] normalized, byte[] raw,
+            int width, int height, int initialKey) {
+        int header = stackedHeaderBar(score);
+        if (header < 0) return score;
+        var notes = new ArrayList<>(score.notes());
+        for (int bar = header + 1; bar + 1 < score.measures().size(); bar++) {
+            var stack = mixedStemStack(score, labels, normalized, raw, width, height, bar, true);
+            if (stack.isEmpty()) continue;
+            int key = keyAt(score, bar, initialKey);
+            if (!mixedStemPitches(stack, key)) continue;
+            for (var chord : stack) {
+                var high = chord.upper();
+                var low = chord.lower();
+                notes.set(high.index(), harmonicQuarter(high.note(), chord.direction(), 24));
+                notes.set(low.index(), harmonicQuarter(low.note(), chord.direction(), chord.direction() > 0 ? 28 : 24));
+            }
+        }
+        if (notes.equals(score.notes())) return score;
+        return score.withNotes(notes, IntStream.range(0, notes.size()).boxed().toList());
+    }
+
+    static void retainMixedStemStackRoles(
+            ScorePageInterpretation score, List<Map<String, Object>> events, List<PlayingTechniqueDetector.Word> words,
+            byte[] labels, byte[] raw, byte[] normalized, int width, int height,
+            float[] beats, double[] starts, int[] keys) {
+        int header = stackedHeaderBar(score);
+        if (header < 0 || events.size() != score.notes().size()) return;
+        for (int bar = header + 1; bar + 1 < score.measures().size(); bar++) {
+            if (beats[bar] != 2) continue;
+            var stack = mixedStemStack(score, labels, normalized, raw, width, height, bar, false);
+            if (stack.isEmpty() || !mixedStemPitches(stack, keys[bar])) continue;
+            var region = score.measures().get(bar);
+            float gap = (region.bottom() - region.top()) * height / 8.2f;
+            if (stack.stream().flatMap(chord -> java.util.stream.Stream.of(chord.upper(), chord.lower()))
+                    .anyMatch(owner -> !Integer.valueOf(owner.index()).equals(events.get(owner.index()).get("sourceNoteIndex"))))
+                continue;
+            PrintedFingeringDigits.HarmonicStack firstUpper = null;
+            for (int i = 0; i < stack.size(); i++) {
+                var chord = stack.get(i);
+                for (var owner : List.of(chord.upper(), chord.lower()))
+                    writeStackRole(events.get(owner.index()), owner, starts[bar] + i, keys[bar], chord.direction(), false);
+                float edge = chord.direction() > 0 ? chord.end() : chord.upper().y() - 1.5f * gap;
+                var high = PrintedFingeringDigits.harmonicStack(words, raw, normalized, width, height, chord.upper().x(),
+                        edge - gap * (chord.direction() > 0 ? 3.45f : 4.55f), edge + gap * .42f, gap);
+                if (i == 0) firstUpper = high;
+                if (i == 1 && high == null)
+                    high = PrintedFingeringDigits.matchingHarmonicStack(raw, normalized, width, height,
+                            chord.upper().x(), edge - 4.35f * gap, edge - .72f * gap, gap, firstUpper);
+                var low = quarterFingers(words, raw, normalized, width, height, gap, chord, false);
+                if (high != null && high.provedTouch())
+                    events.get(chord.upper().index()).put("compoundHarmonicFingering", high.fingering("above"));
+                if (low != null && low.provedTouch())
+                    events.get(chord.lower().index()).put("compoundHarmonicFingering", low.fingering("below"));
+            }
+        }
+    }
+
+    private static List<Attack> mixedStemStack(ScorePageInterpretation score, byte[] labels,
+            byte[] normalized, byte[] raw, int width, int height, int barIndex, boolean beforeRecovery) {
+        if (raw == null || normalized == null || labels == null || raw.length != (long) width * height
+                || normalized.length != raw.length || labels.length != raw.length) return List.of();
+        var bars = score.measures();
+        var bar = bars.get(barIndex);
+        float nominal = (bar.bottom() - bar.top()) * height / 8.2f;
+        float span = (bar.right() - bar.left()) * width;
+        if (bar.cadenceQuarterBeats() != 0 || nominal < 10 || nominal > 25
+                || span < nominal * 8.3f || span > nominal * 11.8f
+                || Math.abs(bar.top() - bars.get(barIndex - 1).top()) * height > nominal * .35f
+                || Math.abs(bar.top() - bars.get(barIndex + 1).top()) * height > nominal * .35f
+                || score.rests().stream().anyMatch(rest -> rest.measureIndex() == barIndex)) return List.of();
+        var members = local(score, barIndex, width, height);
+        if (members.size() != 4) return List.of();
+        var pair = new ArrayList<Owner>(4);
+        for (int i = 0; i < 4; i += 2) {
+            var a = members.get(i);
+            var b = members.get(i + 1);
+            var high = a.y() < b.y() ? a : b;
+            var low = high == a ? b : a;
+            if (Math.abs(high.x() - low.x()) > nominal * .16f
+                    || high.note().staffStep() - low.note().staffStep() != 5) return List.of();
+            pair.add(high);
+            pair.add(low);
+        }
+        float distance = pair.get(2).x() - pair.get(0).x();
+        if (distance < nominal * 3.8f || distance > nominal * 5.6f) return List.of();
+        for (int i = 0; i < pair.size(); i++) {
+            var owner = pair.get(i);
+            var n = owner.note();
+            if (!ordinary(withQuarter(n, n.stemDirection()))
+                    || n.clefBottomDiatonic() != ScoreNoteEvent.CLEF_TREBLE || n.stemDirection() != (i < 2 ? 1 : -1)
+                    || n.openStringTouch() != null || n.articulations() != 0
+                    || n.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_FROM_KEY
+                    || hasNoteSourceControl(score, owner.index())) return List.of();
+            if (beforeRecovery) {
+                if (n.octaveShift() != 2 || n.harmonicSemitones() != 0
+                        || (i < 3 ? !quarter(n) : n.beamCount() != 3 || n.unbeamedDurationBeats() != 0))
+                    return List.of();
+            } else if (!quarter(n) || n.octaveShift() != 0 || n.harmonicSemitones() != (i == 1 ? 28 : 24))
+                return List.of();
+        }
+        var printed = proveMixedStemStack(raw, width, height, bars, barIndex, nominal, pair);
+        var corrected = proveMixedStemStack(normalized, width, height, bars, barIndex, nominal, pair);
+        return printed.equals(corrected) ? printed : List.of();
+    }
+
+    /** Recover the exact printed roles after the closing measure's clocks have been assigned. */
+    static ScorePageInterpretation retainReverseTerminalStackRoles(
+            ScorePageInterpretation score, List<Map<String, Object>> events,
+            List<PlayingTechniqueDetector.Word> words, byte[] raw, byte[] normalized,
+            int width, int height, float[] beats, double[] starts, int[] keys) {
+        int index = score.measures().size() - 2;
+        int header = stackedHeaderBar(score);
+        if (header < 0 || index <= header || index >= beats.length || beats[index] != 2
+                || events.size() != score.notes().size()) return score;
+        var stack = reverseTerminalStack(score, normalized, raw, width, height, index);
+        if (stack.isEmpty()) return score;
+        int key = keys[index];
+        var bar = score.measures().get(index);
+        float gap = (bar.bottom() - bar.top()) * height / 8.2f;
+        for (var chord : stack) {
+            int upperMarks = chord.upper().note().articulations();
+            int lowerMarks = chord.lower().note().articulations();
+            if ((upperMarks | lowerMarks) != 0
+                    && (chord.direction() != 1 || upperMarks != NoteArticulation.STACCATO
+                            || lowerMarks != NoteArticulation.STACCATO
+                            || !printedFingeringClearsStaccato(raw, width, height, chord.lower(), gap)
+                            || !printedFingeringClearsStaccato(normalized, width, height, chord.lower(), gap)))
+                return score;
+            if (!printedFourth(chord.upper().note(), key)
+                    || !(chord.direction() > 0 ? printedMajorThird(chord.lower().note(), key)
+                            : printedFourth(chord.lower().note(), key))) return score;
+            for (var owner : List.of(chord.upper(), chord.lower())) {
+                var event = events.get(owner.index());
+                if (!Integer.valueOf(owner.index()).equals(event.get("sourceNoteIndex"))
+                        || !Integer.valueOf(index).equals(event.get("measureIndex"))
+                        || !(event.get("durationBeats") instanceof Number duration)
+                        || duration.doubleValue() != 1
+                        || Boolean.TRUE.equals(event.get("durationFallback"))) return score;
+            }
+        }
+        var notes = new ArrayList<>(score.notes());
+        for (int i = 0; i < stack.size(); i++) {
+            var chord = stack.get(i);
+            for (var owner : List.of(chord.upper(), chord.lower())) {
+                int semitones = chord.direction() > 0 && owner == chord.lower() ? 28 : 24;
+                var note = harmonicQuarter(owner.note().withArticulations(0), chord.direction(), semitones);
+                notes.set(owner.index(), note);
+                writeStackRole(events.get(owner.index()), new Owner(owner.index(), note, owner.x(), owner.y()),
+                        starts[index] + i, key, chord.direction(), false);
+            }
+            float edge = chord.direction() > 0 ? chord.end() : chord.upper().y() - 1.5f * gap;
+            var upper = PrintedFingeringDigits.harmonicStack(words, raw, normalized, width, height, chord.upper().x(),
+                    edge - gap * (chord.direction() > 0 ? 3.45f : 4.55f), edge + gap * .42f, gap);
+            var lower = quarterFingers(words, raw, normalized, width, height, gap, chord, false);
+            if (upper != null && upper.provedTouch())
+                events.get(chord.upper().index()).put("compoundHarmonicFingering", upper.fingering("above"));
+            if (lower != null && lower.provedTouch())
+                events.get(chord.lower().index()).put("compoundHarmonicFingering", lower.fingering("below"));
+        }
+        var retained = IntStream.range(0, notes.size()).boxed().toList();
+        // These source values were already literal quarters. The rhythm observations still apply.
+        return score.withNotes(notes, retained).withClockContextSource(score.clockContextSource());
+    }
+
+    private static boolean printedFingeringClearsStaccato(
+            byte[] ink, int width, int height, Owner lower, float gap) {
+        int left = Math.round(lower.x() - .95f * gap);
+        int right = Math.round(lower.x() + .95f * gap);
+        int top = Math.round(lower.y() + .63f * gap);
+        int bottom = Math.round(lower.y() + 4.15f * gap);
+        var window = RawNumeralComponents.capture(
+                ink, width, height, left, top, right, bottom, 175, () -> {}, () -> {});
+        if (window == null || window.components().size() != 2) return false;
+        var digits = window.components().stream()
+                .sorted(Comparator.comparingInt(glyph -> glyph.top)).toList();
+        var first = digits.get(0);
+        var second = digits.get(1);
+        // Require paper before two complete tall glyphs. Any third component, including
+        // a compact staccato dot between the head and fingerings, keeps the original mark.
+        return first.top - top >= .35f * gap
+                && second.top - first.bottom >= .20f * gap
+                && second.top - first.bottom <= .52f * gap
+                && digits.stream().allMatch(glyph -> glyph.left > left && glyph.right < right
+                        && glyph.bottom < bottom && glyph.bottom - glyph.top + 1 >= .85f * gap
+                        && glyph.bottom - glyph.top + 1 <= 1.4f * gap
+                        && glyph.right - glyph.left + 1 <= .96f * gap
+                        && Math.abs((glyph.left + glyph.right) * .5f - lower.x()) <= .45f * gap);
+    }
+
+    /** The closing 2/4 can put two full downstem fourths before an upstem third and fourth. */
+    private static List<Attack> reverseTerminalStack(
+            ScorePageInterpretation score, byte[] normalized, byte[] raw,
+            int width, int height, int index) {
+        if (raw == null || normalized == null || raw.length != (long) width * height
+                || normalized.length != raw.length || index + 2 != score.measures().size())
+            return List.of();
+        var bars = score.measures();
+        var bar = bars.get(index);
+        var after = bars.get(index + 1);
+        float gap = (bar.bottom() - bar.top()) * height / 8.2f;
+        float span = (bar.right() - bar.left()) * width;
+        if (bar.cadenceQuarterBeats() != 0 || after.cadenceQuarterBeats() != 1 || gap < 10 || gap > 25
+                || span < 8.15f * gap || span > 10.1f * gap
+                || Math.abs(bar.top() - bars.get(index - 1).top()) * height > .35f * gap
+                || Math.abs(bar.top() - after.top()) * height > .35f * gap
+                || score.rests().stream().anyMatch(r -> r.measureIndex() == index)) return List.of();
+        var members = local(score, index, width, height);
+        if (members.size() != 4) return List.of();
+        var owners = new ArrayList<Owner>(4);
+        for (int i = 0; i < 4; i += 2) {
+            var a = members.get(i);
+            var b = members.get(i + 1);
+            var high = a.y() < b.y() ? a : b;
+            var low = high == a ? b : a;
+            if (Math.abs(high.x() - low.x()) > gap * (i == 0 ? .28f : .17f)
+                    || high.note().staffStep() - low.note().staffStep() != (i == 0 ? 5 : 4))
+                return List.of();
+            owners.add(high);
+            owners.add(low);
+        }
+        float distance = owners.get(3).x() - owners.get(1).x();
+        if (distance < 3.4f * gap || distance > 4.15f * gap) return List.of();
+        for (int i = 0; i < 4; i++) {
+            var owner = owners.get(i);
+            var n = owner.note();
+            int direction = i < 2 ? -1 : 1;
+            if (!ordinary(n) || !quarter(n) || n.stemDirection() != direction
+                    || n.clefBottomDiatonic() != ScoreNoteEvent.CLEF_TREBLE || n.openStringTouch() != null
+                    || n.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_FROM_KEY
+                    || (n.articulations() & ~NoteArticulation.STACCATO) != 0
+                    || hasNoteSourceControl(score, owner.index())) return List.of();
+            int shifted = i == 1 || i == 2 ? 2 : 0;
+            if (n.octaveShift() != shifted || n.harmonicSemitones() != 0) return List.of();
+        }
+        var original = proveReverseTerminalStack(raw, width, height, bars, index, gap, owners);
+        var corrected = proveReverseTerminalStack(normalized, width, height, bars, index, gap, owners);
+        return original.equals(corrected) ? original : List.of();
+    }
+
+    private static List<Attack> proveReverseTerminalStack(
+            byte[] ink, int width, int height, List<MeasureRegion> bars,
+            int index, float nominal, List<Owner> owners) {
+        var bar = bars.get(index);
+        var fit = PrintedDirectionStaff.printedRules(ink, width, height,
+                (bar.left() + bar.right()) * width * .5f, bar.bottom() * height - 2.1f * nominal, nominal);
+        if (fit == null) return List.of();
+        float gap = fit[1], floor = fit[0];
+        var staff = new PlayingTechniqueDetector.Staff(floor - 4 * gap, floor, gap, 0, 1);
+        if (!interiorRule(ink, width, height, staff, bars.get(index - 1), bar)
+                || !interiorRule(ink, width, height, staff, bar, bars.get(index + 1))
+                || owners.stream().anyMatch(head -> !filledStaffHead(ink, width, height, head, staff)))
+            return List.of();
+        var high = owners.get(0);
+        var low = owners.get(1);
+        var down = alignedHarmonicQuarter(ink, width, height, staff, high, low, -1);
+        if (down == null && high.x() > low.x() + .12f * gap && high.x() <= low.x() + .28f * gap) {
+            // The far filled lobe can inherit the ledger edge. Test the same head on the
+            // lower owner's horizontal axis and require the complete shared printed shaft.
+            var aligned = new Owner(high.index(), high.note(), low.x(), high.y());
+            if (!filledStaffHead(ink, width, height, aligned, staff)) return List.of();
+            var proved = alignedHarmonicQuarter(ink, width, height, staff, aligned, low, -1);
+            if (proved != null) down = new Attack(high, low, proved.stem(), proved.end(), proved.direction());
+        }
+        var up = alignedHarmonicQuarter(ink, width, height, staff, owners.get(2), owners.get(3), 1);
+        if (down == null || up == null || !paperSeparatesAttacks(ink, width, height, down, up, staff)
+                || !PrintedCadenceDurations.emptyOutsideChord(ink, width, staff, bar.left() * width,
+                        bar.right() * width, down.lower().x(), up.lower().x(), false)) return List.of();
+        return List.of(down, up);
+    }
+
+    private static List<Attack> proveMixedStemStack(byte[] ink, int width, int height,
+            List<MeasureRegion> bars, int index, float nominal, List<Owner> heads) {
+        var bar = bars.get(index);
+        var fit = PrintedDirectionStaff.printedRules(ink, width, height,
+                (bar.left() + bar.right()) * width * .5f, bar.bottom() * height - nominal * 2.1f, nominal);
+        if (fit == null) return List.of();
+        float gap = fit[1], floor = fit[0];
+        var staff = new PlayingTechniqueDetector.Staff(floor - 4 * gap, floor, gap, 0, 1);
+        if (!interiorRule(ink, width, height, staff, bars.get(index - 1), bar)
+                || !interiorRule(ink, width, height, staff, bar, bars.get(index + 1))
+                || heads.stream().anyMatch(head -> !filledStaffHead(ink, width, height, head, staff))) return List.of();
+        var up = alignedHarmonicQuarter(ink, width, height, staff, heads.get(0), heads.get(1), 1);
+        var down = alignedHarmonicQuarter(ink, width, height, staff, heads.get(2), heads.get(3), -1);
+        if (up == null || down == null || !paperSeparatesAttacks(ink, width, height, up, down, staff)
+                || !PrintedCadenceDurations.emptyOutsideChord(
+                        ink, width, staff, bar.left() * width, bar.right() * width,
+                        up.lower().x(), down.lower().x(), false)) return List.of();
+        return List.of(up, down);
+    }
+
+    private static Attack alignedHarmonicQuarter(byte[] ink, int width, int height,
+            PlayingTechniqueDetector.Staff staff, Owner upper, Owner lower, int direction) {
+        float gap = staff.gap(), floor = staff.bottom();
+        var budget = new PrintedBeamShafts.Budget(72_000);
+        var high = PrintedBeamShafts.at(ink, width, height, upper.x(), upper.y(), gap, budget);
+        var low = PrintedBeamShafts.at(ink, width, height, lower.x(), lower.y(), gap, budget);
+        if (budget.refused() || high.size() != 1 || low.size() != 1) return null;
+        var a = high.get(0);
+        var b = low.get(0);
+        if (a.direction() != -direction || b.direction() != -direction
+                || Math.abs(a.endY() - b.endY()) > gap * .13f) return null;
+        float hiTouch = floor - (upper.note().staffStep() + 3) * gap * .5f;
+        float loTouch = floor - (lower.note().staffStep() + (direction > 0 ? 2 : 3)) * gap * .5f;
+        int tip = direction > 0 ? a.endY() : b.endY();
+        for (int col = Math.max(a.left(), b.left()); col <= Math.min(a.right(), b.right()); col++) {
+            if (!darkSpine(ink, width, height, col, Math.round(upper.y()), Math.round(lower.y()), .94f)
+                    || !ArtificialHarmonics.shaftCrossedDiamond(
+                            ink, width, height, upper.x(), hiTouch, gap, col, direction, true)
+                    || !ArtificialHarmonics.shaftCrossedDiamond(
+                            ink, width, height, lower.x(), loTouch, gap, col, direction, true)) continue;
+            var tipOwner = direction > 0 ? upper : lower;
+            if (ArtificialHarmonics.unflaggedQuarterTip(ink, width, height, col, hiTouch,
+                    tipOwner.y(), tip, direction, staff)) return new Attack(upper, lower, col, tip, direction);
+        }
+        return null;
+    }
+
+    private static boolean mixedStemPitches(List<Attack> stack, int key) {
+        var up = stack.get(0);
+        var down = stack.get(1);
+        return printedFourth(up.upper().note(), key) && printedMajorThird(up.lower().note(), key)
+                && printedFourth(down.upper().note(), key) && printedFourth(down.lower().note(), key);
+    }
+    private static boolean matchesFollowingThree(
+            ScorePageInterpretation score, List<PlayingTechniqueDetector.Word> words,
+            byte[] raw, byte[] normalized, int width, int height, float gap, int bar,
+            PrintedFingeringDigits.HarmonicStack target) {
+        if (target.touch() != 3) return false;
+        var next = local(score, bar, width, height);
+        if (next.size() != 4) return false;
+        var low = next.get(2).y() > next.get(3).y() ? next.get(2) : next.get(3);
+        var high = low == next.get(2) ? next.get(3) : next.get(2);
+        if (Math.abs(high.x() - low.x()) > .16f * gap
+                || high.note().staffStep() - low.note().staffStep() != 5) return false;
+        var match = PrintedFingeringDigits.harmonicStack(words, raw, normalized, width, height, low.x(),
+                low.y() + .8f * gap, low.y() + 4.4f * gap, gap);
+        return match != null && PrintedFingeringDigits.repeatedHarmonicThree(target, match, width);
+    }
+
+    private static int stackedHeaderBar(ScorePageInterpretation score) {
+        var meters = score.meterChanges();
+        if (meters.isEmpty()) return -1;
+        var meter = meters.get(meters.size() - 1);
+        return meter.numerator() == 2 && meter.denominator() == 4
+                && meter.measureIndex() > 0 && meter.measureIndex() + 1 < score.measures().size()
+                ? meter.measureIndex() : -1;
+    }
+
+    private static HeaderedStack headeredStack(
+            ScorePageInterpretation score, byte[] labels, byte[] normalized, byte[] raw,
+            int width, int height, int bar, boolean beforeRecovery) {
+        if (raw == null || normalized == null || labels == null || raw.length != (long) width * height
+                || normalized.length != raw.length || labels.length != raw.length) return null;
+        var region = score.measures().get(bar);
+        var next = score.measures().get(bar + 1);
+        float nominal = (region.bottom() - region.top()) * height / 8.2f;
+        float span = (region.right() - region.left()) * width;
+        if (nominal < 10 || nominal > 25 || span < 22 * nominal || span > 38 * nominal
+                || Math.abs(next.top() - region.top()) * height > nominal * .35f
+                || region.cadenceQuarterBeats() != 0
+                || score.rests().stream().anyMatch(rest -> rest.measureIndex() == bar)) return null;
+        var members = local(score, bar, width, height);
+        if (members.size() != (beforeRecovery ? 5 : 4)) return null;
+        var aLower = members.get(0);
+        var aUpper = members.get(1);
+        var second = members.subList(beforeRecovery ? 3 : 2, members.size())
+                .stream().sorted(Comparator.comparingDouble(Owner::y)).toList();
+        var bUpper = second.get(0);
+        var bLower = second.get(1);
+        var alias = beforeRecovery ? members.get(2) : null;
+        if (aLower.note().positionInMeasure() < .57f || bLower.note().positionInMeasure() < .77f
+                || aUpper.note().staffStep() - aLower.note().staffStep() != 4
+                || bUpper.note().staffStep() != aUpper.note().staffStep()
+                || bLower.note().staffStep() != aLower.note().staffStep()
+                || aLower.note().staffStep() >= 0
+                || aUpper.x() - aLower.x() < nominal * 1.06f || aUpper.x() - aLower.x() > nominal * 1.52f
+                || Math.abs(bUpper.x() - bLower.x()) > nominal * .16f
+                || bLower.x() - aLower.x() < nominal * 4.7f || bLower.x() - aLower.x() > nominal * 6.7f)
+            return null;
+        for (var owner : List.of(aLower, aUpper, bUpper, bLower)) {
+            var n = owner.note();
+            if (!ordinary(n) || n.clefBottomDiatonic() != ScoreNoteEvent.CLEF_TREBLE
+                    || n.articulations() != 0 || n.openStringTouch() != null || hasNoteSourceControl(score, owner.index()))
+                return null;
+            if (beforeRecovery && (n.harmonicSemitones() != 0
+                    || !quarter(n) && (owner != aUpper || n.beamCount() != 1 || n.unbeamedDurationBeats() != 0)))
+                return null;
+            if (!beforeRecovery && (!quarter(n) || n.stemDirection() != 1 || n.octaveShift() != 0
+                    || n.harmonicSemitones() != (owner == bLower ? 28 : 24))) return null;
+        }
+        if (beforeRecovery && (!ordinary(withQuarter(alias.note(), 1))
+                || alias.note().beamCount() != 0 || alias.note().unbeamedDurationBeats() != 2
+                || alias.note().octaveShift() != 0 || alias.note().harmonicSemitones() != 0
+                || alias.note().stemDirection() != 1 || alias.note().articulations() != 0
+                || alias.note().staffStep() - bLower.note().staffStep() != 2
+                || hasNoteSourceControl(score, alias.index())
+                || Math.abs(alias.x() - bLower.x()) > nominal * .30f)) return null;
+
+        var printed = proveHeaderStack(labels, raw, width, height, region, next, nominal,
+                aUpper, aLower, bUpper, bLower, alias);
+        var corrected = proveHeaderStack(labels, normalized, width, height, region, next, nominal,
+                aUpper, aLower, bUpper, bLower, alias);
+        return printed != null && printed.equals(corrected) ? printed : null;
+    }
+
+    private static HeaderedStack proveHeaderStack(byte[] labels, byte[] gray, int width, int height,
+            MeasureRegion bar, MeasureRegion next, float nominal,
+            Owner aUpper, Owner aLower, Owner bUpper, Owner bLower, Owner alias) {
+        var fit = PrintedDirectionStaff.printedRules(gray, width, height,
+                (bar.left() + bar.right()) * width * .5f, bar.bottom() * height - nominal * 2.1f, nominal);
+        if (fit == null) return null;
+        float gap = fit[1], floor = fit[0];
+        var staff = new PlayingTechniqueDetector.Staff(floor - 4 * gap, floor, gap, 0, 1);
+        int top = Math.round(staff.top());
+        var metric = MeterFontMatcher.readCrop(gray, width, height, new MeterChangeDetector.Crop(
+                Math.round(aLower.x() - 4.25f * gap), Math.round(top - .32f * gap),
+                Math.round(aLower.x() - 2.15f * gap), Math.round(floor + .52f * gap), top, gap));
+        if (!metric.text().equals("2/4") || metric.topScore() < .86f || metric.bottomScore() < .86f
+                || !interiorRule(gray, width, height, staff, bar, next)) return null;
+        for (var owner : List.of(aUpper, aLower, bUpper, bLower))
+            if (Math.abs(owner.y() - (floor - owner.note().staffStep() * gap * .5f)) > gap * .28f
+                    || !ArtificialHarmonics.filledQuarterCore(gray, width, height, owner.x(), owner.y(), gap)) return null;
+
+        var a = stackedUpstem(labels, gray, width, height, staff, aUpper, aLower, null, true);
+        var b = stackedUpstem(labels, gray, width, height, staff, bUpper, bLower, alias, false);
+        return a != null && b != null && paperSeparatesAttacks(gray, width, height, a, b, staff)
+                && twoDetachedFlats(gray, width, height, bLower, floor, gap)
+                ? new HeaderedStack(a, b, alias) : null;
+    }
+
+    private static Attack stackedUpstem(byte[] labels, byte[] gray, int width, int height,
+            PlayingTechniqueDetector.Staff staff, Owner upper, Owner lower, Owner alias, boolean offset) {
+        float gap = staff.gap(), floor = staff.bottom();
+        var budget = new PrintedBeamShafts.Budget(72_000);
+        var shafts = PrintedBeamShafts.at(gray, width, height, lower.x(), lower.y(), gap, budget);
+        if (budget.refused() || shafts.size() != 1) return null;
+        var shared = shafts.get(0);
+        if (shared.direction() != -1) return null;
+        float highTouch = floor - (upper.note().staffStep() + 3) * gap * .5f;
+        float lowTouch = floor - (lower.note().staffStep() + (offset ? 3 : 2)) * gap * .5f;
+        float touchX = alias == null ? lower.x() - .20f * gap : alias.x();
+        float touchY = alias == null ? lowTouch + .055f * gap : alias.y();
+        if (!offset && Math.abs(touchY - lowTouch) > .18f * gap) return null;
+        for (var column : shared.columns()) {
+            int x = column.x(), end = column.endY(), side = offset ? -1 : 1;
+            if (Math.abs(shared.endY() - end) > 1
+                    || !darkSpine(gray, width, height, x, end, Math.round(lower.y() - .13f * gap), .96f)
+                    || !headJoinsShaft(gray, width, upper, x, gap)
+                    || !ArtificialHarmonics.shaftCrossedDiamond(
+                            gray, width, height, upper.x(), highTouch, gap, x, side, true)
+                    || !ArtificialHarmonics.unflaggedQuarterTip(
+                            gray, width, height, x, highTouch, upper.y(), end, 1, staff))
+                continue;
+            if (offset ? LedgerCrossedHarmonicDiamond.proved(
+                            labels, gray, width, height, lower.x(), lowTouch, gap, x, 1)
+                    : slantedTouchCounter(gray, width, height, touchX, touchY, gap, x))
+                return new Attack(upper, lower, x, end, 1);
+        }
+        return null;
+    }
+
+    private static boolean headJoinsShaft(byte[] gray, int width, Owner owner, int stem, float gap) {
+        int center = Math.round(owner.x());
+        if (Math.abs(center - stem) < .40f * gap || Math.abs(center - stem) > .90f * gap) return false;
+        int y = Math.round(owner.y());
+        for (int dy = -2; dy <= 2; dy++) {
+            int ink = rowInk(gray, width, Math.min(stem, center), Math.max(stem, center), y + dy);
+            if (ink == Math.abs(center - stem) + 1) return true;
+        }
+        return false;
+    }
+
+    /** The ledger and two filled heads conceal the outer corners, but leave a diagonal closed counter. */
+    static boolean slantedTouchCounter(
+            byte[] gray, int width, int height, float x, float y, float gap, int stem) {
+        if (stem - x < .55f * gap || stem - x > .93f * gap
+                || !ArtificialHarmonics.enclosedCounter(gray, width, height, x, y, .70f * gap, .23f * gap))
+            return false;
+        float top = boundedPaperCenter(gray, width, x, Math.round(y - .16f * gap), gap, stem);
+        float bottom = boundedPaperCenter(gray, width, x, Math.round(y + .16f * gap), gap, stem);
+        return Float.isFinite(top) && Float.isFinite(bottom)
+                && bottom - top > .15f * gap && bottom - top < .45f * gap;
+    }
+
+    private static float boundedPaperCenter(byte[] gray, int width, float x, int row, float gap, int stem) {
+        int left = Math.round(x - .50f * gap), right = stem - 2;
+        int run = -1;
+        for (int col = left; col <= right; col++) {
+            if ((gray[row * width + col] & 255) >= 185) {
+                if (run < 0) run = col;
+            } else if (run >= 0) {
+                int length = col - run;
+                if (run > left && length >= .17f * gap && length <= .49f * gap)
+                    return (run + col - 1) * .5f;
+                run = -1;
+            }
+        }
+        return Float.NaN;
+    }
+
+    private static boolean twoDetachedFlats(byte[] gray, int width, int height, Owner owner, float floor, float gap) {
+        int left = Math.round(owner.x() - 3.58f * gap), right = Math.round(owner.x() - .98f * gap);
+        int top = Math.round(floor + .20f * gap), bottom = Math.round(owner.y() + .88f * gap);
+        if (left < 0 || right >= width || top < 0 || bottom >= height || top >= bottom) return false;
+        var graph = RawNumeralComponents.captureLongWindow(gray, width, height, left, top, right, bottom, 154);
+        var glyphs = graph.components().stream().filter(g -> g.left > left && g.right < right
+                && g.right - g.left >= .65f * gap && g.right - g.left <= 1.17f * gap
+                && g.top <= top + .10f * gap && g.bottom < bottom).sorted(Comparator.comparingInt(g -> g.left)).toList();
+        if (glyphs.size() != 2) return false;
+        var first = glyphs.get(0);
+        var second = glyphs.get(1);
+        if (second.left - first.left < .86f * gap || second.left - first.left > 1.36f * gap
+                || Math.abs(first.bottom - second.bottom) > .22f * gap) return false;
+        for (var g : glyphs) {
+            boolean proved = false;
+            for (int dl = 0; dl <= Math.round(.20f * gap); dl++)
+                for (int dr = 0; dr <= Math.round(.20f * gap); dr++)
+                    if (PrintedFlatGlyph.matches(gray, width, height, g.left + dl,
+                            Math.round(floor - .40f * gap), g.right - dr,
+                            Math.round(owner.y() + .70f * gap), gap)) proved = true;
+            if (!proved) return false;
+        }
+        return true;
+    }
+
+    private static boolean headeredStackPitches(HeaderedStack stack, int key) {
+        var lower = stack.second().lower().note();
+        int inherited = ScoreNoteEvent.ACCIDENTAL_FROM_KEY;
+        return stack.first().upper().note().writtenAccidental() == inherited
+                && stack.first().lower().note().writtenAccidental() == inherited
+                && stack.second().upper().note().writtenAccidental() == inherited
+                && (lower.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_FLAT
+                        || lower.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_DOUBLE_FLAT)
+                && printedFourth(stack.first().upper().note(), key)
+                && printedFourth(stack.first().lower().note(), key)
+                && printedFourth(stack.second().upper().note(), key)
+                && printedMajorThird(lower.withWrittenAccidental(ScoreNoteEvent.ACCIDENTAL_DOUBLE_FLAT), key);
+    }
+
+    private static int keyAt(ScorePageInterpretation score, int bar, int fallback) {
+        int key = fallback;
+        for (var change : score.keyChanges()) if (change.measureIndex() <= bar) key = change.fifths();
+        return key;
+    }
+
+    private static ScoreNoteEvent harmonicQuarter(ScoreNoteEvent note, int stem, int semitones) {
+        return withQuarter(note, stem).withOctaveShift(0).withHarmonicSemitones(semitones);
+    }
+    /** Engrave two proved upstem chords without changing the retained sounded quarter clocks. */
+    static ScorePageInterpretation retainUpstemRoles(
+            ScorePageInterpretation score, List<Map<String, Object>> events,
+            List<PlayingTechniqueDetector.Word> words, byte[] raw,
+            byte[] normalized, int width, int height, float[] beats, double[] starts, int[] keys) {
+        var bars = score.measures();
+        var notes = score.notes();
+        var updated = new ArrayList<>(notes);
+        boolean found = false;
+        for (int bar = 1; bar + 1 < bars.size(); bar++) {
+            if (beats[bar] != 2 || bars.get(bar).cadenceQuarterBeats() != 0) continue;
+            int measure = bar;
+            if (score.rests().stream().anyMatch(rest -> rest.measureIndex() == measure)) continue;
+            var members = local(score, bar, width, height);
+            if (members.size() != 4 || members.stream().anyMatch(member ->
+                    !quarter(member.note()) || member.note().stemDirection() != 1
+                    || member.note().openStringTouch() != null
+                    || member.note().clefBottomDiatonic() != ScoreNoteEvent.CLEF_TREBLE
+                    || member.note().articulations() != 0
+                    || !Integer.valueOf(member.index()).equals(events.get(member.index()).get("sourceNoteIndex"))))
+                continue;
+            var first = upstemRoles(raw, width, height, bars, bar, members);
+            var second = upstemRoles(normalized, width, height, bars, bar, members);
+            if (!first.equals(second) || first.size() != 2) continue;
+            var a = first.get(0);
+            var b = first.get(1);
+            if (!quarterRoleIdentity(a.lower(), events, starts[bar], keys[bar], false)
+                    || !quarterRoleIdentity(a.upper(), events, starts[bar], keys[bar], false)
+                    || !quarterRoleIdentity(b.lower(), events, starts[bar] + 1, keys[bar], true)
+                    || !quarterRoleIdentity(b.upper(), events, starts[bar] + 1, keys[bar], false)) continue;
+            writeUpstemRole(a.lower(), updated, events, keys[bar], false);
+            writeUpstemRole(a.upper(), updated, events, keys[bar], false);
+            writeUpstemRole(b.lower(), updated, events, keys[bar], true);
+            writeUpstemRole(b.upper(), updated, events, keys[bar], false);
+            var region = bars.get(bar);
+            retainQuarterFingerings(events, words, raw, normalized, width, height,
+                    (region.bottom() - region.top()) * height / 8.2f, a, b);
+            found = true;
+        }
+        if (!found) return score;
+        var owners = IntStream.range(0, notes.size()).boxed().toList();
+        return score.withNotes(updated, owners).withClockContextSource(score.clockContextSource());
+    }
+
+    private static void retainQuarterFingerings(List<Map<String, Object>> events,
+            List<PlayingTechniqueDetector.Word> words, byte[] raw, byte[] normalized,
+            int width, int height, float gap, Attack a, Attack b) {
+        var aUpper = quarterFingers(words, raw, normalized, width, height, gap, a, true);
+        var bUpper = quarterFingers(words, raw, normalized, width, height, gap, b, true);
+        var aLower = quarterFingers(words, raw, normalized, width, height, gap, a, false);
+        var bLower = quarterFingers(words, raw, normalized, width, height, gap, b, false);
+        if (aUpper != null && aUpper.provedTouch())
+            events.get(a.upper().index()).put("compoundHarmonicFingering", aUpper.fingering("above"));
+        if (bUpper != null && bUpper.provedTouch())
+            events.get(b.upper().index()).put("compoundHarmonicFingering", bUpper.fingering("above"));
+        boolean repeated = aLower != null && bLower != null
+                && PrintedFingeringDigits.repeatedHarmonicThree(aLower, bLower, width);
+        if (aLower != null && (aLower.provedTouch() || repeated))
+            events.get(a.lower().index()).put("compoundHarmonicFingering", aLower.fingering("below"));
+        if (bLower != null && (bLower.provedTouch() || repeated))
+            events.get(b.lower().index()).put("compoundHarmonicFingering", bLower.fingering("below"));
+    }
+
+    private static PrintedFingeringDigits.HarmonicStack quarterFingers(
+            List<PlayingTechniqueDetector.Word> words, byte[] raw, byte[] normalized,
+            int width, int height, float gap, Attack attack, boolean above) {
+        float x = above ? attack.upper().x() : attack.lower().x();
+        float edge = above ? attack.end() : attack.lower().y();
+        return PrintedFingeringDigits.harmonicStack(words, raw, normalized, width, height, x,
+                edge + gap * (above ? -3.4f : .8f), edge + gap * (above ? .42f : 4.4f), gap);
+    }
+
+    private static List<Attack> upstemRoles(byte[] gray, int width, int height,
+            List<MeasureRegion> bars, int bar, List<Owner> members) {
+        var region = bars.get(bar);
+        float nominal = (region.bottom() - region.top()) * height / 8.2f;
+        if (nominal < 10 || nominal > 25
+                || Math.abs(region.top() - bars.get(bar - 1).top()) * height > nominal * .36f
+                || Math.abs(region.top() - bars.get(bar + 1).top()) * height > nominal * .36f) return List.of();
+        var rules = PrintedDirectionStaff.printedRules(gray, width, height,
+                (region.left() + region.right()) * width * .5f,
+                region.bottom() * height - 2.1f * nominal, nominal);
+        if (rules == null) return List.of();
+        float gap = rules[1];
+        var staff = new PlayingTechniqueDetector.Staff(rules[0] - 4 * gap, rules[0], gap, 0, 1);
+        if (!interiorRule(gray, width, height, staff, bars.get(bar - 1), region)
+                || !interiorRule(gray, width, height, staff, region, bars.get(bar + 1))
+                || members.stream().anyMatch(n -> !filledStaffHead(gray, width, height, n, staff)))
+            return List.of();
+        var a = attack(members, 0, gray, width, height, staff);
+        var b = attack(members, 2, gray, width, height, staff);
+        if (a == null || b == null || a.direction() != 1 || b.direction() != 1
+                || !paperSeparatesAttacks(gray, width, height, a, b, staff)
+                || !provedLowerTouch(gray, width, height, a, gap, 3)
+                || !provedLowerTouch(gray, width, height, b, gap, 2)) return List.of();
+        return List.of(a, b);
+    }
+
+    private static boolean provedLowerTouch(
+            byte[] gray, int width, int height, Attack attack, float gap, int steps) {
+        var lower = attack.lower();
+        return ArtificialHarmonics.shaftCrossedDiamond(gray, width, height, lower.x(),
+                lower.y() - steps * gap * .5f, gap, attack.stem(), 1, true);
+    }
+
+    private static boolean quarterRoleIdentity(
+            Owner owner, List<Map<String, Object>> events, double onset, int key, boolean third) {
+        var n = owner.note();
+        var event = events.get(owner.index());
+        int written = ScoreTiePitchGuard.writtenMidi(n.diatonicPitchIdentity(), n.writtenAccidental(), key);
+        int touch = ScoreTiePitchGuard.writtenMidi(n.diatonicPitchIdentity() + (third ? 2 : 3),
+                ScoreNoteEvent.ACCIDENTAL_FROM_KEY, key);
+        return n.octaveShift() == (third ? 0 : 2) && n.harmonicSemitones() == (third ? 28 : 0)
+                && touch - written == (third ? 4 : 5)
+                && Integer.valueOf(written + (third ? 28 : 24)).equals(event.get("midi"))
+                && Double.valueOf(onset).equals(event.get("startBeat"))
+                && Double.valueOf(1).equals(event.get("durationBeats"))
+                && Boolean.FALSE.equals(event.get("durationFallback"))
+                && Boolean.FALSE.equals(event.get("clefInferred"))
+                && !event.containsKey("writtenPlacement");
+    }
+
+    private static void writeUpstemRole(Owner owner, List<ScoreNoteEvent> notes,
+            List<Map<String, Object>> events, int key, boolean third) {
+        var n = owner.note();
+        var event = events.get(owner.index());
+        int written = ScoreTiePitchGuard.writtenMidi(n.diatonicPitchIdentity(), n.writtenAccidental(), key);
+        event.remove("octaveShift");
+        event.put("writtenMidi", written);
+        event.put("harmonicTouchMidi", written + (third ? 4 : 5));
+        event.put(third ? "artificialHarmonicThird" : "artificialHarmonicFourth", true);
+        event.put("sharedUpstemHarmonicQuarter", true);
+        notes.set(owner.index(), n.withOctaveShift(0).withHarmonicSemitones(third ? 28 : 24));
+    }
+
+    /**
+     * Recover the unflagged shared downstems before a closing upstem cadence.
+     * A ledger can fill a diamond while the ordinary label records the shaft as a flag.
+     */
+    static ScorePageInterpretation retainClosingDownstemRoles(
+            ScorePageInterpretation score, List<Map<String, Object>> events, byte[] labels,
+            byte[] raw, byte[] normalized, int width, int height, float[] beats, double[] starts, int[] keys,
+            List<SourceLocalAccidental.PrintedMark> printedMarks) {
+        var bars = score.measures();
+        int last = bars.size() - 1, first = last - 2;
+        if (first < 1 || beats[first] != 2 || beats[first + 1] != 2 || beats[last] != 1
+                || bars.get(last).cadenceQuarterBeats() != 1) return score;
+        var meters = score.meterChanges();
+        if (meters.isEmpty()) return score;
+        var meter = meters.get(meters.size() - 1);
+        if (meter.measureIndex() > first || meter.numerator() != 2 || meter.denominator() != 4
+                || score.rests().stream().anyMatch(rest -> rest.measureIndex() >= first)) return score;
+        var a = local(score, first, width, height);
+        var b = local(score, first + 1, width, height);
+        var terminal = local(score, last, width, height);
+        if (!closingOwners(a, events, starts[first], true)
+                || !closingOwners(b, events, starts[first + 1], false)
+                || terminal.size() != 2 || terminal.stream().anyMatch(n -> !quarter(n.note())
+                        || n.note().stemDirection() != 1 || n.note().octaveShift() != 2)) return score;
+        var source = closingDownstems(bars, first, a, b, terminal, labels, raw, width, height);
+        if (source.size() != 3 || !source.equals(
+                closingDownstems(bars, first, a, b, terminal, labels, normalized, width, height))) return score;
+        if (!closedDownstemPitches(source.get(0), keys[first], true)
+                || !closedDownstemPitches(source.get(1), keys[first], false)
+                || !closedDownstemPitches(source.get(2), keys[first + 1], false)) return score;
+        var notes = new ArrayList<>(score.notes());
+        for (int i = 0; i < source.size(); i++) {
+            var chord = source.get(i);
+            int key = keys[first + i / 2];
+            double onset = starts[first] + i;
+            writeClosingDownstem(chord.lower(), notes, events, key, onset, i == 0);
+            writeClosingDownstem(chord.upper(), notes, events, key, onset, false);
+        }
+        var firstLower = source.get(0).lower();
+        var region = bars.get(first);
+        float gap = (region.bottom() - region.top()) * height / 8.2f;
+        var query = new ArtificialHarmonics.TouchHead(firstLower.note(), firstLower.x(), firstLower.y(), gap);
+        var literals = OmrScoreInterpreter.harmonicTouchAccidentals(
+                labels, normalized, raw, width, height, score, List.of(query));
+        if (firstLower.note().writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_FLAT
+                && Integer.valueOf(ScoreNoteEvent.ACCIDENTAL_FLAT).equals(literals.get(firstLower.note())))
+            printedMarks.add(new SourceLocalAccidental.PrintedMark(firstLower.index(), ScoreNoteEvent.ACCIDENTAL_FLAT));
+        var owners = IntStream.range(0, notes.size()).boxed().toList();
+        return score.withNotes(notes, owners).withClockContextSource(score.clockContextSource());
+    }
+
+
+    /** Resolves two complete unflagged downstem quarters when a folded shaft edge was read as a flag. */
+    static ScorePageInterpretation retainClosedFourthPairs(
+            ScorePageInterpretation score, List<Map<String, Object>> events, byte[] labels, byte[] raw,
+            byte[] normalized, int width, int height, float[] beats, double[] starts, int[] keys) {
+        var meters = score.meterChanges();
+        if (meters.isEmpty() || raw == null || normalized == null || labels == null
+                || raw.length != (long) width * height || normalized.length != raw.length
+                || labels.length != raw.length || events.size() != score.notes().size()) return score;
+        var meter = meters.get(meters.size() - 1);
+        if (meter.numerator() != 2 || meter.denominator() != 4) return score;
+        var revised = new ArrayList<>(score.notes());
+        var bars = score.measures();
+        for (int bar = Math.max(1, meter.measureIndex() + 1); bar + 1 < bars.size(); bar++) {
+            final int measure = bar;
+            if (beats[bar] != 2 || bars.get(bar).cadenceQuarterBeats() != 0
+                    || score.rests().stream().anyMatch(rest -> rest.measureIndex() == measure)) continue;
+            var owners = local(score, bar, width, height);
+            if (!foldedQuarterOwners(owners, events, starts[bar])) continue;
+            var first = opticalFourthPairs(bars, bar, owners, labels, raw, width, height);
+            if (first.isEmpty()) continue;
+            var second = opticalFourthPairs(bars, bar, owners, labels, normalized, width, height);
+            if (second.size() != first.size()) continue;
+            boolean agrees = true;
+            for (int i = 0; i < first.size(); i++) {
+                var a = first.get(i);
+                var b = second.get(i);
+                if (Math.abs(a.stem() - b.stem()) > 1 || Math.abs(a.end() - b.end()) > 2
+                        || !closedDownstemPitches(a, keys[bar], false)) agrees = false;
+            }
+            if (!agrees) continue;
+            for (int i = 0; i < 2; i++) {
+                var chord = first.get(i);
+                writeClosingDownstem(chord.lower(), revised, events, keys[bar], starts[bar] + i, false);
+                writeClosingDownstem(chord.upper(), revised, events, keys[bar], starts[bar] + i, false);
+            }
+        }
+        if (revised.equals(score.notes())) return score;
+        return score.withNotes(revised, IntStream.range(0, revised.size()).boxed().toList())
+                .withClockContextSource(score.clockContextSource());
+    }
+
+    private static boolean foldedQuarterOwners(List<Owner> owners, List<Map<String, Object>> events,
+            double firstBeat) {
+        if (owners.size() != 4) return false;
+        var upperLast = owners.get(2).y() < owners.get(3).y() ? owners.get(2) : owners.get(3);
+        for (int i = 0; i < owners.size(); i++) {
+            var owner = owners.get(i);
+            var note = owner.note();
+            var event = events.get(owner.index());
+            boolean folded = owner == upperLast;
+            if (!ordinary(note) || note.clefBottomDiatonic() != ScoreNoteEvent.CLEF_TREBLE
+                    || note.stemDirection() != -1 || note.octaveShift() != 2 || note.harmonicSemitones() != 0
+                    || note.openStringTouch() != null || note.articulations() != 0
+                    || (folded ? note.beamCount() != 1 || note.unbeamedDurationBeats() != 0 : !quarter(note))
+                    || !Integer.valueOf(owner.index()).equals(event.get("sourceNoteIndex"))
+                    || !Boolean.FALSE.equals(event.get("durationFallback")) || event.containsKey("writtenPlacement")
+                    || !Double.valueOf(firstBeat + i / 2 + .25).equals(event.get("startBeat"))
+                    || !Double.valueOf(folded ? .5 : 1).equals(event.get("durationBeats"))) return false;
+        }
+        return true;
+    }
+
+    private static List<Attack> opticalFourthPairs(List<MeasureRegion> bars, int index, List<Owner> owners,
+            byte[] labels, byte[] ink, int width, int height) {
+        var region = bars.get(index);
+        float nominal = (region.bottom() - region.top()) * height / 8.2f;
+        if (nominal < 10 || nominal > 25) return List.of();
+        var rails = PrintedDirectionStaff.printedRules(ink, width, height,
+                (region.left() + region.right()) * width * .5f,
+                region.bottom() * height - 2.1f * nominal, nominal);
+        if (rails == null || Math.abs(rails[1] - nominal) > nominal * .12f) return List.of();
+        float gap = rails[1];
+        var staff = new PlayingTechniqueDetector.Staff(rails[0] - gap * 4, rails[0], gap, 0, 1);
+        for (int i = index - 1; i <= index; i++) {
+            if (Math.abs(bars.get(i).top() - bars.get(i + 1).top()) * height > gap * .36f
+                    || !interiorRule(ink, width, height, staff, bars.get(i), bars.get(i + 1))) return List.of();
+        }
+        var a = closingDownstem(owners, 0, 3, labels, ink, width, height, staff);
+        var b = foldedDownstem(owners.get(2), owners.get(3), labels, ink, width, height, staff);
+        if (a == null || b == null || b.stem() - a.stem() < gap * 3.2f || b.stem() - a.stem() > gap * 7.5f
+                || a.upper().note().staffStep() - a.lower().note().staffStep() != 5
+                || b.upper().note().staffStep() - b.lower().note().staffStep() != 5
+                || a.upper().note().staffStep() - b.upper().note().staffStep()
+                        != a.lower().note().staffStep() - b.lower().note().staffStep()
+                || !paperSeparatesAttacks(ink, width, height, a, b, staff)) return List.of();
+        return List.of(a, b);
+    }
+
+    private static Attack foldedDownstem(Owner one, Owner two, byte[] labels, byte[] ink,
+            int width, int height, PlayingTechniqueDetector.Staff staff) {
+        var upper = one.y() < two.y() ? one : two;
+        var lower = upper == one ? two : one;
+        float gap = staff.gap();
+        if (Math.abs(upper.x() - lower.x()) > gap * .17f || !filledStaffHead(ink, width, height, upper, staff)
+                || !filledStaffHead(ink, width, height, lower, staff)) return null;
+        float lowTouch = staff.bottom() - (lower.note().staffStep() + 3) * gap * .5f;
+        float highTouch = staff.bottom() - (upper.note().staffStep() + 3) * gap * .5f;
+        if (!ArtificialHarmonics.symbolDiamond(labels, ink, width, height, lower.x(), lowTouch, gap)
+                || !ArtificialHarmonics.symbolDiamond(labels, ink, width, height, upper.x(), highTouch, gap))
+            return null;
+        var budget = new PrintedBeamShafts.Budget(85_000);
+        var top = PrintedBeamShafts.at(ink, width, height, upper.x(), upper.y(), gap, budget);
+        var base = PrintedBeamShafts.at(ink, width, height, lower.x(), lower.y(), gap, budget);
+        if (budget.refused() || top.size() != 1 || base.size() != 1
+                || top.get(0).direction() != 1 || base.get(0).direction() != 1) return null;
+        var upperStem = top.get(0);
+        var lowerStem = base.get(0);
+        int end = lowerStem.endY();
+        if (end - upperStem.endY() < gap * .26f || end - upperStem.endY() > gap * .66f) return null;
+        for (int stem = Math.max(upperStem.left(), lowerStem.left());
+                stem <= Math.min(upperStem.right(), lowerStem.right()); stem++) {
+            if (darkSpine(ink, width, height, stem, Math.round(highTouch + .24f * gap), end - 2, .93f)
+                    && ArtificialHarmonics.shaftCrossedDiamond(ink, width, height, upper.x(), highTouch,
+                            gap, stem, -1, true)
+                    && ArtificialHarmonics.shaftCrossedDiamond(ink, width, height, lower.x(), lowTouch,
+                            gap, stem, -1, true)
+                    && ArtificialHarmonics.unflaggedQuarterTip(
+                            ink, width, height, stem, lowTouch, lower.y(), end, -1, staff))
+                return new Attack(upper, lower, stem, end, -1);
+        }
+        return null;
+    }
+
+    private static boolean closingOwners(
+            List<Owner> notes, List<Map<String, Object>> events, double firstBeat, boolean aliasBar) {
+        if (notes.size() != 4) return false;
+        for (int i = 0; i < notes.size(); i++) {
+            var owner = notes.get(i);
+            var note = owner.note();
+            boolean flaggedAlias = aliasBar && i >= 2;
+            int stem = !aliasBar && i >= 2 ? 1 : -1;
+            var event = events.get(owner.index());
+            if (!ordinary(note) || note.stemDirection() != stem || note.openStringTouch() != null
+                    || note.articulations() != 0 || note.clefBottomDiatonic() != ScoreNoteEvent.CLEF_TREBLE
+                    || (flaggedAlias ? note.beamCount() != 1 || note.unbeamedDurationBeats() != 0 : !quarter(note))
+                    || !Integer.valueOf(owner.index()).equals(event.get("sourceNoteIndex"))
+                    || !Boolean.FALSE.equals(event.get("durationFallback"))
+                    || !Boolean.FALSE.equals(event.get("clefInferred"))
+                    || event.containsKey("writtenPlacement")
+                    || !Double.valueOf(firstBeat + i / 2 + (aliasBar ? .5 : 0)).equals(event.get("startBeat"))
+                    || !Double.valueOf(flaggedAlias ? .5 : 1).equals(event.get("durationBeats")))
+                return false;
+        }
+        return true;
+    }
+
+    private static List<Attack> closingDownstems(
+            List<MeasureRegion> bars, int first, List<Owner> a, List<Owner> b, List<Owner> terminal,
+            byte[] labels, byte[] ink, int width, int height) {
+        var region = bars.get(first);
+        float nominal = (region.bottom() - region.top()) * height / 8.2f;
+        if (nominal < 10 || nominal > 25) return List.of();
+        var rails = PrintedDirectionStaff.printedRules(ink, width, height,
+                (region.left() + region.right()) * width * .5f,
+                region.bottom() * height - 2.1f * nominal, nominal);
+        if (rails == null) return List.of();
+        float gap = rails[1];
+        var staff = new PlayingTechniqueDetector.Staff(rails[0] - gap * 4, rails[0], gap, 0, 1);
+        for (int i = first - 1; i < first + 2; i++)
+            if (Math.abs(bars.get(i).top() - bars.get(i + 1).top()) * height > gap * .36f
+                    || !interiorRule(ink, width, height, staff, bars.get(i), bars.get(i + 1))) return List.of();
+        var firstQuarter = closingDownstem(a, 0, 2, labels, ink, width, height, staff);
+        var secondQuarter = closingDownstem(a, 2, 3, labels, ink, width, height, staff);
+        var nextQuarter = closingDownstem(b, 0, 3, labels, ink, width, height, staff);
+        var nextUp = attack(b, 2, ink, width, height, staff);
+        if (firstQuarter == null || secondQuarter == null || nextQuarter == null || nextUp == null
+                || nextUp.direction() != 1 || attack(terminal, 0, ink, width, height, staff) == null
+                || !paperSeparatesAttacks(ink, width, height, firstQuarter, secondQuarter, staff)) return List.of();
+        return List.of(firstQuarter, secondQuarter, nextQuarter);
+    }
+
+    private static Attack closingDownstem(List<Owner> owners, int offset, int lowerSteps,
+            byte[] labels, byte[] ink, int width, int height, PlayingTechniqueDetector.Staff staff) {
+        var one = owners.get(offset);
+        var two = owners.get(offset + 1);
+        var upper = one.y() < two.y() ? one : two;
+        var lower = upper == one ? two : one;
+        float gap = staff.gap();
+        int separation = upper.note().staffStep() - lower.note().staffStep();
+        if (separation < 4 || separation > 5 || Math.abs(upper.x() - lower.x()) > gap * .16f
+                || !filledStaffHead(ink, width, height, upper, staff)
+                || !filledStaffHead(ink, width, height, lower, staff)) return null;
+        float lowTouch = staff.bottom() - (lower.note().staffStep() + lowerSteps) * gap * .5f;
+        float highTouch = staff.bottom() - (upper.note().staffStep() + 3) * gap * .5f;
+        if (!ArtificialHarmonics.symbolDiamond(labels, ink, width, height, lower.x(), lowTouch, gap))
+            return null;
+        var budget = new PrintedBeamShafts.Budget(85_000);
+        var a = PrintedBeamShafts.at(ink, width, height, upper.x(), upper.y(), gap, budget);
+        var b = PrintedBeamShafts.at(ink, width, height, lower.x(), lower.y(), gap, budget);
+        if (a.size() != 1 || b.size() != 1 || a.get(0).direction() != 1 || b.get(0).direction() != 1
+                || Math.abs(a.get(0).endY() - b.get(0).endY()) > gap * .12f) return null;
+        int end = b.get(0).endY();
+        boolean clearHigh = ArtificialHarmonics.symbolDiamond(labels, ink, width, height, upper.x(), highTouch, gap);
+        for (int stem = Math.max(a.get(0).left(), b.get(0).left());
+                stem <= Math.min(a.get(0).right(), b.get(0).right()); stem++) {
+            boolean high = clearHigh;
+            if (!high && highTouch < staff.top() - gap * .5f)
+                for (int delta = -2; delta <= 2; delta++)
+                    high |= LedgerCrossedHarmonicDiamond.proved(
+                            labels, ink, width, height, upper.x(), highTouch + delta, gap, stem, -1);
+            if (high
+                    && darkSpine(ink, width, height, stem, Math.round(highTouch + gap * .22f), end, .96f)
+                    && ArtificialHarmonics.unflaggedQuarterTip(
+                            ink, width, height, stem, lowTouch, lower.y(), end, -1, staff))
+                return new Attack(upper, lower, stem, end, -1);
+        }
+        return null;
+    }
+
+    private static boolean closedDownstemPitches(Attack attack, int key, boolean lowerThird) {
+        return printedFourth(attack.upper().note(), key)
+                && (lowerThird ? printedMajorThird(attack.lower().note(), key) : printedFourth(attack.lower().note(), key));
+    }
+
+    private static boolean printedMajorThird(ScoreNoteEvent note, int key) {
+        int stopped = ScoreTiePitchGuard.writtenMidi(note.diatonicPitchIdentity(), note.writtenAccidental(), key);
+        int touch = ScoreTiePitchGuard.writtenMidi(
+                note.diatonicPitchIdentity() + 2, ScoreNoteEvent.ACCIDENTAL_FROM_KEY, key);
+        return stopped >= 0 && stopped + 28 <= 127 && touch - stopped == 4;
+    }
+
+    private static void writeClosingDownstem(Owner owner, List<ScoreNoteEvent> notes,
+            List<Map<String, Object>> events, int key, double onset, boolean third) {
+        var note = owner.note();
+        var event = events.get(owner.index());
+        int written = ScoreTiePitchGuard.writtenMidi(note.diatonicPitchIdentity(), note.writtenAccidental(), key);
+        int harmonic = third ? 28 : 24;
+        event.remove("octaveShift");
+        event.put("writtenMidi", written);
+        event.put("harmonicTouchMidi", written + (third ? 4 : 5));
+        event.put("midi", written + harmonic);
+        event.put("startBeat", onset);
+        event.put("durationBeats", 1.0);
+        event.put(third ? "artificialHarmonicThird" : "artificialHarmonicFourth", true);
+        event.put("sharedDownstemHarmonicQuarter", true);
+        notes.set(owner.index(), withQuarter(note, -1).withOctaveShift(0).withHarmonicSemitones(harmonic));
+    }
+
     /** Proves the short final quarter from both stopped heads and their touch diamonds. */
     static ScorePageInterpretation closeTerminalPair(
             ScorePageInterpretation score, byte[] normalized, byte[] original, int width, int height) {
@@ -491,6 +1723,17 @@ final class ClosedDoubleHarmonicQuarters {
         return null;
     }
 
+    record QuarterShaft(int column, int end) {}
+
+    static QuarterShaft stoppedQuarterShaft(byte[] ink, int width, int height,
+            ScoreNoteEvent lower, ScoreNoteEvent upper, float lowerX, float upperX,
+            PlayingTechniqueDetector.Staff staff) {
+        var attack = denseDownstem(ink, width, height,
+                new Owner(0, lower, lowerX, lower.pageY() * height),
+                new Owner(1, upper, upperX, upper.pageY() * height), staff);
+        return attack == null ? null : new QuarterShaft(attack.stem(), attack.end());
+    }
+
     private static boolean filledStaffHead(
             byte[] gray, int width, int height, Owner owner, PlayingTechniqueDetector.Staff staff) {
         float gap = staff.gap();
@@ -811,7 +2054,7 @@ final class ClosedDoubleHarmonicQuarters {
         return ClosedSixteenthPairBeforeHalf.ownedSeparator(gray, width, height, staff, expected);
     }
 
-    private static ScoreNoteEvent withQuarter(ScoreNoteEvent n, int direction) {
+    static ScoreNoteEvent withQuarter(ScoreNoteEvent n, int direction) {
         return new ScoreNoteEvent(
                 n.measureIndex(),
                 n.positionInMeasure(),

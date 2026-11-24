@@ -71,6 +71,58 @@ public class ClosedMonophonicQuartetNumeralTest {
                 score, cut, ink, width, height, 1));
     }
 
+    @Test
+    public void independentUpperFingeringThreesDoNotSplitClosedSixteenthQuartets() {
+        int width = 560, height = 300;
+        int left = 44, right = 509, floor = 209;
+        var ink = new byte[width * height];
+        Arrays.fill(ink, (byte) 255);
+        for (int y = floor - 64; y <= floor; y += 16)
+            rectangle(ink, width, 28, 550, y, y + 1, 0);
+        rectangle(ink, width, left - 1, left + 1, floor - 64, floor + 1, 0);
+        rectangle(ink, width, right - 1, right + 1, floor - 64, floor + 1, 0);
+        var marks = new ArrayList<PlayingTechniqueDetector.Word>();
+        var notes = new ArrayList<ScoreNoteEvent>();
+        for (int i = 0; i < 12; i++) {
+            int x = 70 + 37 * i, y = 74 + 5 * (i % 4);
+            int stem = x - 9;
+            rectangle(ink, width, x - 9, x + 7, y - 5, y + 5, 0);
+            rectangle(ink, width, stem - 1, stem + 1, y, 134, 0);
+            if (i % 4 == 0) {
+                rectangle(ink, width, stem, stem + 111, 116, 121, 0);
+                rectangle(ink, width, stem, stem + 111, 128, 134, 0);
+            }
+            boolean tuplet = i < 3 || i >= 5 && i < 8;
+            notes.add(new ScoreNoteEvent(1, (x - left) / (float) (right - left), (floor - y) / 8,
+                    0, 1, y / (float) height, false, 0, 2, ScoreNoteEvent.ACCIDENTAL_FROM_KEY,
+                    0, tuplet ? 3 : 1, 0, 0, ScoreNoteEvent.CLEF_TREBLE, false, 0, false, 0, 0,
+                    tuplet ? 2 : 1, -1, ScoreNoteEvent.Kind.PITCHED, ScoreNoteEvent.VisualSize.FULL, 0, null));
+            if (i != 1 && i != 6) continue;
+            marks.add(new PlayingTechniqueDetector.Word("3", (x - 11f) / width,
+                    (y - 35f) / height, (x + 12f) / width, (y - 12f) / height));
+            for (int yy : new int[] {y - 32, y - 24, y - 16})
+                rectangle(ink, width, x - 6, x + 6, yy, yy + 2, 0);
+            rectangle(ink, width, x + 4, x + 6, y - 32, y - 14, 0);
+        }
+        var bars = List.of(new MeasureRegion(.1f, .8f, .02f, .1f),
+                new MeasureRegion(left / (float) width, right / (float) width, 111f / height, 242f / height),
+                new MeasureRegion(right / (float) width, .99f, 111f / height, 242f / height));
+        var meter = new ScoreMeterChange(1, 3, 4);
+        var score = new ScorePageInterpretation(bars, notes, 0, List.of(), List.of(), List.of(meter),
+                List.of(), List.of(), List.of(), List.of());
+        var fixed = ClosedMonophonicSixteenths.restoreWrittenClock(
+                score, meter, marks, ink, ink.clone(), width, height);
+        assertEquals(notes.stream().map(n -> n.withTupletRatio(1, 1)).toList(), fixed.notes());
+        assertSame(score, ClosedMonophonicSixteenths.restoreWrittenClock(
+                score, meter, marks.subList(0, 1), ink, ink.clone(), width, height));
+
+        var missingBeam = ink.clone();
+        rectangle(missingBeam, width, 75, 92, 116, 135, 255);
+        assertSame(score, ClosedMonophonicSixteenths.restoreWrittenClock(
+                score, meter, marks, ink, missingBeam, width, height));
+    }
+
+
     private static void rectangle(byte[] ink, int width, int x0, int x1, int y0, int y1, int value) {
         for (int y = y0; y <= y1; y++)
             Arrays.fill(ink, y * width + x0, y * width + x1 + 1, (byte) value);

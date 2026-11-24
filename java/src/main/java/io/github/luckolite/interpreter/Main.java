@@ -146,10 +146,21 @@ public final class Main {
                         gray,
                         width,
                         height,
-                        physicalPage);
+                        physicalPage,
+                        annotations.words());
         score = PrintedLedgerSlurContinuations.apply(
                 score, decoderGray == null ? gray : decoderGray, gray, labels,
                 width, height, physicalPage, initialKey);
+        var printedFingerThrees = new ArrayList<>(decoded.printedFingeringThreeOwners());
+        var provedDyadAccidentals = new ArrayList<>(decoded.provedDyadAccidentals());
+        byte[] rhythmRaster = decoderGray == null ? gray : decoderGray;
+        var fingered = ClosedSixteenthDyads.restoreOpposedFingeringQuartets(
+                score, initialMeter, rhythmRaster, gray, width, height, physicalPage, printedFingerThrees::add);
+        if (fingered != score) {
+            score = PrintedAccidentalSpineRecovery.reconcileSpacedThirds(
+                    fingered.withClockContextSource(score.clockContextSource()), labels, gray, rhythmRaster,
+                    width, height, provedDyadAccidentals::add);
+        }
         score =
                 ClosedDottedSixteenths.applyClosedOctaves(
                         score,
@@ -195,11 +206,14 @@ public final class Main {
                         score,
                         initialMeter,
                         decoderGray == null ? gray : decoderGray,
+                        gray,
                         width,
                         height,
                         beats,
                         labels,
-                        keys);
+                        keys,
+                        annotations.words().stream().map(SheetInterpreter.Word::internal).toList());
+
         wrapped = WrappedSixteenthMeasure.capture(
                 wrapped, initialMeter, decoderGray == null ? gray : decoderGray,
                 width, height, beats, labels, keys);
@@ -208,6 +222,10 @@ public final class Main {
                 decoderGray == null ? gray : decoderGray, width, height, beats);
         score = ClosedLateTripleDyads.normalize(
                 tiedCadence.score(), initialMeter, decoderGray == null ? gray : decoderGray, width, height);
+        score = OwnedTertiaryBeamlets.applyInteriorRhythm(
+                score, gray, decoderGray == null ? gray : decoderGray, width, height);
+        score = ClosedDottedSixteenths.restoreTripleDottedOctaveClock(
+                score, initialMeter, rhythmRaster, gray, width, height);
         float[] lateDyadOnsets = ClosedLateTripleDyads.place(
                 score, initialMeter, decoderGray == null ? gray : decoderGray, width, height, beats, cadences);
         var harmonicQuarterOnsets =
@@ -362,9 +380,20 @@ public final class Main {
                     starts);
         attachNotePerformance(score.notes(), events);
         if (standardViolin) {
+            score = ClosedStoppedAndOpenHarmonicQuarters.recover(score, events, labels, gray,
+                    decoderGray == null ? gray : decoderGray, width, height, beats, keys, starts);
             var mixed = ClosedMixedHarmonicQuarters.capture(score, labels, gray,
                     decoderGray == null ? gray : decoderGray, width, height, beats, keys);
             score = ClosedMixedHarmonicQuarters.apply(score, events, mixed, starts, width, height);
+            score = ClosedOpenAndStoppedHarmonicQuarters.recover(score, events,
+                    annotations.words().stream().map(SheetInterpreter.Word::internal).toList(),
+                    labels, gray, decoderGray == null ? gray : decoderGray,
+                    width, height, beats, keys, starts);
+            score = UpstemCompoundHarmonicQuarters.retain(score, events,
+                    annotations.words().stream().map(SheetInterpreter.Word::internal).toList(),
+                    gray, decoderGray == null ? gray : decoderGray, width, height, beats, starts, keys);
+            ClosedUpstemHarmonicChange.retainRoles(score, events, starts, keys);
+            ClosedDownstemCompoundQuarters.retainRoles(score, events, starts);
             var recovered = OpenStringHarmonics.recover(score, initialKey);
             var compoundFourths = OpenStringHarmonics.captureFourthPartners(
                     score, gray, decoderGray == null ? gray : decoderGray, width, height, keys, recovered);
@@ -389,6 +418,14 @@ public final class Main {
                 score = score.withNotes(changed, owners).withClockContextSource(score.clockContextSource());
             }
             score = appendOpenStringHarmonics(score, events, recovered, height);
+            score = UpstemCompoundHarmonicQuarters.recoverOpeningTouchAlias(score, events,
+                    annotations.words().stream().map(SheetInterpreter.Word::internal).toList(),
+                    gray, decoderGray == null ? gray : decoderGray, width, height, beats, starts, keys);
+            score = UpstemCompoundHarmonicQuarters.recoverClosingTouchAlias(score, events,
+                    annotations.words().stream().map(SheetInterpreter.Word::internal).toList(),
+                    gray, decoderGray == null ? gray : decoderGray, width, height, beats, starts, keys);
+            score = OpeningHarmonicQuarters.recover(score, events, labels, gray,
+                    decoderGray == null ? gray : decoderGray, width, height, beats, keys, starts);
         }
         var hollow = tabs.isEmpty() ? TerminalOpenHarmonicHeads.capture(score, labels,
                 decoderGray == null ? gray : decoderGray, gray, width, height, beats,
@@ -436,10 +473,67 @@ public final class Main {
             score = score.withNotes(notes,owners).withClockContextSource(context);
             hollow = List.copyOf(archived);
         }
+        var beamedHarmonicAccidentals = new ArrayList<SourceLocalAccidental.PrintedMark>();
+        if (standardViolin) {
+            ClosedDoubleHarmonicQuarters.retainHeaderedStackRoles(score, events,
+                    annotations.words().stream().map(SheetInterpreter.Word::internal).toList(),
+                    labels, gray, decoderGray == null ? gray : decoderGray, width, height, beats, starts, keys,
+                    beamedHarmonicAccidentals);
+            ClosedDoubleHarmonicQuarters.retainMixedStemStackRoles(score, events,
+                    annotations.words().stream().map(SheetInterpreter.Word::internal).toList(),
+                    labels, gray, decoderGray == null ? gray : decoderGray, width, height, beats, starts, keys);
+            score = ClosedDoubleHarmonicQuarters.retainClosingDownstemRoles(score, events, labels,
+                    gray, decoderGray == null ? gray : decoderGray, width, height, beats, starts, keys,
+                    beamedHarmonicAccidentals);
+            score = ClosedDoubleHarmonicQuarters.retainClosedFourthPairs(score, events, labels,
+                    gray, decoderGray == null ? gray : decoderGray, width, height, beats, starts, keys);
+            score = ClosedDownstemCompoundQuarters.recoverPenultimateMixed(
+                    score, events, labels, gray, decoderGray == null ? gray : decoderGray,
+                    width, height, beats, starts, keys, beamedHarmonicAccidentals);
+            score = ClosedDownstemCompoundQuarters.recoverPenultimateUpperOpen(
+                    score, events, labels, gray, decoderGray == null ? gray : decoderGray,
+                    width, height, beats, starts, keys);
+            score = ClosedDoubleHarmonicQuarters.retainUpstemRoles(score, events,
+                    annotations.words().stream().map(SheetInterpreter.Word::internal).toList(),
+                    gray, decoderGray == null ? gray : decoderGray, width, height, beats, starts, keys);
+        }
+        if (standardViolin)
+            score = BeamedArtificialFourths.apply(score, events, labels, gray,
+                    decoderGray == null ? gray : decoderGray, width, height,
+                    starts, keys, physicalPage, decoded.printedOctaveSpans(), beamedHarmonicAccidentals);
+        if (standardViolin)
+            score = BeamedArtificialFourths.retainClosedTripletFourths(score, events, labels, gray,
+                    decoderGray == null ? gray : decoderGray, width, height, starts, keys, physicalPage,
+                    decoded.printedOctaveSpans(),
+                    annotations.words().stream().map(SheetInterpreter.Word::internal).toList());
+        if (standardViolin)
+            score = BeamedArtificialFourths.retainPairedTouches(score, events, labels, gray,
+                    decoderGray == null ? gray : decoderGray, width, height, keys, decoded.beamedTouches());
+        if (standardViolin)
+            score = BeamedOpenStringHarmonics.capture(score, events, labels, gray,
+                    decoderGray == null ? gray : decoderGray, width, height, beats, starts, keys);
+        if (standardViolin)
+            score = BeamedArtificialFourths.retainDottedBeams(score, events, labels, gray,
+                    decoderGray == null ? gray : decoderGray, width, height, starts, keys, physicalPage,
+                    decoded.printedOctaveSpans(), beamedHarmonicAccidentals);
+        if (standardViolin)
+            score = ClosedBeamedOpenStringRun.capture(score, events, physicalPage, labels, gray,
+                    decoderGray == null ? gray : decoderGray, width, height, beats, starts, keys);
+        score = ClosedSixteenthDyads.captureWrittenOctaveQuartets(
+                score, events, gray, decoderGray == null ? gray : decoderGray, labels,
+                width, height, physicalPage, beats, starts);
+        if (standardViolin)
+            score = ClosedDoubleHarmonicQuarters.retainReverseTerminalStackRoles(score, events,
+                    annotations.words().stream().map(SheetInterpreter.Word::internal).toList(),
+                    gray, decoderGray == null ? gray : decoderGray, width, height, beats, starts, keys);
+        ClosedDoubleHarmonicQuarters.retainOpposedThirdRoles(score, events, width, height, beats, starts, keys);
         var result = new LinkedHashMap<String, Object>();
         result.put("schemaVersion", 1);
         result.put("width", width);
         result.put("height", height);
+        var ledgerExpressions = LedgerThirdExpressions.capture(
+                score, gray, decoderGray == null ? gray : decoderGray, width, height, physicalPage);
+        score = ledgerExpressions.score();
         result.put("score", score);
         result.put("events", events);
         result.put("tablatureWarnings", tabWarnings);
@@ -456,10 +550,28 @@ public final class Main {
         accidentals =
                 SourceLocalAccidental.includeClosedTripletSharps(
                         accidentals, decoded.provedSharpOwners(), score.notes());
-        if (sharedThird >= 0 || events.stream().anyMatch(
+        accidentals = SourceLocalAccidental.includeProvedLocalMarks(
+                accidentals, decoded.provedDoubleSharpOwners(), score.notes(),
+                ScoreNoteEvent.ACCIDENTAL_DOUBLE_SHARP);
+        accidentals = SourceLocalAccidental.includeProvedLocalMarks(
+                accidentals, provedDyadAccidentals, score.notes());
+        accidentals = SourceLocalAccidental.retainBeamedSharpRestatements(
+                accidentals, score.notes(), score.measures(), gray,
+                decoderGray == null ? gray : decoderGray, width, height);
+        accidentals = SourceLocalAccidental.retainLedgerSixthNaturals(
+                accidentals, score.notes(), score.measures(), gray,
+                decoderGray == null ? gray : decoderGray, width, height);
+        accidentals = SourceLocalAccidental.retainBeamedOctaveAccidentals(
+                accidentals, score.notes(), score.measures(), labels, gray,
+                decoderGray == null ? gray : decoderGray, width, height);
+        accidentals = SourceLocalAccidental.retainSingleStaffTripletFlats(
+                accidentals, score.notes(), score.measures(), labels, gray,
+                decoderGray == null ? gray : decoderGray, width, height);
+        if (!beamedHarmonicAccidentals.isEmpty() || sharedThird >= 0 || events.stream().anyMatch(
                 event -> Boolean.TRUE.equals(event.get("mixedHarmonicQuarter")))) {
             var marks = new java.util.TreeMap<Integer, SourceLocalAccidental.PrintedMark>();
             for (var mark : accidentals) marks.put(mark.noteIndex(), mark);
+            for (var mark : beamedHarmonicAccidentals) marks.putIfAbsent(mark.noteIndex(), mark);
             for (int i = 0; i < events.size(); i++) {
                 if (i != sharedThird && !Boolean.TRUE.equals(events.get(i).get("mixedHarmonicQuarter"))) continue;
                 int sign = score.notes().get(i).writtenAccidental();
@@ -468,6 +580,12 @@ public final class Main {
             }
             accidentals = List.copyOf(marks.values());
         }
+        if (tabs.isEmpty())
+            accidentals = PrintedAccidentalSpineRecovery.retain(
+                    accidentals, score, labels, gray, decoderGray, width, height);
+        if (tabs.isEmpty())
+            accidentals = ClosedOctavePrintedMarks.naturals(
+                    accidentals, score, gray, decoderGray == null ? gray : decoderGray, width, height);
         if (!accidentals.isEmpty()) {
             result.put("printedAccidentals", accidentals.stream().map(mark -> {
                 var value = new java.util.LinkedHashMap<String, Object>();
@@ -480,22 +598,65 @@ public final class Main {
         if (!wrapped.continuations().isEmpty())
             result.put("printedMeasureContinuations", wrapped.continuations());
         var barlineStyles = PrintedBarlineStyles.capture(
-                decoderGray == null ? gray : decoderGray, width, height, score.measures(),
+                decoderGray == null ? gray : decoderGray, gray, width, height, score.measures(),
                 wrapped.continuations());
         if (!barlineStyles.isEmpty()) result.put("printedBarlineStyles", barlineStyles);
         if (tabs.isEmpty()) {
             var fingerings = PrintedFingeringDigits.capture(
                     gray, decoderGray == null ? gray : decoderGray, width, height,
                     annotations.words(), score, events);
-            if (!fingerings.isEmpty()) result.put("printedFingerings", fingerings);
-            if (standardViolin) {
-                byte[] geometry = decoderGray == null ? gray : decoderGray;
-                var romanScore = score;
-                var marks = PrintedRomanStrings.capture(geometry, width, height, annotations.words(),
-                        score, events, () -> OmrScoreInterpreter.techniqueStaffs(
-                                labels, geometry, width, height, romanScore.measures()));
-                if (!marks.isEmpty()) result.put("printedStringMarks", marks);
+            fingerings = StaffOverlaidBeamFingering.include(
+                    fingerings, gray, decoderGray == null ? gray : decoderGray, width, height,
+                    annotations.words(), score);
+            fingerings = MeasuredStaffFingerings.retain(
+                    fingerings, score, labels, gray, decoderGray == null ? gray : decoderGray, width, height);
+            var parenthetical = ParentheticalFingerings.capture(fingerings, score, annotations.words(),
+                    labels, gray, decoderGray == null ? gray : decoderGray, width, height);
+            fingerings = RuledTripletFingeringAlias.attach(
+                    parenthetical.marks(), printedFingerThrees, score.notes());
+            fingerings = ClosedOctavePrintedMarks.fingerings(fingerings, score, gray,
+                    decoderGray == null ? gray : decoderGray, width, height, annotations.words());
+            if (!ledgerExpressions.fingerings().isEmpty()) {
+                var combined = new ArrayList<>(fingerings);
+                for (var proved : ledgerExpressions.fingerings()) {
+                    combined.removeIf(mark -> mark.noteIndex() == proved.noteIndex()
+                            && mark.placement() == proved.placement());
+                    combined.add(proved);
+                }
+                fingerings = List.copyOf(combined);
             }
+            if (!fingerings.isEmpty()) {
+                result.put("printedFingerings", fingerings);
+                result.put("score", WrappedEighthTriplets.retainTerminalFingerTriplets(
+                        score, fingerings, gray, decoderGray == null ? gray : decoderGray, width, height));
+            }
+            if (!parenthetical.groups().isEmpty())
+                result.put("printedFingeringGroups", parenthetical.groups());
+            byte[] geometry = decoderGray == null ? gray : decoderGray;
+            var marks = new ArrayList<PrintedRomanStrings.Mark>();
+            if (standardViolin) {
+                var romanScore = score;
+                marks.addAll(PrintedRomanStrings.capture(geometry, gray, width, height, annotations.words(),
+                        score, events, () -> OmrScoreInterpreter.techniqueStaffs(
+                                labels, geometry, width, height, romanScore.measures())));
+            }
+            var openingMarks = OpeningRomanStrings.capture(gray, geometry, width, height,
+                    annotations.words(), score, events);
+            for (var mark : openingMarks) {
+                if (marks.stream().noneMatch(previous -> previous.noteIndex() == mark.noteIndex()
+                        && previous.placement().equals(mark.placement()))) marks.add(mark);
+            }
+            if (!marks.isEmpty()) result.put("printedStringMarks", marks);
+            var stringContinuations = PrintedStringContinuations.capture(
+                    gray, geometry, width, height, annotations.words(), openingMarks, score, events);
+            if (!stringContinuations.isEmpty())
+                result.put("printedStringContinuations", stringContinuations);
+            var bowPositions = OpeningBowPositionDirections.capture(
+                    gray, geometry, width, height, annotations.words(), score, events);
+            if (!bowPositions.directions().isEmpty())
+                result.put("printedBowPositionDirections", bowPositions.directions());
+            if (!bowPositions.connectors().isEmpty())
+                result.put("printedBowPositionConnectors", bowPositions.connectors());
         }
         result.put("totalBeats", starts[beats.length]);
         Files.writeString(Path.of(args[1]), json(result) + "\n", StandardCharsets.UTF_8);
@@ -559,6 +720,10 @@ public final class Main {
             event.put("writtenMidi", harmonic.touchMidi());
             event.put("harmonicTouchMidi", harmonic.touchMidi());
             event.put("openStringMidi", harmonic.openMidi());
+            if (Boolean.TRUE.equals(anchor.get("compoundUpstemHarmonicBar"))) {
+                event.put("compoundUpstemHarmonicBar", true);
+                event.put("compoundHarmonicFingering", anchor.remove("compoundNaturalHarmonicFingering"));
+            }
             if (Boolean.TRUE.equals(anchor.get("mixedHarmonicQuarter")))
                 event.put("mixedHarmonicQuarter", true);
             event.put("clefInferred", false);
@@ -647,6 +812,10 @@ public final class Main {
                     identity.put("writtenMidi", midi);
                     identity.put("harmonicTouchMidi", touch);
                     identity.put("artificialHarmonicFourth", true);
+                    if (note.beamCount() == 2 && note.unbeamedDurationBeats() == 0
+                            && note.augmentationDots() == 0 && note.tupletDivisor() == 1
+                            && note.stemDirection() != 0)
+                        identity.put("beamedArtificialHarmonicFourth", true);
                     midi += 24;
                 }
             }
@@ -913,6 +1082,8 @@ public final class Main {
                 if (value instanceof ScoreBeamSource.Group group
                         && group.tupletMark() == null
                         && name.equals("tupletMark")) continue;
+                if (value instanceof ScoreTechniqueChange technique
+                        && technique.placement() == null && name.equals("placement")) continue;
                 if (!first) out.append(',');
                 first = false;
                 appendJson(out, name);

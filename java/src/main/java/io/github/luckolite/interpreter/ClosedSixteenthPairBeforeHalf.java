@@ -137,10 +137,19 @@ final class ClosedSixteenthPairBeforeHalf {
             int height,
             PlayingTechniqueDetector.Staff staff,
             float expected) {
+        return ownedSeparatorCenter(gray, width, height, staff, expected) >= 0;
+    }
+
+    static int ownedSeparatorCenter(
+            byte[] gray,
+            int width,
+            int height,
+            PlayingTechniqueDetector.Staff staff,
+            float expected) {
         float gap = staff.gap();
         int top = Math.round(staff.top()), bottom = Math.round(staff.bottom());
         int left = Math.round(expected - gap * .62f), right = Math.round(expected + gap * .62f);
-        if (left < 0 || right >= width || top < 0 || bottom >= height) return false;
+        if (left < 0 || right >= width || top < 0 || bottom >= height) return -1;
         int found = -1;
         for (int x = left; x <= right; x++) {
             if (!DottedDyadMeasureSeparator.fullInk(gray, width, x, top, gap)) continue;
@@ -154,10 +163,10 @@ final class ClosedSixteenthPairBeforeHalf {
                             gray, width, height, center, top, bottom, gap)
                     || DottedDyadMeasureSeparator.continuesBeyondStaff(
                             gray, width, height, center, top, bottom, gap)) continue;
-            if (found >= 0) return false;
+            if (found >= 0) return -1;
             found = center;
         }
-        return found >= 0;
+        return found;
     }
 
     private static List<ScoreNoteEvent> local(List<ScoreNoteEvent> notes, int bar) {

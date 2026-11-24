@@ -339,7 +339,7 @@ final class PrintedSlurOwners {
         return geometryBinding(id, page, bow, a, b, width, height);
     }
 
-    private static Binding geometryBinding(
+    static Binding geometryBinding(
             String id, int page, PrintedSlurContours.Bow bow, Location a, Location b,
             int width, int height) {
         var span =

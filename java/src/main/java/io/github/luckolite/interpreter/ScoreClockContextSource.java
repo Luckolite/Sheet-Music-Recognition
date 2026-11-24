@@ -28,6 +28,12 @@ public record ScoreClockContextSource(
                 meters, printedValues, glyphLedgers, restValues, voiceGroups, syncAnchors, missing);
     }
 
+    ScoreClockContextSource withoutNoteObservations(Set<Integer> replaced) {
+        return new ScoreClockContextSource(origin, noteCount, measureCount, restCount, partWords, numbers, meters,
+                printedValues.stream().filter(value -> !replaced.contains(value.noteIndex())).toList(),
+                glyphLedgers, restValues, voiceGroups, syncAnchors, missing);
+    }
+
     public enum Status {
         UNKNOWN,
         OBSERVATION,

@@ -97,6 +97,30 @@ public class SparseBeamedOvalTest {
         assertArrayEquals(a, p.a);
     }
 
+    @Test
+    public void sharpUprightsCannotLendAnOvalToAnAdjacentShaft() {
+        var page = fixture(0);
+        int x = 148, y = 104;
+        for (int row = y - 7; row <= y + 7; row++) {
+            for (int col = x - 10; col <= x + 10; col++) {
+                int at = row * page.w + col;
+                if ((page.g[at] & 255) < 225 && page.a[at] == 0)
+                    page.a[at] = OmrMeasurePostProcessor.CLEF_OR_KEY;
+            }
+        }
+        page.rect(x - 6, y - 2, 2, 38, 60, OmrMeasurePostProcessor.CLEF_OR_KEY);
+        page.rect(x + 2, y - 2, 2, 38, 60, OmrMeasurePostProcessor.CLEF_OR_KEY);
+
+        var noUpright = page.a.clone();
+        for (int row = y + 10; row < y + 38; row++)
+            noUpright[row * page.w + x + 2] = noUpright[row * page.w + x + 3] = 0;
+        assertTrue(SymbolStemHeadRecovery.sparseOvals(noUpright, page.g, page.w, page.h, 16, 44, 194)
+                .stream().anyMatch(h -> Math.abs(h.x() - x) < 3 && Math.abs(h.y() - y) < 3));
+        assertFalse(SymbolStemHeadRecovery.sparseOvals(page.a, page.g, page.w, page.h, 16, 44, 194)
+                .stream().anyMatch(h -> Math.abs(h.x() - x) < 3 && Math.abs(h.y() - y) < 3));
+    }
+
+
     Page transformed(boolean mirror, int scale) {
         var p = fixture(0);
         int w = p.w, h = p.h;

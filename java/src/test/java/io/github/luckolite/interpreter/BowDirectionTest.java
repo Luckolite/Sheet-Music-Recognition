@@ -97,7 +97,7 @@ public class BowDirectionTest {
         assertEquals(
                 List.of(
                         new ScoreTechniqueChange(
-                                0, n.positionInMeasure(), 0, 1, ScoreTechniqueChange.UP_BOW)),
+                                0, n.positionInMeasure(), 0, 1, ScoreTechniqueChange.UP_BOW, ScoreTechniqueChange.BowPlacement.ABOVE)),
                 r);
         assertArrayEquals(gc, g);
     }
@@ -109,7 +109,7 @@ public class BowDirectionTest {
         assertEquals(
                 List.of(
                         new ScoreTechniqueChange(
-                                0, n.positionInMeasure(), 0, 1, ScoreTechniqueChange.DOWN_BOW)),
+                                0, n.positionInMeasure(), 0, 1, ScoreTechniqueChange.DOWN_BOW, ScoreTechniqueChange.BowPlacement.ABOVE)),
                 read(List.of(n), 20));
     }
 

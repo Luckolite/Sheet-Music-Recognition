@@ -369,6 +369,25 @@ final class JoinedDigitTemplates {
                 frames);
     }
 
+    static float maxEightSimilarity(float[] grayscale) {
+        float best = -1;
+        for (var numeral : NUMERALS) {
+            if (numeral.digit() != 8) continue;
+            float dot = 0;
+            for (int i = 0; i < grayscale.length; i++) {
+                boolean dark = (numeral.bits()[i / 8] & (1 << (i % 8))) != 0;
+                dot += grayscale[i] * (dark ? 128 : -127);
+            }
+            float normSquared = 0;
+            for (byte piece : numeral.bits()) {
+                int dark = Integer.bitCount(piece & 255);
+                normSquared += dark * 128 * 128 + (8 - dark) * 127 * 127;
+            }
+            best = Math.max(best, dot / (float) Math.sqrt(normSquared));
+        }
+        return best;
+    }
+
     record Reading(
             int digit,
             float best,

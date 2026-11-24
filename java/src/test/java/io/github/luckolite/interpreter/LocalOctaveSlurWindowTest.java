@@ -50,9 +50,9 @@ public class LocalOctaveSlurWindowTest {
         var window = PrintedSlurPageCapture.class.getDeclaredMethod(
                 "octaveSlursInLocalWindows", byte[].class, byte[].class, int.class, int.class,
                 PrintedSlurPageCapture.Frame.class, List.class,
-                PrintedSlurContours.HeadEvidence.class, List.class);
+                PrintedSlurContours.HeadEvidence.class, List.class, long[].class);
         window.setAccessible(true);
-        return (List<?>) window.invoke(null, ink, null, WIDTH, HEIGHT, frame, notes, hints, List.of());
+        return (List<?>) window.invoke(null, ink, null, WIDTH, HEIGHT, frame, notes, hints, List.of(), new long[]{640_000});
     }
 
     private static ScoreNoteEvent note(int x, int y, int staffStep) {

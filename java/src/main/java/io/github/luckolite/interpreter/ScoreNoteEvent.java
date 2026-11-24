@@ -383,6 +383,10 @@ public record ScoreNoteEvent(
     }
 
     public ScoreNoteEvent withStemDirection(int direction) {
+        return withBeamAndStem(beamCount, direction);
+    }
+
+    ScoreNoteEvent withBeamAndStem(int beams, int direction) {
         return new ScoreNoteEvent(
                 measureIndex,
                 positionInMeasure,
@@ -392,7 +396,7 @@ public record ScoreNoteEvent(
                 pageY,
                 tiedFromPrevious,
                 augmentationDots,
-                beamCount,
+                beams,
                 writtenAccidental,
                 unbeamedDurationBeats,
                 tupletDivisor,
@@ -620,6 +624,14 @@ public record ScoreNoteEvent(
                 leadingRestBeats,
                 compactOpening,
                 0);
+    }
+
+    ScoreNoteEvent withStaffStep(int step) {
+        return new ScoreNoteEvent(measureIndex, positionInMeasure, step, staffIndex, staffCount,
+                pageY, tiedFromPrevious, augmentationDots, beamCount, writtenAccidental, unbeamedDurationBeats,
+                tupletDivisor, followingRestBeats, articulations, clefBottomDiatonic, crossStaffBeam,
+                leadingRestBeats, compactOpening, octaveShift, boundaryTies, tupletNormalNotes,
+                stemDirection, kind, visualSize, harmonicSemitones, openStringTouch);
     }
 
     ScoreNoteEvent withWrittenAccidental(int accidental) {

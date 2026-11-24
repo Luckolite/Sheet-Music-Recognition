@@ -36,7 +36,7 @@ public final class ThickBowCapTest {
         dark(raw, 83, 246, 251);
         dark(raw, 84, 244, 251);
         assertEquals(
-                List.of(new ScoreTechniqueChange(0, .5f, 0, 1, ScoreTechniqueChange.UP_BOW)),
+                List.of(new ScoreTechniqueChange(0, .5f, 0, 1, ScoreTechniqueChange.UP_BOW, ScoreTechniqueChange.BowPlacement.ABOVE)),
                 read(raw));
     }
 
@@ -47,7 +47,7 @@ public final class ThickBowCapTest {
         dark(raw, 83, 244, 249);
         dark(raw, 84, 241, 249);
         assertEquals(
-                List.of(new ScoreTechniqueChange(0, .5f, 0, 1, ScoreTechniqueChange.UP_BOW)),
+                List.of(new ScoreTechniqueChange(0, .5f, 0, 1, ScoreTechniqueChange.UP_BOW, ScoreTechniqueChange.BowPlacement.ABOVE)),
                 read(raw));
     }
 

@@ -9,23 +9,28 @@ final class SeparateBeamGroups {
     static boolean between(
             byte[] g, int w, int h, float ax, float ay, float bx, float by, float gap) {
         if (g == null || gap < 6 || bx - ax < gap * 1.3f || bx - ax > gap * 5) return false;
-        int inset = Math.round(gap * .25f), radius = Math.round(gap * .35f);
-        int coreRadius = coreRadius(gap);
         for (int direction = -1; direction <= 1; direction += 2) {
             Tip a = tip(g, w, h, ax, ay, gap, direction, -1);
             if (a == null) continue;
             Tip b = tip(g, w, h, bx, by, gap, direction, 1);
-            if (b == null || b.x - a.x < gap * .7f) continue;
-            int left = a.x + inset, right = b.x - inset;
-            int total = right - left + 1;
-            if (total < gap * .35f) continue;
-            float required = total * .85f;
-            int clear = 0;
-            for (int x = left; x <= right; x++) {
-                if (!hasCore(g, w, h, x, lineAt(a, b, x), radius, coreRadius)
-                        && ++clear >= required) return true;
-                if (clear + (right - x) < required) break;
-            }
+            if (b != null && clearBetweenTips(g, w, h, a, b, gap)) return true;
+        }
+        return false;
+    }
+
+    static boolean clearBetweenTips(byte[] g, int w, int h, Tip a, Tip b, float gap) {
+        if (a.direction() != b.direction() || b.x - a.x < gap * .7f) return false;
+        int inset = Math.round(gap * .25f), radius = Math.round(gap * .35f);
+        int coreRadius = coreRadius(gap);
+        int left = a.x + inset, right = b.x - inset;
+        int total = right - left + 1;
+        if (total < gap * .35f) return false;
+        float required = total * .85f;
+        int clear = 0;
+        for (int x = left; x <= right; x++) {
+            if (!hasCore(g, w, h, x, lineAt(a, b, x), radius, coreRadius)
+                    && ++clear >= required) return true;
+            if (clear + right - x < required) return false;
         }
         return false;
     }

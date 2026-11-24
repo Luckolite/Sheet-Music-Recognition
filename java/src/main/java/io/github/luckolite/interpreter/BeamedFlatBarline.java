@@ -1190,7 +1190,7 @@ final class BeamedFlatBarline {
         return true;
     }
 
-    private static boolean flatAt(
+    static boolean flatAt(
             byte[] gray, int width, int height, int column, float headY, float gap) {
         for (int left = column - Math.round(gap * .35f); left <= column; left++)
             for (int right = left + Math.round(gap * .58f); right <= left + gap * 1.2f; right++) {

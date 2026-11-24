@@ -234,14 +234,20 @@ final class SymbolStemHeadRecovery {
                 }
                 if (duplicate >= 0 && score <= scores.get(duplicate)) continue;
                 if (ovalBounds == null) ovalBounds = ovalRowBounds(rx, ry, halfHeight);
-                int area = 0;
+                int area = 0, glyphInk = 0;
+                boolean hasNotehead = false;
                 for (int row = 0, base = (y - halfHeight) * w + x;
                         row < ovalBounds.length; row += 2, base += w) {
                     for (int at = base + ovalBounds[row], last = base + ovalBounds[row + 1];
-                            at <= last; at++)
-                        if ((gray[at] & 255) < 225) area++;
+                            at <= last; at++) {
+                        if ((gray[at] & 255) >= 225) continue;
+                        area++;
+                        if (labels[at] == OmrMeasurePostProcessor.CLEF_OR_KEY) glyphInk++;
+                        if (labels[at] == OmrMeasurePostProcessor.NOTEHEAD) hasNotehead = true;
+                    }
                 }
-                if (area < minArea) continue;
+                if (area < minArea || !hasNotehead && glyphInk >= .55f * area
+                        && sharpOwnsOval(labels, gray, w, h, x, y, gap, Math.round(rx))) continue;
                 Head candidate = new Head(
                         Math.round(x - rx), y - halfHeight, Math.round(x + rx),
                         y + halfHeight, area, x, y);
@@ -255,6 +261,31 @@ final class SymbolStemHeadRecovery {
             }
         }
         return out;
+    }
+
+    /** A sharp's two uprights can supply a false rim beside a real borrowed shaft. */
+    private static boolean sharpOwnsOval(byte[] labels, byte[] gray, int width, int height,
+            int x, int y, float gap, int radius) {
+        int length = Math.round(gap * 2.1f);
+        int minimumSeparation = Math.round(gap * .37f);
+        int maximumSeparation = Math.round(gap * .70f);
+        for (int direction : new int[] {-1, 1}) {
+            if (y + direction * length < 0 || y + direction * length >= height) continue;
+            int witness = Integer.MIN_VALUE / 2;
+            for (int column = x - radius; column <= x + radius; column++) {
+                int owned = 0;
+                for (int i = 0; i <= length; i++) {
+                    int at = (y + direction * i) * width + column;
+                    if (labels[at] == OmrMeasurePostProcessor.CLEF_OR_KEY && (gray[at] & 255) < 165)
+                        owned++;
+                }
+                if (owned < (length + 1) * .92f) continue;
+                int separation = column - witness;
+                if (separation >= minimumSeparation && separation <= maximumSeparation) return true;
+                if (separation > maximumSeparation) witness = column;
+            }
+        }
+        return false;
     }
 
     private static boolean nearHalf(float delta, float precision) {

@@ -1029,7 +1029,7 @@ final class PrintedCadenceDurations {
         return false;
     }
 
-    private static boolean hollowPocket(byte[] gray,int width,int height,float x,float y,float gap) {
+    static boolean hollowPocket(byte[] gray,int width,int height,float x,float y,float gap) {
         int left=Math.round(x-gap), right=Math.round(x+gap*.63f);
         int top=Math.round(y-gap*.73f), bottom=Math.round(y+gap*.73f);
         return left>=0 && right<width && top>=0 && bottom<height

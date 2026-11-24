@@ -35,6 +35,9 @@ public final class ExpressiveDirectionText {
                     "\\s*" + NEGATION_WORD + "(?:\\s+" + TEMPO_MODIFIER + ")*[\\s.,;:()!]*");
     private static final String BOW_CAPTION = "^\\s*(?:segue|(?:(?:m|sp|fr|g\\.\\s*b|h\\.\\s*b)\\.?\\s+)?(?:staccato(?:\\s+volant)?|portato|spiccato|detache|martele))[.!]?\\s*$";
     private static final Pattern BOW_CAPTION_PATTERN = Pattern.compile(BOW_CAPTION);
+    private static final String SHORT_BOW_CAPTION = "^\\s*(?:sp\\.|fr\\.|m\\.|[gh]\\.\\s*b\\.)\\s*$";
+    private static final Pattern SHORT_BOW_CAPTION_PATTERN = Pattern.compile(SHORT_BOW_CAPTION);
+
 
     private static final List<Rule> RULES =
             List.of(
@@ -77,6 +80,10 @@ public final class ExpressiveDirectionText {
 
     static boolean isBowCaption(String text) {
         return text != null && BOW_CAPTION_PATTERN.matcher(normalized(text)).matches();
+    }
+
+    static boolean isShortBowCaption(String text) {
+        return text != null && SHORT_BOW_CAPTION_PATTERN.matcher(normalized(text)).matches();
     }
 
     static boolean pedalRingCaption(String printed) {

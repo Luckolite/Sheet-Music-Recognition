@@ -85,14 +85,7 @@ final class CourtesyMeasureRemap {
                         .toList();
         var techniques =
                 s.techniqueChanges().stream()
-                        .map(
-                                t ->
-                                        new ScoreTechniqueChange(
-                                                map(t.measureIndex(), cut),
-                                                t.positionInMeasure(),
-                                                t.staffIndex(),
-                                                t.staffCount(),
-                                                t.technique()))
+                        .map(t -> t.withMeasureIndex(map(t.measureIndex(), cut)))
                         .toList();
         var dynamics =
                 s.dynamicChanges().stream()

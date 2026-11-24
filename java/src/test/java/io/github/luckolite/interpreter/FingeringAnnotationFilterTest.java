@@ -459,6 +459,42 @@ public class FingeringAnnotationFilterTest {
                 words, staffs, measures, notes, image, width, height));
     }
 
+    @Test
+    public void mergedFingeringSegueInitialNeedsDetachedInkAndACompleteBar() {
+        int width = 640, height = 330;
+        float left = 30, right = 580;
+        var image = new byte[width * height];
+        Arrays.fill(image, (byte) 255);
+        var staffs = List.of(new PlayingTechniqueDetector.Staff(215, 279, 16, 0, 1));
+        var measures = List.of(new MeasureRegion(left / width, right / width, .35f, .98f));
+        var notes = closedSixteenthCaptionNotes(image, width, height, left, right);
+        var expected = List.copyOf(notes);
+        var words = List.of(new PlayingTechniqueDetector.Word("3 2 1 3 2 1 segue", 61f / width,
+                280f / height, 407f / width, 317f / height));
+        for (int x : new int[] {74, 109, 144, 179, 214, 249}) {
+            drawInk(image, width, x, x + 11, 288, 306, 0);
+        }
+        for (int x : new int[] {278, 296, 313, 334, 359}) {
+            drawInk(image, width, x, x + 11, 288, x == 313 ? 311 : 306, 0);
+        }
+        notes.add(captionNote(284, 297, -2, 0, 2, 0, height, left, right));
+        assertEquals(expected, FingeringAnnotationFilter.apply(
+                words, staffs, measures, notes, image, image, width, height));
+
+        var missing = image.clone();
+        drawInk(missing, width, 278, 289, 288, 306, 255);
+        assertSame(notes, FingeringAnnotationFilter.apply(
+                words, staffs, measures, notes, image, missing, width, height));
+        var attached = image.clone();
+        drawInk(attached, width, 283, 285, 247, 297, 0);
+        assertSame(notes, FingeringAnnotationFilter.apply(
+                words, staffs, measures, notes, image, attached, width, height));
+        var broken = image.clone();
+        drawInk(broken, width, 80, 94, 225, 252, 255);
+        assertSame(notes, FingeringAnnotationFilter.apply(
+                words, staffs, measures, notes, image, broken, width, height));
+    }
+
     private static ArrayList<ScoreNoteEvent> closedSixteenthCaptionNotes(
             byte[] image, int width, int height, float left, float right) {
         for (int y = 215; y <= 279; y += 16) {
@@ -548,4 +584,57 @@ public class FingeringAnnotationFilterTest {
             java.util.Arrays.fill(image, y*w+115, y*w+128, (byte) 255);
         org.junit.Assert.assertNull(extract.invoke(null, image, w, h, end, 100f, 16f, false));
     }
+    @Test
+    public void pairedStaffFingeringsNeedTheirInkAndAClosedFourQuartetLine() {
+        int width = 700, height = 340, floor = 278;
+        float left = 36, right = 638;
+        byte[] image = new byte[width * height];
+        Arrays.fill(image, (byte) 255);
+        var regions = List.of(new MeasureRegion(left / width, right / width, .35f, .99f));
+        var staff = List.of(new PlayingTechniqueDetector.Staff(214, floor, 16, 0, 1));
+        for (int y = 214; y <= floor; y += 16) drawInk(image, width, 30, 660, y, y + 1, 0);
+        var music = new ArrayList<ScoreNoteEvent>();
+        for (int i = 0; i < 16; i++) {
+            int x = 88 + i * 34;
+            int y = 184 - i % 4 * 8;
+            music.add(captionNote(x, y, (floor - y) / 8, -1, 2, 0, height, left, right));
+            drawInk(image, width, x - 9, x + 8, y - 5, y + 6, 0);
+            drawInk(image, width, x - 10, x - 7, y, 242, 0);
+            if (i % 4 == 3) {
+                drawInk(image, width, x - 112, x - 7, 224, 230, 0);
+                drawInk(image, width, x - 112, x - 7, 236, 242, 0);
+            }
+        }
+        int a = 88 + 5 * 34, b = 88 + 11 * 34;
+        var words = List.of(
+                new PlayingTechniqueDetector.Word("(3", (a - 21f) / width, 261f / height,
+                        (a + 14f) / width, 299f / height),
+                new PlayingTechniqueDetector.Word("3)", (b - 14f) / width, 261f / height,
+                        (b + 21f) / width, 299f / height));
+        for (int x : new int[] {a, b}) {
+            drawInk(image, width, x + 4, x + 8, floor + 2, floor + 15, 0);
+            drawInk(image, width, x - 4, x - 1, floor + 6, floor + 14, 0);
+            drawInk(image, width, x - 4, x + 8, floor + 10, floor + 15, 0);
+        }
+        drawInk(image, width, a - 18, a - 16, floor - 12, floor + 18, 0);
+        drawInk(image, width, b + 16, b + 18, floor - 12, floor + 18, 0);
+        var noisy = new ArrayList<>(music);
+        noisy.add(captionNote(a, floor + 8, -1, 0, 1, 0, height, left, right));
+        noisy.add(captionNote(b, floor + 8, -1, 0, 0, 4, height, left, right));
+        assertEquals(music, FingeringAnnotationFilter.removePairedStaffFingeringAliases(
+                words, staff, regions, noisy, image, image, width, height));
+
+        var erased = image.clone();
+        drawInk(erased, width, a - 5, a + 9, floor + 2, floor + 15, 255);
+        assertSame(noisy, FingeringAnnotationFilter.removePairedStaffFingeringAliases(
+                words, staff, regions, noisy, image, erased, width, height));
+        var missingRail = image.clone();
+        drawInk(missingRail, width, 98, 106, 224, 230, 255);
+        assertSame(noisy, FingeringAnnotationFilter.removePairedStaffFingeringAliases(
+                words, staff, regions, noisy, image, missingRail, width, height));
+        assertSame(noisy, FingeringAnnotationFilter.removePairedStaffFingeringAliases(
+                words.subList(0, 1), staff, regions, noisy, image, image, width, height));
+    }
+
+
 }

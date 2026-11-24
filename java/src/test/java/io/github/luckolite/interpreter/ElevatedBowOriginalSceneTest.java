@@ -102,7 +102,7 @@ public class ElevatedBowOriginalSceneTest {
         assertEquals(
                 List.of(
                         new ScoreTechniqueChange(
-                                1, n.positionInMeasure(), 0, 1, ScoreTechniqueChange.UP_BOW)),
+                                1, n.positionInMeasure(), 0, 1, ScoreTechniqueChange.UP_BOW, ScoreTechniqueChange.BowPlacement.ABOVE)),
                 read());
     }
 

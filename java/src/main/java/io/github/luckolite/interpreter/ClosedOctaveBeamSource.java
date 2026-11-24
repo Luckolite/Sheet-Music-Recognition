@@ -56,7 +56,7 @@ final class ClosedOctaveBeamSource {
             List<Attack> attacks) {
         if (page < 0 || attacks.size() != 16) return source;
         return provesRibbons(gray, width, height, gap, attacks, null)
-                ? project(source, page, attacks)
+                ? projectDottedRibbons(source, page, attacks)
                 : source;
     }
 
@@ -83,7 +83,7 @@ final class ClosedOctaveBeamSource {
             var group = attacks.subList(index, index + 4);
             if (provesRibbons(gray, width, height, gap, group, null)
                     && (original == gray || provesRibbons(original, width, height, gap, group, null)))
-                result = project(result, page, group);
+                result = projectDottedRibbons(result, page, group);
         }
         return result;
     }
@@ -130,9 +130,23 @@ final class ClosedOctaveBeamSource {
             if (provesDetachedDyadRibbon(gray, width, height, gap, selected, direction, page)
                     && (original == gray || provesDetachedDyadRibbon(
                             original, width, height, gap, selected, direction, page)))
-                printed = project(printed, page, selected);
+                printed = projectDottedRibbons(printed, page, selected);
         }
         return printed;
+    }
+
+    static ScoreBeamSource captureStaffRuleHookOctaves(
+            ScoreBeamSource source, int page, byte[] gray, byte[] original,
+            int width, int height, float gap, List<Attack> attacks, int group, float x, float y) {
+        var claimed = captureDetachedDottedDyads(source, page, gray, original,
+                width, height, gap, attacks, java.util.Collections.nCopies(attacks.size(), 1));
+        var selected = attacks.subList(group, group + 4);
+        float followingX = attacks.get(group + 4).upperX();
+        if (!OwnedTertiaryBeamlets.provesStaffRuleHookAliasRibbon(
+                    gray, width, height, gap, selected, followingX, x, y)
+                || !OwnedTertiaryBeamlets.provesStaffRuleHookAliasRibbon(
+                    original, width, height, gap, selected, followingX, x, y)) return source;
+        return projectDottedRibbons(claimed, page, selected);
     }
 
     private static boolean provesDetachedDyadRibbon(
@@ -204,7 +218,7 @@ final class ClosedOctaveBeamSource {
                 || b.left() - a.right() > 3.8f * gap
                 || !WrappedEighthTriplets.matchesRailBridge(gray, width, height, a, b, gap, false))
             return source;
-        return project(source, page, ending);
+        return projectDottedRibbons(source, page, ending);
     }
 
     static ScoreBeamSource captureOpeningStaffCrossingDyads(
@@ -221,7 +235,7 @@ final class ClosedOctaveBeamSource {
         return page >= 0
                         && OwnedTertiaryBeamlets.provesOpeningStaffCrossingRibbon(
                                 gray, width, height, gap, staffTop, staffGap, ending, followingX)
-                ? project(source, page, ending)
+                ? projectDottedRibbons(source, page, ending)
                 : source;
     }
 
@@ -435,7 +449,7 @@ final class ClosedOctaveBeamSource {
         return hits >= (right - left + 1) * 2f / 3;
     }
 
-    private static ScoreBeamSource project(ScoreBeamSource source, int page, List<Attack> attacks) {
+    static ScoreBeamSource projectDottedRibbons(ScoreBeamSource source, int page, List<Attack> attacks) {
         var origins = new ArrayList<>(source.noteOrigins());
         var counts = new HashMap<ScoreBeamSource.Anchor, Integer>();
         for (var origin : origins) origin.ifPresent(a -> counts.merge(a, 1, Integer::sum));

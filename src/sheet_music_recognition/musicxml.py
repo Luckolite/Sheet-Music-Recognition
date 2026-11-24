@@ -240,7 +240,14 @@ def tempo_mark(tempo):
 def expression_direction(measure, mark, offset):
     kind = mark['kind']
     caption = mark.get('_neutralRestCaption', False)
-    direction = element(measure, 'direction', placement='below' if caption or kind in ('PEDAL_DOWN', 'PEDAL_UP') else 'above')
+    below_bow_caption = kind == 'UNRESOLVED_DIRECTION' and any(
+        row.get('sourceId') == 'printed-expression-below-bow-caption'
+        and row.get('printedText', '').strip().lower() == 'segue'
+        and row.get('staffIndex') == mark.get('staffIndex')
+        and row.get('staffCount') == mark.get('staffCount')
+        for row in mark.get('evidence', []))
+    below = caption or below_bow_caption or kind in ('PEDAL_DOWN', 'PEDAL_UP')
+    direction = element(measure, 'direction', placement='below' if below else 'above')
     type_node = element(direction, 'direction-type')
     if mark.get('_hairpin'):
         direction.set('placement', 'below')
@@ -298,10 +305,6 @@ def _pitch_element(note, spelling):
     if alter:
         element(pitch, 'alter', alter)
     element(pitch, 'octave', octave)
-
-
-def _artificial_harmonic_role(note, role):
-    _harmonic_role(note, 'artificial', role)
 
 
 def _harmonic_role(note, kind, role):
@@ -445,7 +448,9 @@ def _harmonic_spelling(diatonic, midi):
 
 def _closed_artificial_spelling(event, source, third):
     base, touch, sound = (event.get(k) for k in ('writtenMidi', 'harmonicTouchMidi', 'midi'))
-    interval, steps, transposition = (4, 2, 28) if third else (5, 3, 24)
+    fifth = event.get('artificialHarmonicFifth') is True
+    interval, steps, transposition, sounding_steps = (
+        (7, 4, 19, 11) if fifth else (4, 2, 28, 16) if third else (5, 3, 24, 14))
     if (any(type(x) is not int or not 0 <= x <= 127 for x in (base, touch, sound))
             or touch - base != interval or sound - base != transposition
             or event_kind(event) != 'PITCHED' or event.get('octaveShift', 0)
@@ -455,7 +460,51 @@ def _closed_artificial_spelling(event, source, third):
         raise ValueError('Artificial harmonic requires one retained stopped head and matching pitches')
     diatonic = source['clefBottomDiatonic'] + source['staffStep']
     return (_harmonic_spelling(diatonic, base), _harmonic_spelling(diatonic + steps, touch),
-            _harmonic_spelling(diatonic + (16 if third else 14), sound))
+            _harmonic_spelling(diatonic + sounding_steps, sound))
+
+
+def _beamed_fourth_triplet(event):
+    return (event.get('durationBeats') == 1 / 3
+            and event.get('tupletActualNotes') == 3 and event.get('tupletNormalNotes') == 2)
+
+
+def _dotted_beamed_fourth(event):
+    return event.get('durationBeats') == .375 and event.get('tupletActualNotes', 1) == 1
+
+
+def _third_hook_fourth(event):
+    return event.get('durationBeats') == .125 and event.get('tupletActualNotes', 1) == 1
+
+
+def _beamed_fourth_spelling(event, source, engraved):
+    triplet = _beamed_fourth_triplet(event)
+    dotted = _dotted_beamed_fourth(event)
+    written_clock = (source.get('beamCount') == 1 and source.get('tupletDivisor', 1) == 3
+                     and source.get('tupletNormalNotes', 1) == 2
+                     and source.get('augmentationDots', 0) == 0) if triplet else (
+                         (((dotted or event.get('durationBeats') == .25) and source.get('beamCount') == 2)
+                          or (_third_hook_fourth(event) and source.get('beamCount') == 3))
+                         and source.get('augmentationDots', 0) == int(dotted)
+                         and source.get('tupletDivisor', 1) == 1)
+    if (event.get('artificialHarmonicFourth') is not True
+            or event.get('artificialHarmonicThird') is True
+            or not written_clock
+            or event.get('durationFallback') or event.get('tiedFromPrevious')
+            or source.get('staffIndex') != 0 or source.get('staffCount') != 1
+            or source.get('clefBottomDiatonic') != 30
+            or type(source.get('stemDirection')) is not int or source['stemDirection'] not in (-1, 1)
+            or source.get('visualSize', 'FULL') != 'FULL'
+            or source.get('articulations', 0) not in (0, 4, 8, 12)  # Retain staccato and tenuto on the stopped head.
+            or any(source.get(k) for k in ('octaveShift', 'unbeamedDurationBeats',
+                                          'leadingRestBeats', 'followingRestBeats', 'crossStaffBeam',
+                                          'tiedFromPrevious', 'boundaryTies'))):
+        raise ValueError('Beamed artificial fourth requires a complete written sixteenth or eighth triplet')
+    if 'printedHarmonicTouchAccidental' not in event:
+        return None
+    mark = event['printedHarmonicTouchAccidental']
+    if type(mark) is not int or mark not in (-1, 0, 1) or mark != engraved[1][1]:
+        raise ValueError('Printed touching accidental disagrees with the written fourth')
+    return {-1: 'flat', 0: 'natural', 1: 'sharp'}[mark]
 
 
 def _ordinary_compound_quarter(note, stem=1):
@@ -467,7 +516,53 @@ def _ordinary_compound_quarter(note, stem=1):
                                               'boundaryTies', 'tiedFromPrevious')))
 
 
-def _compound_open_harmonics(page, source_notes, shared_terminal=()):
+def _upstem_compound_harmonic_bars(page):
+    events = page['events']
+    flagged = defaultdict(list)
+    for index, event in enumerate(events):
+        if event.get('compoundUpstemHarmonicBar') is True:
+            flagged[event['measureIndex']].append(index)
+    accepted = set()
+    spans = page['measureBeats']
+    starts = list(accumulate(spans, initial=0))
+    for bar, owners in flagged.items():
+        if (type(bar) is not int or not 0 <= bar < len(spans) or spans[bar] != 2
+                or bar in page.get('printedMeasureContinuations', ())
+                or bar + 1 in page.get('printedMeasureContinuations', ())
+                or len(owners) != 4
+                or any(rest['measureIndex'] == bar for rest in page['score'].get('rests', ()))
+                or any(e['measureIndex'] == bar and i not in owners for i, e in enumerate(events))):
+            raise ValueError('Compound upstem harmonics require a complete two-quarter bar')
+        for offset in (0, 1):
+            chord = [events[i] for i in owners if events[i]['startBeat'] == starts[bar] + offset]
+            natural = [e for e in chord if type(e.get('openStringMidi')) is int]
+            artificial = [e for e in chord if _compound_upstem_interval(e, offset)]
+            if len(chord) != 2 or len(natural) != 1 or len(artificial) != 1 or natural[0] is artificial[0]:
+                raise ValueError('Compound upstem harmonics require two opposite open and stopped pairs')
+        accepted.update(owners)
+    return accepted
+
+
+def _compound_upstem_interval(event, offset):
+    if event.get('artificialHarmonicThird') is True:
+        return False
+    fifth = event.get('artificialHarmonicFifth') is True
+    fourth = event.get('artificialHarmonicFourth') is True and event.get('compoundHarmonicFourth') is True
+    return fifth and not fourth if offset == 0 else fourth and not fifth
+
+
+def _compound_harmonic_fingering(event, natural, placement):
+    item = event.get('compoundHarmonicFingering')
+    if not isinstance(item, dict):
+        raise ValueError('Compound harmonic is missing its printed fingering')
+    base, touch, side = (item.get(k) for k in ('base', 'touch', 'placement'))
+    if (side != placement or type(base) is not int or type(touch) is not int
+            or (base != 0 if natural else base < 1) or not base < touch <= 4):
+        raise ValueError('Compound harmonic has an invalid printed fingering')
+    return base, touch, side
+
+
+def _compound_open_harmonics(page, source_notes, shared_terminal=(), upstem_bars=(), opening_fingers=None):
     """Bind the recovered open-string attack to the printed shared shaft."""
     events = page['events']
     result = {}
@@ -479,14 +574,18 @@ def _compound_open_harmonics(page, source_notes, shared_terminal=()):
         third = base.get('artificialHarmonicThird') is True
         fourth = base.get('compoundHarmonicFourth') is True
         mixed = base.get('mixedHarmonicQuarter') is True
-        if not (third or fourth):
+        fifth = base.get('artificialHarmonicFifth') is True
+        if not (third or fourth or fifth):
             continue
-        if (i >= len(source_notes) or base.get('sourceNoteIndex') != i or third == fourth
-                or (base.get('artificialHarmonicFourth') is True) != fourth or fourth and mixed):
+        upstem = i in upstem_bars
+        if (i >= len(source_notes) or base.get('sourceNoteIndex') != i
+                or sum((third, fourth, fifth)) != 1 or fifth and not upstem
+                or (base.get('artificialHarmonicFourth') is True) != fourth
+                or fifth and mixed):
             raise ValueError('Invalid stopped compound harmonic owner')
         stopped = source_notes[i]
         touch = stopped.get('openStringTouch')
-        stem = stopped.get('stemDirection') if fourth else -1 if mixed else 1
+        stem = stopped.get('stemDirection') if fourth or fifth else -1 if mixed else 1
         if stem not in (-1, 1):
             raise ValueError('Compound harmonic has no printed shaft direction')
         matches = [
@@ -526,17 +625,93 @@ def _compound_open_harmonics(page, source_notes, shared_terminal=()):
             raise ValueError('Compound open string has invalid printed or sounding pitch')
         diatonic = note['clefBottomDiatonic'] + steps
         sound_step = diatonic + {4: 14, 5: 11, 7: 7, 9: 11}[written - open_string]
-        if fourth:
+        if fourth or fifth:
             separation = steps - stopped['staffStep']
-            lower = _terminal_lower_open_fourth(page, base, stopped, written, separation, stem)
-            if ((not lower and (separation not in (5, 6) or written <= base['harmonicTouchMidi']))
+            opening_lower = base.get('openingLowerOpenFourth') is True
+            if opening_lower and (stem != 1 or separation != -2 or written - open_string != 4
+                    or not _accepted_lower_opening_fourth(page, i, j, shared_terminal)):
+                raise ValueError('Opening lower natural harmonic requires two complete upstem quarters')
+            lower = (fifth if upstem
+                     else (opening_lower or _terminal_lower_open_fourth(page, base, stopped, written, separation, stem)
+                           or _closed_lower_open_fourth(page, base, stopped, written, separation, stem)))
+            if ((upstem and (stem != 1 or j not in upstem_bars
+                            or (lower and (separation != -2 or written >= base['writtenMidi']))
+                            or (not lower and separation != 5)))
+                    or (not lower and (separation not in (5, 6) or written <= base['harmonicTouchMidi']))
+                    or mixed and (stem != -1 or separation != 6)
                     or sound == base['midi']):
-                raise ValueError('Fourth harmonic does not share its printed shaft with the open string')
+                raise ValueError('Stopped harmonic does not share its printed shaft with the open string')
             stem_name = 'up' if stem > 0 else 'down'
             fourth_partners[i] = stem_name
             fourth_touches[j] = stem_name, lower
+            if opening_lower and opening_fingers is not None:
+                # The source lower touching head has no printed open-string zero.
+                opening_fingers[j] = None
+                if 'compoundHarmonicFingering' in base:
+                    opening_fingers[i] = _compound_harmonic_fingering(base, False, 'above')
         result[j] = _harmonic_spelling(diatonic, written), _harmonic_spelling(sound_step, sound)
     return result, fourth_partners, fourth_touches
+
+def _accepted_lower_opening_fourth(page, stopped, natural, shared_quarters):
+    events = page['events']
+    onset = events[stopped]['startBeat']
+    bar = events[stopped]['measureIndex']
+    spans = page['measureBeats']
+    regions = page['score'].get('measures', ())
+    if (type(bar) is not int or not 0 < bar < len(spans) - 1 or len(regions) != len(spans)
+            or spans[bar] != 2 or regions[bar].get('cadenceQuarterBeats', 0)
+            or onset != sum(spans[:bar])
+            or bar in page.get('printedMeasureContinuations', ())
+            or bar + 1 in page.get('printedMeasureContinuations', ())
+            or any(rest['measureIndex'] == bar for rest in page['score'].get('rests', ()))):
+        return False
+    others = [i for i, event in enumerate(events) if event['measureIndex'] == bar and i not in (stopped, natural)]
+    return (len(others) == 2 and all(i in shared_quarters and events[i].get('sharedUpstemHarmonicQuarter') is True
+            and events[i]['startBeat'] == onset + 1 and events[i]['durationBeats'] == 1 for i in others)
+            and sum(events[i].get('artificialHarmonicThird') is True for i in others) == 1
+            and sum(events[i].get('artificialHarmonicFourth') is True for i in others) == 1)
+
+
+def _closed_lower_open_fourth(page, event, stopped, written, separation, stem):
+    """The two downstem quarters each have an independently retained lower open touch."""
+    bar = stopped.get('measureIndex')
+    spans = page['measureBeats']
+    regions = page['score'].get('measures', ())
+    if (event.get('closedDownstemCompoundBar') is not True or stem != -1 or separation != -2
+            or type(event.get('writtenMidi')) is not int or written >= event['writtenMidi']
+            or type(bar) is not int or not 0 < bar < len(spans) - 1 or len(regions) != len(spans)
+            or spans[bar] != 2 or regions[bar].get('cadenceQuarterBeats', 0)
+            or bar in page.get('printedMeasureContinuations', ())
+            or bar + 1 in page.get('printedMeasureContinuations', ())
+            or any(rest['measureIndex'] == bar for rest in page['score'].get('rests', ()))):
+        return False
+    attack = sum(spans[:bar])
+    owners = [member for member in page['events'] if member.get('measureIndex') == bar]
+    bases = [member for member in owners if member.get('closedDownstemCompoundBar') is True]
+    opens = [member for member in owners if type(member.get('openStringMidi')) is int]
+    if len(owners) == 4 and len(bases) == len(opens) == 1:
+        opening = [member for member in owners if member['startBeat'] == attack]
+        return (bar == len(spans) - 2 and spans[-1] == 1 and regions[-1].get('cadenceQuarterBeats') == 1
+                and bases == [event] and event['startBeat'] == opens[0]['startBeat'] == attack + 1
+                and len(opening) == 2 and all(member.get('sharedDownstemHarmonicQuarter') is True
+                    and member.get('openStringMidi') is None and member.get('durationBeats') == 1
+                    and member.get('staffIndex') == 0 and member.get('staffCount') == 1
+                    for member in opening)
+                and sum(member.get('artificialHarmonicThird') is True
+                        and member.get('artificialHarmonicFourth') is not True for member in opening) == 1
+                and sum(member.get('artificialHarmonicFourth') is True
+                        and member.get('artificialHarmonicThird') is not True for member in opening) == 1)
+    if len(owners) != 4 or len(bases) != 2 or len(opens) != 2:
+        return False
+    clocks = {attack, attack + 1}
+    return (all(member.get('staffIndex') == 0 and member.get('staffCount') == 1
+                and member.get('durationBeats') == 1 for member in owners)
+            and {member.get('startBeat') for member in bases} == clocks
+            and {member.get('startBeat') for member in opens} == clocks
+            and all(member.get('compoundHarmonicFourth') is True
+                    and member.get('artificialHarmonicFourth') is True
+                    and member.get('openStringMidi') is None for member in bases))
+
 
 def _terminal_lower_open_fourth(page, event, stopped, written, separation, stem):
     """The lower touch of a closed final quarter carries its open fingering below."""
@@ -595,11 +770,18 @@ def _terminal_shared_artificial_harmonics(page, source_notes):
     return {i: 'up' for i, _ in events}
 
 
-def _shared_artificial_fourths(page, source_notes):
-    """Two source-owned artificial fourths can share a printed quarter downshaft."""
+def _shared_artificial_fourths(page, source_notes, opposed_offsets=None):
+    """The stopped members share a proved written quarter shaft."""
     events = page['events']
-    if not any(event.get('artificialHarmonicFourth') is True for event in events):
-        return {}
+    upstems = {i for i, event in enumerate(events) if event.get('sharedUpstemHarmonicQuarter') is True}
+    downstems = {i for i, event in enumerate(events) if event.get('sharedDownstemHarmonicQuarter') is True}
+    opposed = {i for i, event in enumerate(events) if event.get('oppositeShaftHarmonicQuarter') is True}
+    if not opposed <= upstems:
+        raise ValueError('Opposite harmonic heads require a proved upstem')
+    if upstems & downstems:
+        raise ValueError('Conflicting shared harmonic shaft directions')
+    if not upstems and not downstems and not any(event.get('artificialHarmonicFourth') is True for event in events):
+        return {}, {}
     spans = page['measureBeats']
     starts = list(accumulate(spans, initial=0))
     attacks = defaultdict(list)
@@ -616,8 +798,10 @@ def _shared_artificial_fourths(page, source_notes):
     width, height = page.get('width'), page.get('height')
     if (type(width) not in (int, float) or not math.isfinite(width) or width <= 0
             or type(height) not in (int, float) or not math.isfinite(height) or height <= 0):
-        return {}
+        return {}, {}
     stems = {}
+    fingers = {}
+    head_offsets = {}
     for (bar, onset), owners in attacks.items():
         if (len(owners) != 2 or onset not in (starts[bar], starts[bar] + 1)
                 or onset + 1 > starts[bar + 1]
@@ -625,10 +809,13 @@ def _shared_artificial_fourths(page, source_notes):
                 or bar + 1 in page.get('printedMeasureContinuations', ())):
             continue
         members = []
+        stem = 1 if all(i in upstems for i, _ in owners) else -1
+        owned_downstem = all(i in downstems for i, _ in owners)
         for i, event in owners:
+            third = event.get('artificialHarmonicThird') is True
             if (i >= len(source_notes) or event.get('sourceNoteIndex') != i
-                    or event.get('artificialHarmonicFourth') is not True
-                    or event.get('artificialHarmonicThird') or event.get('compoundHarmonicFourth')
+                    or (event.get('artificialHarmonicFourth') is True) == third
+                    or (third and stem == -1 and not owned_downstem) or event.get('compoundHarmonicFourth')
                     or event.get('mixedHarmonicQuarter') or event.get('openStringMidi') is not None
                     or event.get('staffCount') != 1 or event.get('durationBeats') != 1
                     or event.get('durationFallback') or event.get('tiedFromPrevious')
@@ -636,8 +823,9 @@ def _shared_artificial_fourths(page, source_notes):
                                for k in ('x', 'y'))):
                 break
             note = source_notes[i]
-            if (not _ordinary_compound_quarter(note, -1)
-                    or note.get('harmonicSemitones') != 24 or note.get('openStringTouch') is not None
+            if (not _ordinary_compound_quarter(note, stem)
+                    or note.get('harmonicSemitones') != (28 if third else 24)
+                    or note.get('openStringTouch') is not None
                     or any(event.get(k) != note.get(k) for k in ('measureIndex', 'staffIndex', 'staffCount'))
                     or type(note.get('staffStep')) is not int
                     or type(note.get('pageY')) not in (int, float)
@@ -647,13 +835,167 @@ def _shared_artificial_fourths(page, source_notes):
             members.append((i, event, note))
         if len(members) != 2:
             continue
-        (_, upper, hi), (_, lower, lo) = sorted(members, key=lambda x: x[1]['y'])
-        if (abs(upper['x'] - lower['x']) > width * .00065
-                or hi['staffStep'] - lo['staffStep'] not in (4, 5)
-                or upper['writtenMidi'] - lower['writtenMidi'] not in (7, 8, 9)):
+        (upper_index, upper, hi), (lower_index, lower, lo) = sorted(members, key=lambda x: x[1]['y'])
+        shifted = upper_index in opposed and lower_index in opposed
+        if (upper_index in opposed) != (lower_index in opposed):
             continue
-        stems.update((i, 'down') for i, _, _ in members)
-    return stems
+        if shifted:
+            if (bar >= len(source_bars) or onset != starts[bar] or hi['staffStep'] - lo['staffStep'] != 4
+                    or lower.get('artificialHarmonicThird') is True):
+                continue
+            region = source_bars[bar]
+            gap = (region['bottom'] - region['top']) * height / 8.2
+            dx = upper['x'] - lower['x']
+            if not (10 <= gap <= 25 and 1.06 * gap <= dx <= 1.52 * gap):
+                continue
+        else:
+            tolerance = width * .00065
+            if owned_downstem and bar < len(source_bars):
+                region = source_bars[bar]
+                gap = (region['bottom'] - region['top']) * height / 8.2
+                if 10 <= gap <= 25:
+                    # A proved shared downstem can retain the upper head's ledger-biased anchor.
+                    tolerance = max(tolerance, .28 * gap)
+            if abs(upper['x'] - lower['x']) > tolerance:
+                continue
+        if (hi['staffStep'] - lo['staffStep'] not in (4, 5)
+                or upper['writtenMidi'] - lower['writtenMidi'] not in (7, 8, 9)
+                or upper.get('artificialHarmonicThird') is True):
+            continue
+        stems.update((i, 'up' if stem == 1 else 'down') for i, _, _ in members)
+        if shifted:
+            head_offsets[lower_index] = 0
+            head_offsets[upper_index] = round(10 * dx / gap, 5)
+        if stem == 1 or owned_downstem:
+            for index, event, placement in ((upper_index, upper, 'above'), (lower_index, lower, 'below')):
+                if 'compoundHarmonicFingering' in event:
+                    fingers[index] = _compound_harmonic_fingering(event, False, placement)
+    if any(stems.get(i) != 'up' for i in upstems) or any(stems.get(i) != 'down' for i in downstems):
+        raise ValueError('Shared harmonics require both owners of the same complete quarter')
+    if opposed != head_offsets.keys():
+        raise ValueError('Opposite harmonic heads require both members of the written chord')
+    if opposed_offsets is not None:
+        opposed_offsets.update(head_offsets)
+    return stems, fingers
+
+
+def _mixed_stopped_pair(page, notes, events, first, second, reversed_order=False):
+    if any(i >= len(notes) or events[i].get('sourceNoteIndex') != i
+           or any(type(events[i].get(k)) not in (int, float) or not math.isfinite(events[i][k])
+                  for k in ('x', 'y')) for i in first + second):
+        raise ValueError('Mixed harmonics require complete retained note owners')
+    first = sorted(first, key=lambda i: events[i]['y'], reverse=True)
+    second = sorted(second, key=lambda i: events[i]['y'], reverse=True)
+    lower, upper = (events[i] for i in second)
+    if (lower.get('artificialHarmonicThird') is not True
+            or upper.get('artificialHarmonicFourth') is not True
+            or any(e.get('compoundHarmonicFourth') or e.get('openStringMidi') is not None
+                   for e in (lower, upper))
+            or abs(lower['x'] - upper['x']) > page['width'] * .00065):
+        raise ValueError('Mixed harmonics require one stopped third and one stopped fourth on the same stem')
+    lo, hi = (notes[i] for i in second)
+    if hi['staffStep'] - lo['staffStep'] != 4:
+        raise ValueError('Invalid written interval for the stopped harmonic pair')
+    open_lo, open_hi = (notes[i] for i in first)
+    lower_matches = (events[first[0]].get('harmonicTouchMidi') == lower.get('harmonicTouchMidi')
+                     and open_lo['staffStep'] == lo['staffStep'] + 2)
+    repeated_touches = (lower_matches and lo.get('writtenAccidental') == 0
+                        and hi.get('writtenAccidental', 2) == 2
+                        and events[first[1]].get('harmonicTouchMidi') == upper.get('harmonicTouchMidi')
+                        and open_hi['staffStep'] == hi['staffStep'] + 3)
+    open_fourth = (lower_matches
+                   and all(n.get('writtenAccidental', 2) == 2 for n in (open_lo, open_hi, lo, hi))
+                   and open_hi['staffStep'] == hi['staffStep'] + 1
+                   and open_hi['staffStep'] - open_lo['staffStep'] == 3
+                   and type(lower.get('harmonicTouchMidi')) is int
+                   and events[first[1]].get('harmonicTouchMidi') == events[first[0]].get('harmonicTouchMidi') + 5)
+    independent_second = (reversed_order and all(n.get('writtenAccidental', 2) == 2
+                          for n in (open_lo, open_hi, lo, hi))
+                          and events[first[0]]['x'] > max(lower['x'], upper['x']))
+    if not (repeated_touches or open_fourth or independent_second):
+        raise ValueError('Incompatible open and stopped harmonic pitches')
+    for i in second:
+        event, note = events[i], notes[i]
+        if (not _ordinary_compound_quarter(note, -1) or note.get('openStringTouch') is not None
+                or event.get('durationBeats') != 1 or event.get('durationFallback')
+                or event.get('tiedFromPrevious') or event.get('boundaryTies')
+                or not abs(event['y'] - note['pageY'] * page['height']) <= .01):
+            raise ValueError('The stopped harmonic pair requires complete downstem quarters')
+        base, touch, _ = _closed_artificial_spelling(event, note, i == second[0])
+        if repeated_touches and (base[1] if i == second[0] else touch[1] - 1) != 0:
+            raise ValueError('Mixed harmonics disagree with the printed natural and sharp')
+    hands = {}
+    for indices, natural in ((first, True), (second, False)):
+        for i, expected in zip(indices, ('below', 'above'), strict=True):
+            item = events[i].get('mixedHarmonicFingering')
+            if not isinstance(item, dict):
+                raise ValueError('Missing printed harmonic fingering')
+            base, touch, side = (item.get(k) for k in ('base', 'touch', 'placement'))
+            if (side != expected or type(base) is not int or type(touch) is not int
+                    or (base != 0 if natural else base < 1) or not base < touch <= 4):
+                raise ValueError('Invalid printed harmonic fingering')
+            hands[i] = base, touch, side
+    return hands
+
+
+def _opening_open_harmonics(page, notes, compound, fourth_partners):
+    events = page['events']
+    groups = defaultdict(list)
+    for i, event in enumerate(events):
+        if event.get('openingOpenHarmonicPair') is True:
+            groups[event['measureIndex']].append(i)
+    accepted, fingers, stops = {}, {}, {}
+    starts = list(accumulate(page['measureBeats'], initial=0))
+    meter_changes = {(row['measureIndex'], row['numerator'], row['denominator'])
+                     for row in page['score'].get('meterChanges', ())}
+    for bar, owners in groups.items():
+        if (type(bar) is not int or not 0 <= bar < len(starts) - 1
+                or (bar, 2, 4) not in meter_changes or starts[bar + 1] - starts[bar] != 2
+                or bar in page.get('printedMeasureContinuations', ())
+                or bar + 1 in page.get('printedMeasureContinuations', ())
+                or any(rest['measureIndex'] == bar for rest in page['score'].get('rests', ()))):
+            raise ValueError('Opening harmonics require a literal closed 2/4 bar')
+        local = [i for i, row in enumerate(events) if row.get('measureIndex') == bar]
+        closing = sorted(set(local) - set(owners))
+        if len(owners) != 2 or len(local) != 4 or len(closing) != 2:
+            raise ValueError('Opening harmonics require two complete quarter-note attacks')
+        partners = [i for i in closing if i in compound]
+        carriers = [i for i in closing if fourth_partners.get(i) == 'up'
+                    and events[i].get('compoundHarmonicFourth') is True]
+        if (len(partners) != 1 or len(carriers) != 1 or set(partners) | set(carriers) != set(closing)
+                or any(events[i].get('startBeat') != starts[bar] + 1 for i in closing)):
+            raise ValueError('Opening harmonics require a stopped and open pair on the second beat')
+        if any(i >= len(notes) or events[i].get('sourceNoteIndex') != i
+                or type(events[i].get('y')) not in (int, float) for i in owners):
+            raise ValueError('Opening harmonics require retained pitch owners')
+        lower, upper = sorted(owners, key=lambda i: events[i]['y'], reverse=True)
+        if (events[lower].get('x') != events[upper].get('x')
+                or events[lower].get('openStringMidi') == events[upper].get('openStringMidi')
+                or notes[upper]['staffStep'] != notes[partners[0]]['staffStep']
+                or events[upper].get('midi') != events[partners[0]].get('midi')
+                or events[lower].get('writtenMidi') != events[carriers[0]].get('harmonicTouchMidi')):
+            raise ValueError('Opening touch heads do not agree with their printed partners')
+        for i, placement in zip((lower, upper), ('below', 'above'), strict=True):
+            event, note = events[i], notes[i]
+            written, string, sound = (event.get(k) for k in ('writtenMidi', 'openStringMidi', 'midi'))
+            if (not _ordinary_compound_quarter(note, 1)
+                    or event.get('startBeat') != starts[bar] or event.get('durationBeats') != 1
+                    or event.get('staffIndex') != 0 or event.get('staffCount') != 1
+                    or any(event.get(k) for k in ('clefInferred', 'tiedFromPrevious', 'durationFallback', 'octaveShift'))
+                    or type(written) is not int or string not in (55, 62, 69, 76)
+                    or event.get('harmonicTouchMidi') != written
+                    or sound != string + {4: 28, 5: 24, 7: 19, 9: 28}.get(written - string, -128)):
+                raise ValueError('Invalid opening harmonic quarter')
+            diatonic = note['clefBottomDiatonic'] + note['staffStep']
+            sound_step = diatonic + {4: 14, 5: 11, 7: 7, 9: 11}[written - string]
+            accepted[i] = _harmonic_spelling(diatonic, written), _harmonic_spelling(sound_step, sound)
+            if 'openingPairFingering' in event:
+                fingers[i] = _compound_harmonic_fingering(
+                    dict(compoundHarmonicFingering=event['openingPairFingering']), True, placement)
+        stop = carriers[0]
+        stops[stop] = _compound_harmonic_fingering(
+            dict(compoundHarmonicFingering=events[stop].get('openingHarmonicStoppedFingering')), False, 'below')
+    return accepted, fingers, stops
 
 
 def _independent_open_harmonic_quarters(page, notes, compound):
@@ -665,6 +1007,10 @@ def _independent_open_harmonic_quarters(page, notes, compound):
             groups[event['measureIndex']].append(index)
     result = {}
     below = set()
+    stopped = {i for i, event in enumerate(events) if event.get('sharedStoppedHarmonicPair') is True}
+    validated = set()
+    reversed_stopped = set()
+    hands = {}
     for bar, owners in groups.items():
         spans = page['measureBeats']
         if (type(bar) is not int or not 0 <= bar < len(spans) or spans[bar] != 2
@@ -678,11 +1024,24 @@ def _independent_open_harmonic_quarters(page, notes, compound):
         onset = ticks(sum(spans[:bar]))
         first = [i for i in owners if ticks(events[i]['startBeat']) == onset]
         second = [i for i in owners if ticks(events[i]['startBeat']) == onset + DIVISIONS]
-        if (len(first) != 2 or len(second) != 2
-                or sum(events[i].get('artificialHarmonicThird') is True for i in second) != 1
-                or sum(i in compound for i in second) != 1
-                or any(i in compound or events[i].get('artificialHarmonicThird') is True for i in first)):
+        if len(first) != 2 or len(second) != 2:
             raise ValueError('Mixed harmonics require two proved attacks on consecutive quarter beats')
+        reversed_order = set(first) <= stopped
+        if reversed_order:
+            first, second = second, first
+        if any(i in compound or events[i].get('artificialHarmonicThird') is True for i in first):
+            raise ValueError('A pair of open-string owners is required')
+        if any(i in stopped for i in owners):
+            if not set(second) <= stopped or any(i in stopped for i in first):
+                raise ValueError('A stopped harmonic pair requires two complete owners')
+            hands.update(_mixed_stopped_pair(page, notes, events, first, second, reversed_order))
+            validated.update(second)
+            if reversed_order:
+                reversed_stopped.update(second)
+        elif (sum(events[i].get('artificialHarmonicThird') is True
+                  or events[i].get('compoundHarmonicFourth') is True for i in second) != 1
+              or sum(i in compound for i in second) != 1):
+            raise ValueError('Mixed harmonics require a stopped and open quarter at the second onset')
         if (events[first[0]].get('openStringMidi') == events[first[1]].get('openStringMidi')
                 or events[first[0]].get('x') != events[first[1]].get('x')
                 or {events[i]['staffIndex'] for i in owners} != {0}
@@ -694,7 +1053,7 @@ def _independent_open_harmonic_quarters(page, notes, compound):
                 raise ValueError('Open harmonic has no written source')
             event, note = events[i], notes[i]
             written, sounding, string = (event.get(k) for k in ('writtenMidi', 'midi', 'openStringMidi'))
-            if (not _ordinary_compound_quarter(note, -1) or event.get('sourceNoteIndex') != i
+            if (not _ordinary_compound_quarter(note, 1 if reversed_order else -1) or event.get('sourceNoteIndex') != i
                     or any(event.get(k) != note.get(k) for k in ('measureIndex', 'staffIndex', 'staffCount'))
                     or event.get('clefInferred') or event.get('durationFallback') or event.get('tiedFromPrevious')
                     or event.get('boundaryTies', 0) or event.get('octaveShift', 0)
@@ -706,7 +1065,45 @@ def _independent_open_harmonic_quarters(page, notes, compound):
             diatonic = note['clefBottomDiatonic'] + note['staffStep']
             sound_step = diatonic + {4: 14, 5: 11, 7: 7, 9: 11}[written - string]
             result[i] = _harmonic_spelling(diatonic, written), _harmonic_spelling(sound_step, sounding)
-    return result, below
+    if validated != stopped:
+        raise ValueError('Stopped harmonics outside a closed mixed bar')
+    return result, below, hands, reversed_stopped
+
+
+def _beamed_open_string_spelling(event, owner, source, key):
+    written, sounding, string = (event.get(k) for k in ('writtenMidi', 'midi', 'openStringMidi'))
+    placement = event.get('writtenPlacement') or {}
+    duration = event.get('durationBeats')
+    beam_depth = {.25: 2, .5: 1}.get(duration)
+    if (source is None or event.get('sourceNoteIndex') != owner
+            or type(written) is not int or type(sounding) is not int or type(string) is not int
+            or written != event.get('harmonicTouchMidi') or string not in (55, 62, 69, 76)
+            or source.get('clefBottomDiatonic') != 30 or type(source.get('staffStep')) is not int
+            or any(source.get(k) != event.get(k) for k in ('measureIndex', 'staffIndex', 'staffCount'))
+            or source.get('staffIndex') != 0 or source.get('staffCount') != 1
+            or source.get('stemDirection') not in (-1, 1) or beam_depth is None
+            or source.get('beamCount') != beam_depth
+            or source.get('unbeamedDurationBeats') != 0 or source.get('augmentationDots') != 0
+            or source.get('tupletDivisor') != 1 or source.get('writtenAccidental') != 2
+            or source.get('octaveShift', 0) or source.get('harmonicSemitones', 0)
+            or source.get('openStringTouch') is not None or source.get('crossStaffBeam')
+            or source.get('tiedFromPrevious') or source.get('boundaryTies', 0)
+            or event.get('tiedFromPrevious') or event.get('durationFallback')
+            or event.get('tupletActualNotes') or event.get('octaveShift', 0)
+            or placement.get('durationBeats') != duration
+            or placement.get('principalIndex') != -1 or type(key) is not int or not -7 <= key <= 7):
+        raise ValueError('Short open-string harmonic requires an owned printed beam')
+    interval = written - string
+    if sounding - string != {4: 28, 5: 24, 7: 19, 9: 28}.get(interval):
+        raise ValueError('Open-string harmonic tuning disagrees with the touching pitch')
+    step = source['clefBottomDiatonic'] + source['staffStep']
+    letter, alteration, octave = _harmonic_spelling(step, written)
+    accidental = 1 if key > 0 and letter in 'FCGDAEB'[:key] else (
+        -1 if key < 0 and letter in 'BEADGCF'[:-key] else 0)
+    if alteration != accidental:
+        raise ValueError('Open-string harmonic touch disagrees with its written key')
+    sound_step = step + {4: 14, 5: 11, 7: 7, 9: 11}[interval]
+    return (letter, alteration, octave), _harmonic_spelling(sound_step, sounding)
 
 
 def emit_note(measure, duration, voice, event=None, chord=False, stop=False, start=False, flats=False,
@@ -718,18 +1115,32 @@ def emit_note(measure, duration, voice, event=None, chord=False, stop=False, sta
     third = event.get('artificialHarmonicThird') is True if event else False
     fourth_stem = event.get('retainedCompoundFourthStem') if event else None
     fourth_touch_stem = event.get('retainedCompoundFourthTouchStem') if event else None
+    beamed_fourth = event and event.get('beamedArtificialHarmonicFourth') is True
+    beamed_triplet = beamed_fourth and _beamed_fourth_triplet(event)
+    dotted_fourth = beamed_fourth and _dotted_beamed_fourth(event)
+    third_hook_fourth = beamed_fourth and _third_hook_fourth(event)
+    beamed_open = bool(open_touch and event.get('beamedOpenStringHarmonic') is True)
+    closing_half = bool(artificial and event.get('closingHarmonicHalf') is True)
     if written_harmonic:
-        if (duration != DIVISIONS or duration != event['end'] - event['start']
+        harmonic_duration = (DIVISIONS // 3 if beamed_triplet else 3 * DIVISIONS // 8 if dotted_fourth
+                             else DIVISIONS // 8 if third_hook_fourth
+                             else 2 * DIVISIONS if closing_half
+                             else ticks(event['durationBeats']) if beamed_open
+                             else DIVISIONS // 4 if beamed_fourth else DIVISIONS)
+        if (duration != harmonic_duration or duration != event['end'] - event['start']
                 or chord and not (third or fourth_stem or open_touch) or stop or start or grace is not None
                 or not attack_fragment or event.get('durationFallback') or event.get('retainedTremolo')):
-            raise ValueError('Printed harmonic requires a complete written quarter')
+            raise ValueError('Printed harmonic requires one complete written attack')
         carrier = element(measure, 'note', **{'print-object': 'no'})
         if chord:
             element(carrier, 'chord')
         _pitch_element(carrier, artificial[2] if artificial else open_touch[1])
         element(carrier, 'duration', duration)
         element(carrier, 'voice', voice)
-        element(carrier, 'type', 'quarter')
+        if beamed_triplet or dotted_fourth or third_hook_fourth or beamed_open or closing_half:
+            note_type(carrier, duration, event)
+        else:
+            element(carrier, 'type', '16th' if beamed_fourth else 'quarter')
         _harmonic_role(carrier, 'artificial' if artificial else 'natural', 'sounding-pitch')
     node = element(measure, 'note')
     if written_harmonic:
@@ -790,9 +1201,11 @@ def emit_note(measure, duration, voice, event=None, chord=False, stop=False, sta
         modification = node.find('time-modification')
         node.insert(list(node).index(modification) if modification is not None else len(node), mark)
     mixed = event and event.get('mixedHarmonicQuarter') is True
-    printed_stem = 'down' if mixed else fourth_stem or fourth_touch_stem
-    if printed_stem:
-        element(node, 'stem', printed_stem)
+    closing_stem = 'up' if event and (event.get('closingHarmonicQuarter') is True or closing_half) else None
+    printed_stem = event.get('retainedMixedHarmonicStem', 'down') if mixed else (event.get('retainedBeamedHarmonicStem') if beamed_fourth
+                                         else fourth_stem or fourth_touch_stem or closing_stem)
+    if printed_stem or beamed_open:
+        element(node, 'stem', printed_stem or event['retainedBeamedOpenStem'])
     if event and (event.get('retainedTremolo') or {}).get('printedFilled'):
         if event['retainedTremolo'].get('printedStem') in (-1, 1):
             element(node, 'stem', 'down' if event['retainedTremolo']['printedStem'] < 0 else 'up')
@@ -869,6 +1282,8 @@ def emit_note(measure, duration, voice, event=None, chord=False, stop=False, sta
                     articulations = element(notation, 'articulations')
                 element(articulations, 'caesura' if kind == 'CAESURA' else 'breath-mark',
                         None if kind == 'CAESURA' else symbol.get('value', 'comma'))
+    fingers = (event.get('retainedMixedHarmonicFingering')
+               or event.get('retainedCompoundHarmonicFingering')) if event else None
     if open_touch:
         node.find('type').set('size', 'full')
         head = ET.Element('notehead', {'filled': 'no'})
@@ -876,25 +1291,52 @@ def emit_note(measure, duration, voice, event=None, chord=False, stop=False, sta
         notations = node.find('notations')
         node.insert(list(node).index(notations) if notations is not None else len(node), head)
         technical = _harmonic_role(node, 'natural', 'touching-pitch')
-        if mixed or fourth_touch_stem and technical.find('fingering') is None:
+        if fingers:
+            base_finger, touch_finger, side = fingers
+            element(technical, 'fingering', touch_finger, placement=side)
+            element(technical, 'fingering', base_finger, placement=side)
+        elif beamed_open:
+            element(technical, 'fingering', '0', placement='below')
+        elif (mixed or fourth_touch_stem and technical.find('fingering') is None
+              and not event.get('retainedNaturalHarmonicWithoutZero')):
             element(technical, 'fingering', '0',
                     placement='below' if (event.get('mixedHarmonicLowerZero')
                                           or event.get('retainedCompoundFourthLowerZero')) else 'above')
     if artificial:
         node.find('type').set('size', 'full')
-        _artificial_harmonic_role(node, 'base-pitch')
+        base_technical = _harmonic_role(node, 'artificial', 'base-pitch')
+        if fingers:
+            element(base_technical, 'fingering', fingers[0], placement=fingers[2])
         touched = element(measure, 'note')
+        if 'retainedHarmonicHeadOffset' in event:
+            offset = str(event['retainedHarmonicHeadOffset'])
+            node.set('relative-x', offset)
+            touched.set('relative-x', offset)
         element(touched, 'cue')
         element(touched, 'chord')
         _pitch_element(touched, artificial[1])
         element(touched, 'duration', duration)
         element(touched, 'voice', voice)
-        element(touched, 'type', 'quarter', size='full')
-        if mixed or fourth_stem:
+        if beamed_triplet or dotted_fourth or third_hook_fourth or closing_half:
+            note_type(touched, duration, event)
+            touched.find('type').set('size', 'full')
+        else:
+            element(touched, 'type', '16th' if beamed_fourth else 'quarter', size='full')
+        if beamed_fourth and event.get('retainedHarmonicTouchAccidental') is not None:
+            mark = element(touched, 'accidental', event['retainedHarmonicTouchAccidental'])
+            if beamed_triplet:
+                touched.remove(mark)
+                touched.insert(list(touched).index(touched.find('time-modification')), mark)
+        elif mixed and fingers and not third and not event.get('retainedReversedStoppedPair'):
+            element(touched, 'accidental', 'sharp')
+        if mixed or fourth_stem or beamed_fourth or closing_stem:
             element(touched, 'stem', printed_stem)
         element(touched, 'notehead', 'diamond',
-                **({'filled': 'no'} if mixed or fourth_stem else {'filled': 'yes'} if third else {}))
-        _artificial_harmonic_role(touched, 'touching-pitch')
+                **({'filled': 'no'} if mixed or fourth_stem or beamed_fourth or closing_stem
+                   else {'filled': 'yes'} if third else {}))
+        technical = _harmonic_role(touched, 'artificial', 'touching-pitch')
+        if fingers:
+            element(technical, 'fingering', fingers[1], placement=fingers[2])
     return node
 
 
@@ -981,6 +1423,7 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
         raise ValueError('Invalid MusicXML initial meter')
     if not isinstance(key_fifths, int) or not -7 <= key_fifths <= 7 or not math.isfinite(bpm) or not 15 <= bpm <= 400:
         raise ValueError('Invalid MusicXML key or tempo')
+    bow_position_directions, string_continuations = [], []
     bars, events, expressions, full_rests, literal_rests = [], [], [], [], []
     first_number = 1
     for page in document['pages']:
@@ -1102,19 +1545,20 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
                 printed_beams.append((columns, bridges, hooks))
                 if len(columns) != 3 or bridges != [1, 1] or not all(columns):
                     continue
-                levels = []
+                pattern = []
                 for col in identities:
                     members = [source_notes[page['events'][index]['sourceNoteIndex']] for index in col]
-                    if any(n.get('tupletDivisor') != 3 or n.get('tupletNormalNotes') != 2
-                           or n.get('augmentationDots') != 0 for n in members):
+                    if any(n.get('tupletDivisor') != 3 or n.get('tupletNormalNotes') != 2 for n in members):
                         break
-                    beams = {n.get('beamCount') for n in members}
-                    if len(beams) != 1:
+                    figures = {(n.get('beamCount'), n.get('augmentationDots')) for n in members}
+                    if len(figures) != 1:
                         break
-                    levels.append(beams.pop())
-                if levels in ([1, 2, 1], [1, 1, 1]):
-                    printed_triplets.append((columns, levels, first_bar, len(page['measureBeats']),
-                                             group.get('tupletMark')))
+                    pattern.append(figures.pop())
+                tuplet_mark = group.get('tupletMark')
+                dotted = pattern == [(1, 1), (2, 0), (1, 0)]
+                if pattern in ([(1, 0), (2, 0), (1, 0)], [(1, 0)] * 3) or dotted and tuplet_mark is not None:
+                    printed_triplets.append((columns, pattern, first_bar, len(page['measureBeats']),
+                                             tuplet_mark))
         first_event = len(events)
         written = grace_export.plan(page, ticks)
         paired_tremolos = tremolo_export.retained(page)
@@ -1124,12 +1568,25 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
         printed_strings = printed_string_export.retained(page)
         printed_string_count += len(printed_strings)
         shared_terminal = _terminal_shared_artificial_harmonics(page, source_notes)
+        shared_stopped = {i for i, note in enumerate(page['events'])
+                          if note.get('sharedStoppedHarmonicPair') is True}
+        shared_offsets = {}
+        shared_quarters, shared_quarter_fingers = _shared_artificial_fourths(
+            page, source_notes, shared_offsets)
+        upstem_bars = _upstem_compound_harmonic_bars(page)
+        opening_lower_fingers = {}
         compound_open, fourth_partners, fourth_touches = _compound_open_harmonics(
-            page, source_notes, shared_terminal)
-        fourth_partners.update(_shared_artificial_fourths(page, source_notes))
+            page, source_notes, set(shared_terminal) | set(shared_quarters) | shared_stopped,
+            upstem_bars, opening_lower_fingers)
+        fourth_partners.update(shared_quarters)
         fourth_partners.update(shared_terminal)
-        independent_open, lower_zeros = _independent_open_harmonic_quarters(page, source_notes, compound_open)
+        fourth_partners.update(dict.fromkeys(shared_stopped, 'down'))
+        independent_open, lower_zeros, mixed_fingers, reversed_stopped = _independent_open_harmonic_quarters(
+            page, source_notes, compound_open)
+        opening_open, opening_fingers, opening_stop_fingers = _opening_open_harmonics(
+            page, source_notes, compound_open, fourth_partners)
         compound_open.update(independent_open)
+        compound_open.update(opening_open)
         for note_index, n in enumerate(page['events']):
             if event_kind(n) == 'PITCHED' and (not isinstance(n['midi'], int) or not 0 <= n['midi'] <= 127):
                 raise ValueError('MusicXML note pitch must be a MIDI integer in 0..127')
@@ -1159,16 +1616,57 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
                                retainedTremolo=paired_tremolos.get(note_index), retainedArpeggio=False, retainedNaturalHarmonic=False))
             owner = n.get('sourceNoteIndex')
             third = n.get('artificialHarmonicThird') is True
-            if third or n.get('artificialHarmonicFourth') is True:
+            beamed_fourth = n.get('beamedArtificialHarmonicFourth') is True
+            if beamed_fourth and n.get('artificialHarmonicFourth') is not True:
+                raise ValueError('Beamed artificial fourth is missing its stopped head')
+            if n.get('closingHarmonicQuarter') is True:
+                source = source_notes[note_index] if 0 <= note_index < len(source_notes) and owner == note_index else None
+                if (source is None or n.get('artificialHarmonicFourth') is not True or beamed_fourth or third
+                        or n.get('artificialHarmonicFifth') is True
+                        or not _ordinary_compound_quarter(source) or n.get('durationBeats') != 1
+                        or source.get('staffIndex') != 0 or source.get('staffCount') != 1
+                        or type(measure_index) is not int or not 0 <= measure_index < len(page['measureBeats'])
+                        or page['measureBeats'][measure_index] != 1
+                        or n.get('startBeat') != sum(page['measureBeats'][:measure_index])
+                        or sum(event['measureIndex'] == measure_index for event in page['events']) != 1):
+                    raise ValueError('Closing harmonic requires an isolated written quarter')
+            if n.get('closingHarmonicHalf') is True:
+                source = source_notes[note_index] if 0 <= note_index < len(source_notes) and owner == note_index else None
+                if (source is None or n.get('artificialHarmonicFourth') is not True or beamed_fourth or third
+                        or n.get('artificialHarmonicFifth') is True or n.get('durationBeats') != 2
+                        or source.get('unbeamedDurationBeats') != 2 or source.get('beamCount') != 0
+                        or source.get('stemDirection') != 1 or source.get('staffIndex') != 0
+                        or source.get('staffCount') != 1 or source.get('tupletDivisor', 1) != 1
+                        or any(source.get(k) for k in ('augmentationDots','crossStaffBeam','articulations',
+                                                      'tiedFromPrevious','boundaryTies'))):
+                    raise ValueError('Closing harmonic half requires a shared upstem and a complete half note')
+            if 'printedHarmonicTouchAccidental' in n and not beamed_fourth:
+                raise ValueError('Printed touching accidental requires an owned beamed fourth')
+            if third or n.get('artificialHarmonicFourth') is True or n.get('artificialHarmonicFifth') is True:
                 source = (source_notes[owner]
                           if type(owner) is int and owner == note_index and 0 <= owner < len(source_notes)
                           else None)
                 engraved = _closed_artificial_spelling(n, source, third)
                 events[-1]['retainedArtificialHarmonic'] = engraved
-                if note_index in shared_terminal:
+                if beamed_fourth:
+                    events[-1]['retainedHarmonicTouchAccidental'] = _beamed_fourth_spelling(n, source, engraved)
+                    events[-1]['retainedBeamedHarmonicStem'] = 'up' if source['stemDirection'] == 1 else 'down'
+                    if 'compoundHarmonicFingering' in n:
+                        events[-1]['retainedCompoundHarmonicFingering'] = _compound_harmonic_fingering(
+                            n, False, 'above')
+                if (beamed_fourth or note_index in shared_terminal or n.get('sharedDownstemHarmonicQuarter') is True
+                        or (note_index in shared_quarters and third and source.get('writtenAccidental') == -2)):
                     events[-1]['retainedAccidental'] = spelling_export.printed_mark(
                         printed_accidentals, note_index, engraved[0], cancelled_sharps)
-            if note_index in compound_open:
+            if n.get('beamedOpenStringHarmonic') is True:
+                if (note_index in compound_open or note_index >= len(source_notes)
+                        or events[-1].get('retainedArtificialHarmonic')):
+                    raise ValueError('Short open-string harmonic has a competing written role')
+                events[-1]['retainedCompoundOpenHarmonic'] = _beamed_open_string_spelling(
+                    n, note_index, source_notes[note_index], spelling_key)
+                events[-1]['retainedBeamedOpenStem'] = (
+                    'up' if source_notes[note_index]['stemDirection'] == 1 else 'down')
+            elif note_index in compound_open:
                 events[-1]['retainedCompoundOpenHarmonic'] = compound_open[note_index]
             if note_index in fourth_partners:
                 events[-1]['retainedCompoundFourthStem'] = fourth_partners[note_index]
@@ -1177,20 +1675,58 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
                 events[-1]['retainedCompoundFourthTouchStem'] = stem
                 if lower:
                     events[-1]['retainedCompoundFourthLowerZero'] = True
+            if note_index in upstem_bars:
+                natural = note_index in compound_open
+                if natural:
+                    _, lower = fourth_touches[note_index]
+                else:
+                    lower = n.get('artificialHarmonicFifth') is not True
+                placement = 'below' if lower else 'above'
+                events[-1]['retainedCompoundHarmonicFingering'] = _compound_harmonic_fingering(
+                    n, natural, placement)
+            if note_index in opening_lower_fingers:
+                pair = opening_lower_fingers[note_index]
+                if pair is None:
+                    events[-1]['retainedNaturalHarmonicWithoutZero'] = True
+                else:
+                    events[-1]['retainedCompoundHarmonicFingering'] = pair
+            if note_index in shared_quarter_fingers:
+                events[-1]['retainedCompoundHarmonicFingering'] = shared_quarter_fingers[note_index]
+            if shared_offsets.get(note_index):
+                events[-1]['retainedHarmonicHeadOffset'] = shared_offsets[note_index]
+            if note_index in opening_open:
+                event = events[-1]
+                event['mixedHarmonicQuarter'] = True
+                event['retainedMixedHarmonicStem'] = 'up'
+                if note_index in opening_fingers:
+                    event['retainedMixedHarmonicFingering'] = opening_fingers[note_index]
+            if note_index in opening_stop_fingers:
+                events[-1]['retainedCompoundHarmonicFingering'] = opening_stop_fingers[note_index]
             if n.get('mixedHarmonicQuarter') is True:
                 event = events[-1]
                 event['mixedHarmonicQuarter'] = True
+                if note_index in independent_open and source_notes[note_index].get('stemDirection') == 1:
+                    event['retainedMixedHarmonicStem'] = 'up'
                 event['mixedHarmonicLowerZero'] = note_index in lower_zeros
                 engraved_harmonic = event.get('retainedArtificialHarmonic') or event.get('retainedCompoundOpenHarmonic')
                 event['retainedAccidental'] = spelling_export.printed_mark(
                     printed_accidentals, note_index, engraved_harmonic[0], cancelled_sharps)
+                if note_index in mixed_fingers:
+                    event['retainedReversedStoppedPair'] = note_index in reversed_stopped
+                    event['retainedMixedHarmonicFingering'] = mixed_fingers[note_index]
+                    if note_index in shared_stopped and third and note_index not in reversed_stopped:
+                        event['retainedAccidental'] = 'natural'
             if type(owner) is int and 0 <= owner < len(source_notes):
                 events[-1]['retainedFollowingRest'] = source_notes[owner].get('followingRestBeats', 0)
             if is_grace:
                 events[-1].update(grace=True, graceOrdinal=placement['ordinal'], afterGrace=placement['after'],
                                   stealPercent=placement['steal'], graceWrittenDuration=duration,
                                   principalSourceIdentity=first_event+placement['principal'])
-        from . import technique_export
+        string_continuations.extend(printed_string_export.continuations(
+            page, events[first_event:], bars[first_bar:]))
+        from . import technique_export, bow_position_export
+        bow_position_directions.extend(bow_position_export.plan(
+            page, events[first_event:], bars[first_bar:]))
         expressions.extend(technique_export.plan(page, events[first_event:], bars[first_bar:], f'page:{page_index}'))
         from . import dynamic_export
         expressions.extend(dynamic_export.plan(page, events[first_event:], bars[first_bar:], f'page:{page_index}'))
@@ -1498,6 +2034,36 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
                 selected.setdefault('releaseSymbols', []).append(symbol)
                 rendered.add(mark['identity'])
         directions_by_bar = defaultdict(list)
+        string_lines_by_bar = defaultdict(list)
+        occupied_brackets = defaultdict(list)
+        bow_starts = {}
+        for mark in sorted(bow_position_directions, key=lambda row: row['start']):
+            if not same_staff(mark) or 'connector' not in mark:
+                continue
+            key = mark['barStart'], mark['staffIndex'], mark['staffCount'], mark['lineNumber']
+            if mark['connector'] == 'start':
+                bow_starts[key] = mark['start']
+            else:
+                occupied_brackets[int(mark['lineNumber'])].append((bow_starts.pop(key), mark['start']))
+        for first, stop in sorted(string_continuations, key=lambda pair: pair[0]['start']):
+            if not same_staff(first):
+                continue
+            number = next((n for n in range(1, 17) if all(
+                end < first['start'] or start > stop['start'] for start, end in occupied_brackets[n])), None)
+            if number is None:
+                raise ValueError('Too many overlapping printed string continuations')
+            indexes = [written_direction_bar(row['barStart'], row['start']) for row in (first,stop)]
+            if None in indexes:
+                raise ValueError('Unresolved printed string continuation in MusicXML')
+            occupied_brackets[number].append((first['start'], stop['start']))
+            for index, row in zip(indexes, (first,stop)):
+                string_lines_by_bar[index].append(dict(row, lineNumber=str(number)))
+        bow_positions_by_bar = defaultdict(list)
+        for mark in bow_position_directions:
+            if same_staff(mark):
+                index = written_direction_bar(mark['barStart'], mark['start'])
+                if index is not None:
+                    bow_positions_by_bar[index].append(mark)
         for mark in marks:
             if mark['identity'] not in rendered:
                 tick = mark['startTick']
@@ -1546,7 +2112,7 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
         by_source = {n['sourceIdentity']: n for n in notes}
         mixed_edges = {}
         mixed_bars = set()
-        for columns, levels, first_bar, page_bar_count, tuplet_mark in printed_triplets:
+        for columns, pattern, first_bar, page_bar_count, tuplet_mark in printed_triplets:
             if any(owner not in by_source for column in columns for owner in column):
                 continue
             members = [[by_source[owner] for owner in column] for column in columns]
@@ -1561,8 +2127,11 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
             if not bar['start'] <= cursor < bar['start'] + bar['length']:
                 continue
             edges = {}
-            for col, level, edge in zip(members, levels, ('start', None, 'stop')):
-                end = cursor + DIVISIONS // (3 if level == 1 else 6)
+            for col, (level, dots), edge in zip(members, pattern, ('start', None, 'stop')):
+                duration = DIVISIONS // (3 if level == 1 else 6)
+                if dots:
+                    duration += duration // 2
+                end = cursor + duration
                 if any((n['voice'], n['measureIndex']) != key or n['start'] != cursor
                        or n['end'] != end or n.get('grace', False)
                        or n.get('tupletActualNotes') != 3 or n.get('tupletNormalNotes') != 2
@@ -1574,7 +2143,7 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
             else:
                 if cursor <= bar['start'] + bar['length']:
                     mixed_edges.update(edges)
-                    if levels == [1, 2, 1]:
+                    if pattern == [(1, 0), (2, 0), (1, 0)]:
                         mixed_bars.add((key[0], bar_index))
 
         grace_groups = defaultdict(list)
@@ -1637,6 +2206,10 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
                 element(direction, 'offset', tempo_offset, sound='yes')
                 element(direction, 'sound', tempo=str(tempo['bpm']))
             a, b = bar['start'], bar['start']+bar['length']
+            for continuation in string_lines_by_bar.get(index, ()):
+                printed_string_export.write_continuation(measure, continuation, continuation['start'] - a)
+            for bow_position in bow_positions_by_bar.get(index, ()):
+                bow_position_export.write(measure, bow_position, bow_position['start'] - a)
             for action, mark in directions_by_bar.get(index, ()):
                 if action == 'start':
                     expression_direction(measure, mark, mark['startTick']-a)
@@ -1731,8 +2304,12 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
                                 if notations is None:
                                     notations = element(emitted, 'notations')
                                 tuplet = element(notations, 'tuplet', type=edge, number=1)
-                                if edge == 'start' and tuplet_mark == 'NUMBERED':
+                                if edge == 'start' and tuplet_mark in ('NUMBERED', 'NUMBERED_CURVED_BELOW'):
                                     tuplet.set('show-number', 'actual')
+                                    if tuplet_mark == 'NUMBERED_CURVED_BELOW':
+                                        tuplet.set('placement', 'below')
+                                        tuplet.set('bracket', 'yes')
+                                        tuplet.set('line-shape', 'curved')
                                 elif edge == 'start' and tuplet_mark == 'UNNUMBERED':
                                     tuplet.set('show-number', 'none')
                                     tuplet.set('bracket', 'no')
