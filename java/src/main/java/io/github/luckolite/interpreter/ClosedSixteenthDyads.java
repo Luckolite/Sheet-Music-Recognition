@@ -6409,7 +6409,7 @@ final class ClosedSixteenthDyads {
     private static List<Head> interiorSixthQuartet(Ink raw, Ink normalized, List<MeasureRegion> regions,
             int measure, List<Head> row, float gap, ScoreBeamSource beams) {
         if (row.size() != 32) return List.of();
-        int first = -1, claims = 0;
+        var claimedSlots = new ArrayList<Integer>();
         int clef = row.get(0).note.clefBottomDiatonic();
         for (int slot = 0; slot < 16; slot++) {
             var a = row.get(2 * slot);
@@ -6423,12 +6423,25 @@ final class ClosedSixteenthDyads {
                         || n.augmentationDots() != 0 || n.tupletDivisor() != (claim ? 3 : 1)
                         || n.tupletNormalNotes() != (claim ? 2 : 1)) return List.of();
             }
-            if (claim) {
-                if (first < 0) first = slot;
-                if (slot != first + claims++) return List.of();
-            }
+            if (claim) claimedSlots.add(slot);
         }
-        if (claims != 3 || first < 4 || first % 4 > 1) return List.of();
+        if (claimedSlots.size() == 6 && claimedSlots.equals(List.of(5, 6, 7, 9, 10, 11))) {
+            var first = provedInteriorSixthQuartet(raw, normalized, regions, measure, row, gap, beams, 5, true);
+            var second = provedInteriorSixthQuartet(raw, normalized, regions, measure, row, gap, beams, 9, true);
+            if (first.isEmpty() || second.isEmpty()) return List.of();
+            var both = new ArrayList<>(first);
+            both.addAll(second);
+            return both;
+        }
+        if (claimedSlots.size() != 3) return List.of();
+        int first = claimedSlots.get(0);
+        if (first < 4 || first % 4 > 1 || claimedSlots.get(1) != first + 1 || claimedSlots.get(2) != first + 2)
+            return List.of();
+        return provedInteriorSixthQuartet(raw, normalized, regions, measure, row, gap, beams, first, false);
+    }
+
+    private static List<Head> provedInteriorSixthQuartet(Ink raw, Ink normalized, List<MeasureRegion> regions,
+            int measure, List<Head> row, float gap, ScoreBeamSource beams, int first, boolean opposedFingerings) {
         int group = first - first % 4;
         var owners = row.subList(2 * group, 2 * group + 8);
         if (!beamOriginsUnclaimed(beams, owners)) return List.of();
@@ -6447,8 +6460,9 @@ final class ClosedSixteenthDyads {
         }
         var bar = regions.get(measure);
         var rows = UnnumberedTripletInk.sourceRows(bar, regions, raw.height);
-        return straightQuartetInk(raw, bar, pairs, gap, first % 4, rows, true, false)
-                && straightQuartetInk(normalized, bar, pairs, gap, first % 4, rows, true, false) ? owners : List.of();
+        return straightQuartetInk(raw, bar, pairs, gap, first % 4, rows, true, false, opposedFingerings)
+                && straightQuartetInk(normalized, bar, pairs, gap, first % 4, rows, true, false, opposedFingerings)
+                ? owners : List.of();
     }
 
     private static boolean completeSixteenthColumns(List<Head> row, float gap, int clef, int attacks) {
@@ -6486,7 +6500,17 @@ final class ClosedSixteenthDyads {
     private static boolean straightQuartetInk(Ink ink, MeasureRegion bar, List<Dyad> pairs,
             float gap, int start, UnnumberedTripletInk.Rows rows, boolean allowPeerFingering,
             boolean fingeredThirds) {
+        return straightQuartetInk(ink, bar, pairs, gap, start, rows, allowPeerFingering, fingeredThirds, false);
+    }
+
+    private static boolean straightQuartetInk(Ink ink, MeasureRegion bar, List<Dyad> pairs,
+            float gap, int start, UnnumberedTripletInk.Rows rows, boolean allowPeerFingering,
+            boolean fingeredThirds, boolean opposedFingerings) {
         var track = WrappedMeasureBoundaries.verifiedTripletStaff(ink.raw, ink.width, ink.height, bar, true);
+        if (track == null && opposedFingerings) {
+            float floor = bar.bottom() * ink.height - 2.1f * gap;
+            track = StaffPitchTrack.forPrintedSlurs(ink.raw, ink.width, ink.height, floor - 4 * gap, floor, gap);
+        }
         if (track == null) {
             var first = pairs.get(0).bottom;
             var rules = localRules(ink, first.x, first.y + first.note.staffStep() * gap * .5f, gap);
@@ -6513,6 +6537,9 @@ final class ClosedSixteenthDyads {
         float bottomCaption = shaft.direction() > 0 ? beam : bottom;
         if (UnnumberedTripletInk.bracketBesideBeam(ink.raw, ink.width, ink.height, gap,
                 claim.get(0).top.x, claim.get(2).top.x, top, bottom, shaft.endY(), rows, track, true)) return false;
+        if (opposedFingerings)
+            return shaft.direction() < 0 && opposedQuartetFingerings(ink, middle, claim.get(2),
+                    shaft, shafts.get(start + 2), gap, rows);
         boolean below = UnnumberedTripletInk.centeredThree(ink.raw, ink.width, ink.height, center,
                 bottomCaption - .15f * gap, bottomCaption + 4 * gap, gap, rows, track);
         if (fingeredThirds ? !opposedOpeningDigits(ink, claim.get(0), middle, shaft, gap) : below) return false;
@@ -6520,6 +6547,42 @@ final class ClosedSixteenthDyads {
                 topCaption - 4 * gap, topCaption + .15f * gap, gap, rows, track)) return true;
         return allowPeerFingering && start == 1 && shaft.direction() < 0
                 && matchingBeamSideThree(ink, pairs.get(0), shafts.get(0), middle, shaft, gap);
+    }
+
+    /** Each of two adjacent shafts has separate upper and lower fingering ink. */
+    private static boolean opposedQuartetFingerings(Ink ink, Dyad middle, Dyad end,
+            PrintedBeamShafts.Shaft middleShaft, PrintedBeamShafts.Shaft endShaft, float gap,
+            UnnumberedTripletInk.Rows rows) {
+        var a = isolatedQuartetFingering(ink, middle.top.x, middleShaft.endY() - 2.5f * gap,
+                middleShaft.endY() - .05f * gap, gap, rows);
+        var b = isolatedQuartetFingering(ink, end.top.x, endShaft.endY() - 2.5f * gap,
+                endShaft.endY() - .05f * gap, gap, rows);
+        var c = isolatedQuartetFingering(ink, middle.bottom.x, middle.bottom.y + .30f * gap,
+                middle.bottom.y + 2.7f * gap, gap, rows);
+        var d = isolatedQuartetFingering(ink, end.bottom.x, end.bottom.y + .30f * gap,
+                end.bottom.y + 2.7f * gap, gap, rows);
+        return a != null && b != null && c != null && d != null
+                && Math.abs((a.bottom - middleShaft.endY()) - (b.bottom - endShaft.endY())) <= .17f * gap
+                && Math.abs((c.top - middle.bottom.y) - (d.top - end.bottom.y)) <= .23f * gap;
+    }
+
+    private static RawNumeralComponents.Component isolatedQuartetFingering(Ink ink, float x,
+            float first, float last, float gap, UnnumberedTripletInk.Rows rows) {
+        int left = Math.round(x - .84f * gap), right = Math.round(x + .84f * gap);
+        int top = Math.max(rows.first(), Math.round(first));
+        int bottom = Math.min(rows.last(), Math.round(last));
+        if (left < 0 || right >= ink.width || top >= bottom) return null;
+        RawNumeralComponents.Component result = null;
+        for (var c : RawNumeralComponents.capture(ink.raw, ink.width, ink.height, left, top, right, bottom,
+                165, () -> {}, () -> {}).components()) {
+            int height = c.bottom - c.top + 1, width = c.right - c.left + 1;
+            if (c.left <= left || c.right >= right || c.top <= top || c.bottom >= bottom
+                    || height < .80f * gap || height > 1.28f * gap || width < .48f * gap || width > 1.08f * gap
+                    || Math.abs((c.left + c.right) * .5f - x) > .48f * gap) continue;
+            if (result != null) return null;
+            result = c;
+        }
+        return result;
     }
 
     private static boolean opposedOpeningDigits(Ink ink, Dyad first, Dyad center,
