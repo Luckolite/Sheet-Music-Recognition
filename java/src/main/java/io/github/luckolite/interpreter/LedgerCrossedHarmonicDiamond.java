@@ -8,21 +8,26 @@ final class LedgerCrossedHarmonicDiamond {
 
     static boolean proved(byte[] labels, byte[] gray, int w, int h,
             float x, float y, float gap, int shaft, int direction) {
-        return proved(labels, gray, w, h, x, y, gap, shaft, direction, 1.03f);
+        return proved(labels, gray, w, h, x, y, gap, shaft, direction, 1.03f, .8f, false);
     }
 
     static boolean compact(byte[] labels, byte[] gray, int w, int h,
             float x, float y, float gap, int shaft, int direction) {
-        return proved(labels, gray, w, h, x, y, gap, shaft, direction, .88f);
+        return proved(labels, gray, w, h, x, y, gap, shaft, direction, .88f, .8f, false);
+    }
+
+    static boolean compactStemmedTouch(byte[] labels, byte[] gray, int w, int h,
+            float x, float y, float gap, int shaft) {
+        return proved(labels, gray, w, h, x, y, gap, shaft, 1, .88f, .68f, true);
     }
 
     private static boolean proved(byte[] labels, byte[] gray, int w, int h,
-            float x, float y, float gap, int shaft, int direction, float span) {
+            float x, float y, float gap, int shaft, int direction, float span, float shoulderRise, boolean touchMayBeLabeledNote) {
         if (labels == null || gray == null || labels.length != (long) w * h || gray.length != labels.length
                 || !Float.isFinite(x) || !Float.isFinite(y) || !Float.isFinite(gap)
                 || gap < 10 || gap > 26 || (direction != 1 && direction != -1)) return false;
         int cx = Math.round(x), cy = Math.round(y);
-        int radius = Math.round(gap * span), rise = Math.round(gap * .8f);
+        int radius = Math.round(gap * span), rise = Math.round(gap * shoulderRise);
         if (cx - radius < 0 || cx + radius >= w || cy - rise < 0 || cy + rise >= h
                 || (shaft - cx) * direction < gap * .32f
                 || (shaft - cx) * direction > gap * .75f) return false;
@@ -44,12 +49,12 @@ final class LedgerCrossedHarmonicDiamond {
         int left = direction == -1 ? shaft + omit : cx - radius;
         int right = direction == -1 ? cx + radius : shaft - omit;
         if (left >= right) return false;
-        return shoulder(labels, gray, w, cx, cy - rise, first - 1, 1, left, right, gap)
-                && shoulder(labels, gray, w, cx, cy + rise, last + 1, -1, left, right, gap);
+        return shoulder(labels, gray, w, cx, cy - rise, first - 1, 1, left, right, gap, touchMayBeLabeledNote)
+                && shoulder(labels, gray, w, cx, cy + rise, last + 1, -1, left, right, gap, touchMayBeLabeledNote);
     }
 
     private static boolean shoulder(byte[] labels, byte[] gray, int w, int cx,
-            int start, int end, int dy, int left, int right, float gap) {
+            int start, int end, int dy, int left, int right, float gap, boolean touchMayBeLabeledNote) {
         int rows = 0, widest = 0, tip = 0, symbol = 0, area = 0, prior = 0;
         for (int y = start; dy * (end - y) >= 0; y += dy) {
             int span = 0, lowest = right, highest = left;
@@ -58,7 +63,9 @@ final class LedgerCrossedHarmonicDiamond {
                 lowest = Math.min(lowest, x);
                 highest = Math.max(highest, x);
                 span++;
-                if (labels[y * w + x] == OmrMeasurePostProcessor.SYMBOL) symbol++;
+                byte label = labels[y * w + x];
+                if (label == OmrMeasurePostProcessor.SYMBOL
+                        || touchMayBeLabeledNote && label == OmrMeasurePostProcessor.NOTEHEAD) symbol++;
             }
             if (span == 0 && rows == 0) continue;
             if (span == 0 || span < prior - 2

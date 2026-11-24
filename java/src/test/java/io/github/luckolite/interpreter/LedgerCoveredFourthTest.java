@@ -40,6 +40,31 @@ public final class LedgerCoveredFourthTest {
         assertFalse(ArtificialHarmonics.beamedLedgerFourth(labels, gray, cut, WIDTH, HEIGHT, X, Y, GAP));
     }
 
+    @Test
+    public void compactUpstemDiamondCanCarryNoteheadLabels() {
+        byte[] labels = new byte[WIDTH * HEIGHT];
+        byte[] gray = new byte[labels.length];
+        Arrays.fill(gray, (byte) 255);
+        for (int dy = -11; dy <= 11; dy++) {
+            int half = 11 - Math.abs(dy);
+            for (int dx = -half; dx <= half; dx++)
+                ink(labels, gray, X + dx, TOUCH + dy, OmrMeasurePostProcessor.NOTEHEAD);
+        }
+        for (int dy = -1; dy <= 2; dy++)
+            for (int dx = -20; dx <= 20; dx++)
+                ink(labels, gray, X + dx, TOUCH + dy, (byte) 1);
+        int shaft = X + 11;
+        assertTrue(LedgerCrossedHarmonicDiamond.compactStemmedTouch(
+                labels, gray, WIDTH, HEIGHT, X, TOUCH, GAP, shaft));
+        assertFalse(LedgerCrossedHarmonicDiamond.compact(
+                labels, gray, WIDTH, HEIGHT, X, TOUCH, GAP, shaft, 1));
+
+        for (int y = TOUCH - 12; y < TOUCH - 1; y++)
+            Arrays.fill(gray, y * WIDTH + X - 16, y * WIDTH + X + 17, (byte) 255);
+        assertFalse(LedgerCrossedHarmonicDiamond.compactStemmedTouch(
+                labels, gray, WIDTH, HEIGHT, X, TOUCH, GAP, shaft));
+    }
+
     private static void ink(byte[] labels, byte[] gray, int x, int y, byte label) {
         labels[y * WIDTH + x] = label;
         gray[y * WIDTH + x] = 0;

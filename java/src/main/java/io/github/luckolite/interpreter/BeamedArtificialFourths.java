@@ -79,6 +79,7 @@ final class BeamedArtificialFourths {
         for (int i = 0; i < bars.size(); i++) byMeasure.add(new ArrayList<>());
         for (int i = 0; i < notes.size(); i++) byMeasure.get(notes.get(i).measureIndex()).add(i);
         var removed = new HashSet<Integer>();
+        var restored = new HashSet<Integer>();
         ScoreMeterChange meter = inherited;
         int meterIndex = 0;
         for (int i = 0; i + 1 < bars.size(); i++) {
@@ -93,38 +94,40 @@ final class BeamedArtificialFourths {
             var bar = bars.get(i);
             var tail = notes.get(following.get(0));
             if (!provesCompactClosure(bar, bars.get(i + 1), tail, raw, normalized, width, height)) continue;
-            var owners = local.stream().filter(j -> simpleTripletStop(notes.get(j))).toList();
-            if (owners.size() != 12) continue;
-            int extra = local.stream().filter(j -> !owners.contains(j)).findFirst().orElseThrow();
-            var alias = notes.get(extra);
-            if (alias.kind() != ScoreNoteEvent.Kind.PITCHED || alias.staffIndex() != 0 || alias.staffCount() != 1
-                    || alias.visualSize() != ScoreNoteEvent.VisualSize.FULL
-                    || alias.octaveShift() != 0 || alias.harmonicSemitones() != 0 || alias.openStringTouch() != null
-                    || alias.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_FROM_KEY
-                    || alias.beamCount() != 1 || alias.articulations() != 0 || alias.augmentationDots() != 0
-                    || alias.unbeamedDurationBeats() != 0 || alias.tiedFromPrevious() || alias.boundaryTies() != 0
-                    || alias.leadingRestBeats() != 0 || alias.followingRestBeats() != 0 || alias.crossStaffBeam())
-                continue;
-            var proof = provedRun(bar, notes, owners, labels, raw, normalized, width, height, 1, null, true);
-            if (proof == null) continue;
-            float x = xAt(alias, bar, width), y = alias.pageY() * height;
-            var candidates = proof.touches().stream().filter(t ->
-                    Math.abs(t.x() - x) <= .21f * t.gap() && Math.abs(t.y() - y) <= .34f * t.gap()
-                            && alias.stemDirection() == t.stop().stemDirection()).toList();
-            if (candidates.size() != 1) continue;
-            var touch = candidates.get(0);
-            if (sameTouchShaft(raw, width, height, x, y, touch)
-                    && sameTouchShaft(normalized, width, height, x, y, touch)) removed.add(extra);
+            if (local.stream().filter(j -> notes.get(j).octaveShift() == 2).count() < 10) continue;
+            for (int extra : local) {
+                var alias = notes.get(extra);
+                if (!simpleTripletStop(alias) || alias.octaveShift() != 0
+                        || alias.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_FROM_KEY
+                        || alias.articulations() != 0) continue;
+                var owners = local.stream().filter(j -> j != extra).toList();
+                if (!owners.stream().allMatch(j -> simpleTripletStop(notes.get(j)))) continue;
+                var proof = provedRun(bar, notes, owners, labels, raw, normalized, width, height, 1, null, true);
+                if (proof == null) continue;
+                float x = xAt(alias, bar, width), y = alias.pageY() * height;
+                var candidates = proof.touches().stream().filter(t ->
+                        Math.abs(t.x() - x) <= .21f * t.gap() && Math.abs(t.y() - y) <= .34f * t.gap()
+                                && alias.stemDirection() == t.stop().stemDirection()
+                                && alias.staffStep() == t.stop().staffStep() + 3).toList();
+                if (candidates.size() != 1) continue;
+                var touch = candidates.get(0);
+                if (!sameTouchShaft(raw, width, height, x, y, touch)
+                        || !sameTouchShaft(normalized, width, height, x, y, touch)) continue;
+                removed.add(extra);
+                owners.stream().filter(j -> notes.get(j).octaveShift() == 0).forEach(restored::add);
+                break;
+            }
         }
         if (removed.isEmpty()) return score;
         var owners = java.util.stream.IntStream.range(0, notes.size())
                 .filter(i -> !removed.contains(i)).boxed().toList();
-        return score.withNotes(owners.stream().map(notes::get).toList(), owners);
+        return score.withNotes(owners.stream()
+                .map(i -> restored.contains(i) ? notes.get(i).withOctaveShift(2) : notes.get(i)).toList(), owners);
     }
 
     private static boolean simpleTripletStop(ScoreNoteEvent n) {
         return n.kind() == ScoreNoteEvent.Kind.PITCHED && n.staffIndex() == 0 && n.staffCount() == 1
-                && n.octaveShift() == 2 && n.harmonicSemitones() == 0 && n.openStringTouch() == null
+                && (n.octaveShift() == 2 || n.octaveShift() == 0) && n.harmonicSemitones() == 0 && n.openStringTouch() == null
                 && n.clefBottomDiatonic() == ScoreNoteEvent.CLEF_TREBLE && n.stemDirection() != 0
                 && n.visualSize() == ScoreNoteEvent.VisualSize.FULL && n.beamCount() == 1
                 && n.unbeamedDurationBeats() == 0 && n.augmentationDots() == 0 && !n.crossStaffBeam()
@@ -149,7 +152,7 @@ final class BeamedArtificialFourths {
             byte[] raw, byte[] normalized, int width, int height) {
         float gap = (bar.bottom() - bar.top()) * height / 8.2f;
         float span = (bar.right() - bar.left()) * width;
-        if (gap < 10 || gap > 25 || span < 22 * gap || span > 28 * gap
+        if (gap < 10 || gap > 25 || span < 20 * gap || span > 28 * gap
                 || Math.abs(bar.top() - next.top()) * height > .23f * gap
                 || Math.abs(bar.bottom() - next.bottom()) * height > .23f * gap
                 || bar.cadenceQuarterBeats() != 0 || next.cadenceQuarterBeats() > 1
@@ -564,6 +567,20 @@ final class BeamedArtificialFourths {
             if (ArtificialHarmonics.shaftCrossedDiamond(raw, width, height, x, touch, gap, col, stem, true)
                     && ArtificialHarmonics.shaftCrossedDiamond(
                             normalized, width, height, x, touch, gap, col, stem, true)) return true;
+        if (compact && printedDottedTouch(labels, raw, normalized, width, height, x, y, gap, stem))
+            return true;
+        if (!compact || stem != 1
+                || !ArtificialHarmonics.filledQuarterCore(raw, width, height, x, y, gap)
+                || !ArtificialHarmonics.filledQuarterCore(normalized, width, height, x, y, gap)) return false;
+        int search = Math.round(gap * .16f);
+        for (int col = Math.max(source.left(), proof.left()); col <= Math.min(source.right(), proof.right()); col++) {
+            for (int dx = -search; dx <= search; dx++) for (int dy = -search; dy <= search; dy++) {
+                if (LedgerCrossedHarmonicDiamond.compactStemmedTouch(
+                            labels, raw, width, height, x + dx, touch + dy, gap, col)
+                        && LedgerCrossedHarmonicDiamond.compactStemmedTouch(
+                            labels, normalized, width, height, x + dx, touch + dy, gap, col)) return true;
+            }
+        }
         return false;
     }
 

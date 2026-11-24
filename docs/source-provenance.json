@@ -9433,8 +9433,8 @@
         "scope": "Unanchored measure-count split guard and raster wiring. Broader source differences remain subject to review."
       },
       "source_path": "tools/native-worker/NativePageGuide.java",
-      "source_sha256": "f2b8031c1b9a297a97cc4692b8b6d635c5cf721cebba066588ef02b366dc8b1c",
-      "source_normalized_sha256": "b1237dad3e5bcf1b91efe94438b72e343bcecf702885684abc910d4cc7f4a6a3",
+      "source_sha256": "c03cce34720bc53e55e892889b2d800f838ae84724e7ea5873d77cb10d909cda",
+      "source_normalized_sha256": "c03cce34720bc53e55e892889b2d800f838ae84724e7ea5873d77cb10d909cda",
       "standalone_sha256": "d0fe2fa045aad2483a3bf820856cba1bbcd4bb282d887235ab724ec0345023ee",
       "license": "Apache-2.0",
       "review_note": "Shared recognition and playback-direction changes ported with standalone adapters. Redistributable synthetic regressions cover the changed ink and direction rules.",
@@ -9463,6 +9463,10 @@
       "november_24_flesch_app_review": {
         "app_commit": "d0622b051dfaa40ad1ac76a2cd1ed7072186bb90",
         "scope": "Shared rhythm and expression repairs use native/app production orchestration. The standalone public entry point retains additional raw rules and export postprocessing."
+      },
+      "compact_harmonic_triplet_adapter_review": {
+        "app_commit": "44ed9ba4ab887f1c36fb1403c598600b077c6cdc",
+        "scope": "Reviewed the native caller and the standalone SheetInterpreter and Main paths. Both require source-owned harmonic diamonds, four closed triplet rails and a shared shaft before removing a false sounding attack. The app decoder reconstructs the same written harmonic and ratio in its page guide."
       }
     },
     "SheetWrittenTieLinks.java": {
