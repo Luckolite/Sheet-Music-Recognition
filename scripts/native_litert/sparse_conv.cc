@@ -13,7 +13,22 @@ struct Step {
 };
 
 // Height and width describe the output. VALID inputs include the full halo.
-template <bool Valid>
+template<int InputChannels>
+static bool same_pixel(const float* first, const float* second) {
+    auto diff = _mm256_setzero_si256();
+    for (int channel = 0; channel < InputChannels; channel += 8) {
+        auto a = _mm256_castps_si256(_mm256_loadu_ps(first + channel));
+        auto b = _mm256_castps_si256(_mm256_loadu_ps(second + channel));
+        diff = _mm256_or_si256(diff, _mm256_xor_si256(a, b));
+    }
+    return _mm256_testz_si256(diff, diff) != 0;
+}
+
+static bool same_sparse_pixel(const float* a, const float* b, int channels) {
+    return channels == 64 ? same_pixel<64>(a, b) : same_pixel<128>(a, b);
+}
+
+template <bool Valid, bool Reuse = false>
 static void conv_rows(
     const float* input, const float* packed, const float* bias, int height, int width,
     int cin, int cout, int dilation, int row_begin, int row_end, float* output) {
@@ -23,20 +38,64 @@ static void conv_rows(
     std::vector<Step> steps;
     steps.reserve(kernel);
     const __m256 zero = _mm256_setzero_ps();
+    const int first = std::max(row_begin - 1, 0);
+    std::vector<uint8_t> equal, copies;
+    if constexpr (Reuse) {
+        const int last = std::min(row_end + 1, height);
+        equal.resize(static_cast<size_t>(last - first) * width);
+        copies.resize(width);
+        for (int y = first; y < last; ++y) {
+            const float* pixel = input + static_cast<size_t>(y) * width * cin;
+            uint8_t* row = equal.data() + static_cast<size_t>(y - first) * width;
+            for (int x = 0; x < width; ++x, pixel += cin) {
+                row[x] = (x > 0 && same_sparse_pixel(pixel, pixel - cin, cin) ? 1 : 0)
+                       | (y > 0 && same_sparse_pixel(pixel, pixel - width * cin, cin) ? 2 : 0);
+            }
+        }
+    }
     for (int y = row_begin; y < row_end; ++y) {
-        for (int x = 0; x < width; x += 4) {
-            int remaining = std::min(width-x, 4);
+        if constexpr (Reuse) {
+            for (int x = 0; x < width; ++x) {
+                int same = 0;
+                if (y > 0 && y < height - 1 && x > 0 && x < width - 1) {
+                    const auto* above = equal.data() + static_cast<size_t>(y-first-1) * width + x-1;
+                    const auto* middle = above + width;
+                    const auto* below = middle + width;
+                    same = above[0] & above[1] & above[2] & middle[0] & middle[1] & middle[2]
+                         & below[0] & below[1] & below[2];
+                }
+                if (x > 1 && (same & 1)) copies[x] = 1;
+                else if (y > row_begin && y > 1 && (same & 2)) copies[x] = 2;
+                else copies[x] = 0;
+            }
+        }
+        float* output_row = output + static_cast<size_t>(y) * width * cout;
+        for (int cursor = 0; cursor < width;) {
+            int positions[4]{};
+            int remaining;
+            if constexpr (Reuse) {
+                remaining = 0;
+                while (cursor < width && remaining < 4) {
+                    if (!copies[cursor]) positions[remaining++] = cursor;
+                    ++cursor;
+                }
+                if (!remaining) break;
+            } else {
+                remaining = std::min(width - cursor, 4);
+                for (int i = 0; i < 4; ++i) positions[i] = cursor + i;
+                cursor += 4;
+            }
             steps.clear();
             for (int ky = 0; ky < 3; ++ky) {
                 const int sy = y + (ky - (Valid ? 0 : 1))*dilation;
                 if (sy < 0 || sy >= input_height) continue;
                 const float* row = input + static_cast<size_t>(sy)*input_width*cin;
                 for (int kx = 0; kx < 3; ++kx) {
-                    const int sx = x + (kx - (Valid ? 0 : 1))*dilation;
-                    const float* src0 = sx >= 0 && sx < input_width ? row + sx*cin : nullptr;
-                    const float* src1 = remaining>1 && sx+1>=0 && sx+1<input_width ? row+(sx+1)*cin : nullptr;
-                    const float* src2 = remaining>2 && sx+2>=0 && sx+2<input_width ? row+(sx+2)*cin : nullptr;
-                    const float* src3 = remaining>3 && sx+3>=0 && sx+3<input_width ? row+(sx+3)*cin : nullptr;
+                    const auto source = [&](int anchor) -> const float* {
+                        const int sx = positions[anchor] + (kx - (Valid ? 0 : 1)) * dilation;
+                        return anchor < remaining && sx >= 0 && sx < input_width ? row + sx * cin : nullptr;
+                    };
+                    const float* src0 = source(0), *src1 = source(1), *src2 = source(2), *src3 = source(3);
                     const int spatial_offset=(ky*3+kx)*cin;
                     const auto bits=[](const float* src,int c) {
                         return src ? _mm256_castps_si256(_mm256_loadu_ps(src+c)) : _mm256_setzero_si256();
@@ -69,7 +128,6 @@ static void conv_rows(
                     }
                 }
             }
-            float* dest=output+(static_cast<size_t>(y)*width+x)*cout;
             for (int co=0; co<cout; co+=16) {
                 const float* weights=packed+static_cast<size_t>(co)*kernel;
                 const __m256 bias0=_mm256_loadu_ps(bias+co), bias1=_mm256_loadu_ps(bias+co+8);
@@ -85,21 +143,29 @@ static void conv_rows(
                     c0=_mm256_fmadd_ps(w0,c,c0); c1=_mm256_fmadd_ps(w1,c,c1);
                     d0=_mm256_fmadd_ps(w0,d,d0); d1=_mm256_fmadd_ps(w1,d,d1);
                 }
-                _mm256_storeu_ps(dest+co,_mm256_max_ps(a0,zero));
-                _mm256_storeu_ps(dest+co+8,_mm256_max_ps(a1,zero));
+                _mm256_storeu_ps(output_row+positions[0]*cout+co,_mm256_max_ps(a0,zero));
+                _mm256_storeu_ps(output_row+positions[0]*cout+co+8,_mm256_max_ps(a1,zero));
                 if (remaining<2) continue;
-                _mm256_storeu_ps(dest+cout+co,_mm256_max_ps(b0,zero));
-                _mm256_storeu_ps(dest+cout+co+8,_mm256_max_ps(b1,zero));
+                _mm256_storeu_ps(output_row+positions[1]*cout+co,_mm256_max_ps(b0,zero));
+                _mm256_storeu_ps(output_row+positions[1]*cout+co+8,_mm256_max_ps(b1,zero));
                 if (remaining<3) continue;
-                _mm256_storeu_ps(dest+2*cout+co,_mm256_max_ps(c0,zero));
-                _mm256_storeu_ps(dest+2*cout+co+8,_mm256_max_ps(c1,zero));
+                _mm256_storeu_ps(output_row+positions[2]*cout+co,_mm256_max_ps(c0,zero));
+                _mm256_storeu_ps(output_row+positions[2]*cout+co+8,_mm256_max_ps(c1,zero));
                 if (remaining<4) continue;
-                _mm256_storeu_ps(dest+3*cout+co,_mm256_max_ps(d0,zero));
-                _mm256_storeu_ps(dest+3*cout+co+8,_mm256_max_ps(d1,zero));
+                _mm256_storeu_ps(output_row+positions[3]*cout+co,_mm256_max_ps(d0,zero));
+                _mm256_storeu_ps(output_row+positions[3]*cout+co+8,_mm256_max_ps(d1,zero));
+            }
+        }
+        if constexpr (Reuse) {
+            for (int x = 0; x < width; ++x) {
+                float* dst = output_row + x * cout;
+                if (copies[x] == 1) std::memcpy(dst, dst-cout, cout * sizeof(float));
+                else if (copies[x] == 2) std::memcpy(dst, dst-width*cout, cout * sizeof(float));
             }
         }
     }
 }
+
 
 // Reuse each weight vector across eight adjacent pixels for the selected layers.
 struct WideStep { int weight; float values[8]; };
@@ -192,16 +258,7 @@ static void conv_wide_rows(const float* input,const float* packed,const float* b
     }
 }
 
-static bool same_pixel(const float* first, const float* second) {
-    auto diff = _mm256_setzero_si256();
-    for (int channel = 0; channel < 32; channel += 8) {
-        auto a = _mm256_castps_si256(_mm256_loadu_ps(first + channel));
-        auto b = _mm256_castps_si256(_mm256_loadu_ps(second + channel));
-        diff = _mm256_or_si256(diff, _mm256_xor_si256(a, b));
-    }
-    return _mm256_testz_si256(diff, diff) != 0;
-}
-
+template<int InputChannels>
 static void convolve_pixel(const float* source, const float* weights, const float* bias,
         int height, int width, int y, int x, float* result) {
     auto a = _mm256_loadu_ps(bias);
@@ -214,9 +271,9 @@ static void convolve_pixel(const float* source, const float* weights, const floa
         for (int kx = 0; kx < 3; ++kx) {
             int xx = x + kx - 1;
             if (xx < 0 || xx >= width) continue;
-            const float* input = source + (static_cast<size_t>(yy)*width + xx)*32;
-            const float* kernel = weights + (ky*3 + kx)*32*32;
-            for (int channel = 0; channel < 32; ++channel, kernel += 32) {
+            const float* input = source + (static_cast<size_t>(yy)*width + xx)*InputChannels;
+            const float* kernel = weights + (ky*3 + kx)*InputChannels*32;
+            for (int channel = 0; channel < InputChannels; ++channel, kernel += 32) {
                 auto v = _mm256_set1_ps(input[channel]);
                 a = _mm256_fmadd_ps(v, _mm256_loadu_ps(kernel), a);
                 b = _mm256_fmadd_ps(v, _mm256_loadu_ps(kernel + 8), b);
@@ -232,6 +289,7 @@ static void convolve_pixel(const float* source, const float* weights, const floa
     _mm256_storeu_ps(result + 24, _mm256_max_ps(d, zero));
 }
 
+template<int InputChannels>
 static void convolve_pair(const float* source, const float* weights, const float* bias,
         int width, int y, int x0, int x1, float* first, float* second) {
     auto a0 = _mm256_loadu_ps(bias);
@@ -241,11 +299,11 @@ static void convolve_pair(const float* source, const float* weights, const float
     auto b0 = a0, b1 = a1, b2 = a2, b3 = a3;
     const float* kernel = weights;
     for (int ky = 0; ky < 3; ++ky) {
-        const float* row = source + static_cast<size_t>(y + ky - 1) * width * 32;
+        const float* row = source + static_cast<size_t>(y + ky - 1) * width * InputChannels;
         for (int kx = -1; kx <= 1; ++kx) {
-            const float* i0 = row + (x0 + kx)*32;
-            const float* i1 = row + (x1 + kx)*32;
-            for (int channel = 0; channel < 32; ++channel, kernel += 32) {
+            const float* i0 = row + (x0 + kx)*InputChannels;
+            const float* i1 = row + (x1 + kx)*InputChannels;
+            for (int channel = 0; channel < InputChannels; ++channel, kernel += 32) {
                 auto v0 = _mm256_set1_ps(i0[channel]);
                 auto v1 = _mm256_set1_ps(i1[channel]);
                 auto w = _mm256_loadu_ps(kernel);
@@ -274,24 +332,41 @@ static void convolve_pair(const float* source, const float* weights, const float
     _mm256_storeu_ps(second + 24, _mm256_max_ps(b3, zero));
 }
 
+template<int InputChannels, int OutputChannels>
+static void convolve_pixel_groups(const float* source, const float* weights, const float* bias,
+        int height, int width, int y, int x, float* result) {
+    for (int channel = 0; channel < OutputChannels; channel += 32)
+        convolve_pixel<InputChannels>(source, weights + 9 * InputChannels * channel, bias + channel,
+                       height, width, y, x, result + channel);
+}
+
+template<int InputChannels, int OutputChannels>
+static void convolve_pair_groups(const float* source, const float* weights, const float* bias,
+        int width, int y, int x0, int x1, float* first, float* second) {
+    for (int channel = 0; channel < OutputChannels; channel += 32)
+        convolve_pair<InputChannels>(source, weights + 9 * InputChannels * channel, bias + channel, width, y, x0, x1,
+                      first + channel, second + channel);
+}
+
+template<int InputChannels, int OutputChannels>
 static void conv_reuse_rows(const float* source, const float* weights, const float* bias,
         int height, int width, int, int, int, int begin, int end, float* output) {
     int first = std::max(begin - 1, 0);
     int last = std::min(end + 1, height);
     std::vector<uint8_t> equal(static_cast<size_t>(last - first) * width);
     for (int y = first; y < last; ++y) {
-        const float* pixel = source + static_cast<size_t>(y)*width*32;
+        const float* pixel = source + static_cast<size_t>(y)*width*InputChannels;
         auto* row = equal.data() + static_cast<size_t>(y-first)*width;
-        for (int x = 0; x < width; ++x, pixel += 32) {
-            row[x] = (x > 0 && same_pixel(pixel, pixel-32) ? 1 : 0)
-                | (y > 0 && same_pixel(pixel, pixel-width*32) ? 2 : 0);
+        for (int x = 0; x < width; ++x, pixel += InputChannels) {
+            row[x] = (x > 0 && same_pixel<InputChannels>(pixel, pixel-InputChannels) ? 1 : 0)
+                | (y > 0 && same_pixel<InputChannels>(pixel, pixel-width*InputChannels) ? 2 : 0);
         }
     }
     // Reuse exact 3x3 patches from earlier interior positions owned by this worker.
     // Compute the remaining positions in pairs to share weight loads.
     std::vector<uint8_t> copies(width);
     for (int y = begin; y < end; ++y) {
-        float* output_row = output + static_cast<size_t>(y)*width*32;
+        float* output_row = output + static_cast<size_t>(y)*width*OutputChannels;
         int pending = -1;
         for (int x = 0; x < width; ++x) {
             int same = 0;
@@ -307,23 +382,156 @@ static void conv_reuse_rows(const float* source, const float* weights, const flo
             else {
                 copies[x] = 0;
                 if (!interior)
-                    convolve_pixel(source, weights, bias, height, width, y, x, output_row + x*32);
+                    convolve_pixel_groups<InputChannels, OutputChannels>(source, weights, bias, height, width, y, x, output_row + x*OutputChannels);
                 else if (pending < 0)
                     pending = x;
                 else {
-                    convolve_pair(source, weights, bias, width, y, pending, x,
-                                  output_row + pending*32, output_row + x*32);
+                    convolve_pair_groups<InputChannels, OutputChannels>(source, weights, bias, width, y, pending, x,
+                                  output_row + pending*OutputChannels, output_row + x*OutputChannels);
                     pending = -1;
                 }
             }
         }
         if (pending >= 0)
-            convolve_pixel(source, weights, bias, height, width, y, pending, output_row + pending*32);
+            convolve_pixel_groups<InputChannels, OutputChannels>(source, weights, bias, height, width, y, pending, output_row + pending*OutputChannels);
         for (int x = 0; x < width; ++x) {
-            float* result = output_row + x*32;
-            if (copies[x] == 1) std::memcpy(result, result-32, 32*sizeof(float));
-            else if (copies[x] == 2) std::memcpy(result, result-width*32, 32*sizeof(float));
+            float* result = output_row + x*OutputChannels;
+            if (copies[x] == 1) std::memcpy(result, result-OutputChannels, OutputChannels*sizeof(float));
+            else if (copies[x] == 2) std::memcpy(result, result-width*OutputChannels, OutputChannels*sizeof(float));
         }
+    }
+}
+
+// Share weight loads across neighboring VALID positions.
+template<int Pixels>
+static void convolve_valid32_block(const float* source, const float* weights, const float* bias,
+        int width, int channels, float* output) {
+    __m256 acc[Pixels][4];
+    for (int j = 0; j < Pixels; ++j)
+        for (int i = 0; i < 4; ++i)
+            acc[j][i] = _mm256_loadu_ps(bias + 8 * i);
+
+    const float* kernel = weights;
+    for (int ky = 0; ky < 3; ++ky) {
+        const float* input = source + static_cast<size_t>(ky) * width * channels;
+        for (int k = 0; k < 3 * channels; ++k, kernel += 32) {
+            __m256 value[Pixels];
+            for (int j = 0; j < Pixels; ++j) {
+                float x = input[k + j * channels];
+                value[j] = _mm256_set1_ps(x);
+            }
+            for (int i = 0; i < 4; ++i) {
+                const auto w = _mm256_loadu_ps(kernel + 8 * i);
+                for (int j = 0; j < Pixels; ++j)
+                    acc[j][i] = _mm256_fmadd_ps(value[j], w, acc[j][i]);
+            }
+        }
+    }
+
+    const auto zero = _mm256_setzero_ps();
+    for (int j = 0; j < Pixels; ++j)
+        for (int i = 0; i < 4; ++i)
+            _mm256_storeu_ps(output + 32 * j + 8 * i, _mm256_max_ps(acc[j][i], zero));
+}
+
+static void conv_valid32_rows(const float* source, const float* weights, const float* bias,
+        int, int width, int channels, int, int, int begin, int end, float* dest) {
+    const int input_width = width + 2;
+    for (int y = begin; y < end; ++y) {
+        const float* row = source + static_cast<size_t>(y) * input_width * channels;
+        float* output = dest + static_cast<size_t>(y) * width * 32;
+        int x = 0;
+        for (; x + 3 <= width; x += 3)
+            convolve_valid32_block<3>(row + x * channels, weights, bias,
+                                      input_width, channels, output + x * 32);
+        for (; x < width; ++x)
+            convolve_valid32_block<1>(row + x * channels, weights, bias,
+                                      input_width, channels, output + x * 32);
+    }
+}
+
+// Load each group of 16 weights once for five adjacent outputs.
+template<int Pixels>
+static void convolve_valid_final_block(const float* src, const float* packed, const float* bias,
+                               int stride, int channels, int outputs, float* dst) {
+    const auto zero = _mm256_setzero_ps();
+    for (int group = 0; group < outputs; group += 16) {
+        const float* weights = packed + 9 * channels * group;
+        const auto b0 = _mm256_loadu_ps(bias + group);
+        const auto b1 = _mm256_loadu_ps(bias + group + 8);
+        auto lower0 = b0, upper0 = b1;
+        auto lower1 = b0, upper1 = b1;
+        auto lower2 = b0, upper2 = b1;
+        auto lower3 = b0, upper3 = b1;
+        auto lower4 = b0, upper4 = b1;
+        for (int ky = 0; ky < 3; ++ky) {
+            const float* row = src + static_cast<size_t>(ky) * stride;
+            for (int k = 0; k < 3 * channels; ++k, weights += 16) {
+                const auto w0 = _mm256_loadu_ps(weights);
+                const auto w1 = _mm256_loadu_ps(weights + 8);
+                if constexpr (Pixels > 0) {
+                    const auto value = _mm256_set1_ps(row[k + 0 * channels]);
+                    lower0 = _mm256_fmadd_ps(value, w0, lower0);
+                    upper0 = _mm256_fmadd_ps(value, w1, upper0);
+                }
+                if constexpr (Pixels > 1) {
+                    const auto value = _mm256_set1_ps(row[k + 1 * channels]);
+                    lower1 = _mm256_fmadd_ps(value, w0, lower1);
+                    upper1 = _mm256_fmadd_ps(value, w1, upper1);
+                }
+                if constexpr (Pixels > 2) {
+                    const auto value = _mm256_set1_ps(row[k + 2 * channels]);
+                    lower2 = _mm256_fmadd_ps(value, w0, lower2);
+                    upper2 = _mm256_fmadd_ps(value, w1, upper2);
+                }
+                if constexpr (Pixels > 3) {
+                    const auto value = _mm256_set1_ps(row[k + 3 * channels]);
+                    lower3 = _mm256_fmadd_ps(value, w0, lower3);
+                    upper3 = _mm256_fmadd_ps(value, w1, upper3);
+                }
+                if constexpr (Pixels > 4) {
+                    const auto value = _mm256_set1_ps(row[k + 4 * channels]);
+                    lower4 = _mm256_fmadd_ps(value, w0, lower4);
+                    upper4 = _mm256_fmadd_ps(value, w1, upper4);
+                }
+            }
+        }
+        if constexpr (Pixels > 0) {
+            _mm256_storeu_ps(dst + 0 * outputs + group, _mm256_max_ps(lower0, zero));
+            _mm256_storeu_ps(dst + 0 * outputs + group + 8, _mm256_max_ps(upper0, zero));
+        }
+        if constexpr (Pixels > 1) {
+            _mm256_storeu_ps(dst + 1 * outputs + group, _mm256_max_ps(lower1, zero));
+            _mm256_storeu_ps(dst + 1 * outputs + group + 8, _mm256_max_ps(upper1, zero));
+        }
+        if constexpr (Pixels > 2) {
+            _mm256_storeu_ps(dst + 2 * outputs + group, _mm256_max_ps(lower2, zero));
+            _mm256_storeu_ps(dst + 2 * outputs + group + 8, _mm256_max_ps(upper2, zero));
+        }
+        if constexpr (Pixels > 3) {
+            _mm256_storeu_ps(dst + 3 * outputs + group, _mm256_max_ps(lower3, zero));
+            _mm256_storeu_ps(dst + 3 * outputs + group + 8, _mm256_max_ps(upper3, zero));
+        }
+        if constexpr (Pixels > 4) {
+            _mm256_storeu_ps(dst + 4 * outputs + group, _mm256_max_ps(lower4, zero));
+            _mm256_storeu_ps(dst + 4 * outputs + group + 8, _mm256_max_ps(upper4, zero));
+        }
+    }
+}
+
+static void conv_valid_final_rows(const float* src, const float* packed, const float* bias,
+                            int height, int width, int channels, int outputs, int, int begin, int end, float* dst) {
+    const int stride = (width + 2) * channels;
+    for (int y = begin; y < end; ++y) {
+        const float* input = src + static_cast<size_t>(y) * stride;
+        float* output = dst + static_cast<size_t>(y) * width * outputs;
+        int x = 0;
+        for (; x + 5 <= width; x += 5)
+            convolve_valid_final_block<5>(input + x * channels, packed, bias,
+                                            stride, channels, outputs, output + x * outputs);
+        for (; x < width; ++x)
+            convolve_valid_final_block<1>(input + x * channels, packed, bias,
+                                     stride, channels, outputs, output + x * outputs);
     }
 }
 
@@ -388,6 +596,224 @@ int sparse_conv_wide_valid(const float* input, const float* packed, const float*
 extern "C" __declspec(dllexport)
 int sparse_conv_reuse(const float* input, const float* packed, const float* bias, int height, int width,
                       int cin, int cout, int dilation, float* output) noexcept {
+    if (height <= 0 || width <= 0 || dilation != 1) return 1;
+    if (cin == 32 && cout == 32)
+        return run_workers(conv_reuse_rows<32, 32>, input, packed, bias, height, width, cin, cout, dilation, output);
+    if (cin == 32 && cout == 64)
+        return run_workers(conv_reuse_rows<32, 64>, input, packed, bias, height, width, cin, cout, dilation, output);
+    if (cin == 64 && cout == 64)
+        return run_workers(conv_reuse_rows<64, 64>, input, packed, bias, height, width, cin, cout, dilation, output);
+    return 1;
+}
+
+
+extern "C" __declspec(dllexport)
+int sparse_conv_valid32(const float* input, const float* packed, const float* bias, int height, int width,
+                        int cin, int cout, int dilation, float* output) noexcept {
+    if (height <= 0 || width <= 0 || cin != 96 || cout != 32 || dilation != 1) return 1;
+    return run_workers(conv_valid32_rows, input, packed, bias, height, width, cin, cout, dilation, output);
+}
+
+static bool sparse_anchor_applicable(const float* source, int height, int width, int channels) noexcept {
+    int total = 0, repeated = 0;
+    for (int y = 2; y < height - 1; y += 5) {
+        const float* row = source + static_cast<size_t>(y) * width * channels;
+        for (int x = 2; x < width - 1; x += 5) {
+            const float* pixel = row + x * channels;
+            repeated += same_sparse_pixel(pixel, pixel - channels, channels);
+            ++total;
+        }
+    }
+    return total > 0 && repeated * 4 >= total;
+}
+
+extern "C" __declspec(dllexport)
+int sparse_conv_anchor(const float* source, const float* weights, const float* bias, int height, int width,
+                       int inputs, int outputs, int dilation, float* dest) noexcept {
+    if (height <= 0 || width <= 0 || (inputs != 64 && inputs != 128) || outputs != 128 || dilation != 1) return 1;
+    if (!sparse_anchor_applicable(source, height, width, inputs))
+        return sparse_conv(source, weights, bias, height, width, inputs, outputs, dilation, dest);
+    return run_workers(conv_rows<false, true>, source, weights, bias, height, width,
+                       inputs, outputs, dilation, dest);
+}
+
+extern "C" __declspec(dllexport)
+int sparse_conv_valid_final(const float* input, const float* packed, const float* bias, int height, int width,
+                            int cin, int cout, int dilation, float* output) noexcept {
     if (height <= 0 || width <= 0 || cin != 32 || cout != 32 || dilation != 1) return 1;
-    return run_workers(conv_reuse_rows, input, packed, bias, height, width, cin, cout, dilation, output);
+    return run_workers(conv_valid_final_rows, input, packed, bias, height, width, cin, cout, dilation, output);
+}
+
+// The next output row can reuse two of the three prepared input rows.
+struct RollingStep { int weight; float values[6]; };
+template<bool Valid, bool FullWidth = Valid>
+static void rolling_six_rows(const float* input, const float* packed, const float* bias,
+        int height, int width, int cin, int cout, int dilation, int first, int stop, float* output) {
+    if (first >= stop) return;
+    const int kernel = 9 * cin;
+    const int input_width = width + (Valid ? 2 : 0);
+    const int spacing = Valid ? 1 : dilation;
+    const auto zero = _mm256_setzero_ps();
+    const auto zero_bits = _mm256_setzero_si256();
+    const auto magnitude = _mm256_set1_epi32(0x7fffffff);
+    std::vector<RollingStep> ring[3][3];
+    for (auto& row : ring)
+        for (auto& columns : row)
+            columns.reserve(cin);
+    for (int x = 0; x < width; x += 6) {
+        const int remaining = FullWidth ? 6 : std::min(width - x, 6);
+        const auto collect = [&](int slot, int y) {
+            if constexpr (Valid) {
+                const float* row = input + static_cast<size_t>(y) * input_width * cin;
+                for (int kx = 0; kx < 3; ++kx) {
+                    auto& steps = ring[slot][kx];
+                    steps.clear();
+                    const float* source = row + (x + kx) * cin;
+                    for (int ci = 0; ci < cin; ci += 8) {
+                        auto selected = zero_bits;
+                        for (int i = 0; i < remaining; ++i) {
+                            const auto bits = _mm256_castps_si256(_mm256_loadu_ps(source + i * cin + ci));
+                            selected = _mm256_or_si256(selected, bits);
+                        }
+                        const auto zeros = _mm256_cmpeq_epi32(_mm256_and_si256(selected, magnitude), zero_bits);
+                        unsigned present = static_cast<unsigned>(_mm256_movemask_ps(_mm256_castsi256_ps(zeros))) ^ 255u;
+                        while (present) {
+                            unsigned long lane;
+                            _BitScanForward(&lane, present);
+                            present &= present - 1;
+                            const int i = ci + static_cast<int>(lane);
+                            RollingStep step{16 * i, {}};
+                            for (int pixel = 0; pixel < remaining; ++pixel)
+                                step.values[pixel] = source[pixel * cin + i];
+                            steps.push_back(step);
+                        }
+                    }
+                }
+            } else {
+                for (int kx = 0; kx < 3; ++kx) {
+                    auto& steps = ring[slot][kx];
+                    steps.clear();
+                    if (y < 0 || y >= height) continue;
+                    const float* row = input + static_cast<size_t>(y) * input_width * cin;
+                    const int source_start = x + (kx - 1) * dilation;
+                    const float* pixels[6]{};
+                    for (int pixel = 0; pixel < remaining; ++pixel) {
+                        const int sx = source_start + pixel;
+                        if (sx >= 0 && sx < width) pixels[pixel] = row + sx * cin;
+                    }
+                    for (int ci = 0; ci < cin; ci += 8) {
+                        auto selected = zero_bits;
+                        for (const float* pixel : pixels) {
+                            if (pixel) {
+                                const auto bits = _mm256_castps_si256(_mm256_loadu_ps(pixel + ci));
+                                selected = _mm256_or_si256(selected, bits);
+                            }
+                        }
+                        const auto zeros = _mm256_cmpeq_epi32(_mm256_and_si256(selected, magnitude), zero_bits);
+                        unsigned present = static_cast<unsigned>(_mm256_movemask_ps(_mm256_castsi256_ps(zeros))) ^ 255u;
+                        while (present) {
+                            unsigned long lane;
+                            _BitScanForward(&lane, present);
+                            present &= present - 1;
+                            const int i = ci + static_cast<int>(lane);
+                            RollingStep step{16 * i, {}};
+                            for (int pixel = 0; pixel < 6; ++pixel)
+                                if (pixels[pixel]) step.values[pixel] = pixels[pixel][i];
+                            steps.push_back(step);
+                        }
+                    }
+                }
+            }
+        };
+        for (int start = first; start < stop && start - first < spacing; ++start) {
+            collect(0, start - (Valid ? 0 : spacing));
+            collect(1, start + (Valid ? 1 : 0));
+            collect(2, start + spacing * (Valid ? 2 : 1));
+            int slot = 0;
+            for (int y = start; y < stop; y += spacing) {
+                const std::vector<RollingStep>* rows[] = {ring[slot], ring[(slot + 1) % 3], ring[(slot + 2) % 3]};
+                float* dest = output + (static_cast<size_t>(y) * width + x) * cout;
+                for (int co = 0; co < cout; co += 16) {
+                    const float* weights = packed + static_cast<size_t>(co) * kernel;
+                    const auto bias0 = _mm256_loadu_ps(bias + co);
+                    const auto bias1 = _mm256_loadu_ps(bias + co + 8);
+                    auto lower0 = bias0, upper0 = bias1;
+                    auto lower1 = bias0, upper1 = bias1;
+                    auto lower2 = bias0, upper2 = bias1;
+                    auto lower3 = bias0, upper3 = bias1;
+                    auto lower4 = bias0, upper4 = bias1;
+                    auto lower5 = bias0, upper5 = bias1;
+                    for (int ky = 0; ky < 3; ++ky) {
+                        for (int kx = 0; kx < 3; ++kx) {
+                            const float* kernelWeights = weights + (ky * 3 + kx) * cin * 16;
+                            for (const RollingStep& step : rows[ky][kx]) {
+                                const auto w0 = _mm256_loadu_ps(kernelWeights + step.weight);
+                                const auto w1 = _mm256_loadu_ps(kernelWeights + step.weight + 8);
+                                const auto v0 = _mm256_set1_ps(step.values[0]);
+                                lower0 = _mm256_fmadd_ps(v0, w0, lower0);
+                                upper0 = _mm256_fmadd_ps(v0, w1, upper0);
+                                const auto v1 = _mm256_set1_ps(step.values[1]);
+                                lower1 = _mm256_fmadd_ps(v1, w0, lower1);
+                                upper1 = _mm256_fmadd_ps(v1, w1, upper1);
+                                const auto v2 = _mm256_set1_ps(step.values[2]);
+                                lower2 = _mm256_fmadd_ps(v2, w0, lower2);
+                                upper2 = _mm256_fmadd_ps(v2, w1, upper2);
+                                const auto v3 = _mm256_set1_ps(step.values[3]);
+                                lower3 = _mm256_fmadd_ps(v3, w0, lower3);
+                                upper3 = _mm256_fmadd_ps(v3, w1, upper3);
+                                const auto v4 = _mm256_set1_ps(step.values[4]);
+                                lower4 = _mm256_fmadd_ps(v4, w0, lower4);
+                                upper4 = _mm256_fmadd_ps(v4, w1, upper4);
+                                const auto v5 = _mm256_set1_ps(step.values[5]);
+                                lower5 = _mm256_fmadd_ps(v5, w0, lower5);
+                                upper5 = _mm256_fmadd_ps(v5, w1, upper5);
+                            }
+                        }
+                    }
+                    if constexpr (!FullWidth) { if (remaining <= 0) continue; }
+                    _mm256_storeu_ps(dest + 0 * cout + co, _mm256_max_ps(lower0, zero));
+                    _mm256_storeu_ps(dest + 0 * cout + co + 8, _mm256_max_ps(upper0, zero));
+                    if constexpr (!FullWidth) { if (remaining <= 1) continue; }
+                    _mm256_storeu_ps(dest + 1 * cout + co, _mm256_max_ps(lower1, zero));
+                    _mm256_storeu_ps(dest + 1 * cout + co + 8, _mm256_max_ps(upper1, zero));
+                    if constexpr (!FullWidth) { if (remaining <= 2) continue; }
+                    _mm256_storeu_ps(dest + 2 * cout + co, _mm256_max_ps(lower2, zero));
+                    _mm256_storeu_ps(dest + 2 * cout + co + 8, _mm256_max_ps(upper2, zero));
+                    if constexpr (!FullWidth) { if (remaining <= 3) continue; }
+                    _mm256_storeu_ps(dest + 3 * cout + co, _mm256_max_ps(lower3, zero));
+                    _mm256_storeu_ps(dest + 3 * cout + co + 8, _mm256_max_ps(upper3, zero));
+                    if constexpr (!FullWidth) { if (remaining <= 4) continue; }
+                    _mm256_storeu_ps(dest + 4 * cout + co, _mm256_max_ps(lower4, zero));
+                    _mm256_storeu_ps(dest + 4 * cout + co + 8, _mm256_max_ps(upper4, zero));
+                    if constexpr (!FullWidth) { if (remaining <= 5) continue; }
+                    _mm256_storeu_ps(dest + 5 * cout + co, _mm256_max_ps(lower5, zero));
+                    _mm256_storeu_ps(dest + 5 * cout + co + 8, _mm256_max_ps(upper5, zero));
+                }
+                if (y + spacing < stop) collect(slot, y + (Valid ? 3 : 2 * spacing));
+                slot = (slot + 1) % 3;
+            }
+        }
+    }
+}
+
+extern "C" __declspec(dllexport)
+int sparse_conv_valid_group(const float* input, const float* packed, const float* bias,
+                       int h, int w, int ic, int oc, int dilation, float* output) noexcept {
+    if (h <= 0 || w <= 0 || w % 6 || ic <= 0 || ic % 8 || oc <= 0 || oc % 16 || dilation != 1) return 1;
+    return run_workers(rolling_six_rows<true>, input, packed, bias, h, w, ic, oc, dilation, output);
+}
+
+extern "C" __declspec(dllexport)
+int sparse_conv_dilated_group(const float* input, const float* packed, const float* bias,
+                              int h, int w, int ic, int oc, int dilation, float* output) noexcept {
+    if (h <= 0 || w <= 0 || ic <= 0 || ic % 8 || oc <= 0 || oc % 16
+            || (dilation != 2 && dilation != 4)) return 1;
+    return run_workers(rolling_six_rows<false>, input, packed, bias, h, w, ic, oc, dilation, output);
+}
+
+extern "C" __declspec(dllexport)
+int sparse_conv_valid_group_tail(const float* input, const float* packed, const float* bias,
+                       int h, int w, int ic, int oc, int dilation, float* output) noexcept {
+    if (h <= 0 || w <= 0 || ic <= 0 || ic % 8 || oc <= 0 || oc % 16 || dilation != 1) return 1;
+    return run_workers(rolling_six_rows<true, false>, input, packed, bias, h, w, ic, oc, dilation, output);
 }

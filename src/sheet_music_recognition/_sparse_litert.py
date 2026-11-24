@@ -17,7 +17,9 @@ _MODEL = _PATH / "data" / "music_sheets_v4_float16.tflite"
 _SHA256 = "92ab7c34c27cb704d95f0cde247b3611d1563fdf1c114b9f9817abb18a7b6a93"
 _CUSTOM = 32
 # Output tensor IDs in the checksum-pinned model.
-_REUSE_TENSOR = 75
+_CHANNEL_BLOCK_TENSORS = frozenset((75, 77, 78, 95))
+_ANCHOR_OPERATORS = frozenset((b"ScoreSparse80", b"ScoreSparse81"))
+_VALID_GROUP_TENSORS = frozenset((87, 91))
 _WIDE_TENSORS = frozenset((87, 91, 92))
 P, I = c_void_p, c_int
 _native = CDLL(str(_PATH / "_score_sparse_avx2.dll"))
@@ -35,7 +37,15 @@ _wide_conv.restype = I
 _conv_valid = getattr(_native, "sparse_conv_valid", None)
 _wide_conv_valid = getattr(_native, "sparse_conv_wide_valid", None)
 _reuse_conv = getattr(_native, "sparse_conv_reuse", None)
-for _kernel in (_conv_valid, _wide_conv_valid, _reuse_conv):
+_conv_valid32 = getattr(_native, "sparse_conv_valid32", None)
+_anchor_conv = getattr(_native, "sparse_conv_anchor", None)
+_conv_valid_final = getattr(_native, "sparse_conv_valid_final", None)
+_conv_valid_group = getattr(_native, "sparse_conv_valid_group", None)
+_conv_dilated_group = getattr(_native, "sparse_conv_dilated_group", None)
+_conv_valid_group_tail = getattr(_native, "sparse_conv_valid_group_tail", None)
+for _kernel in (_conv_valid, _wide_conv_valid, _reuse_conv, _conv_valid32,
+                _anchor_conv, _conv_valid_final, _conv_valid_group, _conv_dilated_group,
+                _conv_valid_group_tail):
     if _kernel is not None:
         _kernel.argtypes, _kernel.restype = _conv.argtypes, I
 
@@ -65,12 +75,19 @@ def _kernels():
         weight = _constant(source, *weight_ref)
         bias = np.ascontiguousarray(_constant(source, *bias_ref), dtype=np.float32)
         lanes = 8 if int(tensor) in _WIDE_TENSORS else 16
-        if int(tensor) == _REUSE_TENSOR:
+        if int(tensor) in _CHANNEL_BLOCK_TENSORS:
             lanes = 32
         packed = np.ascontiguousarray(
             weight.reshape(oc // lanes, lanes, -1).transpose(0, 2, 1), dtype=np.float32)
         result[int(tensor)] = packed, bias, ic, oc, dilation
     return result
+
+@cache
+def _packed_for_valid_group(layer):
+    packed, _, channels, outputs, _ = _kernels()[layer]
+    grouped = packed.reshape(outputs // 16, 2, channels * 9, 8).transpose(0, 2, 1, 3)
+    return np.ascontiguousarray(grouped.reshape(outputs // 16, channels * 9, 16))
+
 
 api=CDLL(str(Path(ai_edge_litert.__file__).with_name("pywrap_litert_common.dll")))
 V=None
@@ -138,7 +155,13 @@ def _specialize(original):
     calls = {}
     for name, layer, height, width, *padding in filters:
         packed, bias, ic, oc, dilation = kernels[layer]
-        calls[name.encode()] = packed, bias, height, width, ic, oc, dilation, bool(padding and padding[0])
+        valid = bool(padding and padding[0])
+        if (_conv_valid_group is not None and valid and dilation == 1 and width % 6 == 0
+                and layer in _VALID_GROUP_TENSORS):
+            packed = _packed_for_valid_group(layer)
+        if _conv_valid_group_tail is not None and valid and dilation == 1 and layer == 92:
+            packed = _packed_for_valid_group(layer)
+        calls[name.encode()] = packed, bias, height, width, ic, oc, dilation, valid
     return graph, calls, _details(inputs), _details(outputs)
 
 
@@ -183,11 +206,23 @@ class _Session:
         packed_data, bias_data = packed.ctypes.data, bias.ctypes.data
         lanes = packed.shape[-1]
         if lanes == 32:
-            convolve = _reuse_conv
+            convolve = _conv_valid32 if valid else _reuse_conv
         elif valid:
             convolve = _wide_conv_valid if lanes == 8 else _conv_valid
         else:
             convolve = _wide_conv if lanes == 8 else _conv
+        if _anchor_conv is not None and name in _ANCHOR_OPERATORS:
+            convolve = _anchor_conv
+        if _conv_valid_final is not None and name == b"ScoreSparse96":
+            convolve = _conv_valid_final
+        if valid and lanes == 16 and name in (b"ScoreSparse87", b"ScoreSparse91"):
+            convolve = _conv_valid_group
+        if (_conv_dilated_group is not None and not valid and dilation in (2, 4)
+                and name in (b"ScoreSparse83", b"ScoreSparse84")):
+            convolve = _conv_dilated_group
+        if (_conv_valid_group_tail is not None and valid and dilation == 1
+                and name in (b"ScoreSparse88", b"ScoreSparse92")):
+            convolve = _conv_valid_group_tail
         if convolve is None:
             raise RuntimeError("Native DLL does not support the required convolution")
 

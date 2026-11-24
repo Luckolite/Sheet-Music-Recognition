@@ -14,7 +14,7 @@ import numpy as np
 
 MODEL = "music_sheets_v4_float16.tflite"
 MODEL_SHA256 = "92ab7c34c27cb704d95f0cde247b3611d1563fdf1c114b9f9817abb18a7b6a93"
-LAYERS = (35, 38, 40, 41, 43, 44, 47, 48, 51, 52)
+LAYERS = (35, 37, 38, 40, 41, 43, 44, 47, 48, 51, 52, 55, 56)
 FLOAT_TYPES = {schema.TensorType.FLOAT16: "<f2", schema.TensorType.FLOAT32: "<f4"}
 DETAIL_TYPES = {schema.TensorType.INT32: "int32", schema.TensorType.INT64: "int64",
                 schema.TensorType.FLOAT32: "float32"}
@@ -74,8 +74,16 @@ def exact_graph(raw, weights):
         assert opts.strideH == opts.strideW == 1
         assert opts.dilationHFactor == opts.dilationWFactor == dilation
         valid = opts.padding == schema.Padding.VALID
-        if tensor == 75:
-            assert not valid and ic == oc == 32 and dilation == 1
+        if tensor in (75, 77):
+            assert not valid and ic == 32 and oc == (32 if tensor == 75 else 64) and dilation == 1
+        if tensor == 78:
+            assert not valid and ic == oc == 64 and dilation == 1
+        if tensor in (80, 81):
+            assert not valid and ic == (64 if tensor == 80 else 128) and oc == 128 and dilation == 1
+        if tensor in (95, 96):
+            if not valid:
+                continue
+            assert ic == (96 if tensor == 95 else 32) and oc == 32 and dilation == 1
         halo = 2 * dilation if valid else 0
         assert tuple(node.inputs) == inputs
         assert tuple(dst) == (1, int(src[1]) - halo, int(src[2]) - halo, oc)

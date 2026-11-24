@@ -59,7 +59,8 @@ class NativeLiteRtTest(unittest.TestCase):
     def test_dynamic_crop_matches_stock(self):
         # Native callbacks bind their kernels when the interpreter is created.
         with (patch.object(self.native, "_wide_conv", wraps=self.native._wide_conv) as wide,
-              patch.object(self.native, "_reuse_conv", wraps=self.native._reuse_conv) as reuse):
+              patch.object(self.native, "_reuse_conv", wraps=self.native._reuse_conv) as reuse,
+              patch.object(self.native, "_anchor_conv", wraps=self.native._anchor_conv) as anchors):
             a, b = self.pair()
             for model in a, b:
                 model.allocate_tensors()
@@ -68,7 +69,9 @@ class NativeLiteRtTest(unittest.TestCase):
             b.invoke()
         self.assertIsNotNone(b._native)
         self.assertEqual(wide.call_count, 3)
-        self.assertEqual(reuse.call_count, 1)
+        channel_counts = [call.args[5:7] for call in reuse.call_args_list]
+        self.assertEqual(channel_counts, [(32, 32), (32, 64), (64, 64)])
+        self.assertEqual([call.args[5] for call in anchors.call_args_list], [64, 128])
         self.compare(a, b)
 
     def test_allocation_failure(self):
@@ -105,12 +108,41 @@ class NativeLiteRtTest(unittest.TestCase):
             model.invoke()
         self.compare(a, b)
 
+    def test_core_matches_stock_with_specialized_kernels(self):
+        from sheet_music_recognition import _tile_decoder
+
+        selection = _tile_decoder.Selection("joint", {}, 48, [], {}, set(), _tile_decoder.CORE_WINDOW)
+        graph = _tile_decoder.specialize(self.native._MODEL.read_bytes(), selection)
+        with (patch.object(self.native, "_conv_valid32", wraps=self.native._conv_valid32) as valid,
+              patch.object(self.native, "_conv_valid_final", wraps=self.native._conv_valid_final) as final,
+              patch.object(self.native, "_conv_valid_group", wraps=self.native._conv_valid_group) as group,
+              patch.object(self.native, "_conv_dilated_group", wraps=self.native._conv_dilated_group) as dilated,
+              patch.object(self.native, "_conv_valid_group_tail", wraps=self.native._conv_valid_group_tail) as tail):
+            a = self.stock(model_content=graph, num_threads=2)
+            b = self.factory(model_content=graph, num_threads=2)
+            self.assertIsInstance(b, self.native.SparseInterpreter)
+            for model in a, b:
+                model.allocate_tensors()
+                self.prepare(model, self.tile, 0)
+                model.invoke()
+        self.assertIsNotNone(b._native)
+        self.assertEqual(valid.call_count, 1)
+        self.assertEqual(final.call_count, 1)
+        self.assertEqual([call.args[3:5] for call in group.call_args_list], [(54, 54), (102, 102)])
+        self.assertEqual([call.args[7] for call in dilated.call_args_list], [2, 4])
+        self.assertEqual([call.args[3:5] for call in tail.call_args_list], [(52, 52), (100, 100)])
+        self.compare(a, b)
+
+        with patch.object(self.native, "_conv_valid32", None):
+            fallback = self.factory(model_content=graph, num_threads=2)
+        self.assertIsInstance(fallback, self.stock)
+
     def test_missing_valid_kernel_uses_stock_core_graph(self):
         from sheet_music_recognition import _tile_decoder
 
         selection = _tile_decoder.Selection("joint", {}, 48, [], {}, set(), _tile_decoder.CORE_WINDOW)
         graph = _tile_decoder.specialize(self.native._MODEL.read_bytes(), selection)
-        with patch.object(self.native, "_conv_valid", None), patch.object(self.native, "_wide_conv_valid", None):
+        with patch.multiple(self.native, _conv_valid=None, _wide_conv_valid=None, _conv_valid_group_tail=None):
             runtime = self.factory(model_content=graph, num_threads=2)
         self.assertIsInstance(runtime, self.stock)
         runtime.allocate_tensors()

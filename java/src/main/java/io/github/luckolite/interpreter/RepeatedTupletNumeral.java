@@ -129,9 +129,21 @@ final class RepeatedTupletNumeral {
                 int[] box = {x, y, x + rw - 1, y + rh - 1};
                 boolean[] covered = new boolean[rh];
                 int hidden = 0;
+                float requiredCrossing = rw * .9f;
                 for (int yy = 0; yy < rh; yy++) {
+                    angleCandidate:
                     for (int angle = -10; angle <= 10 && !covered[yy]; angle++) {
                         float slope = angle * .05f;
+                        if (ownedJoined) {
+                            int inside = 0;
+                            for (int dx = 0; dx < rw; dx++) {
+                                int cy = Math.round(y + yy + slope * (dx - rw * .5f));
+                                if (cy >= 0 && cy < h && (gray[cy * w + x + dx] & 255) < 190)
+                                    inside++;
+                                if (inside + rw - dx - 1 < requiredCrossing)
+                                    continue angleCandidate;
+                            }
+                        }
                         int valid = 0,
                                 total = 0,
                                 leftHits = 0,
@@ -160,12 +172,6 @@ final class RepeatedTupletNumeral {
                         boolean bilateral = total >= gap * 2 && valid >= total * .9f;
                         if (!ownedJoined) covered[yy] = bilateral;
                         else {
-                            int inside = 0;
-                            for (int dx = 0; dx < rw; dx++) {
-                                int cy = Math.round(y + yy + slope * (dx - rw * .5f));
-                                if (cy >= 0 && cy < h && (gray[cy * w + x + dx] & 255) < 190)
-                                    inside++;
-                            }
                             boolean arm =
                                     leftTotal >= gap * 1.3f && leftHits >= leftTotal * .9f
                                             || rightTotal >= gap * 1.3f
@@ -173,10 +179,10 @@ final class RepeatedTupletNumeral {
                             // The caller has proven all three shafts and the same beam.
                             // Require that actual raw beam/rule ink cross the glyph window;
                             // one long arm remains available near a proven beam endpoint.
-                            covered[yy] = inside >= rw * .9f && (bilateral || arm);
+                            covered[yy] = bilateral || arm;
                         }
                     }
-                    if (covered[yy]) hidden++;
+                    if (covered[yy] && ++hidden > rh * .45f) break;
                 }
                 if (hidden > rh * .45f) continue;
                 if (ownedJoined && !visibleBeyondLongStem(gray, w, h, x, y, rw, rh, gap, covered))

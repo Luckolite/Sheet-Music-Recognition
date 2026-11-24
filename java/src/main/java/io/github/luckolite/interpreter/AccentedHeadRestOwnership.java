@@ -60,6 +60,10 @@ final class AccentedHeadRestOwnership {
             return false;
         int scanBottom = top + line.length - 1;
         if (scanBottom - top > gap * 6) return false;
+        float nx = note.positionInMeasure(), ny = note.pageY() * h;
+        boolean headBelowContour = Float.isFinite(nx) && Float.isFinite(ny)
+                && ny - maxY >= gap * .65f && ny - maxY <= gap * 4.5f;
+        if (quarterBudget == null && !headBelowContour) return false;
         var origin =
                 (quarterBudget == null || quarterBudget.allocate(64L + 8L * notes.size(), 0)
                         ? RestFigureOrigins.origin(notes, note, g, w, h)
@@ -200,11 +204,7 @@ final class AccentedHeadRestOwnership {
 
         if (sr < sl || sr - sl + 1 > gap * .4f || sy <= ab + 1 || maxY - sy < gap * .5f)
             return false;
-        float nx = note.positionInMeasure(), ny = note.pageY() * h;
-        if (!Float.isFinite(nx)
-                || !Float.isFinite(ny)
-                || ny - maxY < gap * .65f
-                || ny - maxY > gap * 4.5f) return false;
+        if (!headBelowContour) return false;
         int end = Math.min(h - 1, Math.round(ny + gap * .4f));
         boolean attached = false;
         {
