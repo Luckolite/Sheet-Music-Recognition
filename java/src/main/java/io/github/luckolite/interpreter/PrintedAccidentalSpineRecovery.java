@@ -273,7 +273,7 @@ final class PrintedAccidentalSpineRecovery {
         }
     }
 
-    private static boolean unmarkedRepeat(byte[] labels, byte[] raw, byte[] normalized,
+    static boolean unmarkedRepeat(byte[] labels, byte[] raw, byte[] normalized,
             int width, int height, float previous, float x, float y, float gap) {
         int left = Math.round(Math.max(previous + .62f * gap, x - 2.4f * gap));
         int right = Math.round(x - .65f * gap);
