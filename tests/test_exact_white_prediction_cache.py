@@ -92,6 +92,62 @@ class ExactWhitePredictionCacheTest(unittest.TestCase):
             np.testing.assert_array_equal(changed, owner._predict_prepared_page(gray))
         self.assertGreater(owner.runtime.calls, calls_for_changed)
 
+    def test_large_scoped_prediction_reuses_at_the_limit_and_clears_above_it(self):
+        class LiteRuntime(FakeRuntime):
+            pass
+
+        LiteRuntime.__module__ = "ai_edge_litert.interpreter"
+        owner = make_reader()
+        owner.runtime = LiteRuntime()
+        owner.edge = reader._tile_edges()
+        owner._sparse_pairs_enabled = True
+        gray = np.full((625, 900), 17, np.uint8)
+        oversized = np.full((626, 900), 17, np.uint8)
+        with patch.object(reader, "_REUSABLE_PREDICTION_PIXELS", gray.size):
+            with owner.reuse_decoder():
+                expected = owner._predict_prepared_page(gray).copy()
+                first_calls = owner.runtime.calls
+                np.testing.assert_array_equal(expected, owner._predict_prepared_page(gray))
+                self.assertEqual(first_calls, owner.runtime.calls)
+
+                owner._predict_prepared_page(oversized)
+                self.assertIsNone(owner._last_page_prediction)
+                self.assertFalse(owner._large_page_predictions)
+                calls_after_oversized = owner.runtime.calls
+                np.testing.assert_array_equal(expected, owner._predict_prepared_page(gray))
+                self.assertGreater(owner.runtime.calls, calls_after_oversized)
+            self.assertIsNone(owner._last_page_prediction)
+
+    def test_large_pages_reuse_across_reads_with_bounded_retention(self):
+        class LiteRuntime(FakeRuntime):
+            pass
+
+        LiteRuntime.__module__ = "ai_edge_litert.interpreter"
+        owner = make_reader()
+        owner.runtime = LiteRuntime()
+        owner.edge = reader._tile_edges()
+        owner._sparse_pairs_enabled = True
+        first, second, third = [np.full((625, 900), value, np.uint8) for value in (17, 18, 19)]
+
+        with patch.object(reader, "_LARGE_PREDICTION_CACHE_PAGES", 2), owner.reuse_decoder():
+            expected = owner._predict_prepared_page(first).copy()
+            owner._predict_prepared_page(second)
+            calls = owner.runtime.calls
+            reused = owner._predict_prepared_page(first)
+            np.testing.assert_array_equal(expected, reused)
+            self.assertEqual(calls, owner.runtime.calls)
+            reused.fill(255)
+
+            owner._predict_prepared_page(third)
+            self.assertEqual(2, len(owner._large_page_predictions))
+            calls = owner.runtime.calls
+            np.testing.assert_array_equal(expected, owner._predict_prepared_page(first))
+            self.assertEqual(calls, owner.runtime.calls)
+            owner._predict_prepared_page(second)
+            self.assertGreater(owner.runtime.calls, calls)
+
+        self.assertFalse(owner._large_page_predictions)
+
     def test_read_scope_does_not_cache_a_custom_stateful_model(self):
         owner = make_reader(known=False, stateful=True)
         gray = np.full((119, 212), 17, np.uint8)

@@ -58,6 +58,82 @@ def weight_layout(raw):
     return weights
 
 
+def fuse_decoder_merges(model):
+    """Fold exact 2x resizes and contiguous skip crops into one copy per decoder stage."""
+    graph = model.subgraphs[0]
+    producers = {int(port): node for node in graph.operators for port in node.outputs}
+
+    def kind(node):
+        return model.operatorCodes[node.opcodeIndex].builtinCode
+
+    removals = set()
+    metadata = {}
+    for node in graph.operators:
+        if kind(node) != schema.BuiltinOperator.CONCATENATION or node.builtinOptions.axis not in (3, -1):
+            continue
+        upsampled, skip = map(int, node.inputs)
+        resize = producers[upsampled]
+        assert kind(resize) == schema.BuiltinOperator.RESIZE_NEAREST_NEIGHBOR
+        assert resize.builtinOptions.halfPixelCenters and not resize.builtinOptions.alignCorners
+        assert node.builtinOptions.fusedActivationFunction == schema.ActivationFunctionType.NONE
+        resized, output = int(resize.inputs[0]), int(node.outputs[0])
+        output_shape = graph.tensors[output].shape.tolist()
+        _, height, width, channels = output_shape
+        assert height % 2 == width % 2 == 0
+        assert graph.tensors[resized].shape.tolist() == [1, height // 2, width // 2, 2 * channels // 3]
+        assert graph.tensors[skip].shape.tolist() == [1, height, width, channels // 3]
+        ports = []
+        crops = []
+
+        def describe_crop(port):
+            desired = graph.tensors[port].shape.tolist()
+            coordinates = [[0, -1, desired[1]], [0, -1, desired[2]]]
+            while port in producers and kind(producers[port]) == schema.BuiltinOperator.GATHER:
+                gather = producers[port]
+                port, indices = map(int, gather.inputs)
+                axis = gather.builtinOptions.axis
+                assert axis in (1, 2)
+                tensor = graph.tensors[indices]
+                assert tensor.type == schema.TensorType.INT32 and tensor.shape.tolist() == [desired[axis]]
+                if tensor.buffer and model.buffers[tensor.buffer].data is not None:
+                    values = np.frombuffer(model.buffers[tensor.buffer].data, dtype="<i4")
+                    first = int(values[0])
+                    assert np.array_equal(values, np.arange(first, first + desired[axis]))
+                    coordinates[axis - 1][0] = first
+                else:
+                    assert axis == 1 and indices in graph.inputs
+                    coordinates[axis - 1][1] = len(ports)
+                    ports.append(indices)
+                removals.add(id(gather))
+            physical = graph.tensors[port].shape.tolist()
+            assert physical[0] == 1 and physical[-1] == desired[-1]
+            assert graph.tensors[port].type == schema.TensorType.FLOAT32
+            for i, (offset, _, size) in enumerate(coordinates, 1):
+                assert offset >= 0 and offset + size <= physical[i]
+            crops.append([len(ports), physical, coordinates])
+            ports.append(port)
+
+        describe_crop(resized)
+        describe_crop(skip)
+        name = f"ScoreResizeMerge{output}"
+        metadata[name] = [output_shape, crops]
+        code = schema.OperatorCodeT()
+        code.builtinCode = code.deprecatedBuiltinCode = schema.BuiltinOperator.CUSTOM
+        code.customCode = name.encode()
+        node.opcodeIndex = len(model.operatorCodes)
+        model.operatorCodes.append(code)
+        node.inputs = np.array(ports, dtype=np.int32)
+        node.builtinOptions = None
+        node.builtinOptionsType = schema.BuiltinOptions.NONE
+        removals.add(id(resize))
+    assert len(metadata) == 3
+    candidates = {int(out) for node in graph.operators if id(node) in removals for out in node.outputs}
+    graph.operators = [node for node in graph.operators if id(node) not in removals]
+    assert not candidates.intersection(int(i) for node in graph.operators for i in node.inputs)
+    assert not candidates.intersection(int(i) for i in graph.outputs)
+    return metadata
+
+
 def exact_graph(raw, weights):
     model = schema.ModelT.InitFromObj(flat_model(raw))
     graph = model.subgraphs[0]
@@ -103,13 +179,14 @@ def exact_graph(raw, weights):
 
     unused.difference_update(int(t) for node in graph.operators for t in node.inputs)
     graph.operators = [node for node in graph.operators if not any(int(t) in unused for t in node.outputs)]
+    merges = fuse_decoder_merges(model)
     builder = flatbuffers.Builder(len(raw))
     builder.Finish(model.Pack(builder), file_identifier=b"TFL3")
 
     def details(indices):
         return [(int(i), graph.tensors[i].shape.tolist(), DETAIL_TYPES[graph.tensors[i].type]) for i in indices]
 
-    return bytes(builder.Output()), calls, details(graph.inputs), details(graph.outputs)
+    return bytes(builder.Output()), calls, details(graph.inputs), details(graph.outputs), merges
 
 
 def split_model(raw, compiled):
@@ -166,8 +243,8 @@ def generate(root):
     for model in variants(raw):
         key = sha256(model).hexdigest()
         if key not in layouts:
-            compiled, calls, inputs, outputs = exact_graph(model, weights)
-            layouts[key] = (*split_model(raw, compiled), calls, inputs, outputs)
+            compiled, calls, inputs, outputs, merges = exact_graph(model, weights)
+            layouts[key] = (*split_model(raw, compiled), calls, inputs, outputs, merges)
     result = compress(json.dumps([weights, layouts], separators=(",", ":")).encode(), 9)
     (package / "_score_sparse_layouts.json.z").write_bytes(result)
     print(f"Built {len(layouts)} graph recipes using {len(result):,} bytes")

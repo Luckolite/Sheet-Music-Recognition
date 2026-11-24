@@ -1,10 +1,11 @@
 # Copyright 2026 Luckolite
 # SPDX-License-Identifier: Apache-2.0
-"""Exact two-thread convolutions for supported Windows LiteRT model layouts."""
+"""Exact native kernels for supported two-thread Windows LiteRT model layouts."""
 from base64 import b85decode
 from ctypes import CDLL, CFUNCTYPE, POINTER, Structure, byref, c_bool, c_char_p, c_int, c_int32, c_size_t, c_uint32, c_void_p
 from functools import cache
 from hashlib import sha256
+from math import prod
 from pathlib import Path
 import json
 from zlib import decompress, error as ZlibError
@@ -18,6 +19,14 @@ _SHA256 = "92ab7c34c27cb704d95f0cde247b3611d1563fdf1c114b9f9817abb18a7b6a93"
 _CUSTOM = 32
 # Output tensor IDs in the checksum-pinned model.
 _CHANNEL_BLOCK_TENSORS = frozenset((75, 77, 78, 95))
+# Encoder positions with an unclipped 320-pixel input footprint on each axis.
+# Entries are (inclusive first, exclusive last, tile stride in feature pixels).
+_ENCODER_STRIPES = {
+    b"ScoreSparse77": (2, 158, 96),
+    b"ScoreSparse78": (3, 157, 96),
+    b"ScoreSparse80": (3, 77, 48),
+    b"ScoreSparse81": (4, 76, 48),
+}
 _ANCHOR_OPERATORS = frozenset((b"ScoreSparse80", b"ScoreSparse81"))
 _VALID_GROUP_TENSORS = frozenset((87, 91))
 _WIDE_TENSORS = frozenset((87, 91, 92))
@@ -39,10 +48,16 @@ _wide_conv_valid = getattr(_native, "sparse_conv_wide_valid", None)
 _reuse_conv = getattr(_native, "sparse_conv_reuse", None)
 _conv_valid32 = getattr(_native, "sparse_conv_valid32", None)
 _anchor_conv = getattr(_native, "sparse_conv_anchor", None)
+_encoder_stripe = getattr(_native, "score_encoder_stripe", None)
+if _encoder_stripe is not None:
+    _encoder_stripe.argtypes, _encoder_stripe.restype = _conv.argtypes + [P, I, I, I, I, POINTER(c_uint32)], I
 _conv_valid_final = getattr(_native, "sparse_conv_valid_final", None)
 _conv_valid_group = getattr(_native, "sparse_conv_valid_group", None)
 _conv_dilated_group = getattr(_native, "sparse_conv_dilated_group", None)
 _conv_valid_group_tail = getattr(_native, "sparse_conv_valid_group_tail", None)
+_resize_merge = getattr(_native, "score_merge_resize2", None)
+if _resize_merge is not None:
+    _resize_merge.argtypes, _resize_merge.restype = [P, P, I, I, I, I, I, P], I
 _worker_create = getattr(_native, "sparse_worker_create", None)
 _worker_destroy = getattr(_native, "sparse_worker_destroy", None)
 _worker_exchange = getattr(_native, "sparse_worker_exchange", None)
@@ -157,7 +172,7 @@ def _details(rows):
 
 def _specialize(original):
     source, _, layouts = _assets()
-    skeleton, chunks, filters, inputs, outputs = layouts[sha256(original).hexdigest()]
+    skeleton, chunks, filters, inputs, outputs, *merges = layouts[sha256(original).hexdigest()]
     streams = memoryview(decompress(b85decode(skeleton))), memoryview(source)
     graph = b"".join(streams[part][first:last] for part, first, last in chunks)
     kernels = _kernels()
@@ -171,12 +186,17 @@ def _specialize(original):
         if _conv_valid_group_tail is not None and valid and dilation == 1 and layer == 92:
             packed = _packed_for_valid_group(layer)
         calls[name.encode()] = packed, bias, height, width, ic, oc, dilation, valid
+    if merges:
+        if _resize_merge is None:
+            raise RuntimeError("Native DLL does not support fused decoder resize")
+        calls.update((name.encode(), layout) for name, layout in merges[0].items())
     return graph, calls, _details(inputs), _details(outputs)
 
 
 class _Session:
     def __init__(self, model, layouts):
         self.handle = self.delegate = self.worker = None
+        self.encoder_overlap = 0
         self.operators = []
         self.callbacks = []
         self.names = tuple(layouts)
@@ -190,7 +210,10 @@ class _Session:
                 raise RuntimeError("Unable to create LiteRT options")
             threads(opts, 2)
             for name, layout in layouts.items():
-                self._install(opts, name, layout)
+                if name.startswith(b"ScoreResizeMerge"):
+                    self._install_resize_merge(opts, name, layout)
+                else:
+                    self._install(opts, name, layout)
             settings = delegate_defaults()
             settings.num_threads = 2
             self.delegate = delegate_create(byref(settings))
@@ -237,8 +260,14 @@ class _Session:
         if convolve is None:
             raise RuntimeError("Native DLL does not support the required convolution")
 
+        stripe_shape = _ENCODER_STRIPES.get(name) if _encoder_stripe is not None else None
+        stripe_buffer = None
+        cache_mode = c_uint32()
+        cache_ready = False
+
         @Invoke
         def run(_, context, node):
+            nonlocal stripe_buffer, cache_ready
             try:
                 left = opaque_input(context, node, 0)
                 right = opaque_output(context, node, 0)
@@ -248,13 +277,85 @@ class _Session:
                 src, dst = opaque_data(left), opaque_data(right)
                 if not src or not dst:
                     return 1
+                flags = self.encoder_overlap if stripe_shape else 0
+                if not cache_ready:
+                    flags &= ~1
+                cache_ready = False
+                if flags and self.worker:
+                    first, last, offset = stripe_shape
+                    if stripe_buffer is None:
+                        try:
+                            stripe_buffer = np.empty((last - first, last - offset - first, oc), dtype=np.float32)
+                        except MemoryError:
+                            flags = 0
+                    if flags:
+                        status = _encoder_stripe(
+                            src, packed_data, bias_data, height, width, ic, oc, dilation, dst,
+                            stripe_buffer.ctypes.data, first, last, offset, flags, byref(cache_mode),
+                        )
+                        cache_ready = status == 0 and bool(flags & 2)
+                        return status
                 return convolve(src, packed_data, bias_data, height, width, ic, oc, dilation, dst)
             except Exception:
                 return 1
 
+        self._register(opts, name, run)
+
+    def _install_resize_merge(self, opts, name, layout):
+        output, crops = layout
+        _, height, width, channels = output
+        low, skip = crops
+        high_channels = channels // 3
+        for crop, scale, depth in ((low, 2, 2 * high_channels), (skip, 1, high_channels)):
+            _, shape, coords = crop
+            if (shape[0] != 1 or shape[3] != depth or
+                    (coords[0][2] * scale, coords[1][2] * scale) != (height, width)):
+                raise ValueError("Invalid fused resize shape")
+
+        out_bytes = prod(output) * 4
+        sources = [(port, prod(shape) * 4, shape, coords) for port, shape, coords in crops]
+
+        def raw_data(tensor, size):
+            return opaque_data(tensor) if tensor and opaque_bytes(tensor) == size else None
+
+        def crop_base(context, node, spec):
+            port, size, shape, coords = spec
+            ptr = raw_data(opaque_input(context, node, port), size)
+            if not ptr:
+                return None
+            _, physical_height, physical_width, depth = shape
+            (y, row_port, rows), (x, _, columns) = coords
+            if row_port >= 0:
+                index_data = raw_data(opaque_input(context, node, row_port), rows * 4)
+                if not index_data:
+                    return None
+                indices = (c_int32 * rows).from_address(index_data)
+                y = indices[0]
+                if any(index != row for row, index in enumerate(indices, y)):
+                    return None
+            if not (0 <= y <= physical_height - rows and 0 <= x <= physical_width - columns):
+                return None
+            return ptr + (y * physical_width + x) * depth * 4
+
+        @Invoke
+        def run(_, context, node):
+            try:
+                dest = raw_data(opaque_output(context, node, 0), out_bytes)
+                left = crop_base(context, node, sources[0])
+                right = crop_base(context, node, sources[1])
+                if not dest or not left or not right:
+                    return 1
+                return _resize_merge(left, right, low[1][2], skip[1][2],
+                                     height, width, high_channels, dest)
+            except Exception:
+                return 1
+
+        self._register(opts, name, run)
+
+    def _register(self, opts, name, run):
         op = create_op(_CUSTOM, name, 1, None)
         if not op:
-            raise RuntimeError("Unable to register convolution")
+            raise RuntimeError("Unable to register native LiteRT operator")
         self.operators.append(op)
         self.callbacks.append(run)
         check(set_invoke(op, run))
@@ -349,12 +450,29 @@ class SparseInterpreter:
     def get_tensor(self, index):
         return self.tensor(index)().copy()
 
+    @property
+    def supports_encoder_overlap(self):
+        return _encoder_stripe is not None and self._native is not None and bool(self._native.worker)
+
+    def set_encoder_overlap(self, reuse, save):
+        if self._native is not None:
+            self._native.encoder_overlap = int(reuse) | (int(save) << 1)
+
     def invoke(self):
         if self._native is not None:
             try:
                 for n, item in enumerate(self._inputs):
-                    np.copyto(self._native.tensor(get_input, n, item), self._staging[item["index"]])
-                check(self._native.run())
+                    target = self._native.tensor(get_input, n, item)
+                    values = self._staging[item["index"]]
+                    # Native recipes for the pinned model read channel zero.
+                    # Keep the complete staged image for stock fallback.
+                    if n == 0 and values.ndim == 4 and values.shape[:2] == (1, 3):
+                        target, values = target[:, :1], values[:, :1]
+                    np.copyto(target, values)
+                try:
+                    check(self._native.run())
+                finally:
+                    self._native.encoder_overlap = 0
                 return
             except (OSError, RuntimeError, ValueError) as error:
                 self._fallback(error)

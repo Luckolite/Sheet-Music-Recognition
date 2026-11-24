@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include <immintrin.h>
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <condition_variable>
 #include <cstring>
@@ -30,7 +31,15 @@ static bool same_sparse_pixel(const float* a, const float* b, int channels) {
     return channels == 64 ? same_pixel<64>(a, b) : same_pixel<128>(a, b);
 }
 
-template <bool Valid, bool Reuse = false>
+
+struct EncoderStripe {
+    float* buffer;
+    int first, last, offset;
+    bool read, write;
+};
+static thread_local const EncoderStripe* active_stripe = nullptr;
+
+template <bool Valid, bool Reuse = false, bool Stripe = false>
 static void conv_rows(
     const float* input, const float* packed, const float* bias, int height, int width,
     int cin, int cout, int dilation, int row_begin, int row_end, float* output) {
@@ -56,6 +65,19 @@ static void conv_rows(
         }
     }
     for (int y = row_begin; y < row_end; ++y) {
+        float* output_row = output + static_cast<size_t>(y) * width * cout;
+        int stripe_first = 0, stripe_end = 0;
+        if constexpr (Stripe) {
+            const auto& stripe = *active_stripe;
+            if (stripe.read && y >= stripe.first && y < stripe.last) {
+                stripe_first = stripe.first;
+                stripe_end = stripe.last - stripe.offset;
+                const int count = stripe_end - stripe_first;
+                const size_t index = static_cast<size_t>(y-stripe.first)*count;
+                std::memcpy(output_row + stripe.first*cout, stripe.buffer + index*cout,
+                            static_cast<size_t>(count)*cout*sizeof(float));
+            }
+        }
         if constexpr (Reuse) {
             for (int x = 0; x < width; ++x) {
                 int same = 0;
@@ -66,12 +88,17 @@ static void conv_rows(
                     same = above[0] & above[1] & above[2] & middle[0] & middle[1] & middle[2]
                          & below[0] & below[1] & below[2];
                 }
+                if constexpr (Stripe) {
+                    if (x >= stripe_first && x < stripe_end) {
+                        copies[x] = 3;  // Already populated from the previous tile.
+                        continue;
+                    }
+                }
                 if (x > 1 && (same & 1)) copies[x] = 1;
                 else if (y > row_begin && y > 1 && (same & 2)) copies[x] = 2;
                 else copies[x] = 0;
             }
         }
-        float* output_row = output + static_cast<size_t>(y) * width * cout;
         for (int cursor = 0; cursor < width;) {
             int positions[4]{};
             int remaining;
@@ -163,6 +190,15 @@ static void conv_rows(
                 float* dst = output_row + x * cout;
                 if (copies[x] == 1) std::memcpy(dst, dst-cout, cout * sizeof(float));
                 else if (copies[x] == 2) std::memcpy(dst, dst-width*cout, cout * sizeof(float));
+            }
+        }
+        if constexpr (Stripe) {
+            const auto& stripe = *active_stripe;
+            if (stripe.write && y >= stripe.first && y < stripe.last) {
+                const int count = stripe.last - stripe.offset - stripe.first;
+                std::memcpy(stripe.buffer + static_cast<size_t>(y-stripe.first)*count*cout,
+                            output_row + (stripe.first+stripe.offset)*cout,
+                            static_cast<size_t>(count)*cout*sizeof(float));
             }
         }
     }
@@ -350,7 +386,7 @@ static void convolve_pair_groups(const float* source, const float* weights, cons
                       first + channel, second + channel);
 }
 
-template<int InputChannels, int OutputChannels>
+template<int InputChannels, int OutputChannels, bool Stripe = false>
 static void conv_reuse_rows(const float* source, const float* weights, const float* bias,
         int height, int width, int, int, int, int begin, int end, float* output) {
     int first = std::max(begin - 1, 0);
@@ -369,8 +405,26 @@ static void conv_reuse_rows(const float* source, const float* weights, const flo
     std::vector<uint8_t> copies(width);
     for (int y = begin; y < end; ++y) {
         float* output_row = output + static_cast<size_t>(y)*width*OutputChannels;
+        int stripe_first = 0, stripe_end = 0;
+        if constexpr (Stripe) {
+            const auto& stripe = *active_stripe;
+            if (stripe.read && y >= stripe.first && y < stripe.last) {
+                stripe_first = stripe.first;
+                stripe_end = stripe.last - stripe.offset;
+                const int count = stripe_end - stripe_first;
+                const size_t index = static_cast<size_t>(y-stripe.first)*count;
+                std::memcpy(output_row + stripe.first*OutputChannels, stripe.buffer + index*OutputChannels,
+                            static_cast<size_t>(count)*OutputChannels*sizeof(float));
+            }
+        }
         int pending = -1;
         for (int x = 0; x < width; ++x) {
+            if constexpr (Stripe) {
+                if (x >= stripe_first && x < stripe_end) {
+                    copies[x] = 3;  // Already populated from the previous tile.
+                    continue;
+                }
+            }
             int same = 0;
             bool interior = y > 0 && y < height-1 && x > 0 && x < width-1;
             if (interior) {
@@ -400,6 +454,15 @@ static void conv_reuse_rows(const float* source, const float* weights, const flo
             float* result = output_row + x*OutputChannels;
             if (copies[x] == 1) std::memcpy(result, result-OutputChannels, OutputChannels*sizeof(float));
             else if (copies[x] == 2) std::memcpy(result, result-width*OutputChannels, OutputChannels*sizeof(float));
+        }
+        if constexpr (Stripe) {
+            const auto& stripe = *active_stripe;
+            if (stripe.write && y >= stripe.first && y < stripe.last) {
+                const int count = stripe.last - stripe.offset - stripe.first;
+                std::memcpy(stripe.buffer + static_cast<size_t>(y-stripe.first)*count*OutputChannels,
+                            output_row + (stripe.first+stripe.offset)*OutputChannels,
+                            static_cast<size_t>(count)*OutputChannels*sizeof(float));
+            }
         }
     }
 }
@@ -550,12 +613,30 @@ struct ConvolutionJob {
     float* output;
     unsigned mode;
     bool second_ok = false;
+    const EncoderStripe* stripe = nullptr;
+    int parts = 2;
+    std::atomic<int> next{0};
+
+    bool runParts(bool second) noexcept {
+        if (parts == 2) return second ? run(height/2, height) : run(0, height/2);
+        bool ok = true;
+        for (;;) {
+            const int part = next.fetch_add(1, std::memory_order_relaxed);
+            if (part >= parts) return ok;
+            bool piece = run(height * part / parts, height * (part + 1) / parts);
+            ok = ok && piece;
+        }
+    }
 
     bool run(int begin, int end) const noexcept {
+        const auto* prior = active_stripe;
         try {
+            active_stripe = stripe;
             rows(input, packed, bias, height, width, cin, cout, dilation, begin, end, output);
+            active_stripe = prior;
             return true;
         } catch (...) {
+            active_stripe = prior;
             return false;
         }
     }
@@ -585,7 +666,7 @@ public:
             pending = &job;
         }
         requested.notify_one();
-        const bool first_ok = job.run(0, job.height / 2);
+        const bool first_ok = job.runParts(false);
         std::unique_lock<std::mutex> lock(mutex);
         completed.wait(lock, [&] { return !pending; });
         return first_ok && job.second_ok ? 0 : 1;
@@ -600,7 +681,7 @@ private:
             ConvolutionJob* job = pending;
             lock.unlock();
             _mm_setcsr(job->mode);
-            const bool ok = job->run(job->height / 2, job->height);
+            const bool ok = job->runParts(true);
             lock.lock();
             job->second_ok = ok;
             pending = nullptr;
@@ -639,6 +720,13 @@ static int run_workers(ConvolutionRows kernel, const float* input, const float* 
     if (active_worker) {
         ConvolutionJob job{kernel, input, packed, bias, height, width, cin, cout, dilation,
                            output, _mm_getcsr()};
+        job.stripe = active_stripe;
+        // Sparse music is uneven across the two halves of a tile. The existing
+        // two workers can claim the next disjoint strip when they finish a strip.
+        if (height == width && dilation == 1
+                && ((height == 80 && cout == 128 && (cin == 64 || cin == 128))
+                        || (height == 160 && cout == 64 && (cin == 32 || cin == 64))))
+            job.parts = 6;
         return active_worker->dispatch(job);
     }
     const int mid = height/2;
@@ -1314,4 +1402,71 @@ static void conv_valid_tail_tap_rows(const float* source, const float* weights, 
             slot=(slot+1)%3;
         }
     }
+}
+
+template<int Low, int High>
+static void merge_resize2(const float* low, const float* high, int lowWidth, int highWidth,
+        int h, int w, float* result) {
+    constexpr int channels = Low + High;
+    for (int y = 0; y < h; y += 2) {
+        const float* small = low + static_cast<size_t>(y / 2) * lowWidth * Low;
+        const float* large0 = high + static_cast<size_t>(y) * highWidth * High;
+        const float* large1 = large0 + highWidth * High;
+        float* row0 = result + static_cast<size_t>(y) * w * channels;
+        float* row1 = row0 + w * channels;
+        for (int x = 0; x < w; x += 2) {
+            std::memcpy(row0, small, Low * sizeof(float));
+            std::memcpy(row0 + channels, small, Low * sizeof(float));
+            std::memcpy(row1, small, Low * sizeof(float));
+            std::memcpy(row1 + channels, small, Low * sizeof(float));
+            std::memcpy(row0 + Low, large0, High * sizeof(float));
+            std::memcpy(row0 + channels + Low, large0 + High, High * sizeof(float));
+            std::memcpy(row1 + Low, large1, High * sizeof(float));
+            std::memcpy(row1 + channels + Low, large1 + High, High * sizeof(float));
+            small += Low;
+            large0 += 2 * High;
+            large1 += 2 * High;
+            row0 += 2 * channels;
+            row1 += 2 * channels;
+        }
+    }
+}
+extern "C" __declspec(dllexport)
+int score_merge_resize2(const float* low, const float* high,
+        int lowWidth, int highWidth, int h, int w, int highChannels, float* result) noexcept {
+    if (!low || !high || !result || h <= 0 || w <= 0 || h % 2 || w % 2
+            || lowWidth < w / 2 || highWidth < w) return 1;
+    switch (highChannels) {
+        case 32: merge_resize2<64,32>(low,high,lowWidth,highWidth,h,w,result); return 0;
+        case 64: merge_resize2<128,64>(low,high,lowWidth,highWidth,h,w,result); return 0;
+        case 128: merge_resize2<256,128>(low,high,lowWidth,highWidth,h,w,result); return 0;
+        default: return 1;
+    }
+}
+
+extern "C" __declspec(dllexport)
+int score_encoder_stripe(const float* input, const float* weights, const float* bias,
+        int height, int width, int cin, int cout, int dilation, float* output,
+        float* buffer, int first, int last, int offset, int mode, unsigned* cache_mode) noexcept {
+    ConvolutionRows kernel = nullptr;
+    if (height == 80 && width == 80 && (cin == 64 || cin == 128) && cout == 128 && offset == 48)
+        kernel = conv_rows<false, true, true>;
+    else if (height == 160 && width == 160 && cin == 32 && cout == 64 && offset == 96)
+        kernel = conv_reuse_rows<32,64,true>;
+    else if (height == 160 && width == 160 && cin == 64 && cout == 64 && offset == 96)
+        kernel = conv_reuse_rows<64,64,true>;
+    if (!active_worker || !buffer || !cache_mode || !kernel || dilation != 1
+            || first < 1 || last > width - 1 || offset <= 0
+            || last - offset <= first || last - offset > first + offset) return 1;
+    // Read a prior stripe only under the same rounding and denormal controls.
+    const unsigned csr = _mm_getcsr() & 0xffc0;
+    const EncoderStripe stripe{buffer, first, last, offset,
+                               (mode & 1) && *cache_mode == csr, (mode & 2) != 0};
+    const auto* previous = active_stripe;
+    active_stripe = &stripe;
+    const int result = run_workers(kernel, input, weights, bias,
+                                   height, width, cin, cout, dilation, output);
+    active_stripe = previous;
+    if (!result && stripe.write) *cache_mode = csr;
+    return result;
 }

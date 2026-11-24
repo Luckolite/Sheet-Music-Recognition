@@ -119,7 +119,9 @@ def _run_jobs(runtime, gray, labels, regions, profiles, jobs, left, window):
     previous = None
     ports = decoder.row_ports(window)
     inset = decoder.CORE_INSET if window == decoder.CORE_WINDOW else 0
-    for job in jobs:
+    overlap_supported = getattr(runtime, "supports_encoder_overlap", False)
+    reuse = False
+    for at, job in enumerate(jobs):
         index = job.members[0][0]
         tile = gray[regions[index]]
         if job.partner is not None:
@@ -132,6 +134,16 @@ def _run_jobs(runtime, gray, labels, regions, profiles, jobs, left, window):
         slot = input_buffer()
         slot[0, 0] = tile
         del slot
+        if overlap_supported:
+            save = False
+            if at + 1 < len(jobs) and job.partner is None and jobs[at + 1].partner is None:
+                row, column = regions[index]
+                following_row, following_column = regions[jobs[at + 1].members[0][0]]
+                # The encoder stride is aligned only for consecutive horizontal tiles.
+                save = (row.start == following_row.start
+                        and following_column.start - column.start == 192)
+            runtime.set_encoder_overlap(reuse, save)
+            reuse = save
         runtime.invoke()
         result = output_buffer()[0]
         if result.min() < 0 or result.max() > 5:

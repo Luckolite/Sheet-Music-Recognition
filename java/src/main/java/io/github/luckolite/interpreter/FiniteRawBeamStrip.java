@@ -231,31 +231,69 @@ final class FiniteRawBeamStrip {
         return null;
     }
 
+    private static final class SlopeBounds {
+        long lowNumerator = -4L * PHASE, highNumerator = 4L * PHASE;
+        int lowDenominator = 5, highDenominator = 5;
+
+        void copyFrom(SlopeBounds bounds) {
+            lowNumerator = bounds.lowNumerator;
+            highNumerator = bounds.highNumerator;
+            lowDenominator = bounds.lowDenominator;
+            highDenominator = bounds.highDenominator;
+        }
+
+        // Keep exact rational endpoints without allocating temporary fractions per column pair.
+        boolean constrain(Interval left, Interval right, int distance) {
+            long low = (long) right.low() - left.high();
+            long high = (long) right.high() - left.low();
+            if (low * lowDenominator > lowNumerator * distance) {
+                lowNumerator = low;
+                lowDenominator = distance;
+            }
+            if (high * highDenominator < highNumerator * distance) {
+                highNumerator = high;
+                highDenominator = distance;
+            }
+            return lowNumerator * highDenominator <= highNumerator * lowDenominator;
+        }
+
+        boolean add(int at, Interval bound, List<Integer> fixed, List<Interval> intervals) {
+            if (bound.high() > 1000000L * PHASE) return false;
+            for (int i = 0; i < fixed.size(); i++) {
+                int other = fixed.get(i);
+                Interval existing = intervals.get(i);
+                boolean possible = other < at ? constrain(existing, bound, at - other)
+                        : constrain(bound, existing, other - at);
+                if (!possible) return false;
+            }
+            return true;
+        }
+    }
+
     /** Returned constraints and input bounds use PHASE units. */
     static Slopes feasible(List<Integer> indices, List<Interval> intervals) {
+        var bounds = new SlopeBounds();
+        if (!feasible(indices, intervals, bounds)) return null;
+        return new Slopes(new Q(bounds.lowNumerator, bounds.lowDenominator),
+                new Q(bounds.highNumerator, bounds.highDenominator));
+    }
+
+    private static boolean feasible(
+            List<Integer> indices, List<Interval> intervals, SlopeBounds bounds) {
         if (indices == null
                 || intervals == null
                 || indices.size() != intervals.size()
-                || indices.size() > 512) return null;
-        Q sl = new Q(-4L * PHASE, 5), sh = new Q(4L * PHASE, 5);
+                || indices.size() > 512) return false;
         for (int i = 0; i < indices.size(); i++) {
-            if (indices.get(i) < 0
-                    || indices.get(i) > 511
-                    || intervals.get(i).high() > 1000000L * PHASE) return null;
+            int left = indices.get(i);
+            var interval = intervals.get(i);
+            if (left < 0 || left > 511 || interval.high() > 1000000L * PHASE) return false;
             for (int j = i + 1; j < indices.size(); j++) {
-                int denominator = indices.get(j) - indices.get(i);
-                if (denominator <= 0) return null;
-                Q a = new Q((long) intervals.get(j).low() - intervals.get(i).high(), denominator),
-                        b =
-                                new Q(
-                                        (long) intervals.get(j).high() - intervals.get(i).low(),
-                                        denominator);
-                if (a.compareTo(sl) > 0) sl = a;
-                if (b.compareTo(sh) < 0) sh = b;
-                if (sl.compareTo(sh) > 0) return null;
+                int distance = indices.get(j) - left;
+                if (distance <= 0 || !bounds.constrain(interval, intervals.get(j), distance)) return false;
             }
         }
-        return new Slopes(sl, sh);
+        return true;
     }
 
     static List<Interval> unique(List<List<Interval>> choices) {
@@ -276,6 +314,7 @@ final class FiniteRawBeamStrip {
         var options = new ArrayList<List<Interval>>();
         for (var o : input) options.add(new ArrayList<>(o));
         boolean changed;
+        var probe = new SlopeBounds();
         do {
             changed = false;
             var fixed = new ArrayList<Integer>();
@@ -285,26 +324,25 @@ final class FiniteRawBeamStrip {
                     fixed.add(i);
                     intervals.add(options.get(i).get(0));
                 }
-            if (feasible(fixed, intervals) == null) return;
+            // Every candidate shares the constraints between already fixed columns.
+            var bounds = new SlopeBounds();
+            if (!feasible(fixed, intervals, bounds)) return;
             for (int i = 0; i < options.size(); i++) {
                 if (options.get(i).size() == 1) continue;
                 var kept = new ArrayList<Interval>();
                 for (var candidate : options.get(i)) {
-                    var ids = new ArrayList<Integer>();
-                    var bounds = new ArrayList<Interval>();
-                    for (int j = 0; j < options.size(); j++) {
-                        if (j == i) {
-                            ids.add(j);
-                            bounds.add(candidate);
-                        } else if (options.get(j).size() == 1) {
-                            ids.add(j);
-                            bounds.add(options.get(j).get(0));
-                        }
-                    }
-                    if (feasible(ids, bounds) != null) kept.add(candidate);
+                    probe.copyFrom(bounds);
+                    if (probe.add(i, candidate, fixed, intervals)) kept.add(candidate);
                 }
                 if (kept.isEmpty()) return;
                 if (kept.size() < options.get(i).size()) {
+                    if (kept.size() == 1) {
+                        // Later columns in this pass must see the newly fixed interval.
+                        Interval bound = kept.get(0);
+                        bounds.add(i, bound, fixed, intervals);
+                        fixed.add(i);
+                        intervals.add(bound);
+                    }
                     options.set(i, kept);
                     changed = true;
                 }

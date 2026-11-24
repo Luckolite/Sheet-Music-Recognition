@@ -12,6 +12,39 @@ from sheet_music_recognition.runtime import inference_interpreter
 
 
 class TileDecoderTest(unittest.TestCase):
+    def test_encoder_overlap_is_scoped_to_adjacent_unpaired_jobs(self):
+        from sheet_music_recognition import _mixed_tile_decoder as mixed
+
+        origins = [(0, 0), (0, 192), (0, 384), (192, 0), (0, 576), (0, 768),
+                   (0, 900), (192, 900), (192, 1092)]
+        regions = [(slice(y, y + 320), slice(x, x + 320)) for y, x in origins]
+        bounds = (slice(0, 192), slice(0, 192))
+        jobs = [mixed._Job([(i, bounds)], top=0) for i in (0, 1, 2, 4, 5, 6, 7, 8)]
+        jobs[2].members.append((3, bounds))
+        jobs[2].partner = 3
+        gray = np.full((512, 1412), 255, dtype=np.uint8)
+        input_tile = np.empty((1, 3, 320, 320), dtype=np.float32)
+        prediction = np.zeros((1, 192, 192), dtype=np.int32)
+        output_index = 1 + len(mixed.decoder.row_ports(192))
+        observed = []
+        runtime = SimpleNamespace(
+            get_input_details=lambda: [{"index": i} for i in range(output_index)],
+            get_output_details=lambda: [{"index": output_index, "shape": prediction.shape}],
+            tensor=lambda index: (lambda: prediction if index == output_index else input_tile),
+            set_tensor=lambda *_: None,
+            supports_encoder_overlap=True,
+            set_encoder_overlap=lambda reuse, save: observed.append((reuse, save)),
+            invoke=lambda: None,
+        )
+        with patch.object(mixed, "_copy_owned"):
+            mixed._run_jobs(runtime, gray, None, regions, None, jobs, 0, 192)
+            mixed._run_jobs(runtime, gray, None, regions, None, jobs[-1:], 0, 192)
+        self.assertEqual(observed, [
+            (False, True), (True, False), (False, False),
+            (False, True), (True, False), (False, False),
+            (False, True), (True, False), (False, False),
+        ])
+
     def test_core_placements_keep_border_tiles_on_wider_layout(self):
         from sheet_music_recognition import _mixed_tile_decoder as mixed
 

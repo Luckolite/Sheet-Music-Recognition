@@ -41,17 +41,18 @@ final class BoundedSecondaryBeam {
             if (stems[0] == null || stems[1] == null || stems[2] == null) continue;
             if (stems[1].x() - stems[0].x() < gap * .7f || stems[2].x() - stems[1].x() < gap * .7f)
                 continue;
+            boolean[][] stemCoverage = stemCoverage(gray, width, height, stems, gap);
             for (int distance = Math.round(gap * 1.7f); distance <= gap * 10; distance++) {
                 float y = stems[0].headY() + direction * distance;
                 for (int angle = -8; angle <= 8; angle++) {
                     Rail secondary = new Rail(y, angle * .04f);
-                    if (!rail(gray, width, height, stems, secondary, gap)) continue;
+                    if (!rail(gray, width, height, stems, secondary, gap, stemCoverage)) continue;
                     if (!stops(gray, width, height, stems, secondary, gap)) continue;
                     for (int separation = Math.round(gap * .4f);
                             separation <= gap * 1.15f;
                             separation++) {
                         Rail main = new Rail(y + direction * separation, secondary.slope());
-                        if (rail(gray, width, height, stems, main, gap)
+                        if (rail(gray, width, height, stems, main, gap, stemCoverage)
                                 && separated(gray, width, height, stems, secondary, main, gap)
                                 && continues(gray, width, height, stems, main, gap)) return true;
                     }
@@ -83,16 +84,47 @@ final class BoundedSecondaryBeam {
         return bestX < 0 ? null : new Stem(bestX, hy, direction);
     }
 
-    private static boolean rail(byte[] g, int w, int h, Stem[] stems, Rail rail, float gap) {
+    /** The ink quota is inclusive of the head row. Store it once for each possible stem length. */
+    private static boolean[][] stemCoverage(byte[] g, int w, int h, Stem[] stems, float gap) {
+        if (gap > 96f) return null;
+        int span = (int) Math.floor(gap * 10f) + 1;
+        boolean[][] coverage = new boolean[stems.length][];
+        for (int i = 0; i < stems.length; i++) {
+            Stem stem = stems[i];
+            boolean[] enoughInk = coverage[i] = new boolean[span];
+            int head = Math.round(stem.headY()), covered = 0;
+            for (int offset = 0; offset < span; offset++) {
+                if (dark(g, w, h, stem.x(), head + stem.direction() * offset)) covered++;
+                enoughInk[offset] = covered >= (offset + 1) * .85f;
+            }
+        }
+        return coverage;
+    }
+
+    private static boolean rail(
+            byte[] g, int w, int h, Stem[] stems, Rail rail, float gap, boolean[][] stemCoverage) {
         int a = stems[0].x(), b = stems[2].x();
         if (b - a < gap * 2) return false;
-        int radius = Math.max(1, Math.round(gap * .08f));
-        int covered = 0, total = 0;
-        for (int x = a + 2; x <= b - 2; x++) {
-            total++;
-            if (core(g, w, h, x, rail.y() + (x - a) * rail.slope(), radius)) covered++;
+        if (stemCoverage != null) {
+            for (int i = 0; i < stems.length; i++) {
+                Stem stem = stems[i];
+                float y = rail.y() + (stem.x() - a) * rail.slope();
+                float distance = stem.direction() * (y - stem.headY());
+                if (distance < gap * 1.5f || distance > gap * 10) return false;
+                if (!stemCoverage[i][(int) distance]) return false;
+            }
         }
-        if (total == 0 || covered < total * .94f) return false;
+        int radius = Math.max(1, Math.round(gap * .08f));
+        int total = b - a - 3, misses = 0;
+        float needed = total * .94f;
+        if (total <= 0) return false;
+        for (int x = a + 2; x <= b - 2; x++) {
+            if (!core(g, w, h, x, rail.y() + (x - a) * rail.slope(), radius)) {
+                misses++;
+                if (total - misses < needed) return false;
+            }
+        }
+        if (stemCoverage != null) return true;
         for (Stem stem : stems) {
             float y = rail.y() + (stem.x() - a) * rail.slope();
             float d = stem.direction() * (y - stem.headY());

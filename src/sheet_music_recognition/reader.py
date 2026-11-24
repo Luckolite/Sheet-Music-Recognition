@@ -10,7 +10,7 @@ import struct
 import sys
 import tempfile
 import zlib
-from collections import Counter
+from collections import Counter, OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack, contextmanager, nullcontext
 from functools import lru_cache
@@ -36,6 +36,10 @@ _OCR_NUMBER = struct.Struct(">i5f")
 _OCR_METER = struct.Struct(">iii")
 _OCR_WORD_BOUNDS = struct.Struct(">4f")
 _REUSABLE_PAGE_PIXELS = 500_000
+_REUSABLE_PREDICTION_PIXELS = 12_000_000
+# Reserve room for the two uncompressed uint8 buffers of one small page.
+_LARGE_PREDICTION_CACHE_BYTES = 2 * (_REUSABLE_PREDICTION_PIXELS - _REUSABLE_PAGE_PIXELS)
+_LARGE_PREDICTION_CACHE_PAGES = 8
 
 
 def tile_starts(size):
@@ -312,12 +316,14 @@ class Interpreter:
             self._decoder_scope = stack
             self._reusable_decoder = None
             self._last_page_prediction = None
+            self._large_page_predictions = OrderedDict()
             self._last_page_ocr = None
             try:
                 yield self
             finally:
                 self._last_page_ocr = None
                 self._last_page_prediction = None
+                self._large_page_predictions.clear()
                 self._reusable_decoder = None
                 self._decoder_scope = None
 
@@ -755,8 +761,13 @@ class Interpreter:
     def _predict_prepared_page(self, gray):
         if getattr(self, "_decoder_scope", None) is None:
             return self.predict(gray)
-        eligible = (gray.size <= _REUSABLE_PAGE_PIXELS and self.edge is _tile_edges()
+        eligible = (gray.size <= _REUSABLE_PREDICTION_PIXELS and self.edge is _tile_edges()
                     and getattr(self.predict, "__func__", None) is Interpreter.predict)
+        if not eligible:
+            self._large_page_predictions.clear()
+        elif gray.size > _REUSABLE_PAGE_PIXELS and _LARGE_PREDICTION_CACHE_PAGES:
+            self._last_page_prediction = None
+            return self._predict_large_page(gray)
         cached = self._last_page_prediction
         if eligible and cached is not None:
             runtime, image, labels = cached
@@ -767,7 +778,52 @@ class Interpreter:
         if (eligible and getattr(self, "_sparse_pairs_enabled", False)
                 and type(self.runtime).__module__ == "ai_edge_litert.interpreter"):
             # Own both buffers so changes to a prepared page cannot poison later reads.
-            self._last_page_prediction = self.runtime, gray.copy(), labels.copy()
+            try:
+                self._last_page_prediction = self.runtime, gray.copy(), labels.copy()
+            except MemoryError:
+                pass  # Caching is optional under memory pressure.
+        return labels
+
+    def _can_reuse_large_prediction(self):
+        return (getattr(self, "model_sha256", None) == MODEL_SHA256
+                and getattr(self, "_sparse_pairs_enabled", False)
+                and type(getattr(self, "runtime", None)).__module__ == "ai_edge_litert.interpreter")
+
+    def _predict_large_page(self, gray):
+        if not gray.flags.c_contiguous:
+            return self.predict(gray)
+        cache = self._large_page_predictions
+        try:
+            key = gray.shape, hashlib.sha256(gray).digest()
+        except MemoryError:
+            cache.clear()
+            return self.predict(gray)
+        if self._can_reuse_large_prediction() and key in cache:
+            compressed_gray, compressed_labels = cache[key]
+            try:
+                image = np.frombuffer(zlib.decompress(compressed_gray), np.uint8).reshape(gray.shape)
+                if np.array_equal(gray, image):
+                    labels = np.frombuffer(zlib.decompress(compressed_labels), np.uint8)
+                    cache.move_to_end(key)
+                    return labels.reshape(gray.shape).copy()
+            except MemoryError:
+                cache.clear()
+        labels = self.predict(gray)
+        if self._can_reuse_large_prediction():
+            try:
+                compressed_gray = zlib.compress(gray, level=1)
+                compressed_labels = zlib.compress(labels, level=1)
+                size = len(compressed_gray) + len(compressed_labels)
+                if size <= _LARGE_PREDICTION_CACHE_BYTES:
+                    cache.pop(key, None)
+                    used = sum(len(image) + len(mask) for image, mask in cache.values())
+                    while (len(cache) >= _LARGE_PREDICTION_CACHE_PAGES
+                           or used + size > _LARGE_PREDICTION_CACHE_BYTES):
+                        _, (image, mask) = cache.popitem(last=False)
+                        used -= len(image) + len(mask)
+                    cache[key] = compressed_gray, compressed_labels
+            except MemoryError:
+                cache.clear()
         return labels
 
     def _prepare_page(self, image, width, annotations, *, prepare_geometry=None, start_decoder=None,
