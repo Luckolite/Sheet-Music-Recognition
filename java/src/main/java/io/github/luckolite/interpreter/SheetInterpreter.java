@@ -944,6 +944,8 @@ public final class SheetInterpreter {
         finalInterpretation =
                 TerminalDottedCadenceHooks.apply(finalInterpretation, null, gray, width, height);
         var provedDyadAccidentals = new java.util.ArrayList<SourceLocalAccidental.ProvedMark>();
+        upperLedgerTriplets.captureSharps(finalInterpretation, gray, annotationGray, width, height,
+                provedDyadAccidentals::add);
         finalInterpretation =
                 ClosedSixteenthDyads.apply(
                         finalInterpretation,

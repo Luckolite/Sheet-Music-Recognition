@@ -105,6 +105,7 @@ final class PrintedFingeringDigits {
         }
         assignSlurredSixthFingeringStacks(gray, normalized, width, height, score, heads, candidates, ambiguous);
         assignDottedSixthFingerings(gray, normalized, width, height, score, heads, candidates, ambiguous);
+        assignStaffOverlaidTripletOnes(gray, normalized, width, height, score, heads, candidates, ambiguous);
         assignHighStraightDyadFingerings(gray, normalized, width, height, words, score, heads,
                 candidates, ambiguous);
         for (var mark : FingeringAnnotationFilter.captureChordFingeringThrees(
@@ -117,6 +118,45 @@ final class PrintedFingeringDigits {
         for (int i = 0; i < candidates.length; i++)
             if (candidates[i] != null && !ambiguous[i]) marks.add(candidates[i]);
         return List.copyOf(marks);
+    }
+
+    private static void assignStaffOverlaidTripletOnes(byte[] gray, byte[] normalized, int width, int height,
+            ScorePageInterpretation score, List<Head> heads, Mark[] marks, boolean[] ambiguous) {
+        var byOwner = new Head[score.notes().size()];
+        for (var head : heads) byOwner[head.index()] = head;
+        for (var beam : score.beamSource().resolve().groups()) {
+            if (beam.source().tupletMark() != ScoreBeamSource.TupletMark.UNNUMBERED
+                    || beam.columns().size() != 3 || !beam.source().bridges().equals(List.of(1, 1))) continue;
+            var column = beam.columns().get(2);
+            if (column.ambiguous() || column.owners().size() != 1) continue;
+            int owner = column.owners().get(0);
+            var note = byOwner[owner];
+            if (note == null || ambiguous[owner] || marks[owner] != null || note.note().staffStep() < 10
+                    || !HighLedgerTripletBars.hasStaffOverlaidLedgerClock(score.notes(), note.note().measureIndex()))
+                continue;
+            float gap = (float) (note.gap() * 8 / 8.2);
+            if (ownsTripletFingerOne(gray, width, height, note, gap)
+                    && ownsTripletFingerOne(normalized, width, height, note, gap))
+                marks[owner] = new Mark(owner, 1, Placement.ABOVE);
+        }
+    }
+
+    private static boolean ownsTripletFingerOne(byte[] pixels, int width, int height, Head note, float gap) {
+        int left = (int) Math.round(note.x() - .88f * gap), right = (int) Math.round(note.x() + .88f * gap);
+        int top = (int) Math.round(note.y() - 3.15f * gap), bottom = (int) Math.round(note.y() - .62f * gap);
+        if (left < 0 || right >= width || top < 0 || bottom >= height || top >= bottom) return false;
+        int accepted = 0;
+        for (var c : RawNumeralComponents.capture(pixels, width, height, left, top, right, bottom,
+                165, () -> {}, () -> {}).components()) {
+            if (c.left <= left || c.right >= right || c.top <= top || c.bottom >= bottom
+                    || c.bottom - c.top + 1 < .93f * gap || c.bottom - c.top + 1 > 1.28f * gap
+                    || Math.abs((c.left + c.right) * .5f - note.x()) > .30f * gap
+                    || !TripletRhythmDetector.fingerOne(pixels, width, c)) continue;
+            var reading = JoinedDigitTemplates.inspect(pixels, width, height, new BitSet(),
+                    c.left, c.top, c.right, c.bottom, () -> {});
+            if (reading != null && reading.digit() == 1) accepted++;
+        }
+        return accepted == 1;
     }
 
     private static void assignHighStraightDyadFingerings(byte[] raw, byte[] normalized, int width, int height,

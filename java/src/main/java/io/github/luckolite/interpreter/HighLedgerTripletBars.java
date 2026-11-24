@@ -11,7 +11,36 @@ import java.util.stream.IntStream;
 final class HighLedgerTripletBars {
     private HighLedgerTripletBars() {}
 
-    record Capture(ScorePageInterpretation score, List<Integer> measures) {
+    record Capture(ScorePageInterpretation score, List<Integer> measures, List<Integer> staffOverlaid) {
+        void captureSharps(ScorePageInterpretation finalScore, byte[] gray, byte[] raw, int width, int height,
+                java.util.function.Consumer<SourceLocalAccidental.ProvedMark> printed) {
+            var notes = finalScore.notes();
+            for (int m : staffOverlaid) {
+                if (m >= finalScore.measures().size() || !hasStaffOverlaidLedgerClock(notes, m)) continue;
+                var bar = finalScore.measures().get(m);
+                var ordered = owners(notes, m);
+                if (ordered.size() != 12) continue;
+                float gap = (bar.bottom() - bar.top()) * height / 8.2f;
+                // The first sign can straddle the bar's left edge.
+                float before = bar.left() * width - 1.45f * gap;
+                for (int owner : ordered) {
+                    var note = notes.get(owner);
+                    float x = x(bar, note, width), y = note.pageY() * height;
+                    if (note.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_SHARP) {
+                        var a = AccidentalSlurSpines.prove(gray, width, before, x, y, gap, ScoreNoteEvent.ACCIDENTAL_SHARP);
+                        var b = AccidentalSlurSpines.prove(raw, width, before, x, y, gap, ScoreNoteEvent.ACCIDENTAL_SHARP);
+                        if (!a.isEmpty() && !b.isEmpty()) {
+                            boolean prefix = naturalPrefixBeforeSharp(gray, width, before, x, y, gap, a)
+                                    && naturalPrefixBeforeSharp(raw, width, before, x, y, gap, b);
+                            printed.accept(new SourceLocalAccidental.ProvedMark(
+                                    note, ScoreNoteEvent.ACCIDENTAL_SHARP, prefix));
+                        }
+                    }
+                    before = x;
+                }
+            }
+        }
+
         ScorePageInterpretation markUnnumbered(ScorePageInterpretation finalScore) {
             if (measures.isEmpty() || finalScore.beamSource().groups().isEmpty()) return finalScore;
             var beams = finalScore.beamSource();
@@ -24,11 +53,61 @@ final class HighLedgerTripletBars {
                 for (int index : owners) beams.noteOrigins().get(index).ifPresent(a ->
                         columns.add(new ScoreBeamSource.Column(List.of(a))));
                 if (columns.size() != 12) continue;
-                completeUnnumberedGroups(beams, groups, columns);
+                if (staffOverlaid.contains(m)) replaceStaffOverlaidGroups(beams, groups, columns);
+                else completeUnnumberedGroups(beams, groups, columns);
             }
             return groups.equals(beams.groups()) ? finalScore : finalScore.withBeamSource(
                     new ScoreBeamSource(groups, beams.detachedColumns(), beams.noteOrigins()));
         }
+    }
+
+    private static boolean naturalPrefixBeforeSharp(byte[] ink, int width, float before, float x,
+            float y, float gap, List<AccidentalSlurSpines.Spine> sharp) {
+        if (x - before < 3.4f * gap) return false;
+        var natural = AccidentalSlurSpines.proveThinNaturalPrefix(ink, width, before, x - 1.22f * gap, y, gap);
+        if (natural.isEmpty()) return false;
+        float separation = sharp.get(0).left() - natural.get(1).right();
+        return separation >= .28f * gap && separation <= .84f * gap;
+    }
+
+    static boolean hasStaffOverlaidLedgerClock(List<ScoreNoteEvent> notes, int measure) {
+        var row = owners(notes, measure);
+        return row.size() == 12 && notes.get(row.get(0)).staffStep() >= 7 && notes.get(row.get(0)).staffStep() < 10
+                && row.stream().map(notes::get).filter(n -> n.staffStep() >= 10).count() >= 8
+                && row.stream().map(notes::get).allMatch(n -> n.beamCount() == 1
+                        && n.tupletDivisor() == 3 && n.tupletNormalNotes() == 2 && n.stemDirection() == -1);
+    }
+
+    private static void replaceStaffOverlaidGroups(ScoreBeamSource beams,
+            List<ScoreBeamSource.Group> groups, List<ScoreBeamSource.Column> columns) {
+        var anchors = columns.stream().flatMap(c -> c.members().stream()).collect(java.util.stream.Collectors.toSet());
+        if (anchors.size() != columns.size() || beams.detachedColumns().stream()
+                .anyMatch(c -> c.members().stream().anyMatch(anchors::contains))) return;
+        var retained = new ArrayList<ScoreBeamSource.Group>();
+        int insertAt = -1;
+        for (var group : groups) {
+            var members = group.columns().stream().flatMap(c -> c.members().stream()).toList();
+            if (members.stream().noneMatch(anchors::contains)) {
+                retained.add(group);
+            } else {
+                if (!anchors.containsAll(members) || !group.hooks().isEmpty()
+                        || group.bridges().stream().anyMatch(bridge -> bridge != 1)
+                        || group.tupletMark() == ScoreBeamSource.TupletMark.NUMBERED) return;
+                if (insertAt < 0) insertAt = retained.size();
+            }
+        }
+        if (insertAt < 0) return;
+        var proved = new ArrayList<ScoreBeamSource.Group>(4);
+        for (int i = 0; i < columns.size(); i += 3) {
+            var first = columns.get(i).members().get(0);
+            String id = "printed-beam:" + first.pageIndex() + ":" + first.noteIndex();
+            if (retained.stream().anyMatch(group -> group.id().equals(id))) return;
+            proved.add(new ScoreBeamSource.Group(id, columns.subList(i, i + 3), List.of(1, 1), List.of(),
+                    ScoreBeamSource.TupletMark.UNNUMBERED));
+        }
+        retained.addAll(insertAt, proved);
+        groups.clear();
+        groups.addAll(retained);
     }
 
     private static void completeUnnumberedGroups(ScoreBeamSource source,
@@ -80,13 +159,24 @@ final class HighLedgerTripletBars {
 
     static Capture capture(ScorePageInterpretation score, ScoreMeterChange inherited,
             byte[] labels, byte[] gray, byte[] raw, int width, int height) {
+        return capture(score, inherited, labels, gray, raw, width, height, false);
+    }
+
+    static Capture captureStaffOverlaid(ScorePageInterpretation score, ScoreMeterChange inherited,
+            byte[] labels, byte[] gray, byte[] raw, int width, int height) {
+        return capture(score, inherited, labels, gray, raw, width, height, true);
+    }
+
+    private static Capture capture(ScorePageInterpretation score, ScoreMeterChange inherited,
+            byte[] labels, byte[] gray, byte[] raw, int width, int height, boolean staffOverlaidOnly) {
         if (gray == null || raw == null || labels == null || gray.length != (long) width * height
                 || raw.length != gray.length || labels.length != gray.length
-                || score.notes().isEmpty()) return new Capture(score, List.of());
+                || score.notes().isEmpty()) return new Capture(score, List.of(), List.of());
         var measures = score.measures();
         var edits = new ArrayList<>(score.notes());
         var origins = new ArrayList<>(IntStream.range(0, edits.size()).boxed().toList());
         var changed = new ArrayList<Integer>();
+        var staffOverlaid = new ArrayList<Integer>();
         ScoreMeterChange meter = inherited == null ? new ScoreMeterChange(0, 4, 4) : inherited;
         int next = 0;
         for (int m = 0; m < measures.size(); m++) {
@@ -99,6 +189,18 @@ final class HighLedgerTripletBars {
             int measure = m;
             if (score.rests().stream().anyMatch(r -> r.measureIndex() == measure)) continue;
             var bar = measures.get(m);
+            if (owners.size() == 12 && edits.get(owners.get(0)).staffStep() < 10
+                    && ordinaryShape(edits, owners, 7)
+                    && owners.stream().map(edits::get).allMatch(n -> n.beamCount() == 1)
+                    && owners.stream().map(edits::get).filter(n -> n.staffStep() >= 10).count() >= 8
+                    && WrappedEighthTriplets.provesStaffOverlaidLedgerTriplets(gray, width, height, bar, edits, owners)
+                    && WrappedEighthTriplets.provesStaffOverlaidLedgerTriplets(raw, width, height, bar, edits, owners)) {
+                for (int i : owners) edits.set(i, edits.get(i).withTupletRatio(3, 2));
+                changed.add(m);
+                staffOverlaid.add(m);
+                continue;
+            }
+            if (staffOverlaidOnly) continue;
             if (owners.size() == 13) {
                 int alias = ledgerBeamTip(edits, owners);
                 if (alias < 0) continue;
@@ -133,8 +235,8 @@ final class HighLedgerTripletBars {
             for (int i : owners) edits.set(i, ClosingTripletRhythm.singleBeam(edits.get(i)).withTupletRatio(3, 2));
             changed.add(m);
         }
-        return changed.isEmpty() ? new Capture(score, List.of())
-                : new Capture(score.withNotes(edits, origins), List.copyOf(changed));
+        return changed.isEmpty() ? new Capture(score, List.of(), List.of())
+                : new Capture(score.withNotes(edits, origins), List.copyOf(changed), List.copyOf(staffOverlaid));
     }
 
     private static int ledgerBeamTip(List<ScoreNoteEvent> notes, List<Integer> owners) {
@@ -163,12 +265,16 @@ final class HighLedgerTripletBars {
     }
 
     private static boolean ordinaryShape(List<ScoreNoteEvent> notes, List<Integer> owners) {
+        return ordinaryShape(notes, owners, 10);
+    }
+
+    private static boolean ordinaryShape(List<ScoreNoteEvent> notes, List<Integer> owners, int minimumStep) {
         int extra = 0, clef = notes.get(owners.get(0)).clefBottomDiatonic();
         for (int i : owners) {
             var n = notes.get(i);
             if (n.kind() != ScoreNoteEvent.Kind.PITCHED || n.staffIndex() != 0 || n.staffCount() != 1
                     || n.crossStaffBeam() || n.visualSize() != ScoreNoteEvent.VisualSize.FULL
-                    || n.stemDirection() != -1 || n.staffStep() < 10 || n.clefBottomDiatonic() != clef
+                    || n.stemDirection() != -1 || n.staffStep() < minimumStep || n.clefBottomDiatonic() != clef
                     || n.beamCount() < 1 || n.beamCount() > 2 || n.augmentationDots() != 0
                     || n.tupletDivisor() != 1 || n.leadingRestBeats() != 0 || n.followingRestBeats() != 0
                     || n.unbeamedDurationBeats() != 0 || n.tiedFromPrevious() || n.boundaryTies() != 0

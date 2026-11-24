@@ -24,16 +24,21 @@ final class AccidentalSlurSpines {
     static List<Spine> prove(
             byte[] gray, int width, float firstX, float ownerX, float ownerY, float gap,
             int accidental) {
-        return prove(gray, width, firstX, ownerX, ownerY, gap, accidental, false);
+        return prove(gray, width, firstX, ownerX, ownerY, gap, accidental, false, 2);
     }
 
     static List<Spine> proveInterruptedSharp(
             byte[] gray, int width, float firstX, float ownerX, float ownerY, float gap) {
-        return prove(gray, width, firstX, ownerX, ownerY, gap, ScoreNoteEvent.ACCIDENTAL_SHARP, true);
+        return prove(gray, width, firstX, ownerX, ownerY, gap, ScoreNoteEvent.ACCIDENTAL_SHARP, true, 2);
+    }
+
+    static List<Spine> proveThinNaturalPrefix(
+            byte[] gray, int width, float firstX, float ownerX, float ownerY, float gap) {
+        return prove(gray, width, firstX, ownerX, ownerY, gap, ScoreNoteEvent.ACCIDENTAL_NATURAL, false, 1);
     }
 
     private static List<Spine> prove(byte[] gray, int width, float firstX, float ownerX, float ownerY,
-            float gap, int accidental, boolean interrupted) {
+            float gap, int accidental, boolean interrupted, int minimumSpineWidth) {
         if (gray == null || width <= 0 || gray.length % width != 0
                 || !Float.isFinite(firstX + ownerX + ownerY + gap)
                 || gap < 10 || gap > 24 || accidental != 0 && accidental != 1)
@@ -61,7 +66,7 @@ final class AccidentalSlurSpines {
                 if (column == null) break;
                 if (column.length() > best.length()) best = column;
             }
-            if (x - first < 2 || x - first > Math.round(gap * .33f)) continue;
+            if (x - first < minimumSpineWidth || x - first > Math.round(gap * .33f)) continue;
             spines.add(new Spine(first, x - 1, best.top(), best.bottom()));
         }
         List<Spine> result = List.of();

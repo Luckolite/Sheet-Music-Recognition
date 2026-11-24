@@ -4628,6 +4628,47 @@ final class WrappedEighthTriplets {
                 && provesUpperLedgerRailSequence(gray, width, height, bars, measure, notes, owners, false, true);
     }
 
+    /** A closed 4/4 lane can start on the staff and continue into separate high single-rail groups. */
+    static boolean provesStaffOverlaidLedgerTriplets(byte[] ink, int width, int height,
+            MeasureRegion bar, List<ScoreNoteEvent> notes, List<Integer> owners) {
+        float gap = (bar.bottom() - bar.top()) * height / 8.2f;
+        if (owners.size() != 12 || gap < 12 || gap > 24) return false;
+        var staff = WrappedMeasureBoundaries.verifiedTripletStaff(ink, width, height, bar);
+        if (staff == null) staff = WrappedMeasureBoundaries.verifiedTripletStaff(ink, width, height, bar, true);
+        if (staff == null) return false;
+        float[] xs = new float[12], ys = new float[12];
+        var shafts = new ArrayList<PrintedBeamShafts.Shaft>(12);
+        var budget = new PrintedBeamShafts.Budget(800_000);
+        for (int i = 0; i < 12; i++) {
+            var note = notes.get(owners.get(i));
+            float x = (bar.left() + note.positionInMeasure() * (bar.right() - bar.left())) * width;
+            float y = note.pageY() * height;
+            float[] rules = staff.at(x);
+            if (Math.abs(rules[1] - gap) > .14f * gap || y > rules[0] - 3.25f * rules[1]
+                    || i > 0 && (x - xs[i - 1] < 1.55f * gap || x - xs[i - 1] > 4.65f * gap)) return false;
+            var axes = PrintedBeamShafts.at(ink, width, height, x, y, gap, budget);
+            if (axes.size() != 1 || axes.get(0).direction() != 1 || budget.refused()) return false;
+            shafts.add(axes.get(0));
+            xs[i] = x;
+            ys[i] = y;
+        }
+        if (!WrappedMeasureBoundaries.confirmsClosedTripletBar(ink, width, height, bar, xs[0], xs[11])) return false;
+        for (int i = 0; i < 11; i++) {
+            var dot = WrappedTripletDotInk.uniqueCore(ink, width, height, xs[i], ys[i], xs[i + 1], gap);
+            if (dot != null && (notes.get(owners.get(i + 1)).writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_DOUBLE_SHARP
+                    || !ClosedDyadsBeforeHalf.sharpOwnsDotGap(ink, width, height, gap,
+                            xs[i], ys[i], xs[i + 1], ys[i + 1]))) return false;
+            var a = shafts.get(i);
+            var b = shafts.get(i + 1);
+            if (i % 3 == 2) {
+                if (!cutBetweenRecoveredGroups(ink, width, height, bar, a, b, gap)
+                        && !thinStaffRuleBetweenTripletShafts(ink, width, height, staff, a, b, gap)) return false;
+            } else if (!trackedRailCount(ink, width, height, staff, a, b, gap, 1)
+                    && !matchesBeamRails(ink, width, height, a, b, gap, 1)) return false;
+        }
+        return true;
+    }
+
     private static boolean provesUpperLedgerRailSequence(byte[] gray, int width, int height,
             List<MeasureRegion> bars, int measure, List<ScoreNoteEvent> notes,
             List<Integer> owners, boolean mixed, boolean staffRuleFingerings) {
