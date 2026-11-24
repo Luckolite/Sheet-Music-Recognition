@@ -243,6 +243,12 @@ def inference_interpreter(*, bundled):
         try:
             if version("ai-edge-litert") == "2.3.0":
                 from ai_edge_litert.interpreter import Interpreter
+                if Path(__file__).with_name("_score_sparse_avx2.dll").is_file():
+                    try:
+                        from ._sparse_litert import factory_for
+                        return factory_for(Interpreter)
+                    except (AttributeError, ImportError, OSError, RuntimeError, ValueError):
+                        pass
                 return Interpreter
         except (ImportError, OSError):
             # Source installs and older workers can still use their TensorFlow runtime.

@@ -2,9 +2,19 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.github.luckolite.interpreter;
 
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.VarHandle;
+import java.nio.ByteOrder;
+
 /** Small local contrast/rule-cleaned windows for retrying an already bounded numeral search. */
 final class TupletNumeralInk {
     private TupletNumeralInk() {}
+
+    private static final VarHandle PIXEL_WORD = MethodHandles.byteArrayViewVarHandle(
+            long[].class, ByteOrder.LITTLE_ENDIAN);
+    private static final long LOW_BITS = 0x7f7f7f7f7f7f7f7fL;
+    private static final long HIGH_BIT = 0x8080808080808080L;
+    private static final long ONE_PER_BYTE = 0x0101010101010101L;
 
     record Window(byte[] pixels, int width, int height, int left, int top, boolean hasRuleEdges) {}
 
@@ -155,13 +165,24 @@ final class TupletNumeralInk {
         int firstEdgeRow = maxEdgeStroke + 2, endEdgeRow = hh - maxEdgeStroke - 2;
         byte[] pixels = new byte[ww * hh];
         int[] occupancy = new int[hh];
+        long thresholdWord = ONE_PER_BYTE * (128 + (threshold & 127));
+        boolean upperHalf = threshold >= 128;
         int firstLevelRow = hh - 1;
         boolean anyInk = false, possibleEdges = false;
         for (int y = 0; y < hh;) {
             int source = (top + y) * w + left, target = y * ww;
             int repeat = matchingRows(gray, source, ww, w, hh - y);
             int inkCount = 0;
-            for (int x = 0; x < ww; x++) {
+            int x = 0;
+            for (; x <= ww - Long.BYTES; x += Long.BYTES) {
+                long grayWord = (long) PIXEL_WORD.get(gray, source + x);
+                // The high bit in every minuend prevents borrowing across bytes.
+                long ink = (thresholdWord - (grayWord & LOW_BITS)) & HIGH_BIT;
+                ink = upperHalf ? ink | (~grayWord & HIGH_BIT) : ink & ~grayWord;
+                PIXEL_WORD.set(pixels, target + x, ((HIGH_BIT ^ ink) >>> 7) * 255);
+                inkCount += Long.bitCount(ink);
+            }
+            for (; x < ww; x++) {
                 boolean ink = (gray[source + x] & 255) <= threshold;
                 pixels[target + x] = ink ? 0 : (byte) 255;
                 if (ink) inkCount++;

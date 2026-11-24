@@ -9,7 +9,10 @@ import zlib
 import numpy as np
 
 WINDOW = 272
-MAX_PIXELS = 6_000_000
+TIGHT_WINDOW = 224
+CORE_INSET = 16
+CORE_WINDOW = TIGHT_WINDOW - 2 * CORE_INSET
+MAX_PIXELS = 20_000_000
 _OFFSETS = range(0, 321 - WINDOW, 8)
 # Three decoder stages have two 3x3 convolutions each. Sixteen rows or
 # columns cover their combined halo after the encoder has run in full.
@@ -23,13 +26,24 @@ class Selection(NamedTuple):
     decisions: list
     pairs: dict
     blank_tiles: set
+    window: int = WINDOW
 
 
-def _fits(offset, span):
+def row_ports(window):
+    """Return the length, input scale, and inset for each gather."""
+    if window == CORE_WINDOW:
+        return ((28, 8, 0), (56, 4, 0), (104, 2, 4), (196, 1, 14))
+    return tuple((window // scale, scale, 0) for scale in (8, 4, 2, 1))
+
+
+def _fits(offset, span, window=WINDOW):
     if span is None:
         return True
+    if window == CORE_WINDOW:
+        start = offset + CORE_INSET
+        return start <= span[0] and span[1] <= start + CORE_WINDOW
     start = offset if offset == 0 else offset + _HALO
-    end = offset + WINDOW
+    end = offset + window
     if end != 320:
         end -= _HALO
     return start <= span[0] and span[1] <= end
@@ -43,7 +57,31 @@ def _union(first, second):
     return min(first[0], second[0]), max(first[1], second[1])
 
 
-def _owned_spans(gray, owner, region, index, box):
+def _axis_profile(size, windows, weights):
+    """Keep the best score overall and the best later score for each window."""
+    peak = np.zeros(size, dtype=np.uint8)
+    later = {}
+    for window in reversed(windows):
+        current = peak[window]
+        later[window.start] = current.copy()
+        np.maximum(current, weights, out=current)
+    return peak, later
+
+
+def _owned_mask(profiles, region, rows, columns):
+    y, x = region
+    vertical, horizontal, edge = profiles
+    v, below = vertical
+    h, right = horizontal
+    # Among the tied winners, a later row or column takes ownership. The
+    # other axis always has at least one tile that reaches this threshold.
+    threshold = np.minimum.outer(v[y][rows], h[x][columns])
+    return ((edge[rows, columns] >= threshold)
+               & (below[y.start][rows, None] < threshold)
+               & (right[x.start][None, columns] < threshold))
+
+
+def _owned_spans(gray, profiles, region, box):
     from .reader import _affected_interval
 
     if box is None:
@@ -54,7 +92,7 @@ def _owned_spans(gray, owner, region, index, box):
         columns = _affected_interval(ink.any(axis=0))
     else:
         rows, columns = box
-    visible = owner[region][rows, columns] == index
+    visible = _owned_mask(profiles, region, rows, columns)
     retained_rows = np.flatnonzero(visible.any(axis=1))
     if not retained_rows.size:
         return None, None
@@ -65,18 +103,17 @@ def _owned_spans(gray, owner, region, index, box):
 
 def select(gray, rows, columns, edge, *, active_mode=None, active_column=None):
     """Cover every affected final owner, including all recipients of a cached tile."""
-    from .reader import _repeated_tile_plan, _sparse_pairs, _tile_windows
+    from .reader import _repeated_tile_plan, _sparse_pairs, _tile_edges
 
-    if min(gray.shape) < 320 or gray.size > MAX_PIXELS or not 3 <= len(rows) * len(columns) < 255:
+    if min(gray.shape) < 320 or gray.size > MAX_PIXELS or len(rows) * len(columns) < 3 or edge is not _tile_edges():
         return None
     regions = [(row, column) for row in rows for column in columns]
     decisions = list(_repeated_tile_plan(gray, rows, columns))
     pairs, blank_tiles = _sparse_pairs(gray, regions, decisions)
     followers = {partner for partner, *_ in pairs.values()}
-    owner = np.empty(gray.shape, dtype=np.uint8)
-    for index, (region, wins) in enumerate(_tile_windows(*gray.shape, edge, rows, columns)):
-        # Later writes win the same ties as the ordinary prediction loop.
-        np.copyto(owner[region], index, where=wins)
+    axis = edge.max(axis=0)
+    profiles = (_axis_profile(gray.shape[0], rows, axis),
+                _axis_profile(gray.shape[1], columns, axis), edge)
 
     primary, repeated = {}, {}
     for index, (region, (key, _)) in enumerate(zip(regions, decisions)):
@@ -84,11 +121,11 @@ def select(gray, rows, columns, edge, *, active_mode=None, active_column=None):
             continue
         if index in pairs:
             partner, first, second = pairs[index]
-            a, b = _owned_spans(gray, owner, region, index, first)
-            c, d = _owned_spans(gray, owner, regions[partner], partner, second)
+            a, b = _owned_spans(gray, profiles, region, first)
+            c, d = _owned_spans(gray, profiles, regions[partner], second)
             primary[index] = _union(a, c), _union(b, d)
         else:
-            row_span, column_span = primary[index] = _owned_spans(gray, owner, region, index, None)
+            row_span, column_span = primary[index] = _owned_spans(gray, profiles, region, None)
             if key is not None:
                 a, b = repeated.get(key, (None, None))
                 repeated[key] = _union(a, row_span), _union(b, column_span)
@@ -128,13 +165,15 @@ def specialize(content, selection):
     """Reassemble a generated graph from the already verified v4 source bytes."""
     from ._tile_decoder_layout import LAYOUTS
 
-    packed, pieces, fields = LAYOUTS[selection.mode]
+    key = selection.mode if selection.window == WINDOW else f"{selection.mode}{selection.window}"
     try:
+        packed, pieces, fields = LAYOUTS[key]
         skeleton = bytearray(zlib.decompress(b85decode(packed)))
-    except zlib.error as error:
+    except (KeyError, zlib.error) as error:
         raise ValueError("Invalid tile decoder layout") from error
     for position, count, step in fields:
-        start = selection.column // 8 * step
+        first = struct.unpack_from("<i", skeleton, position)[0]
+        start = first + selection.column // 8 * step
         struct.pack_into(f"<{count}i", skeleton, position, *range(start, start + count))
     sources = memoryview(skeleton), memoryview(content)
     return b"".join(sources[index][first:last] for index, first, last in pieces)

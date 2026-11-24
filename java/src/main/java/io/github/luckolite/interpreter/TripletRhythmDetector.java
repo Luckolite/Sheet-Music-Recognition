@@ -5281,15 +5281,33 @@ final class TripletRhythmDetector {
             java.util.function.Predicate<Glyph> ownership) {
         // Both passes probe the same columns at the same rounded rows.
         int[] probes = new int[512];
+        int margin = Math.max(right - (left + right) / 2, (left + right) / 2 - left) / 2 + 2;
+        int denseTop = Math.max(2, Math.round(top + gap * .7f) - margin);
+        int denseBottom = Math.min(height - 3,
+                (int) Math.floor(Math.min(firstY - 1, top + gap * 2.3f)) + margin);
+        long cells = (long) (right - left + 1) * (denseBottom - denseTop + 1);
+        byte[] dense = cells > 0 && cells <= 65_536 ? new byte[(int) cells] : null;
         Glyph plain =
                 bracketedCurveThreePass(
                         gray, width, height, left, right, top, firstX, lastX, firstY, gap,
-                        ownership, false, probes);
+                        ownership, false, probes, dense, denseTop);
         return plain != null
                 ? plain
                 : bracketedCurveThreePass(
                         gray, width, height, left, right, top, firstX, lastX, firstY, gap,
-                        ownership, true, probes);
+                        ownership, true, probes, dense, denseTop);
+    }
+
+    private static int curveProbe(byte[] gray, int width, int height, int x, int y,
+            int radius, float maximumInk) {
+        int flags = 0;
+        if (dark(gray, width, x, y - 1) || dark(gray, width, x, y)
+                || dark(gray, width, x, y + 1)) flags = 1;
+        int ink = 0;
+        int last = Math.min(height - 1, y + radius);
+        for (int yy = Math.max(0, y - radius); yy <= last; yy++)
+            if (dark(gray, width, x, yy) && ++ink > maximumInk) break;
+        return ink <= maximumInk ? flags | 2 : flags;
     }
 
     private static Glyph bracketedCurveThreePass(
@@ -5305,7 +5323,7 @@ final class TripletRhythmDetector {
             float gap,
             java.util.function.Predicate<Glyph> ownership,
             boolean occluded,
-            int[] probes) {
+            int[] probes, byte[] dense, int denseTop) {
         int center = (left + right) / 2, span = right - left + 1;
         int radius = Math.round(gap * .4f);
         float maximumInk = Math.max(3, gap * .35f);
@@ -5320,22 +5338,23 @@ final class TripletRhythmDetector {
                 for (int x = left; x <= right; x++) {
                     int y = Math.round(cy + slope * (x - center));
                     if (y >= 2 && y < height - 2) {
-                        int pixel = y * width + x;
-                        int key = (pixel + 1) << 2;
-                        int slot = (pixel ^ (pixel >>> 9)) & (probes.length - 1);
-                        int probe = probes[slot];
-                        if ((probe & ~3) != key) {
-                            probe = key;
-                            if (dark(gray, width, x, y - 1)
-                                    || dark(gray, width, x, y)
-                                    || dark(gray, width, x, y + 1)) probe |= 1;
-                            // Additional pixels cannot make an overfull column thin.
-                            int ink = 0, lastY = Math.min(height - 1, y + radius);
-                            for (int yy = Math.max(0, y - radius); yy <= lastY; yy++) {
-                                if (dark(gray, width, x, yy) && ++ink > maximumInk) break;
+                        int cell = (y - denseTop) * span + x - left;
+                        int probe;
+                        if (dense != null && cell >= 0 && cell < dense.length) {
+                            probe = dense[cell];
+                            if (probe == 0) {
+                                probe = 4 | curveProbe(gray, width, height, x, y, radius, maximumInk);
+                                dense[cell] = (byte) probe;
                             }
-                            if (ink <= maximumInk) probe |= 2;
-                            probes[slot] = probe;
+                        } else {
+                            int pixel = y * width + x;
+                            int key = (pixel + 1) << 2;
+                            int slot = (pixel ^ (pixel >>> 9)) & (probes.length - 1);
+                            probe = probes[slot];
+                            if ((probe & ~3) != key) {
+                                probe = key | curveProbe(gray, width, height, x, y, radius, maximumInk);
+                                probes[slot] = probe;
+                            }
                         }
                         hits += probe & 1;
                         thin += (probe >>> 1) & 1;

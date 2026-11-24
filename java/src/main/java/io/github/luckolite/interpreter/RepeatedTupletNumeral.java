@@ -92,17 +92,38 @@ final class RepeatedTupletNumeral {
         int maskLeft = Math.max(0, left - armReach), maskRight = Math.min(w - 1, right + rw + armReach);
         int maskTop = Math.max(0, top - maxShift), maskBottom = Math.min(h - 1, bottom + rh - 1 + maxShift);
         long maskCells = (long) (maskRight - maskLeft + 1) * (maskBottom - maskTop + 1);
+        int scanWidth = right - left + rw, scanHeight = bottom - top + rh;
+        long scanCells = (long) scanWidth * scanHeight;
+        byte[] near = right >= left && bottom >= top && scanCells <= 262_144
+                ? new byte[(int) scanCells] : null;
+        int[] offsets = near != null ? new int[ni] : null;
+        if (offsets != null)
+            for (int i = 0; i < ni; i++)
+                offsets[i] = ink[i] / rw * scanWidth + ink[i] % rw;
+        float requiredInk = ni * .93f;
         ThinRuleMask thinRules = null;
         for (int y = top; y <= bottom; y++) {
             if (y + rh >= y1 - gap && y <= y3 + gap) continue;
             for (int x = left; x <= right; x++) {
+                int start = (y - top) * scanWidth + x - left;
                 int hit = 0;
                 for (int i = 0; i < ni; i++) {
-                    int p = ink[i];
-                    if (nearInk(gray, w, h, x + p % rw, y + p / rw)) hit++;
-                    if (hit + ni - i - 1 < ni * .93f) break;
+                    if (near == null) {
+                        int p = ink[i];
+                        if (nearInk(gray, w, h, x + p % rw, y + p / rw)) hit++;
+                    } else {
+                        int cell = start + offsets[i];
+                        int value = near[cell];
+                        if (value == 0) {
+                            int p = ink[i];
+                            value = nearInk(gray, w, h, x + p % rw, y + p / rw) ? 1 : 2;
+                            near[cell] = (byte) value;
+                        }
+                        if (value == 1) hit++;
+                    }
+                    if (hit + ni - i - 1 < requiredInk) break;
                 }
-                if (hit < ni * .93f) continue;
+                if (hit < requiredInk) continue;
                 if (thinRules == null && maskCells > 0 && maskCells <= 262_144)
                     thinRules = ThinRuleMask.scan(gray, w, h, maskLeft, maskRight, maskTop, maskBottom, gap);
                 int[] box = {x, y, x + rw - 1, y + rh - 1};

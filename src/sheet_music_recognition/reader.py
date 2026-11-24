@@ -424,12 +424,12 @@ class Interpreter:
             runtime.allocate_tensors()
             inputs = runtime.get_input_details()
             output = runtime.get_output_details()[0]
-            window = _tile_decoder.WINDOW
+            window = selection.window
             out_shape = [1, window if selection.rows is not None else 320,
                          window if selection.column is not None else 320]
             row_inputs = tuple((item["index"], int(item["shape"][0])) for item in inputs[1:]
                                if item["shape"].size == 1 and item["dtype"] == np.int32)
-            sizes = (window // 8, window // 4, window // 2, window)
+            sizes = tuple(length for length, _, _ in _tile_decoder.row_ports(window))
             if (inputs[0]["shape"].tolist() != [1, 3, 320, 320]
                     or inputs[0]["dtype"] != np.float32 or output["shape"].tolist() != out_shape
                     or output["dtype"] != np.int64 or len(row_inputs) != len(inputs) - 1
@@ -482,6 +482,34 @@ class Interpreter:
         columns = [slice(left, left + cw) for left in tile_starts(width)]
         selection = None
         tile_layout = getattr(self, "_tile_layout", None)
+        mix_path = pending[0] if pending is not None and pending[1] else None
+        previous_mix = None
+        if tile_layout is not None and pending is None:
+            mix_path, mode, column = tile_layout
+            if mode == "mixed":
+                previous_mix = self._mixed_tile_recipe
+                if gray[0, 0] == 255 and gray.min() == 255:
+                    return np.zeros_like(gray)
+            elif mode == "joint":
+                previous_mix = (mix_path, _tile_decoder.WINDOW, column)
+        if (mix_path is not None and sys.platform == "win32" and self.edge is _tile_edges()
+                and ch == cw == 320 and len(rows) * len(columns) >= 48):
+            from . import _mixed_tile_decoder
+
+            mixed = _mixed_tile_decoder.predict(self, gray, rows, columns, mix_path, previous_mix)
+            if mixed is not None:
+                return mixed
+            pending = self._pending_model
+            tile_layout = self._tile_layout
+        if tile_layout is not None and tile_layout[1] == "mixed":
+            path, window, column = self._mixed_tile_recipe
+            self._mixed_tile_recipe = None
+            if window == _tile_decoder.WINDOW:
+                tile_layout = self._tile_layout = (path, "joint", column)
+            else:
+                del self.runtime
+                pending = self._pending_model = (path, True)
+                tile_layout = self._tile_layout = None
         if tile_layout is not None and pending is None:
             path, mode, column = tile_layout
             if gray[0, 0] == 255 and gray.min() == 255:

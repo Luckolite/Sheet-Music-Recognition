@@ -55,6 +55,25 @@ public class TupletNumeralInkTest {
     }
 
     @Test
+    public void thresholdKeepsUnsignedByteOrderAndThePartialWord() {
+        int width = 13, height = 7;
+        byte[] gray = new byte[width * height];
+        Arrays.fill(gray, (byte) 255);
+        int row = 3 * width;
+        int[] columns = {0, 1, 2, 7, 8, 10, 12};
+        int[] values = {126, 127, 128, 129, 254, 0, 127};
+        for (int i = 0; i < columns.length; i++) gray[row + columns[i]] = (byte) values[i];
+
+        for (int threshold : new int[] {127, 128}) {
+            byte[] expected = new byte[gray.length];
+            for (int i = 0; i < gray.length; i++)
+                expected[i] = (gray[i] & 255) <= threshold ? 0 : (byte) 255;
+            var window = TupletNumeralInk.window(gray, width, height, 4, 8, 3, 3, 4, threshold);
+            assertArrayEquals(expected, window.pixels());
+        }
+    }
+
+    @Test
     public void paleThreeUsesLocalPaperContrast() {
         for (var n : detect(image(245, 180, false, false), false))
             assertEquals(3, n.tupletDivisor());
