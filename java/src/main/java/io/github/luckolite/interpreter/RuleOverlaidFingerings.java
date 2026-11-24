@@ -92,10 +92,18 @@ final class RuleOverlaidFingerings {
             }
             int begin = y, end = y, low = start.left(), high = start.right(), mass = start.mass();
             var obscured = new ArrayList<Integer>();
+            boolean bridgedRuleEdge = false;
             while (++y <= bottom) {
                 Row row = rows[y - top];
                 if (row == null) {
                     if (rule.get(y)) continue;
+                    // A witnessed rule can swallow a weak edge row of a printed three.
+                    // Leave that row unmasked so the shape proof still sees the missing ink.
+                    if (threeOnly && !bridgedRuleEdge
+                            && (rule.get(y + 1) || y - end > 1 && rule.get(y - 1))) {
+                        bridgedRuleEdge = true;
+                        continue;
+                    }
                     break;
                 }
                 for (int z = end + 1; z < y; z++)

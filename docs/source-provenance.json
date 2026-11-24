@@ -1700,6 +1700,16 @@
     }
   },
   "files": {
+    "RuleOverlaidFingerings.java": {
+      "source_path": "app/src/main/java/com/musicsheets/app/pdf/RuleOverlaidFingerings.java",
+      "source_sha256": "53de05a0ca9c99cf7572cb39ee50f9c297981b01d8d10676c70300bcbb56eded",
+      "source_normalized_sha256": "53de05a0ca9c99cf7572cb39ee50f9c297981b01d8d10676c70300bcbb56eded",
+      "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/RuleOverlaidFingerings.java",
+      "standalone_normalized_sha256": "52f5b99d06fef0b638b11e6dd33f92d56e602364b5ca91e2ff6f75386a8e84a8",
+      "reviewed_app_commit": "949d1fa8e8c66a3b826aa5ebb50c29bfed35476d",
+      "license": "Apache-2.0",
+      "review_note": "A single weak row bordering a witnessed staff rule can connect the visible halves of a printed three. Only witnessed rule pixels are masked before shape proof."
+    },
     "MeasuredStaffFingerings.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/MeasuredStaffFingerings.java",
       "source_sha256": "de5ae882ff78b99873d8f0c67eeca0bf6a5b0ba0e84933cf59ce9e2c8ececa34",
