@@ -87,6 +87,14 @@ final class PrintedFingeringDigits {
         }
         assignBelowThirdStacks(gray, normalized, width, height, score, heads, candidates, ambiguous);
         assignAttachedOctaveStacks(gray, normalized, width, height, score, heads, candidates, ambiguous);
+        for (var stack : ClosedSixteenthDyads.captureUnderBeamOctaveFingerings(
+                score, gray, normalized, width, height)) {
+            if (ambiguous[stack.upper()] || ambiguous[stack.lower()]
+                    || !compatibleAttachedMark(candidates[stack.upper()], 3)
+                    || !compatibleAttachedMark(candidates[stack.lower()], 1)) continue;
+            candidates[stack.upper()] = new Mark(stack.upper(), 3, Placement.BELOW);
+            candidates[stack.lower()] = new Mark(stack.lower(), 1, Placement.BELOW);
+        }
         for (var mark : ClosedSixteenthDyads.captureCrossCutOpeningFingerings(score, gray, normalized, width, height)) {
             if (!ambiguous[mark.noteIndex()] && (candidates[mark.noteIndex()] == null
                     || candidates[mark.noteIndex()].equals(mark))) candidates[mark.noteIndex()] = mark;
@@ -417,6 +425,9 @@ final class PrintedFingeringDigits {
             if (!group.id().startsWith("beam-page:") || !group.bridges().equals(List.of(3, 3, 3))
                     || group.tupletMark() != null || !group.hooks().isEmpty()
                     || group.columns().stream().anyMatch(c -> c.members().size() != 2)) continue;
+            var opening = group.columns().get(0).members();
+            assignRuledOctaveFourTwo(raw, normalized, width, height,
+                    byAnchor.get(opening.get(0)), byAnchor.get(opening.get(1)), marks, ambiguous);
             var column = group.columns().get(3).members();
             var a = byAnchor.get(column.get(0));
             var b = byAnchor.get(column.get(1));
@@ -434,6 +445,78 @@ final class PrintedFingeringDigits {
             marks[upper.index()] = new Mark(upper.index(), 3, Placement.BELOW);
             marks[lower.index()] = new Mark(lower.index(), 1, Placement.BELOW);
         }
+    }
+
+    private static void assignRuledOctaveFourTwo(byte[] raw, byte[] normalized, int width, int height,
+            Head a, Head b, Mark[] marks, boolean[] ambiguous) {
+        if (a == null || b == null) return;
+        var upper = a.y() < b.y() ? a : b;
+        var lower = upper == a ? b : a;
+        float gap = (float) (upper.gap() * 8 / 8.2);
+        if (gap < 12 || gap > 24 || upper.note().measureIndex() != lower.note().measureIndex()
+                || upper.note().staffCount() != 1 || lower.note().staffCount() != 1
+                || upper.note().staffStep() - lower.note().staffStep() != 7
+                || upper.note().stemDirection() != -1 || lower.note().stemDirection() != -1
+                || upper.harmonic() || lower.harmonic()
+                || Math.abs(upper.x() - lower.x()) > gap * .21
+                || Math.abs(lower.y() - upper.y() - 3.5 * gap) > gap * .32
+                || ambiguous[upper.index()] || ambiguous[lower.index()]
+                || !compatibleAttachedMark(marks[upper.index()], 4)
+                || !compatibleAttachedMark(marks[lower.index()], 2)) return;
+        float x = (float) ((upper.x() + lower.x()) * .5);
+        float floor = (float) upper.bottom() - 2.1f * gap;
+        if (!readsRuledFourTwo(raw, width, height, x, floor, gap)
+                || !readsRuledFourTwo(normalized, width, height, x, floor, gap)) return;
+        marks[upper.index()] = new Mark(upper.index(), 4, Placement.BELOW);
+        marks[lower.index()] = new Mark(lower.index(), 2, Placement.BELOW);
+    }
+
+    // A staff rule can cut through the four, while the two starts close enough to
+    // share foreground pixels. Test neighboring splits against both full templates.
+    static boolean readsRuledFourTwo(byte[] ink, int width, int height, float x, float floor, float gap) {
+        var rules = PrintedDirectionStaff.printedRules(ink, width, height, x, floor, gap);
+        if (rules == null || Math.abs(rules[0] - floor) > gap * .23f
+                || Math.abs(rules[1] - gap) > gap * .10f) return false;
+        floor = rules[0];
+        int left = Math.round(x - .85f * gap), right = Math.round(x + .85f * gap);
+        int top = Math.round(floor - .65f * gap), bottom = Math.round(floor + 2.03f * gap);
+        if (left < 0 || right >= width || top < 0 || bottom >= height) return false;
+        var ruled = new BitSet();
+        for (int y = Math.round(floor - .17f * gap); y <= Math.round(floor + .17f * gap); y++) {
+            int dark = 0;
+            for (int col = left; col <= right; col++)
+                if ((ink[y * width + col] & 255) < 145) dark++;
+            if (dark >= .69f * (right - left + 1)) ruled.set(y * width + left, y * width + right + 1);
+        }
+        if (ruled.isEmpty()) return false;
+        for (int split = Math.round(floor + .42f * gap); split <= Math.round(floor + .72f * gap); split++)
+            if (fitsRuledStackBand(ink, width, height, ruled, x, gap, left, top, right, split - 1, 4)
+                    && fitsRuledStackBand(ink, width, height, ruled, x, gap, left, split, right, bottom, 2))
+                return true;
+        return false;
+    }
+
+    private static boolean fitsRuledStackBand(byte[] ink, int width, int height, BitSet ruled,
+            float x, float gap, int left, int top, int right, int bottom, int digit) {
+        int a = right, b = bottom, c = left, d = top;
+        for (int y = top; y <= bottom; y++) {
+            for (int col = left; col <= right; col++) {
+                int pixel = y * width + col;
+                if (ruled.get(pixel) || (ink[pixel] & 255) >= 145) continue;
+                a = Math.min(a, col);
+                b = Math.min(b, y);
+                c = Math.max(c, col);
+                d = Math.max(d, y);
+            }
+        }
+        if (a <= left || c >= right || Math.abs((a + c) * .5f - x) > gap * .31f
+                || c - a + 1 < gap * .60f || c - a + 1 > gap * 1.10f
+                || d - b + 1 < gap * .87f || d - b + 1 > gap * 1.26f) return false;
+        var reading = JoinedDigitTemplates.inspect(ink, width, height, ruled, a, b, c, d, () -> {});
+        if (reading == null || reading.scores()[digit] < .64f) return false;
+        for (int i = 0; i < reading.scores().length; i++)
+            if (i != digit && reading.scores()[digit] - reading.scores()[i] < .07f) return false;
+        return true;
     }
 
     private static boolean compatibleAttachedMark(Mark existing, int digit) {

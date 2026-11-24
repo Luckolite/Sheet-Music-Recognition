@@ -3434,6 +3434,114 @@ final class ClosedSixteenthDyads {
         return beams == score.beamSource() ? score : score.withBeamSource(beams);
     }
 
+    record UnderBeamOctaveStack(int upper, int lower) {}
+
+    static List<UnderBeamOctaveStack> captureUnderBeamOctaveFingerings(
+            ScorePageInterpretation score, byte[] raw, byte[] normalized, int width, int height) {
+        if (raw == null || normalized == null || raw.length != (long) width * height
+                || normalized.length != raw.length) return List.of();
+        var result = new ArrayList<UnderBeamOctaveStack>();
+        var original = new Ink(raw, width, height);
+        var prepared = new Ink(normalized, width, height);
+        var byMeasure = new ArrayList<List<Head>>(score.measures().size());
+        for (int i = 0; i < score.measures().size(); i++) byMeasure.add(new ArrayList<>());
+        for (int i = 0; i < score.notes().size(); i++) {
+            var note = score.notes().get(i);
+            var bar = score.measures().get(note.measureIndex());
+            byMeasure.get(note.measureIndex()).add(new Head(i, note,
+                    (bar.left() + note.positionInMeasure() * (bar.right() - bar.left())) * width,
+                    note.pageY() * height));
+        }
+        for (int i = 0; i < byMeasure.size(); i++) {
+            var heads = byMeasure.get(i);
+            var bar = score.measures().get(i);
+            float gap = (bar.bottom() - bar.top()) * height / 8.2f;
+            if (heads.size() != 32 || gap < 12 || gap > 24 || bar.cadenceQuarterBeats() != 0) continue;
+            heads.sort(Comparator.comparingDouble(Head::x));
+            var pairs = straightOctaves(heads, gap, false);
+            if (pairs.isEmpty() || !closes(heads, score.notes())) continue;
+            for (int column = 0; column < pairs.size(); column += 4) {
+                var owner = pairs.get(column);
+                var next = pairs.get(column + 1);
+                if (readsUnderBeamThreeOne(original, owner, next, gap)
+                        && (raw == normalized || readsUnderBeamThreeOne(prepared, owner, next, gap)))
+                    result.add(new UnderBeamOctaveStack(owner.top.owner, owner.bottom.owner));
+            }
+        }
+        return List.copyOf(result);
+    }
+
+    private static boolean readsUnderBeamThreeOne(Ink ink, Dyad owner, Dyad next, float gap) {
+        float x = (owner.top.x + owner.bottom.x) * .5f;
+        float floor = owner.bottom.y + owner.bottom.note.staffStep() * gap * .5f;
+        int left = Math.round(x - .87f * gap), right = Math.round(x + .72f * gap);
+        int top = Math.round(floor + 1.96f * gap), bottom = Math.round(floor + 3.76f * gap);
+        if (left < 0 || right >= ink.width || top < 0 || bottom >= ink.height) return false;
+        var ones = RawNumeralComponents.capture(ink.raw, ink.width, ink.height,
+                left, top, right, bottom, 145, () -> {}, () -> {}).components().stream()
+                .filter(c -> c.top > top && c.bottom < bottom && c.left > left && c.right < right
+                        && c.bottom - c.top + 1 >= .92f * gap && c.bottom - c.top + 1 <= 1.28f * gap
+                        && Math.abs((c.left + c.right) * .5f - x) <= .35f * gap
+                        && TripletRhythmDetector.fingerOne(ink.raw, ink.width, c)).toList();
+        if (ones.size() != 1) return false;
+        var one = ones.get(0);
+        int upper = one.top - Math.round(1.40f * gap);
+        int lower = one.top - Math.round(.16f * gap);
+        var threes = RawNumeralComponents.capture(ink.raw, ink.width, ink.height,
+                left, upper, right, lower, 145, () -> {}, () -> {}).components().stream()
+                .filter(c -> c.left > left && c.right < right && c.bottom < lower
+                        && c.bottom - c.top + 1 >= .96f * gap
+                        && c.right - c.left + 1 >= .63f * gap && c.right - c.left + 1 <= 1.05f * gap
+                        && Math.abs(c.left + c.right - one.left - one.right) < .50f * gap).toList();
+        if (threes.size() != 1 || !readsOpenThree(ink, threes.get(0))) return false;
+        var shafts = shafts(ink, owner, gap);
+        var nextShafts = shafts(ink, next, gap);
+        var staff = StaffPitchTrack.linear(ink.width, floor, gap, 0);
+        for (var rail : beams(ink, shafts, nextShafts, owner, next, gap, -1, staff, 3.2f, true)) {
+            float separation = threes.get(0).top - rail.at(Math.round(x)) - rail.separation;
+            // The digit can meet the edge of the lower rail.
+            if (separation >= -.25f * gap && separation <= .45f * gap) return true;
+        }
+        return false;
+    }
+
+    private static boolean readsOpenThree(Ink ink, RawNumeralComponents.Component glyph) {
+        var reading = JoinedDigitTemplates.inspect(ink.raw, ink.width, ink.height, new java.util.BitSet(),
+                glyph.left, glyph.top, glyph.right, glyph.bottom, () -> {});
+        if (reading == null || reading.scores()[3] < .67f || reading.scores()[8] > reading.scores()[3] + .04f)
+            return false;
+        for (int i = 0; i < reading.scores().length; i++)
+            if (i != 3 && i != 8 && reading.scores()[3] - reading.scores()[i] < .07f) return false;
+
+        int width = glyph.right - glyph.left + 1, height = glyph.bottom - glyph.top + 1;
+        var open = new java.util.BitSet(width * height);
+        var queue = new java.util.ArrayDeque<Integer>();
+        for (int y = 0; y < height; y++)
+            if ((ink.raw[(glyph.top + y) * ink.width + glyph.left] & 255) >= 145) {
+                open.set(y * width);
+                queue.add(y * width);
+            }
+        int[] dx = {-1, 1, 0, 0}, dy = {0, 0, -1, 1};
+        while (!queue.isEmpty()) {
+            int cell = queue.remove();
+            for (int side = 0; side < dx.length; side++) {
+                int x = cell % width + dx[side], y = cell / width + dy[side];
+                if (x < 0 || x >= width || y < 0 || y >= height || open.get(y * width + x)
+                        || (ink.raw[(glyph.top + y) * ink.width + glyph.left + x] & 255) < 145) continue;
+                open.set(y * width + x);
+                queue.add(y * width + x);
+            }
+        }
+        int upper = 0, lower = 0;
+        for (int y = 0; y < height; y++) {
+            if (!open.get(y * width + (width - 1) / 2)
+                    || (ink.raw[(glyph.top + y) * ink.width + glyph.right - 1] & 255) >= 145) continue;
+            if (y >= height * .17f && y <= height * .40f) upper++;
+            if (y >= height * .61f && y <= height * .87f) lower++;
+        }
+        return upper >= 2 && lower >= 2;
+    }
+
     private static List<Dyad> straightOctaves(List<Head> heads, float gap, boolean mixed) {
         var pairs = new ArrayList<Dyad>(16);
         int clef = heads.get(0).note.clefBottomDiatonic();
