@@ -175,6 +175,9 @@ def interpret_document(engine, source, *, pages=None, meter=(4, 4), bpm=120,
 
                 def prepare(number, index):
                     options = release if index == selected_count - 1 else {}
+                    if (index < selected_count - 1
+                            and getattr(engine._prepare_page, "__func__", None) is Interpreter._prepare_page):
+                        options = {"_document_has_later_pages": True}
                     return render(number, index,
                                   lambda image, supplied: engine._prepare_page(image, width, supplied, **options))
 

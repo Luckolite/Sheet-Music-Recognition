@@ -91,3 +91,26 @@ of2546; onset+pitch+duration improved1345→1574. All16 clean controls remained
 pixel-identical and10 blank/empty-staff controls yielded no notes. Strict unmatched
 counts rose40→42; a wider positional window reduced3→1, showing positional
 matching sensitivity. Real photographed/scanned score accuracy remains unverified.
+
+
+### Compact decoder layout
+
+The standalone Windows LiteRT reader can derive a compact graph from the
+checksum-pinned v4 model for pages up to 240 raster rows. It retains the
+encoder, the original weights, and the pooling grid. At each decoder resize
+stage it keeps the rows needed by the next stage and its convolution halo.
+The reader uses only the verified visible rows and restores the full graph
+before reading a taller page with ink. When a document has later pages,
+a first page of 225 to 240 rows keeps the original full arena to avoid
+an extra allocation if a later page is taller.
+
+Regenerate the layout with `python scripts/generate_compact_decoder.py`
+using the pinned LiteRT schema. The generator checks exact reconstruction at
+all 30 supported arena heights. Use `--check` to verify the checked-in layout.
+
+A deferred read can also retain a full encoder tile and crop the decoder's
+row or column outputs. The selected window covers the final tile owners and
+their convolution halo, including both halves of each paired inference and
+all recipients of a reused prediction. A single arena serves subsequent
+compatible pages. An incompatible page with ink switches to the full graph.
+Regenerate these layouts with `python scripts/generate_tile_decoder.py`.

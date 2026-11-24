@@ -33,6 +33,18 @@ final class ExactComponentMembers {
         }
     }
 
+    private record AuthenticatedRaster(byte[] raw, byte[] labels) {
+        static AuthenticatedRaster copyOf(byte[] raw, byte[] labels) {
+            byte[] stableRaw = raw.clone();
+            return new AuthenticatedRaster(stableRaw, raw == labels ? stableRaw : labels.clone());
+        }
+
+        boolean matches(byte[] currentRaw, byte[] currentLabels) {
+            return Arrays.equals(raw, currentRaw)
+                    && (raw == labels && currentRaw == currentLabels || Arrays.equals(labels, currentLabels));
+        }
+    }
+
     /** Collectors started and sealed together on the same caller-owned read-only planes. */
     static final class CollectorPair {
         final Collector first, second;
@@ -65,7 +77,18 @@ final class ExactComponentMembers {
             boolean checkFirst = first.prepareSeal(firstAuth);
             boolean checkSecond = second.prepareSeal(secondAuth);
             Collector source = checkHead ? head : checkFirst ? first : checkSecond ? second : null;
-            if (source != null && !source.unchanged()) {
+            boolean unchanged = true;
+            if (source != null) {
+                if (checkHead && head.raw.length >= 65_536 && head.raw.length <= 500_000) {
+                    // Keep one bounded, invocation-owned byte proof for the later
+                    // head checks. Every live check still compares both rasters.
+                    var snapshot = AuthenticatedRaster.copyOf(head.raw, head.labels);
+                    unchanged = head.unchanged(snapshot.raw(), snapshot.labels())
+                            && snapshot.matches(head.raw, head.labels);
+                    if (unchanged) head.sealedRaster = snapshot;
+                } else unchanged = source.unchanged();
+            }
+            if (!unchanged) {
                 if (checkHead) head.invalidate();
                 if (checkFirst) first.invalidate();
                 if (checkSecond) second.invalidate();
@@ -79,6 +102,7 @@ final class ExactComponentMembers {
         final String rawSha, labelSha;
         private final byte[] raw, labels;
         private final Budget sparse;
+        private AuthenticatedRaster sealedRaster;
         private boolean valid = true, sealed = false, bound = false;
         private final IdentityHashMap<Object, Original> records = new IdentityHashMap<>();
         private final IdentityHashMap<Object, AcceptedProbeHead> accepted = new IdentityHashMap<>();
@@ -260,12 +284,16 @@ final class ExactComponentMembers {
         }
 
         private boolean unchanged() {
-            return rawSha.equals(digest(raw)) && labelSha.equals(digest(labels));
+            return sealedRaster == null ? unchanged(raw, labels) : sealedRaster.matches(raw, labels);
+        }
+
+        private boolean unchanged(byte[] currentRaw, byte[] currentLabels) {
+            return rawSha.equals(digest(currentRaw)) && labelSha.equals(digest(currentLabels));
         }
 
         boolean revalidateForExport(Budget budget) {
             if (!valid || !sealed || !budget.take(2L * raw.length, 4096)) return false;
-            if (!rawSha.equals(digest(raw)) || !labelSha.equals(digest(labels))) {
+            if (!unchanged()) {
                 invalidate();
                 return false;
             }

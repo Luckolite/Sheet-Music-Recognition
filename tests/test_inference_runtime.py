@@ -79,7 +79,8 @@ class InferenceRuntimeTest(unittest.TestCase):
                 return np.zeros((1, self.height, 320), np.int64)
 
         Model.__module__ = "ai_edge_litert.interpreter"
-        with patch.object(reader, "inference_interpreter", return_value=Model):
+        with (patch.object(reader, "inference_interpreter", return_value=Model),
+              patch.object(reader._short_arena, "specialize_decoder", side_effect=ValueError)):
             engine = reader.Interpreter(threads=2, _defer_model=True)
             for height in (224, 208, 576, 224):
                 pixels = np.full((height, 320), 255, np.uint8)
@@ -97,11 +98,44 @@ class InferenceRuntimeTest(unittest.TestCase):
 
         loads.clear()
         Model.refuse_short = True
-        with patch.object(reader, "inference_interpreter", return_value=Model):
+        with (patch.object(reader, "inference_interpreter", return_value=Model),
+              patch.object(reader._short_arena, "specialize_decoder", side_effect=ValueError)):
             engine = reader.Interpreter(threads=2, _defer_model=True)
             np.testing.assert_array_equal(engine.predict(pixels), np.zeros_like(pixels))
         self.assertEqual([(304, 2), (320, 2)], loads)
         self.assertEqual(320, engine._model_height)
+
+    @unittest.skipUnless(sys.platform == "win32", "Compact graph requires qualified Windows LiteRT")
+    def test_cropped_output_reuses_arena_until_taller_ink_at_full_input_height(self):
+        factory = inference_interpreter(bundled=True)
+        if factory.__module__ != "ai_edge_litert.interpreter":
+            self.skipTest("LiteRT not available")
+        compact = reader.Interpreter(threads=2, _defer_model=True)
+        original = reader.Interpreter(threads=2)
+        raster = np.full((236, 320), 255, np.uint8)
+        raster[200:236:4, 7:310] = 35
+        np.testing.assert_array_equal(compact.predict(raster), original.predict(raster))
+        self.assertEqual(320, compact._model_height)
+        self.assertEqual(240, compact._model_visible_height)
+        arena = compact.runtime
+        spacer = np.full((576, 320), 255, np.uint8)
+        np.testing.assert_array_equal(compact.predict(spacer), np.zeros_like(spacer))
+        self.assertIs(arena, compact.runtime)
+
+        # A mark past the sanctioned output, even inside a halo row, must expand.
+        taller = np.full((241, 320), 255, np.uint8)
+        taller[-1, -1] = 254
+        np.testing.assert_array_equal(compact.predict(taller), original.predict(taller))
+        self.assertIsNot(arena, compact.runtime)
+        self.assertIsNone(compact._compact_model_path)
+        self.assertEqual(320, compact._model_visible_height)
+
+        document = reader.Interpreter(threads=2, _defer_model=True)
+        with patch.object(reader, "grayscale", return_value=raster):
+            result = document._prepare_page(None, 320, {"words": []}, _document_has_later_pages=True)
+        np.testing.assert_array_equal(result.labels, original.predict(raster))
+        self.assertEqual(320, document._model_visible_height)
+        self.assertIsNone(document._compact_model_path)
 
     def test_final_cli_prediction_can_release_litert_while_ocr_is_pending(self):
         gray = np.full((8, 8), 255, np.uint8)

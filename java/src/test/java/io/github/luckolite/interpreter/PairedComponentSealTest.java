@@ -4,6 +4,8 @@ package io.github.luckolite.interpreter;
 
 import static org.junit.Assert.*;
 
+import java.util.AbstractList;
+import java.util.List;
 import org.junit.Test;
 
 public class PairedComponentSealTest {
@@ -65,6 +67,39 @@ public class PairedComponentSealTest {
             raw[2] = 0;
             assertFalse(head.revalidateForExport(budget(6)));
             assertFalse(pair.second.revalidateForExport(budget(6)));
+        }
+    }
+
+    @Test
+    public void mutationDuringPartitionStillInvalidatesAnAuthenticatedRaster() {
+        for (boolean changeRaw : new boolean[] {true, false}) {
+            byte[] raw = new byte[65_536];
+            byte[] labels = new byte[raw.length];
+            long work = 2L * raw.length;
+            var head = new ExactComponentMembers.Collector(
+                    raw, labels, 256, 256, budget(work), budget(100));
+            assertTrue(head.bindInput(labels, raw, 256, 256));
+            var pair = new ExactComponentMembers.CollectorPair(
+                    head, budget(work), budget(work), budget(100), budget(100));
+            assertTrue(pair.seal(budget(work), budget(work), budget(work)));
+            assertNotNull(head.producerPartitions(
+                    List.of(), new ExactComponentMembers.Budget(2 * work, 8192 + 64)));
+
+            List<Object> request = new AbstractList<>() {
+                @Override
+                public int size() {
+                    return 1;
+                }
+
+                @Override
+                public Object get(int index) {
+                    (changeRaw ? raw : labels)[0] ^= 1;
+                    return new Object();
+                }
+            };
+            assertNull(head.producerPartitions(
+                    request, new ExactComponentMembers.Budget(3 * work, 1_000_000)));
+            assertFalse(head.revalidateForExport(budget(work)));
         }
     }
 

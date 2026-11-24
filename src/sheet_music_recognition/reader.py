@@ -7,6 +7,7 @@ import io
 import json
 import os
 import struct
+import sys
 import tempfile
 import zlib
 from collections import Counter
@@ -19,7 +20,7 @@ from typing import NamedTuple
 
 import numpy as np
 from PIL import ExifTags, Image, ImageOps
-from . import _short_arena
+from . import _short_arena, _tile_decoder
 from .runtime import (
     _ARCHIVE_TRAIN_AND_GEOMETRY_MAX_PIXELS,
     inference_interpreter,
@@ -347,8 +348,10 @@ class Interpreter:
 
     def _initialize_model(self, path, bundled, *, visible_height=320):
         self._last_page_prediction = None
+        self._tile_layout = None
         requested_height = _short_arena.required_height(visible_height)
-        content = path.read_bytes() if bundled and requested_height <= _short_arena.MAX_ARENA_HEIGHT else None
+        can_crop_decoder = 0 < visible_height <= _short_arena.MAX_CROPPED_VISIBLE_HEIGHT
+        content = path.read_bytes() if bundled and can_crop_decoder else None
         digest = hashlib.sha256()
         if content is None:
             with path.open("rb") as model:
@@ -361,37 +364,87 @@ class Interpreter:
             raise ValueError("Bundled model checksum mismatch")
 
         interpreter = inference_interpreter(bundled=bundled)
-        selected_height = 320
+        selected_height = visible_capacity = 320
         allocated = None
         if (content is not None and model_sha256 == _short_arena.MODEL_SHA256
                 and getattr(interpreter, "__module__", None) == "ai_edge_litert.interpreter"):
             try:
+                # The cropped decoder retains two halo rows beyond its visible output.
                 allocated = self._allocate_model(
-                    interpreter, requested_height, model_content=_short_arena.specialize(content, requested_height))
+                    interpreter, requested_height,
+                    output_height=requested_height - 78,
+                    model_content=_short_arena.specialize_decoder(content, requested_height))
                 selected_height = requested_height
-            except (OSError, RuntimeError, ValueError):
-                pass  # The original model remains available on this runtime.
+                visible_capacity = requested_height - 80
+            except (ImportError, OSError, RuntimeError, ValueError):
+                pass
+            if allocated is None and requested_height <= _short_arena.MAX_ARENA_HEIGHT:
+                try:
+                    allocated = self._allocate_model(
+                        interpreter, requested_height,
+                        model_content=_short_arena.specialize(content, requested_height))
+                    selected_height = requested_height
+                    visible_capacity = requested_height - 80
+                except (OSError, RuntimeError, ValueError):
+                    pass  # The original model remains available on this runtime.
 
         if allocated is None:
             allocated = self._allocate_model(interpreter, 320, model_path=str(path))
         self.runtime, self.input, self.output = allocated
         self.model_sha256 = model_sha256
         self._model_height = selected_height
-        self._compact_model_path = path if selected_height != 320 else None
+        self._model_visible_height = visible_capacity
+        self._compact_model_path = path if visible_capacity != 320 else None
         # Pairing relies on the spatial support of this exact graph.
         self._sparse_pairs_enabled = bundled and model_sha256 == (
             "92ab7c34c27cb704d95f0cde247b3611d1563fdf1c114b9f9817abb18a7b6a93")
 
-    def _allocate_model(self, interpreter, height, **model):
+    def _allocate_model(self, interpreter, height, *, output_height=None, **model):
         runtime = interpreter(**model, num_threads=self._threads)
         runtime.allocate_tensors()
         input_info = runtime.get_input_details()[0]
         output_info = runtime.get_output_details()[0]
         if input_info["shape"].tolist() != [1, 3, height, 320] or input_info["dtype"] != np.float32:
             raise ValueError(f"Expected float32 input [1,3,{height},320]")
-        if output_info["shape"].tolist() != [1, height, 320] or output_info["dtype"] != np.int64:
-            raise ValueError(f"Expected int64 class IDs [1,{height},320]")
+        output_height = height if output_height is None else output_height
+        if output_info["shape"].tolist() != [1, output_height, 320] or output_info["dtype"] != np.int64:
+            raise ValueError(f"Expected int64 class IDs [1,{output_height},320]")
         return runtime, input_info, output_info
+
+    def _initialize_tile_decoder(self, path, selection):
+        factory = inference_interpreter(bundled=True)
+        if getattr(factory, "__module__", None) != "ai_edge_litert.interpreter":
+            return False
+        content = path.read_bytes()
+        if hashlib.sha256(content).hexdigest() != MODEL_SHA256:
+            raise ValueError("Bundled model checksum mismatch")
+        try:
+            runtime = factory(model_content=_tile_decoder.specialize(content, selection),
+                              num_threads=self._threads)
+            runtime.allocate_tensors()
+            inputs = runtime.get_input_details()
+            output = runtime.get_output_details()[0]
+            window = _tile_decoder.WINDOW
+            out_shape = [1, window if selection.rows is not None else 320,
+                         window if selection.column is not None else 320]
+            row_inputs = tuple((item["index"], int(item["shape"][0])) for item in inputs[1:]
+                               if item["shape"].size == 1 and item["dtype"] == np.int32)
+            sizes = (window // 8, window // 4, window // 2, window)
+            if (inputs[0]["shape"].tolist() != [1, 3, 320, 320]
+                    or inputs[0]["dtype"] != np.float32 or output["shape"].tolist() != out_shape
+                    or output["dtype"] != np.int64 or len(row_inputs) != len(inputs) - 1
+                    or tuple(size for _, size in row_inputs) != (sizes if selection.rows is not None else ())):
+                return False
+        except (ImportError, OSError, RuntimeError, ValueError):
+            return False
+        self.runtime, self.input, self.output = runtime, inputs[0], output
+        self._tile_layout = path, selection.mode, selection.column
+        self._tile_row_inputs = row_inputs
+        self._model_height = self._model_visible_height = 320
+        self._compact_model_path = self._last_page_prediction = None
+        self._sparse_pairs_enabled = True
+        self.model_sha256 = MODEL_SHA256
+        return True
 
     def interpret_document(self, source, *, pages=None, meter=(4, 4), bpm=120,
                            key_fifths=0, width=2048, annotations=None, progress=None):
@@ -415,7 +468,7 @@ class Interpreter:
             raise ValueError("Invalid image dimensions")
         pending = getattr(self, "_pending_model", None)
         compact_path = getattr(self, "_compact_model_path", None)
-        if compact_path is not None and _short_arena.required_height(height) > self._model_height:
+        if compact_path is not None and height > self._model_visible_height:
             # The qualified model returns only background for a strictly white tile.
             # A blank spacer can keep the existing compact arena for the next score page.
             if gray[0, 0] == 255 and gray.min() == 255:
@@ -424,13 +477,33 @@ class Interpreter:
             pending = self._pending_model = (compact_path, True)
             self._compact_model_path = None
             del self.runtime
-        if pending is not None:
-            self._initialize_model(*pending, visible_height=height if compact_path is None else 320)
-            self._pending_model = None
-        labels = np.zeros_like(gray)
         ch, cw = min(320, height), min(320, width)
         rows = [slice(top, top + ch) for top in tile_starts(height)]
         columns = [slice(left, left + cw) for left in tile_starts(width)]
+        selection = None
+        tile_layout = getattr(self, "_tile_layout", None)
+        if tile_layout is not None and pending is None:
+            path, mode, column = tile_layout
+            if gray[0, 0] == 255 and gray.min() == 255:
+                return np.zeros_like(gray)
+            if self.edge is _tile_edges():
+                selection = _tile_decoder.select(gray, rows, columns, self.edge,
+                                                 active_mode=mode, active_column=column)
+            if selection is None:
+                self._pending_model = (path, True)
+                del self.runtime
+                self._initialize_model(path, True)
+        elif (pending is not None and pending[1] and compact_path is None and sys.platform == "win32"
+              and self.edge is _tile_edges()):
+            selection = _tile_decoder.select(gray, rows, columns, self.edge)
+            if selection is not None and self._initialize_tile_decoder(pending[0], selection):
+                pending = None
+            else:
+                selection = None
+        if pending is not None:
+            self._initialize_model(*pending, visible_height=height if compact_path is None else 320)
+        self._pending_model = None
+        labels = np.zeros_like(gray)
         bundled = getattr(self, "model_sha256", None) == MODEL_SHA256
         known_white = (bundled and getattr(self, "_sparse_pairs_enabled", False)
                        and type(self.runtime).__module__ == "ai_edge_litert.interpreter")
@@ -445,7 +518,9 @@ class Interpreter:
         # Only the reviewed bundled graph has the deterministic-output contract.
         # Custom models keep one inference call per tile, including stateful models.
         reuse_predictions = (height > ch or width > cw) and bundled
-        plan = _repeated_tile_plan(gray, rows, columns) if reuse_predictions else None
+        plan = selection.decisions if selection is not None else None
+        if selection is None and reuse_predictions:
+            plan = _repeated_tile_plan(gray, rows, columns)
         repeated = {}
         pairs, blank_tiles = {}, set()
         later = {}
@@ -453,8 +528,11 @@ class Interpreter:
         if (plan is not None and ch == cw == 320 and len(rows) * len(columns) >= 3
                 and getattr(self, "_sparse_pairs_enabled", False)):
             regions = [(r, c) for r in rows for c in columns]
-            decisions = list(plan)
-            pairs, blank_tiles = _sparse_pairs(gray, regions, decisions)
+            if selection is None:
+                decisions = list(plan)
+                pairs, blank_tiles = _sparse_pairs(gray, regions, decisions)
+            else:
+                decisions, pairs, blank_tiles = selection.decisions, selection.pairs, selection.blank_tiles
             plan = iter(decisions)
             if pairs:
                 paper = getattr(self, "_white_prediction", None)
@@ -466,6 +544,7 @@ class Interpreter:
                         paper = Interpreter.predict(self, np.full((320, 320), 255, np.uint8))
                         paper.setflags(write=False)
                     self._white_prediction = paper
+        last_row = None
         for index, (region, wins) in enumerate(_tile_windows(height, width, self.edge, rows, columns)):
             tile = gray[region]
             cached = pixels = None
@@ -508,12 +587,25 @@ class Interpreter:
                     tensor[0, 0, :ch, :cw] = tile
                 # TFLite may move its arena during invoke. Hold only the getter across calls.
                 del tensor
+                top = 0
+                if selection is not None and selection.rows is not None:
+                    top = selection.rows[index]
+                    if top != last_row:
+                        for input_index, size in self._tile_row_inputs:
+                            first = top // (_tile_decoder.WINDOW // size)
+                            self.runtime.set_tensor(input_index, np.arange(first, first + size, dtype=np.int32))
+                        last_row = top
                 self.runtime.invoke()
                 prediction = (self.runtime.get_tensor(self.output["index"])
                               if tensor_view is None else output_buffer())[0]
                 if prediction.min() < 0 or prediction.max() > 5:
                     del prediction
                     raise ValueError("Model returned classes outside 0..5")
+                if selection is not None:
+                    left = selection.column or 0
+                    expanded = np.zeros((320, 320), dtype=np.uint8)
+                    expanded[top:top + prediction.shape[0], left:left + prediction.shape[1]] = prediction
+                    prediction = expanded
                 if pair is not None:
                     next_tile = paper.copy()
                     next_tile[second_box] = prediction[second_box]
@@ -651,7 +743,7 @@ class Interpreter:
         return labels
 
     def _prepare_page(self, image, width, annotations, *, prepare_geometry=None, start_decoder=None,
-                      _release_after_prediction=False):
+                      _release_after_prediction=False, _document_has_later_pages=False):
         gray = grayscale(image, width)
         needs_ocr = annotations is None or ("tabWords" in annotations and "words" not in annotations)
         prediction_done = Event() if start_decoder is not None else None
@@ -666,6 +758,14 @@ class Interpreter:
         with executor as worker:
             ocr = worker.submit(read_annotations) if worker is not None else None
             try:
+                # The newly eligible heights previously used the full arena. Keep
+                # it on nonfinal pages so later ink cannot force an extra allocation.
+                pending = getattr(self, "_pending_model", None)
+                if (_document_has_later_pages and pending is not None and pending[1]
+                        and _short_arena.MAX_ARENA_HEIGHT - 80 < gray.shape[0]
+                        <= _short_arena.MAX_CROPPED_VISIBLE_HEIGHT):
+                    self._initialize_model(*pending)
+                    self._pending_model = None
                 labels = self._predict_prepared_page(gray)
                 if (_release_after_prediction and ocr is not None and not ocr.done()
                         and getattr(self, "_sparse_pairs_enabled", False)
@@ -673,7 +773,7 @@ class Interpreter:
                     # The CLI has no later page to predict. Let the detector use the memory
                     # while preserving the model identity for the score receipt.
                     self._last_page_prediction = None
-                    self._compact_model_path = None
+                    self._compact_model_path = self._tile_layout = None
                     self._pending_model = (Path(__file__).parent / "data" / MODEL_NAME, True)
                     del self.runtime
             finally:
