@@ -6538,8 +6538,8 @@ final class ClosedSixteenthDyads {
         if (UnnumberedTripletInk.bracketBesideBeam(ink.raw, ink.width, ink.height, gap,
                 claim.get(0).top.x, claim.get(2).top.x, top, bottom, shaft.endY(), rows, track, true)) return false;
         if (opposedFingerings)
-            return shaft.direction() < 0 && opposedQuartetFingerings(ink, middle, claim.get(2),
-                    shaft, shafts.get(start + 2), gap, rows);
+            return shaft.direction() < 0 && !opposedQuartetGlyphs(ink, middle, claim.get(2),
+                    shaft, shafts.get(start + 2), gap, rows).isEmpty();
         boolean below = UnnumberedTripletInk.centeredThree(ink.raw, ink.width, ink.height, center,
                 bottomCaption - .15f * gap, bottomCaption + 4 * gap, gap, rows, track);
         if (fingeredThirds ? !opposedOpeningDigits(ink, claim.get(0), middle, shaft, gap) : below) return false;
@@ -6550,7 +6550,7 @@ final class ClosedSixteenthDyads {
     }
 
     /** Each of two adjacent shafts has separate upper and lower fingering ink. */
-    private static boolean opposedQuartetFingerings(Ink ink, Dyad middle, Dyad end,
+    private static List<RawNumeralComponents.Component> opposedQuartetGlyphs(Ink ink, Dyad middle, Dyad end,
             PrintedBeamShafts.Shaft middleShaft, PrintedBeamShafts.Shaft endShaft, float gap,
             UnnumberedTripletInk.Rows rows) {
         var a = isolatedQuartetFingering(ink, middle.top.x, middleShaft.endY() - 2.5f * gap,
@@ -6563,7 +6563,111 @@ final class ClosedSixteenthDyads {
                 end.bottom.y + 2.7f * gap, gap, rows);
         return a != null && b != null && c != null && d != null
                 && Math.abs((a.bottom - middleShaft.endY()) - (b.bottom - endShaft.endY())) <= .17f * gap
-                && Math.abs((c.top - middle.bottom.y) - (d.top - end.bottom.y)) <= .23f * gap;
+                && Math.abs((c.top - middle.bottom.y) - (d.top - end.bottom.y)) <= .23f * gap
+                ? List.of(a, c, b, d) : List.of();
+    }
+
+    static List<PrintedFingeringDigits.Mark> captureOpposedSixthFingerings(ScorePageInterpretation score,
+            byte[] raw, byte[] normalized, int width, int height) {
+        if (raw == null || normalized == null || raw.length != (long) width * height
+                || normalized.length != raw.length) return List.of();
+        var closedQuartets = new HashSet<List<Integer>>();
+        for (var group : score.beamSource().resolve().groups()) {
+            var beam = group.source();
+            if (beam.tupletMark() == null && beam.hooks().isEmpty() && beam.bridges().equals(List.of(3, 3, 3))
+                    && group.columns().stream().allMatch(c -> !c.ambiguous() && c.owners().size() == 2)) {
+                closedQuartets.add(group.columns().stream().flatMap(c -> c.owners().stream()).sorted().toList());
+            }
+        }
+        if (closedQuartets.isEmpty()) return List.of();
+        var measures = score.measures();
+        var notes = score.notes();
+        var byMeasure = new ArrayList<List<Head>>(measures.size());
+        for (var ignored : measures) byMeasure.add(new ArrayList<>());
+        for (int i = 0; i < notes.size(); i++) {
+            int m = notes.get(i).measureIndex();
+            if (m >= 0 && m < measures.size()) byMeasure.get(m).add(quartetHead(notes, measures.get(m), i, width, height));
+        }
+        var original = new Ink(raw, width, height);
+        var prepared = new Ink(normalized, width, height);
+        var result = new ArrayList<PrintedFingeringDigits.Mark>();
+        for (int m = 0; m < byMeasure.size(); m++) {
+            var row = byMeasure.get(m);
+            var bar = measures.get(m);
+            float gap = (bar.bottom() - bar.top()) * height / 8.2f;
+            if (row.size() != 32 || gap < 12 || gap > 24 || bar.cadenceQuarterBeats() != 0) continue;
+            row.sort(Comparator.comparingDouble(Head::x));
+            if (!completePairedIntervals(row, gap, 5, 2.5f, .28f)
+                    || !completeSixteenthColumns(row, gap, row.get(0).note.clefBottomDiatonic(), 16)) continue;
+            var pairs = new ArrayList<Dyad>(16);
+            for (int i = 0; i < row.size(); i += 2) {
+                var a = row.get(i);
+                var b = row.get(i + 1);
+                pairs.add(a.y < b.y ? new Dyad(a, b) : new Dyad(b, a));
+            }
+            if (!closedQuartetOwners(closedQuartets, row.subList(8, 16))
+                    || !closedQuartetOwners(closedQuartets, row.subList(16, 24))
+                    || pairs.subList(4, 12).stream().anyMatch(p -> p.top.note.stemDirection() != 1)
+                    || pairs.subList(0, 4).stream().anyMatch(p -> p.top.note.stemDirection() != -1)
+                    || pairs.subList(12, 16).stream().anyMatch(p -> p.top.note.stemDirection() != -1)) continue;
+            var rows = UnnumberedTripletInk.sourceRows(bar, measures, height);
+            var a = readOpposedSixthFingers(original, pairs, gap, rows);
+            var b = raw == normalized ? a : readOpposedSixthFingers(prepared, pairs, gap, rows);
+            for (var mark : a) if (b.contains(mark)) result.add(mark);
+        }
+        return List.copyOf(result);
+    }
+
+    private static boolean closedQuartetOwners(Set<List<Integer>> groups, List<Head> heads) {
+        return groups.contains(heads.stream().map(Head::owner).sorted().toList());
+    }
+
+    private static List<PrintedFingeringDigits.Mark> readOpposedSixthFingers(
+            Ink ink, List<Dyad> pairs, float gap, UnnumberedTripletInk.Rows rows) {
+        var budget = new PrintedBeamShafts.Budget(150_000);
+        var result = new ArrayList<PrintedFingeringDigits.Mark>();
+        for (int middle : new int[]{6, 10}) {
+            var a = pairs.get(middle);
+            var b = pairs.get(middle + 1);
+            var aShaft = sharedOpticalShaft(ink, a, gap, budget);
+            var bShaft = sharedOpticalShaft(ink, b, gap, budget);
+            if (aShaft == null || bShaft == null) return List.of();
+            var glyphs = opposedQuartetGlyphs(ink, a, b, aShaft, bShaft, gap, rows);
+            if (glyphs.isEmpty()) return List.of();
+            var owners = List.of(a.top, a.bottom, b.top, b.bottom);
+            for (int i = 0; i < owners.size(); i++) {
+                int digit = quartetFingeringDigit(ink, glyphs.get(i), true);
+                if (digit >= 0) result.add(new PrintedFingeringDigits.Mark(owners.get(i).owner, digit,
+                        i % 2 == 0 ? PrintedFingeringDigits.Placement.ABOVE : PrintedFingeringDigits.Placement.BELOW));
+            }
+        }
+        for (var pair : pairs) {
+            if (pair.top.note.stemDirection() != -1) continue;
+            var head = pair.top;
+            var glyph = isolatedQuartetFingering(ink, head.x,
+                    head.y - 3.42f * gap, head.y - .56f * gap, gap, rows);
+            int digit = quartetFingeringDigit(ink, glyph, false);
+            if (digit >= 0)
+                result.add(new PrintedFingeringDigits.Mark(head.owner, digit, PrintedFingeringDigits.Placement.ABOVE));
+        }
+        return result;
+    }
+
+    private static int quartetFingeringDigit(Ink ink, RawNumeralComponents.Component glyph, boolean opposed) {
+        if (glyph == null) return -1;
+        var reading = JoinedDigitTemplates.inspect(ink.raw, ink.width, ink.height, new java.util.BitSet(),
+                glyph.left, glyph.top, glyph.right, glyph.bottom, () -> {});
+        if (reading == null) return -1;
+        if (!opposed) return reading.digit() <= 4 ? reading.digit() : -1;
+        // A confirmed opposing finger position limits the reading to violin finger numbers.
+        var scores = reading.scores();
+        int best = 0;
+        for (int digit = 1; digit <= 4; digit++) if (scores[digit] > scores[best]) best = digit;
+        if (scores[best] < .59f) return -1;
+        for (int digit = 0; digit <= 4; digit++) {
+            if (digit != best && scores[best] - scores[digit] < .06f) return -1;
+        }
+        return best;
     }
 
     private static RawNumeralComponents.Component isolatedQuartetFingering(Ink ink, float x,

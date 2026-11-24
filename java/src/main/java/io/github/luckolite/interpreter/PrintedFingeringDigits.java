@@ -99,6 +99,10 @@ final class PrintedFingeringDigits {
             if (!ambiguous[mark.noteIndex()] && (candidates[mark.noteIndex()] == null
                     || candidates[mark.noteIndex()].equals(mark))) candidates[mark.noteIndex()] = mark;
         }
+        for (var mark : ClosedSixteenthDyads.captureOpposedSixthFingerings(score, gray, normalized, width, height)) {
+            if (!ambiguous[mark.noteIndex()] && (candidates[mark.noteIndex()] == null
+                    || candidates[mark.noteIndex()].equals(mark))) candidates[mark.noteIndex()] = mark;
+        }
         assignSlurredSixthFingeringStacks(gray, normalized, width, height, score, heads, candidates, ambiguous);
         assignDottedSixthFingerings(gray, normalized, width, height, score, heads, candidates, ambiguous);
         assignHighStraightDyadFingerings(gray, normalized, width, height, words, score, heads,
