@@ -250,8 +250,9 @@ final class BeamedArtificialFourths {
                         && Double.valueOf(1).equals(event.get("durationBeats"))
                         && !Boolean.TRUE.equals(event.get("durationFallback"))
                         && !Boolean.TRUE.equals(event.get("tiedFromPrevious"))
-                        && ClosedHarmonicQuarterCadence.duration(region, end, score.measures().get(bar + 2),
-                                List.of(cadence), labels, normalized, raw, width, height) == 1) {
+                        && ClosedHarmonicQuarterCadence.afterCompactTriplets(
+                                region, end, score.measures().get(bar + 2), cadence,
+                                labels, normalized, raw, width, height)) {
                     float localGap = (next.bottom() - next.top()) * height / 8.2f;
                     var touch = new ArtificialHarmonics.TouchHead(cadence, xAt(cadence, next, width),
                             cadence.pageY() * height - 1.5f * localGap, localGap);

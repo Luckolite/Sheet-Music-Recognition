@@ -17,6 +17,18 @@ final class ClosedHarmonicQuarterCadence {
     static int duration(
             MeasureRegion previous, MeasureRegion bar, MeasureRegion next, List<ScoreNoteEvent> heads,
             byte[] labels, byte[] gray, byte[] raw, int width, int height) {
+        return duration(previous, bar, next, heads, labels, gray, raw, width, height, 5.5f);
+    }
+
+    static boolean afterCompactTriplets(
+            MeasureRegion previous, MeasureRegion bar, MeasureRegion next, ScoreNoteEvent head,
+            byte[] labels, byte[] gray, byte[] raw, int width, int height) {
+        return duration(previous, bar, next, List.of(head), labels, gray, raw, width, height, 4) == 1;
+    }
+
+    private static int duration(
+            MeasureRegion previous, MeasureRegion bar, MeasureRegion next, List<ScoreNoteEvent> heads,
+            byte[] labels, byte[] gray, byte[] raw, int width, int height, float minimumQuarterSpan) {
         if (raw == null || labels == null || raw.length != gray.length || labels.length != gray.length
                 || bar.cadenceQuarterBeats() != 0 || next.top() <= bar.bottom()
                 || (heads.size() != 1 && heads.size() != 9)) return 0;
@@ -24,7 +36,7 @@ final class ClosedHarmonicQuarterCadence {
         float span = (bar.right() - bar.left()) * width;
         boolean pairedBeams = heads.size() == 9;
         if (gap < 10 || gap > 25 || Math.abs(bar.top() - previous.top()) * height > .35f * gap
-                || span < (pairedBeams ? 18 : 5.5f) * gap || span > (pairedBeams ? 25 : 8.5f) * gap)
+                || span < (pairedBeams ? 18 : minimumQuarterSpan) * gap || span > (pairedBeams ? 25 : 8.5f) * gap)
             return 0;
         var ordered = heads.stream().sorted(Comparator.comparingDouble(ScoreNoteEvent::positionInMeasure)).toList();
         if (!pattern(ordered)) return 0;
