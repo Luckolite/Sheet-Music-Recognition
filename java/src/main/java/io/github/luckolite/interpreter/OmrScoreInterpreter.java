@@ -24554,6 +24554,19 @@ final class OmrScoreInterpreter {
     static Map<ScoreNoteEvent, Integer> harmonicTouchAccidentals(
             byte[] labels, byte[] gray, byte[] source, int width, int height,
             ScorePageInterpretation score, List<ArtificialHarmonics.TouchHead> touches) {
+        return harmonicTouchAccidentals(labels, gray, source, width, height, score, touches, false);
+    }
+
+    static Map<ScoreNoteEvent, Integer> harmonicTouchAccidentalsInMeasures(
+            byte[] labels, byte[] gray, byte[] source, int width, int height,
+            ScorePageInterpretation score, List<ArtificialHarmonics.TouchHead> touches) {
+        return harmonicTouchAccidentals(labels, gray, source, width, height, score, touches, true);
+    }
+
+    private static Map<ScoreNoteEvent, Integer> harmonicTouchAccidentals(
+            byte[] labels, byte[] gray, byte[] source, int width, int height,
+            ScorePageInterpretation score, List<ArtificialHarmonics.TouchHead> touches,
+            boolean boundToMeasure) {
         if (touches.isEmpty()) return Map.of();
         var glyphs = findComponents(labels, width, height, OmrMeasurePostProcessor.CLEF_OR_KEY);
         var candidates = new ArrayList<AccidentalCandidate>();
@@ -24576,13 +24589,22 @@ final class OmrScoreInterpreter {
                 if (Math.abs(x - touch.x()) <= touch.gap() * 4.5f)
                     heads.add(accidentalReferenceHead(x, n.pageY() * height, touch.gap()));
             }
+            var local = boundToMeasure
+                    ? candidates.stream().filter(c -> c.component().centerX >= bar.left() * width
+                            && !touches.stream().anyMatch(other ->
+                                    other.stop().measureIndex() == stop.measureIndex()
+                                            && other.stop().staffIndex() == stop.staffIndex()
+                                            && Math.abs(c.component().centerX - other.x()) <= .35f * other.gap()
+                                            && Math.abs(c.component().centerY - other.y()) <= .35f * other.gap()))
+                            .toList()
+                    : candidates;
             var choice = chooseWrittenAccidental(
-                    labels, width, height, candidates, head, touch.gap(), heads, gray);
+                    labels, width, height, local, head, touch.gap(), heads, gray);
             if (choice.ambiguous()) continue;
             int accidental = choice.accidental();
             if (source != null) {
                 var rawChoice = chooseWrittenAccidental(
-                        labels, width, height, candidates, head, touch.gap(), heads, source);
+                        labels, width, height, local, head, touch.gap(), heads, source);
                 if (rawChoice.ambiguous() || rawChoice.accidental() != accidental) continue;
                 if (accidental == ScoreNoteEvent.ACCIDENTAL_FROM_KEY
                         && stop.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_NATURAL) {
@@ -24601,6 +24623,56 @@ final class OmrScoreInterpreter {
             result.put(stop, accidental);
         }
         return result;
+    }
+
+    static java.util.Set<ScoreNoteEvent> harmonicNaturalPairs(
+            byte[] labels, byte[] gray, byte[] raw, int width, int height,
+            MeasureRegion bar, List<ArtificialHarmonics.TouchHead> touches) {
+        var result = java.util.Collections.newSetFromMap(
+                new java.util.IdentityHashMap<ScoreNoteEvent, Boolean>());
+        var glyphs = findComponents(labels, width, height, OmrMeasurePostProcessor.CLEF_OR_KEY);
+        float previousX = bar.left() * width;
+        for (var touch : touches) {
+            float gap = touch.gap(), stopY = touch.stop().pageY() * height;
+            if (touch.stop().writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_FROM_KEY
+                    || touch.stop().writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_NATURAL) {
+                Component match = null;
+                for (var glyph : glyphs) {
+                    if (glyph.minX <= previousX || touch.x() - glyph.maxX < .5f * gap
+                            || touch.x() - glyph.maxX > 1.5f * gap
+                            || glyph.maxX - glyph.minX + 1 < 1.2f * gap
+                            || glyph.maxX - glyph.minX + 1 > 2.25f * gap
+                            || glyph.maxY - glyph.minY + 1 < 3.7f * gap
+                            || glyph.maxY - glyph.minY + 1 > 5.3f * gap
+                            || Math.abs(glyph.centerY - (stopY + touch.y()) * .5f) > .65f * gap
+                            || !harmonicNaturalColumn(labels, gray, width, glyph, gap, touch.y(), stopY)
+                            || !harmonicNaturalColumn(labels, raw, width, glyph, gap, touch.y(), stopY))
+                        continue;
+                    if (match != null) {
+                        match = null;
+                        break;
+                    }
+                    match = glyph;
+                }
+                if (match != null) result.add(touch.stop());
+            }
+            previousX = touch.x();
+        }
+        return result;
+    }
+
+    private static boolean harmonicNaturalColumn(byte[] labels, byte[] ink, int width,
+            Component glyph, float gap, float touchY, float stopY) {
+        byte label = OmrMeasurePostProcessor.CLEF_OR_KEY;
+        int w = glyph.maxX - glyph.minX + 1, h = glyph.maxY - glyph.minY + 1;
+        var mask = new byte[w * h];
+        for (int y = 0; y < h; y++) for (int x = 0; x < w; x++) {
+            int offset = (glyph.minY + y) * width + glyph.minX + x;
+            if (labels[offset] == label && (ink[offset] & 255) < 180) mask[y * w + x] = label;
+        }
+        float[] centers = StackedNaturalColumn.centers(mask, w, h, 0, 0, w - 1, h - 1, label, gap);
+        return centers.length == 2 && Math.abs(glyph.minY + centers[0] - touchY) <= .32f * gap
+                && Math.abs(glyph.minY + centers[1] - stopY) <= .32f * gap;
     }
 
     private static Component accidentalReferenceHead(float x, float y, float gap) {

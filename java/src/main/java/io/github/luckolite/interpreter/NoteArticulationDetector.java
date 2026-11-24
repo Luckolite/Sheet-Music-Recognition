@@ -2419,7 +2419,7 @@ final class NoteArticulationDetector {
                                             && Math.abs(notes.get(j).x - note.x) < note.gap * .45f)
                                         result[j] |= NoteArticulation.ACCENT;
                             if ((result[i] & NoteArticulation.MARCATO) == 0
-                                    && ruleJoinedMarcato(note, labels, gray, width, height, scratch))
+                                    && ruleJoinedMarcato(note, labels, gray, annotationGray, width, height, scratch))
                                 for (int j = 0; j < notes.size(); j++)
                                     if (notes.get(j).staff == note.staff
                                             && Math.abs(notes.get(j).x - note.x) < note.gap * .45f)
@@ -2965,7 +2965,7 @@ final class NoteArticulationDetector {
 
     /** Recover an upward angular mark joined to independently long, thin staff rules. */
     private static boolean ruleJoinedMarcato(
-            Anchor note, byte[] labels, byte[] gray, int width, int height,
+            Anchor note, byte[] labels, byte[] gray, byte[] annotationGray, int width, int height,
             GlyphFloodScratch scratch) {
         float gap = note.gap;
         if (!Float.isFinite(gap)
@@ -3176,12 +3176,28 @@ final class NoteArticulationDetector {
                             rules,
                             top)
                     && !ruledCaretCrossbar(glyph, width, gray)
+                    && !raisedDiamondCap(glyph, note, gray, annotationGray, width, height)
                     && (Math.abs(glyph.y() - note.y) <= gap * 3f
                             || beamOwnedMarcato(glyph, note, gray, width, height, true)
                             || terminatedStemMarcato(glyph, note, gray, width, height)))
                 return true;
         }
         return false;
+    }
+
+    /** A staff rule can hide the bottom of a touching diamond from the caret search. */
+    private static boolean raisedDiamondCap(Glyph glyph, Anchor note, byte[] gray,
+            byte[] annotationGray, int width, int height) {
+        float gap = note.gap;
+        float touchY = note.y - 1.5f * gap;
+        if (Math.abs(glyph.x() - note.x) > .3f * gap
+                || glyph.top < touchY - .9f * gap || glyph.top > touchY - .4f * gap
+                || glyph.bottom < touchY - .4f * gap || glyph.bottom > touchY + .1f * gap)
+            return false;
+        byte[] source = annotationGray != null && annotationGray.length == gray.length
+                ? annotationGray : gray;
+        return ArtificialHarmonics.beamedShaftCrossedFourth(
+                source, gray, width, height, note.x, note.y, touchY, gap, -1);
     }
 
     /** Recover a round dot fused into an upright letter above a crowded chord. */

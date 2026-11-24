@@ -500,7 +500,8 @@ public final class Main {
         if (standardViolin)
             score = BeamedArtificialFourths.apply(score, events, labels, gray,
                     decoderGray == null ? gray : decoderGray, width, height,
-                    starts, keys, physicalPage, decoded.printedOctaveSpans(), beamedHarmonicAccidentals);
+                    starts, keys, physicalPage, decoded.printedOctaveSpans(), beamedHarmonicAccidentals,
+                    decoded.beamedTouches());
         if (standardViolin)
             score = BeamedArtificialFourths.retainClosedTripletFourths(score, events, labels, gray,
                     decoderGray == null ? gray : decoderGray, width, height, starts, keys, physicalPage,

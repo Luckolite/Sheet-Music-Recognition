@@ -645,6 +645,14 @@ final class ArtificialHarmonics {
     }
 
     /** Start from the stopped head's shaft. A flat can shift the decoder's touch center left. */
+    static boolean beamedShaftCrossedFourth(byte[] raw, byte[] normalized, int width, int height,
+            float x, float y, float touchY, float gap, int direction) {
+        int source = beamedFlatTouchShaft(raw, width, height, x, y, x, touchY, gap, direction, true);
+        if (source < 0 || raw == normalized) return source >= 0;
+        int proof = beamedFlatTouchShaft(normalized, width, height, x, y, x, touchY, gap, direction, true);
+        return proof >= 0 && Math.abs(source - proof) <= 1;
+    }
+
     private static int beamedFlatTouchShaft(byte[] ink, int width, int height,
             float x, float y, float tx, float ty, float gap, int direction, boolean quarterAlias) {
         if (Math.abs(x - tx) > .45f * gap || y - ty < 1.25f * gap || y - ty > 1.78f * gap

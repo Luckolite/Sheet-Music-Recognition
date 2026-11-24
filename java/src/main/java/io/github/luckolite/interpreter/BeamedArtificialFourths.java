@@ -21,7 +21,8 @@ final class BeamedArtificialFourths {
             byte[] labels, byte[] raw, byte[] normalized, int width, int height,
             double[] starts, int[] keys, int physicalPage,
             List<OctaveMarkDetector.StaffSpan> printedOctaves,
-            List<SourceLocalAccidental.PrintedMark> stoppedAccidentals) {
+            List<SourceLocalAccidental.PrintedMark> stoppedAccidentals,
+            List<ArtificialHarmonics.BeamedTouch> pairedTouches) {
         var notes = score.notes();
         if (notes.size() != events.size()) return score;
         var byMeasure = new ArrayList<List<Integer>>(score.measures().size());
@@ -37,15 +38,35 @@ final class BeamedArtificialFourths {
                     || !qualifies(notes, events, owners, starts[bar])
                     || hasOtherSource(score, printedOctaves, bar)) continue;
             var proved = provedRun(score.measures().get(bar), notes, owners,
-                    labels, raw, normalized, width, height, 2, null, false);
+                    labels, raw, normalized, width, height, 2, null, false, pairedTouches);
             if (proved == null) continue;
-            var literals = OmrScoreInterpreter.harmonicTouchAccidentals(
-                    labels, normalized, raw, width, height, score, proved.touches());
-            if (!closedFourthSpelling(notes, events, owners, literals, keys[bar])) continue;
+            var literals = notes.get(owners.get(0)).stemDirection() == 1
+                    ? OmrScoreInterpreter.harmonicTouchAccidentalsInMeasures(
+                            labels, normalized, raw, width, height, score, proved.touches())
+                    : OmrScoreInterpreter.harmonicTouchAccidentals(
+                            labels, normalized, raw, width, height, score, proved.touches());
+            var naturalPairs = notes.get(owners.get(0)).stemDirection() == 1
+                    ? OmrScoreInterpreter.harmonicNaturalPairs(
+                            labels, normalized, raw, width, height, score.measures().get(bar), proved.touches())
+                    : java.util.Set.<ScoreNoteEvent>of();
+            if (!naturalPairs.isEmpty()) naturalPairs.removeIf(note -> !Integer.valueOf(ScoreNoteEvent.ACCIDENTAL_FROM_KEY)
+                    .equals(literals.get(note)) && !Integer.valueOf(ScoreNoteEvent.ACCIDENTAL_NATURAL)
+                    .equals(literals.get(note)));
+            for (var note : naturalPairs) literals.put(note, ScoreNoteEvent.ACCIDENTAL_NATURAL);
+            if (!closedFourthSpelling(notes, events, owners, literals, keys[bar], naturalPairs)) continue;
             for (int owner : owners) {
                 var note = notes.get(owner);
                 var event = events.get(owner);
-                int stopped = ((Number) event.get("midi")).intValue() - 24;
+                boolean paired = naturalPairs.contains(note);
+                int stopped = paired
+                        ? ScoreTiePitchGuard.writtenMidi(note.diatonicPitchIdentity(),
+                                ScoreNoteEvent.ACCIDENTAL_NATURAL, keys[bar])
+                        : ((Number) event.get("midi")).intValue() - 24;
+                if (paired) {
+                    event.put("midi", stopped + 24);
+                    stoppedAccidentals.add(new SourceLocalAccidental.PrintedMark(
+                            owner, ScoreNoteEvent.ACCIDENTAL_NATURAL));
+                }
                 event.remove("octaveShift");
                 event.put("writtenMidi", stopped);
                 event.put("harmonicTouchMidi", stopped + 5);
@@ -54,12 +75,11 @@ final class BeamedArtificialFourths {
                 int literal = literals.get(note);
                 if (literal != ScoreNoteEvent.ACCIDENTAL_FROM_KEY)
                     event.put("printedHarmonicTouchAccidental", literal);
+                if (paired) note = note.withWrittenAccidental(ScoreNoteEvent.ACCIDENTAL_NATURAL);
                 changed.set(owner, note.withOctaveShift(0).withHarmonicSemitones(24));
             }
-            if (notes.get(owners.get(owners.size() - 1)).stemDirection() == 1) {
-                retainUpstemNaturals(proved.touches(), score, labels, normalized, raw,
-                        width, height, owners, stoppedAccidentals);
-            }
+            retainStoppedNaturals(proved.touches(), score, labels, normalized, raw,
+                    width, height, owners, stoppedAccidentals);
             beams = projectBeams(beams, physicalPage, proved.groups());
             found = true;
         }
@@ -359,15 +379,14 @@ final class BeamedArtificialFourths {
         return owner;
     }
 
-    private static void retainUpstemNaturals(
+    private static void retainStoppedNaturals(
             List<ArtificialHarmonics.TouchHead> touches, ScorePageInterpretation score,
             byte[] labels, byte[] normalized, byte[] raw, int width, int height,
             List<Integer> owners, List<SourceLocalAccidental.PrintedMark> marks) {
         var queries = new ArrayList<ArtificialHarmonics.TouchHead>();
         for (var touch : touches) {
             var stop = touch.stop();
-            if (stop.stemDirection() == 1
-                    && stop.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_NATURAL)
+            if (stop.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_NATURAL)
                 queries.add(new ArtificialHarmonics.TouchHead(stop, touch.x(),
                         stop.pageY() * height, touch.gap()));
         }
@@ -387,8 +406,7 @@ final class BeamedArtificialFourths {
 
     private static boolean qualifies(List<ScoreNoteEvent> notes, List<Map<String, Object>> events,
             List<Integer> owners, double start) {
-        // A stem reversal is admitted from the downstem group into the upstem group.
-        if (notes.get(owners.get(0)).stemDirection() != -1) return false;
+        // Mixed runs may reverse from downstems into upstems.
         int direction = -1;
         float previous = -1;
         for (int slot = 0; slot < owners.size(); slot++) {
@@ -419,9 +437,18 @@ final class BeamedArtificialFourths {
             MeasureRegion bar, List<ScoreNoteEvent> notes, List<Integer> owners,
             byte[] labels, byte[] raw, byte[] normalized, int width, int height, int rails,
             UnnumberedTripletInk.Rows rows, boolean compact) {
+        return provedRun(bar, notes, owners, labels, raw, normalized, width, height,
+                rails, rows, compact, List.of());
+    }
+
+    private static ProvedRun provedRun(
+            MeasureRegion bar, List<ScoreNoteEvent> notes, List<Integer> owners,
+            byte[] labels, byte[] raw, byte[] normalized, int width, int height, int rails,
+            UnnumberedTripletInk.Rows rows, boolean compact, List<ArtificialHarmonics.BeamedTouch> pairedTouches) {
         float nominal = (bar.bottom() - bar.top()) * height / 8.2f;
         if (nominal < 10 || nominal > 26) return null;
         boolean mixed = compact || notes.get(owners.get(owners.size() - 1)).stemDirection() == 1;
+        boolean downstemRun = rails == 2 && !mixed;
         var hits = new ArrayList<ArtificialHarmonics.TouchHead>();
         var rawShafts = new ArrayList<PrintedBeamShafts.Shaft>();
         var proofShafts = new ArrayList<PrintedBeamShafts.Shaft>();
@@ -438,12 +465,26 @@ final class BeamedArtificialFourths {
             int stem = notes.get(i).stemDirection();
             var source = joinedShaft(raw, width, height, x, y, touch, gap, stem, budget);
             var proof = joinedShaft(normalized, width, height, x, y, touch, gap, stem, budget);
-            if (source == null || proof == null || Math.abs(source.left() - proof.left()) > 2
-                    || !printedTouch(labels, raw, normalized, width, height, x, y, touch, gap,
-                            stem, mixed, compact, source, proof)) return null;
+            if (source == null || proof == null || Math.abs(source.left() - proof.left()) > 2) return null;
+            if (printedTouch(labels, raw, normalized, width, height, x, y, touch, gap,
+                            stem, mixed, compact, source, proof)
+                    || rails == 2 && stem == -1
+                            && (printedDottedTouch(labels, raw, normalized, width, height, x, y, gap, stem)
+                                || ArtificialHarmonics.beamedShaftCrossedFourth(
+                                        raw, normalized, width, height, x, y, touch, gap, stem))) {
+                hits.add(new ArtificialHarmonics.TouchHead(note, x, touch, gap));
+            } else if (downstemRun) {
+                var paired = pairedTouches.stream().filter(alias ->
+                        matchingStop(notes, alias.glyph().stop()) == i
+                                && alias.touchDiatonic() == note.diatonicPitchIdentity() + 3
+                                && Math.abs(alias.glyph().x() - x) <= .55f * gap
+                                && Math.abs(alias.glyph().y() - touch) <= .38f * gap).toList();
+                if (paired.size() != 1) return null;
+                var glyph = paired.get(0).glyph();
+                hits.add(new ArtificialHarmonics.TouchHead(note, glyph.x(), glyph.y(), glyph.gap()));
+            } else return null;
             rawShafts.add(source);
             proofShafts.add(proof);
-            hits.add(new ArtificialHarmonics.TouchHead(notes.get(i), x, touch, gap));
         }
         if (rails == 1) {
             if (!closedTripletRails(raw, width, height, rawShafts, nominal)
@@ -459,6 +500,7 @@ final class BeamedArtificialFourths {
                         && clearsWideTripletMarks(bar, normalized, width, height, hits, proofShafts, rows, nominal));
             return new ProvedRun(hits, List.of(), unnumbered);
         }
+        if (downstemRun) recoverOuterRailEndpoints(raw, normalized, width, height, rawShafts, proofShafts, nominal);
         for (int i = 1; i < owners.size(); i++) {
             var ra = rawShafts.get(i - 1);
             var rb = rawShafts.get(i);
@@ -478,6 +520,64 @@ final class BeamedArtificialFourths {
         if (owners.size() - first < 2) return null;
         groups.add(List.copyOf(owners.subList(first, owners.size())));
         return new ProvedRun(hits, groups, false);
+    }
+
+    private static void recoverOuterRailEndpoints(
+            byte[] raw, byte[] normalized, int width, int height,
+            List<PrintedBeamShafts.Shaft> source, List<PrintedBeamShafts.Shaft> proof, float gap) {
+        for (int i = 1; i + 1 < source.size(); i++) {
+            var a = source.get(i - 1);
+            var b = source.get(i);
+            var c = source.get(i + 1);
+            var p = proof.get(i - 1);
+            var q = proof.get(i);
+            var r = proof.get(i + 1);
+            if (Math.abs(a.endY() - c.endY()) > gap * .36f
+                    || Math.abs(p.endY() - r.endY()) > gap * .36f
+                    || !nearInnerEndpoint(a, b, c, gap)
+                    || !nearInnerEndpoint(p, q, r, gap)
+                    || !doubleBeamBridge(raw, width, height, a, b, c, gap, 1)
+                    || !doubleBeamBridge(normalized, width, height, p, q, r, gap, 1))
+                continue;
+            int reach = Math.round(.2f * gap), center = (b.left() + b.right()) / 2;
+            int first = Math.max(b.left(), q.left()) - reach, last = Math.min(b.right(), q.right()) + reach;
+            int projected = Math.round((a.endY() + c.endY() + p.endY() + r.endY()) * .25f);
+            int slack = Math.round(gap * .22f);
+            extension:
+            for (int end = projected + slack; end >= projected - slack; end--) {
+                for (int x = first; x <= last; x++) {
+                    if (Math.abs(x - center) > reach || x <= a.right() || x >= c.left()) continue;
+                    if (!continuousShaft(raw, width, x, b.endY(), end)
+                            || !continuousShaft(normalized, width, x, q.endY(), end)) continue;
+                    var outer = new PrintedBeamShafts.Shaft(x, x, b.startY(), end, 1,
+                            List.of(new PrintedBeamShafts.Column(x, end)));
+                    if (!doubleBeamBridge(raw, width, height, a, outer, c, gap, 2)
+                            || !doubleBeamBridge(normalized, width, height, p, outer, r, gap, 2)) continue;
+                    source.set(i, outer);
+                    proof.set(i, outer);
+                    break extension;
+                }
+            }
+        }
+    }
+
+    private static boolean nearInnerEndpoint(PrintedBeamShafts.Shaft a, PrintedBeamShafts.Shaft b,
+            PrintedBeamShafts.Shaft c, float gap) {
+        int overlap = Math.min(a.endY(), c.endY()) - b.endY();
+        return overlap >= .48f * gap && overlap <= 1.1f * gap;
+    }
+
+    private static boolean continuousShaft(byte[] ink, int width, int x, int from, int to) {
+        if (from < 0 || to >= ink.length / width || x < 0 || x >= width) return false;
+        for (int y = from; y <= to; y++)
+            if ((ink[y * width + x] & 255) > 180) return false;
+        return true;
+    }
+
+    private static boolean doubleBeamBridge(byte[] ink, int width, int height, PrintedBeamShafts.Shaft a,
+            PrintedBeamShafts.Shaft b, PrintedBeamShafts.Shaft c, float gap, int rails) {
+        return WrappedEighthTriplets.matchesBeamRails(ink, width, height, a, b, gap, rails)
+                && WrappedEighthTriplets.matchesBeamRails(ink, width, height, b, c, gap, rails);
     }
 
     private static boolean closedTripletRails(byte[] gray, int width, int height,
@@ -1029,6 +1129,12 @@ final class BeamedArtificialFourths {
 
     private static boolean closedFourthSpelling(List<ScoreNoteEvent> notes, List<Map<String, Object>> events,
             List<Integer> owners, Map<ScoreNoteEvent, Integer> literals, int key) {
+        return closedFourthSpelling(notes, events, owners, literals, key, java.util.Set.of());
+    }
+
+    private static boolean closedFourthSpelling(List<ScoreNoteEvent> notes, List<Map<String, Object>> events,
+            List<Integer> owners, Map<ScoreNoteEvent, Integer> literals, int key,
+            java.util.Set<ScoreNoteEvent> naturalPairs) {
         var carry = new HashMap<Integer, Integer>();
         for (int i : owners) {
             var n = notes.get(i);
@@ -1037,8 +1143,13 @@ final class BeamedArtificialFourths {
             int base = n.diatonicPitchIdentity(), fourth = base + 3;
             int stopped = ScoreTiePitchGuard.writtenMidi(base, n.writtenAccidental(), key);
             if (!Integer.valueOf(stopped + 24).equals(events.get(i).get("midi"))) return false;
-            if (n.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_FROM_KEY)
-                carry.put(base, n.writtenAccidental());
+            int mark = n.writtenAccidental();
+            if (naturalPairs.contains(n)) {
+                mark = ScoreNoteEvent.ACCIDENTAL_NATURAL;
+                stopped = ScoreTiePitchGuard.writtenMidi(base, mark, key);
+                if (stopped + 24 > 127) return false;
+            }
+            if (mark != ScoreNoteEvent.ACCIDENTAL_FROM_KEY) carry.put(base, mark);
             if (touch != ScoreNoteEvent.ACCIDENTAL_FROM_KEY) carry.put(fourth, touch);
             int touched = ScoreTiePitchGuard.writtenMidi(fourth,
                     carry.getOrDefault(fourth, ScoreNoteEvent.ACCIDENTAL_FROM_KEY), key);
