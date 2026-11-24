@@ -51,6 +51,20 @@ public class DetachedUpperStemFingeringsTest {
     }
 
     @Test
+    public void ordinaryDownstemTipIsAvailableOnlyToTheShapeMatchingPath() {
+        byte[] upper = scene(2, false);
+        byte[] lower = new byte[upper.length];
+        for (int i = 0; i < upper.length; i++) lower[upper.length - 1 - i] = upper[i];
+        var downstem = new PrintedSlurOwners.GeometryHead(0, WIDTH - 1 - head.x(), HEIGHT - 1 - head.y(), 0, 1);
+        var trace = PairedTremoloInk.stem(lower, WIDTH, HEIGHT, downstem.x(), downstem.y(), 16, -1);
+        assertNotNull(trace);
+        assertEquals(-1, MeasuredStaffFingerings.physicalDownstemEnd(lower, WIDTH, HEIGHT, downstem,
+                trace, 16, false, new PrintedBeamShafts.Budget(50_000)));
+        assertEquals(HEIGHT - 1 - 130, MeasuredStaffFingerings.physicalDownstemEnd(
+                lower, WIDTH, HEIGHT, downstem, trace, 16, true, new PrintedBeamShafts.Budget(50_000)));
+    }
+
+    @Test
     public void opposingLiteralShaftPreservesAmbiguity() {
         byte[] gray = scene(2, true);
         for (int y = 190; y <= 244; y++)

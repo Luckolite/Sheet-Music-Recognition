@@ -21,7 +21,7 @@ final class DetachedFingeringThrees {
         }
     }
 
-    private record Window(int left, int top, int right, int bottom, float center, float gap, boolean measuredTip) {
+    private record Window(int left, int top, int right, int bottom, float center, float gap, boolean measuredTip, boolean ordinaryTip) {
         long area() {
             return (long) (right - left + 1) * (bottom - top + 1);
         }
@@ -154,6 +154,7 @@ final class DetachedFingeringThrees {
     private static Window window(byte[] image, int width, int height, PrintedSlurOwners.Location head,
             int stem, float floor, float gap, PrintedBeamShafts.Budget measuredTipWork) {
         boolean measuredTip = false;
+        boolean ordinaryTip = false;
         float center = head.x();
         int top = Math.round(head.y() + gap * .9f), bottom = Math.round(head.y() + gap * 3.7f);
         if (stem == -1) {
@@ -163,10 +164,11 @@ final class DetachedFingeringThrees {
             top = Math.round(shaft.endY() + gap * .18f);
             if (measuredTipWork != null) {
                 int tip = MeasuredStaffFingerings.physicalDownstemEnd(
-                        image, width, height, head, shaft, gap, measuredTipWork);
+                        image, width, height, head, shaft, gap, true, measuredTipWork);
                 if (tip >= 0) {
-                    top = tip + 1;
-                    measuredTip = true;
+                    ordinaryTip = Math.abs(shaft.endY() - tip) <= gap * .18f;
+                    measuredTip = !ordinaryTip;
+                    if (measuredTip) top = tip + 1;
                 }
             }
             bottom = Math.round(Math.max(floor + gap * 2.5f, top + gap * 1.85f));
@@ -174,7 +176,7 @@ final class DetachedFingeringThrees {
         int left = Math.round(center - gap * .92f), right = Math.round(center + gap * .92f);
         if (left < 0 || right >= width || top < 0 || bottom >= height || top >= bottom
                 || bottom - top > gap * 6.5f) return null;
-        return new Window(left, top, right, bottom, center, gap, measuredTip);
+        return new Window(left, top, right, bottom, center, gap, measuredTip, ordinaryTip);
     }
 
     private static Box read(byte[] image, int width, int height, PrintedSlurOwners.Location head,
@@ -270,7 +272,9 @@ final class DetachedFingeringThrees {
                 if (!tested.add(box)) continue;
                 if (!MatchedDetachedThreeShape.proves(image, width, box.left(), box.top(), box.right(),
                         box.bottom(), references, normalized)
-                        && (!window.measuredTip() || !matchesMeasuredTipThree(image, width, height, box, references, normalized)))
+                        && (!window.measuredTip() && !window.ordinaryTip()
+                                || !matchesMeasuredTipThree(image, width, height, box, references, normalized,
+                                        window.ordinaryTip() ? .70f : .65f)))
                     continue;
                 if (!hasEnclosure(image, width, height, box, window.gap(), remaining)) matches.add(box);
             }
@@ -279,11 +283,11 @@ final class DetachedFingeringThrees {
     }
 
     private static boolean matchesMeasuredTipThree(byte[] image, int width, int height, Box box,
-            List<MatchedDetachedThreeShape.Reference> references, boolean normalized) {
+            List<MatchedDetachedThreeShape.Reference> references, boolean normalized, float minimum) {
         var reading = JoinedDigitTemplates.inspect(image, width, height, new BitSet(),
                 box.left(), box.top(), box.right(), box.bottom(), () -> {});
         return reading != null && (reading.digit() < 0 || reading.digit() == 3)
-                && reading.scores()[3] >= .65f && reading.scores()[3] + .08f >= reading.best()
+                && reading.scores()[3] >= minimum && reading.scores()[3] + .08f >= reading.best()
                 && MatchedDetachedThreeShape.matchesReferences(image, width, box.left(), box.top(),
                         box.right(), box.bottom(), references, normalized);
     }

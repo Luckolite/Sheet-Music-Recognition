@@ -45,6 +45,7 @@ final class MeasuredStaffFingerings {
         var added = new ArrayList<PrintedFingeringDigits.Mark>();
         long[] remaining = {900_000};
         long[] measuredTipPixels = {150_000};
+        long[] alternateThresholdPixels = {150_000};
         var measuredTipWork = new PrintedBeamShafts.Budget(1_200_000);
         long[] overlaidRemaining = {750_000};
         for (var frame : frames) {
@@ -58,12 +59,12 @@ final class MeasuredStaffFingerings {
                 int bottom = Math.round(floor + gap * 3.5f);
                 if (top < 0 || bottom >= height || bottom <= top) continue;
                 var norm = find(normalized, width, height, head, top, bottom, gap,
-                        remaining, measuredTipPixels, measuredTipWork);
+                        remaining, measuredTipPixels, alternateThresholdPixels, measuredTipWork);
                 if (remaining[0] < 0) return original;
                 int digit = -1;
                 if (norm != null) {
                     var rawGlyph = find(raw, width, height, head, top, bottom, gap,
-                        remaining, measuredTipPixels, measuredTipWork);
+                        remaining, measuredTipPixels, alternateThresholdPixels, measuredTipWork);
                     if (remaining[0] < 0) return original;
                     if (norm.same(rawGlyph)) digit = norm.digit();
                 }
@@ -120,41 +121,51 @@ final class MeasuredStaffFingerings {
 
     private static Glyph find(byte[] gray, int width, int height,
             PrintedSlurOwners.Location head, int top, int bottom, float gap, long[] remaining,
-            long[] measuredTipPixels, PrintedBeamShafts.Budget measuredTipWork) {
+            long[] measuredTipPixels, long[] alternateThresholdPixels, PrintedBeamShafts.Budget measuredTipWork) {
         var shaft = PairedTremoloInk.stem(gray, width, height, head.x(), head.y(), gap, -1);
         if (shaft == null) return null;
         int left = Math.max(0, Math.round(shaft.x() - gap * .9f));
         int right = Math.min(width - 1, Math.round(shaft.x() + gap * .9f));
         int ordinaryTop = Math.max(top, Math.round(shaft.endY() + gap * .18f));
-        var ordinary = readGlyph(gray, width, height, shaft.x(), left, right, ordinaryTop, bottom, gap, remaining);
-        if (ordinary != null || remaining[0] < 0 || measuredTipPixels[0] < 0) return ordinary;
-        int tip = physicalDownstemEnd(gray, width, height, head, shaft, gap, measuredTipWork);
-        if (tip < 0) return null;
+        var ordinary = readGlyph(gray, width, height, shaft.x(), left, right, ordinaryTop, bottom, gap, remaining, 165);
+        if (ordinary != null || remaining[0] < 0) return ordinary;
+        if (measuredTipPixels[0] >= 0) {
+            int tip = physicalDownstemEnd(gray, width, height, head, shaft, gap, false, measuredTipWork);
+            if (tip >= 0) {
+                var measured = readGlyph(gray, width, height, shaft.x(), left, right,
+                        Math.max(top, tip + 1), bottom, gap, measuredTipPixels, 165);
+                if (measured != null) return measured;
+            }
+        }
+        if (alternateThresholdPixels[0] < 0) return null;
         return readGlyph(gray, width, height, shaft.x(), left, right,
-                Math.max(top, tip + 1), bottom, gap, measuredTipPixels);
+                ordinaryTop, bottom, gap, alternateThresholdPixels, 125);
     }
 
     // A nearby detached fingering can lengthen the permissive vertical trace.
     static int physicalDownstemEnd(byte[] gray, int width, int height, PrintedSlurOwners.Location head,
-            PairedTremoloInk.Stem shaft, float gap, PrintedBeamShafts.Budget work) {
-        if (work.refused() || shaft.endY() - head.y() < gap * 4f) return -1;
+            PairedTremoloInk.Stem shaft, float gap, boolean acceptOrdinary, PrintedBeamShafts.Budget work) {
+        boolean longTrace = shaft.endY() - head.y() >= gap * 4f;
+        if (work.refused() || !acceptOrdinary && !longTrace) return -1;
         var shafts = PrintedBeamShafts.at(gray, width, height, head.x(), head.y(), gap, work);
         if (work.refused() || shafts.size() != 1 || shafts.get(0).direction() != 1) return -1;
         var physical = shafts.get(0);
         float excess = shaft.endY() - physical.endY();
-        if (excess < gap * .6f || excess > gap * 2.1f
-                || Math.abs(shaft.x() - (physical.left() + physical.right()) * .5f) > gap * .18f) return -1;
+        if (Math.abs(shaft.x() - (physical.left() + physical.right()) * .5f) > gap * .18f) return -1;
+        boolean sameTip = acceptOrdinary && Math.abs(excess) <= gap * .18f;
+        boolean extendedTrace = longTrace && excess >= gap * .6f && excess <= gap * 2.1f;
+        if (!sameTip && !extendedTrace) return -1;
         return physical.endY();
     }
 
     private static Glyph readGlyph(byte[] gray, int width, int height, int shaftX,
-            int left, int right, int top, int bottom, float gap, long[] remaining) {
+            int left, int right, int top, int bottom, float gap, long[] remaining, int threshold) {
         long cells = (long) (right - left + 1) * (bottom - top + 1);
         if (top >= bottom || cells > 16_384) return null;
         remaining[0] -= cells;
         if (remaining[0] < 0) return null;
         var image = RawNumeralComponents.capture(gray, width, height,
-                left, top, right, bottom, 165, () -> {}, () -> {});
+                left, top, right, bottom, threshold, () -> {}, () -> {});
         Glyph match = null;
         for (var c : image.components()) {
             int h = c.bottom - c.top + 1, w = c.right - c.left + 1;

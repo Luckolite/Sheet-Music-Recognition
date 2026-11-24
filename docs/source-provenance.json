@@ -1702,13 +1702,13 @@
   "files": {
     "MeasuredStaffFingerings.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/MeasuredStaffFingerings.java",
-      "source_sha256": "1357c33726c604f3279fe0b67053254ccd7b532016d4729c34ac6df920b6fac9",
-      "source_normalized_sha256": "1357c33726c604f3279fe0b67053254ccd7b532016d4729c34ac6df920b6fac9",
+      "source_sha256": "de5ae882ff78b99873d8f0c67eeca0bf6a5b0ba0e84933cf59ce9e2c8ececa34",
+      "source_normalized_sha256": "de5ae882ff78b99873d8f0c67eeca0bf6a5b0ba0e84933cf59ce9e2c8ececa34",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/MeasuredStaffFingerings.java",
-      "standalone_normalized_sha256": "217de6f777cc416dc74dfba5c80a6e9768fafd396b69302bf65ee41b1cd4a713",
-      "reviewed_app_commit": "0252817ba725ebacb553a89285d9b5ac814356d6",
+      "standalone_normalized_sha256": "3f9f1bb392de2880417e915482d459bf4937ff57e762f9451f218ad1dc5a2800",
+      "reviewed_app_commit": "b07709bac8e57c1c2857f283e2d5ecf9236665a2",
       "license": "Apache-2.0",
-      "review_note": "Uses an independently bounded physical downstem end for detached fingerings after the ordinary search. Shares the same optical shaft proof with the detached-three reader."
+      "review_note": "Shares a single physical downstem scan. The ordinary digit path retains its primary and overtrace searches, with a separately bounded second contrast threshold for detached numerals."
     },
     "ShaftMatchedFingerings.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/ShaftMatchedFingerings.java",
@@ -1722,13 +1722,13 @@
     },
     "DetachedFingeringThrees.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/DetachedFingeringThrees.java",
-      "source_sha256": "5b2092b815da87dff6a7b48577d0a8f0fc479aef1683bb3100aac85e5ffca728",
-      "source_normalized_sha256": "5b2092b815da87dff6a7b48577d0a8f0fc479aef1683bb3100aac85e5ffca728",
+      "source_sha256": "acf653d656f6c5f5eae7c278229eb36c85c739b0fec092d986eb85bed2bdfa8c",
+      "source_normalized_sha256": "acf653d656f6c5f5eae7c278229eb36c85c739b0fec092d986eb85bed2bdfa8c",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/DetachedFingeringThrees.java",
-      "standalone_normalized_sha256": "05f2462ed156d11dc4a1a69cf8902ca9d7682d5acc8a0d776a7fd4d14b44600e",
-      "reviewed_app_commit": "0252817ba725ebacb553a89285d9b5ac814356d6",
+      "standalone_normalized_sha256": "dae27d9a28664ddef16bdaaaa0ff6107e16ea33e76d9c265c7d0b5b205e95645",
+      "reviewed_app_commit": "b07709bac8e57c1c2857f283e2d5ecf9236665a2",
       "license": "Apache-2.0",
-      "review_note": "Checks ambiguous detached threes below a qualified physical beam end against more than one independently retained numeral. The existing closed-eight and neighboring-enclosure exclusions remain in force."
+      "review_note": "Accepts ordinary stem-tip agreement for the anchored shape-reference check as well as a proved extended trace. Both source planes, independent page glyphs, and closed-eight and enclosure vetoes remain required."
     },
     "DetachedUpperStemFingerings.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/DetachedUpperStemFingerings.java",
