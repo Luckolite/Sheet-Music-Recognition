@@ -1702,13 +1702,13 @@
   "files": {
     "RuleOverlaidFingerings.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/RuleOverlaidFingerings.java",
-      "source_sha256": "53de05a0ca9c99cf7572cb39ee50f9c297981b01d8d10676c70300bcbb56eded",
-      "source_normalized_sha256": "53de05a0ca9c99cf7572cb39ee50f9c297981b01d8d10676c70300bcbb56eded",
+      "source_sha256": "8462076c21ba1f0b5f89c21bd646b5903beba75d1dac8b4a7897e20706d93421",
+      "source_normalized_sha256": "8462076c21ba1f0b5f89c21bd646b5903beba75d1dac8b4a7897e20706d93421",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/RuleOverlaidFingerings.java",
-      "standalone_normalized_sha256": "52f5b99d06fef0b638b11e6dd33f92d56e602364b5ca91e2ff6f75386a8e84a8",
-      "reviewed_app_commit": "949d1fa8e8c66a3b826aa5ebb50c29bfed35476d",
+      "standalone_normalized_sha256": "f3e5d5ea75c0a9d27574e679f4d9be9c6119035ed304862b576260181972dddc",
+      "reviewed_app_commit": "d9bc3ee11e8c05693bf33bd3b13992174d5a03fd",
       "license": "Apache-2.0",
-      "review_note": "A single weak row bordering a witnessed staff rule can connect the visible halves of a printed three. Only witnessed rule pixels are masked before shape proof."
+      "review_note": "Use a witnessed upper rule and matching physical stem to recover crossed upper ones and twos. Weak twos match two independently retained shapes with the same rows excluded on both raster planes."
     },
     "MeasuredStaffFingerings.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/MeasuredStaffFingerings.java",
@@ -1722,13 +1722,13 @@
     },
     "ShaftMatchedFingerings.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/ShaftMatchedFingerings.java",
-      "source_sha256": "4b3303b8e140a4f5ec7e614b5392dc254b9f54e5be1b5384499a44d915a450b8",
-      "source_normalized_sha256": "4b3303b8e140a4f5ec7e614b5392dc254b9f54e5be1b5384499a44d915a450b8",
+      "source_sha256": "0c9ab76d0a1e56be984d517f67eb1f9f87db01b6891df7c7f5d536aca5a1ff30",
+      "source_normalized_sha256": "0c9ab76d0a1e56be984d517f67eb1f9f87db01b6891df7c7f5d536aca5a1ff30",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/ShaftMatchedFingerings.java",
-      "standalone_normalized_sha256": "876bfc1e34afc30c077ae515e07b45c7775c450320c518c662b9e4542f07520b",
-      "reviewed_app_commit": "0252817ba725ebacb553a89285d9b5ac814356d6",
+      "standalone_normalized_sha256": "714b6ccb16aa3bf6607b887827bb2ba72375bcef28e0788b28ec4e6971cc83cc",
+      "reviewed_app_commit": "d9bc3ee11e8c05693bf33bd3b13992174d5a03fd",
       "license": "Apache-2.0",
-      "review_note": "Checks grayscale numeral shape in both planes on either side of the staff when binary matching fails. The second threshold is separately bounded and the existing note-owned fingering record carries the result."
+      "review_note": "Reuse independently retained and detached-only numeral shapes when a later upper rule recovery cannot resolve a two from the visible ink alone."
     },
     "DetachedFingeringThrees.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/DetachedFingeringThrees.java",

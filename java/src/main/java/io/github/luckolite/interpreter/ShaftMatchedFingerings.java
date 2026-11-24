@@ -68,6 +68,12 @@ final class ShaftMatchedFingerings {
 
         var recovered = new ArrayList<PrintedFingeringDigits.Mark>();
         var boxes = new ArrayList<Box>();
+        var rawTwos = new ArrayList<float[]>();
+        var normalizedTwos = new ArrayList<float[]>();
+        if (above) for (var reference : references) {
+            rawTwos.add(reference.rawShape());
+            normalizedTwos.add(reference.normalizedShape());
+        }
         long[] remaining = {750_000};
         long[] lighterThresholdBudget = {250_000};
         for (var frame : frames) for (var head : frame.heads()) {
@@ -75,9 +81,7 @@ final class ShaftMatchedFingerings {
                 continue;
             float[] local = frame.track().at(head.x());
             float gap = local[1];
-            if (gap < 10 || gap > 24 || frame.heads().stream().anyMatch(other -> other.owner() != head.owner()
-                    && Math.abs(other.x() - head.x()) < gap * .8f
-                    && Math.abs(other.y() - head.y()) < gap * 3f)) continue;
+            if (gap < 10 || gap > 24 || adjacentHead(frame.heads(), head, gap)) continue;
             int top = Math.round(above ? local[0] - gap * 7.5f : head.y() + gap * 1.1f);
             int bottom = Math.round(above ? head.y() - gap * 1.1f : local[0] + gap * 3.5f);
             if (top < 0 || bottom >= height || top >= bottom) continue;
@@ -89,12 +93,43 @@ final class ShaftMatchedFingerings {
             if (!first.same(second) || references.stream().anyMatch(ref -> ref.box().intersects(first))
                     || boxes.stream().anyMatch(box -> box.intersects(first))) continue;
             boxes.add(first);
+            if (above && rawTwos.size() < 64) {
+                // Reuse detached matches established before the staff-rule pass.
+                rawTwos.add(MatchedDetachedThreeShape.vector(raw, width,
+                        first.left(), first.top(), first.right(), first.bottom()));
+                normalizedTwos.add(MatchedDetachedThreeShape.vector(normalized, width,
+                        second.left(), second.top(), second.right(), second.bottom()));
+            }
             var placement = above ? PrintedFingeringDigits.Placement.ABOVE : PrintedFingeringDigits.Placement.BELOW;
             recovered.add(new PrintedFingeringDigits.Mark(head.owner(), 2, placement));
         }
-        if (above) recovered.addAll(DetachedUpperStemFingerings.ones(
-                original, added, recovered, notes, frames, raw, normalized, width, height));
+        if (above) {
+            recovered.addAll(DetachedUpperStemFingerings.ones(
+                    original, added, recovered, notes, frames, raw, normalized, width, height));
+            for (var mark : recovered) alreadyMarked.add(mark.noteIndex());
+            long[] rulePixels = {750_000};
+            for (var frame : frames) for (var head : frame.heads()) {
+                if (rulePixels[0] < 0) return recovered;
+                if (alreadyMarked.contains(head.owner()) || head.grace() || !eligible(notes.get(head.owner()), true))
+                    continue;
+                float[] local = frame.track().at(head.x());
+                float gap = local[1];
+                if (gap < 10 || gap > 24 || adjacentHead(frame.heads(), head, gap)) continue;
+                int digit = RuleOverlaidFingerings.above(raw, normalized, width, height, head, frame.track(),
+                        local[0], gap, rulePixels, rawTwos, normalizedTwos);
+                if (digit < 0) continue;
+                alreadyMarked.add(head.owner());
+                recovered.add(new PrintedFingeringDigits.Mark(head.owner(), digit, PrintedFingeringDigits.Placement.ABOVE));
+            }
+        }
         return recovered;
+    }
+
+    private static boolean adjacentHead(List<PrintedSlurOwners.GeometryHead> heads,
+            PrintedSlurOwners.Location head, float gap) {
+        return heads.stream().anyMatch(other -> other.owner() != head.owner()
+                && Math.abs(other.x() - head.x()) < gap * .8f
+                && Math.abs(other.y() - head.y()) < gap * 3f);
     }
 
     private static Box find(byte[] image, int width, int height, PrintedSlurOwners.Location head,

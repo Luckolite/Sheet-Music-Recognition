@@ -6,7 +6,7 @@ import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.List;
 
-/** Reads stem-side fingerings with independently witnessed lower staff lines through their ink. */
+/** Reads stem-side fingerings with independently witnessed staff lines through their ink. */
 final class RuleOverlaidFingerings {
     private RuleOverlaidFingerings() {}
 
@@ -29,9 +29,9 @@ final class RuleOverlaidFingerings {
             long[] remaining) {
         if (head.y() > floor - gap * 4f
                 || !(track.verifiedAt(head.x()) || track.verifiedAt(head.x() - 2f * gap))) return -1;
-        var other = find(normalized, width, height, head, floor, gap, remaining, false);
+        var other = find(normalized, width, height, head, floor, gap, remaining, false, null);
         if (other == null) return -1;
-        var original = find(raw, width, height, head, floor, gap, remaining, false);
+        var original = find(raw, width, height, head, floor, gap, remaining, false, null);
         return other.same(original) ? other.digit() : -1;
     }
 
@@ -41,19 +41,36 @@ final class RuleOverlaidFingerings {
             long[] remaining) {
         if (head.y() > floor - gap * 4f
                 || !(track.verifiedAt(head.x()) || track.verifiedAt(head.x() - 2f * gap))) return false;
-        var other = find(normalized, width, height, head, floor, gap, remaining, true);
-        return other != null && other.same(find(raw, width, height, head, floor, gap, remaining, true));
+        var other = find(normalized, width, height, head, floor, gap, remaining, true, null);
+        return other != null && other.same(find(raw, width, height, head, floor, gap, remaining, true, null));
+    }
+
+    static int above(byte[] raw, byte[] normalized, int width, int height,
+            PrintedSlurOwners.Location head, StaffPitchTrack track, float floor, float gap,
+            long[] remaining, List<float[]> rawTwos, List<float[]> normalizedTwos) {
+        if (head.y() < floor
+                || !(track.verifiedAt(head.x()) || track.verifiedAt(head.x() - 2f * gap))) return -1;
+        float ceiling = floor - 4f * gap;
+        var candidate = find(normalized, width, height, head, ceiling, gap, remaining, false, normalizedTwos);
+        if (candidate == null) return -1;
+        var original = find(raw, width, height, head, ceiling, gap, remaining, false, rawTwos);
+        return candidate.same(original) ? candidate.digit() : -1;
     }
 
     private static Glyph find(
             byte[] raster, int width, int height, PrintedSlurOwners.Location head,
-            float floor, float gap, long[] remaining, boolean threeOnly) {
-        var shaft = PairedTremoloInk.stem(raster, width, height, head.x(), head.y(), gap, -1);
+            float staffEdge, float gap, long[] remaining, boolean threeOnly, List<float[]> upperTwos) {
+        boolean above = upperTwos != null;
+        var shaft = PairedTremoloInk.stem(raster, width, height, head.x(), head.y(), gap, above ? 1 : -1);
         if (shaft == null) return null;
         int left = Math.round(shaft.x() - gap * .9f);
         int right = Math.round(shaft.x() + gap * .9f);
-        int top = Math.round(Math.max(shaft.endY() + gap * .24f, floor - gap * 1.8f));
-        int bottom = Math.round(floor + gap * .75f);
+        int top = Math.round(Math.max(shaft.endY() + gap * .24f, staffEdge - gap * 1.8f));
+        int bottom = Math.round(staffEdge + gap * .75f);
+        if (above) {
+            top = Math.round(staffEdge - gap * .85f);
+            bottom = Math.round(Math.min(shaft.endY() - gap * .24f, staffEdge + gap * 1.8f));
+        }
         int flank = Math.round(gap * .78f);
         if (top >= bottom || left - flank < 0 || right + flank >= width || top < 0 || bottom >= height)
             return null;
@@ -61,8 +78,9 @@ final class RuleOverlaidFingerings {
         remaining[0] -= (long) (right - left + 1 + flank * 2) * heightOfWindow;
         if (remaining[0] < 0) return null;
         var rule = new BitSet();
+        float innerRule = staffEdge + (above ? gap : -gap);
         for (int y = top; y <= bottom; y++) {
-            if (Math.abs(y - floor) > gap * .21f && Math.abs(y - (floor - gap)) > gap * .21f)
+            if (Math.abs(y - staffEdge) > gap * .21f && Math.abs(y - innerRule) > gap * .21f)
                 continue;
             int before = darkCount(raster, width, y, left - flank, left - 1);
             int after = darkCount(raster, width, y, right + 1, right + flank);
@@ -97,9 +115,9 @@ final class RuleOverlaidFingerings {
                 Row row = rows[y - top];
                 if (row == null) {
                     if (rule.get(y)) continue;
-                    // A witnessed rule can swallow a weak edge row of a printed three.
+                    // A thin edge row can vanish beside a witnessed rule.
                     // Leave that row unmasked so the shape proof still sees the missing ink.
-                    if (threeOnly && !bridgedRuleEdge
+                    if ((above || threeOnly) && !bridgedRuleEdge
                             && (rule.get(y + 1) || y - end > 1 && rule.get(y - 1))) {
                         bridgedRuleEdge = true;
                         continue;
@@ -116,8 +134,9 @@ final class RuleOverlaidFingerings {
             int h = end - begin + 1, w = high - low + 1;
             float center = (low + high) * .5f;
             if (obscured.size() < 2 || obscured.size() > gap * .32f
+                    || above && obscured.get(obscured.size() - 1) - obscured.get(0) + 1 != obscured.size()
                     || begin == top || end == bottom || w < gap * .38f || w > gap * 1.12f
-                    || h < gap * .80f || h > gap * 1.53f || Math.abs(center - shaft.x()) > gap * .46f
+                    || h < gap * .80f || h > gap * 1.53f || Math.abs(center - shaft.x()) > gap * (above ? .30f : .46f)
                     || mass < w * h * .24f) continue;
             var masked = new BitSet();
             for (int z : obscured) masked.set(z * width + low, z * width + high + 1);
@@ -130,11 +149,45 @@ final class RuleOverlaidFingerings {
                     continue;
                 digit = 3;
             }
-            if (digit < 1 || digit > 4) continue;
+            if (above && digit < 0 && reading.scores()[2] == reading.best()
+                    && matchesMaskedTwos(raster, width, low, begin, high, end, obscured, upperTwos, remaining))
+                digit = 2;
+            if (digit < 1 || digit > (above ? 2 : 4)) continue;
             if (result != null) return null;
             result = new Glyph(digit, low, begin, high, end, shaft.x(), List.copyOf(obscured));
         }
         return result;
+    }
+
+    private static boolean matchesMaskedTwos(byte[] raster, int stride, int left, int top, int right, int bottom,
+            List<Integer> rules, List<float[]> references, long[] remaining) {
+        float[] shape = MatchedDetachedThreeShape.vector(raster, stride, left, top, right, bottom);
+        remaining[0] -= (long) shape.length * references.size();
+        if (remaining[0] < 0) return false;
+        var visible = new BitSet(shape.length);
+        float yScale = (bottom - top + 1) / 24f;
+        float observedMass = 0;
+        for (int y = 0; y < 24; y++) {
+            float yy = Math.max(top, Math.min(bottom, top + (y + .5f) * yScale - .5f));
+            // Bilinear sampling touches both pixel rows. Exclude any sample that touches the rule.
+            if (rules.contains((int) yy) || rules.contains((int) Math.ceil(yy))) continue;
+            visible.set(y * 16, (y + 1) * 16);
+            for (int x = 0; x < 16; x++) {
+                float value = shape[y * 16 + x];
+                observedMass += value * value;
+            }
+        }
+        int matches = 0;
+        float required = .84f * .84f * observedMass;
+        for (var reference : references) {
+            float dot = 0, referenceMass = 0;
+            for (int i = visible.nextSetBit(0); i >= 0; i = visible.nextSetBit(i + 1)) {
+                dot += shape[i] * reference[i];
+                referenceMass += reference[i] * reference[i];
+            }
+            if (dot > 0 && dot * dot >= required * referenceMass && ++matches == 2) return true;
+        }
+        return false;
     }
 
     private record Row(int left, int right, int mass) {}
