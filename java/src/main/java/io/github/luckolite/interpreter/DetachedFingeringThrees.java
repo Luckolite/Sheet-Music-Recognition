@@ -21,7 +21,7 @@ final class DetachedFingeringThrees {
         }
     }
 
-    private record Window(int left, int top, int right, int bottom, float center, float gap) {
+    private record Window(int left, int top, int right, int bottom, float center, float gap, boolean measuredTip) {
         long area() {
             return (long) (right - left + 1) * (bottom - top + 1);
         }
@@ -148,6 +148,12 @@ final class DetachedFingeringThrees {
 
     private static Window window(byte[] image, int width, int height, PrintedSlurOwners.Location head,
             int stem, float floor, float gap) {
+        return window(image, width, height, head, stem, floor, gap, null);
+    }
+
+    private static Window window(byte[] image, int width, int height, PrintedSlurOwners.Location head,
+            int stem, float floor, float gap, PrintedBeamShafts.Budget measuredTipWork) {
+        boolean measuredTip = false;
         float center = head.x();
         int top = Math.round(head.y() + gap * .9f), bottom = Math.round(head.y() + gap * 3.7f);
         if (stem == -1) {
@@ -155,12 +161,20 @@ final class DetachedFingeringThrees {
             if (shaft == null) return null;
             center = shaft.x();
             top = Math.round(shaft.endY() + gap * .18f);
+            if (measuredTipWork != null) {
+                int tip = MeasuredStaffFingerings.physicalDownstemEnd(
+                        image, width, height, head, shaft, gap, measuredTipWork);
+                if (tip >= 0) {
+                    top = tip + 1;
+                    measuredTip = true;
+                }
+            }
             bottom = Math.round(Math.max(floor + gap * 2.5f, top + gap * 1.85f));
         }
         int left = Math.round(center - gap * .92f), right = Math.round(center + gap * .92f);
         if (left < 0 || right >= width || top < 0 || bottom >= height || top >= bottom
                 || bottom - top > gap * 6.5f) return null;
-        return new Window(left, top, right, bottom, center, gap);
+        return new Window(left, top, right, bottom, center, gap, measuredTip);
     }
 
     private static Box read(byte[] image, int width, int height, PrintedSlurOwners.Location head,
@@ -203,6 +217,7 @@ final class DetachedFingeringThrees {
             byte[] raw, byte[] normalized, int width, int height) {
         var recovered = new ArrayList<PrintedFingeringDigits.Mark>();
         long[] budget = {2_800_000};
+        var measuredTipWork = new PrintedBeamShafts.Budget(1_200_000);
         for (var frame : frames) for (var head : frame.heads()) {
             var note = notes.get(head.owner());
             if (occupied.contains(head.owner()) || head.grace() || !eligibleShape(note)) continue;
@@ -212,11 +227,11 @@ final class DetachedFingeringThrees {
                     && Math.abs(other.x() - head.x()) < gap * .8f
                     && Math.abs(other.y() - head.y()) < gap * 3f)) continue;
 
-            var a = window(raw, width, height, head, note.stemDirection(), at[0], gap);
+            var a = window(raw, width, height, head, note.stemDirection(), at[0], gap, measuredTipWork);
             var candidates = matching(raw, width, height, a, references, false, budget);
             if (budget[0] < 0) return List.of();
             if (candidates.isEmpty()) continue;
-            var b = window(normalized, width, height, head, note.stemDirection(), at[0], gap);
+            var b = window(normalized, width, height, head, note.stemDirection(), at[0], gap, measuredTipWork);
             var corroborated = matching(normalized, width, height, b, references, true, budget);
             if (budget[0] < 0) return List.of();
             Box match = null;
@@ -254,11 +269,23 @@ final class DetachedFingeringThrees {
                 var box = new Box(glyph.left, glyph.top, glyph.right, glyph.bottom);
                 if (!tested.add(box)) continue;
                 if (!MatchedDetachedThreeShape.proves(image, width, box.left(), box.top(), box.right(),
-                        box.bottom(), references, normalized)) continue;
+                        box.bottom(), references, normalized)
+                        && (!window.measuredTip() || !matchesMeasuredTipThree(image, width, height, box, references, normalized)))
+                    continue;
                 if (!hasEnclosure(image, width, height, box, window.gap(), remaining)) matches.add(box);
             }
         }
         return matches;
+    }
+
+    private static boolean matchesMeasuredTipThree(byte[] image, int width, int height, Box box,
+            List<MatchedDetachedThreeShape.Reference> references, boolean normalized) {
+        var reading = JoinedDigitTemplates.inspect(image, width, height, new BitSet(),
+                box.left(), box.top(), box.right(), box.bottom(), () -> {});
+        return reading != null && (reading.digit() < 0 || reading.digit() == 3)
+                && reading.scores()[3] >= .65f && reading.scores()[3] + .08f >= reading.best()
+                && MatchedDetachedThreeShape.matchesReferences(image, width, box.left(), box.top(),
+                        box.right(), box.bottom(), references, normalized);
     }
 
     private static boolean separateTupletOwner(byte[] raw, byte[] normalized, int width, int height,

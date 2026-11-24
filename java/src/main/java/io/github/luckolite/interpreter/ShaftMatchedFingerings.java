@@ -9,8 +9,7 @@ import java.util.List;
 
 /** Recovers detached fingerings beyond a stem tip using independently retained same-page numeral shapes. */
 final class ShaftMatchedFingerings {
-    private static final int[] SINGLE_LEVEL = {165};
-    private static final int[] ORDINARY_UPPER_LEVELS = {165, 125};
+    private static final int[] ORDINARY_LEVELS = {165, 125};
     private static final int[] RECOVERED_UPPER_LEVELS = {80, 105, 135, 165};
 
     private ShaftMatchedFingerings() {}
@@ -62,8 +61,8 @@ final class ShaftMatchedFingerings {
             var normalizedBits = bits(normalized, width, b);
             if (similarity(rawBits, normalizedBits) >= .90f)
                 references.add(new Reference(a, rawBits, normalizedBits,
-                        above ? MatchedDetachedThreeShape.vector(raw, width, a.left(), a.top(), a.right(), a.bottom()) : null,
-                        above ? MatchedDetachedThreeShape.vector(normalized, width, b.left(), b.top(), b.right(), b.bottom()) : null));
+                        MatchedDetachedThreeShape.vector(raw, width, a.left(), a.top(), a.right(), a.bottom()),
+                        MatchedDetachedThreeShape.vector(normalized, width, b.left(), b.top(), b.right(), b.bottom())));
         }
         if (references.size() < 2) return List.of();
 
@@ -119,7 +118,7 @@ final class ShaftMatchedFingerings {
         long area = (long) (right - left + 1) * (bottom - top + 1);
         if (top >= bottom || area > 16_384) return null;
         Box result = null;
-        int[] levels = recoveredTip ? RECOVERED_UPPER_LEVELS : above ? ORDINARY_UPPER_LEVELS : SINGLE_LEVEL;
+        int[] levels = recoveredTip ? RECOVERED_UPPER_LEVELS : ORDINARY_LEVELS;
         for (int level : levels) {
             if (level == 125) {
                 if (result != null || lighterThresholdBudget[0] < area) break;
@@ -145,8 +144,7 @@ final class ShaftMatchedFingerings {
                     if (score >= .74f) matches++;
                     best = Math.max(best, score);
                 }
-                if ((matches < 2 || best < .78f) && (!above
-                        || !matchesOwnedTwos(image, width, box, references, normalized))) continue;
+                if ((matches < 2 || best < .78f) && !matchesOwnedTwos(image, width, box, references, normalized)) continue;
                 var format = JoinedDigitTemplates.inspect(image, width, height, new BitSet(),
                         c.left, c.top, c.right, c.bottom, () -> {});
                 if (format == null || format.digit() >= 0 && format.digit() != 2

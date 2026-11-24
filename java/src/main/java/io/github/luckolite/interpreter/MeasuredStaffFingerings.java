@@ -44,6 +44,8 @@ final class MeasuredStaffFingerings {
         frames.addAll(supplemental.frames());
         var added = new ArrayList<PrintedFingeringDigits.Mark>();
         long[] remaining = {900_000};
+        long[] measuredTipPixels = {150_000};
+        var measuredTipWork = new PrintedBeamShafts.Budget(1_200_000);
         long[] overlaidRemaining = {750_000};
         for (var frame : frames) {
             for (var head : frame.heads()) {
@@ -55,11 +57,13 @@ final class MeasuredStaffFingerings {
                 int top = Math.round(head.y() + gap * 1.1f);
                 int bottom = Math.round(floor + gap * 3.5f);
                 if (top < 0 || bottom >= height || bottom <= top) continue;
-                var norm = find(normalized, width, height, head, top, bottom, gap, remaining);
+                var norm = find(normalized, width, height, head, top, bottom, gap,
+                        remaining, measuredTipPixels, measuredTipWork);
                 if (remaining[0] < 0) return original;
                 int digit = -1;
                 if (norm != null) {
-                    var rawGlyph = find(raw, width, height, head, top, bottom, gap, remaining);
+                    var rawGlyph = find(raw, width, height, head, top, bottom, gap,
+                        remaining, measuredTipPixels, measuredTipWork);
                     if (remaining[0] < 0) return original;
                     if (norm.same(rawGlyph)) digit = norm.digit();
                 }
@@ -115,12 +119,36 @@ final class MeasuredStaffFingerings {
     }
 
     private static Glyph find(byte[] gray, int width, int height,
-            PrintedSlurOwners.Location head, int top, int bottom, float gap, long[] remaining) {
+            PrintedSlurOwners.Location head, int top, int bottom, float gap, long[] remaining,
+            long[] measuredTipPixels, PrintedBeamShafts.Budget measuredTipWork) {
         var shaft = PairedTremoloInk.stem(gray, width, height, head.x(), head.y(), gap, -1);
         if (shaft == null) return null;
         int left = Math.max(0, Math.round(shaft.x() - gap * .9f));
         int right = Math.min(width - 1, Math.round(shaft.x() + gap * .9f));
-        top = Math.max(top, Math.round(shaft.endY() + gap * .18f));
+        int ordinaryTop = Math.max(top, Math.round(shaft.endY() + gap * .18f));
+        var ordinary = readGlyph(gray, width, height, shaft.x(), left, right, ordinaryTop, bottom, gap, remaining);
+        if (ordinary != null || remaining[0] < 0 || measuredTipPixels[0] < 0) return ordinary;
+        int tip = physicalDownstemEnd(gray, width, height, head, shaft, gap, measuredTipWork);
+        if (tip < 0) return null;
+        return readGlyph(gray, width, height, shaft.x(), left, right,
+                Math.max(top, tip + 1), bottom, gap, measuredTipPixels);
+    }
+
+    // A nearby detached fingering can lengthen the permissive vertical trace.
+    static int physicalDownstemEnd(byte[] gray, int width, int height, PrintedSlurOwners.Location head,
+            PairedTremoloInk.Stem shaft, float gap, PrintedBeamShafts.Budget work) {
+        if (work.refused() || shaft.endY() - head.y() < gap * 4f) return -1;
+        var shafts = PrintedBeamShafts.at(gray, width, height, head.x(), head.y(), gap, work);
+        if (work.refused() || shafts.size() != 1 || shafts.get(0).direction() != 1) return -1;
+        var physical = shafts.get(0);
+        float excess = shaft.endY() - physical.endY();
+        if (excess < gap * .6f || excess > gap * 2.1f
+                || Math.abs(shaft.x() - (physical.left() + physical.right()) * .5f) > gap * .18f) return -1;
+        return physical.endY();
+    }
+
+    private static Glyph readGlyph(byte[] gray, int width, int height, int shaftX,
+            int left, int right, int top, int bottom, float gap, long[] remaining) {
         long cells = (long) (right - left + 1) * (bottom - top + 1);
         if (top >= bottom || cells > 16_384) return null;
         remaining[0] -= cells;
@@ -131,14 +159,14 @@ final class MeasuredStaffFingerings {
         for (var c : image.components()) {
             int h = c.bottom - c.top + 1, w = c.right - c.left + 1;
             if (c.left <= left || c.right >= right || c.top <= top || c.bottom >= bottom
-                    || Math.abs((c.left + c.right) * .5f - shaft.x()) > gap * .42f
+                    || Math.abs((c.left + c.right) * .5f - shaftX) > gap * .42f
                     || h < gap * .80f || h > gap * 1.90f || w < gap * .39f || w > gap * 1.10f
                     || c.size() < w * h * .20f) continue;
             var literal = JoinedDigitTemplates.inspect(
                     gray, width, height, new BitSet(), c.left, c.top, c.right, c.bottom, () -> {});
             if (literal == null || literal.digit() < 1 || literal.digit() > 4) continue;
             if (match != null) return null;
-            match = new Glyph(literal.digit(), c.left, c.top, c.right, c.bottom, Math.round(shaft.x()));
+            match = new Glyph(literal.digit(), c.left, c.top, c.right, c.bottom, Math.round(shaftX));
         }
         return match;
     }

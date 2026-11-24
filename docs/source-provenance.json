@@ -1700,25 +1700,35 @@
     }
   },
   "files": {
+    "MeasuredStaffFingerings.java": {
+      "source_path": "app/src/main/java/com/musicsheets/app/pdf/MeasuredStaffFingerings.java",
+      "source_sha256": "1357c33726c604f3279fe0b67053254ccd7b532016d4729c34ac6df920b6fac9",
+      "source_normalized_sha256": "1357c33726c604f3279fe0b67053254ccd7b532016d4729c34ac6df920b6fac9",
+      "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/MeasuredStaffFingerings.java",
+      "standalone_normalized_sha256": "217de6f777cc416dc74dfba5c80a6e9768fafd396b69302bf65ee41b1cd4a713",
+      "reviewed_app_commit": "0252817ba725ebacb553a89285d9b5ac814356d6",
+      "license": "Apache-2.0",
+      "review_note": "Uses an independently bounded physical downstem end for detached fingerings after the ordinary search. Shares the same optical shaft proof with the detached-three reader."
+    },
     "ShaftMatchedFingerings.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/ShaftMatchedFingerings.java",
-      "source_sha256": "3b16eccb7f9adefb8bea7bad887e94510c4d8e07afd8613f614c55807310989c",
-      "source_normalized_sha256": "3b16eccb7f9adefb8bea7bad887e94510c4d8e07afd8613f614c55807310989c",
+      "source_sha256": "4b3303b8e140a4f5ec7e614b5392dc254b9f54e5be1b5384499a44d915a450b8",
+      "source_normalized_sha256": "4b3303b8e140a4f5ec7e614b5392dc254b9f54e5be1b5384499a44d915a450b8",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/ShaftMatchedFingerings.java",
-      "standalone_normalized_sha256": "0b1e671c060c5b2ce03cf83273e933de896a31bf35ea6a07fcd42c47849054ad",
-      "reviewed_app_commit": "560dd0be15b96ce9b10c96ec6b2890afba959002",
+      "standalone_normalized_sha256": "876bfc1e34afc30c077ae515e07b45c7775c450320c518c662b9e4542f07520b",
+      "reviewed_app_commit": "0252817ba725ebacb553a89285d9b5ac814356d6",
       "license": "Apache-2.0",
-      "review_note": "Matches grayscale details in detached upper twos when a binary mask fails. A second threshold is independently bounded and is only used when the usual threshold yields no owned mark."
+      "review_note": "Checks grayscale numeral shape in both planes on either side of the staff when binary matching fails. The second threshold is separately bounded and the existing note-owned fingering record carries the result."
     },
     "DetachedFingeringThrees.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/DetachedFingeringThrees.java",
-      "source_sha256": "655d990b0e4f4b983b10e84f45836fd003232b3084d31573addc32ab70d9cec0",
-      "source_normalized_sha256": "655d990b0e4f4b983b10e84f45836fd003232b3084d31573addc32ab70d9cec0",
+      "source_sha256": "5b2092b815da87dff6a7b48577d0a8f0fc479aef1683bb3100aac85e5ffca728",
+      "source_normalized_sha256": "5b2092b815da87dff6a7b48577d0a8f0fc479aef1683bb3100aac85e5ffca728",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/DetachedFingeringThrees.java",
-      "standalone_normalized_sha256": "a4b16f006ccdbeb100dc30251445eab3e3addf2ce9e050e3dd488b67eadd770c",
-      "reviewed_app_commit": "560dd0be15b96ce9b10c96ec6b2890afba959002",
+      "standalone_normalized_sha256": "05f2462ed156d11dc4a1a69cf8902ca9d7682d5acc8a0d776a7fd4d14b44600e",
+      "reviewed_app_commit": "0252817ba725ebacb553a89285d9b5ac814356d6",
       "license": "Apache-2.0",
-      "review_note": "Reuses independently identified printed threes for the matching shape on both sides of the staff."
+      "review_note": "Checks ambiguous detached threes below a qualified physical beam end against more than one independently retained numeral. The existing closed-eight and neighboring-enclosure exclusions remain in force."
     },
     "DetachedUpperStemFingerings.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/DetachedUpperStemFingerings.java",
