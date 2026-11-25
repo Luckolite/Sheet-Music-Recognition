@@ -402,8 +402,11 @@ final class OctaveMarkDetector {
                     literal = new SystemRibbonEnd(right, false, true);
                 right = Math.max(right, closedStraightDottedOctave(gray, width, height, numeral, gap));
                 if (owner.equals(initialUpperOwner)) right = Math.max(right, downwardEnd);
-                if (right >= 0)
-                    left = closedBeamStart(gray, width, height, word, owner, staffs, measures, notes, left, right);
+                if (right >= 0) {
+                    float beamStart = closedBeamStart(gray, width, height, word, owner, staffs, measures, notes, left, right);
+                    left = beamStart != left ? beamStart : closedDyadOctaveStart(
+                            gray, width, height, word, owner, staffs, measures, notes, left, right);
+                }
                 if (right >= 0 && bareEight && literal == null) {
                     var detached = dottedTripletOctaveStart(
                             gray, width, height, numeral, owner, staffs, measures, notes, left, right);
@@ -796,6 +799,83 @@ final class OctaveMarkDetector {
                 && earlier.span.staff.count() == later.span.staff.count()
                 && earlier.span.staff.bottom() < later.span.staff.top()
                 && measures.get(earlier.last).bottom() < measures.get(later.first).top();
+    }
+
+    private record OctaveBeamPair(BeamStartHead upper, BeamStartHead lower) {}
+
+    /** Locate a printed octave start between two separately attached double-beam groups. */
+    private static float closedDyadOctaveStart(byte[] gray, int width, int height,
+            PlayingTechniqueDetector.Word word, PlayingTechniqueDetector.Staff owner,
+            List<PlayingTechniqueDetector.Staff> staffs, List<MeasureRegion> measures,
+            List<ScoreNoteEvent> notes, float left, float right) {
+        float gap = owner.gap();
+        float wordLeft = word.left() * width, wordRight = word.right() * width;
+        float top = word.top() * height, bottom = word.bottom() * height;
+        if (gap < 10 || gap > 28 || wordLeft <= left || wordRight - wordLeft > 1.7f * gap)
+            return left;
+
+        var nearby = new ArrayList<BeamStartHead>();
+        for (var note : notes) {
+            if (note.kind() != ScoreNoteEvent.Kind.PITCHED || note.measureIndex() < 0
+                    || note.measureIndex() >= measures.size() || note.staffIndex() != owner.index()
+                    || note.staffCount() != owner.count()) continue;
+            float x = x(note, measures, width);
+            if (x >= wordLeft - 4 * gap && x <= wordRight + 3.5f * gap
+                    && onStaff(note, owner, staffs, measures, height)) nearby.add(new BeamStartHead(note, x));
+        }
+        if (nearby.size() != 8) return left;
+        nearby.sort(Comparator.comparingDouble(BeamStartHead::x));
+        var pairs = new ArrayList<OctaveBeamPair>(4);
+        int measure = nearby.get(0).note.measureIndex();
+        for (int i = 0; i < nearby.size(); i += 2) {
+            var a = nearby.get(i);
+            var b = nearby.get(i + 1);
+            if (b.x - a.x > .22f * gap || i > 0 && a.x - nearby.get(i - 1).x < 1.12f * gap
+                    || a.note.measureIndex() != measure || b.note.measureIndex() != measure
+                    || a.note.beamCount() != 2 || b.note.beamCount() != 2
+                    || a.note.stemDirection() != -1 || b.note.stemDirection() != -1
+                    || a.note.crossStaffBeam() || b.note.crossStaffBeam()
+                    || Math.abs(a.note.staffStep() - b.note.staffStep()) != 7) return left;
+            pairs.add(a.note.pageY() < b.note.pageY() ? new OctaveBeamPair(a, b) : new OctaveBeamPair(b, a));
+        }
+
+        var earlier = pairs.get(1);
+        var following = pairs.get(2);
+        float previousX = Math.max(earlier.upper.x, earlier.lower.x);
+        float followingX = Math.min(following.upper.x, following.lower.x);
+        if (previousX < left || wordLeft - previousX < .35f * gap
+                || wordLeft - previousX > .75f * gap
+                || followingX - wordRight < -.1f * gap || followingX - wordRight > .35f * gap
+                || (following.upper.note.pageY() - earlier.upper.note.pageY()) * height < 1.25f * gap
+                || pairs.get(3).upper.x >= right) return left;
+        var numeral = new InkBox(Math.round(wordLeft), Math.round(top),
+                Math.round(wordRight) - 1, Math.round(bottom) - 1, 0);
+        if (!(bareEightShape(gray, width, numeral, gap)
+                        || canRepairEight(gray, width, numeral, gap) && brokenEightShape(gray, width, numeral, gap))
+                || hookDirection(gray, width, height, right, top, bottom, gap) <= 0) return left;
+
+        var shafts = new ArrayList<PrintedBeamShafts.Shaft>(4);
+        var budget = new PrintedBeamShafts.Budget(180_000);
+        for (var pair : pairs) {
+            var upper = PrintedBeamShafts.at(gray, width, height, pair.upper.x,
+                    pair.upper.note.pageY() * height, gap, budget);
+            var lower = PrintedBeamShafts.at(gray, width, height, pair.lower.x,
+                    pair.lower.note.pageY() * height, gap, budget);
+            PrintedBeamShafts.Shaft shared = null;
+            for (var a : upper) for (var b : lower) {
+                if (a.direction() != b.direction() || Math.abs(a.endY() - b.endY()) > 2
+                        || Math.max(a.left(), b.left()) > Math.min(a.right(), b.right()) + 1) continue;
+                if (a.direction() != 1 || shared != null) return left;
+                shared = a;
+            }
+            if (budget.refused() || shared == null) return left;
+            shafts.add(shared);
+        }
+        if (!FingeringAnnotationFilter.pairedBeamRails(gray, width, height, shafts.get(0), shafts.get(1), gap)
+                || !WrappedEighthTriplets.matchesRailBridge(gray, width, height, shafts.get(1), shafts.get(2), gap, false)
+                || !FingeringAnnotationFilter.pairedBeamRails(gray, width, height, shafts.get(2), shafts.get(3), gap))
+            return left;
+        return (previousX + followingX) * .5f;
     }
 
     private record BeamStartHead(ScoreNoteEvent note, float x) {}
