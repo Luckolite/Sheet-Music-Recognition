@@ -120,7 +120,11 @@ final class PrintedFingeringDigits {
             if (candidates[i] != null && !ambiguous[i]) marks.add(candidates[i]);
         includeWordSequences(marks, words, heads, gray, normalized, width, height);
         includeStaffRuleFingerings(marks, heads, gray, normalized, width, height);
+        var references = observedFingeringSamples(words, heads, marks, gray, normalized, width, height);
+        if (!references.isEmpty()) includeStaffRuleFingerings(marks, heads, gray, normalized, width, height, references);
+        includeDetachedQuartetFingering(marks, heads, score, gray, normalized, width, height);
         includeOpposedQuartetFingerings(marks, heads, gray, normalized, width, height);
+        includeHighLedgerQuartetFingerings(marks, heads, score, gray, normalized, width, height);
         marks.sort(Comparator.comparingInt(Mark::noteIndex).thenComparing(Mark::placement));
         return List.copyOf(marks);
     }
@@ -246,6 +250,11 @@ final class PrintedFingeringDigits {
 
     private static void includeStaffRuleFingerings(List<Mark> marks, List<Head> heads,
             byte[] raw, byte[] normalized, int width, int height) {
+        includeStaffRuleFingerings(marks, heads, raw, normalized, width, height, List.of());
+    }
+
+    private static void includeStaffRuleFingerings(List<Mark> marks, List<Head> heads,
+            byte[] raw, byte[] normalized, int width, int height, List<ObservedFingering> references) {
         if (raw == null || normalized == null || raw.length != (long) width * height
                 || normalized.length != raw.length) return;
         var indexes = new HashMap<Integer, Head>();
@@ -268,13 +277,14 @@ final class PrintedFingeringDigits {
                         && Math.abs(head.x() - neighbor.x()) < 7.5 * head.gap()) anchors++;
             }
             if (anchors < 2) continue;
-            int first = readStaffRuleFingering(raw, width, height, head);
-            if (first != 0 && first == readStaffRuleFingering(normalized, width, height, head))
+            int first = readStaffRuleFingering(raw, width, height, head, references, false);
+            if (first != 0 && first == readStaffRuleFingering(normalized, width, height, head, references, true))
                 marks.add(new Mark(head.index(), first, Placement.ABOVE));
         }
     }
 
-    private static int readStaffRuleFingering(byte[] pixels, int width, int height, Head head) {
+    private static int readStaffRuleFingering(byte[] pixels, int width, int height, Head head,
+            List<ObservedFingering> references, boolean normalized) {
         double gap = head.gap();
         int x = (int) Math.round(head.x()), y = (int) Math.round(head.top() + 2.1 * gap);
         int near = (int) Math.round(.70 * gap), far = (int) Math.round(1.25 * gap);
@@ -328,26 +338,112 @@ final class PrintedFingeringDigits {
         if (Math.min(above, below) < 12 || observedLeft <= left || observedRight >= right
                 || observedTop <= top || head.y() - observedBottom < .85 * gap)
             return 0;
-        float bestMargin = 0;
+        if (references.isEmpty()) {
+            float bestMargin = 0;
+            int digit = 0;
+            for (int l = Math.max(left, observedLeft - 4); l <= observedLeft + 1; l++)
+                for (int t = Math.max(top, observedTop - 3); t <= observedTop + 1; t++)
+                    for (int r = observedRight - 1; r <= Math.min(right, observedRight + 1); r++)
+                        for (int b = observedBottom - 1; b <= Math.min(bottom, observedBottom + 2); b++) {
+                            var read = JoinedDigitTemplates.inspect(pixels, width, height, mask, l, t, r, b, () -> {});
+                            if (read == null || read.independentInk() < 24) continue;
+                            int winner = 0;
+                            for (int d = 1; d < read.scores().length; d++)
+                                if (read.scores()[d] > read.scores()[winner]) winner = d;
+                            if (winner < 1 || winner > 3) continue;
+                            float margin = read.best() - read.runner();
+                            if (read.best() < (winner == 1 ? .49f : .61f)
+                                    || margin < (winner == 1 ? .18f : .055f) || margin <= bestMargin
+                                    || !ownsWordDigit(pixels, width, height, head, new WordDigit(l, t, r, b))) continue;
+                            bestMargin = margin;
+                            digit = winner;
+                        }
+            return digit;
+        }
         int digit = 0;
-        for (int l = Math.max(left, observedLeft - 4); l <= observedLeft + 1; l++)
-            for (int t = Math.max(top, observedTop - 3); t <= observedTop + 1; t++)
-                for (int r = observedRight - 1; r <= Math.min(right, observedRight + 1); r++)
-                    for (int b = observedBottom - 1; b <= Math.min(bottom, observedBottom + 2); b++) {
-                        var read = JoinedDigitTemplates.inspect(pixels, width, height, mask, l, t, r, b, () -> {});
-                        if (read == null || read.independentInk() < 24) continue;
-                        int winner = 0;
-                        for (int d = 1; d < read.scores().length; d++)
-                            if (read.scores()[d] > read.scores()[winner]) winner = d;
-                        if (winner < 1 || winner > 3) continue;
-                        float margin = read.best() - read.runner();
-                        if (read.best() < (winner == 1 ? .49f : .61f)
-                                || margin < (winner == 1 ? .18f : .055f) || margin <= bestMargin
-                                || !ownsWordDigit(pixels, width, height, head, new WordDigit(l, t, r, b))) continue;
-                        bestMargin = margin;
-                        digit = winner;
+        WordDigit strongestBox = null;
+        double strongest = 0;
+        for (int l = Math.max(left, observedLeft - 2); l <= observedLeft + 1; l++)
+            for (int t = Math.max(top, observedTop - 2); t <= observedTop + 1; t++)
+                for (int r = observedRight - 4; r <= Math.min(right, observedRight + 1); r++)
+                    for (int b = observedBottom - 1; b <= Math.min(bottom, observedBottom + 1); b++) {
+                        if (r - l < .62 * gap) continue;
+                        var candidate = ruledFingerInk(pixels, width, mask, l, t, r, b);
+                        for (int n = 1; n <= 4; n++) {
+                            double proof = observedDigitAgreement(candidate, references, normalized, n);
+                            if (proof > strongest) {
+                                strongest = proof;
+                                digit = n;
+                                strongestBox = new WordDigit(l, t, r, b);
+                            }
+                        }
                     }
-        return digit;
+        return strongestBox != null && ownsWordDigit(pixels, width, height, head, strongestBox) ? digit : 0;
+    }
+
+    private record ObservedFingering(int digit, RuledFingerInk raw, RuledFingerInk normalized) {}
+
+    private static List<ObservedFingering> observedFingeringSamples(List<SheetInterpreter.Word> words,
+            List<Head> heads, List<Mark> marks, byte[] raw, byte[] normalized, int width, int height) {
+        if (raw == null || normalized == null || raw.length != (long) width * height
+                || normalized.length != raw.length) return List.of();
+        var established = new HashMap<Integer, Integer>();
+        for (var mark : marks)
+            if (mark.placement() == Placement.ABOVE) established.put(mark.noteIndex(), mark.digit());
+        var seen = new HashSet<Integer>();
+        var samples = new ArrayList<ObservedFingering>();
+        for (var word : words) {
+            String digits = word.text().replace(" ", "");
+            if (!digits.matches("[1-4]{1,4}")) continue;
+            int l = Math.round(word.left() * width), t = Math.round(word.top() * height);
+            int r = Math.round(word.right() * width), b = Math.round(word.bottom() * height);
+            if (l < 0 || r >= width || t < 0 || b >= height
+                    || r - l < 13 || r - l > 175 || b - t < 12 || b - t > 52) continue;
+            var a = wordDigits(raw, width, height, l, t, r, b);
+            var c = wordDigits(normalized, width, height, l, t, r, b);
+            if (a.size() != digits.length() || c.size() != a.size()) continue;
+            for (int i = 0; i < a.size(); i++) {
+                var first = a.get(i);
+                var second = c.get(i);
+                int digit = digits.charAt(i) - '0';
+                Head h = uniqueWordDigitOwner(heads, first);
+                if (h == null || established.getOrDefault(h.index(), 0) != digit || seen.contains(h.index())
+                        || !first.agrees(second)
+                        || !matchesWordDigit(raw, width, height, first, digit)
+                        || !matchesWordDigit(normalized, width, height, second, digit)
+                        || !ownsWordDigit(raw, width, height, h, first)
+                        || !ownsWordDigit(normalized, width, height, h, second)) continue;
+                seen.add(h.index());
+                samples.add(new ObservedFingering(digit,
+                        ruledFingerInk(raw, width, new BitSet(), first.left(), first.top(), first.right(), first.bottom()),
+                        ruledFingerInk(normalized, width, new BitSet(), second.left(), second.top(), second.right(), second.bottom())));
+            }
+        }
+        return samples;
+    }
+
+    private static double observedDigitAgreement(RuledFingerInk glyph, List<ObservedFingering> references,
+            boolean normalized, int digit) {
+        float best = 0, corroborating = 0, rival = 0;
+        boolean hasRival = false;
+        for (var sample : references) {
+            var ref = normalized ? sample.normalized() : sample.raw();
+            var visible = (BitSet) ref.pixels().clone();
+            visible.and(glyph.visible());
+            var shared = (BitSet) visible.clone();
+            shared.and(glyph.pixels());
+            int overlap = shared.cardinality();
+            float likeness = overlap / (float) Math.max(1, visible.cardinality() + glyph.pixels().cardinality() - overlap);
+            if (sample.digit() != digit) {
+                rival = Math.max(rival, likeness);
+                hasRival = true;
+            } else if (likeness > best) {
+                corroborating = best;
+                best = likeness;
+            } else corroborating = Math.max(corroborating, likeness);
+        }
+        return hasRival && best >= .79f && corroborating >= .75f && (best + corroborating) * .5 - rival >= .11f
+                ? (best + corroborating) * .5 - rival : 0;
     }
 
 
@@ -445,6 +541,150 @@ final class PrintedFingeringDigits {
         if (!shafts.isEmpty()) return shafts.get(0).direction() < 0;
         var stem = PairedTremoloInk.stem(pixels, width, height, head.x(), head.y(), gap, 1);
         return stem != null && hasHorizontalBeamAtTip(pixels, width, height, stem.x(), stem.endY(), gap);
+    }
+
+
+    private static void includeDetachedQuartetFingering(List<Mark> marks, List<Head> heads,
+            ScorePageInterpretation score, byte[] raw, byte[] normalized, int width, int height) {
+        if (raw == null || normalized == null || raw.length != (long) width * height
+                || normalized.length != raw.length) return;
+        var indexed = new Head[score.notes().size()];
+        for (var head : heads) indexed[head.index()] = head;
+        var upper = new HashSet<Integer>();
+        for (var mark : marks) if (mark.placement() == Placement.ABOVE) upper.add(mark.noteIndex());
+        for (var beam : score.beamSource().resolve().groups()) {
+            if (beam.source().tupletMark() != null || !beam.source().bridges().equals(List.of(3, 3, 3))
+                    || !beam.source().hooks().isEmpty() || beam.columns().size() != 4) continue;
+            Head missing = null;
+            int known = 0;
+            for (var column : beam.columns()) {
+                if (!column.usable() || column.owners().size() != 1) break;
+                var h = indexed[column.owners().get(0)];
+                if (h == null || h.harmonic() || !ClosedMonophonicSixteenths.regularQuartetHead(h.note())
+                        || h.note().stemDirection() != 1 || h.note().tupletDivisor() != 1
+                        || h.note().augmentationDots() != 0 || h.gap() < 10 || h.gap() > 24) break;
+                if (upper.contains(h.index())) known++;
+                else if (missing == null) missing = h;
+                else break;
+            }
+            if (missing == null || known != 3) continue;
+            int first = readDetachedQuartetDigit(raw, width, height, missing);
+            if (first > 0 && first == readDetachedQuartetDigit(normalized, width, height, missing)) {
+                marks.add(new Mark(missing.index(), first, Placement.ABOVE));
+                upper.add(missing.index());
+            }
+        }
+    }
+
+    private static int readDetachedQuartetDigit(byte[] pixels, int width, int height, Head head) {
+        float gap = (float) (head.gap() * 8 / 8.2);
+        var budget = new PrintedBeamShafts.Budget(40000);
+        var shafts = PrintedBeamShafts.at(pixels, width, height, (float) head.x(), (float) head.y(), gap, budget);
+        if (budget.refused() || shafts.size() != 1 || shafts.get(0).direction() >= 0) return 0;
+        int first = (int) Math.round(head.x() - .64 * gap), last = (int) Math.round(head.x() + .64 * gap);
+        int tip = shafts.get(0).endY();
+        int top = tip - Math.round(2.1f * gap), bottom = tip - 2;
+        if (first < 0 || last >= width || top < 0 || bottom >= height) return 0;
+        var boxes = wordDigits(pixels, width, height, first, top, last, bottom);
+        if (boxes.size() != 1) return 0;
+        var box = boxes.get(0);
+        if (Math.abs(box.x() - head.x()) > .30 * gap || !upperDigitAtTip(box, gap, tip)) return 0;
+        var read = JoinedDigitTemplates.inspect(pixels, width, height, new BitSet(),
+                box.left(), box.top(), box.right(), box.bottom(), () -> {});
+        return read != null && read.digit() > 0 && read.digit() <= 4 && read.best() >= .71f
+                && read.best() - read.runner() >= .17f ? read.digit() : 0;
+    }
+
+
+    private static void includeHighLedgerQuartetFingerings(List<Mark> marks, List<Head> heads,
+            ScorePageInterpretation score, byte[] raw, byte[] normalized, int width, int height) {
+        if (raw == null || normalized == null || raw.length != (long) width * height
+                || normalized.length != raw.length) return;
+        var indexed = new Head[score.notes().size()];
+        for (var head : heads) indexed[head.index()] = head;
+        var retained = new HashMap<Integer, Integer>();
+        for (var mark : marks)
+            if (mark.placement() == Placement.ABOVE) retained.put(mark.noteIndex(), mark.digit());
+        var rows = new HashMap<Integer, List<Head>>();
+        for (var beam : score.beamSource().resolve().groups()) {
+            if (beam.source().tupletMark() != null || !beam.source().bridges().equals(List.of(3, 3, 3))
+                    || !beam.source().hooks().isEmpty() || beam.columns().size() != 4) continue;
+            var quartet = new ArrayList<Head>();
+            for (var column : beam.columns()) {
+                if (!column.usable() || column.owners().size() != 1) break;
+                var h = indexed[column.owners().get(0)];
+                if (h == null || h.harmonic() || h.note().staffStep() < 11
+                        || !ClosedMonophonicSixteenths.regularQuartetHead(h.note())
+                        || h.note().stemDirection() != -1 || h.note().tupletDivisor() != 1
+                        || h.note().augmentationDots() != 0 || h.gap() < 10 || h.gap() > 24
+                        || !quartet.isEmpty() && h.note().measureIndex() != quartet.get(0).note().measureIndex())
+                    break;
+                quartet.add(h);
+            }
+            if (quartet.size() == 4 && quartet.stream().anyMatch(h -> retained.containsKey(h.index())))
+                rows.computeIfAbsent(quartet.get(0).note().measureIndex(), unused -> new ArrayList<>()).addAll(quartet);
+        }
+        for (var row : rows.values()) {
+            if (row.size() < 8 || row.stream().filter(h -> retained.containsKey(h.index())).count() < 4) continue;
+            var examples = new ArrayList<ObservedFingering>();
+            for (var h : row) {
+                Integer digit = retained.get(h.index());
+                if (digit == null || digit == 0) continue;
+                var a = highLedgerDigit(raw, width, height, h);
+                var b = highLedgerDigit(normalized, width, height, h);
+                if (a == null || b == null || !a.agrees(b)) continue;
+                examples.add(new ObservedFingering(digit,
+                        ruledFingerInk(raw, width, new BitSet(), a.left(), a.top(), a.right(), a.bottom()),
+                        ruledFingerInk(normalized, width, new BitSet(), b.left(), b.top(), b.right(), b.bottom())));
+            }
+            for (var h : row) {
+                if (retained.containsKey(h.index())) continue;
+                var a = highLedgerDigit(raw, width, height, h);
+                var b = highLedgerDigit(normalized, width, height, h);
+                if (a == null || b == null || !a.agrees(b)) continue;
+                int digit = readHighLedgerDigit(raw, width, height, a, examples, false);
+                if (digit > 0 && digit == readHighLedgerDigit(normalized, width, height, b, examples, true))
+                    marks.add(new Mark(h.index(), digit, Placement.ABOVE));
+            }
+        }
+    }
+
+    private static WordDigit highLedgerDigit(byte[] ink, int width, int height, Head h) {
+        float gap = (float) (h.gap() * 8 / 8.2);
+        var budget = new PrintedBeamShafts.Budget(40000);
+        var shafts = PrintedBeamShafts.at(ink, width, height, (float) h.x(), (float) h.y(), gap, budget);
+        if (budget.refused() || shafts.size() != 1 || shafts.get(0).direction() <= 0) return null;
+        int l = (int) Math.round(h.x() - .70 * gap), r = (int) Math.round(h.x() + .70 * gap);
+        int t = (int) Math.round(h.y() - 2.60 * gap), b = (int) Math.round(h.y() - .57 * gap);
+        if (l < 0 || t < 0 || r >= width || b >= height) return null;
+        var boxes = wordDigits(ink, width, height, l, t, r, b);
+        if (boxes.size() != 1) return null;
+        var shape = boxes.get(0);
+        return Math.abs(shape.x() - h.x()) <= .29 * gap && h.y() - shape.bottom() <= 1.12 * gap ? shape : null;
+    }
+
+    private static int readHighLedgerDigit(byte[] ink, int width, int height, WordDigit box,
+            List<ObservedFingering> references, boolean normalized) {
+        var empty = new BitSet();
+        var read = JoinedDigitTemplates.inspect(ink, width, height, empty,
+                box.left(), box.top(), box.right(), box.bottom(), () -> {});
+        if (read == null) return 0;
+        if (read.digit() >= 1 && read.digit() <= 4 && read.best() >= .60f
+                && read.best() - read.runner() >= .083f) return read.digit();
+        if (read.scores()[3] == read.best() && read.best() >= .73f && read.best() - read.runner() >= .06f)
+            return 3;
+        var shape = ruledFingerInk(ink, width, empty, box.left(), box.top(), box.right(), box.bottom());
+        double best = 0;
+        int digit = 0;
+        for (int candidate = 1; candidate <= 4; candidate++) {
+            if (read.scores()[candidate] < .55f || read.best() - read.scores()[candidate] > .07f) continue;
+            double proof = observedDigitAgreement(shape, references, normalized, candidate);
+            if (proof > best) {
+                digit = candidate;
+                best = proof;
+            }
+        }
+        return digit;
     }
 
 
