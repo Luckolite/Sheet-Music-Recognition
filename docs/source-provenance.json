@@ -5891,13 +5891,13 @@
         "standalone_lf_sha256": "af1d3947016efcc690381c794ec3de40e791468ea8730295f96baf70b2273130",
         "scope": "Opening two-over-four repair. The production patches match after path normalization. Broader source differences remain subject to review."
       },
-      "source_sha256": "49cea3b1aa49a615959ae1812f63f3aee08c074ca3340d098cc1b64971f417e8",
+      "source_sha256": "5d4734df5c54765412bb933c311c42d7c59d6a9afb1355db30077509320ec268",
       "review_note": "Two independently proved whole-note counters protect an aligned stemless chord from interior shaft pixels, retaining the exterior shaft veto.",
-      "source_normalized_sha256": "49cea3b1aa49a615959ae1812f63f3aee08c074ca3340d098cc1b64971f417e8",
-      "reviewed_app_state": "Committed source projection for expanded ledger dyads. The standalone and app retain their existing independent pipeline differences.",
+      "source_normalized_sha256": "5d4734df5c54765412bb933c311c42d7c59d6a9afb1355db30077509320ec268",
+      "reviewed_app_state": "Committed accidental ownership projection. The standalone and app retain their independently reviewed accidental and guide pipelines.",
       "standalone_sha256": "946d1ed82df8d600c43a0b5c83aa72fd3718e9bdd70a6edfa1ee0415159fc94e",
       "reviewed_app_base_commit": "f35728a8aa54ad905276707014439af44502ea61",
-      "reviewed_app_commit": "9550d2ab7329a46934f7ee868fe7ca10940abd6e",
+      "reviewed_app_commit": "799a7c5d71f3468ea4198ad07d5df9913cd1c4d2",
       "scoped_reviewed_app_commit": "5a83c7704ff14579edcf52af5c1ab8e8e719a4d7",
       "license": "Apache-2.0",
       "cue_flag87_review_note": "Original procedural geometry only. Cue-size local glyph gap reuses unchanged own-stem and curved-flag checks. Existing scalar and wire semantics retained; no private raster/model/dependency change.",
@@ -5908,7 +5908,7 @@
       "recognition91_review_note": "Reviewed recognition91: observed terminal ribbon; boundary-crossing hairpin proposal completion (anchor coordinate-span <=4; new 4M proposal budget); complete raw beam following-rest voice. Existing admission fits and 145/225, model, Guide291 and audio97 unchanged. Original procedural tests only.",
       "reviewed_source_state": "committed",
       "release130_review_note": "Reviewed platform adapter; see release130_source_review. No claim of whole-file token parity.",
-      "standalone_normalized_sha256": "8516c13db344153b84b0f364c438b3fd10a76ab2b2bbf4589512991f4cf4cdb6",
+      "standalone_normalized_sha256": "7de39ae460f089f384ca7c1f5752e34a0163a224afa0844b14815f422a91d7e0",
       "current_source_review": "Allocate bounded shared-ledger caches only after an eligible independently owned remote head; exact split sibling capture retained. Existing cancellation zero-work contract restored;812 focused tests and1373 retained complete native note records preserved. Models, limits and layouts unchanged.",
       "release_transport_review": "For valid blank/no-staff inputs, unavailable context preserves the supplied measure count without inventing source observations or clock authority. The original strict whole-analysis server parity assertion remains enabled; an original two-measure blank control covers the early return. A generic comment replaces an internal review title.",
       "natural_cancellation_review": {
@@ -5978,6 +5978,12 @@
         "app_lf_sha256": "49cea3b1aa49a615959ae1812f63f3aee08c074ca3340d098cc1b64971f417e8",
         "standalone_lf_sha256": "8516c13db344153b84b0f364c438b3fd10a76ab2b2bbf4589512991f4cf4cdb6",
         "scope": "Matching expanded ledger line counting, line or space evidence, and attached downstems in both rasters. Existing unrelated pipeline differences are preserved."
+      },
+      "repeated_signature_and_octave_natural_review": {
+        "reviewed_app_commit": "799a7c5d71f3468ea4198ad07d5df9913cd1c4d2",
+        "app_lf_sha256": "5d4734df5c54765412bb933c311c42d7c59d6a9afb1355db30077509320ec268",
+        "standalone_lf_sha256": "7de39ae460f089f384ca7c1f5752e34a0163a224afa0844b14815f422a91d7e0",
+        "scope": "Matching ownership of fully witnessed repeated sharp signatures across inferred bar edges and touching octave naturals in both rasters."
       }
     },
     "OnnxOcrInference.java": {

@@ -81,4 +81,54 @@ public final class CloseHeaderAccidentalTest {
             }
         assertEquals(List.of(-1), f.keys());
     }
+
+    @Test
+    public void repeatedSharpsCrossingAnInferredBarOwnOnlyTheCompletePrintedSequence()
+            throws Exception {
+        var fixture = new JoinedSignatureSharpTest();
+        int[] offsets = {0, 24, -8, 16};
+        var interpreter = OmrScoreInterpreter.class;
+        var staffType = Class.forName(interpreter.getName() + "$Staff");
+        var staffConstructor = staffType.getDeclaredConstructor(float.class, float.class, float.class);
+        staffConstructor.setAccessible(true);
+        var staff = staffConstructor.newInstance(100f, 164f, 16f);
+        var componentType = Class.forName(interpreter.getName() + "$Component");
+        var component = componentType.getDeclaredConstructors()[0];
+        component.setAccessible(true);
+        var candidate = Class.forName(interpreter.getName() + "$AccidentalCandidate")
+                .getDeclaredConstructors()[0];
+        candidate.setAccessible(true);
+        var expected = new java.util.ArrayList<>();
+        var candidates = new java.util.ArrayList<>();
+        for (int i = 0; i < offsets.length; i++) {
+            int x = 80 + 21 * i, y = 100 + offsets[i];
+            fixture.sharp(x, y);
+            var glyph = component.newInstance(248, x - 8, x + 7, y - 22, y + 22,
+                    (float) x, (float) y);
+            expected.add(glyph);
+            candidates.add(candidate.newInstance(glyph, OmrMeasurePostProcessor.CLEF_OR_KEY));
+        }
+        fixture.sharp(168, 116);
+        var inline = component.newInstance(248, 160, 175, 94, 138, 168f, 116f);
+        candidates.add(candidate.newInstance(inline, OmrMeasurePostProcessor.CLEF_OR_KEY));
+        var detect = interpreter.getDeclaredMethod("retainRepeatedHeaderAcrossBarEdge", byte[].class,
+                byte[].class, byte[].class, int.class, int.class, List.class, List.class,
+                staffType, int.class, float.class, float.class);
+        detect.setAccessible(true);
+
+        int width = JoinedSignatureSharpTest.W, height = JoinedSignatureSharpTest.H;
+        byte[] raw = fixture.gray.clone();
+        var owned = new java.util.ArrayList<>();
+        detect.invoke(null, fixture.labels, fixture.gray, raw, width, height, owned, candidates,
+                staff, 4, 126f, 181f);
+        assertEquals(expected, owned);
+
+        owned.clear();
+        for (int y = 92; y <= 140; y++) {
+            java.util.Arrays.fill(raw, y * width + 135, y * width + 151, (byte) 255);
+        }
+        detect.invoke(null, fixture.labels, fixture.gray, raw, width, height, owned, candidates,
+                staff, 4, 126f, 181f);
+        assertTrue(owned.isEmpty());
+    }
 }

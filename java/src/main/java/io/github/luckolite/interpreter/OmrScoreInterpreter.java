@@ -1594,6 +1594,7 @@ final class OmrScoreInterpreter {
         detectKeyChangesWithHeaders(
                 labels,
                 gray,
+                annotationGray,
                 width,
                 height,
                 measures,
@@ -2533,6 +2534,8 @@ final class OmrScoreInterpreter {
                         && writtenChoice.glyph() instanceof Component glyph
                         && (printedNaturalOnUpperLedger(
                                 gray, width, height, glyph, head, accidentalGap, localBottom)
+                            || naturalAtStackedHead(labels, gray, annotationGray, width, height,
+                                    glyph, head, heads, localAccidentals, accidentalGap)
                             || naturalBetweenContinuedRules(
                                      gray, annotationGray, width, height, glyph, head, accidentalGap)
                              || staff.count == 1 && beamCount == 2
@@ -8518,6 +8521,22 @@ final class OmrScoreInterpreter {
             List<Component> heads,
             List<Component> headerAccidentals,
             RawCourtesyBudget rawCourtesy) {
+        return detectKeyChangesWithHeaders(labels, gray, gray, width, height, measures, staffs,
+                candidates, heads, headerAccidentals, rawCourtesy);
+    }
+
+    private static List<ScoreKeyChange> detectKeyChangesWithHeaders(
+            byte[] labels,
+            byte[] gray,
+            byte[] annotationRaw,
+            int width,
+            int height,
+            List<MeasureRegion> measures,
+            List<Staff> staffs,
+            List<AccidentalCandidate> candidates,
+            List<Component> heads,
+            List<Component> headerAccidentals,
+            RawCourtesyBudget rawCourtesy) {
         List<ScoreKeyChange> result = new ArrayList<>();
         candidates = joinSignatureFragments(labels, width, candidates, staffs);
         candidates = splitSignatureSharps(labels, width, height, candidates, staffs);
@@ -8615,6 +8634,10 @@ final class OmrScoreInterpreter {
                 if (Float.isFinite(firstHead))
                     right = Math.min(right, firstHead - staff.gap * .28f);
                 if (right <= left) continue;
+
+                if (headerAccidentals != null && firstInRow && clef == null && prior != null)
+                    retainRepeatedHeaderAcrossBarEdge(labels, gray, annotationRaw, width, height, headerAccidentals,
+                            candidates, staff, prior, boundary, firstHead);
 
                 if (headerAccidentals != null && firstInRow && prior != null
                         && prior >= 5 && prior <= 7 && clef != null && completeHeaderTreble(clef, staff)
@@ -10241,6 +10264,57 @@ final class OmrScoreInterpreter {
      * A repeated signature may preserve its source owners even when one interior
      * sharp cannot be extracted. Its surviving ordered ink must predate the first attack.
      */
+    /** An established, complete sharp sequence can cross the inferred first bar edge. */
+    private static void retainRepeatedHeaderAcrossBarEdge(
+            byte[] labels, byte[] gray, byte[] raw, int width, int height,
+            List<Component> headers, List<AccidentalCandidate> candidates, Staff staff,
+            int fifths, float boundary, float firstHead) {
+        float gap = staff.gap;
+        if (gray == null || raw == null || gray.length != raw.length || fifths < 3 || fifths > 7
+                || !Float.isFinite(firstHead) || firstHead - boundary < gap * 2.6f
+                || firstHead - boundary > gap * 4f) return;
+        float left = boundary - (fifths + .75f) * gap;
+        float right = firstHead - gap * 1.65f;
+        if (left < 0 || right >= width) return;
+        var run = candidates.stream()
+                .filter(c -> c.label == OmrMeasurePostProcessor.CLEF_OR_KEY
+                        && c.component.centerX >= left && c.component.maxX <= right
+                        && Math.abs(c.component.centerY - staff.top) <= gap * 2.7f)
+                .filter(c -> isSharpGlyph(labels, width, height, c, gap))
+                .sorted(Comparator.comparingDouble(c -> c.component.centerX)).toList();
+        if (run.size() != fifths || run.get(fifths - 1).component.maxX <= boundary) return;
+        for (int i = 0; i < fifths; i++) {
+            var c = run.get(i).component;
+            float expected = staff.top - TREBLE_SHARP_STEPS[i] * gap * .5f;
+            if (Math.abs(c.centerY - expected) > gap * .44f) return;
+            if (i > 0) {
+                float dx = c.centerX - run.get(i - 1).component.centerX;
+                if (dx < gap * .92f || dx > gap * 1.54f) return;
+            }
+        }
+        if (!printedRepeatedSharps(gray, width, height, run, staff, left, right)
+                || !printedRepeatedSharps(raw, width, height, run, staff, left, right)) return;
+        for (var candidate : run) headers.add(candidate.component);
+    }
+
+    private static boolean printedRepeatedSharps(byte[] plane, int width, int height,
+            List<AccidentalCandidate> run, Staff staff, float left, float right) {
+        List<SignatureGlyph> wideRead = null;
+        for (int i = 0; i < run.size(); i++) {
+            var candidate = run.get(i);
+            float center = printedSignatureSharpCenter(plane, width, height, candidate, staff.gap);
+            if (Float.isFinite(center) && Math.abs(center - candidate.component.centerX) <= staff.gap * .24f)
+                continue;
+            if (wideRead == null)
+                wideRead = printedHeaderSymbols(plane, width, height, left, right, staff);
+            float expected = staff.top - TREBLE_SHARP_STEPS[i] * staff.gap * .5f;
+            if (wideRead.stream().noneMatch(glyph -> glyph.accidental == ScoreNoteEvent.ACCIDENTAL_SHARP
+                    && Math.abs(glyph.x - candidate.component.centerX) <= staff.gap * .24f
+                    && Math.abs(glyph.pitchY - expected) <= staff.gap * .43f)) return false;
+        }
+        return true;
+    }
+
     private static void retainRepeatedSharpHeaderOwners(
             List<Component> headers,
             List<AccidentalCandidate> candidates,
@@ -23306,6 +23380,29 @@ final class OmrScoreInterpreter {
      * accidental label. Reconstruct only that narrow printed column and require the natural's
      * asymmetric spine endpoints.
      */
+    private static boolean naturalAtStackedHead(
+            byte[] labels, byte[] gray, byte[] raw, int width, int height, Component glyph,
+            Component head, List<Component> heads, List<AccidentalCandidate> candidates, float gap) {
+        if (gray == null || raw == null || gray.length != raw.length
+                || head.minX - glyph.maxX > gap * .12f || glyph.maxX - head.minX > gap * .18f
+                || Math.abs(glyph.centerY - head.centerY) > gap * .32f
+                || !rawNaturalAtSeed(gray, width, height, glyph, head, gap)
+                || !rawNaturalAtSeed(raw, width, height, glyph, head, gap)) return false;
+        for (Component upper : heads) {
+            float separation = head.centerY - upper.centerY;
+            if (separation < gap * 3.25f || separation > gap * 3.8f
+                    || Math.abs(upper.centerX - head.centerX) > gap * .28f) continue;
+            for (AccidentalCandidate candidate : candidates) {
+                Component other = candidate.component;
+                if (Math.abs(other.centerX - glyph.centerX) <= gap * .26f
+                        && Math.abs(other.centerY - upper.centerY) <= gap * .38f
+                        && isNaturalGlyph(labels, width, height, candidate, gap)
+                        && rawNaturalAtSeed(raw, width, height, other, upper, gap)) return true;
+            }
+        }
+        return false;
+    }
+
     private static boolean rawNaturalAtSeed(
             byte[] gray, int width, int height, Component seed, Component head, float gap) {
         return rawNaturalAtSeed(gray, width, height, seed, head, gap, 0)
