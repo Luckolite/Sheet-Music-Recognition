@@ -164,6 +164,35 @@ public final class PrintedOctaveQuartetTest {
         assertTrue(recognize(fixture, separate).beamSource().groups().isEmpty());
     }
 
+    @Test
+    public void closesQuartetsBeforeAnIndependentHalfOrQuarterDyad() {
+        for (int quartets : new int[] {2, 3}) {
+            var source = fixture(quartets);
+            int x = 50 + quartets * 4 * 42;
+            var notes = new ArrayList<>(source.score.notes());
+            byte[] ink = source.gray.clone();
+            for (int y : new int[] {64, 120}) {
+                oval(ink, x, y);
+                if (quartets == 2) fill(ink, x - 4, y - 3, x + 4, y + 3, 255);
+                notes.add(new ScoreNoteEvent(0, x / (float) WIDTH, (144 - y) / 8, 0, 1,
+                        y / (float) HEIGHT, false, 0, 0, ScoreNoteEvent.ACCIDENTAL_FROM_KEY,
+                        4 - quartets).withStemDirection(-1).withClef(ScoreNoteEvent.CLEF_TREBLE));
+            }
+            fill(ink, x - 10, 67, x - 8, 183, 0);
+            var fixture = new Fixture(new ScorePageInterpretation(source.score.measures(), notes),
+                    ink, source.staffs);
+            var result = recognize(fixture, ink.clone());
+            assertEquals(quartets, result.beamSource().groups().size());
+            assertEquals(notes, result.notes());
+            assertTrue(result.beamSource().noteOrigins().get(notes.size() - 2).isEmpty());
+            assertTrue(result.beamSource().noteOrigins().get(notes.size() - 1).isEmpty());
+
+            byte[] joined = ink.clone();
+            fill(joined, x - 42 - 8, 177, x - 10, 183, 0);
+            assertTrue(recognize(fixture, joined).beamSource().groups().isEmpty());
+        }
+    }
+
     private static ScorePageInterpretation recognize(Fixture fixture, byte[] raw) {
         return ClosedOctaveRailRun.completePrintedBeamQuartets(
                 fixture.score, fixture.gray, raw, WIDTH, HEIGHT, fixture.staffs, 0);

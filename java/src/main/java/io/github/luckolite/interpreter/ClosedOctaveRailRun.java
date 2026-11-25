@@ -58,11 +58,15 @@ final class ClosedOctaveRailRun {
         for (var heads : byBar) {
             Head island = heads.size() == 33 ? unownedBeamIsland(beam, heads) : null;
             if (island != null) heads.remove(island);
-            if ((heads.size() != 32 && heads.size() != 24) || heads.stream().anyMatch(h -> !ordinaryHead(h.note, NoteArticulation.ARTICULATIONS, true)
+            int size = heads.size();
+            if (size != 18 && size != 24 && size != 26 && size != 32) continue;
+            heads.sort(Comparator.comparingDouble(Head::x));
+            boolean hasUnbeamedTail = size == 18 || size == 26;
+            List<Head> beamedHeads = hasUnbeamedTail ? heads.subList(0, size - 2) : heads;
+            if (beamedHeads.stream().anyMatch(h -> !ordinaryHead(h.note, NoteArticulation.ARTICULATIONS, true)
                     || h.note.unbeamedDurationBeats() != 0 || h.note.beamCount() < 2
                     || h.note.beamCount() > 3 || h.note.stemDirection() != -1)
-                    || heads.stream().filter(h -> h.note.beamCount() == 3).count() > 1) continue;
-            heads.sort(Comparator.comparingDouble(Head::x));
+                    || beamedHeads.stream().filter(h -> h.note.beamCount() == 3).count() > 1) continue;
             var firstLower = heads.get(0).y > heads.get(1).y ? heads.get(0) : heads.get(1);
             PlayingTechniqueDetector.Staff frame = null;
             for (var staff : staffs) {
@@ -74,21 +78,29 @@ final class ClosedOctaveRailRun {
             }
             if (frame == null) continue;
             float gap = frame.gap();
-            var columns = new ArrayList<Column>(heads.size() / 2);
-            for (int i = 0; i < heads.size(); i += 2) {
-                var a = heads.get(i);
-                var b = heads.get(i + 1);
+            if (hasUnbeamedTail && !hasSeparatedUnbeamedOctaveTail(heads, gap, size == 18 ? 2 : 1))
+                continue;
+            var columns = new ArrayList<Column>(beamedHeads.size() / 2);
+            for (int i = 0; i < beamedHeads.size(); i += 2) {
+                var a = beamedHeads.get(i);
+                var b = beamedHeads.get(i + 1);
                 var upper = a.y < b.y ? a : b;
                 var lower = upper == a ? b : a;
                 if (b.x - a.x > gap * .24f || upper.note.staffStep() - lower.note.staffStep() != 7
                         || Math.abs(lower.y - upper.y - 3.58f * gap) > gap * .36f
-                        || i > 0 && (a.x - heads.get(i - 1).x < gap * 1.65f
-                                        || a.x - heads.get(i - 1).x > gap * 3.65f)) break;
+                        || i > 0 && (a.x - beamedHeads.get(i - 1).x < gap * 1.65f
+                                        || a.x - beamedHeads.get(i - 1).x > gap * 3.65f)) break;
                 columns.add(new Column(upper, lower));
             }
-            if (columns.size() * 2 != heads.size()
-                    || !printedQuartetRails(gray, width, height, frame, columns)
-                    || !printedQuartetRails(raw, width, height, frame, columns)) continue;
+            if (columns.size() * 2 != beamedHeads.size()) continue;
+            Head tail = null;
+            if (hasUnbeamedTail) {
+                var left = heads.get(size - 2);
+                var right = heads.get(size - 1);
+                tail = left.y > right.y ? left : right;
+            }
+            if (!printedQuartetRails(gray, width, height, frame, columns, tail)
+                    || !printedQuartetRails(raw, width, height, frame, columns, tail)) continue;
             if (island != null) {
                 if (!interiorBeamIsland(gray, width, height, island, columns, gap)
                         || !interiorBeamIsland(raw, width, height, island, columns, gap)) continue;
@@ -102,6 +114,22 @@ final class ClosedOctaveRailRun {
         var owners = java.util.stream.IntStream.range(0, score.notes().size())
                 .filter(i -> !removed.contains(i)).boxed().toList();
         return amended.withNotes(owners.stream().map(score.notes()::get).toList(), owners);
+    }
+
+    private static boolean hasSeparatedUnbeamedOctaveTail(List<Head> heads, float gap, int beats) {
+        int tail = heads.size() - 2;
+        var left = heads.get(tail);
+        var right = heads.get(tail + 1);
+        return isUnbeamedTailHead(left.note, beats) && isUnbeamedTailHead(right.note, beats)
+                && right.x - left.x <= gap * .24f
+                && Math.abs(left.note.staffStep() - right.note.staffStep()) == 7
+                && Math.abs(Math.abs(left.y - right.y) - 3.58f * gap) <= gap * .36f
+                && left.x - heads.get(tail - 1).x >= gap * 1.65f;
+    }
+
+    private static boolean isUnbeamedTailHead(ScoreNoteEvent note, int beats) {
+        return ordinaryHead(note, NoteArticulation.ARTICULATIONS, true) && note.stemDirection() == -1
+                && note.beamCount() == 0 && note.unbeamedDurationBeats() == beats;
     }
 
     private static Head unownedBeamIsland(ScoreBeamSource beam, List<Head> heads) {
@@ -168,7 +196,7 @@ final class ClosedOctaveRailRun {
     }
 
     private static boolean printedQuartetRails(byte[] ink, int width, int height,
-            PlayingTechniqueDetector.Staff staff, List<Column> columns) {
+            PlayingTechniqueDetector.Staff staff, List<Column> columns, Head tail) {
         float gap = staff.gap();
         var track = StaffPitchTrack.linear(width, staff.bottom(), gap, 0);
         var budget = new PrintedBeamShafts.Budget(1_500_000);
@@ -217,7 +245,14 @@ final class ClosedOctaveRailRun {
                                     ink, width, height, stem, previous, gap, -1, staff.bottom()))) return false;
             previous = stem;
         }
-        return true;
+        if (tail == null) return true;
+        var terminal = PrintedBeamShafts.at(ink, width, height, tail.x, tail.y, gap, budget).stream()
+                .filter(shaft -> shaft.direction() == 1).toList();
+        if (budget.refused() || terminal.size() > 1) return false;
+        var shaft = terminal.isEmpty()
+                ? FadedTripletDownshaft.measure(ink, width, height, tail.x, tail.y, gap) : terminal.get(0);
+        return shaft != null && WrappedEighthTriplets.separatedOctaveQuartets(
+                ink, width, height, previous, shaft, gap, staff.bottom());
     }
 
     private static boolean hasThirdDepth(Column column) {

@@ -2212,6 +2212,9 @@ final class NoteArticulationDetector {
                                         note.y,
                                         note.gap,
                                         glyph.pixels)) continue;
+                        if (raw && candidate == NoteArticulation.STACCATO
+                                && octaveDottedRun(annotationGray != null && annotationGray.length == gray.length
+                                        ? annotationGray : gray, width, height, glyph, note.gap)) continue;
                         if (raw && candidate == NoteArticulation.TENUTO) {
                             if (pairedEquationStroke(glyph, note, gray, width, height)) continue;
                             if (octaveDashInk == null) {
@@ -4122,6 +4125,64 @@ final class NoteArticulationDetector {
     }
 
     /** A separated, matching stroke above the staff belongs to an equals sign. */
+    /** A compact glyph within a tightly spaced dotted octave extension is line ink. */
+    private static boolean octaveDottedRun(byte[] gray, int width, int height, Glyph glyph, float gap) {
+        int center = (glyph.left + glyph.right) / 2;
+        int left = Math.max(0, Math.round(center - 3f * gap));
+        int right = Math.min(width - 1, Math.round(center + 3f * gap));
+        int coreLeft = Math.max(0, glyph.left - 1), coreRight = Math.min(width - 1, glyph.right + 1);
+        for (int y = Math.max(0, glyph.top); y <= Math.min(height - 1, glyph.bottom); y++) {
+            int previous = -1, first = -1, count = 0, compact = 0;
+            int row = y * width;
+            float firstStep = 0;
+            boolean owns = false;
+            for (int x = left; x <= right; x++) {
+                if ((gray[row + x] & 255) >= 145) continue;
+                int start = x;
+                while (x < right && (gray[row + x + 1] & 255) < 145) x++;
+                int span = x - start + 1;
+                int middle = (x + start) / 2;
+                if (span < gap * .14f || span > gap * .48f) {
+                    previous = -1;
+                    continue;
+                }
+                int step = middle - previous;
+                if (previous < 0 || step < gap * .30f || step > gap * .70f
+                        || (count >= 2 && Math.abs(step - firstStep) > gap * .17f)) {
+                    count = 0;
+                    compact = 0;
+                    owns = false;
+                    first = middle;
+                } else if (count == 1) {
+                    firstStep = step;
+                }
+                owns |= middle >= coreLeft && middle <= coreRight;
+                count++;
+                previous = middle;
+                if (compactDottedStroke(gray, width, height, start, x, y, gap)) compact++;
+                // Allow a neighboring stroke to touch the extension, but require compact bodies
+                // across the run so coincident letter uprights cannot claim the actual dot.
+                if (owns && count >= 8 && compact >= 7 && middle - first >= gap * 2.7f)
+                    return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean compactDottedStroke(
+            byte[] gray, int width, int height, int left, int right, int y, float gap) {
+        int maximumHeight = Math.round(gap * .45f);
+        for (int x = left; x <= right; x++) {
+            int top = y, bottom = y;
+            while (top > 0 && y - top < maximumHeight
+                    && (gray[(top - 1) * width + x] & 255) < 145) top--;
+            while (bottom + 1 < height && bottom - top < maximumHeight
+                    && (gray[(bottom + 1) * width + x] & 255) < 145) bottom++;
+            if (bottom - top + 1 > maximumHeight) return false;
+        }
+        return true;
+    }
+
     private static boolean pairedEquationStroke(
             Glyph glyph, Anchor note, byte[] gray, int width, int height) {
         int span = glyph.right - glyph.left + 1;
