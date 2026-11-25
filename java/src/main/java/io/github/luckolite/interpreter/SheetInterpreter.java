@@ -230,6 +230,26 @@ public final class SheetInterpreter {
             Integer initialKeyFifths,
             boolean standardViolin)
             throws Exception {
+        try (var tupletRetries = TupletNumeralInk.memoizeRetries()) {
+            return analyzePage(labels, gray, width, height, annotations, ocr, physicalPage,
+                    decoderGray, preparedTabs, inheritedMeter, initialKeyFifths, standardViolin);
+        }
+    }
+
+    private static AnalyzedPage analyzePage(
+            byte[] labels,
+            byte[] gray,
+            int width,
+            int height,
+            Annotations annotations,
+            MusicalOcr ocr,
+            int physicalPage,
+            byte[] decoderGray,
+            TablatureDecoder.Prepared preparedTabs,
+            ScoreMeterChange inheritedMeter,
+            Integer initialKeyFifths,
+            boolean standardViolin)
+            throws Exception {
         if (decoderGray != null && (gray == null || decoderGray.length != gray.length))
             throw new IllegalArgumentException("Decoder grayscale dimensions must match source");
         if (physicalPage < -1) throw new IllegalArgumentException("Invalid physical source page");

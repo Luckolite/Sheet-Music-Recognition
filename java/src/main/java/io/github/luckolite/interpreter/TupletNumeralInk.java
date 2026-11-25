@@ -143,6 +143,78 @@ final class TupletNumeralInk {
         return count;
     }
 
+    private static final ThreadLocal<RetryMemo> RETRY_MEMO = new ThreadLocal<>();
+
+    static RetryMemo memoizeRetries() {
+        var memo = new RetryMemo(RETRY_MEMO.get());
+        RETRY_MEMO.set(memo);
+        return memo;
+    }
+
+    static RetryMemo activeRetryMemo(byte[] gray) {
+        var memo = RETRY_MEMO.get();
+        if (memo != null) memo.useRaster(gray);
+        return memo;
+    }
+
+    // Use integer float bits so absent head coordinates also match on Android.
+    record RetryGeometry(int stride, int left, int top, int width, int height,
+            int firstXBits, int lastXBits, int firstYBits, int lastYBits, int gapBits,
+            int headXBits, int headYBits, boolean shortNotes, int number, boolean boundedSecondary) {
+        RetryGeometry(int stride, int left, int top, int width, int height,
+                float firstX, float lastX, float firstY, float lastY, float gap,
+                float headX, float headY, boolean shortNotes, int number, boolean boundedSecondary) {
+            this(stride, left, top, width, height, Float.floatToIntBits(firstX),
+                    Float.floatToIntBits(lastX), Float.floatToIntBits(firstY),
+                    Float.floatToIntBits(lastY), Float.floatToIntBits(gap),
+                    Float.floatToIntBits(headX), Float.floatToIntBits(headY),
+                    shortNotes, number, boundedSecondary);
+        }
+    }
+
+    record RetryKey(RetryGeometry geometry, int threshold, boolean ruleEdges) {}
+
+    enum RetryMiss { UNCHANGED_EDGES, POSSIBLE_EDGES }
+
+    /** Bounded, per-read misses that did not consult glyph ownership. */
+    static final class RetryMemo implements AutoCloseable {
+        private static final int MAX_RETRIES = 8192;
+        private final RetryMemo previous;
+        private final java.util.LinkedHashMap<RetryKey, RetryMiss> misses =
+                new java.util.LinkedHashMap<>(64, .75f, true);
+        private byte[] raster;
+
+        private RetryMemo(RetryMemo previous) {
+            this.previous = previous;
+        }
+
+        private void useRaster(byte[] gray) {
+            if (raster != gray) {
+                misses.clear();
+                raster = gray;
+            }
+        }
+
+        RetryMiss find(RetryKey key) {
+            return misses.get(key);
+        }
+
+        void record(RetryKey key, boolean hasRuleEdges) {
+            if (misses.size() >= MAX_RETRIES) {
+                var oldest = misses.entrySet().iterator();
+                oldest.next();
+                oldest.remove();
+            }
+            misses.put(key, hasRuleEdges ? RetryMiss.POSSIBLE_EDGES : RetryMiss.UNCHANGED_EDGES);
+        }
+
+        @Override
+        public void close() {
+            if (previous == null) RETRY_MEMO.remove();
+            else RETRY_MEMO.set(previous);
+        }
+    }
+
     record Crop(byte[] gray, int sourceWidth, int left, int top, int width, int height,
                 int paperLimit, float gap, int[] histogram) {
         int effectiveThreshold(int requested) {

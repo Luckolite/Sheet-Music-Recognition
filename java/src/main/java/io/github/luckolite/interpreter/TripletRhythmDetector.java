@@ -3858,6 +3858,10 @@ final class TripletRhythmDetector {
         int[] pendingLevels = pendingEnabled ? new int[admitted.length] : null;
         int pendingCount = 0;
         var crop = TupletNumeralInk.crop(gray, width, height, firstX, lastX, firstY, lastY, gap);
+        var retryMemo = crop == null ? null : TupletNumeralInk.activeRetryMemo(crop.gray());
+        var search = retryMemo == null ? null : new TupletNumeralInk.RetryGeometry(width,
+                crop.left(), crop.top(), crop.width(), crop.height(), firstX, lastX, firstY,
+                lastY, gap, headX, headY, shortNotes, number, boundedSecondary);
         // Equal effective thresholds have the same binary ink. Keep the requested
         // levels and ownership call order for consensus and budget accounting.
         int[] thresholds = new int[levels.length];
@@ -3886,6 +3890,17 @@ final class TripletRhythmDetector {
                 int retryBit = 1 << key;
                 if ((misses & retryBit) != 0 || (pass != 0 && (crossPassMisses & retryBit) != 0))
                     continue;
+                var retryKey = search == null ? null : new TupletNumeralInk.RetryKey(
+                        search, threshold, pass != 0);
+                if (retryMemo != null) {
+                    var known = retryMemo.find(retryKey);
+                    if (known != null) {
+                        misses |= retryBit;
+                        if (pass == 0 && known == TupletNumeralInk.RetryMiss.UNCHANGED_EDGES)
+                            crossPassMisses |= retryBit;
+                        continue;
+                    }
+                }
                 var saved = unchanged == null ? null : unchanged[key];
                 TupletNumeralInk.Window local;
                 if (paperIndex >= 0 && threshold == thresholds[paperIndex]) {
@@ -3923,6 +3938,7 @@ final class TripletRhythmDetector {
                                                                 glyph.bottom() + local.top()));
                                 });
                 if (retry == null && !consultedOwner[0]) {
+                    if (retryMemo != null) retryMemo.record(retryKey, local.hasRuleEdges());
                     misses |= retryBit;
                     if (pass == 0 && !local.hasRuleEdges()) crossPassMisses |= retryBit;
                     continue;
