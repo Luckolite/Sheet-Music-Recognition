@@ -505,6 +505,17 @@ final class FingeringAnnotationFilter {
         return rejected.isEmpty() ? notes : notes.stream().filter(n -> !rejected.contains(n)).toList();
     }
 
+    static boolean provesRuledParentheticalPair(List<ScoreNoteEvent> notes, MeasureRegion bar,
+            byte[] raw, byte[] gray, int width, int height, float cueLeft, float cueRight, float cueY) {
+        if (notes.size() != 16) return false;
+        float gap = (bar.bottom() - bar.top()) * height / 8.2f;
+        if (gap < 10 || gap > 24) return false;
+        float x = fingeringHeadX(bar, notes.get(5), width) - .26f * gap;
+        return x >= cueLeft && x <= cueRight
+                && ruledSmallFingerPair(raw, width, height, bar, notes, x, cueY, gap)
+                && ruledSmallFingerPair(gray, width, height, bar, notes, x, cueY, gap);
+    }
+
     private static boolean ruledSmallFingerPair(byte[] ink, int width, int height, MeasureRegion bar,
             List<ScoreNoteEvent> notes, float x, float y, float gap) {
         float close = fingeringHeadX(bar, notes.get(11), width);

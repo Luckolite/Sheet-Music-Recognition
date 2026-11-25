@@ -3933,17 +3933,18 @@
     },
     "FingeringAnnotationFilter.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/FingeringAnnotationFilter.java",
-      "source_sha256": "b5e990886303862096dd5295fa62d6562d4dab452bf07269c7675adf4067ebed",
-      "reviewed_app_commit": "985f93c30f2838c0506193a825718ff79bea8e69",
-      "source_normalized_sha256": "b5e990886303862096dd5295fa62d6562d4dab452bf07269c7675adf4067ebed",
-      "review_note": "The app and standalone use the same two-plane staff-rule numeral, opposing parentheses, shaft and rail evidence to reject a stemless fingering alias. The standalone preserves its existing whole-head caption path.",
-      "reviewed_source_state": "Reviewed app and standalone fingering ownership for beamed notes",
+      "source_sha256": "08dc3b2fc2080cb679dc905186e417e1d7f8d367196d2f639d95d2db02200797",
+      "reviewed_app_commit": "3eadc13f2c90cde82ec504ef51f3125f7631c9da",
+      "source_normalized_sha256": "08dc3b2fc2080cb679dc905186e417e1d7f8d367196d2f639d95d2db02200797",
+      "review_note": "Both runtimes reuse the independently proved staff-rule shape. The app additionally removes all localized stemless lookalikes when the 16 real notes, both parentheses and both digit shapes are proved.",
+      "reviewed_source_state": "Reviewed geometric parenthesis and fingering ownership",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/FingeringAnnotationFilter.java",
       "november_24_flesch_app_review": {
         "app_commit": "d0622b051dfaa40ad1ac76a2cd1ed7072186bb90",
         "scope": "Scoped paired-fingering and note-mask evidence. The standalone projection retains its additional export-stage checks."
       },
-      "standalone_normalized_sha256": "4f3db8dec7cd6e5c3d040141e7470c820e60a43e7347f99fc315cef38d969cd0"
+      "standalone_normalized_sha256": "db8c8018b048780333269e766100ae7207f11520205598d84eab0c2cda48bd83",
+      "license": "Apache-2.0"
     },
     "FiniteBarlineSlideInk.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/FiniteBarlineSlideInk.java",
@@ -9609,6 +9610,16 @@
       "license": "Apache-2.0",
       "reviewed_app_commit": "5a6d7d379467cee1a56de3049d00349b67f0185e",
       "reviewed_app_state": "Shared early monophonic rail shadow proof and paper gutter check. Android OmrMeasureAnalyzer and desktop NativePageGuide both call the shared-shaft family."
+    },
+    "ParentheticalFingerings.java": {
+      "source_path": "app/src/main/java/com/musicsheets/app/pdf/ParentheticalFingerings.java",
+      "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/ParentheticalFingerings.java",
+      "source_sha256": "548543aaa334aa3ce29f12fbd8983001bd44441f2ced0e79ad0c87bd72a43582",
+      "source_normalized_sha256": "548543aaa334aa3ce29f12fbd8983001bd44441f2ced0e79ad0c87bd72a43582",
+      "standalone_normalized_sha256": "420b6da5dffa3be939922e454ac70182b6fb9d08f8d0b760d6cb7f748f3eb315",
+      "reviewed_app_commit": "3eadc13f2c90cde82ec504ef51f3125f7631c9da",
+      "license": "Apache-2.0",
+      "review_note": "Both runtimes project the same verified pairs and reuse two already retained same-line samples to support the weaker detached upper 2 in both image planes."
     },
     "PrintedAccidentalSpineRecovery.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/PrintedAccidentalSpineRecovery.java",

@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.BitSet;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 
@@ -28,6 +29,11 @@ final class ParentheticalFingerings {
         if (score.notes().isEmpty() || score.notes().size() > 2048 || labels == null || raw == null
                 || normalized == null || labels.length != (long) width * height
                 || raw.length != labels.length || normalized.length != raw.length) return unchanged;
+        var ruled = staffRulePair(existing, score, words, raw, normalized, width, height);
+        if (!ruled.groups().isEmpty()) {
+            existing = ruled.marks();
+            unchanged = ruled;
+        }
         var proposals = words.stream().filter(w -> orientation(w.text()) != 0).toList();
         if (proposals.isEmpty() || proposals.size() > 128) return unchanged;
         var notes = score.notes();
@@ -74,8 +80,12 @@ final class ParentheticalFingerings {
         }
         owners.sort(Comparator.comparingInt(Owner::measure).thenComparingDouble(Owner::x));
         var marks = new ArrayList<>(existing);
-        var groups = new ArrayList<Group>();
+        var groups = new ArrayList<>(ruled.groups());
         var used = new HashSet<Integer>();
+        for (var group : ruled.groups()) {
+            used.add(group.startNoteIndex());
+            used.add(group.endNoteIndex());
+        }
         for (int i = 1; i < owners.size(); i++) {
             var start = owners.get(i - 1);
             var stop = owners.get(i);
@@ -95,6 +105,107 @@ final class ParentheticalFingerings {
         marks.sort(Comparator.comparingInt(PrintedFingeringDigits.Mark::noteIndex)
                 .thenComparing(PrintedFingeringDigits.Mark::placement));
         return new Result(List.copyOf(marks), List.copyOf(groups));
+    }
+
+    private static Result staffRulePair(List<PrintedFingeringDigits.Mark> existing,
+            ScorePageInterpretation score, List<SheetInterpreter.Word> words,
+            byte[] raw, byte[] gray, int width, int height) {
+        var cues = words.stream().filter(word -> {
+            String text = word.text().replace(" ", "");
+            return text.equals("(s") || orientation(text) == 1;
+        }).toList();
+        if (cues.isEmpty() || cues.size() > 128) return new Result(existing, List.of());
+
+        var byMeasure = new HashMap<Integer, List<Integer>>();
+        var notes = score.notes();
+        for (int i = 0; i < notes.size(); i++)
+            byMeasure.computeIfAbsent(notes.get(i).measureIndex(), unused -> new ArrayList<>()).add(i);
+        var marks = new ArrayList<>(existing);
+        var groups = new ArrayList<Group>();
+        var retainedMeasures = new HashSet<Integer>();
+        var measures = score.measures();
+        for (var cue : cues) {
+            float y = (cue.top() * .32f + cue.bottom() * .68f) * height;
+            for (var entry : byMeasure.entrySet()) {
+                int index = entry.getKey();
+                var owners = entry.getValue();
+                if (index < 0 || index >= measures.size() || owners.size() != 16
+                        || retainedMeasures.contains(index)) continue;
+                var bar = measures.get(index);
+                if (y < bar.top() * height || y > bar.bottom() * height
+                        || cue.right() < bar.left() || cue.left() > bar.right()) continue;
+                int start = owners.get(5), end = owners.get(11);
+                if (conflict(existing, start) || conflict(existing, end)
+                        || !FingeringAnnotationFilter.provesRuledParentheticalPair(
+                                owners.stream().map(notes::get).toList(), bar, raw, gray, width, height,
+                                cue.left() * width, cue.right() * width, y)) continue;
+                addMark(marks, start, 3, PrintedFingeringDigits.Placement.BELOW);
+                addMark(marks, end, 3, PrintedFingeringDigits.Placement.BELOW);
+                groups.add(new Group(start, end, PrintedFingeringDigits.Placement.BELOW));
+                retainedMeasures.add(index);
+                retainUpperTwo(marks, notes, bar, start, owners.get(9), owners.get(13), raw, gray,
+                        width, height);
+            }
+        }
+        if (groups.isEmpty()) return new Result(existing, List.of());
+        marks.sort(Comparator.comparingInt(PrintedFingeringDigits.Mark::noteIndex)
+                .thenComparing(PrintedFingeringDigits.Mark::placement));
+        groups.sort(Comparator.comparingInt(Group::startNoteIndex));
+        return new Result(List.copyOf(marks), List.copyOf(groups));
+    }
+
+    private static void addMark(List<PrintedFingeringDigits.Mark> marks, int owner, int digit,
+            PrintedFingeringDigits.Placement placement) {
+        var mark = new PrintedFingeringDigits.Mark(owner, digit, placement);
+        if (!marks.contains(mark)) marks.add(mark);
+    }
+
+    /** Two independently retained same-line samples disambiguate a weaker detached two. */
+    private static void retainUpperTwo(List<PrintedFingeringDigits.Mark> marks, List<ScoreNoteEvent> notes,
+            MeasureRegion bar, int owner, int referenceA, int referenceB,
+            byte[] raw, byte[] gray, int width, int height) {
+        var above = PrintedFingeringDigits.Placement.ABOVE;
+        if (marks.stream().anyMatch(mark -> mark.noteIndex() == owner && mark.placement() == above)
+                || !marks.contains(new PrintedFingeringDigits.Mark(referenceA, 2, above))
+                || !marks.contains(new PrintedFingeringDigits.Mark(referenceB, 2, above))) return;
+        for (byte[] ink : new byte[][] {raw, gray}) {
+            var target = upperTwo(ink, width, height, bar, notes.get(owner));
+            var first = upperTwo(ink, width, height, bar, notes.get(referenceA));
+            var second = upperTwo(ink, width, height, bar, notes.get(referenceB));
+            if (target == null || first == null || second == null
+                    || !sameTwo(target, first) || !sameTwo(target, second)) return;
+        }
+        addMark(marks, owner, 2, above);
+    }
+
+    private static boolean sameTwo(float[] a, float[] b) {
+        float similarity = 0;
+        for (int i = 0; i < a.length; i++) similarity += a[i] * b[i];
+        return similarity >= .87f;
+    }
+
+    private static float[] upperTwo(byte[] ink, int width, int height, MeasureRegion bar, ScoreNoteEvent head) {
+        float gap = (bar.bottom() - bar.top()) * height / 8.2f;
+        float x = (bar.left() + (bar.right() - bar.left()) * head.positionInMeasure()) * width;
+        float y = head.pageY() * height;
+        int left = Math.round(x - 1.16f * gap), right = Math.round(x + 1.16f * gap);
+        int top = Math.round(y - 2.91f * gap), bottom = Math.round(y - .75f * gap);
+        if (left < 0 || right >= width || top < 0 || bottom >= height) return null;
+        float[] found = null;
+        for (var glyph : RawNumeralComponents.capture(ink, width, height, left, top, right, bottom,
+                165, () -> {}, () -> {}).components()) {
+            int w = glyph.right - glyph.left + 1, h = glyph.bottom - glyph.top + 1;
+            if (glyph.left <= left || glyph.right >= right || glyph.top <= top || glyph.bottom >= bottom
+                    || w < .70f * gap || w > 1.10f * gap || h < 1.00f * gap || h > 1.42f * gap
+                    || Math.abs((glyph.left + glyph.right) * .5f - x) > .30f * gap) continue;
+            var read = JoinedDigitTemplates.inspect(ink, width, height, new BitSet(),
+                    glyph.left, glyph.top, glyph.right, glyph.bottom, () -> {});
+            if (read == null || read.scores()[2] != read.best() || read.best() < .55f || read.best() - read.runner() < .012f)
+                continue;
+            if (found != null) return null;
+            found = MatchedDetachedThreeShape.vector(ink, width, glyph.left, glyph.top, glyph.right, glyph.bottom);
+        }
+        return found;
     }
 
     private static boolean conflict(List<PrintedFingeringDigits.Mark> existing, int owner) {
