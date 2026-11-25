@@ -193,6 +193,53 @@ public final class PrintedOctaveQuartetTest {
         }
     }
 
+    @Test
+    public void completesSingleRailOctaveTripletsWithProvedUnnumberedVisibility() {
+        var source = tripletFixture();
+        var complete = recognize(source, source.gray.clone());
+        assertEquals(source.score.notes(), complete.notes());
+        assertEquals(4, complete.beamSource().groups().size());
+        for (var group : complete.beamSource().groups()) {
+            assertEquals(List.of(1, 1), group.bridges());
+            assertEquals(ScoreBeamSource.TupletMark.UNNUMBERED, group.tupletMark());
+        }
+
+        byte[] bridged = source.gray.clone();
+        fill(bridged, 214, 177, 248, 183, 0);
+        assertTrue(recognize(source, bridged).beamSource().groups().isEmpty());
+
+        byte[] marked = source.gray.clone();
+        fill(marked, 179, 190, 188, 191, 0);
+        fill(marked, 187, 191, 189, 201, 0);
+        fill(marked, 180, 195, 188, 196, 0);
+        fill(marked, 179, 201, 188, 202, 0);
+        assertEquals(3, recognize(source, marked).beamSource().groups().size());
+    }
+
+    private static Fixture tripletFixture() {
+        byte[] gray = new byte[WIDTH * HEIGHT];
+        Arrays.fill(gray, (byte) 255);
+        for (int y = 80; y <= 144; y += GAP) fill(gray, 8, y, WIDTH - 9, y + 1, 0);
+        var notes = new ArrayList<ScoreNoteEvent>();
+        for (int slot = 0; slot < 12; slot++) {
+            int x = 150 + slot * 36;
+            for (int y : new int[] {72, 128}) {
+                oval(gray, x, y);
+                notes.add(new ScoreNoteEvent(0, (x - 84f) / 602f, (144 - y) / 8,
+                        0, 1, y / (float) HEIGHT, false, 0, 1).withStemDirection(-1)
+                        .withClef(ScoreNoteEvent.CLEF_TREBLE).withTupletRatio(3, 2));
+            }
+            fill(gray, x - 10, 75, x - 8, 183, 0);
+        }
+        for (int slot = 0; slot < 12; slot += 3) {
+            int first = 140 + slot * 36, last = first + 2 * 36 + 2;
+            fill(gray, first, 177, last, 183, 0);
+        }
+        var measure = new MeasureRegion(84f / WIDTH, 686f / WIDTH, 46.4f / HEIGHT, 177.6f / HEIGHT);
+        return new Fixture(new ScorePageInterpretation(List.of(measure), notes),
+                gray, List.of(new PlayingTechniqueDetector.Staff(80, 144, GAP, 0, 1)));
+    }
+
     private static ScorePageInterpretation recognize(Fixture fixture, byte[] raw) {
         return ClosedOctaveRailRun.completePrintedBeamQuartets(
                 fixture.score, fixture.gray, raw, WIDTH, HEIGHT, fixture.staffs, 0);

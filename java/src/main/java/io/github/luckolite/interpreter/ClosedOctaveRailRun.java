@@ -37,7 +37,7 @@ final class ClosedOctaveRailRun {
         return removeClosedRailFragments(score, inherited, labels, normalized, raw, w, h);
     }
 
-    /** Complete detached double-beam quartets from physical octave shafts in both images. */
+    /** Complete physically separated octave-dyad beams in both images. */
     static ScorePageInterpretation completePrintedBeamQuartets(ScorePageInterpretation score,
             byte[] gray, byte[] raw, int width, int height,
             List<PlayingTechniqueDetector.Staff> staffs, int page) {
@@ -63,8 +63,11 @@ final class ClosedOctaveRailRun {
             heads.sort(Comparator.comparingDouble(Head::x));
             boolean hasUnbeamedTail = size == 18 || size == 26;
             List<Head> beamedHeads = hasUnbeamedTail ? heads.subList(0, size - 2) : heads;
-            if (beamedHeads.stream().anyMatch(h -> !ordinaryHead(h.note, NoteArticulation.ARTICULATIONS, true)
-                    || h.note.unbeamedDurationBeats() != 0 || h.note.beamCount() < 2
+            boolean singleRails = size == 24 && beamedHeads.stream().allMatch(h -> h.note.beamCount() == 1);
+            int groupSize = singleRails ? 3 : 4;
+            if (beamedHeads.stream().anyMatch(h -> !ordinaryHead(
+                            h.note, NoteArticulation.ARTICULATIONS, true, singleRails)
+                    || h.note.unbeamedDurationBeats() != 0 || h.note.beamCount() < (singleRails ? 1 : 2)
                     || h.note.beamCount() > 3 || h.note.stemDirection() != -1)
                     || beamedHeads.stream().filter(h -> h.note.beamCount() == 3).count() > 1) continue;
             var firstLower = heads.get(0).y > heads.get(1).y ? heads.get(0) : heads.get(1);
@@ -99,15 +102,28 @@ final class ClosedOctaveRailRun {
                 var right = heads.get(size - 1);
                 tail = left.y > right.y ? left : right;
             }
-            if (!printedQuartetRails(gray, width, height, frame, columns, tail)
-                    || !printedQuartetRails(raw, width, height, frame, columns, tail)) continue;
+            if (!printedGroupRails(gray, width, height, frame, columns, tail, groupSize)
+                    || !printedGroupRails(raw, width, height, frame, columns, tail, groupSize)) continue;
             if (island != null) {
                 if (!interiorBeamIsland(gray, width, height, island, columns, gap)
                         || !interiorBeamIsland(raw, width, height, island, columns, gap)) continue;
                 removed.add(island.owner);
             }
-            for (int i = 0; i < columns.size(); i += 4)
-                beam = completeOctaveQuartet(beam, page, columns.subList(i, i + 4));
+            var bar = bars.get(firstLower.note.measureIndex());
+            var rows = singleRails ? UnnumberedTripletInk.sourceRows(bar, bars, height) : null;
+            var rawTrack = singleRails ? WrappedMeasureBoundaries.verifiedTripletStaff(raw, width, height, bar, true) : null;
+            var track = singleRails ? WrappedMeasureBoundaries.verifiedTripletStaff(gray, width, height, bar, true) : null;
+            for (int i = 0; i < columns.size(); i += groupSize) {
+                var members = columns.subList(i, i + groupSize);
+                ScoreBeamSource.TupletMark mark = null;
+                if (singleRails) {
+                    if (rawTrack == null || track == null
+                            || !unnumberedTriplet(raw, width, height, members, bar, gap, rows, rawTrack)
+                            || !unnumberedTriplet(gray, width, height, members, bar, gap, rows, track)) continue;
+                    mark = ScoreBeamSource.TupletMark.UNNUMBERED;
+                }
+                beam = completeOctaveGroup(beam, page, members, singleRails ? 1 : 3, mark);
+            }
         }
         var amended = beam == score.beamSource() ? score : score.withBeamSource(beam);
         if (removed.isEmpty()) return amended;
@@ -195,8 +211,8 @@ final class ClosedOctaveRailRun {
         return dark >= length - 1;
     }
 
-    private static boolean printedQuartetRails(byte[] ink, int width, int height,
-            PlayingTechniqueDetector.Staff staff, List<Column> columns, Head tail) {
+    private static boolean printedGroupRails(byte[] ink, int width, int height,
+            PlayingTechniqueDetector.Staff staff, List<Column> columns, Head tail, int groupSize) {
         float gap = staff.gap();
         var track = StaffPitchTrack.linear(width, staff.bottom(), gap, 0);
         var budget = new PrintedBeamShafts.Budget(1_500_000);
@@ -231,12 +247,15 @@ final class ClosedOctaveRailRun {
                                         && upperFadedAttachment(ink, width, upper, lower, stem, gap)))
                     return false;
             }
-            if (previous != null && (i % 4 == 0
+            if (previous != null && (i % groupSize == 0
                     ? !WrappedEighthTriplets.separatedOctaveQuartets(
                             ink, width, height, previous, stem, gap, staff.bottom())
-                    : !WrappedEighthTriplets.matchesExactlyTwoBeamRails(
-                            ink, width, height, previous, stem, gap, track))) return false;
-            if (previous != null && i % 4 != 0
+                    : groupSize == 3
+                            ? !WrappedEighthTriplets.matchesBeamRails(ink, width, height, previous, stem, gap, 1)
+                                    || WrappedEighthTriplets.matchesBeamRails(ink, width, height, previous, stem, gap, 2)
+                            : !WrappedEighthTriplets.matchesExactlyTwoBeamRails(
+                                    ink, width, height, previous, stem, gap, track))) return false;
+            if (previous != null && i % groupSize != 0
                     && (hasThirdDepth(columns.get(i - 1))
                             && OwnedTertiaryBeamlets.provesThirdHookToward(
                                     ink, width, height, previous, stem, gap, 1, staff.bottom())
@@ -255,11 +274,24 @@ final class ClosedOctaveRailRun {
                 ink, width, height, previous, shaft, gap, staff.bottom());
     }
 
+    private static boolean unnumberedTriplet(byte[] ink, int width, int height,
+            List<Column> members, MeasureRegion bar, float gap,
+            UnnumberedTripletInk.Rows rows, StaffPitchTrack track) {
+        var heads = new ArrayList<ScoreNoteEvent>(6);
+        for (var member : members) {
+            heads.add(member.upper.note);
+            heads.add(member.lower.note);
+        }
+        return ClosedOctaveTripletBars.noPrintedTripletMark(
+                ink, width, height, heads, bar.left() * width, (bar.right() - bar.left()) * width, gap, rows, track);
+    }
+
     private static boolean hasThirdDepth(Column column) {
         return column.upper.note.beamCount() == 3 || column.lower.note.beamCount() == 3;
     }
 
-    private static ScoreBeamSource completeOctaveQuartet(ScoreBeamSource source, int page, List<Column> heads) {
+    private static ScoreBeamSource completeOctaveGroup(
+            ScoreBeamSource source, int page, List<Column> heads, int bridge, ScoreBeamSource.TupletMark mark) {
         var origins = new ArrayList<>(source.noteOrigins());
         var counts = new java.util.HashMap<ScoreBeamSource.Anchor, Integer>();
         for (var origin : origins) origin.ifPresent(a -> counts.merge(a, 1, Integer::sum));
@@ -272,9 +304,9 @@ final class ClosedOctaveRailRun {
         for (var column : source.detachedColumns())
             for (var a : column.members())
                 if (a.pageIndex() == page) next = Math.max(next, a.noteIndex() + 1);
-        if (next + 8 > ScoreBeamSource.MAX_NOTES) return source;
+        if (next + heads.size() * 2 > ScoreBeamSource.MAX_NOTES) return source;
         var columnIndex = new java.util.HashMap<ScoreBeamSource.Anchor, Integer>();
-        var columns = new ArrayList<ScoreBeamSource.Column>(4);
+        var columns = new ArrayList<ScoreBeamSource.Column>(heads.size());
         for (int i = 0; i < heads.size(); i++) {
             var members = new ArrayList<ScoreBeamSource.Anchor>(2);
             for (var head : List.of(heads.get(i).upper, heads.get(i).lower)) {
@@ -291,6 +323,7 @@ final class ClosedOctaveRailRun {
         if (source.detachedColumns().stream().flatMap(c -> c.members().stream())
                 .anyMatch(columnIndex::containsKey)) return source;
         var groups = new ArrayList<ScoreBeamSource.Group>();
+        var bridges = java.util.Collections.nCopies(heads.size() - 1, bridge);
         String id = "complete-octave-beam:" + page + ":" + columns.get(0).members().get(0).noteIndex();
         for (var group : source.groups()) {
             if (group.columns().stream().flatMap(c -> c.members().stream()).noneMatch(columnIndex::containsKey)) {
@@ -299,7 +332,7 @@ final class ClosedOctaveRailRun {
                 continue;
             }
             if (!group.hooks().isEmpty() || group.tupletMark() != null
-                    || group.bridges().stream().anyMatch(mask -> (mask & ~3) != 0)) return source;
+                    || group.bridges().stream().anyMatch(mask -> (mask & ~bridge) != 0)) return source;
             int previous = -1;
             for (var column : group.columns()) {
                 int index = columnIndex.getOrDefault(column.members().get(0), -1);
@@ -308,10 +341,10 @@ final class ClosedOctaveRailRun {
                     return source;
                 previous = index;
             }
-            if (group.columns().size() == 4 && group.bridges().equals(List.of(3, 3, 3))
+            if (group.columns().size() == heads.size() && group.bridges().equals(bridges)
                     && group.columns().stream().allMatch(c -> c.members().size() == 2)) return source;
         }
-        groups.add(new ScoreBeamSource.Group(id, columns, List.of(3, 3, 3), List.of()));
+        groups.add(new ScoreBeamSource.Group(id, columns, bridges, List.of(), mark));
         return new ScoreBeamSource(groups, source.detachedColumns(), origins);
     }
 
@@ -861,10 +894,16 @@ final class ClosedOctaveRailRun {
     }
 
     private static boolean ordinaryHead(ScoreNoteEvent n, int allowedArticulations, boolean allowIndependentMarks) {
+        return ordinaryHead(n, allowedArticulations, allowIndependentMarks, false);
+    }
+
+    private static boolean ordinaryHead(ScoreNoteEvent n, int allowedArticulations,
+            boolean allowIndependentMarks, boolean allowTriplet) {
         return n.kind() == ScoreNoteEvent.Kind.PITCHED && n.staffIndex() == 0 && n.staffCount() == 1
                 && n.clefBottomDiatonic() == ScoreNoteEvent.CLEF_TREBLE
                 && n.visualSize() == ScoreNoteEvent.VisualSize.FULL
-                && n.augmentationDots() == 0 && n.tupletDivisor() == 1 && n.tupletNormalNotes() == 1
+                && n.augmentationDots() == 0 && (n.tupletDivisor() == 1 && n.tupletNormalNotes() == 1
+                        || allowTriplet && n.tupletDivisor() == 3 && n.tupletNormalNotes() == 2)
                 && (n.articulations() & ~allowedArticulations) == 0 && (allowIndependentMarks || n.octaveShift() == 0)
                 && (allowIndependentMarks || !n.tiedFromPrevious() && n.boundaryTies() == 0) && !n.crossStaffBeam()
                 && n.leadingRestBeats() == 0 && n.followingRestBeats() == 0
