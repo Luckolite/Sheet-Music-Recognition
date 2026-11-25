@@ -6742,36 +6742,52 @@ final class OmrScoreInterpreter {
      * Two enclosed counters in an inline 8, immediately after a complete barline, cannot be the two
      * attacks that a semantic notehead mask may suggest.
      */
-    /**
-     * Reuse note-stage ledger proof for distant model ink that would veto a proved counted rest.
-     */
-    static int unsupportedRestLedgerHeads(
-            byte[] labels,
-            byte[] gray,
-            int width,
-            int height,
-            List<MeasureRegion> measures,
-            MeasureRegion parent,
-            MeasureRegion noteRegion,
-            MeasureNumberReconciler.NumberToken countGlyph) {
-        var staffs = findStaffs(labels, gray, width, height, measures);
-        if (staffs.isEmpty()) return 0;
-        int ignored = 0;
-        for (var head : findComponents(labels, width, height, OmrMeasurePostProcessor.NOTEHEAD)) {
-            // The count glyph already has its own exemption; never subtract it twice.
-            if (countGlyph != null
-                    && head.maxX >= Math.round(countGlyph.left() * width)
-                    && head.minX <= Math.round(countGlyph.right() * width)
-                    && head.maxY >= Math.round(countGlyph.top() * height)
-                    && head.minY <= Math.round(countGlyph.bottom() * height)) continue;
-            if (head.minX < noteRegion.left() * width
-                    || head.maxX > noteRegion.right() * width
-                    || head.minY < noteRegion.top() * height
-                    || head.maxY > noteRegion.bottom() * height) continue;
-            if (head.maxY >= parent.top() * height && head.minY <= parent.bottom() * height)
-                continue;
+    /** Shares exact page geometry across the candidate counted-rest measures. */
+    static final class RestLedgerEvidence {
+        private final byte[] labels, gray;
+        private final int width, height;
+        private final List<MeasureRegion> measures;
+        private final List<Component> heads;
+        private List<Staff> staffs;
+        private final IdentityHashMap<Component, Boolean> supported = new IdentityHashMap<>();
+
+        RestLedgerEvidence(
+                byte[] labels, byte[] gray, int width, int height, List<MeasureRegion> measures) {
+            this.labels = labels;
+            this.gray = gray;
+            this.width = width;
+            this.height = height;
+            this.measures = measures;
+            heads = findComponents(labels, width, height, OmrMeasurePostProcessor.NOTEHEAD);
+        }
+
+        int unsupportedHeads(
+                MeasureRegion parent,
+                MeasureRegion noteRegion,
+                MeasureNumberReconciler.NumberToken countGlyph) {
+            int ignored = 0;
+            for (Component head : heads) {
+                // The count glyph already has its own exemption; never subtract it twice.
+                if (countGlyph != null
+                        && head.maxX >= Math.round(countGlyph.left() * width)
+                        && head.minX <= Math.round(countGlyph.right() * width)
+                        && head.maxY >= Math.round(countGlyph.top() * height)
+                        && head.minY <= Math.round(countGlyph.bottom() * height)) continue;
+                if (head.minX < noteRegion.left() * width
+                        || head.maxX > noteRegion.right() * width
+                        || head.minY < noteRegion.top() * height
+                        || head.maxY > noteRegion.bottom() * height) continue;
+                if (head.maxY >= parent.top() * height && head.minY <= parent.bottom() * height)
+                    continue;
+                if (staffs == null) staffs = findStaffs(labels, gray, width, height, measures);
+                if (staffs.isEmpty()) return 0;
+                if (!supported.computeIfAbsent(head, this::hasStaffSupport)) ignored += head.area;
+            }
+            return ignored;
+        }
+
+        private boolean hasStaffSupport(Component head) {
             // Any plausible physical staff or faint ledger support keeps the note veto.
-            boolean possible = false;
             for (var staff : staffs) {
                 float[] frame = localStaffPitch(labels, gray, width, height, staff, head);
                 var physical = new Staff(frame[0] - 4 * frame[1], frame[0], frame[1]);
@@ -6780,13 +6796,11 @@ final class OmrScoreInterpreter {
                                 && head.centerY <= physical.bottom + physical.gap * 1.8f
                         || hasHeadLedgerSupport(
                                 labels, gray, width, height, head, physical, true, staffs)) {
-                    possible = true;
-                    break;
+                    return true;
                 }
             }
-            if (!possible) ignored += head.area;
+            return false;
         }
-        return ignored;
     }
 
     private static boolean inlineEightMeterFragment(

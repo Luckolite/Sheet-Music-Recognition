@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.github.luckolite.interpreter;
 
+import java.util.Arrays;
 import java.util.function.Predicate;
 
 /** Compare a joined numeral with a clearly read printed 3 on the same page. */
@@ -94,8 +95,30 @@ final class RepeatedTupletNumeral {
         long maskCells = (long) (maskRight - maskLeft + 1) * (maskBottom - maskTop + 1);
         int scanWidth = right - left + rw, scanHeight = bottom - top + rh;
         long scanCells = (long) scanWidth * scanHeight;
-        byte[] near = right >= left && bottom >= top && scanCells <= 262_144
-                ? new byte[(int) scanCells] : null;
+        int candidates = right - left + 1;
+        InkMatchRows matcher =
+                candidates >= 12
+                                && candidates <= 64
+                                && bottom >= top
+                                && scanWidth <= 128
+                                && scanCells <= 262_144
+                        ? new InkMatchRows(
+                                gray,
+                                w,
+                                h,
+                                left,
+                                top,
+                                scanWidth,
+                                scanHeight,
+                                candidates,
+                                rw,
+                                ink,
+                                ni)
+                        : null;
+        byte[] near =
+                matcher == null && right >= left && bottom >= top && scanCells <= 262_144
+                        ? new byte[(int) scanCells]
+                        : null;
         int[] offsets = near != null ? new int[ni] : null;
         if (offsets != null)
             for (int i = 0; i < ni; i++)
@@ -104,26 +127,32 @@ final class RepeatedTupletNumeral {
         ThinRuleMask thinRules = null;
         for (int y = top; y <= bottom; y++) {
             if (y + rh >= y1 - gap && y <= y3 + gap) continue;
+            long matches = matcher == null ? 0 : matcher.matches(y - top);
+            if (matcher != null && matches == 0) continue;
             for (int x = left; x <= right; x++) {
-                int start = (y - top) * scanWidth + x - left;
-                int hit = 0;
-                for (int i = 0; i < ni; i++) {
-                    if (near == null) {
-                        int p = ink[i];
-                        if (nearInk(gray, w, h, x + p % rw, y + p / rw)) hit++;
-                    } else {
-                        int cell = start + offsets[i];
-                        int value = near[cell];
-                        if (value == 0) {
+                if (matcher != null) {
+                    if ((matches & (1L << (x - left))) == 0) continue;
+                } else {
+                    int start = (y - top) * scanWidth + x - left;
+                    int hit = 0;
+                    for (int i = 0; i < ni; i++) {
+                        if (near == null) {
                             int p = ink[i];
-                            value = nearInk(gray, w, h, x + p % rw, y + p / rw) ? 1 : 2;
-                            near[cell] = (byte) value;
+                            if (nearInk(gray, w, h, x + p % rw, y + p / rw)) hit++;
+                        } else {
+                            int cell = start + offsets[i];
+                            int value = near[cell];
+                            if (value == 0) {
+                                int p = ink[i];
+                                value = nearInk(gray, w, h, x + p % rw, y + p / rw) ? 1 : 2;
+                                near[cell] = (byte) value;
+                            }
+                            if (value == 1) hit++;
                         }
-                        if (value == 1) hit++;
+                        if (hit + ni - i - 1 < requiredInk) break;
                     }
-                    if (hit + ni - i - 1 < requiredInk) break;
+                    if (hit < requiredInk) continue;
                 }
-                if (hit < requiredInk) continue;
                 if (thinRules == null && maskCells > 0 && maskCells <= 262_144)
                     thinRules = ThinRuleMask.scan(gray, w, h, maskLeft, maskRight, maskTop, maskBottom, gap);
                 int[] box = {x, y, x + rw - 1, y + rh - 1};
@@ -349,5 +378,102 @@ final class RepeatedTupletNumeral {
             for (int xx = Math.max(0, x - 1); xx <= Math.min(w - 1, x + 1); xx++)
                 if ((gray[yy * w + xx] & 255) < 165) return true;
         return false;
+    }
+
+    private static final class InkMatchRows {
+        private final byte[] gray;
+        private final int width, height, left, top, columns;
+        private final int[] dx, dy;
+        private final long[] lo, hi, counts;
+        private final boolean[] ready;
+        private final long valid;
+        private final int rejectAt;
+
+        InkMatchRows(
+                byte[] gray,
+                int width,
+                int height,
+                int left,
+                int top,
+                int scanWidth,
+                int scanHeight,
+                int sites,
+                int glyphWidth,
+                int[] ink,
+                int count) {
+            this.gray = gray;
+            this.width = width;
+            this.height = height;
+            this.left = left;
+            this.top = top;
+            this.columns = scanWidth;
+            lo = new long[scanHeight];
+            hi = new long[scanHeight];
+            ready = new boolean[scanHeight];
+            valid = -1L >>> (64 - sites);
+            rejectAt = count - (int) Math.ceil(count * .93f) + 1;
+            counts = new long[Integer.SIZE - Integer.numberOfLeadingZeros(rejectAt)];
+            dx = new int[count];
+            dy = new int[count];
+            for (int i = 0; i < count; i++) {
+                dx[i] = ink[i] % glyphWidth;
+                dy[i] = ink[i] / glyphWidth;
+            }
+        }
+
+        long matches(int y) {
+            // One lane per possible x origin. Bit planes count template misses independently.
+            long active = valid;
+            Arrays.fill(counts, 0L);
+            for (int i = 0; i < dx.length; i++) {
+                int row = y + dy[i];
+                if (!ready[row]) initialize(row);
+                int offset = dx[i];
+                long hits;
+                if (offset == 0) hits = lo[row];
+                else if (offset < 64) hits = (lo[row] >>> offset) | (hi[row] << (64 - offset));
+                else hits = hi[row] >>> (offset - 64);
+                // Remove a lane exactly when it exceeds the incumbent ink threshold.
+                long rejecting = active & ~hits;
+                long carry = rejecting;
+                for (int bit = 0; carry != 0 && bit < counts.length; bit++) {
+                    long next = carry & counts[bit];
+                    counts[bit] ^= carry;
+                    carry = next;
+                }
+                for (int bit = 0; rejecting != 0 && bit < counts.length; bit++) {
+                    rejecting &= (rejectAt & (1 << bit)) != 0 ? counts[bit] : ~counts[bit];
+                }
+                active &= ~rejecting;
+                if (active == 0) break;
+            }
+            return active;
+        }
+
+        private void initialize(int index) {
+            int y = top + index;
+            boolean prev = vertical(left - 1, y);
+            boolean mid = vertical(left, y);
+            long low = 0, high = 0;
+            for (int x = 0; x < columns; x++) {
+                boolean next = vertical(left + x + 1, y);
+                if (prev || mid || next) {
+                    if (x < 64) low |= 1L << x;
+                    else high |= 1L << (x - 64);
+                }
+                prev = mid;
+                mid = next;
+            }
+            lo[index] = low;
+            hi[index] = high;
+            ready[index] = true;
+        }
+
+        private boolean vertical(int x, int y) {
+            if (x < 0 || x >= width) return false;
+            return (gray[y * width + x] & 255) < 165
+                    || y > 0 && (gray[(y - 1) * width + x] & 255) < 165
+                    || y + 1 < height && (gray[(y + 1) * width + x] & 255) < 165;
+        }
     }
 }

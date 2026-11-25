@@ -143,6 +143,7 @@ final class MultiMeasureRestDetector {
                 writtenCounts.isEmpty() ? 0 : writtenCounts.get(writtenCounts.size() / 2);
         int noteFreeLimit = Math.max(6, ordinaryWrittenInk / 14);
         List<RestBarCandidate> result = new ArrayList<>();
+        OmrScoreInterpreter.RestLedgerEvidence ledgerEvidence = null;
         for (int index = 0; index < measures.size(); index++) {
             MeasureRegion parent = measures.get(index);
             // Segmentation can classify a printed rest count as a notehead. Exclude
@@ -183,18 +184,15 @@ final class MultiMeasureRestDetector {
             // long beam or staff-line segment in one locally empty window, and a nearby time
             // signature/OCR digit then expands that measure several times. Require the complete
             // parent measure to be note-free before treating any local heavy bar as a rest.
-            int unsupportedLedgerHeads =
-                    countGlyph == null
-                            ? 0
-                            : OmrScoreInterpreter.unsupportedRestLedgerHeads(
-                                    labels,
-                                    gray,
-                                    width,
-                                    height,
-                                    measures,
-                                    parent,
-                                    noteRegions.get(index),
-                                    countGlyph);
+            int unsupportedLedgerHeads = 0;
+            if (countGlyph != null) {
+                if (ledgerEvidence == null)
+                    ledgerEvidence =
+                            new OmrScoreInterpreter.RestLedgerEvidence(
+                                    labels, gray, width, height, measures);
+                unsupportedLedgerHeads =
+                        ledgerEvidence.unsupportedHeads(parent, noteRegions.get(index), countGlyph);
+            }
             if (noteheadPixels[index]
                             - unsupportedLedgerHeads
                             - countGlyphHeads(
@@ -220,8 +218,8 @@ final class MultiMeasureRestDetector {
                 int localHeads =
                         countLabel(labels, width, height, window, OmrMeasurePostProcessor.NOTEHEAD)
                                 - countGlyphHeads(countGlyph, labels, width, height, window);
-                boolean thickBar = hasThickHorizontalBar(gray, width, height, window);
-                if (localHeads <= noteFreeLimit && thickBar) {
+                if (localHeads <= noteFreeLimit
+                        && hasThickHorizontalBar(gray, width, height, window)) {
                     MeasureRegion capped = cappedRestWindow(gray, width, height, window);
                     if (capped != null && index > 0 && index == measures.size() - 1
                             && TerminalCompoundHarmonicQuarter.prove(

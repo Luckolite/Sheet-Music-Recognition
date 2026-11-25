@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.github.luckolite.interpreter;
 
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.nio.FloatBuffer;
 import java.util.*;
 import java.util.function.IntPredicate;
 
@@ -18,7 +21,14 @@ public final class PortableOcr {
         List<String> dictionary();
     }
 
+    /** Synchronously consumes a native-order tensor and releases it before returning. */
+    interface DirectDetectorInference extends Inference {
+        float[][] detectDirect(FloatBuffer input, int width, int height) throws Exception;
+    }
+
     private final Inference inference;
+    // Full-page detector inputs can otherwise allocate tens of MiB twice.
+    private static final int DIRECT_DETECTOR_MIN_PIXELS = 2_000_000;
 
     public PortableOcr(Inference inference) {
         this.inference = Objects.requireNonNull(inference);
@@ -82,14 +92,20 @@ public final class PortableOcr {
         int dw = Math.max(32, (int) Math.round(width * scale / 32) * 32);
         int dh = Math.max(32, (int) Math.round(height * scale / 32) * 32);
         float[][] prediction =
-                inference.detect(
-                        gray == null
-                                ? normalize(
-                                        argb, width, height, 0, 0, width, height, dw, dh, dw, true)
-                                : normalizeGray(
-                                        gray, width, height, 0, 0, width, height, dw, dh, dw, true),
-                        dw,
-                        dh);
+                gray != null
+                                && (long) dw * dh >= DIRECT_DETECTOR_MIN_PIXELS
+                                && inference instanceof DirectDetectorInference direct
+                        ? direct.detectDirect(normalizeGrayDirect(gray, width, height, dw, dh), dw, dh)
+                        : inference.detect(
+                                gray == null
+                                        ? normalize(
+                                                argb, width, height, 0, 0, width, height, dw, dh,
+                                                dw, true)
+                                        : normalizeGray(
+                                                gray, width, height, 0, 0, width, height, dw, dh,
+                                                dw, true),
+                                dw,
+                                dh);
         IntPredicate isInk = gray == null
                 ? index -> isColorInk(argb[index])
                 : index -> (gray[index] & 255) < 190;
@@ -237,6 +253,52 @@ public final class PortableOcr {
             int outHeight,
             int paddedWidth,
             boolean detector) {
+        validateGrayResize(
+                pixels, width, height, left, top, right, bottom, outWidth, outHeight, paddedWidth);
+        float[] output = new float[3 * paddedWidth * outHeight];
+        normalizeGrayRows(
+                pixels,
+                width,
+                left,
+                top,
+                right,
+                bottom,
+                outWidth,
+                outHeight,
+                paddedWidth,
+                detector,
+                output,
+                null);
+        return output;
+    }
+
+    private static FloatBuffer normalizeGrayDirect(
+            byte[] pixels, int width, int height, int outWidth, int outHeight) {
+        validateGrayResize(
+                pixels, width, height, 0, 0, width, height, outWidth, outHeight, outWidth);
+        FloatBuffer direct =
+                ByteBuffer.allocateDirect(3 * outWidth * outHeight * Float.BYTES)
+                        .order(ByteOrder.nativeOrder())
+                        .asFloatBuffer();
+        float[] row = new float[3 * outWidth];
+        normalizeGrayRows(
+                pixels, width, 0, 0, width, height, outWidth, outHeight, outWidth, true, row,
+                direct);
+        direct.position(0);
+        return direct;
+    }
+
+    private static void validateGrayResize(
+            byte[] pixels,
+            int width,
+            int height,
+            int left,
+            int top,
+            int right,
+            int bottom,
+            int outWidth,
+            int outHeight,
+            int paddedWidth) {
         if (width <= 0
                 || height <= 0
                 || (long) width * height != pixels.length
@@ -251,7 +313,22 @@ public final class PortableOcr {
                 || paddedWidth < outWidth
                 || (long) paddedWidth * outHeight > 5_000_000)
             throw new IllegalArgumentException("Invalid OCR resize");
-        float[] output = new float[paddedWidth * outHeight * 3];
+    }
+
+    private static void normalizeGrayRows(
+            byte[] pixels,
+            int width,
+            int left,
+            int top,
+            int right,
+            int bottom,
+            int outWidth,
+            int outHeight,
+            int paddedWidth,
+            boolean detector,
+            float[] output,
+            FloatBuffer direct) {
+        int planeStride = direct == null ? paddedWidth * outHeight : paddedWidth;
         int[] xs0 = new int[outWidth], xs1 = new int[outWidth];
         float[] fractions = new float[outWidth];
         for (int x = 0; x < outWidth; x++) {
@@ -273,6 +350,7 @@ public final class PortableOcr {
             int y0 = (int) sy, y1 = Math.min(bottom - 1, y0 + 1);
             float fy = (float) (sy - y0);
             int row0 = y0 * width, row1 = y1 * width;
+            int destination = direct == null ? y * paddedWidth : 0;
             for (int x = 0; x < outWidth; x++) {
                 int x0 = xs0[x], x1 = xs1[x];
                 float fx = fractions[x];
@@ -281,16 +359,21 @@ public final class PortableOcr {
                 int rounded = Math.round((a + (b - a) * fx) * (1 - fy) + (d + (e - d) * fx) * fy);
                 if (detector) {
                     for (int c = 0; c < 3; c++)
-                        output[c * paddedWidth * outHeight + y * paddedWidth + x] =
+                        output[c * planeStride + destination + x] =
                                 GrayDetectorNormalization.VALUES[c][rounded];
                 } else {
                     float normalized = GrayRecognizerNormalization.VALUES[rounded];
                     for (int c = 0; c < 3; c++)
-                        output[c * paddedWidth * outHeight + y * paddedWidth + x] = normalized;
+                        output[c * planeStride + destination + x] = normalized;
+                }
+            }
+            if (direct != null) {
+                for (int plane = 0; plane < 3; plane++) {
+                    direct.position((plane * outHeight + y) * paddedWidth);
+                    direct.put(output, plane * paddedWidth, paddedWidth);
                 }
             }
         }
-        return output;
     }
 
     private static final class GrayDetectorNormalization {
@@ -401,6 +484,9 @@ public final class PortableOcr {
                 new OcrText.Box(box.left, middle, box.right, box.bottom));
     }
 
+    private static final int INITIAL_COMPONENT_QUEUE = 4_096;
+    private static final int DENSE_COMPONENT_QUEUE = 65_536;
+
     /** Bounded connected text components from the detector probability map. */
     public static List<OcrText.Box> regions(float[][] map, int width, int height) {
         if (width < 1
@@ -442,7 +528,7 @@ public final class PortableOcr {
         var result = new ArrayList<OcrText.Box>();
         if (foreground < 3) return result;
         // Each queued pixel is marked when added, so no component can exceed this count.
-        int[] queue = new int[foreground];
+        int[] queue = new int[Math.min(INITIAL_COMPONENT_QUEUE, foreground)];
         for (int start = first; start < scanEnd; start++)
             if (mask[start]) {
                 int head = 0, tail = 1;
@@ -462,6 +548,13 @@ public final class PortableOcr {
                             int next = yy * mw + xx;
                             if (mask[next]) {
                                 mask[next] = false;
+                                if (tail == queue.length) {
+                                    int capacity =
+                                            tail >= DENSE_COMPONENT_QUEUE
+                                                    ? foreground
+                                                    : Math.min(foreground, tail * 2);
+                                    queue = Arrays.copyOf(queue, capacity);
+                                }
                                 queue[tail++] = next;
                             }
                         }

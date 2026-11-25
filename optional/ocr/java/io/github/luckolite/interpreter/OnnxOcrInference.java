@@ -7,7 +7,7 @@ import java.nio.FloatBuffer;
 import java.util.*;
 
 /** Optional runtime binding shared by the desktop and Android validation builds. */
-public final class OnnxOcrInference implements PortableOcr.Inference, AutoCloseable {
+public final class OnnxOcrInference implements PortableOcr.DirectDetectorInference, AutoCloseable {
     private final OrtEnvironment environment = OrtEnvironment.getEnvironment();
     private final OrtSession detector, recognizer;
     private final List<String> dictionary;
@@ -89,13 +89,15 @@ public final class OnnxOcrInference implements PortableOcr.Inference, AutoClosea
     }
 
     public float[][] detect(float[] input, int width, int height) throws Exception {
+        return detectDirect(FloatBuffer.wrap(input), width, height);
+    }
+
+    public float[][] detectDirect(FloatBuffer input, int width, int height) throws Exception {
         if (detector == null)
             throw new IllegalStateException("OCR detector is unavailable in recognizer-only mode");
         try (var tensor =
                         OnnxTensor.createTensor(
-                                environment,
-                                FloatBuffer.wrap(input),
-                                new long[] {1, 3, height, width});
+                                environment, input, new long[] {1, 3, height, width});
                 var result =
                         detector.run(Map.of(detector.getInputNames().iterator().next(), tensor))) {
             return ((float[][][][]) result.get(0).getValue())[0][0];
