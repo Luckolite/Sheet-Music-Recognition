@@ -1713,12 +1713,14 @@
     "WrappedEighthTriplets.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/WrappedEighthTriplets.java",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/WrappedEighthTriplets.java",
-      "source_sha256": "beb9f0d55d3a3ad523806fd57dce35a45fcd7b523d40271546eb10df9ebb0726",
-      "source_normalized_sha256": "beb9f0d55d3a3ad523806fd57dce35a45fcd7b523d40271546eb10df9ebb0726",
+      "source_sha256": "1070da91fad31e3ed723b345c5b0170e8146e84171940ba3b442c4295c3ac56d",
+      "source_normalized_sha256": "1070da91fad31e3ed723b345c5b0170e8146e84171940ba3b442c4295c3ac56d",
       "standalone_normalized_sha256": "b62300a311306d8a5e4669d045ea36aa5e491b6cfa8e4aa99d33e6b0881f185f",
       "license": "Apache-2.0",
       "reviewed_app_commit": "92ae8ad156a125259b27dfd55be30e907b611b7f",
-      "reviewed_app_state": "Matching five-rule staff witness and masking only observed carrier pixels at octave-quartet boundaries."
+      "reviewed_app_state": "Matching five-rule staff witness and masking only observed carrier pixels at octave-quartet boundaries.",
+      "triplet_fingering_review": "Shared printed-note evidence is reconciled through each producer. Standalone retains its existing direct triplet-clock repair, while Android and native guides use the retained beam ownership with their effective meter.",
+      "standalone_sha256": "394e44833ce8e212734c52b0100711957a8af99fe6f87a393cbdf41e00443986"
     },
     "ClosedMonophonicSixteenths.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/ClosedMonophonicSixteenths.java",
@@ -4297,10 +4299,10 @@
     },
     "GuideCacheIdentity.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/GuideCacheIdentity.java",
-      "source_sha256": "e8f4a800878a009b39002b1d6b720d2600ebfac9c3e6af339adc7288418e0d22",
-      "source_normalized_sha256": "e8f4a800878a009b39002b1d6b720d2600ebfac9c3e6af339adc7288418e0d22",
+      "source_sha256": "4c72c9f2dab28c8d797b60ed3fcd7dea8412012ea10af3098f94f390004f100a",
+      "source_normalized_sha256": "4c72c9f2dab28c8d797b60ed3fcd7dea8412012ea10af3098f94f390004f100a",
       "review_note": "App and desktop revision 168 and standalone revision 188 refresh their respective caches for printed fingering recognition.",
-      "standalone_sha256": "44aa96cfc6fc1d5674764255789600fbda7e49a4f80c51102c0b496d04d307de",
+      "standalone_sha256": "3187384af3a525620bac542ffafae3dd04cdf6f627fe3e5b099d972d724963f5",
       "reviewed_app_commit": "bd726502235465a6d3e91e6f5abdbaada211d4c8",
       "scoped_reviewed_app_commit": "5a83c7704ff14579edcf52af5c1ab8e8e719a4d7",
       "license": "Apache-2.0",
@@ -4363,14 +4365,15 @@
         "app_commit": "68d2e9e1beb05bf160b685c1327490eef64c0356",
         "standalone_normalized_sha256": "a7e5f61c81759dac6a898e9166033c1c3163cab38c87afd369a760abdc0b716b",
         "scope": "The app uses recognition revision 165 for its paired Guide runtime. Standalone uses independent revision 162 to invalidate its prior recognition cache. The standalone guide format stays at its existing default."
-      }
+      },
+      "triplet_fingering_review": "Verified terminal fingering ownership, independent dot and beam evidence, and timing from the effective meter remain distinct."
     },
     "GuideCacheIdentityTest.java": {
       "source_path": "app/src/test/java/com/musicsheets/app/pdf/GuideCacheIdentityTest.java",
       "standalone_path": "java/src/test/java/io/github/luckolite/interpreter/GuideCacheIdentityTest.java",
-      "source_sha256": "6540a044cd5d330d97a5c7dae6cce1403e5ac85e4b5b4f13037b7d45f8fadd73",
-      "source_normalized_sha256": "6540a044cd5d330d97a5c7dae6cce1403e5ac85e4b5b4f13037b7d45f8fadd73",
-      "standalone_sha256": "d56e58d3022b47631025415ec55bfa420dc184841892166d70d15206fbf794e7",
+      "source_sha256": "abe4d70b60931a9aab821531e704db9928043cdeb141f7c2a2198e171dbc3143",
+      "source_normalized_sha256": "abe4d70b60931a9aab821531e704db9928043cdeb141f7c2a2198e171dbc3143",
+      "standalone_sha256": "ffc73ce83a3f103ad55d5c18544f160695597797a016a21b09f71e4c67fb0473",
       "license": "Apache-2.0",
       "recognition88_review_note": "Reviewed exact contextual global changes and namespace twins with original synthetic regressions. New helpers are selected explicitly by desktop decoder manifest; no models, private fixtures, schema, wire or audio changes.",
       "reviewed_app_commit": "b954c0cc5f30c21a302a8f65141d0c297d4177c3",
@@ -4426,7 +4429,8 @@
         "app_commit": "68d2e9e1beb05bf160b685c1327490eef64c0356",
         "standalone_normalized_sha256": "8781a20352b592975a812f935222c50335bf014ddac9abbce9b4d76d71e4fd4a",
         "scope": "Each cache test pins its corresponding revision and exercises historical recognition identities."
-      }
+      },
+      "triplet_fingering_review": "Verified terminal fingering ownership, independent dot and beam evidence, and timing from the effective meter remain distinct."
     },
     "HairpinApertureBarExtentOriginalTest.java": {
       "source_path": "app/src/test/java/com/musicsheets/app/pdf/HairpinApertureBarExtentOriginalTest.java",
@@ -8919,9 +8923,9 @@
     },
     "ScoreNoteTiming.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/ScoreNoteTiming.java",
-      "source_sha256": "d7605bb70c9af0a6e1c6d951c40fef6d2e41dd9768f39eddfb3831770079c364",
+      "source_sha256": "7ab801332e88d01e3bea4e368dc755270732ead3c3fd838abe125738a0986e8a",
       "review_note": "Global recognition/performance repairs; namespace-equivalent portable helpers and separately reviewed caller adapters. Original synthetic regressions; no private score assets.",
-      "source_normalized_sha256": "d7605bb70c9af0a6e1c6d951c40fef6d2e41dd9768f39eddfb3831770079c364",
+      "source_normalized_sha256": "7ab801332e88d01e3bea4e368dc755270732ead3c3fd838abe125738a0986e8a",
       "reviewed_app_state": "Reviewed six-class interpreter worktree extension; package/diagnostic token parity verified against standalone port.",
       "reviewed_source_state": "Committed combined source snapshot; paired package deployment and whole-library accuracy acceptance pending.",
       "standalone_sha256": "6820c62c7b46fe5f25731e88b358bd4cbc452bd887787b80877a598eaec4a247",
@@ -8930,7 +8934,8 @@
       "license": "Apache-2.0",
       "closed_phrase_clock_review": "Same-pass complete printed beam ownership resolves remote/shared-stem phrase caps and cross-staff written clock. Asymmetric arches have independent IDs preserving old arcs. Literal unique opposed-stem single-beam partners sustain independently of faster bass attacks. Optional bounded proofs preserve legacy on refusal. One existing clock capture follows final value projection. Original procedural regressions only; no score data, observers, weights or layouts.",
       "standalone_normalized_sha256": "6820c62c7b46fe5f25731e88b358bd4cbc452bd887787b80877a598eaec4a247",
-      "recognition139_review_note": "Reviewed app fix merged with the existing standalone adapters and formatting. Reviewed namespace-equivalent dotted-triplet timing. The standalone caller also retains the inferred ratio for MusicXML written values."
+      "recognition139_review_note": "Reviewed app fix merged with the existing standalone adapters and formatting. Reviewed namespace-equivalent dotted-triplet timing. The standalone caller also retains the inferred ratio for MusicXML written values.",
+      "triplet_fingering_review": "Shared printed-note evidence is reconciled through each producer. Standalone retains its existing direct triplet-clock repair, while Android and native guides use the retained beam ownership with their effective meter."
     },
     "ScoreOpeningDuration.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/ScoreOpeningDuration.java",
@@ -9625,13 +9630,14 @@
     "PrintedFingeringDigits.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/PrintedFingeringDigits.java",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/PrintedFingeringDigits.java",
-      "source_sha256": "ffe17fb056b619fbd411fdca77748742013e29519ae3d70ac678f02cabe8cf49",
+      "source_sha256": "14776341dd8e25a0cc2fc708c83e98d4cf4f0664494c355b0336a11e58ea837e",
       "notes": "Shared detached numeral sequence proof. Standalone uses SheetInterpreter OCR words and playback events; the app uses PlayingTechniqueDetector words and guide heads. Both use original glyph templates and bounded two-raster optical checks.",
-      "source_normalized_sha256": "ffe17fb056b619fbd411fdca77748742013e29519ae3d70ac678f02cabe8cf49",
-      "standalone_sha256": "0b5de722fc188b0e841103a2948c882c59a98100aec1d68a0357ddb2054472ed",
+      "source_normalized_sha256": "14776341dd8e25a0cc2fc708c83e98d4cf4f0664494c355b0336a11e58ea837e",
+      "standalone_sha256": "e02f428d40a45428fac39fbdbd0a1e8b5cf1b77596ec0f84fdfe8c8e2444196c",
       "staff_rule_review": "Both runtimes independently witness the staff rule and shaft, then verify the digit shape. The opposed quartet uses score order even when note columns on multiple systems share the same x coordinate.",
       "detached_reference_review": "Both decoders compare a partly hidden upper digit against independently retained printed examples. A verified four-note double beam with three existing marks can support the fourth detached digit.",
-      "ledger_fingering_review": "The app and standalone require verified high ledger note shafts and detached numeral ink. Established upper fingerings supply independent examples when the generic templates have a close rival."
+      "ledger_fingering_review": "The app and standalone require verified high ledger note shafts and detached numeral ink. Established upper fingerings supply independent examples when the generic templates have a close rival.",
+      "triplet_fingering_review": "Verified terminal fingering ownership, independent dot and beam evidence, and timing from the effective meter remain distinct."
     },
     "PrintedAccidentalSpineRecovery.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/PrintedAccidentalSpineRecovery.java",
@@ -10798,10 +10804,10 @@
     },
     "guide_writer.py": {
       "source_path": "tools/native-worker/guide_writer.py",
-      "source_sha256": "fc0b0ff071e91f77bcd03e9a843fc7ed51e66627d57bf9de7a5e9df8d4eb7890",
-      "source_normalized_sha256": "fc0b0ff071e91f77bcd03e9a843fc7ed51e66627d57bf9de7a5e9df8d4eb7890",
+      "source_sha256": "1db9e8401c8440d831e04facfccdd34a26ef7fba6d80e3b9337e732dff2a236a",
+      "source_normalized_sha256": "1db9e8401c8440d831e04facfccdd34a26ef7fba6d80e3b9337e732dff2a236a",
       "review_note": "App and desktop revision 168 and standalone revision 188 refresh their respective caches for printed fingering recognition.",
-      "standalone_sha256": "424b83aa3bce5266dd16ec77ef7a7086a9b484317ac05b8745dd63da7f5cb7ab",
+      "standalone_sha256": "0091a08b1310ecd48ffb63a4c36234fcafaba878839e20d80f061a418f95f985",
       "reviewed_app_commit": "2bdb8536b043182f1898ef53e00749b7a50d1748",
       "license": "Apache-2.0",
       "scoped_reviewed_app_commit": "5a83c7704ff14579edcf52af5c1ab8e8e719a4d7",
@@ -10845,7 +10851,8 @@
         "standalone_normalized_sha256": "97df373cc35fb7b2f4d3893d4254f788f368ff6423db0f3a0bcb36826029f20b",
         "scope": "App Guide 310 appends note owner and printed accidental records after Guide 309 fields. Standalone exports these harmonic roles through its existing decoded event interface and retains its independent binary Guide formats."
       },
-      "supplemental_fingering_review": "The app worker negotiates Guide 311 for an additive supplemental fingering record. The portable guide keeps its existing compatibility profile. Standalone MusicXML retains both source marks with an explicit endpoint digit."
+      "supplemental_fingering_review": "The app worker negotiates Guide 311 for an additive supplemental fingering record. The portable guide keeps its existing compatibility profile. Standalone MusicXML retains both source marks with an explicit endpoint digit.",
+      "triplet_fingering_review": "Verified terminal fingering ownership, independent dot and beam evidence, and timing from the effective meter remain distinct."
     },
     "hairpin-export.js": {
       "source_path": "app/src/youtube/assets/musescore/hairpin-export.js",

@@ -53,7 +53,7 @@ final class ClosedOctavePrintedMarks {
             ScorePageInterpretation score, byte[] raw, byte[] normalized, int width, int height,
             List<SheetInterpreter.Word> words) {
         var marks = new TreeMap<Integer, PrintedFingeringDigits.Mark>();
-        for (var mark : existing) marks.put(mark.noteIndex(), mark);
+        for (var mark : existing) marks.put(mark.noteIndex() * 2 + mark.placement().ordinal(), mark);
         boolean changed = false;
         for (var group : groups(score, raw, normalized, width, height)) {
             var a = downstems(raw, width, height, group);
@@ -69,13 +69,10 @@ final class ClosedOctavePrintedMarks {
             // Each independently read mark is below the common shaft of the octave.
             for (int i = 0; i < 3; i++) {
                 var column = group.columns.get(i);
-                var upper = marks.get(column.upper.owner);
-                if (upper != null && upper.placement() == PrintedFingeringDigits.Placement.BELOW)
-                    marks.remove(column.upper.owner);
-                var lower = marks.get(column.lower.owner);
-                if (lower == null || lower.placement() == PrintedFingeringDigits.Placement.BELOW)
-                    marks.put(column.lower.owner, new PrintedFingeringDigits.Mark(column.lower.owner,
-                            digits[i], PrintedFingeringDigits.Placement.BELOW));
+                var below = PrintedFingeringDigits.Placement.BELOW;
+                marks.remove(column.upper.owner * 2 + below.ordinal());
+                marks.put(column.lower.owner * 2 + below.ordinal(),
+                        new PrintedFingeringDigits.Mark(column.lower.owner, digits[i], below));
                 changed = true;
             }
         }

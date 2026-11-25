@@ -125,6 +125,7 @@ final class PrintedFingeringDigits {
         includeDetachedQuartetFingering(marks, heads, score, gray, normalized, width, height);
         includeOpposedQuartetFingerings(marks, heads, gray, normalized, width, height);
         includeHighLedgerQuartetFingerings(marks, heads, score, gray, normalized, width, height);
+        includeTripletTerminalFingerings(marks, heads, words, score, gray, normalized, width, height);
         marks.sort(Comparator.comparingInt(Mark::noteIndex).thenComparing(Mark::placement));
         return List.copyOf(marks);
     }
@@ -685,6 +686,191 @@ final class PrintedFingeringDigits {
             }
         }
         return digit;
+    }
+
+
+    private static void includeTripletTerminalFingerings(List<Mark> marks, List<Head> heads,
+            List<SheetInterpreter.Word> words, ScorePageInterpretation score,
+            byte[] raw, byte[] normalized, int width, int height) {
+        if (raw == null || normalized == null || raw.length != (long) width * height
+                || normalized.length != raw.length) return;
+        var byOwner = new Head[score.notes().size()];
+        for (var h : heads) byOwner[h.index()] = h;
+        var above = new HashSet<Integer>();
+        for (var mark : marks) if (mark.placement() == Placement.ABOVE) above.add(mark.noteIndex());
+        var terminals = new ArrayList<Head>();
+        for (var beam : score.beamSource().resolve().groups()) {
+            if (!beam.source().bridges().equals(List.of(1, 1)) || !beam.source().hooks().isEmpty()
+                    || beam.columns().size() != 3 || beam.columns().stream().anyMatch(c ->
+                            !c.usable() || c.owners().size() != 1)) continue;
+            var first = byOwner[beam.columns().get(0).owners().get(0)];
+            var middle = byOwner[beam.columns().get(1).owners().get(0)];
+            var last = byOwner[beam.columns().get(2).owners().get(0)];
+            if (first == null || middle == null || last == null
+                    || !ordinaryTripletMember(first) || !ordinaryTripletMember(middle) || !ordinaryTripletMember(last)
+                    || first.note().measureIndex() != last.note().measureIndex()
+                    || middle.note().measureIndex() != last.note().measureIndex()
+                    || first.note().tupletDivisor() != last.note().tupletDivisor()
+                    || middle.note().tupletDivisor() != last.note().tupletDivisor()) continue;
+            terminals.add(last);
+            if (above.contains(last.index())) continue;
+            int digit = 0;
+            for (var word : words) {
+                String text = word.text();
+                if (text.length() != 1 || text.charAt(0) < '1' || text.charAt(0) > '4') continue;
+                int proposed = text.charAt(0) - '0';
+                int l = Math.round(word.left() * width), t = Math.round(word.top() * height);
+                int r = Math.round(word.right() * width), b = Math.round(word.bottom() * height);
+                double gap = last.gap(), topDistance = last.y() - b;
+                if (l < 0 || t < 0 || r >= width || b >= height
+                        || r - l < .62 * gap || r - l > 1.82 * gap || b - t < .85 * gap || b - t > 2.15 * gap
+                        || Math.abs((l + r) * .5 - last.x()) > .43 * gap
+                        || topDistance < 2.2 * gap || topDistance > 5.5 * gap) continue;
+                var a = tripletEndUpperMark(raw, width, height, last, proposed, l, t, r, b);
+                var n = tripletEndUpperMark(normalized, width, height, last, proposed, l, t, r, b);
+                if (a == null || n == null || !a.agrees(n)) continue;
+                if (digit != 0 && digit != proposed) {
+                    digit = 0;
+                    break;
+                }
+                digit = proposed;
+            }
+            if (digit != 0) {
+                marks.add(new Mark(last.index(), digit, Placement.ABOVE));
+                above.add(last.index());
+            }
+        }
+        appendTripletLowerFingerings(marks, terminals, words, raw, normalized, width, height);
+    }
+
+    private static void appendTripletLowerFingerings(List<Mark> marks, List<Head> terminals,
+            List<SheetInterpreter.Word> words, byte[] raw, byte[] normalized, int width, int height) {
+        var upper = new HashSet<Integer>();
+        var lower = new HashSet<Integer>();
+        for (var mark : marks)
+            (mark.placement() == Placement.ABOVE ? upper : lower).add(mark.noteIndex());
+        for (var head : terminals) {
+            if (!upper.contains(head.index()) || lower.contains(head.index())) continue;
+            int measure = head.note().measureIndex();
+            long aboveCount = terminals.stream().filter(t -> t.note().measureIndex() == measure
+                    && upper.contains(t.index())).count();
+            boolean opposingAnchor = terminals.stream().anyMatch(t -> t.note().measureIndex() == measure
+                    && lower.contains(t.index()));
+            if (aboveCount < 3 || !opposingAnchor) continue;
+            int hint = 0;
+            for (var word : words) {
+                String text = word.text();
+                if (text.length() != 1 || text.charAt(0) < '1' || text.charAt(0) > '4') continue;
+                double x = (word.left() + word.right()) * .5 * width;
+                double y = (word.top() + word.bottom()) * .5 * height;
+                if (Math.abs(x - head.x()) > .39 * head.gap() || y - head.y() < .9 * head.gap()
+                        || y - head.y() > 2.72 * head.gap()) continue;
+                int digit = text.charAt(0) - '0';
+                if (hint > 0 && hint != digit) {
+                    hint = -1;
+                    break;
+                }
+                hint = digit;
+            }
+            if (hint < 0) continue;
+            int digit = readTripletLowerAtEnd(raw, width, height, head, hint);
+            if (digit > 0 && digit == readTripletLowerAtEnd(normalized, width, height, head, hint))
+                marks.add(new Mark(head.index(), digit, Placement.BELOW));
+        }
+    }
+
+    private static int readTripletLowerAtEnd(byte[] ink, int width, int height, Head head, int hint) {
+        if (!ownsUpperShaft(ink, width, height, head)) return 0;
+        float gap = (float) (head.gap() * 8 / 8.2);
+        int x = (int) Math.round(head.x());
+        int left = x - Math.round(.80f * gap), right = x + Math.round(.80f * gap);
+        int top = (int) Math.round(head.y() + .69 * gap), bottom = (int) Math.round(head.y() + 2.85 * gap);
+        if (left < 0 || right >= width || top < 0 || bottom >= height) return 0;
+        if (hint > 0) {
+            var boxes = wordDigits(ink, width, height, left, top, right, bottom);
+            if (boxes.size() == 1) {
+                var box = boxes.get(0);
+                if (Math.abs(box.x() - head.x()) <= .30 * gap && readTripletLowerGlyph(ink, width, height,
+                        new BitSet(), box.left(), box.top(), box.right(), box.bottom(), hint) != 0) return hint;
+            }
+        }
+        float floor = (float) head.bottom() - 2.1f * gap;
+        var frame = PrintedDirectionStaff.printedRules(ink, width, height, (float) head.x(), floor, gap);
+        if (frame == null || Math.abs(frame[0] - floor) > .25f * gap) return 0;
+        int rowCenter = Math.round(frame[0]), extent = Math.round(.67f * gap);
+        int rowTop = rowCenter - extent, rowBottom = rowCenter + Math.round(.81f * gap);
+        if (rowTop < top || rowBottom > bottom) return 0;
+        int flank = Math.round(.52f * gap), scan = Math.round(.22f * gap);
+        if (left - flank < 0 || right + flank >= width) return 0;
+        var mask = new BitSet();
+        int first = -1, last = -1;
+        for (int y = rowCenter - scan; y <= rowCenter + scan; y++) {
+            int lt = 0, rt = 0;
+            for (int n = 1; n <= flank; n++) {
+                if ((ink[y * width + left - n] & 255) < 160) lt++;
+                if ((ink[y * width + right + n] & 255) < 160) rt++;
+            }
+            if (Math.min(lt, rt) < .70f * flank) continue;
+            if (last >= 0 && y != last + 1) return 0;
+            if (first < 0) first = y;
+            last = y;
+            mask.set(y * width + left, y * width + right + 1);
+        }
+        if (first < 0 || last - first < 1 || last - first >= .24f * gap) return 0;
+        int l = right, r = left, t = rowBottom, b = rowTop, above = 0, below = 0;
+        for (int y = rowTop; y <= rowBottom; y++)
+            for (int col = left; col <= right; col++) {
+                int at = y * width + col;
+                if (mask.get(at) || (ink[at] & 255) > 165) continue;
+                if (Math.abs(col - x) > .62 * gap) continue;
+                l = Math.min(l, col);
+                r = Math.max(r, col);
+                t = Math.min(t, y);
+                b = Math.max(b, y);
+                if (y < first) above++; else below++;
+            }
+        if (Math.min(above, below) < 14 || r - l < .34 * gap || b - t < .83 * gap
+                || t <= rowTop || b >= rowBottom || Math.abs((l + r) * .5 - head.x()) > .31 * gap)
+            return 0;
+        int digit = hint > 0 ? hint : 1;
+        for (int ll = l - 1; ll <= l + 1; ll++)
+            for (int tt = t - 1; tt <= t + 1; tt++)
+                for (int rr = r - 1; rr <= r + 1; rr++)
+                    for (int bb = b - 1; bb <= b + 1; bb++)
+                        if (readTripletLowerGlyph(ink, width, height, mask, ll, tt, rr, bb,
+                                digit) != 0) return digit;
+        return 0;
+    }
+
+    private static int readTripletLowerGlyph(byte[] ink, int width, int height, BitSet excluded,
+            int l, int t, int r, int b, int digit) {
+        var read = JoinedDigitTemplates.inspect(ink, width, height, excluded, l, t, r, b, () -> {});
+        if (read == null || read.independentInk() < 32 || read.scores()[digit] != read.best()) return 0;
+        float minScore = digit == 1 ? .60f : .56f;
+        float minMargin = digit == 3 && excluded.isEmpty() ? .045f : .062f;
+        return read.best() >= minScore && read.best() - read.runner() >= minMargin ? digit : 0;
+    }
+
+
+    private static boolean ordinaryTripletMember(Head head) {
+        var n = head.note();
+        return !head.harmonic() && n.kind() == ScoreNoteEvent.Kind.PITCHED && n.visualSize() == ScoreNoteEvent.VisualSize.FULL
+                && n.staffCount() == 1 && n.beamCount() == 1 && n.stemDirection() == 1
+                && (n.tupletDivisor() == 1 || n.tupletDivisor() == 3 && n.tupletNormalNotes() == 2)
+                && !n.crossStaffBeam() && (n.articulations() & NoteOrnament.GRACE) == 0;
+    }
+
+    private static WordDigit tripletEndUpperMark(byte[] ink, int width, int height, Head head, int digit,
+            int l, int t, int r, int b) {
+        var candidates = wordDigits(ink, width, height, l, t, r, b);
+        if (candidates.size() != 1) return null;
+        var box = candidates.get(0);
+        if (Math.abs(box.x() - head.x()) > .32 * head.gap()
+                || !ownsWordDigit(ink, width, height, head, box)) return null;
+        var read = JoinedDigitTemplates.inspect(ink, width, height, new BitSet(),
+                box.left(), box.top(), box.right(), box.bottom(), () -> {});
+        return read != null && read.best() >= .59f && read.scores()[digit] == read.best()
+                && read.best() - read.runner() >= .029f ? box : null;
     }
 
 

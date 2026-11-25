@@ -2331,10 +2331,7 @@ final class WrappedEighthTriplets {
         if (fingers.isEmpty() || raw == null || normalized == null
                 || raw.length != (long) width * height || normalized.length != raw.length) return score;
         var terminalFingers = new HashSet<Integer>();
-        for (var finger : fingers)
-            if ((finger.digit() == 3 || finger.digit() == 4)
-                    && finger.placement() == PrintedFingeringDigits.Placement.BELOW)
-                terminalFingers.add(finger.noteIndex());
+        for (var finger : fingers) terminalFingers.add(finger.noteIndex());
         if (terminalFingers.isEmpty()) return score;
         var source = score.beamSource();
         var notes = score.notes();
