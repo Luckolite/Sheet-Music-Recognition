@@ -685,6 +685,74 @@ public final class PrintedBeamSource {
         return closed.project(completed);
     }
 
+    static boolean denseUnclaimedPage(ScorePageInterpretation score) {
+        return score.notes().size() >= 600 && score.beamSource().groups().isEmpty()
+                && score.beamSource().detachedColumns().isEmpty();
+    }
+
+    /** A late dense-page pass can contribute beam facts without replacing existing ownership. */
+    static ScorePageInterpretation recoverDensePage(ScorePageInterpretation score, byte[] labels,
+            byte[] gray, int width, int height, List<PlayingTechniqueDetector.Staff> staffs, int page) {
+        var capture = capture(score, labels, gray, width, height, staffs, page, 16_000_000, 256_000_000);
+        if (!capture.statistics().refusal().isEmpty() || capture.source().groups().isEmpty()) return score;
+        var existing = score.beamSource();
+        var merged = supplement(existing, capture.source(), page);
+        return merged == existing ? score : score.withBeamSource(merged);
+    }
+
+    static ScoreBeamSource supplement(ScoreBeamSource existing, ScoreBeamSource recovered, int page) {
+        recovered.validateNoteCount(existing.noteOrigins().size());
+        var groups = new ArrayList<>(existing.groups());
+        var origins = new ArrayList<>(existing.noteOrigins());
+        var claimed = new HashSet<ScoreBeamSource.Anchor>();
+        var ambiguous = new HashSet<ScoreBeamSource.Anchor>();
+        var usedOrigins = new HashSet<ScoreBeamSource.Anchor>();
+        var ids = new HashSet<String>();
+        int next = 0;
+        for (var origin : origins) {
+            if (origin.isEmpty()) continue;
+            var anchor = origin.get();
+            if (!usedOrigins.add(anchor)) ambiguous.add(anchor);
+            if (anchor.pageIndex() == page) next = Math.max(next, anchor.noteIndex() + 1);
+        }
+        var occupied = new ArrayList<>(existing.detachedColumns());
+        for (var group : groups) {
+            ids.add(group.id());
+            occupied.addAll(group.columns());
+        }
+        for (var column : occupied) for (var anchor : column.members()) {
+            claimed.add(anchor);
+            if (anchor.pageIndex() == page) next = Math.max(next, anchor.noteIndex() + 1);
+        }
+        for (var group : recovered.groups()) {
+            if (ids.contains(group.id())) continue;
+            var owners = group.columns().stream().flatMap(c -> c.members().stream())
+                    .map(ScoreBeamSource.Anchor::noteIndex).toList();
+            if (owners.stream().anyMatch(i -> origins.get(i).filter(a -> a.pageIndex() != page
+                    || claimed.contains(a) || ambiguous.contains(a)).isPresent())) continue;
+            if (next + owners.size() > ScoreBeamSource.MAX_NOTES) break;
+            var columns = new ArrayList<ScoreBeamSource.Column>();
+            for (var column : group.columns()) {
+                var members = new ArrayList<ScoreBeamSource.Anchor>();
+                for (var captured : column.members()) {
+                    int i = captured.noteIndex();
+                    var anchor = origins.get(i).orElse(null);
+                    if (anchor == null) {
+                        anchor = new ScoreBeamSource.Anchor(page, next++);
+                        origins.set(i, Optional.of(anchor));
+                    }
+                    members.add(anchor);
+                    claimed.add(anchor);
+                }
+                columns.add(new ScoreBeamSource.Column(members));
+            }
+            groups.add(new ScoreBeamSource.Group(group.id(), columns, group.bridges(), group.hooks(), group.tupletMark()));
+            ids.add(group.id());
+        }
+        return groups.size() == existing.groups().size() ? existing
+                : new ScoreBeamSource(groups, existing.detachedColumns(), origins);
+    }
+
     static Capture capture(
             ScorePageInterpretation score,
             byte[] labels,

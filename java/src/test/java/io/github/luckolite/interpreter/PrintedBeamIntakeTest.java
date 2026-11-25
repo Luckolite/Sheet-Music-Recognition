@@ -160,4 +160,52 @@ public final class PrintedBeamIntakeTest {
         System.out.println(
                 "PASS " + checks + " original ordinary/cue/grace/raw-body/rival assertions");
     }
+
+    @org.junit.Test
+    public void supplementsOnlyUnclaimedAndUnambiguousBeamOrigins() {
+        var claimed = group("proved", 40, 41);
+        var existing = new ScoreBeamSource(
+                List.of(claimed), List.of(column(53)),
+                List.of(Optional.of(anchor(40)), Optional.of(anchor(41)), Optional.empty(),
+                        Optional.empty(), Optional.of(anchor(48)), Optional.of(anchor(48)),
+                        Optional.of(anchor(53)), Optional.empty(), Optional.empty(), Optional.empty()));
+        var recovered = ScoreBeamSource.capture(3, 10,
+                List.of(group("overlap", 1, 8), group("new", 2, 3),
+                        group("ambiguous", 4, 7), group("detached-rival", 6, 9)),
+                List.of());
+        var merged = PrintedBeamSource.supplement(existing, recovered, 3);
+        org.junit.Assert.assertEquals(List.of(claimed, group("new", 54, 55)), merged.groups());
+        org.junit.Assert.assertEquals(existing.detachedColumns(), merged.detachedColumns());
+        org.junit.Assert.assertEquals(Optional.of(anchor(54)), merged.noteOrigins().get(2));
+        org.junit.Assert.assertEquals(Optional.of(anchor(55)), merged.noteOrigins().get(3));
+        org.junit.Assert.assertEquals(Optional.empty(), merged.noteOrigins().get(8));
+        org.junit.Assert.assertSame(merged, PrintedBeamSource.supplement(merged, recovered, 3));
+    }
+
+    @org.junit.Test
+    public void supplementalBeamCaptureRequiresPrintedInk() {
+        var score = score(0);
+        var staffs = List.of(new PlayingTechniqueDetector.Staff(40, 88, 12, 0, 1));
+        var printed = raw(1, true, true, false);
+        var erased = raw(1, true, false, false);
+        org.junit.Assert.assertSame(score,
+                PrintedBeamSource.recoverDensePage(score, new byte[erased.length],
+                        erased, 120, 128, staffs, 3));
+        var recovered = PrintedBeamSource.recoverDensePage(score, new byte[printed.length],
+                printed, 120, 128, staffs, 3);
+        org.junit.Assert.assertEquals(1, recovered.beamSource().groups().size());
+        org.junit.Assert.assertEquals(score.notes(), recovered.notes());
+    }
+
+    private static ScoreBeamSource.Anchor anchor(int index) {
+        return new ScoreBeamSource.Anchor(3, index);
+    }
+
+    private static ScoreBeamSource.Column column(int index) {
+        return new ScoreBeamSource.Column(List.of(anchor(index)));
+    }
+
+    private static ScoreBeamSource.Group group(String id, int a, int b) {
+        return new ScoreBeamSource.Group(id, List.of(column(a), column(b)), List.of(1), List.of());
+    }
 }

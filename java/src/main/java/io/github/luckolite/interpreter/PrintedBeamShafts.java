@@ -12,7 +12,7 @@ final class PrintedBeamShafts {
         private boolean refused;
 
         Budget(long pixels) {
-            if (pixels < 0 || pixels > 8_000_000)
+            if (pixels < 0 || pixels > 16_000_000)
                 throw new IllegalArgumentException("Invalid shaft budget");
             remaining = pixels;
         }

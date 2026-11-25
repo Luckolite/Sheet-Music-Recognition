@@ -887,6 +887,7 @@ public final class SheetInterpreter {
             finalInterpretation = finalInterpretation.withNotes(
                     harmonicTriplets.notes(),
                     java.util.stream.IntStream.range(0, harmonicTriplets.notes().size()).boxed().toList());
+        var beforeBeamCapture = finalInterpretation;
         if (physicalPage >= 0)
             finalInterpretation =
                     PrintedBeamSource.apply(
@@ -898,6 +899,8 @@ public final class SheetInterpreter {
                             staffs,
                             physicalPage,
                             phrasePending);
+        boolean recoverDenseBeams = physicalPage >= 0 && finalInterpretation == beforeBeamCapture
+                && PrintedBeamSource.denseUnclaimedPage(finalInterpretation);
         finalInterpretation = TripletRhythmDetector.projectClippedDyadQuartets(
                 finalInterpretation, provedDyadClock, repairedDyadBars, physicalPage, width, height);
         finalInterpretation = WrappedEighthTriplets.completeRestoredTripletBeams(
@@ -1083,6 +1086,9 @@ public final class SheetInterpreter {
                 finalInterpretation, gray, annotationGray, width, height, provedDyadAccidentals::add);
         finalInterpretation = OpeningTripletNumeral.projectCurvedLowerMarks(
                 finalInterpretation, labels, annotationGray, gray, width, height);
+        if (recoverDenseBeams)
+            finalInterpretation = PrintedBeamSource.recoverDensePage(
+                    finalInterpretation, labels, gray, width, height, staffs, physicalPage);
         finalInterpretation =
                 finalInterpretation.withClockContextSource(
                         ScoreClockContextCapture.capture(
