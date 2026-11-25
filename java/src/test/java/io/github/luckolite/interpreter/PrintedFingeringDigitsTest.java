@@ -107,6 +107,29 @@ public final class PrintedFingeringDigitsTest {
                         .isEmpty());
     }
 
+    @Test
+    public void splitsAdjacentFingeringDigitsOnlyWithTwoCompleteOpticalOwners() {
+        one(101, 64);
+        one(141, 64);
+        rectangle(107, 82, 110, 133);
+        rectangle(147, 82, 150, 133);
+        rectangle(107, 82, 150, 86);
+        rectangle(107, 91, 150, 95);
+        var words = List.of(new SheetInterpreter.Word("1 1", 93f / WIDTH, 50f / HEIGHT,
+                150f / WIDTH, 79f / HEIGHT));
+        var notes = List.of(note(101, 133).withBeamAndStem(2, 1), note(141, 133).withBeamAndStem(2, 1));
+        var score = new ScorePageInterpretation(List.of(MEASURE), notes);
+        var events = List.of(event(101, 133, 0), event(141, 133, 1));
+        assertEquals(List.of(
+                new PrintedFingeringDigits.Mark(0, 1, PrintedFingeringDigits.Placement.ABOVE),
+                new PrintedFingeringDigits.Mark(1, 1, PrintedFingeringDigits.Placement.ABOVE)),
+                PrintedFingeringDigits.capture(gray, gray, WIDTH, HEIGHT, words, score, events));
+        var incomplete = gray.clone();
+        for (int y = 53; y <= 74; y++)
+            Arrays.fill(incomplete, y * WIDTH + 135, y * WIDTH + 148, (byte) 255);
+        assertTrue(PrintedFingeringDigits.capture(gray, incomplete, WIDTH, HEIGHT, words, score, events).isEmpty());
+    }
+
     private List<PrintedFingeringDigits.Mark> capture(
             List<SheetInterpreter.Word> words,
             List<ScoreNoteEvent> notes,

@@ -117,7 +117,128 @@ final class PrintedFingeringDigits {
         var marks = new ArrayList<Mark>();
         for (int i = 0; i < candidates.length; i++)
             if (candidates[i] != null && !ambiguous[i]) marks.add(candidates[i]);
+        includeWordSequences(marks, words, heads, gray, normalized, width, height);
+        marks.sort(Comparator.comparingInt(Mark::noteIndex).thenComparing(Mark::placement));
         return List.copyOf(marks);
+    }
+
+    private record WordDigit(int left, int top, int right, int bottom) {
+        float x() { return (left + right) * .5f; }
+        boolean agrees(WordDigit other) {
+            return Math.abs(left - other.left) <= 1 && Math.abs(top - other.top) <= 1
+                    && Math.abs(right - other.right) <= 1 && Math.abs(bottom - other.bottom) <= 1;
+        }
+    }
+
+    private static void includeWordSequences(List<Mark> marks, List<SheetInterpreter.Word> words,
+            List<Head> heads, byte[] raw, byte[] gray, int width, int height) {
+        if (raw == null || gray == null || raw.length != (long) width * height || gray.length != raw.length)
+            return;
+        for (var word : words) {
+            String digits = word.text().replace(" ", "");
+            if (!digits.matches("[1-4]{1,4}")) continue;
+            var targets = new ArrayList<Mark>();
+            int left = Math.round(word.left() * width), right = Math.round(word.right() * width);
+            int top = Math.round(word.top() * height), bottom = Math.round(word.bottom() * height);
+            if (left < 0 || top < 0 || right >= width || bottom >= height
+                    || right - left < (digits.length() == 1 ? 13 : 24) || right - left > 175 || bottom - top < 12 || bottom - top > 52)
+                continue;
+            var first = wordDigits(raw, width, height, left, top, right, bottom);
+            var second = wordDigits(gray, width, height, left, top, right, bottom);
+            if (first.size() != digits.length() || second.size() != first.size()) continue;
+            Head previous = null;
+            for (int i = 0; i < first.size(); i++) {
+                var box = first.get(i);
+                int digit = digits.charAt(i) - '0';
+                if (!box.agrees(second.get(i)) || !matchesWordDigit(raw, width, height, box, digit)
+                        || !matchesWordDigit(gray, width, height, second.get(i), digit)) break;
+                Head owner = uniqueWordDigitOwner(heads, box);
+                if (owner == null || previous != null && (owner.index() != previous.index() + 1
+                        || owner.note().measureIndex() != previous.note().measureIndex()
+                        || owner.note().stemDirection() != previous.note().stemDirection())
+                        || !ownsWordDigit(raw, width, height, owner, box)
+                        || !ownsWordDigit(gray, width, height, owner, second.get(i))) break;
+                var mark = new Mark(owner.index(), digit, Placement.ABOVE);
+                if (digits.length() == 1 && marks.stream().noneMatch(old ->
+                        old.noteIndex() == mark.noteIndex() && old.placement() == Placement.BELOW)) break;
+                if (marks.stream().anyMatch(old -> old.noteIndex() == mark.noteIndex()
+                        && old.placement() == mark.placement() && old.digit() != mark.digit())) break;
+                targets.add(mark);
+                previous = owner;
+            }
+            if (targets.size() == digits.length())
+                for (var mark : targets) if (!marks.contains(mark)) marks.add(mark);
+        }
+    }
+
+    private static List<WordDigit> wordDigits(byte[] ink, int width, int height,
+            int left, int top, int right, int bottom) {
+        return RawNumeralComponents.capture(ink, width, height, left, top, right, bottom,
+                        165, () -> {}, () -> {}).components().stream()
+                .filter(c -> c.top > top && c.bottom < bottom && c.left > left && c.right < right
+                        && c.right - c.left >= 5 && c.right - c.left <= 27
+                        && c.bottom - c.top >= 9 && c.bottom - c.top <= 30
+                        && c.size() >= 45)
+                .map(c -> new WordDigit(c.left, c.top, c.right, c.bottom))
+                .sorted(Comparator.comparingInt(WordDigit::left)).toList();
+    }
+
+    private static boolean matchesWordDigit(byte[] ink, int width, int height, WordDigit box, int digit) {
+        var read = JoinedDigitTemplates.inspect(ink, width, height, new BitSet(),
+                box.left(), box.top(), box.right(), box.bottom(), () -> {});
+        return read != null && read.scores()[digit] >= .55f && read.best() - read.scores()[digit] <= .039f;
+    }
+
+    private static Head uniqueWordDigitOwner(List<Head> heads, WordDigit box) {
+        Head owner = null;
+        for (var head : heads) {
+            var note = head.note();
+            double gap = head.gap(), distance = head.y() - box.bottom();
+            if (gap < 10 || gap > 24 || Math.abs(head.x() - box.x()) > .53 * gap
+                    || distance < .80 * gap || distance > 6 * gap || head.harmonic()
+                    || !ClosedMonophonicSixteenths.regularQuartetHead(note)
+                    || note.tupletDivisor() != 1 || note.augmentationDots() != 0) continue;
+            if (owner != null) return null;
+            owner = head;
+        }
+        return owner;
+    }
+
+    private static boolean ownsWordDigit(byte[] ink, int width, int height, Head head, WordDigit box) {
+        float gap = (float) head.gap() * (8f / 8.2f);
+        var budget = new PrintedBeamShafts.Budget(40000);
+        var shafts = PrintedBeamShafts.at(ink, width, height, (float) head.x(), (float) head.y(), gap, budget);
+        if (budget.refused() || shafts.size() > 1) return false;
+        if (shafts.isEmpty()) {
+            if (head.note().stemDirection() != 1) return false;
+            var stem = PairedTremoloInk.stem(ink, width, height, head.x(), head.y(), gap, 1);
+            return stem != null && upperDigitAtTip(box, gap, stem.endY())
+                    && hasHorizontalBeamAtTip(ink, width, height, stem.x(), stem.endY(), gap);
+        }
+        var shaft = shafts.get(0);
+        if (shaft.direction() != -head.note().stemDirection()) return false;
+        return shaft.direction() < 0 ? upperDigitAtTip(box, gap, shaft.endY())
+                : head.y() - box.bottom() <= gap * 2.65f;
+    }
+
+    private static boolean upperDigitAtTip(WordDigit box, float gap, int tip) {
+        return box.bottom() <= tip + gap * .13f && tip - box.bottom() <= gap * 1.6f;
+    }
+
+    private static boolean hasHorizontalBeamAtTip(byte[] ink, int width, int height, int x, int y, float gap) {
+        int reach = Math.round(.65f * gap), vertically = Math.round(.24f * gap);
+        if (x < reach || x + reach >= width || y < vertically || y + vertically >= height) return false;
+        for (int side : new int[] {-1, 1}) {
+            int confirmedRows = 0;
+            for (int row = y - vertically; row <= y + vertically; row++) {
+                int dark = 0;
+                for (int d = 3; d <= reach; d++)
+                    if ((ink[row * width + x + side * d] & 255) < 155) dark++;
+                if (dark >= .84f * (reach - 2)) confirmedRows++;
+            }
+            if (confirmedRows >= Math.max(3, Math.round(.20f * gap))) return true;
+        }
+        return false;
     }
 
     private static void assignStaffOverlaidTripletOnes(byte[] gray, byte[] normalized, int width, int height,
