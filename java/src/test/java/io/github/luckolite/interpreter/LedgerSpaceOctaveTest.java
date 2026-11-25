@@ -89,6 +89,48 @@ public final class LedgerSpaceOctaveTest {
                 182f, (float) GAP, 16));
     }
 
+    @Test
+    public void recoversAHighNoteOnThePrintedLedgerOfAnOctave() throws Exception {
+        var interpreter = OmrScoreInterpreter.class;
+        var componentType = Class.forName(interpreter.getName() + "$Component");
+        var component = componentType.getDeclaredConstructors()[0];
+        component.setAccessible(true);
+        var staffType = Class.forName(interpreter.getName() + "$Staff");
+        var staff = staffType.getDeclaredConstructor(float.class, float.class, float.class);
+        staff.setAccessible(true);
+        var frame = staff.newInstance(126f, 190f, (float) GAP);
+        var upper = head(component, 80, 46);
+        var lower = head(component, 80, 102);
+        var pair = List.of(upper, lower);
+        var recover = interpreter.getDeclaredMethod("filledLedgerLineOctave",
+                byte[].class, byte[].class, int.class, int.class, componentType, staffType,
+                staffType, List.class);
+        recover.setAccessible(true);
+
+        byte[] ink = new byte[WIDTH * HEIGHT];
+        Arrays.fill(ink, (byte) 255);
+        for (int y = 126; y <= 190; y += GAP) fill(ink, 25, y, 190, y + 1);
+        oval(ink, 80, 46);
+        oval(ink, 80, 102);
+        fill(ink, 70, 48, 72, 205);
+        for (int y = 46; y <= 110; y += GAP) fill(ink, 65, y - 1, 95, y + 1);
+        assertEquals(18, recover.invoke(null, ink, ink.clone(), WIDTH, HEIGHT, upper,
+                frame, frame, pair));
+        assertEquals(0, recover.invoke(null, ink, ink.clone(), WIDTH, HEIGHT, upper,
+                frame, frame, List.of(upper)));
+
+        byte[] severed = ink.clone();
+        for (int y = 84; y <= 91; y++) Arrays.fill(severed, y * WIDTH + 67, y * WIDTH + 75, (byte) 255);
+        assertEquals(0, recover.invoke(null, ink, severed, WIDTH, HEIGHT, upper, frame, frame, pair));
+
+        byte[] missingLedger = ink.clone();
+        for (int y = 77; y <= 79; y++) {
+            Arrays.fill(missingLedger, y * WIDTH + 63, y * WIDTH + 69, (byte) 255);
+            Arrays.fill(missingLedger, y * WIDTH + 73, y * WIDTH + 97, (byte) 255);
+        }
+        assertEquals(0, recover.invoke(null, missingLedger, ink, WIDTH, HEIGHT, upper, frame, frame, pair));
+    }
+
     private static byte[] ledgerDyad(int... ledgerRows) {
         byte[] ink = new byte[WIDTH * HEIGHT];
         Arrays.fill(ink, (byte) 255);

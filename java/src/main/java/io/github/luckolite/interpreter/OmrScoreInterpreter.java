@@ -1964,6 +1964,7 @@ final class OmrScoreInterpreter {
             int sharedFarStep = 0;
             int compressedQuartetStep = 0;
             int shortBeamedLedgerStep = 0;
+            int filledLedgerOctaveStep = 0;
             if (gray != null
                     && physicalStaff != null
                     && (head.centerY < physicalStaff.top - physicalStaff.gap * ledgerClearance
@@ -2047,6 +2048,8 @@ final class OmrScoreInterpreter {
                             staff,
                             staffs,
                             heads, measures)
+                    && (filledLedgerOctaveStep = filledLedgerLineOctave(
+                            gray, annotationGray, width, height, head, physicalStaff, staff, heads)) == 0
                     && !(recoveredShadedChordHeads.contains(head)
                             && ShadedChordHeadRecovery.hasLedgerRails(
                                     gray,
@@ -2081,6 +2084,7 @@ final class OmrScoreInterpreter {
             float localBottom =
                     printedLedgerBottom(gray, width, height, head, localPitch[0], localGap);
             int step = openingLedgerStep != 0 ? openingLedgerStep
+                    : filledLedgerOctaveStep != 0 ? filledLedgerOctaveStep
                     : stackedLedgerStep != 0 ? stackedLedgerStep
                     : sharedFarStep != 0 ? sharedFarStep
                     : remoteSixthStep != 0 ? remoteSixthStep
@@ -29269,7 +29273,7 @@ final class OmrScoreInterpreter {
         if (gray == null || raw == null || gray.length != raw.length || gap < 12 || gap > 24
                 || step < 12 || step > 23) return step;
         float phase = (staffBottom - head.centerY) * 2 / gap - (step - 1);
-        if (phase < .49f || phase > .82f) return step;
+        if (phase < .49f || phase > .86f) return step;
 
         Component lower = null;
         for (Component peer : heads) {
@@ -29310,6 +29314,43 @@ final class OmrScoreInterpreter {
         var budget = new PrintedBeamShafts.Budget(120_000);
         if (!expandedDyadShafts(gray, raw, width, height, head, lower, gap, budget)) return step;
         return step - 1;
+    }
+
+    /** A filled high octave can share most of its visible ledger ladder with its lower head. */
+    private static int filledLedgerLineOctave(byte[] gray, byte[] raw, int width, int height,
+            Component head, Staff physical, Staff owner, List<Component> heads) {
+        float gap = physical.pitchGap;
+        float position = (physical.pitchBottom - head.centerY) * 2 / gap;
+        if (raw == null || gray.length != raw.length || owner.count != 1 || gap < 12 || gap > 24
+                || position < 17.2f || position > 20.8f
+                || Math.abs(physical.pitchBottom - owner.pitchBottom) > gap) return 0;
+        Component lower = null;
+        for (Component peer : heads) {
+            if (Math.abs(peer.centerX - head.centerX) > gap * .22f) continue;
+            float span = (peer.centerY - head.centerY) / gap;
+            if (span < 3.40f || span > 3.74f) continue;
+            if (lower != null) return 0;
+            lower = peer;
+        }
+        if (lower == null || !FilledSparseBeamHead.completeInterior(gray, width, height, head.centerX, head.centerY, gap)
+                || !FilledSparseBeamHead.completeInterior(raw, width, height, head.centerX, head.centerY, gap)
+                || !FilledSparseBeamHead.completeInterior(gray, width, height, lower.centerX, lower.centerY, gap)
+                || !FilledSparseBeamHead.completeInterior(raw, width, height, lower.centerX, lower.centerY, gap)) return 0;
+        float top = physical.pitchBottom - 4 * gap;
+        var rows = upperLedgerLadder(gray, width, height, head, top, gap).rows();
+        var original = upperLedgerLadder(raw, width, height, head, top, gap).rows();
+        if (rows.size() < 5 || rows.size() > 6 || rows.size() != original.size()) return 0;
+        for (int i = 0; i < rows.size(); i++)
+            if (Math.abs(rows.get(i) - original.get(i)) > gap * .13f) return 0;
+        int step = 8 + 2 * rows.size();
+        if (Math.abs(rows.get(rows.size() - 1) - head.centerY) > gap * .16f
+                || Math.abs(original.get(original.size() - 1) - head.centerY) > gap * .16f
+                || Math.abs(step - position) > .72f
+                || printedPitchStep(gray, width, height, lower,
+                        printedLedgerBottom(gray, width, height, lower, physical.pitchBottom, gap), gap) != step - 7)
+            return 0;
+        var budget = new PrintedBeamShafts.Budget(120_000);
+        return expandedDyadShafts(gray, raw, width, height, head, lower, gap, budget) ? step : 0;
     }
 
     private static boolean expandedDyadShafts(byte[] gray, byte[] raw, int width, int height,
