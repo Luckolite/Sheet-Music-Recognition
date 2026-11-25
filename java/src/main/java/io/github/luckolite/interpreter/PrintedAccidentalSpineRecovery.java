@@ -72,6 +72,101 @@ final class PrintedAccidentalSpineRecovery {
                 java.util.stream.IntStream.range(0, notes.size()).boxed().toList());
     }
 
+    /** A narrow printed 1 above the preceding head can be misread as a flat on the next head. */
+    static ScorePageInterpretation rejectPriorFingeringFlats(ScorePageInterpretation score,
+            byte[] labels, byte[] raw, byte[] gray, int width, int height) {
+        if (labels == null || raw == null || gray == null || raw.length != (long) width * height
+                || raw.length != labels.length || raw.length != gray.length) return score;
+        var notes = score.notes();
+        ArrayList<ScoreNoteEvent> edited = null;
+        for (int i = 1; i < notes.size(); i++) {
+            var note = notes.get(i);
+            var prior = notes.get(i - 1);
+            int index = note.measureIndex();
+            if (note.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_FLAT || index != prior.measureIndex()
+                    || index < 0 || index >= score.measures().size()
+                    || !fingeringFlatHead(note) || !fingeringFlatHead(prior)
+                    || prior.staffStep() < 9 || note.staffStep() != prior.staffStep() + 1
+                    || prior.clefBottomDiatonic() != note.clefBottomDiatonic()) continue;
+            var bar = score.measures().get(index);
+            float gap = (bar.bottom() - bar.top()) * height / 8.2f;
+            float x = headX(bar, note, width), px = headX(bar, prior, width);
+            float y = note.pageY() * height, py = prior.pageY() * height;
+            if (gap < 11 || gap > 24 || x - px < gap * 1.85f || x - px > gap * 2.8f
+                    || py - y < gap * .38f || py - y > gap * .65f
+                    || !priorFingeringOne(raw, labels, width, height, px, py, x, y, gap)
+                    || !priorFingeringOne(gray, labels, width, height, px, py, x, y, gap)) continue;
+            if (edited == null) edited = new ArrayList<>(notes);
+            edited.set(i, note.withWrittenAccidental(ScoreNoteEvent.ACCIDENTAL_FROM_KEY));
+        }
+        return edited == null ? score : score.withNotes(edited,
+                java.util.stream.IntStream.range(0, notes.size()).boxed().toList())
+                .withClockContextSource(score.clockContextSource());
+    }
+
+    private static boolean fingeringFlatHead(ScoreNoteEvent n) {
+        return n.kind() == ScoreNoteEvent.Kind.PITCHED && n.staffIndex() == 0 && n.staffCount() == 1
+                && n.visualSize() == ScoreNoteEvent.VisualSize.FULL
+                && n.beamCount() == 1 && n.unbeamedDurationBeats() == 0 && n.stemDirection() == -1
+                && n.octaveShift() == 0 && n.augmentationDots() == 0 && n.tupletDivisor() == 1
+                && n.harmonicSemitones() == 0 && n.openStringTouch() == null && !n.crossStaffBeam()
+                && (n.articulations() & NoteOrnament.GRACE) == 0 && !n.tiedFromPrevious()
+                && n.boundaryTies() == 0 && n.leadingRestBeats() == 0 && n.followingRestBeats() == 0;
+    }
+
+    private static boolean priorFingeringOne(byte[] ink, byte[] labels, int width, int height,
+            float px, float py, float x, float y, float gap) {
+        int left = Math.round(px - .57f * gap), right = Math.round(px + .57f * gap);
+        int top = Math.round(py - 2.38f * gap), bottom = Math.round(py - .69f * gap);
+        if (left < 0 || right >= width || top < 0 || bottom >= height) return false;
+        if (PrintedFlatGlyph.matchesOwnedInk(labels, ink, width, height, x, y, gap)
+                || PrintedFlatGlyph.matches(ink, width, height, Math.round(x - 1.85f * gap),
+                        Math.round(y - 1.8f * gap), Math.round(x - .72f * gap),
+                        Math.round(y + .85f * gap), gap)) return false;
+
+        var digits = RawNumeralComponents.capture(ink, width, height, left, top, right, bottom,
+                () -> {}, () -> {}).components();
+        if (digits.size() != 1) return false;
+        var one = digits.get(0);
+        int w = one.right - one.left + 1, h = one.bottom - one.top + 1;
+        if (one.left <= left || one.right >= right || one.top <= top || one.bottom >= bottom
+                || w < .48f * gap || w > .84f * gap || h < .95f * gap || h > 1.36f * gap
+                || Math.abs((one.left + one.right) * .5f - px) > .22f * gap
+                || Math.abs(y - one.bottom) > .51f * gap
+                || py - one.bottom < .76f * gap || py - one.bottom > 1.40f * gap
+                || !TripletRhythmDetector.fingerOne(ink, width, one)) return false;
+        // Unlike a flat bowl, the lower middle of the numeral stays narrow.
+        for (int row = one.top + Math.round(h * .47f); row <= one.top + Math.round(h * .72f); row++) {
+            int black = 0;
+            for (int col = one.left; col <= one.right; col++)
+                if ((ink[row * width + col] & 255) <= 165) black++;
+            if (black > .67f * w) return false;
+        }
+
+        var budget = new PrintedBeamShafts.Budget(28_000);
+        var first = PrintedBeamShafts.at(ink, width, height, px, py, gap, budget);
+        var second = PrintedBeamShafts.at(ink, width, height, x, y, gap, budget);
+        if (budget.refused() || first.size() != 1 || second.size() != 1
+                || first.get(0).direction() != 1 || second.get(0).direction() != 1) return false;
+        var a = first.get(0);
+        var b = second.get(0);
+        if (!(WrappedEighthTriplets.matchesBeamRails(ink, width, height, a, b, gap, 1)
+                || WrappedEighthTriplets.matchesBeamRails(ink, width, height, a, b, gap, 2))) return false;
+        // The joined shafts must carry a thick beam, even when nearby staff ink mimics a second rail.
+        int start = a.right() + Math.round(.43f * gap), end = b.left() - Math.round(.43f * gap);
+        int thick = 0, depth = Math.round(.50f * gap);
+        for (int col = start; col <= end; col++) {
+            float t = (col - a.right()) / (float)(b.left() - a.right());
+            int tip = Math.round(a.endY() + t * (b.endY() - a.endY()));
+            if (tip < depth || tip >= height - 2) return false;
+            int count = 0;
+            for (int row = tip - depth; row <= tip + 2; row++)
+                if ((ink[row * width + col] & 255) <= 155) count++;
+            if (count >= .31f * gap) thick++;
+        }
+        return end > start && thick >= .85f * (end - start + 1);
+    }
+
     /** Replace a decoded natural only when the repeat's printed shoulder proves another sign. */
     static ScorePageInterpretation reconcileRepeatedMonophonicSigns(
             ScorePageInterpretation score, byte[] labels, byte[] raw, byte[] normalized,

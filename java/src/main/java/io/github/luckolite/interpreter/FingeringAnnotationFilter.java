@@ -481,7 +481,8 @@ final class FingeringAnnotationFilter {
         for (var alias : notes) {
             int i = alias.measureIndex();
             if (i < 1 || i >= measures.size() || !captionGlyphHead(alias, false, -1, -1)
-                    || alias.beamCount() != 0 || alias.unbeamedDurationBeats() != 4) continue;
+                    || !(alias.beamCount() == 0 && alias.unbeamedDurationBeats() == 4
+                            || alias.beamCount() == 1 && alias.unbeamedDurationBeats() == 0)) continue;
             var bar = measures.get(i);
             float gap = (bar.bottom() - bar.top()) * height / 8.2f;
             float x = fingeringHeadX(bar, alias, width), y = alias.pageY() * height;
@@ -492,11 +493,105 @@ final class FingeringAnnotationFilter {
                     .sorted(Comparator.comparingDouble(ScoreNoteEvent::positionInMeasure)).toList();
             if (music.size() != 16 || Math.abs(fingeringHeadX(bar, music.get(5), width) - x) > .6f * gap)
                 continue;
-            if (smallFingerPair(raw, width, height, bar, music, x, y, gap)
-                    && smallFingerPair(gray, width, height, bar, music, x, y, gap))
+            if (alias.beamCount() == 1) {
+                if (ruledSmallFingerPair(raw, width, height, bar, music, x, y, gap)
+                        && ruledSmallFingerPair(gray, width, height, bar, music, x, y, gap))
+                    rejected.add(alias);
+            } else if (smallFingerPair(raw, width, height, bar, music, x, y, gap)
+                    && smallFingerPair(gray, width, height, bar, music, x, y, gap)) {
                 rejected.add(alias);
+            }
         }
         return rejected.isEmpty() ? notes : notes.stream().filter(n -> !rejected.contains(n)).toList();
+    }
+
+    private static boolean ruledSmallFingerPair(byte[] ink, int width, int height, MeasureRegion bar,
+            List<ScoreNoteEvent> notes, float x, float y, float gap) {
+        float close = fingeringHeadX(bar, notes.get(11), width);
+        var track = WrappedMeasureBoundaries.verifiedTripletStaff(ink, width, height, bar, true);
+        if (track == null || !track.verifiedAt(x) || !track.verifiedAt(close)) return false;
+        float floor = track.at(x)[0], closeFloor = track.at(close)[0];
+        if (y - floor < gap * .25f || y - floor > gap * .75f || close - x < gap * 7f
+                || close - x > gap * 15f) return false;
+        var budget = new PrintedBeamShafts.Budget(60_000);
+        if (!PrintedBeamShafts.at(ink, width, height, x, y, gap, budget).isEmpty() || budget.refused()) return false;
+        int[] a = ruledFingerDigit(ink, width, height, x, floor, gap, true);
+        int[] b = ruledFingerDigit(ink, width, height, close, closeFloor, gap, false);
+        if (a == null || b == null || y < a[0] || y > a[1]
+                || Math.abs((a[1] - a[0]) - (b[1] - b[0])) > .25f * gap
+                || !opposingFingerCurve(ink, width, height, x, floor, gap, true)
+                || !opposingFingerCurve(ink, width, height, close, closeFloor, gap, false)) return false;
+        return WrappedMeasureBoundaries.confirmsSampledClosingEdge(
+                        ink, width, height, bar, fingeringHeadX(bar, notes.get(15), width))
+                && (MixedUpperLedgerBeamSource.provesUpperSixteenthLine(ink, width, height, track, bar, notes)
+                    || ruledCaptionQuartets(ink, width, height, track, bar, notes, gap));
+    }
+
+    private static boolean ruledCaptionQuartets(byte[] ink, int width, int height,
+            StaffPitchTrack track, MeasureRegion bar, List<ScoreNoteEvent> notes, float gap) {
+        var budget = new PrintedBeamShafts.Budget(155_000);
+        PrintedBeamShafts.Shaft previous = null;
+        float previousX = 0;
+        for (int i = 0; i < notes.size(); i++) {
+            var note = notes.get(i);
+            if (!ClosedMonophonicSixteenths.regularQuartetHead(note)
+                    || note.stemDirection() != -1 || note.tupletDivisor() != 1
+                    || note.augmentationDots() != 0) return false;
+            float x = fingeringHeadX(bar, note, width), y = note.pageY() * height;
+            if (previous != null && (x - previousX < 1.55f * gap || x - previousX > 3.95f * gap))
+                return false;
+            var shafts = PrintedBeamShafts.at(ink, width, height, x, y, gap, budget);
+            if (budget.refused() || shafts.size() != 1 || shafts.get(0).direction() != 1) return false;
+            var shaft = shafts.get(0);
+            if (previous != null) {
+                boolean edge = i % 4 == 0
+                        ? WrappedEighthTriplets.cutBetweenRecoveredGroups(ink, width, height, bar, previous, shaft, gap)
+                            || WrappedEighthTriplets.separatedOctaveQuartets(
+                                     ink, width, height, previous, shaft, gap, track.at(x)[0])
+                        : WrappedEighthTriplets.matchesExactlyTwoBeamRails(ink, width, height, previous, shaft, gap, track);
+                if (!edge) return false;
+            }
+            previous = shaft;
+            previousX = x;
+        }
+        return true;
+    }
+
+    private static int[] ruledFingerDigit(byte[] ink, int width, int height,
+            float x, float floor, float gap, boolean opening) {
+        int left = Math.round(x - (opening ? .49f : .68f) * gap);
+        int right = Math.round(x + (opening ? .56f : .20f) * gap);
+        int top = Math.round(floor - .55f * gap), bottom = Math.round(floor + gap);
+        return staffRuleThree(ink, width, height, left, top, right, bottom, x, floor + .45f * gap, gap);
+    }
+
+    private static boolean opposingFingerCurve(byte[] ink, int width, int height,
+            float x, float floor, float gap, boolean opening) {
+        int left = Math.round(x + (opening ? -1.35f : .30f) * gap);
+        int right = Math.round(x + (opening ? -.37f : 1.2f) * gap);
+        int first = Math.round(floor - gap), last = Math.round(floor + 1.2f * gap);
+        int center = Math.round(floor);
+        int clear = Math.round(gap * .22f);
+        if (left < 0 || right >= width || first < 0 || last >= height) return false;
+        for (int side : new int[] {-1, 1}) {
+            var columns = new ArrayList<Float>();
+            for (int row = center + side * clear; row >= first && row <= last; row += side) {
+                int body = 0, sum = 0;
+                for (int col = left; col <= right; col++) {
+                    if ((ink[row * width + col] & 255) >= 165) continue;
+                    body++;
+                    sum += col;
+                }
+                if (body > 0 && body <= gap * .48f) columns.add(sum / (float)body);
+                else if (!columns.isEmpty()) break;
+            }
+            if (columns.size() < 5) return false;
+            int n = columns.size();
+            float near = (columns.get(0) + columns.get(1)) * .5f;
+            float far = (columns.get(n - 1) + columns.get(n - 2)) * .5f;
+            if ((opening ? 1 : -1) * (far - near) < gap * .08f) return false;
+        }
+        return true;
     }
 
     private static boolean smallFingerPair(

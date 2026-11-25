@@ -38,6 +38,35 @@ public class ParentheticalFingeringShapeTest {
         assertEquals(0, direction(ink, new BitSet()));
     }
 
+    @Test
+    public void aDetachedFleckCannotExtendTheStaffRuleParenthesis() throws ReflectiveOperationException {
+        var ink = ruledCurve(true);
+        Arrays.fill(ink, 21 * WIDTH + 18, 21 * WIDTH + 20, (byte) 0);
+        assertEquals(true, tracesRuledCurve(ink, true));
+        assertEquals(true, tracesRuledCurve(ruledCurve(false), false));
+
+        for (int row = 23; row < 34; row++)
+            Arrays.fill(ink, row * WIDTH, (row + 1) * WIDTH, (byte) 255);
+        assertEquals(false, tracesRuledCurve(ink, true));
+    }
+
+    private static byte[] ruledCurve(boolean opening) {
+        var ink = paper();
+        for (int row = 23; row <= 45; row++) {
+            int shift = Math.abs(row - 34) / 2;
+            int x = opening ? 22 + shift : 53 - shift;
+            Arrays.fill(ink, row * WIDTH + x, row * WIDTH + x + 2, (byte) 0);
+        }
+        return ink;
+    }
+
+    private static boolean tracesRuledCurve(byte[] ink, boolean opening) throws ReflectiveOperationException {
+        Method method = FingeringAnnotationFilter.class.getDeclaredMethod("opposingFingerCurve",
+                byte[].class, int.class, int.class, float.class, float.class, float.class, boolean.class);
+        method.setAccessible(true);
+        return (boolean) method.invoke(null, ink, WIDTH, HEIGHT, 39f, 34f, 16f, opening);
+    }
+
     private static byte[] bracket(boolean opening) {
         var ink = paper();
         for (int y = 15; y <= 42; y++) {

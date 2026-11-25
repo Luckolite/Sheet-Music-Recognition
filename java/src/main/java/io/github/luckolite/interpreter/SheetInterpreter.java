@@ -1161,6 +1161,8 @@ public final class SheetInterpreter {
                     clockPartSource, meterEvidence.provenance(), tabSourceGray));
         terminalCadence = PrintedAccidentalSpineRecovery.reconcileLedgerSigns(
                 terminalCadence, annotationGray, gray, width, height, provedDyadAccidentals::add);
+        terminalCadence = PrintedAccidentalSpineRecovery.rejectPriorFingeringFlats(
+                terminalCadence, labels, annotationGray, gray, width, height);
         terminalCadence = PrintedAccidentalSpineRecovery.reconcileRepeatedMonophonicSigns(
                 terminalCadence, labels, annotationGray, gray, width, height, provedDyadAccidentals::add);
         terminalCadence = PrintedAccidentalSpineRecovery.reconcileDyadSigns(
