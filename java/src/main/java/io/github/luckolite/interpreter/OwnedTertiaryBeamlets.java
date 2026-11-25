@@ -863,6 +863,44 @@ final class OwnedTertiaryBeamlets {
         return joinedRailHookForShafts(gray, width, height, owners.get(0), peers.get(0), gap);
     }
 
+    static boolean provesThirdHookToward(byte[] gray, int width, int height,
+            PrintedBeamShafts.Shaft owner, PrintedBeamShafts.Shaft peer, float gap, int side, float staffBottom) {
+        boolean candidate = side < 0 ? provesBackwardHookForShafts(gray, width, height, owner, peer, gap)
+                : proveSide(gray, width, height, downwardAxes(owner), downwardAxes(peer), gap, side, true);
+        if (!candidate) return false;
+        int thickness = Math.max(3, (int) Math.ceil(gap * .25f));
+        for (var axis : downwardAxes(owner)) {
+            var rules = new ArrayList<PrintedBeamRuleWitness.Witness>();
+            for (int dx = Math.round(gap * 1.35f); dx <= Math.round(gap * 1.8f); dx++) {
+                int x = axis.x + side * dx;
+                if (x < 0 || x >= width) continue;
+                var witness = PrintedBeamRuleWitness.at(gray, width, height, x, staffBottom, gap);
+                if (witness != null) rules.add(witness);
+            }
+            for (int depth = Math.round(gap * 1.65f); depth <= Math.round(gap * 2.24f); depth++) {
+                int center = axis.tip - depth;
+                int complete = 0;
+                for (int dx = Math.round(gap * .27f); dx <= Math.round(gap * .8f); dx++) {
+                    int x = axis.x + side * dx;
+                    int run = 0;
+                    for (int y = center - 2; y <= center + thickness; y++) {
+                        run = ink(gray, width, height, x, y) && !witnessedRulePixel(rules, y) ? run + 1 : 0;
+                        if (run == thickness) {
+                            complete++;
+                            break;
+                        }
+                    }
+                }
+                if (complete >= Math.max(4, Math.round(gap * .3f))) return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean witnessedRulePixel(List<PrintedBeamRuleWitness.Witness> rules, int y) {
+        return rules.size() >= 3 && rules.stream().allMatch(rule -> rule.contains(y));
+    }
+
     static boolean provesBackwardHookForShafts(byte[] gray, int width, int height,
             PrintedBeamShafts.Shaft own, PrintedBeamShafts.Shaft peerShaft, float gap) {
         return proveSide(gray, width, height, downwardAxes(own), downwardAxes(peerShaft), gap, -1, true)

@@ -1700,6 +1700,16 @@
     }
   },
   "files": {
+    "OwnedTertiaryBeamlets.java": {
+      "source_path": "app/src/main/java/com/musicsheets/app/pdf/OwnedTertiaryBeamlets.java",
+      "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/OwnedTertiaryBeamlets.java",
+      "source_sha256": "00aeecba1386610dd5cb74231d1098bdbbe6eb215af67fb01c7d9e3b10341b9a",
+      "source_normalized_sha256": "00aeecba1386610dd5cb74231d1098bdbbe6eb215af67fb01c7d9e3b10341b9a",
+      "standalone_normalized_sha256": "abbab02aa3bfa194f3b4b8a018b1837896d93cddf34addf7befbcb153d415923",
+      "license": "Apache-2.0",
+      "reviewed_app_commit": "778cd590b0340b965946c828338dbc5cdf011e21",
+      "reviewed_app_state": "Matching connected short-hook evidence with independently witnessed staff-rule exclusion."
+    },
     "WrappedEighthTriplets.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/WrappedEighthTriplets.java",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/WrappedEighthTriplets.java",
@@ -1712,13 +1722,13 @@
     },
     "ClosedOctaveRailRun.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/ClosedOctaveRailRun.java",
-      "source_sha256": "f7b61bfe202e98555eb3c166f7f36512e893131f618c8439fcca65c9c4b3454e",
-      "source_normalized_sha256": "f7b61bfe202e98555eb3c166f7f36512e893131f618c8439fcca65c9c4b3454e",
+      "source_sha256": "88f4ada83a009ad7eb1b2c1b4b51ad8f903325bf615f480a641908a7a0e44481",
+      "source_normalized_sha256": "88f4ada83a009ad7eb1b2c1b4b51ad8f903325bf615f480a641908a7a0e44481",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/ClosedOctaveRailRun.java",
-      "standalone_normalized_sha256": "2127369224cb4c9386f7f0a0e4aef2ac4da558a9b296134c8200b6bdd58c58ab",
+      "standalone_normalized_sha256": "f2251e7eda7c442647f3dbe7a024b8c1c7f5ab6a5dc31de6cc397aebc693f094",
       "license": "Apache-2.0",
-      "reviewed_app_commit": "92ae8ad156a125259b27dfd55be30e907b611b7f",
-      "reviewed_app_state": "Matching printed octave grouping, stem-direction evidence, and bounded fade fallback."
+      "reviewed_app_commit": "778cd590b0340b965946c828338dbc5cdf011e21",
+      "reviewed_app_state": "Matching shared lower-head shaft transition and protection against true third rail hooks."
     },
     "RuleOverlaidFingerings.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/RuleOverlaidFingerings.java",

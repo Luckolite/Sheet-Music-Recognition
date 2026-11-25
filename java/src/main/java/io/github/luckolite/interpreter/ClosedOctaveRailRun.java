@@ -59,7 +59,9 @@ final class ClosedOctaveRailRun {
             Head island = heads.size() == 33 ? unownedBeamIsland(beam, heads) : null;
             if (island != null) heads.remove(island);
             if ((heads.size() != 32 && heads.size() != 24) || heads.stream().anyMatch(h -> !ordinaryHead(h.note, NoteArticulation.ARTICULATIONS, true)
-                    || !sixteenth(h.note) || h.note.stemDirection() != -1)) continue;
+                    || h.note.unbeamedDurationBeats() != 0 || h.note.beamCount() < 2
+                    || h.note.beamCount() > 3 || h.note.stemDirection() != -1)
+                    || heads.stream().filter(h -> h.note.beamCount() == 3).count() > 1) continue;
             heads.sort(Comparator.comparingDouble(Head::x));
             var firstLower = heads.get(0).y > heads.get(1).y ? heads.get(0) : heads.get(1);
             PlayingTechniqueDetector.Staff frame = null;
@@ -195,16 +197,31 @@ final class ClosedOctaveRailRun {
                 var attached = highDownward.get(0);
                 if (attached.direction() != 1 || attached.left() > stem.right()
                         || stem.left() > attached.right()
-                        || Math.abs(attached.endY() - stem.endY()) > gap * .25f) return false;
+                        || Math.abs(attached.endY() - stem.endY()) > gap * .25f
+                                && !(Math.abs(attached.endY() - lower.y) <= gap * .64f
+                                        && Math.abs(stem.startY() - lower.y) <= gap * .7f
+                                        && upperFadedAttachment(ink, width, upper, lower, stem, gap)))
+                    return false;
             }
             if (previous != null && (i % 4 == 0
                     ? !WrappedEighthTriplets.separatedOctaveQuartets(
                             ink, width, height, previous, stem, gap, staff.bottom())
                     : !WrappedEighthTriplets.matchesExactlyTwoBeamRails(
                             ink, width, height, previous, stem, gap, track))) return false;
+            if (previous != null && i % 4 != 0
+                    && (hasThirdDepth(columns.get(i - 1))
+                            && OwnedTertiaryBeamlets.provesThirdHookToward(
+                                    ink, width, height, previous, stem, gap, 1, staff.bottom())
+                        || hasThirdDepth(column)
+                            && OwnedTertiaryBeamlets.provesThirdHookToward(
+                                    ink, width, height, stem, previous, gap, -1, staff.bottom()))) return false;
             previous = stem;
         }
         return true;
+    }
+
+    private static boolean hasThirdDepth(Column column) {
+        return column.upper.note.beamCount() == 3 || column.lower.note.beamCount() == 3;
     }
 
     private static ScoreBeamSource completeOctaveQuartet(ScoreBeamSource source, int page, List<Column> heads) {

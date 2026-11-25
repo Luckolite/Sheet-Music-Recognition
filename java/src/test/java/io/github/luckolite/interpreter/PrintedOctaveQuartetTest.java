@@ -138,6 +138,32 @@ public final class PrintedOctaveQuartetTest {
         assertTrue(recognize(fixture, joined).beamSource().groups().isEmpty());
     }
 
+    @Test
+    public void preservesARealShortThirdHookWhenOneHeadReportsThreeBeams() {
+        var fixture = fixture();
+        var notes = new ArrayList<>(fixture.score.notes());
+        var first = notes.get(1);
+        notes.set(1, new ScoreNoteEvent(0, first.positionInMeasure(), first.staffStep(), 0, 1,
+                first.pageY(), false, 0, 3).withStemDirection(-1).withClef(ScoreNoteEvent.CLEF_TREBLE));
+        var overcount = new Fixture(new ScorePageInterpretation(fixture.score.measures(), notes),
+                fixture.gray, fixture.staffs);
+        assertEquals(4, recognize(overcount, fixture.gray.clone()).beamSource().groups().size());
+        byte[] hooked = fixture.gray.clone();
+        fill(hooked, 40, 147, 55, 153, 0);
+        assertTrue(recognize(overcount, hooked).beamSource().groups().isEmpty());
+    }
+
+    @Test
+    public void completesAnOctaveShaftAtTheLowerHeadAndRejectsASeparateStem() {
+        var fixture = fixture();
+        byte[] clipped = fixture.gray.clone();
+        fill(clipped, 40, 116, 42, 123, 255);
+        assertEquals(4, recognize(fixture, clipped).beamSource().groups().size());
+        byte[] separate = clipped.clone();
+        fill(separate, 40, 91, 42, 114, 255);
+        assertTrue(recognize(fixture, separate).beamSource().groups().isEmpty());
+    }
+
     private static ScorePageInterpretation recognize(Fixture fixture, byte[] raw) {
         return ClosedOctaveRailRun.completePrintedBeamQuartets(
                 fixture.score, fixture.gray, raw, WIDTH, HEIGHT, fixture.staffs, 0);
