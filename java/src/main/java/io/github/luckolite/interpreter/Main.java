@@ -626,13 +626,27 @@ public final class Main {
                 }
                 fingerings = List.copyOf(combined);
             }
+            var extraTwos = ParentheticalFingerings.staffCrossedTwos(
+                    parenthetical, fingerings, score, gray, decoderGray == null ? gray : decoderGray,
+                    width, height);
             if (!fingerings.isEmpty()) {
-                result.put("printedFingerings", fingerings);
+                var retained = new ArrayList<>(fingerings);
+                retained.addAll(extraTwos);
+                result.put("printedFingerings", retained);
                 result.put("score", WrappedEighthTriplets.retainTerminalFingerTriplets(
                         score, fingerings, gray, decoderGray == null ? gray : decoderGray, width, height));
             }
-            if (!parenthetical.groups().isEmpty())
-                result.put("printedFingeringGroups", parenthetical.groups());
+            if (!parenthetical.groups().isEmpty()) {
+                result.put("printedFingeringGroups", parenthetical.groups().stream().map(group -> {
+                    var row = new java.util.LinkedHashMap<String,Object>();
+                    row.put("startNoteIndex", group.startNoteIndex());
+                    row.put("endNoteIndex", group.endNoteIndex());
+                    row.put("placement", group.placement());
+                    if (extraTwos.stream().anyMatch(mark -> mark.noteIndex() == group.startNoteIndex()
+                            && mark.placement() == group.placement())) row.put("startDigit", 3);
+                    return row;
+                }).toList());
+            }
             byte[] geometry = decoderGray == null ? gray : decoderGray;
             var marks = new ArrayList<PrintedRomanStrings.Mark>();
             if (standardViolin) {

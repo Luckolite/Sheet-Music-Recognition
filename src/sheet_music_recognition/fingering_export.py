@@ -11,7 +11,7 @@ def retained(page):
     rows = page.get('printedFingerings', [])
     notes = page.get('score', {}).get('notes', [])
     groups = page.get('printedFingeringGroups', [])
-    if not isinstance(rows, list) or len(rows) > 2 * len(notes):
+    if not isinstance(rows, list) or len(rows) > 4 * len(notes):
         raise ValueError('Invalid printed fingering list')
     if not isinstance(groups, list) or len(groups) > len(rows) // 2:
         raise ValueError('Invalid printed fingering group list')
@@ -35,12 +35,14 @@ def retained(page):
             raise ValueError('Invalid printed fingering owner, digit or placement')
         note, index = notes[owner], owners[owner][0]
         event = page['events'][index]
-        if (placement in result[index] or event_kind(note) != 'PITCHED' or event_kind(event) != 'PITCHED'
+        site = result[index].setdefault(placement, [])
+        if (len(site) >= 2 or str(digit) in site
+                or event_kind(note) != 'PITCHED' or event_kind(event) != 'PITCHED'
                 or note.get('visualSize', 'FULL') != 'FULL'
                 or any(k not in event or k not in note or event[k] != note[k]
                        for k in ('measureIndex', 'staffIndex', 'staffCount'))):
             raise ValueError('Invalid printed fingering note identity')
-        result[index][placement] = str(digit)
+        site.append(str(digit))
         source_sites[owner, placement] = index
 
     boundaries = set()
@@ -69,10 +71,22 @@ def retained(page):
         spans[lane].append((low, high))
         boundaries.update(((first, placement), (last, placement)))
         a, b = (source_sites[owner, placement] for owner in (first, last))
-        result[a][placement] = '(' + result[a][placement]
-        result[b][placement] += ')'
+        for index, field, opening in ((a, 'startDigit', True), (b, 'endDigit', False)):
+            digits = result[index][placement]
+            if field not in group and len(digits) == 1:
+                endpoint = digits[0]
+            else:
+                value = group.get(field)
+                if type(value) is not int or str(value) not in digits:
+                    raise ValueError('Missing or invalid printed fingering group endpoint digit')
+                endpoint = str(value)
+            target = digits.index(endpoint)
+            digits[target] = '(' + endpoint if opening else endpoint + ')'
 
-    return {index: tuple((marks[side], side.lower()) for side in ('ABOVE', 'BELOW') if side in marks)
+    for (owner, placement), index in source_sites.items():
+        if len(result[index][placement]) > 1 and (owner, placement) not in boundaries:
+            raise ValueError('Multiple printed fingerings require an explicit group endpoint')
+    return {index: tuple((digit, side.lower()) for side in ('ABOVE', 'BELOW') for digit in marks.get(side, ()))
             for index, marks in result.items()}
 
 

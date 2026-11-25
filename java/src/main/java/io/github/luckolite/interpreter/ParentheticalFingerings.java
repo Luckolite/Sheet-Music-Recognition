@@ -21,7 +21,7 @@ final class ParentheticalFingerings {
         int height() { return bottom - top + 1; }
     }
     private record Glyph(Box digit, Box curve, boolean opening, boolean ruleClipped) {}
-    private record Owner(int index, int measure, float x, float gap, Glyph glyph) {}
+    private record Owner(int index, int measure, float x, float gap, Glyph glyph, PrintedFingeringDigits.Placement side) {}
 
     static Result capture(List<PrintedFingeringDigits.Mark> existing, ScorePageInterpretation score,
             List<SheetInterpreter.Word> words, byte[] labels, byte[] raw, byte[] normalized, int width, int height) {
@@ -56,29 +56,38 @@ final class ParentheticalFingerings {
                 if (center < frame.left() || center > frame.right()) continue;
                 var local = frame.track().at(center);
                 float gap = local[1], floor = local[0];
-                if (gap < 10 || gap > 24 || word.top() * height < floor - .35f * gap
-                        || word.bottom() * height > floor + 3.8f * gap
+                boolean above = word.bottom() * height < floor - 4.6f * gap
+                        && word.top() * height > floor - 10f * gap;
+                if (gap < 10 || gap > 24 || !above && (word.top() * height < floor - .35f * gap
+                        || word.bottom() * height > floor + 3.8f * gap)
                         || (word.right() - word.left()) * width < gap
                         || (word.right() - word.left()) * width > gap * 3.2f) continue;
                 var a = read(raw, width, height, word, floor, gap, references, false);
                 var b = read(normalized, width, height, word, floor, gap, references, true);
-                if (a == null || !a.equals(b)) continue;
+                if (a == null || (above ? !agreeAbove(a,b) : !a.equals(b))) continue;
                 float x = (a.digit().left() + a.digit().right()) * .5f;
-                var offers = frame.heads().stream().filter(head ->
-                        eligible(notes.get(head.owner())) && Math.abs(head.x() - x) < (notes.get(head.owner()).stemDirection() < 0 ? 1.05f : .55f) * gap
-                                && a.digit().top() - head.y() > .8f * gap
-                                && shaftOwns(raw, normalized, width, height, head,
-                                        notes.get(head.owner()), a.digit(), gap)).toList();
+                var offers = frame.heads().stream().filter(head -> {
+                    var note = notes.get(head.owner());
+                    if (!eligible(note)) return false;
+                    if (above) return Math.abs(head.x() - x) < .60f * gap
+                            && head.y() - a.digit().bottom() > 1.6f * gap
+                            && head.y() - a.digit().bottom() < 6.9f * gap
+                            && aboveShaftOwns(raw, normalized, width, height, head, note, gap);
+                    return Math.abs(head.x() - x) < (note.stemDirection() < 0 ? 1.05f : .55f) * gap
+                            && a.digit().top() - head.y() > .8f * gap
+                            && shaftOwns(raw, normalized, width, height, head, note, a.digit(), gap);
+                }).toList();
                 if (offers.size() != 1) continue;
                 var head = offers.get(0);
                 var note = notes.get(head.owner());
                 if (!frame.track().verifiedAt(head.x())
                         && !frame.track().verifiedAt(head.x() - gap * 2)) continue;
-                found.add(new Owner(head.owner(), note.measureIndex(), head.x(), gap, a));
+                found.add(new Owner(head.owner(), note.measureIndex(), head.x(), gap, a, above ? PrintedFingeringDigits.Placement.ABOVE
+                        : PrintedFingeringDigits.Placement.BELOW));
             }
             if (found.size() == 1) owners.add(found.get(0));
         }
-        owners.sort(Comparator.comparingInt(Owner::measure).thenComparingDouble(Owner::x));
+        owners.sort(Comparator.comparingInt(Owner::measure).thenComparing(Owner::side).thenComparingDouble(Owner::x));
         var marks = new ArrayList<>(existing);
         var groups = new ArrayList<>(ruled.groups());
         var used = new HashSet<Integer>();
@@ -86,20 +95,25 @@ final class ParentheticalFingerings {
             used.add(group.startNoteIndex());
             used.add(group.endNoteIndex());
         }
+        var retainedMarks = existing;
         for (int i = 1; i < owners.size(); i++) {
             var start = owners.get(i - 1);
             var stop = owners.get(i);
             if (!start.glyph().opening() || stop.glyph().opening() || start.measure() != stop.measure()
+                    || start.side() != stop.side()
+                    || start.side() == PrintedFingeringDigits.Placement.ABOVE
+                            && Math.abs(start.glyph().digit().top() - stop.glyph().digit().top()) > .45f * start.gap()
                     || stop.x() - start.x() < 1.4f * start.gap()
                     || stop.x() - start.x() > 24 * start.gap()
                     || used.contains(start.index()) || used.contains(stop.index())
-                    || conflict(existing, start.index()) || conflict(existing, stop.index())) continue;
+                    || retainedMarks.stream().anyMatch(mark -> (mark.noteIndex() == start.index() || mark.noteIndex() == stop.index())
+                            && mark.placement() == start.side() && mark.digit() != 3)) continue;
             for (var owner : List.of(start, stop)) {
-                var mark = new PrintedFingeringDigits.Mark(owner.index(), 3, PrintedFingeringDigits.Placement.BELOW);
+                var mark = new PrintedFingeringDigits.Mark(owner.index(), 3, owner.side());
                 if (!marks.contains(mark)) marks.add(mark);
                 used.add(owner.index());
             }
-            groups.add(new Group(start.index(), stop.index(), PrintedFingeringDigits.Placement.BELOW));
+            groups.add(new Group(start.index(), stop.index(), start.side()));
         }
         if (groups.isEmpty()) return unchanged;
         marks.sort(Comparator.comparingInt(PrintedFingeringDigits.Mark::noteIndex)
@@ -208,9 +222,131 @@ final class ParentheticalFingerings {
         return found;
     }
 
+    static List<PrintedFingeringDigits.Mark> staffCrossedTwos(
+            Result groups, List<PrintedFingeringDigits.Mark> retained, ScorePageInterpretation score,
+            byte[] raw, byte[] normalized, int width, int height) {
+        var above = PrintedFingeringDigits.Placement.ABOVE;
+        var notes = score.notes();
+        var measures = score.measures();
+        var result = new ArrayList<PrintedFingeringDigits.Mark>();
+        for (var group : groups.groups()) {
+            if (group.placement() != above) continue;
+            int owner = group.startNoteIndex();
+            var head = notes.get(owner);
+            int measure = head.measureIndex();
+            if (head.stemDirection() != -1 || head.beamCount() != 2
+                    || retained.stream().anyMatch(row -> row.noteIndex() == owner
+                            && row.placement() == above && row.digit() != 3)) continue;
+            var box = measures.get(measure);
+            var rawProof = staffCrossedTwo(raw, width, height, box, head);
+            var normalizedProof = staffCrossedTwo(normalized, width, height, box, head);
+            if (rawProof == null || normalizedProof == null
+                    || !sameBox(rawProof.box(), normalizedProof.box())) continue;
+            int matches = 0;
+            var supportingMeasures = new HashSet<Integer>();
+            for (var ref : retained) {
+                if (ref.digit() != 2 || ref.placement() != above) continue;
+                var reference = notes.get(ref.noteIndex());
+                if (reference.measureIndex() == measure) continue;
+                var region = measures.get(reference.measureIndex());
+                var a = upperTwo(raw, width, height, region, reference);
+                var b = upperTwo(normalized, width, height, region, reference);
+                if (!matchesObservedTwo(rawProof, a) || !matchesObservedTwo(normalizedProof, b)) continue;
+                matches++;
+                supportingMeasures.add(reference.measureIndex());
+                if (matches >= 3 && supportingMeasures.size() >= 2) break;
+            }
+            if (matches >= 3 && supportingMeasures.size() >= 2)
+                result.add(new PrintedFingeringDigits.Mark(owner, 2, above));
+        }
+        return List.copyOf(result);
+    }
+
+    private record StaffCrossedTwo(Box box, float[] shape, BitSet visible) {}
+
+    private static StaffCrossedTwo staffCrossedTwo(byte[] ink, int width, int height,
+            MeasureRegion bar, ScoreNoteEvent note) {
+        float gap = (bar.bottom() - bar.top()) * height / 8.2f;
+        if (gap < 11 || gap > 24) return null;
+        float x = (bar.left() + (bar.right() - bar.left()) * note.positionInMeasure()) * width;
+        float y = note.pageY() * height;
+        int left = Math.round(x - .78f * gap), right = Math.round(x + .82f * gap);
+        int top = Math.round(y - 3f * gap), bottom = Math.round(y - .96f * gap);
+        int flank = Math.round(.65f * gap);
+        if (left < flank || right + flank >= width || top < 0 || bottom >= height) return null;
+        var ruled = new BitSet();
+        int l = right, r = left, t = bottom, b = top;
+        for (int row = top; row <= bottom; row++) {
+            int west = 0, east = 0;
+            for (int d = 1; d <= flank; d++) {
+                if ((ink[row * width + left - d] & 255) < 165) west++;
+                if ((ink[row * width + right + d] & 255) < 165) east++;
+            }
+            if (west >= .85f * flank && east >= .85f * flank) {
+                ruled.set(row);
+                continue;
+            }
+            for (int col = left; col <= right; col++) {
+                if ((ink[row * width + col] & 255) >= 165) continue;
+                l = Math.min(l, col);
+                r = Math.max(r, col);
+                t = Math.min(t, row);
+                b = Math.max(b, row);
+            }
+        }
+        if (l <= left || r >= right || t <= top || b >= bottom
+                || r - l + 1 < .72f * gap || r - l + 1 > 1.13f * gap
+                || b - t + 1 < .95f * gap || b - t + 1 > 1.47f * gap) return null;
+        int staffStart = ruled.nextSetBit(t);
+        if (staffStart <= t || staffStart >= b) return null;
+        int staffEnd = ruled.nextClearBit(staffStart);
+        int next = ruled.nextSetBit(staffEnd);
+        if (staffEnd >= b || staffEnd - staffStart < 2 || staffEnd - staffStart > .30f * gap
+                || next >= 0 && next <= b) return null;
+        var seen = new BitSet(16 * 24);
+        for (int row = 0; row < 24; row++) {
+            float rawY = t + (row + .5f) * (b - t + 1) / 24 - .5f;
+            if (rawY <= staffStart - 1 || rawY >= staffEnd)
+                seen.set(row * 16, (row + 1) * 16);
+        }
+        if (seen.cardinality() < 16 * 24 * .65f) return null;
+        return new StaffCrossedTwo(new Box(l,t,r,b),
+                MatchedDetachedThreeShape.vector(ink, width, l, t, r, b), seen);
+    }
+
+    private static boolean matchesObservedTwo(StaffCrossedTwo proof, float[] other) {
+        if (other == null) return false;
+        float xy = 0, xx = 0, yy = 0;
+        var target = proof.shape();
+        for (int i = proof.visible().nextSetBit(0); i >= 0; i = proof.visible().nextSetBit(i + 1)) {
+            xy += target[i] * other[i];
+            xx += target[i] * target[i];
+            yy += other[i] * other[i];
+        }
+        return xx > 0 && yy > 0 && xy >= .88f * Math.sqrt(xx * yy);
+    }
+
     private static boolean conflict(List<PrintedFingeringDigits.Mark> existing, int owner) {
         return existing.stream().anyMatch(m -> m.noteIndex() == owner
                 && m.placement() == PrintedFingeringDigits.Placement.BELOW && m.digit() != 3);
+    }
+
+    private static boolean agreeAbove(Glyph a, Glyph b) {
+        return b != null && a.opening() == b.opening() && !a.ruleClipped() && !b.ruleClipped()
+                && sameBox(a.digit(), b.digit()) && sameBox(a.curve(), b.curve());
+    }
+
+    private static boolean sameBox(Box a, Box b) {
+        return Math.abs(a.left() - b.left()) <= 2 && Math.abs(a.top() - b.top()) <= 2
+                && Math.abs(a.right() - b.right()) <= 2 && Math.abs(a.bottom() - b.bottom()) <= 2;
+    }
+
+    private static boolean aboveShaftOwns(byte[] raw, byte[] normalized, int width, int height,
+            PrintedSlurOwners.Location head, ScoreNoteEvent note, float gap) {
+        if (note.beamCount() == 0 || note.stemDirection() == 0) return false;
+        var a = PairedTremoloInk.stem(raw, width, height, head.x(), head.y(), gap, note.stemDirection());
+        var b = PairedTremoloInk.stem(normalized, width, height, head.x(), head.y(), gap, note.stemDirection());
+        return a != null && b != null && Math.abs(a.x() - b.x()) <= 1 && Math.abs(a.endY() - b.endY()) <= 2;
     }
 
     private static boolean shaftOwns(byte[] raw, byte[] normalized, int width, int height,
