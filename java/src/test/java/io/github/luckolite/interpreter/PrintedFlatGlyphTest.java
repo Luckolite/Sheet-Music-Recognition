@@ -114,6 +114,44 @@ public class PrintedFlatGlyphTest {
     }
 
     @Test
+    public void aRepeatedHeadRetainsItsLiteralChromaticSign() {
+        var bar = new MeasureRegion(20f / w, 124f / w, 8f / h, 139.2f / h);
+        var original = List.of(repeatedHead(45, 2), repeatedHead(89, 0));
+        var score = new ScorePageInterpretation(List.of(bar), original);
+        flat();
+        byte[] labels = new byte[w * h];
+        for (int i = 0; i < labels.length; i++)
+            if (gray[i] == 0) labels[i] = OmrMeasurePostProcessor.CLEF_OR_KEY;
+        var recorded = new ArrayList<SourceLocalAccidental.ProvedMark>();
+        var result = PrintedAccidentalSpineRecovery.reconcileRepeatedMonophonicSigns(
+                score, labels, gray, gray.clone(), w, h, recorded::add);
+        assertEquals(List.of(original.get(0), original.get(1).withWrittenAccidental(-1)), result.notes());
+        assertEquals(1, recorded.size());
+        assertSame(score, PrintedAccidentalSpineRecovery.reconcileRepeatedMonophonicSigns(
+                score, new byte[w * h], gray, gray.clone(), w, h, mark -> fail("unowned flat")));
+
+        byte[] blank = new byte[w * h];
+        Arrays.fill(blank, (byte) 255);
+        assertSame(score, PrintedAccidentalSpineRecovery.reconcileRepeatedMonophonicSigns(
+                score, labels, gray, blank, w, h, mark -> fail("unproved sign")));
+
+        Arrays.fill(gray, (byte) 255);
+        rect(62, 50, 3, 45);
+        rect(70, 50, 3, 45);
+        rect(59, 67, 16, 2);
+        rect(59, 83, 16, 2);
+        result = PrintedAccidentalSpineRecovery.reconcileRepeatedMonophonicSigns(
+                score, new byte[w * h], gray, gray.clone(), w, h, mark -> {});
+        assertEquals(List.of(original.get(0), original.get(1).withWrittenAccidental(1)), result.notes());
+    }
+
+    private ScoreNoteEvent repeatedHead(int x, int accidental) {
+        return new ScoreNoteEvent(0, (x - 20f) / 104f, 3, 0, 1, 76f / h,
+                false, 0, 2, accidental, 0)
+                .withStemDirection(-1).withClef(ScoreNoteEvent.CLEF_TREBLE);
+    }
+
+    @Test
     public void edgeFlatSkipsUnavailableRuleProbeAndKeepsGuardErrors() {
         flat();
         byte[] edge = new byte[w * h];

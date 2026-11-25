@@ -1720,6 +1720,16 @@
       "reviewed_app_commit": "92ae8ad156a125259b27dfd55be30e907b611b7f",
       "reviewed_app_state": "Matching five-rule staff witness and masking only observed carrier pixels at octave-quartet boundaries."
     },
+    "ClosedMonophonicSixteenths.java": {
+      "source_path": "app/src/main/java/com/musicsheets/app/pdf/ClosedMonophonicSixteenths.java",
+      "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/ClosedMonophonicSixteenths.java",
+      "source_sha256": "d3726581d14bbbed56e9695dab3934f7855a0b6f92b5f70d1363b8a539f8e890",
+      "source_normalized_sha256": "d3726581d14bbbed56e9695dab3934f7855a0b6f92b5f70d1363b8a539f8e890",
+      "standalone_normalized_sha256": "13468909b81892d2f434d76a5b7f8ec8b280d168c41aab5afbb0e2e03b45dd26",
+      "license": "Apache-2.0",
+      "reviewed_app_commit": "3707075d6567e9c60852d17ca16c6f72b208fcee",
+      "reviewed_app_state": "Shared common-time clock and rail ownership proof covers inherited and unmarked full bars without changing the prior meter-specific repairs."
+    },
     "ClosedOctaveRailRun.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/ClosedOctaveRailRun.java",
       "source_sha256": "7c189ba848704b4260d31c2ec797b6150e62ae7b5ef2bcb53d3ff7f99386d4f1",
@@ -9599,6 +9609,16 @@
       "reviewed_app_commit": "5a6d7d379467cee1a56de3049d00349b67f0185e",
       "reviewed_app_state": "Shared early monophonic rail shadow proof and paper gutter check. Android OmrMeasureAnalyzer and desktop NativePageGuide both call the shared-shaft family."
     },
+    "PrintedAccidentalSpineRecovery.java": {
+      "source_path": "app/src/main/java/com/musicsheets/app/pdf/PrintedAccidentalSpineRecovery.java",
+      "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/PrintedAccidentalSpineRecovery.java",
+      "source_sha256": "2b5aae87778a76b03b8be48753d4048d6a96dfbfc2bef58086ca131350296b33",
+      "source_normalized_sha256": "2b5aae87778a76b03b8be48753d4048d6a96dfbfc2bef58086ca131350296b33",
+      "standalone_normalized_sha256": "10513049520cc034fda9957e4d1b9ee0ffa4b5ab62dcf7e917840e88e7a42746",
+      "license": "Apache-2.0",
+      "reviewed_app_commit": "fc925fd0fcca6065c27034c9e1856e9b3de2aecd",
+      "reviewed_app_state": "Repeated-note rivals replace a natural only with the matching unique sharp or segmented flat witness in both planes. The Android and native callers then recheck ties only on notes whose accidental changed."
+    },
     "SheetInterpreter.java": {
       "unanchored_split_review": {
         "reviewed_app_commit": "b029dfbb",
@@ -9622,12 +9642,12 @@
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/SheetInterpreter.java",
       "recognition95_review_note": "Reviewed recognition95: preserve positively recognized printed multi-rest identity through the score, source selections, joins, Guide292 MRG1 cache/native/Python/Hub records, MusicXML and compact layout without changing logical rest timing. Complete raw two-bulb rest recovery uses finite upper-cap ownership and a prepaid optional raster work bound. Raw-proved returning-pitch slur candidates require a same-part nonoverlapping intervening different-pitch attack; exact ties retain precedence and candidate XML endpoints must share the emitted part. Original synthetic regressions only; models, dependencies and audio97 unchanged.",
       "recognition95_adapter_review": "semantic-adapter",
-      "reviewed_app_state": "Native page worker calls the shared monophonic filter on both raster planes. The standalone early remove adapter applies the same proof together with its existing dyad filter.",
+      "reviewed_app_state": "Reviewed matching repeated-note accidental recovery in the standalone entry and the native rhythm adapter, with respective caller key-context handling preserved.",
       "recognition101_review_note": "Complete independently owned rehearsal frames retain bounded cap fringes and full capital-F topology without changing unboxed dynamic recognition. Missing printed system-number crops retain complete clipped components and require full numeric OCR text, one element and overlapping source boxes at two scales before supplementing existing tokens. Conflicting original tokens remain unchanged. General procedural regressions; no song-specific rule, private score image, model or record-layout change.",
       "recognition103_review_note": "Recognition103 preserves accepted multi-rest origin identity when logical bars are inserted or removed. Reindexing runs after rhythm reconciliation and only relocates previously accepted identity; it adds no admission, rest count, timing, record, wire, Guide292, model, OCR, or dependency change. The 12 procedural originals are mirrored once in app and once in standalone, yielding 12 unique regressions and 24 invocations; 17 existing controls per namespace remain controls. No private score material.",
       "reviewed_source_state": "Reviewed committed recognition138 violin-score repair.",
       "release130_review_note": "Reviewed platform adapter; see release130_source_review. No claim of whole-file token parity.",
-      "standalone_normalized_sha256": "a9a44b065a9649a069ca5d7db7446b51dd982747cd5ede4c6b0eec4b6190fcf4",
+      "standalone_normalized_sha256": "9dbb5984de2f43199ad1ddf1e6e3079d034991fbd36cf3de4c109ea450596bcf",
       "current_source_review": "Reviewed current source and standalone counterpart for the cumulative source-bound beam, notation, key, articulation and bounded context batch. Original procedural regressions only; physical source observations and model facts do not establish complete musical authority.",
       "qualified_dynamic_source_adapter_review": "Retain standalone caller-owned inference, existing strip acquisition, glyph and supplement ordering. Bind source before actual OCR, normalize final dynamic words from actual crop/scale origins, and preserve exact original expression acquisition. Additive semantic adapter for native source-identity repair; no whole-wrapper copy.",
       "recognition127_clock_adapter_review": "Reviewed equivalent final lifecycle change: bind existing full clock context before PrintedBeamSource.apply; native and standalone inference/word/port adapters remain separate. No full-wrapper token-parity claim, generic clock weakening, models or layouts change.",

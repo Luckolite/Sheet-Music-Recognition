@@ -72,6 +72,49 @@ final class PrintedAccidentalSpineRecovery {
                 java.util.stream.IntStream.range(0, notes.size()).boxed().toList());
     }
 
+    /** Replace a decoded natural only when the repeat's printed shoulder proves another sign. */
+    static ScorePageInterpretation reconcileRepeatedMonophonicSigns(
+            ScorePageInterpretation score, byte[] labels, byte[] raw, byte[] normalized,
+            int width, int height, java.util.function.Consumer<SourceLocalAccidental.ProvedMark> printed) {
+        if (labels == null || raw == null || normalized == null || raw.length != (long) width * height
+                || normalized.length != raw.length || labels.length != raw.length) return score;
+        var notes = score.notes();
+        ArrayList<ScoreNoteEvent> edited = null;
+        for (int i = 1; i < notes.size(); i++) {
+            var note = notes.get(i);
+            var past = notes.get(i - 1);
+            int measure = note.measureIndex();
+            if (measure != past.measureIndex() || measure < 0 || measure >= score.measures().size()
+                    || note.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_NATURAL
+                    || note.diatonicPitchIdentity() != past.diatonicPitchIdentity()
+                    || note.octaveShift() != past.octaveShift()
+                    || !regularDyadHead(note) || !regularDyadHead(past)
+                    || past.tiedFromPrevious()) continue;
+            var bar = score.measures().get(measure);
+            float gap = (bar.bottom() - bar.top()) * height / 8.2f;
+            float x = headX(bar, note, width), previous = headX(bar, past, width);
+            float y = note.pageY() * height;
+            if (gap < 10 || gap > 24 || x - previous < 1.85f * gap || x - previous > 3.3f * gap) continue;
+            if (i + 1 < notes.size() && notes.get(i + 1).measureIndex() == measure
+                    && headX(bar, notes.get(i + 1), width) - x < gap * 1.65f) continue;
+            if (!AccidentalSlurSpines.prove(raw, width, previous, x, y, gap, ScoreNoteEvent.ACCIDENTAL_NATURAL).isEmpty()
+                    || !AccidentalSlurSpines.prove(normalized, width, previous, x, y, gap,
+                            ScoreNoteEvent.ACCIDENTAL_NATURAL).isEmpty()) continue;
+            boolean sharp = agreedSign(raw, normalized, width, previous, x, y, gap, ScoreNoteEvent.ACCIDENTAL_SHARP);
+            boolean flat = PrintedFlatGlyph.matchesOwnedInk(labels, raw, width, height, x, y, gap)
+                    && PrintedFlatGlyph.matchesOwnedInk(labels, normalized, width, height, x, y, gap);
+            if (sharp == flat) continue;
+            int sign = sharp ? ScoreNoteEvent.ACCIDENTAL_SHARP : ScoreNoteEvent.ACCIDENTAL_FLAT;
+            if (edited == null) edited = new ArrayList<>(notes);
+            var corrected = note.withWrittenAccidental(sign);
+            edited.set(i, corrected);
+            printed.accept(new SourceLocalAccidental.ProvedMark(corrected, sign, false));
+        }
+        return edited == null ? score : score.withNotes(edited,
+                java.util.stream.IntStream.range(0, notes.size()).boxed().toList())
+                .withClockContextSource(score.clockContextSource());
+    }
+
     /** Recover printed signs whose two spines belong to a head in a beamed sixth. */
     static ScorePageInterpretation reconcileDyadSigns(
             ScorePageInterpretation score, byte[] labels, byte[] raw, byte[] normalized, int width, int height,

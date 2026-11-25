@@ -123,6 +123,61 @@ public class ClosedMonophonicQuartetNumeralTest {
     }
 
 
+    @Test
+    public void commonTimeQuartetsRetainARealStemReversalButRemoveSpuriousRatios() {
+        int width = 820, height = 320, left = 55, right = 744, floor = 192;
+        var ink = new byte[width * height];
+        Arrays.fill(ink, (byte) 255);
+        for (int y = floor - 64; y <= floor; y += 16) rectangle(ink, width, 28, 784, y, y + 1, 0);
+        rectangle(ink, width, left - 1, left + 1, floor - 64, floor + 1, 0);
+        rectangle(ink, width, right - 1, right + 1, floor - 64, floor + 1, 0);
+        var notes = new ArrayList<ScoreNoteEvent>();
+        for (int i = 0; i < 16; i++) {
+            int x = 92 + 41 * i, y = i < 8 ? 144 + 4 * (i % 4) : 184 - 4 * (i % 4);
+            boolean down = i < 8;
+            int stem = x + (down ? -9 : 9);
+            int tip = down ? 235 : 101;
+            rectangle(ink, width, x - 10, x + 10, y - 5, y + 5, 0);
+            rectangle(ink, width, stem - 1, stem + 1, Math.min(y, tip), Math.max(y, tip), 0);
+            if (i % 4 == 0) {
+                rectangle(ink, width, stem, stem + 123, down ? 228 : 101, down ? 235 : 108, 0);
+                rectangle(ink, width, stem, stem + 123, down ? 215 : 114, down ? 222 : 121, 0);
+            }
+            var n = new ScoreNoteEvent(0, (x - left) / (float) (right - left), (floor - y) / 8,
+                    0, 1, y / (float) height, false, 0, 2)
+                    .withClef(ScoreNoteEvent.CLEF_TREBLE).withStemDirection(down ? -1 : 1);
+            notes.add(i < 8 && i % 4 < 3 ? n.withTupletRatio(3, 2) : n);
+        }
+        var bars = List.of(new MeasureRegion(left / (float) width, right / (float) width, 94.4f / height, 225.6f / height),
+                new MeasureRegion((right + 9f) / width, .99f, 94.4f / height, 225.6f / height));
+        var meter = new ScoreMeterChange(0, 4, 4);
+        var score = new ScorePageInterpretation(bars, notes, 1, List.of(), List.of(),
+                List.of(meter), List.of(), List.of(), List.of(), List.of());
+        var fixed = ClosedMonophonicSixteenths.restoreWrittenClock(
+                score, meter, List.of(), ink, ink.clone(), width, height);
+        assertEquals(notes.stream().map(n -> n.withTupletRatio(1, 1)).toList(), fixed.notes());
+
+        var unknown = new ScorePageInterpretation(bars, notes, 1, List.of(), List.of(),
+                List.of(), List.of(), List.of(), List.of(), List.of());
+        assertEquals(fixed.notes(), ClosedMonophonicSixteenths.restoreWrittenClock(
+                unknown, null, List.of(), ink, ink.clone(), width, height).notes());
+        assertSame(unknown, ClosedMonophonicSixteenths.restoreWrittenClock(
+                unknown, new ScoreMeterChange(0, 3, 4), List.of(), ink, ink.clone(), width, height));
+
+        var cut = ink.clone();
+        rectangle(cut, width, 100, 111, 215, 222, 255);
+        assertSame(score, ClosedMonophonicSixteenths.restoreWrittenClock(
+                score, meter, List.of(), ink, cut, width, height));
+
+        var columns = java.util.stream.IntStream.range(0, 3)
+                .mapToObj(i -> new ScoreBeamSource.Column(List.of(new ScoreBeamSource.Anchor(0, i)))).toList();
+        var marked = score.withBeamSource(ScoreBeamSource.capture(0, 16, List.of(
+                new ScoreBeamSource.Group("marked", columns, List.of(1, 1), List.of(),
+                        ScoreBeamSource.TupletMark.NUMBERED)), List.of()));
+        assertSame(marked, ClosedMonophonicSixteenths.restoreWrittenClock(
+                marked, meter, List.of(), ink, ink.clone(), width, height));
+    }
+
     private static void rectangle(byte[] ink, int width, int x0, int x1, int y0, int y1, int value) {
         for (int y = y0; y <= y1; y++)
             Arrays.fill(ink, y * width + x0, y * width + x1 + 1, (byte) value);

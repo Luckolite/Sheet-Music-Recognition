@@ -234,10 +234,10 @@ final class ClosedMonophonicSixteenths {
         var origins = owners.stream().map(source.noteOrigins()::get).toList();
         if (origins.stream().anyMatch(java.util.Optional::isEmpty)) return source;
         var anchors = origins.stream().map(java.util.Optional::orElseThrow).toList();
-        if (new HashSet<>(anchors).size() != 8
+        if (owners.isEmpty() || owners.size() % 4 != 0 || new HashSet<>(anchors).size() != owners.size()
                 || anchors.stream().anyMatch(a -> a.pageIndex() != anchors.get(0).pageIndex())) return source;
         var groups = new ArrayList<>(source.groups());
-        for (int i = 0; i < 8; i += 4) {
+        for (int i = 0; i < anchors.size(); i += 4) {
             var quartet = anchors.subList(i, i + 4);
             var columns = quartet.stream().map(a -> new ScoreBeamSource.Column(List.of(a))).toList();
             if (source.detachedColumns().stream().anyMatch(c -> c.members().stream().anyMatch(quartet::contains)))
@@ -346,11 +346,32 @@ final class ClosedMonophonicSixteenths {
         var meter = initial;
         int nextMeter = 0;
         List<ScoreNoteEvent> repaired = null;
+        var beamSource = score.beamSource();
         for (int i = 0; i + 1 < bars.size(); i++) {
             while (nextMeter < score.meterChanges().size()
                     && score.meterChanges().get(nextMeter).measureIndex() <= i)
                 meter = score.meterChanges().get(nextMeter++);
             var row = rows.get(i);
+            var bar = bars.get(i);
+            if ((meter == null || meter.numerator() == 4 && meter.denominator() == 4)
+                    && (row.size() == 14 || row.size() == 16)
+                    && !hasRest.get(i) && bar.cadenceQuarterBeats() == 0
+                    && (i != 0 || !score.openingPickup())) {
+                row.sort(Comparator.comparingDouble(j -> notes.get(j).positionInMeasure()));
+                var music = row.stream().map(notes::get).toList();
+                var lengths = commonTimeQuartetPattern(music);
+                if (lengths != null && !ownsPrintedTuplet(beamSource, row)
+                        && confirmsCommonTimeRailClock(gray, width, height, bars, i, music, lengths)
+                        && confirmsCommonTimeRailClock(raw, width, height, bars, i, music, lengths)) {
+                    if (repaired == null) repaired = new ArrayList<>(notes);
+                    for (int slot = 0; slot < music.size(); slot++) {
+                        if (music.get(slot).tupletDivisor() == 3)
+                            repaired.set(row.get(slot), music.get(slot).withTupletRatio(1, 1));
+                    }
+                    if (row.size() == 16) beamSource = mergeCadenceQuartets(beamSource, row);
+                    continue;
+                }
+            }
             if (i > 0 && meter != null && meter.measureIndex() == i
                     && meter.numerator() == 4 && meter.denominator() == 4
                     && row.size() == 16 && !hasRest.get(i)
@@ -435,8 +456,105 @@ final class ClosedMonophonicSixteenths {
                 repaired.set(row.get(slot), withoutAugmentationDot(music.get(slot)));
             }
         }
-        return repaired == null ? score : score.withNotes(repaired,
-                java.util.stream.IntStream.range(0, notes.size()).boxed().toList());
+        if (repaired == null) return score;
+        return score.withNotes(repaired, java.util.stream.IntStream.range(0, notes.size()).boxed().toList())
+                .withBeamSource(beamSource);
+    }
+
+    private static int[] commonTimeQuartetPattern(List<ScoreNoteEvent> music) {
+        // Each group occupies a quarter-note beat: four sixteenths, or one eighth
+        // followed by two sixteenths. Shortened subgroups cannot fill that written bar.
+        int[] lengths = music.size() == 16 ? new int[] {4, 4, 4, 4} : new int[] {3, 4, 3, 4};
+        int reduced = 0;
+        int start = 0;
+        for (int length : lengths) {
+            boolean ratio = music.get(start).tupletDivisor() == 3;
+            if (ratio && length != 4) return null;
+            for (int j = 0; j < length; j++) {
+                var note = music.get(start + j);
+                boolean third = ratio && j < 3;
+                if (!regularBeamHead(note, length == 3 && j == 0 ? 1 : 2)
+                        || note.stemDirection() != music.get(start).stemDirection()
+                        || note.augmentationDots() != 0 || note.tiedFromPrevious()
+                        || note.tupletDivisor() != (third ? 3 : 1) || note.tupletNormalNotes() != (third ? 2 : 1))
+                    return null;
+            }
+            if (ratio) reduced++;
+            start += length;
+        }
+        return reduced > 0 && reduced < lengths.length ? lengths : null;
+    }
+
+    private static boolean ownsPrintedTuplet(ScoreBeamSource source, List<Integer> owners) {
+        var anchors = new HashSet<ScoreBeamSource.Anchor>();
+        for (int owner : owners) source.noteOrigins().get(owner).ifPresent(anchors::add);
+        return source.groups().stream().anyMatch(group -> group.tupletMark() != null
+                && group.columns().stream().anyMatch(c -> c.members().stream().anyMatch(anchors::contains)));
+    }
+
+    private static boolean confirmsCommonTimeRailClock(byte[] ink, int width, int height,
+            List<MeasureRegion> bars, int index, List<ScoreNoteEvent> music, int[] lengths) {
+        var bar = bars.get(index);
+        float left = bar.left() * width, span = (bar.right() - bar.left()) * width;
+        float gap = (bar.bottom() - bar.top()) * height / 8.2f;
+        if (gap < 10 || gap > 25 || !ClosedDottedSixteenths.hasClosingRule(ink, width, height, bar)) return false;
+        float firstX = left + span * music.get(0).positionInMeasure();
+        float lastX = left + span * music.get(music.size() - 1).positionInMeasure();
+        float opening = firstX - left, closing = left + span - lastX;
+        if (opening < .9f * gap || opening > 3.5f * gap || closing < .9f * gap || closing > 2.6f * gap)
+            return false;
+        if (index > 0 && !WrappedMeasureBoundaries.confirmsClosed(ink, width, height, bar, firstX, lastX)) {
+            var preceding = bars.get(index - 1);
+            if ((bar.top() - preceding.bottom()) * height < 3 * gap
+                    || !ClosedDottedSixteenths.hasClosingRule(ink, width, height, preceding))
+                return false;
+        }
+        float floor = bar.bottom() * height - 2.1f * gap;
+        var staff = StaffPitchTrack.forPrintedSlurs(ink, width, height, floor - 4 * gap, floor, gap);
+        if (staff == null) return false;
+        var rows = UnnumberedTripletInk.sourceRows(bar, bars, height);
+        var budget = new PrintedBeamShafts.Budget(340_000);
+        PrintedBeamShafts.Shaft before = null;
+        float beforeX = 0;
+        int start = 0;
+        for (int length : lengths) {
+            float groupFirst = 0, headTop = Float.POSITIVE_INFINITY, headBottom = 0, tip = 0;
+            for (int j = 0; j < length; j++) {
+                var note = music.get(start + j);
+                float x = left + span * note.positionInMeasure(), y = note.pageY() * height;
+                if (before != null && (x - beforeX < 1.55f * gap || x - beforeX > 4.12f * gap))
+                    return false;
+                var shafts = PrintedBeamShafts.at(ink, width, height, x, y, gap, budget);
+                if (shafts.size() != 1 || shafts.get(0).direction() != -note.stemDirection() || budget.refused())
+                    return false;
+                var at = shafts.get(0);
+                if (before != null) {
+                    boolean edge = j == 0
+                            ? WrappedEighthTriplets.cutBetweenRecoveredGroups(ink, width, height, bar, before, at, gap)
+                            : length == 3 && j == 1
+                                    ? WrappedEighthTriplets.matchesBeamRails(ink, width, height, before, at, gap, 1)
+                                            && !WrappedEighthTriplets.matchesBeamRails(ink, width, height, before, at, gap, 2)
+                                    : WrappedEighthTriplets.matchesExactlyTwoBeamRails(ink, width, height, before, at, gap, staff);
+                    if (!edge) return false;
+                }
+                if (j == 0) {
+                    groupFirst = x;
+                    tip = at.endY();
+                } else {
+                    tip = at.direction() == 1 ? Math.max(tip, at.endY()) : Math.min(tip, at.endY());
+                }
+                headBottom = Math.max(headBottom, y);
+                headTop = Math.min(headTop, y);
+                before = at;
+                beforeX = x;
+            }
+            if (music.get(start).tupletDivisor() == 3
+                    && UnnumberedTripletInk.bracketBesideBeam(
+                            ink, width, height, gap, groupFirst, beforeX, headTop, headBottom, tip, rows, staff, true))
+                return false;
+            start += length;
+        }
+        return true;
     }
 
     private static boolean upperFingeringQuartets(List<Integer> ratios, List<ScoreNoteEvent> music,
@@ -492,8 +610,12 @@ final class ClosedMonophonicSixteenths {
     }
 
     static boolean regularQuartetHead(ScoreNoteEvent n) {
+        return regularBeamHead(n, 2);
+    }
+
+    private static boolean regularBeamHead(ScoreNoteEvent n, int beams) {
         return n.kind() == ScoreNoteEvent.Kind.PITCHED && n.staffIndex() == 0 && n.staffCount() == 1
-                && n.beamCount() == 2 && Math.abs(n.stemDirection()) == 1 && n.unbeamedDurationBeats() == 0
+                && n.beamCount() == beams && Math.abs(n.stemDirection()) == 1 && n.unbeamedDurationBeats() == 0
                 && (n.articulations() & NoteOrnament.GRACE) == 0
                 && n.boundaryTies() == 0 && n.harmonicSemitones() == 0
                 && n.openStringTouch() == null && !n.crossStaffBeam() && n.visualSize() == ScoreNoteEvent.VisualSize.FULL
