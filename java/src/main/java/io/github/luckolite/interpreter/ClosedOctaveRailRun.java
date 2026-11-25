@@ -37,6 +37,224 @@ final class ClosedOctaveRailRun {
         return removeClosedRailFragments(score, inherited, labels, normalized, raw, w, h);
     }
 
+    /** Complete detached double-beam quartets from physical octave shafts in both images. */
+    static ScorePageInterpretation completePrintedBeamQuartets(ScorePageInterpretation score,
+            byte[] gray, byte[] raw, int width, int height,
+            List<PlayingTechniqueDetector.Staff> staffs, int page) {
+        if (page < 0 || gray == null || raw == null || gray.length != (long) width * height
+                || gray.length != raw.length) return score;
+        var bars = score.measures();
+        var byBar = new ArrayList<List<Head>>(bars.size());
+        for (int i = 0; i < bars.size(); i++) byBar.add(new ArrayList<>());
+        for (int i = 0; i < score.notes().size(); i++) {
+            var note = score.notes().get(i);
+            var bar = bars.get(note.measureIndex());
+            byBar.get(note.measureIndex()).add(new Head(i, note,
+                    (bar.left() + (bar.right() - bar.left()) * note.positionInMeasure()) * width,
+                    note.pageY() * height));
+        }
+        var beam = score.beamSource();
+        var removed = new java.util.HashSet<Integer>();
+        for (var heads : byBar) {
+            Head island = heads.size() == 33 ? unownedBeamIsland(beam, heads) : null;
+            if (island != null) heads.remove(island);
+            if (heads.size() != 32 || heads.stream().anyMatch(h -> !ordinaryHead(h.note, NoteArticulation.ARTICULATIONS, true)
+                    || !sixteenth(h.note) || h.note.stemDirection() != -1)) continue;
+            heads.sort(Comparator.comparingDouble(Head::x));
+            var firstLower = heads.get(0).y > heads.get(1).y ? heads.get(0) : heads.get(1);
+            PlayingTechniqueDetector.Staff frame = null;
+            for (var staff : staffs) {
+                float expected = staff.bottom() - firstLower.note.staffStep() * staff.gap() * .5f;
+                if (staff.count() != 1 || staff.gap() < 12 || staff.gap() > 24
+                        || Math.abs(expected - firstLower.y) > staff.gap() * .8f) continue;
+                if (frame != null) { frame = null; break; }
+                frame = staff;
+            }
+            if (frame == null) continue;
+            float gap = frame.gap();
+            var columns = new ArrayList<Column>(16);
+            for (int i = 0; i < heads.size(); i += 2) {
+                var a = heads.get(i);
+                var b = heads.get(i + 1);
+                var upper = a.y < b.y ? a : b;
+                var lower = upper == a ? b : a;
+                if (b.x - a.x > gap * .24f || upper.note.staffStep() - lower.note.staffStep() != 7
+                        || Math.abs(lower.y - upper.y - 3.58f * gap) > gap * .36f
+                        || i > 0 && (a.x - heads.get(i - 1).x < gap * 1.65f
+                                        || a.x - heads.get(i - 1).x > gap * 3.65f)) break;
+                columns.add(new Column(upper, lower));
+            }
+            if (columns.size() != 16
+                    || !printedQuartetRails(gray, width, height, frame, columns)
+                    || !printedQuartetRails(raw, width, height, frame, columns)) continue;
+            if (island != null) {
+                if (!interiorBeamIsland(gray, width, height, island, columns, gap)
+                        || !interiorBeamIsland(raw, width, height, island, columns, gap)) continue;
+                removed.add(island.owner);
+            }
+            for (int i = 0; i < columns.size(); i += 4)
+                beam = completeOctaveQuartet(beam, page, columns.subList(i, i + 4));
+        }
+        var amended = beam == score.beamSource() ? score : score.withBeamSource(beam);
+        if (removed.isEmpty()) return amended;
+        var owners = java.util.stream.IntStream.range(0, score.notes().size())
+                .filter(i -> !removed.contains(i)).boxed().toList();
+        return amended.withNotes(owners.stream().map(score.notes()::get).toList(), owners);
+    }
+
+    private static Head unownedBeamIsland(ScoreBeamSource beam, List<Head> heads) {
+        Head selected = null;
+        for (var h : heads) {
+            var note = h.note;
+            if (note.stemDirection() != 0 || note.beamCount() != 1 || note.unbeamedDurationBeats() != 0
+                    || !ordinary(note) || beam.noteOrigins().get(h.owner).isPresent()) continue;
+            if (selected != null) return null;
+            selected = h;
+        }
+        return selected;
+    }
+
+    /** A false head wholly contained in the connecting bands has no shaft or separate oval ink. */
+    private static boolean interiorBeamIsland(byte[] ink, int width, int height, Head island,
+            List<Column> columns, float gap) {
+        int following = 0;
+        while (following < columns.size() && columns.get(following).lower.x < island.x) following++;
+        if (following == 0 || following == columns.size() || following % 4 == 0) return false;
+        var left = columns.get(following - 1).lower;
+        var right = columns.get(following).lower;
+        var budget = new PrintedBeamShafts.Budget(120_000);
+        var before = PrintedBeamShafts.at(ink, width, height, left.x, left.y, gap, budget);
+        var after = PrintedBeamShafts.at(ink, width, height, right.x, right.y, gap, budget);
+        var independent = PrintedBeamShafts.at(ink, width, height, island.x, island.y, gap, budget);
+        if (budget.refused() || before.size() != 1 || after.size() != 1 || !independent.isEmpty()) return false;
+        var a = before.get(0);
+        var b = after.get(0);
+        float slope = (b.endY() - a.endY()) / (float)(b.left() - a.left());
+        float end = a.endY() + slope * (island.x - a.left());
+        float depth = (end - island.y) / gap;
+        int x0 = Math.round(island.x - gap * .85f), x1 = Math.round(island.x + gap * .70f);
+        if (depth < .38f || depth > 1.35f || x0 <= a.right() || x1 >= b.left()) return false;
+        int extension = Math.round(gap * .78f);
+        for (int x = x0; x <= x1; x++) {
+            float offset = Math.abs(x - island.x) / gap;
+            if (offset < .43f || offset > .77f) continue;
+            int tip = Math.round(end + slope * (x - island.x));
+            if (solidVertical(ink, width, height, x, tip - Math.round(gap * 1.92f), extension)
+                    || solidVertical(ink, width, height, x, tip + Math.round(gap * .16f), extension)) return false;
+        }
+        int xMid = Math.round(island.x), centerRows = 0;
+        for (int offset = -Math.round(gap * .44f); offset <= Math.round(gap * .44f); offset++) {
+            int yMid = Math.round(island.y) + offset;
+            if (yMid < 2 || yMid >= height - 2 || (ink[yMid * width + xMid] & 255) >= 165) continue;
+            centerRows++;
+            int dark = 0;
+            for (int x = x0; x <= x1; x++) {
+                int y = yMid + Math.round(slope * (x - xMid));
+                if (y >= 0 && y < height && (ink[y * width + x] & 255) < 190) dark++;
+            }
+            if (dark < (x1 - x0 + 1) * .80f) return false;
+        }
+        return centerRows >= Math.round(gap * .45f);
+    }
+
+    private static boolean solidVertical(byte[] ink, int width, int height, int x, int top, int length) {
+        if (top < 0 || top + length > height) return false;
+        int dark = 0;
+        for (int y = top; y < top + length; y++)
+            if ((ink[y * width + x] & 255) < 165) dark++;
+        return dark >= length - 1;
+    }
+
+    private static boolean printedQuartetRails(byte[] ink, int width, int height,
+            PlayingTechniqueDetector.Staff staff, List<Column> columns) {
+        float gap = staff.gap();
+        var track = StaffPitchTrack.linear(width, staff.bottom(), gap, 0);
+        var budget = new PrintedBeamShafts.Budget(1_500_000);
+        PrintedBeamShafts.Shaft previous = null;
+        for (int i = 0; i < columns.size(); i++) {
+            var column = columns.get(i);
+            var lower = column.lower;
+            var upper = column.upper;
+            if (!FilledSparseBeamHead.completeInterior(ink, width, height, lower.x, lower.y, gap)
+                    || !FilledSparseBeamHead.completeInterior(ink, width, height, upper.x, upper.y, gap)) return false;
+            var stems = PrintedBeamShafts.at(ink, width, height, lower.x, lower.y, gap, budget);
+            var high = PrintedBeamShafts.at(ink, width, height, upper.x, upper.y, gap, budget);
+            if (budget.refused() || stems.size() != 1 || high.size() > 1) return false;
+            var stem = stems.get(0);
+            if (stem.direction() != 1) return false;
+            if (high.isEmpty()) {
+                if (!upperFadedAttachment(ink, width, upper, lower, stem, gap)) return false;
+            } else {
+                var attached = high.get(0);
+                if (attached.direction() != 1 || attached.left() > stem.right()
+                        || stem.left() > attached.right()
+                        || Math.abs(attached.endY() - stem.endY()) > gap * .25f) return false;
+            }
+            if (previous != null && (i % 4 == 0
+                    ? WrappedEighthTriplets.matchesBeamRails(ink, width, height, previous, stem, gap, 1)
+                    : !WrappedEighthTriplets.matchesExactlyTwoBeamRails(
+                            ink, width, height, previous, stem, gap, track))) return false;
+            previous = stem;
+        }
+        return true;
+    }
+
+    private static ScoreBeamSource completeOctaveQuartet(ScoreBeamSource source, int page, List<Column> heads) {
+        var origins = new ArrayList<>(source.noteOrigins());
+        var counts = new java.util.HashMap<ScoreBeamSource.Anchor, Integer>();
+        for (var origin : origins) origin.ifPresent(a -> counts.merge(a, 1, Integer::sum));
+        int next = counts.keySet().stream().filter(a -> a.pageIndex() == page)
+                .mapToInt(ScoreBeamSource.Anchor::noteIndex).max().orElse(-1) + 1;
+        for (var group : source.groups())
+            for (var column : group.columns())
+                for (var a : column.members())
+                    if (a.pageIndex() == page) next = Math.max(next, a.noteIndex() + 1);
+        for (var column : source.detachedColumns())
+            for (var a : column.members())
+                if (a.pageIndex() == page) next = Math.max(next, a.noteIndex() + 1);
+        if (next + 8 > ScoreBeamSource.MAX_NOTES) return source;
+        var columnIndex = new java.util.HashMap<ScoreBeamSource.Anchor, Integer>();
+        var columns = new ArrayList<ScoreBeamSource.Column>(4);
+        for (int i = 0; i < heads.size(); i++) {
+            var members = new ArrayList<ScoreBeamSource.Anchor>(2);
+            for (var head : List.of(heads.get(i).upper, heads.get(i).lower)) {
+                var anchor = origins.get(head.owner).orElse(null);
+                if (anchor == null) {
+                    anchor = new ScoreBeamSource.Anchor(page, next++);
+                    origins.set(head.owner, java.util.Optional.of(anchor));
+                } else if (anchor.pageIndex() != page || counts.get(anchor) != 1) return source;
+                columnIndex.put(anchor, i);
+                members.add(anchor);
+            }
+            columns.add(new ScoreBeamSource.Column(members));
+        }
+        if (source.detachedColumns().stream().flatMap(c -> c.members().stream())
+                .anyMatch(columnIndex::containsKey)) return source;
+        var groups = new ArrayList<ScoreBeamSource.Group>();
+        String id = "complete-octave-beam:" + page + ":" + columns.get(0).members().get(0).noteIndex();
+        for (var group : source.groups()) {
+            if (group.columns().stream().flatMap(c -> c.members().stream()).noneMatch(columnIndex::containsKey)) {
+                if (group.id().equals(id)) return source;
+                groups.add(group);
+                continue;
+            }
+            if (!group.hooks().isEmpty() || group.tupletMark() != null
+                    || group.bridges().stream().anyMatch(mask -> (mask & ~3) != 0)) return source;
+            int previous = -1;
+            for (var column : group.columns()) {
+                int index = columnIndex.getOrDefault(column.members().get(0), -1);
+                if (index < 0 || previous >= 0 && index != previous + 1
+                        || column.members().stream().anyMatch(a -> columnIndex.getOrDefault(a, -1) != index))
+                    return source;
+                previous = index;
+            }
+            if (group.columns().size() == 4 && group.bridges().equals(List.of(3, 3, 3))
+                    && group.columns().stream().allMatch(c -> c.members().size() == 2)) return source;
+        }
+        groups.add(new ScoreBeamSource.Group(id, columns, List.of(3, 3, 3), List.of()));
+        return new ScoreBeamSource(groups, source.detachedColumns(), origins);
+    }
+
     /** Recover a whole octave attack when both retained head components share a faded double-beam shaft. */
     private static ScorePageInterpretation recoverOpeningPair(ScorePageInterpretation score, ScoreMeterChange inherited,
             byte[] labels, byte[] normalized, byte[] raw, int w, int h, int page) {
@@ -574,16 +792,21 @@ final class ClosedOctaveRailRun {
     }
 
     private static boolean ordinary(ScoreNoteEvent n) {
+
         return ordinaryHead(n) && n.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_FROM_KEY;
     }
 
     private static boolean ordinaryHead(ScoreNoteEvent n) {
+        return ordinaryHead(n, 0, false);
+    }
+
+    private static boolean ordinaryHead(ScoreNoteEvent n, int allowedArticulations, boolean allowTies) {
         return n.kind() == ScoreNoteEvent.Kind.PITCHED && n.staffIndex() == 0 && n.staffCount() == 1
                 && n.clefBottomDiatonic() == ScoreNoteEvent.CLEF_TREBLE
                 && n.visualSize() == ScoreNoteEvent.VisualSize.FULL
                 && n.augmentationDots() == 0 && n.tupletDivisor() == 1 && n.tupletNormalNotes() == 1
-                && n.articulations() == 0 && n.octaveShift() == 0
-                && !n.tiedFromPrevious() && n.boundaryTies() == 0 && !n.crossStaffBeam()
+                && (n.articulations() & ~allowedArticulations) == 0 && n.octaveShift() == 0
+                && (allowTies || !n.tiedFromPrevious() && n.boundaryTies() == 0) && !n.crossStaffBeam()
                 && n.leadingRestBeats() == 0 && n.followingRestBeats() == 0
                 && n.harmonicSemitones() == 0 && n.openStringTouch() == null;
     }

@@ -1089,6 +1089,8 @@ public final class SheetInterpreter {
         if (recoverDenseBeams)
             finalInterpretation = PrintedBeamSource.recoverDensePage(
                     finalInterpretation, labels, gray, width, height, staffs, physicalPage);
+        finalInterpretation = ClosedOctaveRailRun.completePrintedBeamQuartets(
+                finalInterpretation, gray, annotationGray, width, height, staffs, physicalPage);
         finalInterpretation =
                 finalInterpretation.withClockContextSource(
                         ScoreClockContextCapture.capture(
