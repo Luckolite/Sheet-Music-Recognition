@@ -2090,9 +2090,12 @@ final class OmrScoreInterpreter {
             if (!unpitched && staff.count == 1 && step >= 12 && openingLedgerStep == 0
                     && stackedLedgerStep == 0 && sharedFarStep == 0 && remoteSixthStep == 0 && compressedQuartetStep == 0
                     && shortBeamedLedgerStep == 0
-                    && !upperSpaceAtBeamBoundary)
-                step = compressedUpperLedgerPitch(gray, annotationGray, width, height, head,
+                    && !upperSpaceAtBeamBoundary) {
+                int compressed = compressedUpperLedgerPitch(gray, annotationGray, width, height, head,
                         localPitch[0], localGap, step);
+                step = compressed != step ? compressed : expandedLedgerDyadPitch(
+                        gray, annotationGray, width, height, head, heads, localPitch[0], localGap, step);
+            }
             if (!unpitched && staff.count == 1 && step == -3
                     && Math.round((localBottom - head.centerY) * 2 / localGap) == -4
                     && annotationGray != null && gray != null && annotationGray.length == gray.length
@@ -29161,6 +29164,66 @@ final class OmrScoreInterpreter {
                 return true;
         }
         return false;
+    }
+
+    /** Resolve the high head of an attached dyad by counting an expanded printed ledger ladder. */
+    private static int expandedLedgerDyadPitch(byte[] gray, byte[] raw, int width, int height,
+            Component head, List<Component> heads, float staffBottom, float gap, int step) {
+        if (gray == null || raw == null || gray.length != raw.length || gap < 12 || gap > 24
+                || step < 12 || step > 23) return step;
+        float phase = (staffBottom - head.centerY) * 2 / gap - (step - 1);
+        if (phase < .49f || phase > .82f) return step;
+
+        Component lower = null;
+        for (Component peer : heads) {
+            if (Math.abs(peer.centerX - head.centerX) > gap * .23f) continue;
+            float span = (peer.centerY - head.centerY) / gap;
+            if (span < 3.62f || span > 3.92f) continue;
+            if (lower != null) return step;
+            lower = peer;
+        }
+        if (lower == null || printedPitchStep(gray, width, height, lower,
+                        printedLedgerBottom(gray, width, height, lower, staffBottom, gap), gap) != step - 8
+                || !FilledSparseBeamHead.completeInterior(gray, width, height, head.centerX, head.centerY, gap)
+                || !FilledSparseBeamHead.completeInterior(raw, width, height, head.centerX, head.centerY, gap)
+                || !FilledSparseBeamHead.completeInterior(gray, width, height, lower.centerX, lower.centerY, gap)
+                || !FilledSparseBeamHead.completeInterior(raw, width, height, lower.centerX, lower.centerY, gap))
+            return step;
+
+        float top = staffBottom - 4 * gap;
+        var lines = upperLedgerLadder(gray, width, height, head, top, gap).rows();
+        var original = upperLedgerLadder(raw, width, height, head, top, gap).rows();
+        if (lines.isEmpty() || lines.size() != original.size()) return step;
+        for (int i = 0; i < lines.size(); i++)
+            if (Math.abs(lines.get(i) - original.get(i)) > .13f * gap) return step;
+
+        float last = lines.get(lines.size() - 1);
+        float originalLast = original.get(original.size() - 1);
+        float offset = (last - head.centerY) / gap, originalOffset = (originalLast - head.centerY) / gap;
+        if (top - last < 1.015f * lines.size() * gap || top - originalLast < 1.015f * lines.size() * gap)
+            return step;
+        int counted = 8 + 2 * lines.size();
+        boolean space = counted + 1 == step - 1;
+        if ((space ? offset < .48f || offset > .74f : Math.abs(offset) > .16f)
+                || (space ? originalOffset < .48f || originalOffset > .74f : Math.abs(originalOffset) > .16f)
+                || (space ? counted + 1 : counted) != step - 1) return step;
+        boolean onLine = Float.isFinite(printedLedgerLine(gray, width, height, head, head.centerY, gap, false));
+        boolean originalOnLine = Float.isFinite(printedLedgerLine(raw, width, height, head, head.centerY, gap, false));
+        if (onLine == space || originalOnLine == space) return step;
+        var budget = new PrintedBeamShafts.Budget(120_000);
+        if (!expandedDyadShafts(gray, raw, width, height, head, lower, gap, budget)) return step;
+        return step - 1;
+    }
+
+    private static boolean expandedDyadShafts(byte[] gray, byte[] raw, int width, int height,
+            Component head, Component lower, float gap, PrintedBeamShafts.Budget budget) {
+        var upper = downShaft(gray, width, height, head, gap, budget);
+        var originalUpper = downShaft(raw, width, height, head, gap, budget);
+        var below = downShaft(gray, width, height, lower, gap, budget);
+        var originalBelow = downShaft(raw, width, height, lower, gap, budget);
+        return upper != null && originalUpper != null && below != null && originalBelow != null
+                && !budget.refused() && sameOctaveDownshaft(upper, originalUpper)
+                && sameOctaveDownshaft(upper, below) && sameOctaveDownshaft(originalUpper, originalBelow);
     }
 
     private record UpperLedgerLadder(List<Float> rows, int step) {}

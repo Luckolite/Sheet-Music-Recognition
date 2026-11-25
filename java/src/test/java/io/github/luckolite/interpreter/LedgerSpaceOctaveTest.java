@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.github.luckolite.interpreter;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
@@ -57,6 +58,46 @@ public final class LedgerSpaceOctaveTest {
         assertFalse((boolean) admit.invoke(null, ink, cut, WIDTH, HEIGHT, first, frame, owner, heads));
         assertFalse((boolean) admit.invoke(null, ink, ink.clone(), WIDTH, HEIGHT, first, frame, owner,
                 List.of(first, second, lowerSecond)));
+    }
+
+    @Test
+    public void countsExpandedLedgersWithoutFlatteningAPrintedNinth() throws Exception {
+        var componentType = Class.forName(OmrScoreInterpreter.class.getName() + "$Component");
+        var component = componentType.getDeclaredConstructors()[0];
+        component.setAccessible(true);
+        var upper = head(component, 80, 58);
+        var lower = head(component, 80, 118);
+        var heads = List.of(upper, lower);
+        var correct = OmrScoreInterpreter.class.getDeclaredMethod("expandedLedgerDyadPitch",
+                byte[].class, byte[].class, int.class, int.class, componentType, List.class,
+                float.class, float.class, int.class);
+        correct.setAccessible(true);
+
+        byte[] octave = ledgerDyad(101, 84, 67);
+        byte[] ninth = ledgerDyad(103, 88, 73, 58);
+        assertEquals(15, correct.invoke(null, octave, octave.clone(), WIDTH, HEIGHT, upper, heads,
+                182f, (float) GAP, 16));
+        assertEquals(16, correct.invoke(null, ninth, ninth.clone(), WIDTH, HEIGHT, upper, heads,
+                182f, (float) GAP, 16));
+        assertEquals(16, correct.invoke(null, octave, ninth, WIDTH, HEIGHT, upper, heads,
+                182f, (float) GAP, 16));
+
+        byte[] severed = octave.clone();
+        for (int y = 109; y <= 116; y++)
+            Arrays.fill(severed, y * WIDTH + 68, y * WIDTH + 74, (byte) 255);
+        assertEquals(16, correct.invoke(null, octave, severed, WIDTH, HEIGHT, upper, heads,
+                182f, (float) GAP, 16));
+    }
+
+    private static byte[] ledgerDyad(int... ledgerRows) {
+        byte[] ink = new byte[WIDTH * HEIGHT];
+        Arrays.fill(ink, (byte) 255);
+        for (int row = 118; row <= 182; row += GAP) fill(ink, 30, row, 190, row + 1);
+        oval(ink, 80, 58);
+        oval(ink, 80, 118);
+        fill(ink, 70, 62, 72, 198);
+        for (int y : ledgerRows) fill(ink, 66, y - 1, 94, y + 1);
+        return ink;
     }
 
     private static Object head(Constructor<?> c, int x, int y) throws Exception {
