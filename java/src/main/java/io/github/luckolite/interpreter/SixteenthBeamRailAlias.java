@@ -14,37 +14,119 @@ final class SixteenthBeamRailAlias {
     private SixteenthBeamRailAlias() {}
 
     static List<ScoreNoteEvent> remove(
-            List<ScoreNoteEvent> notes,
-            List<MeasureRegion> measures,
-            byte[] gray,
-            byte[] raw,
-            int width,
-            int height) {
-        if (gray == null
-                || raw == null
-                || width < 1
-                || height < 1
-                || gray.length != (long) width * height
-                || raw.length != gray.length) return notes;
+            List<ScoreNoteEvent> notes, List<MeasureRegion> measures, byte[] gray, byte[] raw,
+            int width, int height) {
+        return removeRailAliases(notes, measures, gray, raw, width, height, true);
+    }
+
+    /** Remove monophonic false heads that borrow the next printed shaft in reverse. */
+    static List<ScoreNoteEvent> removeSharedShaftAliases(
+            List<ScoreNoteEvent> notes, List<MeasureRegion> measures, byte[] gray, byte[] raw,
+            int width, int height) {
+        return removeRailAliases(notes, measures, gray, raw, width, height, false);
+    }
+
+    private static List<ScoreNoteEvent> removeRailAliases(
+            List<ScoreNoteEvent> notes, List<MeasureRegion> measures, byte[] gray, byte[] raw,
+            int width, int height, boolean includeDyads) {
+        if (gray == null || raw == null || width < 1 || height < 1
+                || gray.length != (long) width * height || raw.length != gray.length) return notes;
         Map<Integer, List<ScoreNoteEvent>> rows = new HashMap<>();
-        for (var n : notes)
-            rows.computeIfAbsent(n.measureIndex(), unused -> new ArrayList<>()).add(n);
+        for (var note : notes)
+            rows.computeIfAbsent(note.measureIndex(), ignored -> new ArrayList<>()).add(note);
         var removed = new HashSet<ScoreNoteEvent>();
         for (var entry : rows.entrySet()) {
-            if (entry.getValue().size() != 25) continue;
-            var alias =
-                    ownedAlias(
-                            entry.getValue(),
-                            measures.get(entry.getKey()),
-                            gray,
-                            raw,
-                            width,
-                            height);
+            int measure = entry.getKey();
+            var row = entry.getValue();
+            if (measure < 0 || measure >= measures.size()) continue;
+            var bar = measures.get(measure);
+            ScoreNoteEvent alias;
+            if (row.size() == 15) {
+                alias = sharedShaftAlias(row, bar, gray, raw, width, height);
+            } else if (includeDyads && row.size() == 25) {
+                alias = ownedAlias(row, bar, gray, raw, width, height);
+            } else {
+                continue;
+            }
             if (alias != null) removed.add(alias);
         }
-        return removed.isEmpty()
-                ? notes
-                : notes.stream().filter(note -> !removed.contains(note)).toList();
+        return removed.isEmpty() ? notes : notes.stream().filter(note -> !removed.contains(note)).toList();
+    }
+
+    private static ScoreNoteEvent sharedShaftAlias(List<ScoreNoteEvent> row, MeasureRegion bar,
+            byte[] gray, byte[] raw, int width, int height) {
+        float left = bar.left() * width, span = (bar.right() - bar.left()) * width;
+        float gap = (bar.bottom() - bar.top()) * height / 8.2f;
+        if (gap < 10 || gap > 25) return null;
+        row.sort(Comparator.comparingDouble(ScoreNoteEvent::positionInMeasure));
+        ScoreNoteEvent candidate = null;
+        for (var note : row) {
+            if (!regular(note) || note.harmonicSemitones() != 0 || note.openStringTouch() != null
+                    || note.boundaryTies() != 0 || note.tiedFromPrevious()) return null;
+            if (note.stemDirection() == -1 && note.beamCount() >= 1 && note.beamCount() <= 2
+                    && note.unbeamedDurationBeats() == 0) continue;
+            if (candidate != null || note.stemDirection() != 1
+                    || note.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_FROM_KEY
+                    || note.articulations() != 0
+                    || !((note.beamCount() == 0 && note.unbeamedDurationBeats() == 1)
+                            || (note.beamCount() == 1 && note.unbeamedDurationBeats() == 0))) return null;
+            candidate = note;
+        }
+        if (candidate == null) return null;
+        int index = row.indexOf(candidate);
+        if (index == 0 || index + 1 == row.size()) return null;
+        var before = row.get(index - 1);
+        var after = row.get(index + 1);
+        if (before.beamCount() != 2 || after.beamCount() != 2) return null;
+        float x = left + span * candidate.positionInMeasure(), y = candidate.pageY() * height;
+        float lx = left + span * before.positionInMeasure(), ly = before.pageY() * height;
+        float rx = left + span * after.positionInMeasure(), ry = after.pageY() * height;
+        if (x - lx < .75f * gap || x - lx > 1.6f * gap
+                || rx - x < .75f * gap || rx - x > 1.6f * gap) return null;
+        var track = StaffPitchTrack.linear(width, bar.bottom() * height - 2.1f * gap, gap, 0);
+        return sharedShaftRailInk(gray, width, height, x, y, lx, ly, rx, ry, gap, track)
+                && sharedShaftRailInk(raw, width, height, x, y, lx, ly, rx, ry, gap, track) ? candidate : null;
+    }
+
+    private static boolean sharedShaftRailInk(byte[] ink, int width, int height,
+            float x, float y, float lx, float ly, float rx, float ry, float gap, StaffPitchTrack track) {
+        var budget = new PrintedBeamShafts.Budget(120_000);
+        var before = PrintedBeamShafts.at(ink, width, height, lx, ly, gap, budget);
+        var after = PrintedBeamShafts.at(ink, width, height, rx, ry, gap, budget);
+        var aliases = PrintedBeamShafts.at(ink, width, height, x, y, gap, budget);
+        if (budget.refused() || before.size() != 1 || after.size() > 1 || aliases.size() != 1) return false;
+        var a = before.get(0);
+        var b = after.isEmpty() ? FadedTripletDownshaft.measure(ink, width, height, rx, ry, gap) : after.get(0);
+        var alias = aliases.get(0);
+        if (b == null || a.direction() != 1 || b.direction() != 1 || alias.direction() != -1
+                || alias.left() < b.left() || alias.right() > b.right()
+                || Math.abs(ry - alias.endY()) > gap * .46f
+                || !WrappedEighthTriplets.matchesExactlyTwoBeamRails(ink, width, height, a, b, gap, track))
+            return false;
+        float start = (a.left() + a.right()) * .5f, stop = (b.left() + b.right()) * .5f;
+        if (x <= start || x >= stop) return false;
+        float slope = (b.endY() - a.endY()) / (stop - start);
+        float depth = (a.endY() + slope * (x - start) - y) / gap;
+        int from = Math.max(a.right() + 2, Math.round(x - .85f * gap));
+        int to = Math.min(b.left() - 2, Math.round(x + .70f * gap));
+        int cx = Math.round(x), cy = Math.round(y), radius = Math.round(.44f * gap);
+        if (depth < .55f || depth > 1.12f || to - from < gap * .90f
+                || from < 0 || to >= width || cx < from || cx > to
+                || cy - radius < 3 || cy + radius >= height - 3) return false;
+        int rows = 0;
+        for (int off = -radius; off <= radius; off++) {
+            int sample = cy + off;
+            if ((ink[sample * width + cx] & 255) >= 165) continue;
+            rows++;
+            int hits = 0;
+            for (int col = from; col <= to; col++) {
+                int yy = sample + Math.round(slope * (col - cx));
+                if (yy >= 0 && yy < height && (ink[yy * width + col] & 255) < 190) hits++;
+            }
+            if (hits < (to - from + 1) * .80f) return false;
+        }
+        return rows >= Math.round(gap * .45f)
+                && paperGutter(ink, width, height, start, a.endY(), slope, from, to, gap);
     }
 
     private static ScoreNoteEvent ownedAlias(
@@ -564,9 +646,14 @@ final class SixteenthBeamRailAlias {
         int fromX = Math.max(from.right() + 3, Math.round(ax - .42f * gap));
         int throughX = Math.min(to.left() - 2, Math.round(ax + .42f * gap));
         if (throughX - fromX < .33f * gap) return false;
+        return paperGutter(ink, width, height, x0, from.endY(), slope, fromX, throughX, gap);
+    }
+
+    private static boolean paperGutter(byte[] ink, int width, int height, float shaftX, int shaftTip,
+            float slope, int fromX, int throughX, float gap) {
         int paperColumns = 0;
         for (int x = fromX; x <= throughX; x++) {
-            float y = from.endY() + slope * (x - x0);
+            float y = shaftTip + slope * (x - shaftX);
             int start = Math.round(y + .09f * gap), end = Math.round(y + .52f * gap);
             if (start < 0 || end >= height) return false;
             for (int at = start; at <= end; at++) {

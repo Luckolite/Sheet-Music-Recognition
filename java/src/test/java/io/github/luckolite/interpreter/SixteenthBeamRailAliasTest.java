@@ -88,6 +88,42 @@ public class SixteenthBeamRailAliasTest {
         assertEquals(notes, resolve(notes, separate, pixels, 4));
     }
 
+    @Test
+    public void monophonicAliasBorrowsTheRightShaftOnlyInsideBothPrintedRails() {
+        int step = 35, noteY = 210, aliasX = FIRST + 11 * step - 16, aliasY = TAIL - 13;
+        var notes = new ArrayList<ScoreNoteEvent>();
+        var pixels = new byte[WIDTH * HEIGHT];
+        Arrays.fill(pixels, (byte) 255);
+        for (int i = 0; i < 5; i++) paint(pixels, LEFT, 164 + i * 16, RIGHT, 166 + i * 16, 0);
+        for (int i = 0; i < 14; i++) {
+            int x = FIRST + i * step;
+            notes.add(head(x, noteY, 2, 2, -1));
+            paint(pixels, x - 10, noteY + 1, x - 7, TAIL + 1, 0);
+            oval(pixels, x, noteY);
+        }
+        int last = FIRST + 13 * step - 7;
+        paint(pixels, FIRST - 10, TAIL - 7, last, TAIL + 1, 0);
+        paint(pixels, FIRST - 10, TAIL - 20, last, TAIL - 11, 0);
+        notes.add(head(aliasX, aliasY, 0, 1, 1));
+        assertEquals(notes.subList(0, 14), resolveSharedShaft(notes, pixels, pixels));
+
+        var separate = pixels.clone();
+        paint(separate, aliasX + 12, noteY - 20, aliasX + 15, aliasY + 1, 0);
+        assertEquals(notes, resolveSharedShaft(notes, pixels, separate));
+        assertEquals(notes, resolveSharedShaft(notes, separate, pixels));
+
+        var cut = pixels.clone();
+        paint(cut, aliasX - 4, TAIL - 8, aliasX + 4, TAIL + 1, 255);
+        assertEquals(notes, resolveSharedShaft(notes, pixels, cut));
+        assertEquals(notes, resolveSharedShaft(notes, cut, pixels));
+    }
+
+    private static List<ScoreNoteEvent> resolveSharedShaft(
+            List<ScoreNoteEvent> notes, byte[] decoded, byte[] original) {
+        return SixteenthBeamRailAlias.removeSharedShaftAliases(
+                notes, List.of(BAR), decoded, original, WIDTH, HEIGHT);
+    }
+
     private static List<ScoreNoteEvent> resolve(
             List<ScoreNoteEvent> notes, byte[] decoded, byte[] original, int numerator) {
         return SixteenthBeamRailAlias.removeClosedOctaveAliases(
