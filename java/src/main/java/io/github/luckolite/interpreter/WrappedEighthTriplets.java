@@ -16,8 +16,13 @@ final class WrappedEighthTriplets {
 
     private record Ribbon(float coverage, int leftY, int rightY) {}
 
-    private record RuleBand(int first, int[] rows, int radius) {
-        boolean contains(int x, int y) {
+    @FunctionalInterface
+    private interface ExcludedInk {
+        boolean contains(int x, int y);
+    }
+
+    private record RuleBand(int first, int[] rows, int radius) implements ExcludedInk {
+        public boolean contains(int x, int y) {
             return Math.abs(y - rows[x - first]) <= radius;
         }
     }
@@ -4352,6 +4357,31 @@ final class WrappedEighthTriplets {
                 : matchesRailCount(gray, width, height, left, right, gap, rails == 2);
     }
 
+    /** Discard an apparent link only when every intervening column proves five thin staff rules. */
+    static boolean separatedOctaveQuartets(byte[] ink, int width, int height,
+            PrintedBeamShafts.Shaft left, PrintedBeamShafts.Shaft right, float gap, float staffBottom) {
+        if (bestRibbon(ink, width, height, left, right, gap).coverage() < .90f) return true;
+        int padding = Math.round(gap * .45f);
+        int from = (left.left() + left.right()) / 2 + padding;
+        int to = (right.left() + right.right()) / 2 - padding;
+        if (from < 0 || to >= width || to - from < gap) return false;
+        var rules = new PrintedBeamRuleWitness.Witness[to - from + 1];
+        for (int x = from; x <= to; x++) {
+            var witness = PrintedBeamRuleWitness.at(ink, width, height, x, staffBottom, gap);
+            if (witness == null) return false;
+            int min = Integer.MAX_VALUE, max = 0;
+            for (var band : witness.rules()) {
+                int thickness = band.bottom() - band.top() + 1;
+                min = Math.min(min, thickness);
+                max = Math.max(max, thickness);
+            }
+            if (max - min > 1) return false;
+            rules[x - from] = witness;
+        }
+        return bestRibbon(ink, width, height, left, right, gap,
+                (x, y) -> rules[x - from].contains(y)).coverage() <= .46f;
+    }
+
     /** Verify both bands on joined shafts and reject a further thick band off the staff rules. */
     static boolean matchesExactlyTwoBeamRails(
             byte[] gray, int width, int height, PrintedBeamShafts.Shaft a,
@@ -5718,7 +5748,7 @@ final class WrappedEighthTriplets {
             PrintedBeamShafts.Shaft a,
             PrintedBeamShafts.Shaft b,
             float gap,
-            RuleBand excluded) {
+            ExcludedInk excluded) {
         var best = new Ribbon(0, a.endY(), b.endY());
         int direction = a.direction();
         for (int dy = -Math.round(gap * .28f); dy <= Math.round(gap * .28f); dy++) {
@@ -5754,7 +5784,7 @@ final class WrappedEighthTriplets {
             int leftY,
             int rightY,
             float band,
-            RuleBand excluded) {
+            ExcludedInk excluded) {
         int x0 = (a.left() + a.right()) / 2, x1 = (b.left() + b.right()) / 2;
         int padding = Math.round(gap * .45f);
         if (x0 < 0 || x1 >= width || x1 - x0 <= padding * 2) return 0;

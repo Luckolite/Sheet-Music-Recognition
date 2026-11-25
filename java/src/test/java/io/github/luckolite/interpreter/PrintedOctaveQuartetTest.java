@@ -85,6 +85,59 @@ public final class PrintedOctaveQuartetTest {
                 .mapToObj(i -> new ScoreBeamSource.Anchor(0, i)).toList());
     }
 
+    @Test
+    public void ignoresAnApparentBridgeOnlyWithFiveIndependentlyWitnessedRules() {
+        byte[] staff = new byte[WIDTH * HEIGHT];
+        Arrays.fill(staff, (byte) 255);
+        for (int y = 80; y <= 144; y += GAP) fill(staff, 8, y - 2, 110, y + 1, 0);
+        var left = new PrintedBeamShafts.Shaft(39, 41, 110, 147, 1, List.of());
+        var right = new PrintedBeamShafts.Shaft(81, 83, 110, 147, 1, List.of());
+        assertTrue(WrappedEighthTriplets.matchesBeamRails(staff, WIDTH, HEIGHT, left, right, GAP, 2));
+        assertTrue(WrappedEighthTriplets.separatedOctaveQuartets(
+                staff, WIDTH, HEIGHT, left, right, GAP, 144));
+
+        byte[] joined = staff.clone();
+        fill(joined, 40, 141, 82, 148, 0);
+        assertTrue(!WrappedEighthTriplets.separatedOctaveQuartets(
+                joined, WIDTH, HEIGHT, left, right, GAP, 144));
+
+        byte[] doubled = joined.clone();
+        fill(doubled, 40, 125, 82, 133, 0);
+        assertTrue(WrappedEighthTriplets.matchesBeamRails(doubled, WIDTH, HEIGHT, left, right, GAP, 2));
+        assertTrue(!WrappedEighthTriplets.separatedOctaveQuartets(
+                doubled, WIDTH, HEIGHT, left, right, GAP, 144));
+
+        byte[] partial = staff.clone();
+        fill(partial, 47, 95, 75, 97, 255);
+        assertTrue(!WrappedEighthTriplets.separatedOctaveQuartets(
+                partial, WIDTH, HEIGHT, left, right, GAP, 144));
+    }
+
+    @Test
+    public void preservesOctaveShiftValuesOnIndependentlyProvedGroups() {
+        var fixture = fixture();
+        var notes = new ArrayList<>(fixture.score.notes());
+        for (int i = 0; i < 8; i++) notes.set(i, notes.get(i).withOctaveShift(1));
+        var shifted = new Fixture(new ScorePageInterpretation(fixture.score.measures(), notes),
+                fixture.gray, fixture.staffs);
+        var result = recognize(shifted, fixture.gray.clone());
+        assertEquals(notes, result.notes());
+        assertEquals(4, result.beamSource().groups().size());
+    }
+
+    @Test
+    public void recoversThreeSeparatedQuartetsInAThreeBeatBar() {
+        var fixture = fixture(3);
+        var result = recognize(fixture, fixture.gray.clone());
+        assertEquals(3, result.beamSource().groups().size());
+        assertEquals(fixture.score.notes(), result.notes());
+        assertEquals(List.of(new ScoreMeterChange(0, 3, 4)), result.meterChanges());
+
+        byte[] joined = fixture.gray.clone();
+        fill(joined, 176, 177, 220, 183, 0);
+        assertTrue(recognize(fixture, joined).beamSource().groups().isEmpty());
+    }
+
     private static ScorePageInterpretation recognize(Fixture fixture, byte[] raw) {
         return ClosedOctaveRailRun.completePrintedBeamQuartets(
                 fixture.score, fixture.gray, raw, WIDTH, HEIGHT, fixture.staffs, 0);
@@ -93,11 +146,15 @@ public final class PrintedOctaveQuartetTest {
     private record Fixture(ScorePageInterpretation score, byte[] gray, List<PlayingTechniqueDetector.Staff> staffs) {}
 
     private static Fixture fixture() {
+        return fixture(4);
+    }
+
+    private static Fixture fixture(int quartets) {
         byte[] gray = new byte[WIDTH * HEIGHT];
         Arrays.fill(gray, (byte) 255);
         for (int y = 80; y <= 144; y += GAP) fill(gray, 8, y, WIDTH - 9, y + 1, 0);
         var notes = new ArrayList<ScoreNoteEvent>();
-        for (int slot = 0; slot < 16; slot++) {
+        for (int slot = 0; slot < quartets * 4; slot++) {
             int x = 50 + slot * 42;
             for (int y : new int[] {64, 120}) {
                 oval(gray, x, y);
@@ -106,12 +163,14 @@ public final class PrintedOctaveQuartetTest {
             }
             fill(gray, x - 10, 67, x - 8, 183, 0);
         }
-        for (int slot = 0; slot < 16; slot += 4) {
+        for (int slot = 0; slot < quartets * 4; slot += 4) {
             int first = 40 + slot * 42, last = first + 3 * 42 + 2;
             fill(gray, first, 162, last, 168, 0);
             fill(gray, first, 177, last, 183, 0);
         }
-        return new Fixture(new ScorePageInterpretation(List.of(new MeasureRegion(0, 1, 0, 1)), notes),
+        return new Fixture(new ScorePageInterpretation(List.of(new MeasureRegion(0, 1, 0, 1)), notes,
+                        1, List.of(), List.of(), List.of(new ScoreMeterChange(0, quartets, 4)),
+                        List.of(), List.of(), List.of()),
                 gray, List.of(new PlayingTechniqueDetector.Staff(80, 144, 16, 0, 1)));
     }
 

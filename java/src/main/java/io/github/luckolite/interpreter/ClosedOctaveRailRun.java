@@ -58,7 +58,7 @@ final class ClosedOctaveRailRun {
         for (var heads : byBar) {
             Head island = heads.size() == 33 ? unownedBeamIsland(beam, heads) : null;
             if (island != null) heads.remove(island);
-            if (heads.size() != 32 || heads.stream().anyMatch(h -> !ordinaryHead(h.note, NoteArticulation.ARTICULATIONS, true)
+            if ((heads.size() != 32 && heads.size() != 24) || heads.stream().anyMatch(h -> !ordinaryHead(h.note, NoteArticulation.ARTICULATIONS, true)
                     || !sixteenth(h.note) || h.note.stemDirection() != -1)) continue;
             heads.sort(Comparator.comparingDouble(Head::x));
             var firstLower = heads.get(0).y > heads.get(1).y ? heads.get(0) : heads.get(1);
@@ -72,7 +72,7 @@ final class ClosedOctaveRailRun {
             }
             if (frame == null) continue;
             float gap = frame.gap();
-            var columns = new ArrayList<Column>(16);
+            var columns = new ArrayList<Column>(heads.size() / 2);
             for (int i = 0; i < heads.size(); i += 2) {
                 var a = heads.get(i);
                 var b = heads.get(i + 1);
@@ -84,7 +84,7 @@ final class ClosedOctaveRailRun {
                                         || a.x - heads.get(i - 1).x > gap * 3.65f)) break;
                 columns.add(new Column(upper, lower));
             }
-            if (columns.size() != 16
+            if (columns.size() * 2 != heads.size()
                     || !printedQuartetRails(gray, width, height, frame, columns)
                     || !printedQuartetRails(raw, width, height, frame, columns)) continue;
             if (island != null) {
@@ -179,19 +179,27 @@ final class ClosedOctaveRailRun {
                     || !FilledSparseBeamHead.completeInterior(ink, width, height, upper.x, upper.y, gap)) return false;
             var stems = PrintedBeamShafts.at(ink, width, height, lower.x, lower.y, gap, budget);
             var high = PrintedBeamShafts.at(ink, width, height, upper.x, upper.y, gap, budget);
-            if (budget.refused() || stems.size() != 1 || high.size() > 1) return false;
-            var stem = stems.get(0);
-            if (stem.direction() != 1) return false;
-            if (high.isEmpty()) {
+            if (budget.refused()) return false;
+            var downward = stems.stream().filter(s -> s.direction() == 1).toList();
+            var highDownward = high.stream().filter(s -> s.direction() == 1).toList();
+            if (downward.size() > 1 || highDownward.size() > 1) return false;
+            var stem = downward.isEmpty()
+                    ? stems.isEmpty() ? FadedTripletDownshaft.measure(ink, width, height, lower.x, lower.y, gap)
+                            : null
+                    : downward.get(0);
+            if (stem == null) return false;
+            if (highDownward.isEmpty()) {
+                if (!high.isEmpty()) return false;
                 if (!upperFadedAttachment(ink, width, upper, lower, stem, gap)) return false;
             } else {
-                var attached = high.get(0);
+                var attached = highDownward.get(0);
                 if (attached.direction() != 1 || attached.left() > stem.right()
                         || stem.left() > attached.right()
                         || Math.abs(attached.endY() - stem.endY()) > gap * .25f) return false;
             }
             if (previous != null && (i % 4 == 0
-                    ? WrappedEighthTriplets.matchesBeamRails(ink, width, height, previous, stem, gap, 1)
+                    ? !WrappedEighthTriplets.separatedOctaveQuartets(
+                            ink, width, height, previous, stem, gap, staff.bottom())
                     : !WrappedEighthTriplets.matchesExactlyTwoBeamRails(
                             ink, width, height, previous, stem, gap, track))) return false;
             previous = stem;
@@ -281,7 +289,7 @@ final class ClosedOctaveRailRun {
         if (heads.size() != 30) return score;
         if (meter == null && !hasCompleteFollowingOctaveBar(score, w, h, gap)) return score;
         heads.sort(Comparator.comparingDouble(Head::x));
-        var columns = new ArrayList<Column>(16);
+        var columns = new ArrayList<Column>(heads.size() / 2);
         int hole = -1;
         Column weak = null;
         for (int i = 0; i < 30; i += 2) {
@@ -743,7 +751,7 @@ final class ClosedOctaveRailRun {
         }
         if (fragment == null) return score;
         heads.sort(Comparator.comparingDouble(Head::x));
-        var columns = new ArrayList<Column>(16);
+        var columns = new ArrayList<Column>(heads.size() / 2);
         Head missing = null, lowerOwner = null;
         for (int i = 0; i < heads.size(); i++) {
             var a = heads.get(i);
@@ -765,7 +773,7 @@ final class ClosedOctaveRailRun {
                     : upper.note.beamCount() != 0 || upper.note.unbeamedDurationBeats() != 1) return score;
             columns.add(new Column(upper, lower));
         }
-        if (columns.size() != 16 || missing == null
+        if (columns.size() * 2 != heads.size() || missing == null
                 || !sourceRails(raw, labels, w, h, bar, preceding, columns, fragment, gap, false)
                 || !sourceRails(normalized, labels, w, h, bar, preceding, columns, fragment, gap, false)) return score;
         int tail = columns.get(columns.size() - 1).upper.owner;
@@ -800,13 +808,13 @@ final class ClosedOctaveRailRun {
         return ordinaryHead(n, 0, false);
     }
 
-    private static boolean ordinaryHead(ScoreNoteEvent n, int allowedArticulations, boolean allowTies) {
+    private static boolean ordinaryHead(ScoreNoteEvent n, int allowedArticulations, boolean allowIndependentMarks) {
         return n.kind() == ScoreNoteEvent.Kind.PITCHED && n.staffIndex() == 0 && n.staffCount() == 1
                 && n.clefBottomDiatonic() == ScoreNoteEvent.CLEF_TREBLE
                 && n.visualSize() == ScoreNoteEvent.VisualSize.FULL
                 && n.augmentationDots() == 0 && n.tupletDivisor() == 1 && n.tupletNormalNotes() == 1
-                && (n.articulations() & ~allowedArticulations) == 0 && n.octaveShift() == 0
-                && (allowTies || !n.tiedFromPrevious() && n.boundaryTies() == 0) && !n.crossStaffBeam()
+                && (n.articulations() & ~allowedArticulations) == 0 && (allowIndependentMarks || n.octaveShift() == 0)
+                && (allowIndependentMarks || !n.tiedFromPrevious() && n.boundaryTies() == 0) && !n.crossStaffBeam()
                 && n.leadingRestBeats() == 0 && n.followingRestBeats() == 0
                 && n.harmonicSemitones() == 0 && n.openStringTouch() == null;
     }

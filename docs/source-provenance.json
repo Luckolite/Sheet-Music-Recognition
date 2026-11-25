@@ -1700,15 +1700,25 @@
     }
   },
   "files": {
+    "WrappedEighthTriplets.java": {
+      "source_path": "app/src/main/java/com/musicsheets/app/pdf/WrappedEighthTriplets.java",
+      "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/WrappedEighthTriplets.java",
+      "source_sha256": "beb9f0d55d3a3ad523806fd57dce35a45fcd7b523d40271546eb10df9ebb0726",
+      "source_normalized_sha256": "beb9f0d55d3a3ad523806fd57dce35a45fcd7b523d40271546eb10df9ebb0726",
+      "standalone_normalized_sha256": "b62300a311306d8a5e4669d045ea36aa5e491b6cfa8e4aa99d33e6b0881f185f",
+      "license": "Apache-2.0",
+      "reviewed_app_commit": "92ae8ad156a125259b27dfd55be30e907b611b7f",
+      "reviewed_app_state": "Matching five-rule staff witness and masking only observed carrier pixels at octave-quartet boundaries."
+    },
     "ClosedOctaveRailRun.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/ClosedOctaveRailRun.java",
-      "source_sha256": "0b914669489edaf29f05fc506c22aa1d16a96d13c66627971d6cf0e8a60136ef",
-      "source_normalized_sha256": "0b914669489edaf29f05fc506c22aa1d16a96d13c66627971d6cf0e8a60136ef",
+      "source_sha256": "f7b61bfe202e98555eb3c166f7f36512e893131f618c8439fcca65c9c4b3454e",
+      "source_normalized_sha256": "f7b61bfe202e98555eb3c166f7f36512e893131f618c8439fcca65c9c4b3454e",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/ClosedOctaveRailRun.java",
-      "standalone_normalized_sha256": "c9d0a4930141fbec75b137b1ea15d3862243e5a9c784d8225a218bc063737f7b",
+      "standalone_normalized_sha256": "2127369224cb4c9386f7f0a0e4aef2ac4da558a9b296134c8200b6bdd58c58ab",
       "license": "Apache-2.0",
-      "reviewed_app_commit": "5c48839bd46a7e5111d62440adfe5a9725f70bff",
-      "reviewed_app_state": "Matching platform-independent octave quartet and enclosed beam-fragment proof."
+      "reviewed_app_commit": "92ae8ad156a125259b27dfd55be30e907b611b7f",
+      "reviewed_app_state": "Matching printed octave grouping, stem-direction evidence, and bounded fade fallback."
     },
     "RuleOverlaidFingerings.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/RuleOverlaidFingerings.java",
