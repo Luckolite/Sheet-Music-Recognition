@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 
@@ -118,6 +119,8 @@ final class PrintedFingeringDigits {
         for (int i = 0; i < candidates.length; i++)
             if (candidates[i] != null && !ambiguous[i]) marks.add(candidates[i]);
         includeWordSequences(marks, words, heads, gray, normalized, width, height);
+        includeStaffRuleFingerings(marks, heads, gray, normalized, width, height);
+        includeOpposedQuartetFingerings(marks, heads, gray, normalized, width, height);
         marks.sort(Comparator.comparingInt(Mark::noteIndex).thenComparing(Mark::placement));
         return List.copyOf(marks);
     }
@@ -240,6 +243,210 @@ final class PrintedFingeringDigits {
         }
         return false;
     }
+
+    private static void includeStaffRuleFingerings(List<Mark> marks, List<Head> heads,
+            byte[] raw, byte[] normalized, int width, int height) {
+        if (raw == null || normalized == null || raw.length != (long) width * height
+                || normalized.length != raw.length) return;
+        var indexes = new HashMap<Integer, Head>();
+        for (var head : heads) indexes.put(head.index(), head);
+        var upper = new HashSet<Integer>();
+        for (var mark : marks) if (mark.placement() == Placement.ABOVE) upper.add(mark.noteIndex());
+        for (var head : heads) {
+            if (upper.contains(head.index()) || head.harmonic()
+                    || !ClosedMonophonicSixteenths.regularQuartetHead(head.note())
+                    || head.note().tupletDivisor() != 1 || head.note().augmentationDots() != 0
+                    || head.gap() < 10 || head.gap() > 24) continue;
+            int anchors = 0;
+            for (int index = head.index() - 3; index <= head.index() + 3; index++) {
+                Head neighbor = indexes.get(index);
+                if (neighbor != null && upper.contains(index)
+                        && Math.abs(neighbor.note().measureIndex() - head.note().measureIndex()) <= 1
+                        && neighbor.note().stemDirection() == head.note().stemDirection()
+                        && Math.abs(head.top() - neighbor.top()) < .25 * head.gap()
+                        && Math.abs(head.bottom() - neighbor.bottom()) < .25 * head.gap()
+                        && Math.abs(head.x() - neighbor.x()) < 7.5 * head.gap()) anchors++;
+            }
+            if (anchors < 2) continue;
+            int first = readStaffRuleFingering(raw, width, height, head);
+            if (first != 0 && first == readStaffRuleFingering(normalized, width, height, head))
+                marks.add(new Mark(head.index(), first, Placement.ABOVE));
+        }
+    }
+
+    private static int readStaffRuleFingering(byte[] pixels, int width, int height, Head head) {
+        double gap = head.gap();
+        int x = (int) Math.round(head.x()), y = (int) Math.round(head.top() + 2.1 * gap);
+        int near = (int) Math.round(.70 * gap), far = (int) Math.round(1.25 * gap);
+        int radius = (int) Math.round(.24 * gap);
+        if (x < far || x + far >= width || y - 2 * gap < 0 || y + gap >= height) return 0;
+        int first = -1, last = -1;
+        for (int row = y - radius; row <= y + radius; row++) {
+            int left = 0, right = 0;
+            for (int dx = near; dx <= far; dx++) {
+                if ((pixels[row * width + x - dx] & 255) < 155) left++;
+                if ((pixels[row * width + x + dx] & 255) < 155) right++;
+            }
+            if (Math.min(left, right) < .75 * (far - near + 1)) continue;
+            if (last >= 0 && row != last + 1) return 0;
+            if (first < 0) first = row;
+            last = row;
+        }
+        int lineThickness = last - first + 1;
+        if (first < 0 || lineThickness < 2 || lineThickness > Math.max(3, Math.round(.22 * gap))) return 0;
+        int left = x - (int) Math.round(.76 * gap), right = 2 * x - left;
+        int top = first - (int) Math.round(.99 * gap), bottom = last + (int) Math.round(.47 * gap);
+        if (head.note().stemDirection() == 1) {
+            var stem = PairedTremoloInk.stem(pixels, width, height, head.x(), head.y(), gap * 8 / 8.2, 1);
+            if (stem == null) return 0;
+            right = Math.min(right, stem.x() - 2);
+            bottom = Math.min(bottom, stem.endY() - 2);
+        }
+        if (right <= x || bottom <= last + 2) return 0;
+        var mask = new BitSet();
+        for (int row = first; row <= last; row++) mask.set(row * width + left, row * width + right + 1);
+        for (int row : new int[] {first - 1, last + 1}) {
+            int rowOffset = row * width;
+            for (int col = left; col < x && (pixels[rowOffset + col] & 255) < 182; col++)
+                mask.set(rowOffset + col);
+            for (int col = right; col > x && (pixels[rowOffset + col] & 255) < 182; col--)
+                mask.set(rowOffset + col);
+        }
+        int observedLeft = right, observedRight = left, observedTop = bottom, observedBottom = top;
+        int above = 0, below = 0;
+        for (int row = top; row <= bottom; row++) {
+            if (row >= first && row <= last) continue;
+            for (int col = left; col <= right; col++) {
+                if (mask.get(row * width + col) || (pixels[row * width + col] & 255) >= 165) continue;
+                observedLeft = Math.min(observedLeft, col);
+                observedRight = Math.max(observedRight, col);
+                observedTop = Math.min(observedTop, row);
+                observedBottom = Math.max(observedBottom, row);
+                if (row < first) above++; else below++;
+            }
+        }
+        if (Math.min(above, below) < 12 || observedLeft <= left || observedRight >= right
+                || observedTop <= top || head.y() - observedBottom < .85 * gap)
+            return 0;
+        float bestMargin = 0;
+        int digit = 0;
+        for (int l = Math.max(left, observedLeft - 4); l <= observedLeft + 1; l++)
+            for (int t = Math.max(top, observedTop - 3); t <= observedTop + 1; t++)
+                for (int r = observedRight - 1; r <= Math.min(right, observedRight + 1); r++)
+                    for (int b = observedBottom - 1; b <= Math.min(bottom, observedBottom + 2); b++) {
+                        var read = JoinedDigitTemplates.inspect(pixels, width, height, mask, l, t, r, b, () -> {});
+                        if (read == null || read.independentInk() < 24) continue;
+                        int winner = 0;
+                        for (int d = 1; d < read.scores().length; d++)
+                            if (read.scores()[d] > read.scores()[winner]) winner = d;
+                        if (winner < 1 || winner > 3) continue;
+                        float margin = read.best() - read.runner();
+                        if (read.best() < (winner == 1 ? .49f : .61f)
+                                || margin < (winner == 1 ? .18f : .055f) || margin <= bestMargin
+                                || !ownsWordDigit(pixels, width, height, head, new WordDigit(l, t, r, b))) continue;
+                        bestMargin = margin;
+                        digit = winner;
+                    }
+        return digit;
+    }
+
+
+    private static void includeOpposedQuartetFingerings(List<Mark> marks, List<Head> heads,
+            byte[] raw, byte[] normalized, int width, int height) {
+        if (raw == null || normalized == null || raw.length != (long) width * height
+                || normalized.length != raw.length) return;
+        var upper = new HashSet<Integer>();
+        var lower = new HashSet<Integer>();
+        for (var mark : marks)
+            (mark.placement() == Placement.ABOVE ? upper : lower).add(mark.noteIndex());
+        var byScoreOrder = heads.stream().sorted(Comparator.comparingInt(Head::index)).toList();
+        for (int start = 0; start + 3 < byScoreOrder.size(); start++) {
+            Head opening = byScoreOrder.get(start);
+            if (!upper.contains(opening.index())) continue;
+            var quartet = byScoreOrder.subList(start, start + 4);
+            if (quartet.stream().noneMatch(h -> lower.contains(h.index()))) continue;
+            boolean owned = true;
+            for (int slot = 0; slot < quartet.size(); slot++) {
+                Head head = quartet.get(slot);
+                if (head.index() != opening.index() + slot
+                        || head.note().measureIndex() != opening.note().measureIndex()
+                        || !upper.contains(head.index()) || head.harmonic()
+                        || head.note().stemDirection() != 1
+                        || !ClosedMonophonicSixteenths.regularQuartetHead(head.note())
+                        || head.note().tupletDivisor() != 1 || head.note().augmentationDots() != 0
+                        || head.gap() < 10 || head.gap() > 24
+                        || slot > 0 && (head.x() <= quartet.get(slot - 1).x()
+                                || head.x() - quartet.get(slot - 1).x() > 3 * head.gap())) {
+                    owned = false;
+                    break;
+                }
+            }
+            if (!owned) continue;
+            var added = new ArrayList<Mark>();
+            for (var head : quartet) {
+                if (lower.contains(head.index())) continue;
+                int first = readDetachedLowerFingering(raw, width, height, head);
+                if (first < 0 || first != readDetachedLowerFingering(normalized, width, height, head)) {
+                    owned = false;
+                    break;
+                }
+                added.add(new Mark(head.index(), first, Placement.BELOW));
+            }
+            if (owned) for (var mark : added) {
+                marks.add(mark);
+                lower.add(mark.noteIndex());
+            }
+        }
+    }
+
+    private static int readDetachedLowerFingering(byte[] pixels, int width, int height, Head head) {
+        double gap = head.gap();
+        int left = (int) Math.round(head.x() - .64 * gap), right = (int) Math.round(head.x() + .64 * gap);
+        int top = (int) Math.round(head.y() + .57 * gap), bottom = (int) Math.round(head.y() + 2.25 * gap);
+        if (left < 0 || right >= width || top < 0 || bottom >= height) return -1;
+        var boxes = wordDigits(pixels, width, height, left, top, right, bottom);
+        if (boxes.size() != 1) return -1;
+        var box = boxes.get(0);
+        if (Math.abs(box.x() - head.x()) > .30 * gap
+                || box.bottom() - box.top() < .65 * gap
+                || !ownsUpperShaft(pixels, width, height, head)) return -1;
+        var read = JoinedDigitTemplates.inspect(pixels, width, height, new BitSet(),
+                box.left(), box.top(), box.right(), box.bottom(), () -> {});
+        if (read == null) return -1;
+        if (read.digit() >= 0 && read.digit() <= 4) return read.digit();
+        if (read.scores()[0] == read.best() && read.best() >= .69f && read.best() - read.runner() >= .045f
+                && hasClosedZeroCounter(pixels, width, box)) return 0;
+        return -1;
+    }
+
+    private static boolean hasClosedZeroCounter(byte[] pixels, int width, WordDigit box) {
+        int center = Math.round(box.x());
+        int glyphHeight = box.bottom() - box.top() + 1;
+        if ((pixels[(box.top() + 2) * width + center] & 255) >= 165
+                || (pixels[(box.bottom() - 2) * width + center] & 255) >= 165) return false;
+        int first = box.top() + glyphHeight / 4;
+        int last = box.bottom() - glyphHeight / 4;
+        for (int row = first; row <= last; row++) {
+            int offset = row * width;
+            if ((pixels[offset + center] & 255) < 185) return false;
+            boolean left = false, right = false;
+            for (int col = box.left(); col < center - 1; col++) left |= (pixels[offset + col] & 255) < 155;
+            for (int col = center + 2; col <= box.right(); col++) right |= (pixels[offset + col] & 255) < 155;
+            if (!left || !right) return false;
+        }
+        return true;
+    }
+
+    private static boolean ownsUpperShaft(byte[] pixels, int width, int height, Head head) {
+        float gap = (float) head.gap() * (8f / 8.2f);
+        var budget = new PrintedBeamShafts.Budget(40000);
+        var shafts = PrintedBeamShafts.at(pixels, width, height, (float) head.x(), (float) head.y(), gap, budget);
+        if (budget.refused() || shafts.size() > 1) return false;
+        if (!shafts.isEmpty()) return shafts.get(0).direction() < 0;
+        var stem = PairedTremoloInk.stem(pixels, width, height, head.x(), head.y(), gap, 1);
+        return stem != null && hasHorizontalBeamAtTip(pixels, width, height, stem.x(), stem.endY(), gap);
+    }
+
 
     private static void assignStaffOverlaidTripletOnes(byte[] gray, byte[] normalized, int width, int height,
             ScorePageInterpretation score, List<Head> heads, Mark[] marks, boolean[] ambiguous) {
@@ -494,7 +701,7 @@ final class PrintedFingeringDigits {
         var phrased = new java.util.HashSet<ScoreSlurPages.Anchor>();
         for (var span : score.slurSource().spans())
             if (span.id().startsWith("printed-sixth-phrase:")) phrased.add(span.start());
-        var measures = new java.util.HashSet<Integer>();
+        var measures = new HashSet<Integer>();
         var byIndex = new Head[score.notes().size()];
         for (var head : heads) {
             byIndex[head.index()] = head;

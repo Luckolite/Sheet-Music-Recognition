@@ -4297,10 +4297,10 @@
     },
     "GuideCacheIdentity.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/GuideCacheIdentity.java",
-      "source_sha256": "98643cc9c4d012550c2bbfd0a6e485da3cc72c803bf448a19b7c4fbb6fa0efc0",
-      "source_normalized_sha256": "98643cc9c4d012550c2bbfd0a6e485da3cc72c803bf448a19b7c4fbb6fa0efc0",
-      "review_note": "App and worker recognition 166 and standalone recognition 186 invalidate recognition caches for detached fingering sequence recovery.",
-      "standalone_sha256": "aec71de1588df3db7f17d110112b6421bdde92db73759d54591bd77c6a051604",
+      "source_sha256": "1602c7685c0e2146a546381c5905d8bf23c57547fabb432112bf10e267ae5093",
+      "source_normalized_sha256": "1602c7685c0e2146a546381c5905d8bf23c57547fabb432112bf10e267ae5093",
+      "review_note": "App and desktop revision 167 and standalone revision 187 refresh their respective caches for printed fingering recognition.",
+      "standalone_sha256": "14774c2aac983fefda846bac2eec6a3715e29dc0007f159e0dd582267f059281",
       "reviewed_app_commit": "bd726502235465a6d3e91e6f5abdbaada211d4c8",
       "scoped_reviewed_app_commit": "5a83c7704ff14579edcf52af5c1ab8e8e719a4d7",
       "license": "Apache-2.0",
@@ -4368,9 +4368,9 @@
     "GuideCacheIdentityTest.java": {
       "source_path": "app/src/test/java/com/musicsheets/app/pdf/GuideCacheIdentityTest.java",
       "standalone_path": "java/src/test/java/io/github/luckolite/interpreter/GuideCacheIdentityTest.java",
-      "source_sha256": "42050d8cfc8b87dbd65748237dfd3033c9a30d604f8b9e4f46ce9284a5c7b4da",
-      "source_normalized_sha256": "42050d8cfc8b87dbd65748237dfd3033c9a30d604f8b9e4f46ce9284a5c7b4da",
-      "standalone_sha256": "09596cf78fc8d6c431e4aa27b5ea47b04f762f0afedbc1250a77b75e8285f4b8",
+      "source_sha256": "93abeb8014e07a59d6af87dfe31a81245b75920427b199ed77c90c986ede765e",
+      "source_normalized_sha256": "93abeb8014e07a59d6af87dfe31a81245b75920427b199ed77c90c986ede765e",
+      "standalone_sha256": "f6226605f8efabaebd2dba080a81f98e32d83e6ff1ba450e9e203c6ff44eeae0",
       "license": "Apache-2.0",
       "recognition88_review_note": "Reviewed exact contextual global changes and namespace twins with original synthetic regressions. New helpers are selected explicitly by desktop decoder manifest; no models, private fixtures, schema, wire or audio changes.",
       "reviewed_app_commit": "b954c0cc5f30c21a302a8f65141d0c297d4177c3",
@@ -4404,7 +4404,7 @@
         "reviewed_app_base_commit": "d4e7be78516806a0e35f855177d16b1818048c0f"
       },
       "reviewed_source_state": "Reviewed recognition cache revision for raised Segno recognition.",
-      "review_note": "The app asserts recognition 166 and the standalone asserts recognition 186, using their independent cache epochs.",
+      "review_note": "App and desktop revision 167 and standalone revision 187 refresh their respective caches for printed fingering recognition.",
       "scoped_reviewed_app_commit": "5a83c7704ff14579edcf52af5c1ab8e8e719a4d7",
       "retained_branch_review_note": "Reviewed retained-branch recovery: independently owned faded flag shafts and centered broad tremolo mask islands with existing bilateral raw proof. Original synthetic regressions and negative controls only. Recognition121; Guide299/audio101, models and dependencies unchanged. Matched runtime packaging/deployment remains deferred.",
       "recognition126_review_note": "Complete literal cap graph and exact certified auxiliary fit pixels; original synthetic controls, same whole denominator/coverage/ownership/resource limits. Namespace-only Java port and matching cache revision, no model or layout changes.",
@@ -9625,10 +9625,11 @@
     "PrintedFingeringDigits.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/PrintedFingeringDigits.java",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/PrintedFingeringDigits.java",
-      "source_sha256": "172fd01f8d3157a745f1e4f21f081d7f2b7cd0b49a4629aa202baa861244e577",
+      "source_sha256": "0784ac86a94d960c22e6c40a7f2f79e8b12538bd4f2e112ecfa66e9e874cc348",
       "notes": "Shared detached numeral sequence proof. Standalone uses SheetInterpreter OCR words and playback events; the app uses PlayingTechniqueDetector words and guide heads. Both use original glyph templates and bounded two-raster optical checks.",
-      "source_normalized_sha256": "172fd01f8d3157a745f1e4f21f081d7f2b7cd0b49a4629aa202baa861244e577",
-      "standalone_sha256": "b45c79b5a03face6efc91f70782e42984594c932a322f5b16d5dcad17319fbbf"
+      "source_normalized_sha256": "0784ac86a94d960c22e6c40a7f2f79e8b12538bd4f2e112ecfa66e9e874cc348",
+      "standalone_sha256": "663c79cc5bc48de40486d9ca8fa93945f4cfd1693c38cd9b45c1f585b0339b61",
+      "staff_rule_review": "Both runtimes independently witness the staff rule and shaft, then verify the digit shape. The opposed quartet uses score order even when note columns on multiple systems share the same x coordinate."
     },
     "PrintedAccidentalSpineRecovery.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/PrintedAccidentalSpineRecovery.java",
@@ -10795,10 +10796,10 @@
     },
     "guide_writer.py": {
       "source_path": "tools/native-worker/guide_writer.py",
-      "source_sha256": "c8f16c332f65d3fc848c593baaa051e7e0acd352810e9e1c3023df83c2d7f665",
-      "source_normalized_sha256": "c8f16c332f65d3fc848c593baaa051e7e0acd352810e9e1c3023df83c2d7f665",
-      "review_note": "App and worker recognition 166 and standalone recognition 186 stay aligned with their respective runtime.",
-      "standalone_sha256": "6bd6143a68527ad974588cd57f847e137ce7ee89203a7e7873477becfcbad67c",
+      "source_sha256": "0ecf2c40d2841027481da124cb16c3075f8a668229bc00bed332b6fdca92db57",
+      "source_normalized_sha256": "0ecf2c40d2841027481da124cb16c3075f8a668229bc00bed332b6fdca92db57",
+      "review_note": "App and desktop revision 167 and standalone revision 187 refresh their respective caches for printed fingering recognition.",
+      "standalone_sha256": "9e37cf578d8d14405dbc3f8de65e6aa87bf0dada80b4052755ceb9380602fac3",
       "reviewed_app_commit": "2bdb8536b043182f1898ef53e00749b7a50d1748",
       "license": "Apache-2.0",
       "scoped_reviewed_app_commit": "5a83c7704ff14579edcf52af5c1ab8e8e719a4d7",
