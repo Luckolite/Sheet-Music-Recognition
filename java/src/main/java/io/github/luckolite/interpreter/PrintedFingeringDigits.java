@@ -607,6 +607,7 @@ final class PrintedFingeringDigits {
         for (var mark : marks)
             if (mark.placement() == Placement.ABOVE) retained.put(mark.noteIndex(), mark.digit());
         var rows = new HashMap<Integer, List<Head>>();
+        var descendingMeasures = new HashMap<Integer, Boolean>();
         for (var beam : score.beamSource().resolve().groups()) {
             if (beam.source().tupletMark() != null || !beam.source().bridges().equals(List.of(3, 3, 3))
                     || !beam.source().hooks().isEmpty() || beam.columns().size() != 4) continue;
@@ -614,7 +615,10 @@ final class PrintedFingeringDigits {
             for (var column : beam.columns()) {
                 if (!column.usable() || column.owners().size() != 1) break;
                 var h = indexed[column.owners().get(0)];
-                if (h == null || h.harmonic() || h.note().staffStep() < 11
+                if (h == null || h.harmonic() || h.note().staffStep() < 7
+                        || (h.note().staffStep() < 11
+                                && !descendingMeasures.computeIfAbsent(h.note().measureIndex(),
+                                        measure -> descendingSixteenthMeasure(score, measure)))
                         || !ClosedMonophonicSixteenths.regularQuartetHead(h.note())
                         || h.note().stemDirection() != -1 || h.note().tupletDivisor() != 1
                         || h.note().augmentationDots() != 0 || h.gap() < 10 || h.gap() > 24
@@ -627,45 +631,80 @@ final class PrintedFingeringDigits {
         }
         for (var row : rows.values()) {
             if (row.size() < 8 || row.stream().filter(h -> retained.containsKey(h.index())).count() < 4) continue;
+            boolean descending = descendingMeasures.getOrDefault(row.get(0).note().measureIndex(), false);
             var examples = new ArrayList<ObservedFingering>();
+            var alignedExamples = new ArrayList<ObservedFingering>();
             for (var h : row) {
                 Integer digit = retained.get(h.index());
                 if (digit == null || digit == 0) continue;
-                var a = highLedgerDigit(raw, width, height, h);
-                var b = highLedgerDigit(normalized, width, height, h);
+                var a = highLedgerDigit(raw, width, height, h, false);
+                var b = highLedgerDigit(normalized, width, height, h, false);
+                boolean centered = a != null && b != null && a.agrees(b);
+                if (!centered && descending && digit == 3) {
+                    a = highLedgerDigit(raw, width, height, h, true);
+                    b = highLedgerDigit(normalized, width, height, h, true);
+                }
                 if (a == null || b == null || !a.agrees(b)) continue;
-                examples.add(new ObservedFingering(digit,
+                var example = new ObservedFingering(digit,
                         ruledFingerInk(raw, width, new BitSet(), a.left(), a.top(), a.right(), a.bottom()),
-                        ruledFingerInk(normalized, width, new BitSet(), b.left(), b.top(), b.right(), b.bottom())));
+                        ruledFingerInk(normalized, width, new BitSet(), b.left(), b.top(), b.right(), b.bottom()));
+                if (centered) examples.add(example);
+                if (descending) alignedExamples.add(example);
             }
             for (var h : row) {
                 if (retained.containsKey(h.index())) continue;
-                var a = highLedgerDigit(raw, width, height, h);
-                var b = highLedgerDigit(normalized, width, height, h);
+                var a = highLedgerDigit(raw, width, height, h, false);
+                var b = highLedgerDigit(normalized, width, height, h, false);
                 if (a == null || b == null || !a.agrees(b)) continue;
-                int digit = readHighLedgerDigit(raw, width, height, a, examples, false);
-                if (digit > 0 && digit == readHighLedgerDigit(normalized, width, height, b, examples, true))
+                int digit = readHighLedgerDigit(raw, width, height, a, examples, alignedExamples, false);
+                if (digit > 0 && digit == readHighLedgerDigit(normalized, width, height, b, examples, alignedExamples, true))
                     marks.add(new Mark(h.index(), digit, Placement.ABOVE));
             }
         }
     }
 
-    private static WordDigit highLedgerDigit(byte[] ink, int width, int height, Head h) {
+
+    private static boolean descendingSixteenthMeasure(ScorePageInterpretation score, int measure) {
+        if (measure < 0 || measure >= score.measures().size()
+                || score.measures().get(measure).cadenceQuarterBeats() != 0
+                || score.rests().stream().anyMatch(rest -> rest.measureIndex() == measure))
+            return false;
+        var notes = score.notes().stream().filter(note -> note.measureIndex() == measure)
+                .sorted(Comparator.comparingDouble(ScoreNoteEvent::positionInMeasure)).toList();
+        if (notes.size() != 12 || notes.get(0).positionInMeasure() > .15f
+                || notes.get(11).positionInMeasure() < .85f || notes.get(0).staffStep() < 11
+                || notes.get(0).staffStep() - notes.get(11).staffStep() < 4)
+            return false;
+        int previous = notes.get(0).staffStep();
+        for (var note : notes) {
+            if (!ClosedMonophonicSixteenths.regularQuartetHead(note) || note.stemDirection() != -1
+                    || note.tupletDivisor() != 1 || note.augmentationDots() != 0
+                    || note.staffStep() > previous || previous - note.staffStep() > 2)
+                return false;
+            previous = note.staffStep();
+        }
+        return true;
+    }
+    private static WordDigit highLedgerDigit(byte[] ink, int width, int height, Head h, boolean reference) {
         float gap = (float) (h.gap() * 8 / 8.2);
         var budget = new PrintedBeamShafts.Budget(40000);
         var shafts = PrintedBeamShafts.at(ink, width, height, (float) h.x(), (float) h.y(), gap, budget);
         if (budget.refused() || shafts.size() != 1 || shafts.get(0).direction() <= 0) return null;
-        int l = (int) Math.round(h.x() - .70 * gap), r = (int) Math.round(h.x() + .70 * gap);
+        // Only an already owned reference can use the wider crop.
+        float radius = reference ? .94f : .70f;
+        int l = (int) Math.round(h.x() - radius * gap), r = (int) Math.round(h.x() + radius * gap);
         int t = (int) Math.round(h.y() - 2.60 * gap), b = (int) Math.round(h.y() - .57 * gap);
         if (l < 0 || t < 0 || r >= width || b >= height) return null;
         var boxes = wordDigits(ink, width, height, l, t, r, b);
         if (boxes.size() != 1) return null;
         var shape = boxes.get(0);
-        return Math.abs(shape.x() - h.x()) <= .29 * gap && h.y() - shape.bottom() <= 1.12 * gap ? shape : null;
+        float separation = reference ? 1.34f : h.note().staffStep() >= 11 ? 1.12f : 1.24f;
+        return Math.abs(shape.x() - h.x()) <= (reference ? .41f : .29f) * gap
+                && h.y() - shape.bottom() <= separation * gap ? shape : null;
     }
 
     private static int readHighLedgerDigit(byte[] ink, int width, int height, WordDigit box,
-            List<ObservedFingering> references, boolean normalized) {
+            List<ObservedFingering> references, List<ObservedFingering> alignedExamples, boolean normalized) {
         var empty = new BitSet();
         var read = JoinedDigitTemplates.inspect(ink, width, height, empty,
                 box.left(), box.top(), box.right(), box.bottom(), () -> {});
@@ -685,7 +724,38 @@ final class PrintedFingeringDigits {
                 best = proof;
             }
         }
+        if (digit == 0 && !alignedExamples.isEmpty() && read.scores()[3] >= .61f
+                && (read.scores()[3] == read.best() || read.scores()[8] == read.best())
+                && alignsWithObservedThrees(shape, alignedExamples, normalized)) return 3;
         return digit;
+    }
+
+    private static boolean alignsWithObservedThrees(RuledFingerInk glyph,
+            List<ObservedFingering> references, boolean normalized) {
+        double best = 0, second = 0, rival = 0;
+        for (var sample : references) {
+            var ref = normalized ? sample.normalized() : sample.raw();
+            int bestShared = 0;
+            for (int shiftY = -2; shiftY <= 2; shiftY++) {
+                for (int shiftX = -1; shiftX <= 1; shiftX++) {
+                    int shared = 0;
+                    for (int at = glyph.pixels().nextSetBit(0); at >= 0; at = glyph.pixels().nextSetBit(at + 1)) {
+                        int x = at % 20 + shiftX, y = at / 20 + shiftY;
+                        if (x >= 0 && x < 20 && y >= 0 && y < 32 && ref.pixels().get(y * 20 + x))
+                            shared++;
+                    }
+                    bestShared = Math.max(bestShared, shared);
+                }
+            }
+            double likeness = bestShared / (double) Math.max(1,
+                    glyph.pixels().cardinality() + ref.pixels().cardinality() - bestShared);
+            if (sample.digit() != 3) rival = Math.max(rival, likeness);
+            else if (likeness > best) {
+                second = best;
+                best = likeness;
+            } else second = Math.max(second, likeness);
+        }
+        return best >= .75 && second >= .72 && rival > 0 && (best + second) / 2 - rival >= .10;
     }
 
 

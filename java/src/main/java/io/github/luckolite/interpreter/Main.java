@@ -603,6 +603,9 @@ public final class Main {
                 wrapped.continuations());
         if (!barlineStyles.isEmpty()) result.put("printedBarlineStyles", barlineStyles);
         if (tabs.isEmpty()) {
+            score = IncompleteDownstemQuartets.complete(score,
+                    decoderGray == null ? gray : decoderGray, gray, width, height);
+            result.put("score", score);
             var fingerings = PrintedFingeringDigits.capture(
                     gray, decoderGray == null ? gray : decoderGray, width, height,
                     annotations.words(), score, events);

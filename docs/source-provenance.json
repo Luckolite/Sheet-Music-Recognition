@@ -4299,10 +4299,10 @@
     },
     "GuideCacheIdentity.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/GuideCacheIdentity.java",
-      "source_sha256": "4c72c9f2dab28c8d797b60ed3fcd7dea8412012ea10af3098f94f390004f100a",
-      "source_normalized_sha256": "4c72c9f2dab28c8d797b60ed3fcd7dea8412012ea10af3098f94f390004f100a",
+      "source_sha256": "94b477655e9a37cc3027d675aed121cc16edd7db2c5f4ea3d3574da19dffef7e",
+      "source_normalized_sha256": "94b477655e9a37cc3027d675aed121cc16edd7db2c5f4ea3d3574da19dffef7e",
       "review_note": "App and desktop revision 168 and standalone revision 188 refresh their respective caches for printed fingering recognition.",
-      "standalone_sha256": "3187384af3a525620bac542ffafae3dd04cdf6f627fe3e5b099d972d724963f5",
+      "standalone_sha256": "90beb4a841f035f1cdf2b3f31be56222c70c1f82820c11049a26f667bc247290",
       "reviewed_app_commit": "bd726502235465a6d3e91e6f5abdbaada211d4c8",
       "scoped_reviewed_app_commit": "5a83c7704ff14579edcf52af5c1ab8e8e719a4d7",
       "license": "Apache-2.0",
@@ -4366,14 +4366,18 @@
         "standalone_normalized_sha256": "a7e5f61c81759dac6a898e9166033c1c3163cab38c87afd369a760abdc0b716b",
         "scope": "The app uses recognition revision 165 for its paired Guide runtime. Standalone uses independent revision 162 to invalidate its prior recognition cache. The standalone guide format stays at its existing default."
       },
-      "triplet_fingering_review": "Verified terminal fingering ownership, independent dot and beam evidence, and timing from the effective meter remain distinct."
+      "triplet_fingering_review": "Verified terminal fingering ownership, independent dot and beam evidence, and timing from the effective meter remain distinct.",
+      "downstem_quartet_review": {
+        "app_commit": "17d480ed2ff9f6c49875061d23f921e61435e311",
+        "scope": "App/worker revision 170 and standalone 190 invalidate caches for the verified quartet and fingering repair."
+      }
     },
     "GuideCacheIdentityTest.java": {
       "source_path": "app/src/test/java/com/musicsheets/app/pdf/GuideCacheIdentityTest.java",
       "standalone_path": "java/src/test/java/io/github/luckolite/interpreter/GuideCacheIdentityTest.java",
-      "source_sha256": "abe4d70b60931a9aab821531e704db9928043cdeb141f7c2a2198e171dbc3143",
-      "source_normalized_sha256": "abe4d70b60931a9aab821531e704db9928043cdeb141f7c2a2198e171dbc3143",
-      "standalone_sha256": "ffc73ce83a3f103ad55d5c18544f160695597797a016a21b09f71e4c67fb0473",
+      "source_sha256": "f17a7911a3a6f93598f0718999858e0d1835baaf96383a2ee73a8613962c793d",
+      "source_normalized_sha256": "f17a7911a3a6f93598f0718999858e0d1835baaf96383a2ee73a8613962c793d",
+      "standalone_sha256": "7fc8636fbf0adf09ece9e5da2053c8b7b7133d39d6fa9741406f21be517730a4",
       "license": "Apache-2.0",
       "recognition88_review_note": "Reviewed exact contextual global changes and namespace twins with original synthetic regressions. New helpers are selected explicitly by desktop decoder manifest; no models, private fixtures, schema, wire or audio changes.",
       "reviewed_app_commit": "b954c0cc5f30c21a302a8f65141d0c297d4177c3",
@@ -4430,7 +4434,11 @@
         "standalone_normalized_sha256": "8781a20352b592975a812f935222c50335bf014ddac9abbce9b4d76d71e4fd4a",
         "scope": "Each cache test pins its corresponding revision and exercises historical recognition identities."
       },
-      "triplet_fingering_review": "Verified terminal fingering ownership, independent dot and beam evidence, and timing from the effective meter remain distinct."
+      "triplet_fingering_review": "Verified terminal fingering ownership, independent dot and beam evidence, and timing from the effective meter remain distinct.",
+      "downstem_quartet_review": {
+        "app_commit": "17d480ed2ff9f6c49875061d23f921e61435e311",
+        "scope": "Both cache fixtures preserve Guide 311 and audio 106 behavior while checking their own recognition revision."
+      }
     },
     "HairpinApertureBarExtentOriginalTest.java": {
       "source_path": "app/src/test/java/com/musicsheets/app/pdf/HairpinApertureBarExtentOriginalTest.java",
@@ -9627,17 +9635,39 @@
       "review_note": "Both runtimes project the same verified pairs and reuse two already retained same-line samples to support the weaker detached upper 2 in both image planes.",
       "supplemental_fingering_review": "Explicit two-plane shaft and parenthesis proofs bind the pair on either side. The additional ordinary two uses the independently witnessed staff rule and at least three detached same-font references across distinct measures."
     },
+    "IncompleteDownstemQuartets.java": {
+      "source_path": "app/src/main/java/com/musicsheets/app/pdf/IncompleteDownstemQuartets.java",
+      "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/IncompleteDownstemQuartets.java",
+      "source_sha256": "0cb4a6b6b3bd86c61ad15b9b5c0ef4b88031fea66d36fac869eb96b2e35fc0ea",
+      "source_normalized_sha256": "0cb4a6b6b3bd86c61ad15b9b5c0ef4b88031fea66d36fac869eb96b2e35fc0ea",
+      "standalone_sha256": "0a38431a7b782766701988f3356403a1d54df97af78549204225001e26cd56c2",
+      "license": "Apache-2.0",
+      "reviewed_app_commit": "17d480ed2ff9f6c49875061d23f921e61435e311",
+      "reviewed_app_state": "Identical aside from package name. Both rasters must independently show the two rails and a break before the next retained group.",
+      "ingress_review": {
+        "app_caller": "app/src/main/java/com/musicsheets/app/pdf/PrintedPageExpressions.java",
+        "source_sha256": "9c15ebb401a1d00291d67f4c4d94c910f1fb2e291c5851a95255f0ca7d68cd35",
+        "standalone_caller": "java/src/main/java/io/github/luckolite/interpreter/Main.java",
+        "standalone_sha256": "ec2d2ad2d97c3aed3f2007bba09422b3f4d52f0646b82359478b05142d5474cf",
+        "native_manifest": "tools/native-worker/decoder-sources.txt",
+        "manifest_sha256": "9249a86c7864bc9e92ceebaeeef1c2f991e52b7f35bfd94335bfae20ab7b6f6e"
+      }
+    },
     "PrintedFingeringDigits.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/PrintedFingeringDigits.java",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/PrintedFingeringDigits.java",
-      "source_sha256": "14776341dd8e25a0cc2fc708c83e98d4cf4f0664494c355b0336a11e58ea837e",
+      "source_sha256": "c8cb175dddd9c0853b80bf7a40f27d5840faa65dd2d7aaf6162ec00486f85e01",
       "notes": "Shared detached numeral sequence proof. Standalone uses SheetInterpreter OCR words and playback events; the app uses PlayingTechniqueDetector words and guide heads. Both use original glyph templates and bounded two-raster optical checks.",
-      "source_normalized_sha256": "14776341dd8e25a0cc2fc708c83e98d4cf4f0664494c355b0336a11e58ea837e",
-      "standalone_sha256": "e02f428d40a45428fac39fbdbd0a1e8b5cf1b77596ec0f84fdfe8c8e2444196c",
+      "source_normalized_sha256": "c8cb175dddd9c0853b80bf7a40f27d5840faa65dd2d7aaf6162ec00486f85e01",
+      "standalone_sha256": "722681c04a563305a44ce45eda7c626bee2f46beff71780709b44811ec971b68",
       "staff_rule_review": "Both runtimes independently witness the staff rule and shaft, then verify the digit shape. The opposed quartet uses score order even when note columns on multiple systems share the same x coordinate.",
       "detached_reference_review": "Both decoders compare a partly hidden upper digit against independently retained printed examples. A verified four-note double beam with three existing marks can support the fourth detached digit.",
       "ledger_fingering_review": "The app and standalone require verified high ledger note shafts and detached numeral ink. Established upper fingerings supply independent examples when the generic templates have a close rival.",
-      "triplet_fingering_review": "Verified terminal fingering ownership, independent dot and beam evidence, and timing from the effective meter remain distinct."
+      "triplet_fingering_review": "Verified terminal fingering ownership, independent dot and beam evidence, and timing from the effective meter remain distinct.",
+      "downstem_quartet_review": {
+        "app_commit": "17d480ed2ff9f6c49875061d23f921e61435e311",
+        "scope": "Detached upper digits in closed descending sixteenth-note bars reuse complete double-rail group ownership and exact detached ink from both images. For detached threes, bounded alignment must independently match two already owned same-row examples in both rasters. Only an established reference can use the larger crop."
+      }
     },
     "PrintedAccidentalSpineRecovery.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/PrintedAccidentalSpineRecovery.java",
@@ -10804,10 +10834,10 @@
     },
     "guide_writer.py": {
       "source_path": "tools/native-worker/guide_writer.py",
-      "source_sha256": "1db9e8401c8440d831e04facfccdd34a26ef7fba6d80e3b9337e732dff2a236a",
-      "source_normalized_sha256": "1db9e8401c8440d831e04facfccdd34a26ef7fba6d80e3b9337e732dff2a236a",
+      "source_sha256": "4fb0fdb22cdb19d016b0e2350a2bb86d4fa29c7394795b34fb0a0b9ddb4b7e8f",
+      "source_normalized_sha256": "4fb0fdb22cdb19d016b0e2350a2bb86d4fa29c7394795b34fb0a0b9ddb4b7e8f",
       "review_note": "App and desktop revision 168 and standalone revision 188 refresh their respective caches for printed fingering recognition.",
-      "standalone_sha256": "0091a08b1310ecd48ffb63a4c36234fcafaba878839e20d80f061a418f95f985",
+      "standalone_sha256": "6b55ce6fed314e4518b49377677f841a85247910ac95730d7718b93bff6ebb75",
       "reviewed_app_commit": "2bdb8536b043182f1898ef53e00749b7a50d1748",
       "license": "Apache-2.0",
       "scoped_reviewed_app_commit": "5a83c7704ff14579edcf52af5c1ab8e8e719a4d7",
@@ -10852,7 +10882,11 @@
         "scope": "App Guide 310 appends note owner and printed accidental records after Guide 309 fields. Standalone exports these harmonic roles through its existing decoded event interface and retains its independent binary Guide formats."
       },
       "supplemental_fingering_review": "The app worker negotiates Guide 311 for an additive supplemental fingering record. The portable guide keeps its existing compatibility profile. Standalone MusicXML retains both source marks with an explicit endpoint digit.",
-      "triplet_fingering_review": "Verified terminal fingering ownership, independent dot and beam evidence, and timing from the effective meter remain distinct."
+      "triplet_fingering_review": "Verified terminal fingering ownership, independent dot and beam evidence, and timing from the effective meter remain distinct.",
+      "downstem_quartet_review": {
+        "app_commit": "17d480ed2ff9f6c49875061d23f921e61435e311",
+        "scope": "Runtime recognition constants advance without changing the guide record layouts."
+      }
     },
     "hairpin-export.js": {
       "source_path": "app/src/youtube/assets/musescore/hairpin-export.js",
