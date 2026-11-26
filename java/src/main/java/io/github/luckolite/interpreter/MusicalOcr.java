@@ -1036,14 +1036,24 @@ public final class MusicalOcr {
         right = Math.min(width, right);
         bottom = Math.min(height, bottom);
         if (right <= left || bottom <= top) return new OcrText("", List.of());
-        int cropWidth = right - left, cropHeight = bottom - top;
-        int[] pixels = new int[cropWidth * cropHeight];
-        for (int y = 0; y < cropHeight; y++)
-            for (int x = 0; x < cropWidth; x++) {
-                int value = gray[(top + y) * width + left + x] & 255;
-                pixels[y * cropWidth + x] = 0xff000000 | value << 16 | value << 8 | value;
+        long scaledWidth = (long) (right - left) * scale;
+        long scaledHeight = (long) (bottom - top) * scale;
+        if (scaledWidth > 20_000_000 || scaledHeight > 20_000_000
+                || scaledWidth * scaledHeight > 20_000_000)
+            return new OcrText("", List.of());
+        int outWidth = (int) scaledWidth, outHeight = (int) scaledHeight;
+        byte[] pixels = new byte[outWidth * outHeight];
+        for (int y = top, row = 0; y < bottom; y++, row += outWidth * scale) {
+            int source = y * width + left;
+            int column = row;
+            for (int x = left; x < right; x++) {
+                byte value = gray[source++];
+                for (int repeat = 0; repeat < scale; repeat++) pixels[column++] = value;
             }
-        return readPixels(pixels, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight, scale);
+            for (int repeat = 1; repeat < scale; repeat++)
+                System.arraycopy(pixels, row, pixels, row + repeat * outWidth, outWidth);
+        }
+        return reader.readGray(pixels, outWidth, outHeight);
     }
 
     private OcrText readPixels(
