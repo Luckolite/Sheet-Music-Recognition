@@ -61,6 +61,15 @@ public final class OrtSession implements AutoCloseable {
             configEntries.put(key, value);
         }
 
+        public void setMemoryPatternOptimization(boolean enabled) {
+            FakeOrt.events.add("pattern:" + enabled);
+        }
+
+        public void registerCustomOpLibrary(String library) throws OrtException {
+            FakeOrt.events.add("register:" + library);
+            FakeOrt.throwOrt(FakeOrt.libraryRegisterFailure);
+        }
+
         public void close() {
             FakeOrt.optionsCloseCalls++;
             FakeOrt.events.add("options.close");

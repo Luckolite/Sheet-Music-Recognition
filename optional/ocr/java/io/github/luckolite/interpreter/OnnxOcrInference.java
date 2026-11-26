@@ -11,18 +11,34 @@ public final class OnnxOcrInference implements PortableOcr.DirectDetectorInferen
     private final OrtEnvironment environment = OrtEnvironment.getEnvironment();
     private final OrtSession detector, recognizer;
     private final List<String> dictionary;
+    private final OrtSession.SessionOptions recognizerOptions;
+    private static String pinnedLibrary;
 
     public OnnxOcrInference(String detectorPath, String recognizerPath) throws Exception {
-        this(detectorPath, recognizerPath, false);
+        this(detectorPath, recognizerPath, false, null);
     }
 
     /** Own only the recognizer when text crops have already been located. */
     public static OnnxOcrInference recognizerOnly(String recognizerPath) throws Exception {
-        return new OnnxOcrInference(null, recognizerPath, true);
+        return new OnnxOcrInference(null, recognizerPath, true, null);
     }
 
-    private OnnxOcrInference(String detectorPath, String recognizerPath, boolean recognizerOnly)
+    /** Open the optional Android ARM64 CPU recognizer with a generated graph and custom operations. */
+    public static OnnxOcrInference openPackedArm64(
+            String detectorPath, String recognizerPath, String libraryPath) throws Exception {
+        if (!"Dalvik".equals(System.getProperty("java.vm.name"))
+                || !"aarch64".equals(System.getProperty("os.arch")))
+            throw new UnsupportedOperationException("Packed OCR requires Android ARM64");
+        var library = java.nio.file.Path.of(libraryPath).toRealPath().toString();
+        verify(library, Set.of("33e277d9de0a25cbe2568f220d0765dd53772c40efa8100ff900acd73be5d054"));
+        return new OnnxOcrInference(detectorPath, recognizerPath, false, library);
+    }
+
+    private OnnxOcrInference(
+            String detectorPath, String recognizerPath, boolean recognizerOnly, String packedLibrary)
             throws Exception {
+        if (packedLibrary != null && !"1.25.1".equals(environment.getVersion()))
+            throw new UnsupportedOperationException("Packed OCR requires ONNX Runtime 1.25.1");
         if (!recognizerOnly)
             verify(
                     detectorPath,
@@ -31,11 +47,14 @@ public final class OnnxOcrInference implements PortableOcr.DirectDetectorInferen
                             "4d97c44a20d30a81aad087d6a396b08f786c4635742afc391f6621f5c6ae78ae"));
         verify(
                 recognizerPath,
-                Set.of("b20bd37c168a570f583afbc8cd7925603890efbcdc000a59e22c269d160b5f5a"));
+                Set.of(packedLibrary == null
+                        ? "b20bd37c168a570f583afbc8cd7925603890efbcdc000a59e22c269d160b5f5a"
+                        : "751b79329b420192022f8e9901bbdb243c60efa627f8abbc9d08b6fb4b47f740"));
         verify(
                 recognizerPath + ".dictionary",
                 Set.of("1169fb297871f7a14d6a0f20c14af56de789c48b170e59dfb66950448e31c062"));
         OrtSession openedDetector = null, openedRecognizer = null;
+        OrtSession.SessionOptions packedOptions = null;
         try {
             try (var options = new OrtSession.SessionOptions()) {
                 options.setIntraOpNumThreads(2);
@@ -44,8 +63,19 @@ public final class OnnxOcrInference implements PortableOcr.DirectDetectorInferen
                 options.addConfigEntry("session.force_spinning_stop", "1");
                 if (!recognizerOnly)
                     openedDetector = environment.createSession(detectorPath, options);
-                options.setIntraOpNumThreads(4);
-                openedRecognizer = environment.createSession(recognizerPath, options);
+                if (packedLibrary == null) {
+                    options.setIntraOpNumThreads(4);
+                    openedRecognizer = environment.createSession(recognizerPath, options);
+                } else {
+                    packedOptions = new OrtSession.SessionOptions();
+                    packedOptions.setIntraOpNumThreads(4);
+                    packedOptions.setInterOpNumThreads(1);
+                    packedOptions.addConfigEntry("session.force_spinning_stop", "1");
+                    packedOptions.setMemoryPatternOptimization(false);
+                    pinLibrary(packedLibrary);
+                    packedOptions.registerCustomOpLibrary(packedLibrary);
+                    openedRecognizer = environment.createSession(recognizerPath, packedOptions);
+                }
             }
             dictionary =
                     List.copyOf(
@@ -55,16 +85,28 @@ public final class OnnxOcrInference implements PortableOcr.DirectDetectorInferen
         } catch (Exception | Error failure) {
             closeAfterFailure(openedDetector, failure);
             closeAfterFailure(openedRecognizer, failure);
+            closeAfterFailure(packedOptions, failure);
             throw failure;
         }
         detector = openedDetector;
         recognizer = openedRecognizer;
+        recognizerOptions = packedOptions;
     }
 
-    private static void closeAfterFailure(OrtSession session, Throwable failure) {
-        if (session != null)
+    private static synchronized void pinLibrary(String library) {
+        if (pinnedLibrary == null) {
+            // The registered custom operation domain borrows code from the library.
+            System.load(library);
+            pinnedLibrary = library;
+        } else if (!pinnedLibrary.equals(library)) {
+            throw new IllegalStateException("Packed OCR already uses a different library path");
+        }
+    }
+
+    private static void closeAfterFailure(AutoCloseable resource, Throwable failure) {
+        if (resource != null)
             try {
-                session.close();
+                resource.close();
             } catch (Exception | Error cleanup) {
                 if (cleanup != failure) failure.addSuppressed(cleanup);
             }
@@ -129,8 +171,15 @@ public final class OnnxOcrInference implements PortableOcr.DirectDetectorInferen
             if (detector != null) detector.close();
         } catch (OrtException | RuntimeException | Error failure) {
             closeAfterFailure(recognizer, failure);
+            closeAfterFailure(recognizerOptions, failure);
             throw failure;
         }
-        recognizer.close();
+        try {
+            recognizer.close();
+        } catch (OrtException | RuntimeException | Error failure) {
+            closeAfterFailure(recognizerOptions, failure);
+            throw failure;
+        }
+        if (recognizerOptions != null) recognizerOptions.close();
     }
 }

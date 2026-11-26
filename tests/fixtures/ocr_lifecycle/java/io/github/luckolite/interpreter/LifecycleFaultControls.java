@@ -498,6 +498,59 @@ public final class LifecycleFaultControls {
                     FakeOrt.recognizerCloseFailure = e;
                     closeFailure(e);
                 });
+        run("packed-rejects-desktop-before-loading", () -> {
+            try {
+                OnnxOcrInference.openPackedArm64("detector", "packed", "missing.so");
+                throw new AssertionError("Packed OCR opened on a desktop JVM");
+            } catch (UnsupportedOperationException expected) {
+                need(FakeOrt.events.isEmpty(), "Unsupported host touched the runtime");
+            }
+        });
+        var packedLibrary = Files.createFile(Path.of(args[1]).resolveSibling("packed-test.so")).toString();
+        var hostVm = System.getProperty("java.vm.name");
+        var hostArch = System.getProperty("os.arch");
+        try {
+            System.setProperty("java.vm.name", "Dalvik");
+            System.setProperty("os.arch", "aarch64");
+            run("packed-pins-library-through-session-close", () -> {
+                try (var reader = OnnxOcrInference.openPackedArm64("detector", "packed", packedLibrary)) {
+                    need(FakeOrt.optionsCloseCalls == 1, "Packed options closed before recognition");
+                    need(FakeOrt.events.stream().anyMatch(e -> e.startsWith("load:")), "Library was not pinned");
+                    need(reader.dictionary().equals(List.of("", "a", "b")), "Packed dictionary was lost");
+                }
+                closeCounts(1, 1, 2);
+                need(FakeOrt.events.lastIndexOf("options.close") > FakeOrt.events.indexOf("close:packed"),
+                        "Custom operations unloaded before the recognizer closed");
+            });
+            run("packed-register-error-releases-detector-and-options", () -> {
+                var failure = new OrtException("library registration failed");
+                FakeOrt.libraryRegisterFailure = failure;
+                try {
+                    OnnxOcrInference.openPackedArm64("detector", "packed", packedLibrary);
+                    throw new AssertionError("Expected registration failure");
+                } catch (OrtException actual) {
+                    primary(actual, failure);
+                    closeCounts(1, 0, 2);
+                }
+            });
+            run("packed-close-keeps-recognizer-failure-primary", () -> {
+                var reader = OnnxOcrInference.openPackedArm64("detector", "packed", packedLibrary);
+                var primaryFailure = new OrtException("packed recognizer close failed");
+                var optionsFailure = new IllegalStateException("custom options close failed");
+                FakeOrt.recognizerCloseFailure = primaryFailure;
+                FakeOrt.optionsCloseFailure = optionsFailure;
+                try {
+                    reader.close();
+                    throw new AssertionError("Expected close failure");
+                } catch (OrtException actual) {
+                    primary(actual, primaryFailure, optionsFailure);
+                    closeCounts(1, 1, 2);
+                }
+            });
+        } finally {
+            System.setProperty("java.vm.name", hostVm);
+            System.setProperty("os.arch", hostArch);
+        }
         int failures = (int) rows.stream().filter(r -> r.get("criteria").equals("FAIL")).count();
         Files.writeString(
                 Path.of(args[1]),

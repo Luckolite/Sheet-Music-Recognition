@@ -9,6 +9,10 @@ public final class OrtEnvironment {
         return INSTANCE;
     }
 
+    public String getVersion() {
+        return "1.25.1";
+    }
+
     public OrtSession createSession(String path, OrtSession.SessionOptions options)
             throws OrtException {
         FakeOrt.events.add("create:" + path);

@@ -37,8 +37,14 @@ def fault_instrumented_copy(raw):
     original_dictionary = matches[0].group(0)
     dictionary_hook = ('ai.onnxruntime.FakeOrt.readDictionary(recognizerPath + ".dictionary", '
                        'java.nio.charset.StandardCharsets.UTF_8)')
-    instrumented = text.replace(original_verify, verify_hook, 1).replace(original_dictionary, dictionary_hook, 1)
-    restored = instrumented.replace(verify_hook, original_verify, 1).replace(dictionary_hook, original_dictionary, 1)
+    load = 'System.load(library);'
+    load_hook = 'ai.onnxruntime.FakeOrt.events.add("load:" + library);'
+    if text.count(load) != 1:
+        raise AssertionError('Native library loading must have one entry point')
+    instrumented = (text.replace(original_verify, verify_hook, 1)
+                    .replace(original_dictionary, dictionary_hook, 1).replace(load, load_hook, 1))
+    restored = (instrumented.replace(verify_hook, original_verify, 1)
+                .replace(dictionary_hook, original_dictionary, 1).replace(load_hook, load, 1))
     if restored.encode('utf-8') != raw:
         raise AssertionError('Reversing the two test-only IO hooks must restore exact source bytes')
     return instrumented.encode('utf-8')
@@ -74,8 +80,8 @@ class OnnxOcrLifecycleTest(unittest.TestCase):
             self.assertEqual(0, executed.returncode, executed.stdout)
             result = json.loads(result_file.read_text(encoding='utf-8'))
             self.assertEqual('PASS', result['status'])
-            self.assertEqual(29, result['criteria'])
-            self.assertEqual(29, result['criterionPasses'])
+            self.assertEqual(33, result['criteria'])
+            self.assertEqual(33, result['criterionPasses'])
             self.assertEqual(0, result['criterionFailures'])
             self.assertTrue(result['allExpected'])
             for row in result['rows']:

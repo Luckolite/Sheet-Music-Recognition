@@ -18,7 +18,8 @@ public final class FakeOrt {
             optionsCloseFailure,
             dictionaryFailure,
             detectorCloseFailure,
-            recognizerCloseFailure;
+            recognizerCloseFailure,
+            libraryRegisterFailure;
     public static int optionsCreated,
             optionsCloseCalls,
             tensorsCreated,
@@ -53,6 +54,7 @@ public final class FakeOrt {
         sessions.clear();
         sessionSettings.clear();
         recognizerConfigFailure = null;
+        libraryRegisterFailure = null;
         verifyFailure =
                 optionsNewFailure =
                         configFailure =
@@ -96,23 +98,25 @@ public final class FakeOrt {
 
     public static void verify(String path, Set<String> allowed) throws IOException {
         events.add("verify:" + path);
-        Set<String> expected =
-                path.equals("detector")
-                        ? Set.of(
-                                "d2a7720d45a54257208b1e13e36a8479894cb74155a5efe29462512d42f49da9",
-                                "4d97c44a20d30a81aad087d6a396b08f786c4635742afc391f6621f5c6ae78ae")
-                        : path.equals("recognizer")
-                                ? Set.of(
-                                        "b20bd37c168a570f583afbc8cd7925603890efbcdc000a59e22c269d160b5f5a")
-                                : Set.of(
-                                        "1169fb297871f7a14d6a0f20c14af56de789c48b170e59dfb66950448e31c062");
+        Set<String> expected = switch (new File(path).getName()) {
+            case "detector" -> Set.of(
+                    "d2a7720d45a54257208b1e13e36a8479894cb74155a5efe29462512d42f49da9",
+                    "4d97c44a20d30a81aad087d6a396b08f786c4635742afc391f6621f5c6ae78ae");
+            case "recognizer" -> Set.of("b20bd37c168a570f583afbc8cd7925603890efbcdc000a59e22c269d160b5f5a");
+            case "packed" -> Set.of("751b79329b420192022f8e9901bbdb243c60efa627f8abbc9d08b6fb4b47f740");
+            case "packed-test.so" -> Set.of("33e277d9de0a25cbe2568f220d0765dd53772c40efa8100ff900acd73be5d054");
+            case "recognizer.dictionary", "packed.dictionary" ->
+                    Set.of("1169fb297871f7a14d6a0f20c14af56de789c48b170e59dfb66950448e31c062");
+            default -> throw new AssertionError("Unexpected artifact path " + path);
+        };
         if (!allowed.equals(expected)) throw new AssertionError("allowed checksum set changed");
         throwIo(verifyFailure);
     }
 
     public static List<String> readDictionary(String path, Charset charset) throws IOException {
         events.add("dictionary:" + path + ":" + charset.name());
-        if (!path.equals("recognizer.dictionary") || !charset.name().equals("UTF-8"))
+        if ((!path.equals("recognizer.dictionary") && !path.equals("packed.dictionary"))
+                || !charset.name().equals("UTF-8"))
             throw new AssertionError("dictionary input changed");
         throwIo(dictionaryFailure);
         return dictionaryWithNull

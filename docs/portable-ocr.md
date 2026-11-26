@@ -106,12 +106,13 @@ confidence, and unchanged caller input. It also checks that detection is rejecte
 in line-only mode. This is an optional native gate using the supplied models and
 runtime; it adds no runtime or model dependency to the ordinary Java/Python gates.
 
-The normal Python unittest suite also runs 29 original lifecycle fault controls
+The normal Python unittest suite also runs lifecycle fault controls
 against a fake public ORT API in an isolated temporary classpath. It checks
 partial constructor acquisition, options/dictionary failures, attempted cleanup,
 primary/suppressed exception identity, immutable dictionaries and unchanged
-inference input bits and caller arrays. Only the temporary test copy replaces
-checksum and dictionary IO; reversing those two hooks restores the exact binding.
+inference input bits and caller arrays. The temporary test copy substitutes
+checksum and dictionary IO and native library loading. Reversing the three hooks
+restores the exact binding.
 These controls require a JDK but no runtime binaries, models or images. They prove
 Java ownership and failure behavior, not native resource release after a failed
 native close or model accuracy.
@@ -124,6 +125,26 @@ Model lineage and redistribution terms:
 RapidOCR documents converted artifacts under the upstream Apache-2.0 terms.
 No third-party model artifacts, fonts, runtime binaries, or private scans are
 included by this change.
+
+## Optional Android ARM64 recognizer
+
+Android callers using ONNX Runtime 1.25.1 can open
+`OnnxOcrInference.openPackedArm64(detectorPath, packedRecognizerPath, libraryPath)`.
+Generate the recognizer with Python ONNX 1.19.1 and NumPy 1.26.2. Build the custom
+operations with Zig 0.15.2 and the headers extracted from the Android 1.25.1 AAR.
+
+```sh
+python optional/ocr/native/generate_packed_recognizer.py latin_PP-OCRv5_rec_mobile.onnx packed.onnx
+python optional/ocr/native/build_packed_recognizer.py /path/to/zig /path/to/ort-headers libscore_reader_packed_ocr.so
+```
+
+Copy the original pinned dictionary to `packed.onnx.dictionary`. Keep one copy
+of the native library at a stable absolute path for the process. The loader
+verifies the model, dictionary and library before opening the packed recognizer.
+The detector uses two inference threads and the recognizer uses four. The
+generated graph compresses repeated activations on 320-pixel inputs and retains
+the original operations for other input widths. The existing Java constructors
+and the Python CLI continue to use their usual models.
 
 ## Optional local worker
 
