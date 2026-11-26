@@ -114,6 +114,17 @@ final class CommonTimeMeter {
             int firstLine,
             float gap,
             float slope) {
+        return read(gray, width, height, left, right, firstLine, gap, slope, false);
+    }
+
+    static boolean readTerminalCut(
+            byte[] gray, int width, int height, int left, int right, int firstLine, float gap) {
+        return read(gray, width, height, left, right, firstLine, gap, 0, true) == 2;
+    }
+
+    private static int read(
+            byte[] gray, int width, int height, int left, int right, int firstLine, float gap,
+            float slope, boolean terminal) {
         if (gray == null
                 || gray.length != width * height
                 || gap < 6
@@ -225,7 +236,7 @@ final class CommonTimeMeter {
             }
             if (rows > 0
                     && present >= rows * .90f
-                    && separatedCut(gray, width, height, left, x, mid, gap, slope, firstLine)) {
+                    && separatedCut(gray, width, height, left, x, mid, gap, slope, firstLine, terminal)) {
                 cut = true;
                 break;
             }
@@ -427,7 +438,7 @@ final class CommonTimeMeter {
             float mid,
             float gap,
             float slope,
-            int firstLine) {
+            int firstLine, boolean terminal) {
         int[] supported = new int[2], total = new int[2];
         int radius = Math.max(1, Math.round(gap * .12f));
         int channelEnd = cut - Math.max(1, Math.round(gap * .10f));
@@ -446,6 +457,10 @@ final class CommonTimeMeter {
                 }
             }
         }
+        // A compact courtesy cut can touch the inside of both bowls away from the middle.
+        // Near an isolated terminal double rule, require distinct openings on both halves.
+        if (terminal && supported[0] >= gap * .15f && supported[1] >= gap * .15f
+                && supported[0] + supported[1] >= gap * .42f) return true;
         return total[0] > 0
                 && total[1] > 0
                 && supported[0] >= total[0] * .65f

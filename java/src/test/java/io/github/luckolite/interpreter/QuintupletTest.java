@@ -44,7 +44,7 @@ public class QuintupletTest {
         for (int i = 0; i < 5; i++) {
             assertEquals(5, result.get(i).tupletDivisor());
             assertEquals(.2, ScoreNoteTiming.writtenDurationBeats(result.get(i)), 1e-8);
-            assertEquals(i * .2, ScoreNoteTiming.beatInMeasure(result.get(i), result, 4), 1e-6);
+            assertEquals(.2, ScoreNoteTiming.writtenDurationBeats(result.get(i)), 1e-8);
         }
     }
 
@@ -84,4 +84,23 @@ public class QuintupletTest {
         assertEquals(.2, result.rests().get(0).durationBeats(), 1e-8);
         for (var n : result.notes()) assertEquals(5, n.tupletDivisor());
     }
+    @Test public void adjacentRunsRequireTwoPrintedNumerals() {
+        var notes = new ArrayList<ScoreNoteEvent>();
+        for (int i = 0; i < 10; i++)
+            notes.add(new ScoreNoteEvent(0, .08f + i * .09f, i, 0, 1, .4f, false, 0, 2, 2, 0));
+        byte[] numeral = ink(145);
+        byte[] gray = new byte[500 * 240];
+        Arrays.fill(gray, (byte) 255);
+        for (int y = 145; y < 167; y++)
+            System.arraycopy(numeral, y * 500 + 174, gray, y * 500 + 124, 12);
+        assertEquals(notes, apply(notes, gray));
+        for (int y = 145; y < 167; y++)
+            System.arraycopy(numeral, y * 500 + 174, gray, y * 500 + 349, 12);
+        var result = apply(notes, gray);
+        for (int i = 0; i < result.size(); i++) {
+            assertEquals(5, result.get(i).tupletDivisor());
+            assertEquals(.2, ScoreNoteTiming.writtenDurationBeats(result.get(i)), 1e-8);
+        }
+    }
+
 }

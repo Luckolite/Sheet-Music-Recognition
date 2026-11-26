@@ -9,12 +9,77 @@ import static io.github.luckolite.interpreter.ScorePlaybackDirection.Kind.*;
 
 public class ScoreNavigationDetectorTest {
     @Test
+    public void raisedCodaHeadingRequiresAPrintedSymbolAndFirstBar() {
+        var label = new PlayingTechniqueDetector.Word("Coda", .129f, .043f, .17f, .072f);
+        var glyph = new ScoreNavigationDetector.Glyph(CODA, .120f, .038f, .078f);
+
+        assertEquals(List.of(new ScorePlaybackDirection(0, CODA)),
+                detect(List.of(label), List.of(glyph)));
+        assertTrue(detect(List.of(label), List.of()).isEmpty());
+        assertTrue(detect(List.of(), List.of(glyph)).isEmpty());
+
+        var middle = new PlayingTechniqueDetector.Word("Coda", .48f, .043f, .53f, .072f);
+        var midGlyph = new ScoreNavigationDetector.Glyph(CODA, .472f, .038f, .078f);
+        assertTrue(detect(List.of(middle), List.of(midGlyph)).isEmpty());
+    }
+
+    @Test
     public void codaSignAtToCodaBoundaryIsTheTriggerRatherThanADestination() {
         assertEquals(
                 List.of(new ScorePlaybackDirection(2, TO_CODA), new ScorePlaybackDirection(3, CODA)),
                 detect(List.of(word("To Coda", .37f, .46f)), List.of(
                         new ScoreNavigationDetector.Glyph(CODA, .515f, .15f, .22f),
                         new ScoreNavigationDetector.Glyph(CODA, .72f, .15f, .22f))));
+    }
+
+    @Test
+    public void glyphTightlyFollowingToCodaBelongsToThatInstructionAtABarline() {
+        var trigger = word("To Coda", .40f, .492f);
+        var adjacent = new ScoreNavigationDetector.Glyph(CODA, .503f, .17f, .245f);
+
+        assertEquals(List.of(new ScorePlaybackDirection(2, TO_CODA)),
+                detect(List.of(trigger), List.of(adjacent)));
+    }
+
+    @Test
+    public void oneLabelledDestinationCanCrossTheIncomingBarline() {
+        var label = word("Coda", .52f, .58f);
+        var sign = new ScoreNavigationDetector.Glyph(CODA, .503f, .17f, .245f);
+
+        assertEquals(List.of(new ScorePlaybackDirection(2, CODA)),
+                detect(List.of(label), List.of(sign)));
+    }
+
+    @Test
+    public void endingDigitMergedWithToCodaKeepsTheTriggerWhenTheGlyphConfirmsIt() {
+        var merged = word("To Coda 1.", .40f, .55f);
+        var sign = new ScoreNavigationDetector.Glyph(CODA, .488f, .18f, .22f);
+
+        assertEquals(List.of(new ScorePlaybackDirection(2, TO_CODA)),
+                detect(List.of(merged), List.of(sign)));
+        assertTrue(detect(List.of(merged), List.of()).isEmpty());
+    }
+
+    @Test
+    public void codaSymbolBeforeItsTextAnchorsBeforeAnExpandedMultiRest() {
+        var trigger = new PlayingTechniqueDetector.Word("To Coda", .52f, .17f, .60f, .245f);
+        var leading = new ScoreNavigationDetector.Glyph(CODA, .507f, .17f, .245f);
+        var expanded = List.of(bars.get(0), bars.get(1), bars.get(2), bars.get(2), bars.get(3));
+
+        assertEquals(List.of(new ScorePlaybackDirection(2, TO_CODA)),
+                ScoreNavigationDetector.detect(List.of(trigger), List.of(leading),
+                        staffs, expanded, 1000, 400));
+    }
+
+    @Test
+    public void mergedCodaGlyphsNeedMatchingPrintedEvidence() {
+        var sign = new ScoreNavigationDetector.Glyph(CODA, .488f, .18f, .22f);
+        for (String text : List.of("To Coda φ", "To Coda-")) {
+            var merged = word(text, .40f, .52f);
+            assertEquals(List.of(new ScorePlaybackDirection(2, TO_CODA)),
+                    detect(List.of(merged), List.of(sign)));
+            assertTrue(detect(List.of(merged), List.of()).isEmpty());
+        }
     }
 
     @Test
@@ -46,7 +111,7 @@ public class ScoreNavigationDetectorTest {
                 new MeasureRegion(.1f, .49f, .2f, .575f),
                 new MeasureRegion(.51f, .9f, .2f, .575f));
         var glyphs = List.of(
-                new ScoreNavigationDetector.Glyph(SEGNO, .493f, .11f, .18f),
+                new ScoreNavigationDetector.Glyph(SEGNO, .487f, .11f, .18f),
                 new ScoreNavigationDetector.Glyph(SEGNO, .507f, .385f, .455f));
         assertEquals(List.of(new ScorePlaybackDirection(1, SEGNO)),
                 ScoreNavigationDetector.detect(List.of(), glyphs, staves, measures, 800, 400));

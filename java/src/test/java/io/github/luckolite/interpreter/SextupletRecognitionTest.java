@@ -180,4 +180,36 @@ public class SextupletRecognitionTest {
             assertEquals(
                     first + i / 6., ScoreNoteTiming.beatInMeasure(notes.get(i), notes, 4), 1e-9);
     }
+    @Test public void openItalicCurlWithOneClosedBowlIsSix() {
+        String[] rows = {
+            ".........#####..",
+            "......#########.",
+            ".....###.....###",
+            "....###......###",
+            "...###........##",
+            "..###...........",
+            "..###...........",
+            ".###............",
+            ".###########....",
+            ".############...",
+            "###.......####..",
+            "###........###..",
+            "###........###..",
+            "###........###..",
+            "###.......###...",
+            ".###......###...",
+            ".###.....###....",
+            "..#########.....",
+            "...#######......",
+            "....#####......."
+        };
+        int w = rows[0].length(), h = rows.length;
+        byte[] gray = new byte[w * h];
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++) gray[y * w + x] = rows[y].charAt(x) == '#' ? 0 : (byte) 255;
+        assertTrue(TupletSixGlyph.matches(gray, w, 0, 0, w, h));
+        for (int y = 17; y < h; y++) gray[y * w + 7] = (byte) 255;
+        assertFalse(TupletSixGlyph.matches(gray, w, 0, 0, w, h));
+    }
+
 }

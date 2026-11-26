@@ -10,8 +10,8 @@ import java.util.List;
 final class NavigationSegnoGlyphs {
     // A system heading can place the Segno slightly above the usual six-space band.
     static final float MAX_STAFF_DISTANCE = 6.25f;
-    private static final float MAX_BODY_HEIGHT = 4.5f;
-    private static final float MAX_BODY_WIDTH = 3.6f;
+    private static final float MAX_BODY_HEIGHT = 5f;
+    private static final float MAX_BODY_WIDTH = 4f;
 
     private NavigationSegnoGlyphs() {}
 

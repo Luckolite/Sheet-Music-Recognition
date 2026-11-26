@@ -136,4 +136,60 @@ public class SeptupletTest {
         assertEquals(1.0 / 7, result.rests().get(0).durationBeats(), 1e-8);
         for (var n : result.notes()) assertEquals(7, n.tupletDivisor());
     }
+
+    @Test
+    public void oppositeStemStartsASeparateBeamAfterTheSeven() {
+        var notes = run(8);
+        for (int i = 0; i < 7; i++) notes.set(i, notes.get(i).withStemDirection(1));
+        notes.set(7, notes.get(7).withStemDirection(-1));
+        var result = apply(notes, ink(30));
+        assertTrue(result.subList(0, 7).stream().allMatch(n -> n.tupletDivisor() == 7));
+        assertEquals(1, result.get(7).tupletDivisor());
+
+        notes.set(7, notes.get(7).withStemDirection(1));
+        assertEquals(notes, apply(notes, ink(30)));
+    }
+
+    @Test
+    public void sevenDottedSixteenthsRetainTheirDots() {
+        var notes = new ArrayList<ScoreNoteEvent>();
+        for (int i = 0; i < 7; i++)
+            notes.add(new ScoreNoteEvent(0, .20f + i * .08f, i, 0, 1, .4f, false, 1, 2, 2, 0, 1));
+        var result = apply(notes, ink(30));
+        for (var note : result) {
+            assertEquals(1, note.augmentationDots());
+            assertEquals(7, note.tupletDivisor());
+            assertEquals(4, note.tupletNormalNotes());
+            assertEquals(3.0 / 14, ScoreNoteTiming.writtenDurationBeats(note), 1e-8);
+        }
+    }
+
+    @Test
+    public void thePrintedSevenIsNotAlsoAnEighthRest() {
+        var notes = run(7);
+        var numeralAlias = new ScoreRestEvent(0, .445f, 40f / 240, .09f, 0, 1, .5);
+        var result = TripletRhythmDetector.withRests(
+                notes, List.of(numeralAlias), BARS, ink(30), 500, 240);
+        assertTrue(result.rests().isEmpty());
+        assertTrue(result.notes().stream().allMatch(n -> n.tupletDivisor() == 7));
+
+        var separateRest = new ScoreRestEvent(0, .445f, .27f, .09f, 0, 1, .5);
+        var withRest = TripletRhythmDetector.withRests(
+                notes, List.of(separateRest), BARS, ink(30), 500, 240);
+        assertEquals(List.of(separateRest), withRest.rests());
+    }
+
+    @Test
+    public void consecutiveSevensWithTwoPrintedCountsKeepTheirSeparateRatios() {
+        var notes = new ArrayList<ScoreNoteEvent>();
+        for (int i = 0; i < 14; i++) notes.add(note(.04f + i * .065f, i, 2));
+        byte[] number = ink(30);
+        byte[] gray = new byte[500 * 240];
+        Arrays.fill(gray, (byte) 255);
+        for (int y = 30; y < 52; y++) {
+            System.arraycopy(number, y * 500 + 214, gray, y * 500 + 111, 12);
+            System.arraycopy(number, y * 500 + 214, gray, y * 500 + 338, 12);
+        }
+        assertTrue(apply(notes, gray).stream().allMatch(n -> n.tupletDivisor() == 7));
+    }
 }

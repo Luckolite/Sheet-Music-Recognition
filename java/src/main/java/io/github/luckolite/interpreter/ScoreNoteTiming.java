@@ -86,21 +86,30 @@ public final class ScoreNoteTiming {
         private boolean closed;
 
         private final java.util.IdentityHashMap<ScoreNoteEvent, Double> tremoloAdvances;
+        private final java.util.Map<ScoreNoteEvent, ScoreNoteEvent> tremoloPredecessors;
 
         private TimingSession() {
             tremoloAdvances =
                     previous == null ? new java.util.IdentityHashMap<>() : previous.tremoloAdvances;
+            tremoloPredecessors = previous == null ? java.util.Map.of() : previous.tremoloPredecessors;
             SESSION.set(this);
         }
 
         private TimingSession(List<ScoreNoteEvent> notes, ScoreTremoloSource source) {
             tremoloAdvances = ScoreTremoloTiming.advances(notes, source);
+            var predecessors = new java.util.IdentityHashMap<ScoreNoteEvent, ScoreNoteEvent>();
+            if (!tremoloAdvances.isEmpty()) {
+                for (var pair : source.performanceResolution().resolved()) {
+                    var first = notes.get(pair.first().get(0));
+                    for (int index : pair.second()) predecessors.put(notes.get(index), first);
+                }
+            }
+            tremoloPredecessors = predecessors;
             SESSION.set(this);
         }
 
         private TimingSession(ScorePageInterpretation score) {
-            tremoloAdvances = ScoreTremoloTiming.advances(score);
-            SESSION.set(this);
+            this(score.notes(), score.tremoloSource());
         }
 
         private Double get(List<ScoreNoteEvent> notes, TimingKey key) {
@@ -549,6 +558,16 @@ public final class ScoreNoteTiming {
             ScoreNoteEvent target, List<ScoreNoteEvent> notes, float beatsPerMeasure) {
         if (target == null || notes == null || notes.isEmpty())
             return beatInMeasure(target, beatsPerMeasure);
+        TimingSession timing = SESSION.get();
+        var earlierEndpoint = timing == null ? null : timing.tremoloPredecessors.get(target);
+        if (earlierEndpoint != null && !timing.tremoloPredecessors.containsKey(earlierEndpoint)
+                && measureVoice(target, notes).contains(earlierEndpoint)) {
+            // A validated pair shares one span. Engraved spacing alone cannot insert silence
+            // between its two endpoints.
+            double onset = beatInMeasure(earlierEndpoint, notes, beatsPerMeasure)
+                    + advanceDurationBeats(earlierEndpoint);
+            if (onset + advanceDurationBeats(target) <= beatsPerMeasure + 1e-7) return onset;
+        }
         GracePlayback grace = gracePlayback(target, notes);
         if (grace != null) {
             if (grace.principal == null)

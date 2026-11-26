@@ -430,6 +430,28 @@ public final class OmrMeasurePostProcessorTest {
         staffWithBars(page, width, top, bars ? new int[] {60, 180, 300, 420, 540} : new int[0]);
     }
 
+    @Test
+    public void recoversUnlabelledSeparatorAfterCappedRest() {
+        int width = 600, height = 240, top = 100;
+        byte[] labels = page(width, height);
+        byte[] gray = page(width, height);
+        java.util.Arrays.fill(gray, (byte) 255);
+        staffWithBars(labels, width, top, new int[] {60, 540});
+        rawStaffAndBars(gray, width, top, new int[] {60, 281, 540});
+        for (int x = 80; x <= 270; x++) {
+            int radius = x <= 82 || x >= 268 ? 8 : 2;
+            for (int y = top + 16 - radius; y <= top + 16 + radius; y++)
+                gray[y * width + x] = 0;
+        }
+
+        assertEquals(2, OmrMeasurePostProcessor.process(labels, gray, width, height).size());
+
+        for (int x = 268; x <= 270; x++)
+            for (int y = top + 9; y <= top + 23; y++)
+                if (Math.abs(y - (top + 16)) > 2) gray[y * width + x] = (byte) 255;
+        assertEquals(1, OmrMeasurePostProcessor.process(labels, gray, width, height).size());
+    }
+
     private static void staffWithBars(byte[] page, int width, int top, int[] bars) {
         for (int line = 0; line < 5; line++) {
             int y = top + line * 8;

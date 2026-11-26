@@ -50,14 +50,12 @@ final class PrintedEndingBrackets {
                 || gray.length != (long) width * height
                 || staffs == null
                 || measures == null
-                || words == null
-                || words.isEmpty()) return List.of();
+                || words == null) return List.of();
         var selectors = new ArrayList<Selector>();
         for (var word : words) {
             var parsed = passes(word.text());
             if (!parsed.isEmpty()) selectors.add(new Selector(word, parsed));
         }
-        if (selectors.isEmpty()) return List.of();
         var result = new ArrayList<Mark>();
         boolean[] seen = new boolean[0];
         int[] runs = new int[256];
@@ -227,7 +225,14 @@ final class PrintedEndingBrackets {
                         matched = word;
                         passes = selector.passes();
                     }
-                    if (matched == null || ambiguous) continue;
+                    if (ambiguous) continue;
+                    if (matched == null) {
+                        double roofY = top + first + slope * origin + intercept;
+                        matched = isolatedSelector(gray, width, height, segmentLeft, segmentRight,
+                                roofY, slope, hook, gap);
+                        if (matched == null) continue;
+                        passes = passes(matched.text());
+                    }
                     int start =
                             PrintedRepeatGlyphs.boundary(
                                     measures, staff, segmentLeft, false, width, height);
@@ -252,6 +257,76 @@ final class PrintedEndingBrackets {
         }
         result.sort(Comparator.comparingInt(Mark::start).thenComparingInt(Mark::end));
         return List.copyOf(result);
+    }
+
+    /** A missing page OCR token can be recovered from a digit and its independent period. */
+    private static PlayingTechniqueDetector.Word isolatedSelector(
+            byte[] gray, int width, int height, int left, int right,
+            double roofY, double slope, int hook, float gap) {
+        int cropLeft = left + Math.max(2, Math.round(.16f * gap));
+        int cropRight = Math.min(right - 1, left + Math.round(3 * gap));
+        int top = Math.max(0, (int) Math.ceil(roofY + Math.max(0, slope * (cropRight - left))) + 1);
+        int bottom = Math.min(height - 1, (int) Math.floor(roofY + Math.min(2.7f * gap, hook + .25f * gap)));
+        if (cropLeft > cropRight || top > bottom
+                || (long) (cropRight - cropLeft + 1) * (bottom - top + 1) > 16_384) return null;
+        var graph = RawNumeralComponents.capture(gray, width, height, cropLeft, top, cropRight, bottom,
+                () -> {}, () -> {});
+        PlayingTechniqueDetector.Word candidate = null;
+        for (var digit : graph.components()) {
+            int glyphHeight = digit.bottom - digit.top + 1;
+            int glyphWidth = digit.right - digit.left + 1;
+            if (digit.left - left > 1.4f * gap || digit.right == cropRight
+                    || glyphHeight < .72f * gap || glyphHeight > 2.2f * gap
+                    || glyphWidth < .22f * gap || glyphWidth > 1.2f * gap) continue;
+            for (var dot : graph.components()) {
+                float dotGap = dot.left - digit.right;
+                if (dotGap <= 0 || dotGap > .55f * gap || dot.right == cropRight
+                        || dot.right - dot.left + 1 > .35f * gap
+                        || dot.bottom - dot.top + 1 > .35f * gap
+                        || Math.abs(dot.bottom - digit.bottom) > .24f * gap) continue;
+                // A separator in a multi-pass selector must never become a terminal period.
+                if (graph.components().stream().anyMatch(other -> other.left > dot.right
+                        && other.left - dot.right <= gap
+                        && other.bottom - other.top + 1 >= .72f * gap)) continue;
+                var reading = JoinedDigitTemplates.inspect(gray, width, height, new BitSet(),
+                        digit.left, digit.top, digit.right, digit.bottom, () -> {}, true);
+                if (reading == null) continue;
+                boolean provedOne = glyphWidth <= .46f * glyphHeight
+                        && reading.scores()[1] >= .52f
+                        && reading.scores()[1] - reading.runner() >= .12f
+                        && slenderOne(digit, width);
+                if (!provedOne && (reading.digit() < 1 || reading.best() < .65f
+                        || reading.best() - reading.runner() < .12f)) continue;
+                if (candidate != null) return null;
+                int value = provedOne ? 1 : reading.digit();
+                candidate = new PlayingTechniqueDetector.Word(value + ".",
+                        digit.left / (float) width, digit.top / (float) height,
+                        (dot.right + 1) / (float) width, (Math.max(dot.bottom, digit.bottom) + 1) / (float) height);
+            }
+        }
+        return candidate;
+    }
+
+    private static boolean slenderOne(RawNumeralComponents.Component glyph, int width) {
+        int height = glyph.bottom - glyph.top + 1;
+        int[] columns = new int[glyph.right - glyph.left + 1];
+        for (int i = 0; i < glyph.size(); i++) columns[glyph.pixel(i) % width - glyph.left]++;
+        int stemLeft = columns.length, stemRight = -1;
+        for (int x = 0; x < columns.length; x++) {
+            if (columns[x] < .8f * height) continue;
+            stemLeft = Math.min(stemLeft, x);
+            stemRight = x;
+        }
+        if (stemLeft == 0 || stemRight < stemLeft || stemRight == columns.length - 1) return false;
+        boolean cap = false, leftFoot = false, rightFoot = false;
+        for (int i = 0; i < glyph.size(); i++) {
+            int pixel = glyph.pixel(i);
+            int x = pixel % width - glyph.left, y = pixel / width - glyph.top;
+            cap |= x < stemLeft && y < .3f * height;
+            leftFoot |= x < stemLeft && y >= .75f * height;
+            rightFoot |= x > stemRight && y >= .75f * height;
+        }
+        return cap && leftFoot && rightFoot;
     }
 
     static List<Integer> passes(String text) {

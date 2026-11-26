@@ -167,6 +167,17 @@ public class PrintedNavigationRecognitionTest {
         check(
                 endings.size() == 1 && endings.get(0).start() == 1 && endings.get(0).end() == 2,
                 "open bracket with selectors");
+        var untranscribed = bracket.clone();
+        rect(untranscribed, 600, 319, 47, 3, 17);
+        rect(untranscribed, 600, 315, 49, 5, 3);
+        rect(untranscribed, 600, 315, 62, 11, 3);
+        check(PrintedEndingBrackets.detect(untranscribed, 600, 240, staff, measures, List.of()).isEmpty(),
+                "a numeral without a period is not a recovered ending selector");
+        rect(untranscribed, 600, 328, 62, 3, 3);
+        var rasterEnding = PrintedEndingBrackets.detect(
+                untranscribed, 600, 240, staff, measures, List.of());
+        check(rasterEnding.size() == 1 && rasterEnding.get(0).passes().equals(List.of(1)),
+                "isolated serif selector can be read from a witnessed ending bracket");
         check(
                 PrintedEndingBrackets.detect(page(), 600, 240, staff, measures, words).isEmpty(),
                 "digits without bracket rejected");

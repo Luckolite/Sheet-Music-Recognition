@@ -57,6 +57,7 @@ final class PrintedAccidentalSpineRecovery {
                 for (int j = i + 1; j < notes.size(); j++) {
                     var repeated = notes.get(j);
                     if (repeated.measureIndex() != note.measureIndex()) break;
+                    if (repeated.kind() != ScoreNoteEvent.Kind.PITCHED) continue;
                     if (repeated.diatonicPitchIdentity() != note.diatonicPitchIdentity()) continue;
                     if (!ledgerHead(repeated) || repeated.octaveShift() != note.octaveShift()
                             || repeated.writtenAccidental() != current) break;
@@ -181,9 +182,9 @@ final class PrintedAccidentalSpineRecovery {
             int measure = note.measureIndex();
             if (measure != past.measureIndex() || measure < 0 || measure >= score.measures().size()
                     || note.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_NATURAL
+                    || !regularDyadHead(note) || !regularDyadHead(past)
                     || note.diatonicPitchIdentity() != past.diatonicPitchIdentity()
                     || note.octaveShift() != past.octaveShift()
-                    || !regularDyadHead(note) || !regularDyadHead(past)
                     || past.tiedFromPrevious()) continue;
             var bar = score.measures().get(measure);
             float gap = (bar.bottom() - bar.top()) * height / 8.2f;
@@ -394,7 +395,8 @@ final class PrintedAccidentalSpineRecovery {
         for (int i = owner + 1; i < notes.size(); i++) {
             var note = notes.get(i);
             if (note.measureIndex() != start.measureIndex()) return;
-            if (note.staffIndex() != start.staffIndex() || note.octaveShift() != start.octaveShift()
+            if (note.kind() != ScoreNoteEvent.Kind.PITCHED
+                    || note.staffIndex() != start.staffIndex() || note.octaveShift() != start.octaveShift()
                     || note.diatonicPitchIdentity() != start.diatonicPitchIdentity()) continue;
             if (!dyadHead(note) || note.writtenAccidental() != start.writtenAccidental()) return;
             float x = headX(bar, note, width), y = note.pageY() * height;
@@ -501,8 +503,9 @@ final class PrintedAccidentalSpineRecovery {
                 return false;
             if (Math.abs(headX(bar, prior, width) - previousX) <= .24f * gap
                     && prior.staffIndex() == note.staffIndex() && prior.octaveShift() == note.octaveShift()
-                    && prior.diatonicPitchIdentity() == note.diatonicPitchIdentity()
-                    && prior.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_FLAT) return true;
+                    && prior.kind() == ScoreNoteEvent.Kind.PITCHED
+                    && prior.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_FLAT
+                    && prior.diatonicPitchIdentity() == note.diatonicPitchIdentity()) return true;
         }
         return false;
     }
@@ -607,8 +610,8 @@ final class PrintedAccidentalSpineRecovery {
             if (measure < 0 || measure >= score.measures().size() || second.measureIndex() != measure
                     || first.octaveShift() != 0 || second.octaveShift() != 0
                     || first.stemDirection() != second.stemDirection()
-                    || Math.abs(first.diatonicPitchIdentity() - second.diatonicPitchIdentity()) != 2
-                    || !regularDyadHead(first) || !regularDyadHead(second)) continue;
+                    || !regularDyadHead(first) || !regularDyadHead(second)
+                    || Math.abs(first.diatonicPitchIdentity() - second.diatonicPitchIdentity()) != 2) continue;
             var bar = score.measures().get(measure);
             float gap = (bar.bottom() - bar.top()) * height / 8.2f;
             float aX = headX(bar, first, width), bX = headX(bar, second, width);
@@ -701,7 +704,8 @@ final class PrintedAccidentalSpineRecovery {
     }
 
     private static boolean beamedSixth(ScoreNoteEvent a, ScoreNoteEvent b, MeasureRegion bar, int width, float gap) {
-        if (a.measureIndex() != b.measureIndex() || a.octaveShift() != b.octaveShift()
+        if (a.kind() != ScoreNoteEvent.Kind.PITCHED || b.kind() != ScoreNoteEvent.Kind.PITCHED
+                || a.measureIndex() != b.measureIndex() || a.octaveShift() != b.octaveShift()
                 || Math.abs(a.diatonicPitchIdentity() - b.diatonicPitchIdentity()) != 5
                 || Math.abs(headX(bar, a, width) - headX(bar, b, width)) > .20f * gap) return false;
         var upper = a.pageY() < b.pageY() ? a : b;

@@ -1741,6 +1741,11 @@ final class OmrMeasurePostProcessor {
                                 Math.round(rows[0] + shift),
                                 Math.round(rows[4] + shift),
                                 gap);
+            if ((!semanticBar || attachedHead)
+                    && MultiMeasureRestDetector.afterWideRestBar(gray, width, height, x, rows, gap, shift)) {
+                columns.set(x - left - 1);
+                continue;
+            }
             if (!semanticBar) continue;
             if (attachedHead) {
                 if (rawColumn < 0) continue;

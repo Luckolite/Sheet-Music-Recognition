@@ -51,6 +51,24 @@ public final class TremoloClockPolicyOriginalTest {
     }
 
     @Test
+    public void resolvedDottedPairUsesItsSharedClockDespiteWideEngraving() {
+        var first = new ScoreNoteEvent(0, .14f, 0, 0, 1, .3f, false, 1, 0, 2, 1f)
+                .withStemDirection(-1);
+        var second = new ScoreNoteEvent(0, .50f, 2, 0, 1, .3f, false, 1, 0, 2, 1f)
+                .withStemDirection(-1);
+        var prior = new ScoreNoteEvent(0, .06f, 5, 0, 1, .3f, false, 0, 0, 2, .5f)
+                .withStemDirection(-1);
+        var notes = List.of(prior, first, second);
+        var shared = source(ScoreTremoloSource.ClockPolicy.LEGACY_SHARED_DURATION, 2)
+                .edited(List.of(-1, 0, 1));
+        try (var clock = ScoreNoteTiming.beginTimingSession(notes, shared)) {
+            double left = ScoreNoteTiming.beatInMeasure(first, notes, 4);
+            double right = ScoreNoteTiming.beatInMeasure(second, notes, 4);
+            assertEquals(.75, right - left, 1e-7);
+        }
+    }
+
+    @Test
     public void explicitIndependentEndpointsRetainTheirOwnDurations() {
         var notes = two(2, 1);
         var result =

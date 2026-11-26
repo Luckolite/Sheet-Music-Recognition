@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.github.luckolite.interpreter;
 
+import java.util.List;
 import org.junit.Test;
 import static org.junit.Assert.*;
 
@@ -127,4 +128,29 @@ public class CommonTimeMeterTest {
         p.staff();
         assertEquals(0, read(p));
     }
+    @Test
+    public void terminalCutOnlyStartsTheFollowingMeasure() {
+        var printed = terminalPage(true, true);
+        var score = new ScorePageInterpretation(List.of(
+                new MeasureRegion(20f / printed.w, 106f / printed.w, 48f / printed.h, 176f / printed.h)),
+                List.of());
+        var recovered = TerminalCutTime.apply(score, printed.gray, printed.w, printed.h);
+        assertEquals(List.of(new ScoreMeterChange(1, 2, 2)), recovered.meterChanges());
+        assertEquals(score.measures(), recovered.measures());
+        assertSame(recovered, TerminalCutTime.apply(recovered, printed.gray, printed.w, printed.h));
+        for (var control : List.of(terminalPage(false, true), terminalPage(true, false)))
+            assertSame(score, TerminalCutTime.apply(score, control.gray, control.w, control.h));
+    }
+
+    private HeaderSymbolNormalizationTest.Page terminalPage(boolean cut, boolean doubleBar) {
+        var page = new HeaderSymbolNormalizationTest.Page(cut, false);
+        for (int y = 0; y < page.h; y++)
+            for (int x = 154; x < page.w; x++) page.gray[y * page.w + x] = (byte) 255;
+        for (int y = 80; y <= 144; y++) {
+            page.gray[y * page.w + 101] = page.gray[y * page.w + 102] = 0;
+            if (doubleBar) page.gray[y * page.w + 95] = page.gray[y * page.w + 96] = 0;
+        }
+        return page;
+    }
+
 }

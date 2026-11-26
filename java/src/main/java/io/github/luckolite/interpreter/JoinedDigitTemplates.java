@@ -437,6 +437,12 @@ final class JoinedDigitTemplates {
             int r,
             int b,
             ObservedFringeContinuation.Charge work) {
+        return inspect(raw, width, height, curve, l, t, r, b, work, false);
+    }
+
+    static Reading inspect(
+            byte[] raw, int width, int height, BitSet curve, int l, int t, int r, int b,
+            ObservedFringeContinuation.Charge work, boolean allowSlenderOne) {
         if (raw == null
                 || width < 1
                 || height < 1
@@ -482,7 +488,10 @@ final class JoinedDigitTemplates {
         for (int n = 0; n < NUMERALS.length; n++) {
             var template = NUMERALS[n];
             float ratio = Math.abs((float) Math.log(aspect / template.aspect));
-            if (ratio > .45f) continue;
+            // A volta selector may use a narrow text numeral instead of a music numeral.
+            boolean narrowOne = allowSlenderOne && template.digit == 1
+                    && aspect >= .22f && aspect <= .46f;
+            if (ratio > (narrowOne ? .85f : .45f)) continue;
             int intersection = 0, union = 0;
             for (int word = 0; word < 6; word++) {
                 for (int q = 0; q < 12; q++) work.tick();

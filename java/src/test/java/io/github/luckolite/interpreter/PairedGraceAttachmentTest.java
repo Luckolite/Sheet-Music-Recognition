@@ -39,12 +39,43 @@ public class PairedGraceAttachmentTest {
             int initialBeams,
             boolean interleaved)
             throws Exception {
+        return run(trailing, paired, paper, principalX, fullPair, printedBeams, initialBeams,
+                interleaved, 5, 0);
+    }
+
+    private static List<ScoreNoteEvent> run(
+            boolean trailing,
+            boolean paired,
+            int paper,
+            float principalX,
+            boolean fullPair,
+            int printedBeams,
+            int initialBeams,
+            boolean interleaved,
+            int graceRadius,
+            int shaftBlank)
+            throws Exception {
+        return run(trailing, paper, principalX, fullPair, printedBeams, initialBeams, interleaved,
+                new GraceGeometry(graceRadius, shaftBlank, 110, 158, false));
+    }
+
+    private record GraceGeometry(int radius, int shaftBlank, int stemTop, int tailY, boolean knownTail) {}
+
+    private static List<ScoreNoteEvent> run(
+            boolean trailing, int paper, float principalX, boolean fullPair, int printedBeams,
+            int initialBeams, boolean interleaved, GraceGeometry geometry)
+            throws Exception {
+        int graceRadius = geometry.radius();
+        int shaftBlank = geometry.shaftBlank();
         byte[] gray = new byte[W * H];
         Arrays.fill(gray, (byte) paper);
-        for (int y = 110; y <= 150; y++) gray[y * W + 105] = 40;
-        for (int y = 112; y <= 158; y++) gray[y * W + 130] = 40;
-        for (int x = 105; x <= 130; x++) {
-            int y = 110 + Math.round((x - 105) * 2f / 25);
+        int firstStem = 100 + graceRadius;
+        int lastStem = 125 + graceRadius;
+        for (int y = geometry.stemTop(); y <= 150; y++) gray[y * W + firstStem] = 40;
+        for (int y = geometry.stemTop() + 2; y <= geometry.tailY(); y++)
+            if (y < 138 || y >= 138 + shaftBlank) gray[y * W + lastStem] = 40;
+        for (int x = firstStem; x <= lastStem; x++) {
+            int y = geometry.stemTop() + Math.round((x - firstStem) * 2f / 25);
             for (int b = 0; b < printedBeams; b++)
                 for (int dy = 0; dy < 5; dy++)
                     gray[(y + b * (printedBeams == 3 ? 8 : 11) + dy) * W + x] = 40;
@@ -63,9 +94,9 @@ public class PairedGraceAttachmentTest {
                 trailing ? new float[] {principalX, 100, 125} : new float[] {100, 125, principalX};
         for (float x : xs) {
             boolean principal = x == principalX;
-            float y = x == 125 ? 158 : 150;
+            float y = x == 125 ? geometry.tailY() : 150;
             boolean full = principal || fullPair;
-            int rx = full ? 11 : 5, ry = full ? 7 : 4;
+            int rx = full ? 11 : graceRadius, ry = full ? 7 : 4;
             var head =
                     hc.newInstance(
                             full ? 260 : 65,
@@ -88,6 +119,7 @@ public class PairedGraceAttachmentTest {
                             principal ? 0 : initialBeams,
                             2,
                             principal ? 1 : 0);
+            if (x == 125 && geometry.knownTail()) event = event.withArticulations(NoteOrnament.GRACE);
             events.add(event);
             detected.add(dc.newInstance(event, head, 16f));
         }
@@ -110,6 +142,41 @@ public class PairedGraceAttachmentTest {
         m.setAccessible(true);
         m.invoke(null, gray, W, H, detected, events);
         return events;
+    }
+
+    @Test
+    public void shortStemNeedsKnownSmallTailAndTwoPrintedRails() throws Exception {
+        var proof = new GraceGeometry(5, 0, 130, 158, true);
+        var pair = run(false, 245, 160, false, 2, 2, false, proof);
+        assertEquals(NoteOrnament.GRACE, pair.get(0).articulations());
+        assertEquals(NoteOrnament.GRACE, pair.get(1).articulations());
+        assertEquals(0, pair.get(2).articulations());
+        assertEquals(0, run(false, 245, 160, false, 1, 2, false, proof).get(0).articulations());
+        var unknownTail = new GraceGeometry(5, 0, 130, 158, false);
+        assertEquals(0, run(false, 245, 160, false, 2, 2, false, unknownTail).get(0).articulations());
+    }
+
+    @Test
+    public void compactDoubleBeamsCanCarryAVerticalThird() throws Exception {
+        var proof = new GraceGeometry(9, 0, 110, 173, false);
+        var pair = run(false, 245, 160, false, 2, 2, false, proof);
+        assertEquals(NoteOrnament.GRACE, pair.get(0).articulations());
+        assertEquals(NoteOrnament.GRACE, pair.get(1).articulations());
+        var tooFar = new GraceGeometry(9, 0, 110, 180, false);
+        assertEquals(0, run(false, 245, 160, false, 2, 2, false, tooFar).get(0).articulations());
+    }
+
+    @Test
+    public void compactPairNeedsBothRailsAcrossShortShaftBreak() throws Exception {
+        var doubleRail = run(false, true, 245, 160, false, 2, 2, false, 9, 4);
+        assertTrue((doubleRail.get(0).articulations() & NoteOrnament.GRACE) != 0);
+        assertTrue((doubleRail.get(1).articulations() & NoteOrnament.GRACE) != 0);
+        assertEquals(0, doubleRail.get(2).articulations());
+
+        for (var note : run(false, false, 245, 160, false, 1, 2, false, 9, 4))
+            assertEquals(0, note.articulations());
+        for (var note : run(false, true, 245, 160, false, 2, 2, false, 9, 10))
+            assertEquals(0, note.articulations());
     }
 
     @Test

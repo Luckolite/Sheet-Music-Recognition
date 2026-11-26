@@ -178,14 +178,27 @@ public final class ScorePageTimeline {
                 || starts[page] <= 1
                 || counts[page - 1] <= 0
                 || starts[page - 1] > 0) return -1;
-        int prior = page - 2;
-        while (prior >= 0 && counts[prior] <= 0) prior--;
-        if (prior < 0
-                || prior >= starts.length
-                || starts[prior] <= 0
-                || starts[page] >= starts[prior]) return -1;
-        // Allow a few extra detected bar slices on the unknown page, but do not
-        // split an ordinary unnumbered continuation with a later large number.
-        return starts[page] <= counts[page - 1] + 5 ? page - 1 : -1;
+        int boundary = page - 1;
+        long expectedMeasures = starts[page] - 1L;
+        long unnumberedMeasures = counts[boundary];
+        long bestCount = unnumberedMeasures;
+        int prior = boundary - 1;
+        while (prior >= 0 && (counts[prior] <= 0 || starts[prior] <= 0)) {
+            if (counts[prior] > 0) {
+                unnumberedMeasures += counts[prior];
+                if (Math.abs(unnumberedMeasures - expectedMeasures)
+                        < Math.abs(bestCount - expectedMeasures)) {
+                    boundary = prior;
+                    bestCount = unnumberedMeasures;
+                }
+            }
+            prior--;
+        }
+        if (prior < 0 || starts[page] >= starts[prior]) return -1;
+        // Choose the unnumbered suffix whose measure count best fits the restart.
+        // An unnumbered final page of the previous edition can precede that suffix.
+        if (starts[page] > bestCount + 5
+                || (unnumberedMeasures > counts[page - 1] && starts[page] < bestCount - 3)) return -1;
+        return boundary;
     }
 }

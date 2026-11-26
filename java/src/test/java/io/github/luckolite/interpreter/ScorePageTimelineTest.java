@@ -69,4 +69,25 @@ public class ScorePageTimelineTest {
         assertEquals(11, ScorePageTimeline.measureCount(counts, starts, selected));
         assertEquals(1, ScorePageTimeline.pageForMeasure(10, counts, starts, selected));
     }
+
+    @Test
+    public void consecutiveUnnumberedOpeningPagesStayWithTheRestartedEdition() {
+        int[] counts = {24, 18, 9, 11, 9, 12};
+        var first = new ScorePageTimeline.PageRange(0, 2);
+        var second = new ScorePageTimeline.PageRange(2, 6);
+        assertEquals(java.util.List.of(first, second),
+                ScorePageTimeline.arrangements(counts, new int[] {48, 72, 0, 0, 21, 30}));
+
+        assertEquals(java.util.List.of(new ScorePageTimeline.PageRange(0, 6)),
+                ScorePageTimeline.arrangements(counts, new int[] {48, 72, 0, 0, 4, 108}));
+    }
+
+    @Test
+    public void unnumberedFinalPageDoesNotMoveIntoTheNextEdition() {
+        int[] counts = {22, 19, 2, 8, 16, 15};
+        int[] starts = {31, 53, 0, 0, 9, 25};
+        assertEquals(java.util.List.of(new ScorePageTimeline.PageRange(0, 3),
+                        new ScorePageTimeline.PageRange(3, 6)),
+                ScorePageTimeline.arrangements(counts, starts));
+    }
 }

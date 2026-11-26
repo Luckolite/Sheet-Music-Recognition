@@ -27,7 +27,7 @@ public final class CompactRestArbitrationTest {
             heads.add(h);
             ScoreNoteEvent e =
                     new ScoreNoteEvent(
-                            mode == 9 && b[5] == 160 ? 1 : 0,
+                            (mode == 9 && b[5] == 160 || mode == 13 && b[5] == 136) ? 1 : 0,
                             b[5] / 700f,
                             2,
                             0,
@@ -97,6 +97,7 @@ public final class CompactRestArbitrationTest {
     }
 
     static Page scene(int mode) {
+        if (mode >= 10) return singleGraceScene(mode);
         Page p = new Page();
         p.oval(100, 152, 9, 8);
         p.oval(129, 152, 9, 8);
@@ -138,6 +139,33 @@ public final class CompactRestArbitrationTest {
             }
         }
         return p;
+    }
+
+    private static Page singleGraceScene(int mode) {
+        Page p = new Page();
+        Arrays.fill(p.l, (byte) 0);
+        Arrays.fill(p.g, (byte) 255);
+        p.oval(100, 152, 6, 4);
+        p.oval(136, 146, mode == 14 ? 6 : 12, mode == 14 ? 4 : 9);
+        if (mode != 12) p.stem(106, 152, 117);
+        for (int y = 117; y <= 133; y++) {
+            int x = 106 + Math.round((y - 117) * 9 / 16f);
+            for (int dx = -1; dx <= 1; dx++) p.pixel(x + dx, y, 1);
+        }
+        if (mode != 11)
+            for (int y = 121; y <= 138; y++)
+                for (int dx = -1; dx <= 1; dx++) p.pixel(238 - y + dx, y, 1);
+        return p;
+    }
+
+    @SuppressWarnings("unchecked")
+    @org.junit.Test
+    public void independentlySlashedGraceSurvivesRestArbitration() throws Exception {
+        var result = proof(10);
+        var policy = (CompactRestArbitration) result[0];
+        var heads = (List<Object>) result[1];
+        check(!policy.mayRemove(heads.get(0)) && policy.mayRemove(heads.get(1)));
+        for (int negative : new int[] {11, 12, 13, 14}) abstains(negative);
     }
 
     private final Object a = new Object();

@@ -7,6 +7,8 @@ import java.util.List;
 
 /** Staff-local raw candidates; the full crossed ring and four holes must verify a coda. */
 final class NavigationCodaGlyphs {
+    static final float MAX_LABELLED_STAFF_DISTANCE = 8f;
+
     private NavigationCodaGlyphs() {}
 
     static List<ScoreNavigationDetector.Glyph> detect(
@@ -21,8 +23,7 @@ final class NavigationCodaGlyphs {
         for (var staff : staffs) {
             float gap = staff.gap();
             if (gap < 5 || !Float.isFinite(gap)) continue;
-            // Boundary ownership accepts a sign ending six gaps above the staff.
-            // Leave room for the full cross above the ring at that distance.
+            // Keep roof space for the entire cross. Raised destinations need an OCR label.
             int top = Math.max(0, Math.round(staff.top() - gap * 12));
             int bottom = Math.min(height - 1, Math.round(staff.top() - gap * .5f));
             if (bottom <= top) continue;
@@ -34,7 +35,7 @@ final class NavigationCodaGlyphs {
                     int w = endX - l, h = endY - t;
                     if (t == top
                             || b == bottom
-                            || staff.top() - b > gap * 6
+                            || staff.top() - b > gap * MAX_LABELLED_STAFF_DISTANCE
                             || !CodaGlyphInk.fits(w, h, gap)) return true;
                     if (!CodaGlyphInk.matches(gray, width, height, l, t, r, b, gap))
                         return true;

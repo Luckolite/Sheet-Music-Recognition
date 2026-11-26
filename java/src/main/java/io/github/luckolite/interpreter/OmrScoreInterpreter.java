@@ -1359,6 +1359,29 @@ final class OmrScoreInterpreter {
                             staff.gap)) handwrittenTwos.add(candidate);
         }
         heads.removeAll(handwrittenTwos);
+        var handwrittenThreeHeads = new ArrayList<Component>();
+        for (Component candidate : heads) {
+            Staff staff = nearestHeadStaff(staffs, candidate.centerY);
+            if (staff == null || candidate.centerY < staff.top + staff.gap * .18f
+                    || candidate.centerY > staff.top + staff.gap * .88f
+                    || candidate.maxX - candidate.minX + 1 > staff.gap * 1.85f
+                    || candidate.maxY - candidate.minY + 1 > staff.gap * 1.3f
+                    || !HandwrittenThreeHeadInk.matches(
+                        gray, width, height, candidate.centerX, staff.top, staff.gap)) continue;
+            for (Component note : heads) {
+                float horizontal = note.centerX - candidate.centerX;
+                float vertical = note.centerY - candidate.centerY;
+                if (horizontal >= staff.gap * .95f && horizontal <= staff.gap * 2.65f
+                        && vertical >= staff.gap * .85f && vertical <= staff.gap * 2.1f
+                        && note.maxX - note.minX + 1 >= staff.gap * .8f
+                        && nearestHeadStaff(staffs, note.centerY) == staff
+                        && attachedRawStem(gray, width, height, note, staff.gap) != null) {
+                    handwrittenThreeHeads.add(candidate);
+                    break;
+                }
+            }
+        }
+        heads.removeAll(handwrittenThreeHeads);
         List<Component> segnoFragments = new ArrayList<>();
         for (Component candidate : heads) {
             Staff staff = nearestHeadStaff(staffs, candidate.centerY);
@@ -1986,6 +2009,12 @@ final class OmrScoreInterpreter {
                             roundedLedgerGraces.contains(head),
                             staffs,
                             heads)
+                    && !slashedGraceLedgerChain(
+                            gray, annotationGray, width, height, head, physicalStaff, staff,
+                            staffs, heads, measures)
+                    && !palePairedLedgerGrace(
+                            gray, annotationGray, width, height, head, physicalStaff, staff,
+                            staffs, heads, measures)
                     && !sharedWideUpperLedgerChord(
                             labels,
                             gray,
@@ -17306,6 +17335,119 @@ final class OmrScoreInterpreter {
                         < ScoreNoteEvent.DURATION_HALF;
     }
 
+    /** A compact double-beamed pair can own a first ledger at normal staff spacing. */
+    private static boolean palePairedLedgerGrace(
+            byte[] gray, byte[] raw, int width, int height, Component head,
+            Staff physical, Staff owner, List<Staff> staffs, List<Component> heads,
+            List<MeasureRegion> measures) {
+        float gap = physical.pitchGap;
+        float distance = (physical.top - head.centerY) / gap;
+        if (raw == null || raw.length != gray.length || distance < .8f || distance > 1.25f
+                || !compactOpticalGraceHead(head, gap)) return false;
+        int bar = containingMeasureForStaff(measures, head.centerX / width, head.centerY / height, owner, height);
+        if (bar < 0) return false;
+        Component previous = null, next = null;
+        for (Component candidate : heads) {
+            if (candidate == head || Math.abs(candidate.centerX - head.centerX) > gap * 4
+                    || nearestHeadStaff(staffs, candidate.centerY) != owner
+                    || containingMeasureForStaff(measures, candidate.centerX / width,
+                            candidate.centerY / height, owner, height) != bar) continue;
+            if (candidate.centerX < head.centerX
+                    && (previous == null || candidate.centerX > previous.centerX)) previous = candidate;
+            if (candidate.centerX > head.centerX
+                    && (next == null || candidate.centerX < next.centerX)) next = candidate;
+        }
+        if (previous == null || next == null || !compactOpticalGraceHead(previous, gap)
+                || head.centerX - previous.centerX < gap * .95f || head.centerX - previous.centerX > gap * 3
+                || Math.abs(head.centerY - previous.centerY) > gap * 1.3f
+                || next.centerX - head.centerX < gap * .65f
+                || next.area <= Math.max(head.area, previous.area) * 1.65f
+                || next.maxX - next.minX + 1 <= gap * 1.05f
+                || !hasInnerLedgerInk(gray, width, height, head, physical, true)
+                || !hasInnerLedgerInk(raw, width, height, head, physical, true)) return false;
+        return paleGraceShafts(gray, width, height, previous, head, gap) != null
+                && paleGraceShafts(raw, width, height, previous, head, gap) != null;
+    }
+
+    private static boolean compactOpticalGraceHead(Component head, float gap) {
+        return head.maxX - head.minX + 1 <= Math.ceil(gap * .95f)
+                && head.maxY - head.minY + 1 <= Math.ceil(gap * .78f)
+                && head.area <= gap * gap * .65f;
+    }
+
+    private static int[][] paleGraceShafts(
+            byte[] gray, int width, int height, Component first, Component last, float gap) {
+        int blank = Math.max(2, Math.round(gap * .16f));
+        int[] a = attachedRawStem(gray, width, height, first, gap * .65f, blank, 205);
+        int[] b = attachedRawStem(gray, width, height, last, gap * .65f, blank, 205);
+        return PairedGraceBeamInk.count(gray, width, height, a, b, gap) == 2 ? new int[][] {a, b} : null;
+    }
+
+    /** A proved single grace still needs every short rule at its written staff position. */
+    private static boolean slashedGraceLedgerChain(
+            byte[] gray, byte[] raw, int width, int height, Component head,
+            Staff physical, Staff owner, List<Staff> staffs, List<Component> heads,
+            List<MeasureRegion> measures) {
+        if (raw == null || raw.length != gray.length) return false;
+        float gap = physical.pitchGap;
+        float distance = (physical.top - head.centerY) / gap;
+        if (distance < 1.8f || distance >= 4
+                || !reducedLedgerHead(gray, width, height, head, gap)
+                || !openingGraceFlag(gray, width, height, head, gap)) return false;
+        int measure = containingMeasureForStaff(measures, head.centerX / width, head.centerY / height, owner, height);
+        if (measure < 0) measure = openingGraceMeasure(measures, head.centerX, owner, width, height);
+        if (measure < 0) return false;
+        boolean principal = false;
+        for (var candidate : heads) {
+            float dx = candidate.centerX - head.centerX;
+            if (dx < gap * .65f || dx > gap * 3.5f
+                    || Math.abs(candidate.centerY - head.centerY) > gap * 2.5f
+                    || candidate.area <= head.area * 1.65f
+                    || nearestHeadStaff(staffs, candidate.centerY) != owner
+                    || containingMeasureForStaff(measures, candidate.centerX / width, candidate.centerY / height,
+                            owner, height) != measure
+                    || attachedRawStem(gray, width, height, candidate, gap * .65f) == null) continue;
+            principal = true;
+            break;
+        }
+        if (!principal) return false;
+        int count = (int) Math.floor(distance + .14f);
+        for (int i = 1; i <= count; i++) {
+            float y = physical.top - gap * i;
+            if (!shortGraceLedgerRule(gray, width, height, head, gap, y)
+                    || !shortGraceLedgerRule(raw, width, height, head, gap, y)) return false;
+        }
+        return true;
+    }
+
+    private static boolean shortGraceLedgerRule(
+            byte[] gray, int width, int height, Component head, float gap, float center) {
+        int margin = Math.max(2, Math.round(gap * .3f));
+        int tol = Math.max(1, Math.round(gap * .18f));
+        int outer = Math.max(2, Math.round(gap * .2f));
+        int middle = Math.round(head.centerX), y0 = Math.round(center);
+        if (head.minX - margin < 0 || head.maxX + margin >= width
+                || y0 - tol - outer < 0 || y0 + tol + outer >= height) return false;
+        for (int y = y0 - tol; y <= y0 + tol; y++) {
+            int threshold = Math.min(205,
+                    BeamInkThreshold.at(gray, width, height, middle, y, y, gap) + 30);
+            int left = middle, right = middle;
+            if ((gray[y * width + middle] & 255) >= threshold) continue;
+            while (left > head.minX - margin && (gray[y * width + left - 1] & 255) < threshold) left--;
+            while (right < head.maxX + margin && (gray[y * width + right + 1] & 255) < threshold) right++;
+            if (left >= head.minX || right <= head.maxX
+                    || left == head.minX - margin || right == head.maxX + margin) continue;
+            int thin = 0;
+            boolean touchesOval = y > head.maxY && y - outer >= head.minY && y - outer <= head.maxY;
+            for (int x = left; x <= right; x++)
+                if (((gray[(y - outer) * width + x] & 255) >= threshold
+                                || touchesOval && x >= head.minX && x <= head.maxX)
+                        && (gray[(y + outer) * width + x] & 255) >= threshold) thin++;
+            if (thin * 4 >= (right - left + 1) * 3) return true;
+        }
+        return false;
+    }
+
     /** Grace-sized heads use shorter ledger rules but retain the normal staff spacing. */
     private static boolean reducedLedgerHead(
             byte[] gray, int width, int height, Component head, float gap) {
@@ -20181,6 +20323,14 @@ final class OmrScoreInterpreter {
                                     labels, gray, width, height, a.head, b.head, b.staffGap, true);
                 }
                 if (proved) for (int index : prefix) owned.add(detected.get(index).head);
+                if (prefix.size() == 1
+                        && smallGraceHead(first)
+                        && first.event.beamCount() <= 1
+                        && next.head.area > first.head.area * 1.65f
+                        && next.head.maxX - next.head.minX + 1 > first.staffGap * 1.05f
+                        && openingGraceFlag(gray, width, height, first.head, first.staffGap))
+                    owned.add(first.head);
+
                 break;
             }
         }
@@ -20399,16 +20549,18 @@ final class OmrScoreInterpreter {
             if (bIndex < 0) continue;
             DetectedNote b = detected.get(bIndex);
             float gap = a.staffGap;
-            // Only an independently established grace group may round its integer envelope outward.
+            // A rounded head needs either existing grace ownership or the double-rail proof below.
             boolean existingGracePair =
                     (events.get(i).articulations() & NoteOrnament.GRACE) != 0
                             && (events.get(bIndex).articulations() & NoteOrnament.GRACE) != 0;
+            boolean compactPair = compactDoubleBeamedGraceHead(a) && compactDoubleBeamedGraceHead(b);
             if (!sameGraceVoice(a, b)
-                    || !reducedPairedGrace(a, existingGracePair)
-                    || !reducedPairedGrace(b, existingGracePair)
+                    || (!compactPair
+                            && (!reducedPairedGrace(a, existingGracePair)
+                                    || !reducedPairedGrace(b, existingGracePair)))
                     || b.head.centerX - a.head.centerX < gap * .95f
                     || b.head.centerX - a.head.centerX > gap * 3
-                    || Math.abs(b.head.centerY - a.head.centerY) > gap * 1.3f) continue;
+                    || Math.abs(b.head.centerY - a.head.centerY) > gap * (compactPair ? 1.6f : 1.3f)) continue;
             int threshold =
                     BeamInkThreshold.at(
                                     gray,
@@ -20475,6 +20627,44 @@ final class OmrScoreInterpreter {
                 }
             }
 
+            // A short low-contrast break in one shaft needs two independent beam cores.
+            if (provedBeams < 2 && compactPair && (first == null || last == null)) {
+                int blank = Math.max(2, Math.round(gap * .32f));
+                int[] retryFirst =
+                        first == null
+                                ? attachedRawStem(gray, width, height, a.head, gap * .65f, blank, 185)
+                                : first;
+                int[] retryLast =
+                        last == null
+                                ? attachedRawStem(gray, width, height, b.head, gap * .65f, blank, 185)
+                                : last;
+                if (PairedGraceBeamInk.count(gray, width, height, retryFirst, retryLast, gap) == 2) {
+                    first = retryFirst;
+                    last = retryLast;
+                    provedBeams = 2;
+                }
+            }
+            // A very short prefix needs a previously recognized tail and both printed rails.
+            if (provedBeams < 2 && first == null && last != null
+                    && smallGraceHead(a) && smallGraceHead(b) && a.event.beamCount() == 2
+                    && (events.get(i).articulations() & NoteOrnament.GRACE) == 0
+                    && (events.get(bIndex).articulations() & NoteOrnament.GRACE) != 0) {
+                int[] shortFirst = attachedRawStem(gray, width, height, a.head, gap * .48f,
+                        Math.max(1, Math.round(gap * .16f)), 185);
+                if (PairedGraceBeamInk.count(gray, width, height, shortFirst, last, gap) == 2) {
+                    first = shortFirst;
+                    provedBeams = 2;
+                }
+            }
+            if (provedBeams < 2 && (first == null || last == null)
+                    && smallGraceHead(a) && smallGraceHead(b)) {
+                int[][] pale = paleGraceShafts(gray, width, height, a.head, b.head, gap);
+                if (pale != null) {
+                    first = pale[0];
+                    last = pale[1];
+                    provedBeams = 2;
+                }
+            }
             if (first == null
                     || last == null
                     || Math.abs(first[1] - a.head.centerY) > gap * 4.8f
@@ -20567,7 +20757,7 @@ final class OmrScoreInterpreter {
         markSlashedGracePrefixes(null, gray, width, height, detected, events);
     }
 
-    /** An independently slashed short shaft can survive a modestly faded scan. */
+    /** Prove an isolated printed flag on the short shaft before marking its head as grace. */
     private static void markSlashedGracePrefixes(
             byte[] labels,
             byte[] gray,
@@ -20581,9 +20771,8 @@ final class OmrScoreInterpreter {
             if (principalIndex < 0) continue;
             DetectedNote a = detected.get(i), principal = detected.get(principalIndex);
             float gap = a.staffGap;
-            // A larger rounded mask needs a wider principal, a short owned shaft and
-            // the independent slash/flag proof below; accompaniment does not own it.
-            boolean largerSlashed =
+            // A rounded head also needs a larger principal and independent flag ink.
+            boolean roundedPrefix =
                     a.head.maxX - a.head.minX + 1 <= Math.ceil(gap * 1.2f)
                             && a.head.maxY - a.head.minY + 1 <= Math.ceil(gap * 1.1f)
                             && a.head.area <= gap * gap * .95f
@@ -20594,7 +20783,7 @@ final class OmrScoreInterpreter {
                                     > (a.head.maxX - a.head.minX + 1) * 1.2f
                             && !extendsMetricalBeam(labels, gray, width, height, detected, i);
             if ((events.get(i).articulations() & NoteOrnament.GRACE) != 0
-                    || !(largerSlashed
+                    || !(roundedPrefix
                             || smallGraceHead(a)
                             || roundedBeamedGraceHead(a, gray, width, height)
                                     && !extendsMetricalBeam(
@@ -20602,12 +20791,13 @@ final class OmrScoreInterpreter {
                     || a.event.beamCount() > 1
                     || !sameGraceVoice(a, principal)
                     || smallGraceHead(principal)
-                    || principal.head.area <= a.head.area * (largerSlashed ? 1.4f : 1.65f)
+                    || principal.head.area <= a.head.area * (roundedPrefix ? 1.4f : 1.65f)
                     || principal.head.maxX - principal.head.minX + 1 <= gap * 1.05f) continue;
             float dx = principal.head.centerX - a.head.centerX;
+            float verticalSpan = Math.abs(principal.head.centerY - a.head.centerY);
             if (dx < gap * .65f
-                    || dx > gap * (largerSlashed ? 3.5f : 3.2f)
-                    || Math.abs(principal.head.centerY - a.head.centerY) > gap * 2.5f) continue;
+                    || dx > gap * (roundedPrefix ? 3.5f : 3.2f)
+                    || verticalSpan > gap * 6) continue;
             if (i > 0) {
                 DetectedNote previous = detected.get(i - 1);
                 if (sameGraceVoice(a, previous)
@@ -20625,18 +20815,18 @@ final class OmrScoreInterpreter {
                                 gap * .65f,
                                 Math.max(1, Math.round(gap * .16f)),
                                 185);
-            if (stem == null
-                    || stem[2] != -1
-                    || a.head.centerY - stem[1] > gap * 3.3f
-                    || SlashedGraceFlagInk.count(
-                                    gray,
-                                    width,
-                                    height,
-                                    a.head.centerX,
-                                    a.head.centerY,
-                                    stem[0],
-                                    gap)
-                            != 1) continue;
+            if (stem == null || stem[2] != -1 || a.head.centerY - stem[1] > gap * 3.3f)
+                continue;
+            int slash = SlashedGraceFlagInk.count(
+                    gray, width, height, a.head.centerX, a.head.centerY, stem[0], gap);
+            if (slash != 1) {
+                // Across a wider interval, require the printed slash on the grace shaft.
+                if (slash != 0 || labels == null || !roundedPrefix || verticalSpan > gap * 2.5f
+                        || !hasCurvedFlag(labels, gray, width, height, a.head, gap, stem[0], stem[1], true))
+                    continue;
+                int[] principalStem = attachedRawStem(gray, width, height, principal.head, gap * .65f);
+                if (principalStem == null || principalStem[2] != 1) continue;
+            }
             events.set(i, asEngravedGrace(events.get(i), 1));
         }
     }
@@ -20675,6 +20865,16 @@ final class OmrScoreInterpreter {
         return a.event.measureIndex() == b.event.measureIndex()
                 && a.event.staffIndex() == b.event.staffIndex()
                 && a.event.staffCount() == b.event.staffCount();
+    }
+
+    private static boolean compactDoubleBeamedGraceHead(DetectedNote note) {
+        float gap = note.staffGap;
+        return note.head.maxX - note.head.minX + 1 <= gap * 1.2f
+                && note.head.maxY - note.head.minY + 1 <= gap
+                && note.head.area <= gap * gap * .8f
+                && note.event.beamCount() == 2
+                && note.event.unbeamedDurationBeats() < ScoreNoteEvent.DURATION_HALF
+                && note.event.augmentationDots() == 0;
     }
 
     private static boolean reducedPairedGrace(DetectedNote n, boolean existingGracePair) {

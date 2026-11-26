@@ -146,6 +146,8 @@ final class MeasureNumberReconciler {
                 expected = typicalExpected;
                 expectedFromTypicalFinalRow = true;
             }
+            List<NumberToken> rowRests = assignedRestTokens(row, rows, multiMeasureRests);
+            boolean finalRowWithRest = index + 1 == rows.size() && !rowRests.isEmpty();
             // Once consecutive printed numbers establish the page's system count, carry it
             // through a full-width trailing numbered/final system. Previously a noisy final
             // row kept 13-14 stem boxes merely because there was no later number anchor.
@@ -156,11 +158,11 @@ final class MeasureNumberReconciler {
             if (expected == 0
                     && previousExpected > 0
                     && extremelyNoisyRow
+                    && !finalRowWithRest
                     && (row.anchor != null || index + 1 == rows.size())
                     && (row.measures.isEmpty() || matchesEarlierSystemSpan(rows, index)))
                 expected = previousExpected;
             if (expected > 0) previousExpected = expected;
-            List<NumberToken> rowRests = tokensInside(row, multiMeasureRests);
             // A following printed measure number already includes the logical measures hidden
             // inside a multi-rest. A final-row count inferred from visual system density does
             // not, so add those hidden measures before fitting. If the rest is centred beyond
@@ -900,8 +902,15 @@ final class MeasureNumberReconciler {
             Row row, int expected, List<NumberToken> multiMeasureRests) {
         int representedExtras = 0;
         for (NumberToken token : multiMeasureRests) representedExtras += token.value - 1;
+        List<MeasureRegion> printedRestRow = List.of();
+        if (!multiMeasureRests.isEmpty() && row.measures.size() > 1) {
+            var expandedRaw = expandMultiMeasureRests(row.measures, multiMeasureRests);
+            if (expandedRaw.size() == row.measures.size() + representedExtras)
+                printedRestRow = expandedRaw;
+        }
         int visualExpected = expected - representedExtras;
         if (visualExpected <= 0) {
+            if (!printedRestRow.isEmpty()) return printedRestRow;
             multiMeasureRests = List.of();
             visualExpected = expected;
         }
@@ -915,6 +924,18 @@ final class MeasureNumberReconciler {
                             visualExpected);
         }
         List<MeasureRegion> expanded = expandMultiMeasureRests(fitted, multiMeasureRests);
+        if (!printedRestRow.isEmpty()) {
+            // An anchor fit can merge two counted rests into one box or join a rest
+            // to sounding music. Keep the independently proved visual rest regions
+            // whenever the count fit would replace one of their physical owners.
+            var fittedRegions = java.util.Collections.newSetFromMap(
+                    new java.util.IdentityHashMap<MeasureRegion, Boolean>());
+            fittedRegions.addAll(fitted);
+            for (int i = 1; i < printedRestRow.size(); i++)
+                if (printedRestRow.get(i - 1) == printedRestRow.get(i)
+                        && !fittedRegions.contains(printedRestRow.get(i))) return printedRestRow;
+            if (expanded.size() != expected) return printedRestRow;
+        }
         // A rest token must map back into exactly one fitted visual measure. If it cannot, keep
         // the ordinary correction path rather than returning a malformed logical system.
         return expanded.size() == expected ? expanded : fitCount(row.measures, expected);

@@ -649,6 +649,30 @@ public final class MeasureNumberReconcilerTest {
         assertEquals(6, corrected.stream().filter(item -> item.top() == finalTop).count());
     }
 
+    @Test
+    public void finalRowWithPrintedRestsDoesNotInheritAnEarlierShortRowCount() {
+        List<MeasureRegion> detected = new ArrayList<>();
+        List<MeasureNumberReconciler.NumberToken> numbers = new ArrayList<>();
+        for (int index = 0; index < 6; index++) {
+            float top = .10f + index * .10f;
+            detected.addAll(row(top, 3));
+            numbers.add(number(20 + 3 * index, top));
+        }
+        float finalTop = .70f;
+        var finalRow = row(finalTop, 7);
+        detected.addAll(finalRow);
+        numbers.add(number(38, finalTop));
+        var two = new MeasureNumberReconciler.NumberToken(2, .26f, .66f, .28f, .69f);
+        var three = new MeasureNumberReconciler.NumberToken(3, .71f, .66f, .73f, .69f);
+
+        var corrected = MeasureNumberReconciler.reconcile(detected, numbers, List.of(two, three));
+        var tail = corrected.stream().filter(item -> item.top() == finalTop).toList();
+
+        assertEquals(List.of(finalRow.get(0), finalRow.get(1), finalRow.get(1), finalRow.get(2),
+                finalRow.get(3), finalRow.get(4), finalRow.get(5), finalRow.get(5), finalRow.get(5),
+                finalRow.get(6)), tail);
+    }
+
     private static List<MeasureRegion> regularPage(int rows, int measuresPerRow) {
         List<MeasureRegion> result = new ArrayList<>();
         for (int index = 0; index < rows; index++)

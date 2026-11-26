@@ -86,6 +86,15 @@ public class NineRestCountTest {
                                 labels, gray, w, h, List.of(region), List.of(distantSix))
                         .get(0)
                         .value());
+        // A separate printed fragment in that OCR box is not the centered rest count.
+        rect(136, 67, 3, 20, 5);
+        rect(136, 84, 12, 3, 5);
+        assertEquals(
+                9,
+                MultiMeasureRestDetector.detect(
+                                labels, gray, w, h, List.of(region), List.of(distantSix))
+                        .get(0)
+                        .value());
     }
 
     @Test

@@ -54,12 +54,15 @@ final class TupletSixGlyph {
                 lowerPocket++;
             if (y >= h * .8f && max[y] - min[y] >= w * .45f) footWide++;
         }
-        return highRows > 0
-                && lowRows > 0
-                && high / highRows - low / lowRows >= w * .15f
-                && upperThin >= Math.max(2, Math.round(h * .2f))
-                && upperPocket <= Math.max(1, Math.round(h * .12f))
-                && lowerPocket >= Math.max(3, Math.round(h * .2f))
-                && footWide >= 2;
+        if (highRows == 0 || lowRows == 0
+                || high / highRows - low / lowRows < w * .15f
+                || lowerPocket < Math.max(3, Math.round(h * .2f))
+                || footWide < 2) return false;
+        if (upperThin >= Math.max(2, Math.round(h * .2f))
+                && upperPocket <= Math.max(1, Math.round(h * .12f))) return true;
+
+        // An italic six can have an open upper curl and one enclosed lower bowl.
+        return upperPocket >= 2 && upperThin >= 2
+                && OctaveClefDigit.holes(gray, width, left, top, w, h) == 1;
     }
 }

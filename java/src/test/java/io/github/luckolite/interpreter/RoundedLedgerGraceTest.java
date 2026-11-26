@@ -156,4 +156,78 @@ public class RoundedLedgerGraceTest {
         p.rule(180, 260, 88);
         assertNull(p.at(200));
     }
+
+    private static final Class<?> DECODER = OmrScoreInterpreter.class;
+
+    private static Object component(int area, int x, int y, int rx, int ry) throws Exception {
+        var type = Class.forName(DECODER.getName() + "$Component");
+        var ctor = type.getDeclaredConstructors()[0];
+        ctor.setAccessible(true);
+        return ctor.newInstance(area, x - rx, x + rx, y - ry, y + ry, (float) x, (float) y);
+    }
+
+    private static byte[] blank() {
+        byte[] gray = new byte[W * H];
+        Arrays.fill(gray, (byte) 255);
+        return gray;
+    }
+
+    private static void ink(byte[] gray, int left, int right, int top, int bottom, int tone) {
+        for (int y = top; y <= bottom; y++)
+            Arrays.fill(gray, y * W + left, y * W + right + 1, (byte) tone);
+    }
+
+    @Test
+    public void bothPlanesMustRetainEveryShortLedgerOfSlashedGrace() throws Exception {
+        var head = component(75, 200, 125, 6, 4);
+        var principal = component(210, 235, 142, 11, 7);
+        var staffType = Class.forName(DECODER.getName() + "$Staff");
+        var staffCtor = staffType.getDeclaredConstructor(float.class, float.class, float.class);
+        staffCtor.setAccessible(true);
+        var staff = staffCtor.newInstance(160f, 224f, 16f);
+        var proof = DECODER.getDeclaredMethod("slashedGraceLedgerChain",
+                byte[].class, byte[].class, int.class, int.class, head.getClass(),
+                staffType, staffType, List.class, List.class, List.class);
+        proof.setAccessible(true);
+
+        byte[] gray = blank();
+        ink(gray, 195, 205, 122, 126, 25);
+        ink(gray, 206, 207, 90, 125, 25);
+        for (int y = 90; y <= 106; y++) {
+            int x = 206 + Math.round((y - 90) * 9f / 16);
+            ink(gray, x - 1, x + 1, y, y, 25);
+        }
+        for (int y = 94; y <= 111; y++) ink(gray, 316 - y, 318 - y, y, y, 25);
+        ink(gray, 224, 225, 142, 181, 25);
+        ink(gray, 192, 208, 130, 130, 155);
+        ink(gray, 192, 208, 144, 144, 155);
+        byte[] original = gray.clone();
+        assertTrue((boolean) proof.invoke(null, gray, original, W, H, head, staff, staff,
+                List.of(staff), List.of(head, principal), M));
+
+        ink(original, 192, 208, 130, 130, 255);
+        assertFalse((boolean) proof.invoke(null, gray, original, W, H, head, staff, staff,
+                List.of(staff), List.of(head, principal), M));
+
+        ink(original, 180, 220, 130, 132, 25);
+        assertFalse((boolean) proof.invoke(null, gray, original, W, H, head, staff, staff,
+                List.of(staff), List.of(head, principal), M));
+    }
+
+    @Test
+    public void paleBeamPairNeedsBothAttachedShafts() throws Exception {
+        var first = component(75, 200, 125, 6, 4);
+        var last = component(75, 225, 117, 6, 4);
+        var proof = DECODER.getDeclaredMethod("paleGraceShafts", byte[].class, int.class,
+                int.class, first.getClass(), last.getClass(), float.class);
+        proof.setAccessible(true);
+        byte[] gray = blank();
+        ink(gray, 206, 207, 92, 125, 190);
+        ink(gray, 231, 232, 92, 117, 190);
+        ink(gray, 206, 232, 92, 94, 25);
+        ink(gray, 206, 232, 100, 102, 25);
+        assertNotNull(proof.invoke(null, gray, W, H, first, last, 16f));
+        ink(gray, 231, 232, 105, 110, 255);
+        assertNull(proof.invoke(null, gray, W, H, first, last, 16f));
+    }
 }

@@ -270,6 +270,110 @@ public final class MultiMeasureRestDetectorTest {
                 MultiMeasureRestDetector.standaloneCount(gray, width, height, candidate).value());
     }
 
+    @Test
+    public void recognizesHeavySerifSevenAboveRestBar() {
+        int width = 220, height = 130;
+        byte[] gray = new byte[width * height];
+        java.util.Arrays.fill(gray, (byte) 255);
+        MeasureRegion region = new MeasureRegion(.32f, .68f, .51f, .88f);
+        addHorizontalBar(new byte[width * height], gray, width, 83, 137, 86, 90);
+        for (int y = 34; y <= 38; y++)
+            for (int x = 102; x <= 116; x++) gray[y * width + x] = 0;
+        for (int y = 39; y <= 56; y++) {
+            int start = 112 - (y - 39) / 3;
+            for (int x = start; x <= start + 2; x++) gray[y * width + x] = 0;
+        }
+        gray[39 * width + 102] = 0;
+        gray[40 * width + 102] = 0;
+        var candidate = new MultiMeasureRestDetector.RestBarCandidate(0, region);
+
+        assertEquals(7, MultiMeasureRestDetector.standaloneCount(gray, width, height, candidate).value());
+    }
+
+    @Test
+    public void repeatedCountHeadsOnTwoLinkedStavesProveOneRest() {
+        int width = 320, height = 230;
+        byte[] labels = new byte[width * height];
+        byte[] gray = new byte[width * height];
+        java.util.Arrays.fill(gray, (byte) 255);
+        var measure = new MeasureRegion(.20f, .70f, .25f, .83f);
+        var counts = new java.util.ArrayList<MeasureNumberReconciler.NumberToken>();
+        for (int staff : new int[] {70, 145}) {
+            for (int line = 0; line < 5; line++) {
+                int y = staff + line * 9;
+                java.util.Arrays.fill(gray, y * width + 24, y * width + 300, (byte) 0);
+                java.util.Arrays.fill(labels, y * width + 24, y * width + 300, OmrMeasurePostProcessor.STAFF);
+            }
+            addHorizontalBar(labels, gray, width, 88, 194, staff + 15, staff + 21);
+            addNotehead(labels, width, 144, staff - 8);
+            counts.add(new MeasureNumberReconciler.NumberToken(3, 137f / width,
+                    (staff - 12f) / height, 151f / width, (staff - 4f) / height));
+        }
+
+        var admitted = MultiMeasureRestDetector.detect(labels, gray, width, height, List.of(measure), counts);
+
+        assertEquals(List.of(counts.get(0)), admitted);
+        addNotehead(labels, width, 111, 157);
+        assertEquals(List.of(), MultiMeasureRestDetector.detect(labels, gray, width, height,
+                List.of(measure), counts));
+    }
+
+    @Test
+    public void recognizesBreveRestWithPrintedTwoAndRejectsOrdinaryRest() {
+        int width = 320, height = 220;
+        byte[] labels = new byte[width * height];
+        byte[] gray = new byte[width * height];
+        java.util.Arrays.fill(gray, (byte) 255);
+        for (int y = 100; y <= 148; y += 12) {
+            java.util.Arrays.fill(gray, y * width + 18, y * width + 300, (byte) 0);
+            java.util.Arrays.fill(labels, y * width + 18, y * width + 300, OmrMeasurePostProcessor.STAFF);
+        }
+        var measure = new MeasureRegion(.25f, .70f, .42f, .73f);
+        var count = new MeasureNumberReconciler.NumberToken(2, 147f / width, 84f / height,
+                159f / width, 95f / height);
+        addHorizontalBar(labels, gray, width, 150, 156, 113, 123);
+
+        assertEquals(List.of(count), MultiMeasureRestDetector.detect(labels, gray, width, height,
+                List.of(measure), List.of(count)));
+        assertEquals(List.of(), MultiMeasureRestDetector.detect(labels, gray, width, height,
+                List.of(measure), List.of()));
+        for (int y = 118; y <= 123; y++) {
+            java.util.Arrays.fill(gray, y * width + 150, y * width + 157, (byte) 255);
+            java.util.Arrays.fill(labels, y * width + 150, y * width + 157, (byte) 0);
+        }
+        assertEquals(List.of(), MultiMeasureRestDetector.detect(labels, gray, width, height,
+                List.of(measure), List.of(count)));
+    }
+
+    @Test
+    public void followsLongSkewedRestBetweenItsTwoCaps() {
+        int width = 500, height = 260;
+        byte[] labels = new byte[width * height];
+        byte[] gray = new byte[width * height];
+        java.util.Arrays.fill(gray, (byte) 255);
+        for (int x = 35; x < 470; x++) {
+            int drift = (x - 230) / 42;
+            for (int line = 0; line < 5; line++) {
+                int i = (100 + line * 14 + drift) * width + x;
+                gray[i] = 0;
+                labels[i] = OmrMeasurePostProcessor.STAFF;
+            }
+        }
+        for (int x = 90; x <= 370; x++) {
+            int middle = 128 + (x - 230) / 42;
+            int half = x <= 93 || x >= 367 ? 14 : 4;
+            for (int y = middle - half; y <= middle + half; y++) gray[y * width + x] = 0;
+        }
+        var measure = new MeasureRegion(.15f, .80f, 72f / height, 187f / height);
+        var count = new MeasureNumberReconciler.NumberToken(3, .445f, 78f / height, .475f, 97f / height);
+
+        assertEquals(List.of(count), MultiMeasureRestDetector.detect(labels, gray, width, height,
+                List.of(measure), List.of(count)));
+        addNotehead(labels, width, 84, 116);
+        assertEquals(List.of(), MultiMeasureRestDetector.detect(labels, gray, width, height,
+                List.of(measure), List.of(count)));
+    }
+
     private static MeasureRegion region(float left, float right) {
         return new MeasureRegion(left, right, .38f, .62f);
     }

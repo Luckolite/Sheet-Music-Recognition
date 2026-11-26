@@ -912,6 +912,10 @@ final class PairedTremoloInk {
                     refusedLanes.add(lane);
                     continue;
                 }
+                complete = complete.stream()
+                        .filter(mark -> !endpointLedgerFamily(mark, a, b.x)
+                                && !endpointLedgerFamily(mark, b, a.x))
+                        .toList();
                 if (complete.isEmpty()) continue;
                 var endpointIds = new java.util.HashSet<Integer>();
                 for (Head x : first) endpointIds.add(x.id);
@@ -981,6 +985,25 @@ final class PairedTremoloInk {
             if (p.firstIds.stream().allMatch(id -> use.get(id) == 1)
                     && p.secondIds.stream().allMatch(id -> use.get(id) == 1)) result.add(p);
         return List.copyOf(result);
+    }
+
+    /** Short ledger rules at one chord cannot mark alternation between two shafts. */
+    static boolean endpointLedgerFamily(Mark mark, Head endpoint, double otherCenterX) {
+        if (!Double.isFinite(endpoint.staffTop)) return false;
+        double gap = endpoint.gap;
+        double center = (mark.left() + mark.right()) * .5;
+        double between = (endpoint.x + otherCenterX) * .5;
+        int span = mark.right() - mark.left();
+        if (span + 1 > 1.9 * gap || Math.abs(mark.slope()) * span > .20 * gap
+                || !(mark.left() < endpoint.x && endpoint.x < mark.right())
+                || Math.abs(center - endpoint.x) > .35 * gap
+                || (mark.left() <= between && between <= mark.right())) return false;
+        for (Band band : mark.bands()) {
+            double line = (band.center() - endpoint.staffTop) / gap;
+            long nearest = Math.round(line);
+            if ((nearest >= 0 && nearest <= 4) || Math.abs(line - nearest) > .20) return false;
+        }
+        return !mark.bands().isEmpty();
     }
 
     /** Discover complete finite raw bodies over the whole eligible pair lane, independent of a proposal. */

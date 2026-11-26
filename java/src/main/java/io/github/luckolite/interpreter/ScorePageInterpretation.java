@@ -638,4 +638,12 @@ public record ScorePageInterpretation(
                 .map(change -> change.offset(-firstMeasure))
                 .collect(java.util.stream.Collectors.toList());
     }
+    /** Retain the terminal signature while preserving all other guide evidence. */
+    ScorePageInterpretation withMeterChanges(List<ScoreMeterChange> changes) {
+        return new ScorePageInterpretation(
+                measures, notes, firstMeasureNumber, keyChanges, tempoChanges, List.copyOf(changes),
+                rests, techniqueChanges, dynamicChanges, playbackDirections, expressiveEvents,
+                slurSource, openingPickup, tremoloSource, multiRestGroups, beamSource, clockContextSource);
+    }
+
 }

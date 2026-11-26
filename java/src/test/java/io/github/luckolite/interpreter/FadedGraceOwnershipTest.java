@@ -44,6 +44,11 @@ public class FadedGraceOwnershipTest {
 
     List<ScoreNoteEvent> mark(List<Object> heads, List<ScoreNoteEvent> src, String method)
             throws Exception {
+        return mark(heads, src, method, false);
+    }
+
+    List<ScoreNoteEvent> mark(List<Object> heads, List<ScoreNoteEvent> src, String method, boolean withLabels)
+            throws Exception {
         var hc = Class.forName(OmrScoreInterpreter.class.getName() + "$Component");
         var dc = Class.forName(OmrScoreInterpreter.class.getName() + "$DetectedNote");
         var ctor = dc.getDeclaredConstructor(ScoreNoteEvent.class, hc, float.class);
@@ -52,11 +57,14 @@ public class FadedGraceOwnershipTest {
         for (int i = 0; i < heads.size(); i++)
             detected.add(ctor.newInstance(src.get(i), heads.get(i), 16f));
         var events = new ArrayList<>(src);
-        var m =
-                OmrScoreInterpreter.class.getDeclaredMethod(
+        var m = withLabels
+                ? OmrScoreInterpreter.class.getDeclaredMethod(
+                        method, byte[].class, byte[].class, int.class, int.class, List.class, List.class)
+                : OmrScoreInterpreter.class.getDeclaredMethod(
                         method, byte[].class, int.class, int.class, List.class, List.class);
         m.setAccessible(true);
-        m.invoke(null, gray, W, H, detected, events);
+        if (withLabels) m.invoke(null, labels, gray, W, H, detected, events);
+        else m.invoke(null, gray, W, H, detected, events);
         return events;
     }
 

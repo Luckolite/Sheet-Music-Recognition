@@ -421,7 +421,7 @@ public final class SheetInterpreter {
         noteOwners = tripleRuns.retain(noteOwners, labels, gray, annotationGray, width, height);
         var rhythm =
                 TripletRhythmDetector.withRests(
-                        noteOwners, score.rests(), measures, gray, width, height);
+                        noteOwners, score.rests(), measures, gray, annotationGray, width, height);
         var notes = rhythm.notes();
         var physicalStaffs = pageAnalysis.physicalStaffs();
         var staffs = ScoreDynamicsDetector.alignStaffs(physicalStaffs, notes, height);
@@ -1204,10 +1204,14 @@ public final class SheetInterpreter {
                 provedDyadAccidentals::add).withClockContextSource(terminalCadence.clockContextSource());
         terminalCadence = ClosedLedgerHalfDyad.captureTerminalSpaceSixth(
                 terminalCadence, annotationGray, gray, width, height);
+        if (annotationGray != gray)
+            terminalCadence = TripletRhythmDetector.recoverSourceTriplets(terminalCadence, gray, annotationGray, width, height);
         var phrasing = PrintedStaccatoSlurs.apply(
                 terminalCadence, physicalPage, labels, gray, annotationGray, width, height);
+        var finalPage = OpeningPortatoSixteenths.restore(phrasing, gray, annotationGray, width, height);
+        var continued = RepeatedBeamedTriplets.apply(finalPage, labels, annotationGray, width, height, inheritedMeter);
         return new AnalyzedPage(
-                OpeningPortatoSixteenths.restore(phrasing, gray, annotationGray, width, height),
+                TerminalCutTime.apply(continued, gray, width, height),
                 clockAnalysis.notes(),
                 clockAnalysis.clockProducerSource().localAccidentals(),
                 measures,

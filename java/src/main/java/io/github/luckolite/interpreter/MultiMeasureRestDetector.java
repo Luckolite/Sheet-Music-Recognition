@@ -53,6 +53,16 @@ final class MultiMeasureRestDetector {
                 // glyph at the same location may replace that single-digit reading.
                 if (count.value() == 9)
                     readings.removeIf(token -> token.value() == 6 && sameCountGlyph(token, count));
+                // The centered printed count can disqualify a separate off-center OCR token.
+                if (centeredCount(count, candidate.region()))
+                    readings.removeIf(token -> token.value() >= 2 && token.value() <= 32
+                            && token.value() != count.value()
+                            && !centeredCount(token, candidate.region())
+                            && (token.left() > count.right() || token.right() < count.left())
+                            && containingRestBar(restBars, measures,
+                                    (token.left() + token.right()) * .5f,
+                                    (token.top() + token.bottom()) * .5f, null) == candidate.measureIndex()
+                            && hasCountTextInk(token, gray, width, height));
                 readings.add(count);
             }
         }
@@ -77,6 +87,23 @@ final class MultiMeasureRestDetector {
             if (origins != null) origins.admitted(token, matched[0], measureIndex);
         }
         return List.copyOf(result);
+    }
+
+    private static boolean hasCountTextInk(
+            MeasureNumberReconciler.NumberToken token, byte[] gray, int width, int height) {
+        int left = clamp(Math.round(token.left() * width), 0, width);
+        int right = clamp(Math.round(token.right() * width), left, width);
+        int top = clamp(Math.round(token.top() * height), 0, height);
+        int bottom = clamp(Math.round(token.bottom() * height), top, height);
+        int inkRows = 0;
+        for (int y = top; y < bottom; y++) {
+            for (int x = left; x < right; x++) {
+                if ((gray[y * width + x] & 255) > 165) continue;
+                if (++inkRows == 3) return true;
+                break;
+            }
+        }
+        return false;
     }
 
     private static boolean sameCountGlyph(
@@ -144,8 +171,28 @@ final class MultiMeasureRestDetector {
         int noteFreeLimit = Math.max(6, ordinaryWrittenInk / 14);
         List<RestBarCandidate> result = new ArrayList<>();
         OmrScoreInterpreter.RestLedgerEvidence ledgerEvidence = null;
+        List<RawStaffLineDetector.StaffLines> rawStaffs = null;
+        measuresLoop:
         for (int index = 0; index < measures.size(); index++) {
             MeasureRegion parent = measures.get(index);
+            boolean wideRestRegion = (parent.right() - parent.left()) * width
+                    >= (parent.bottom() - parent.top()) * height * (12f / 8.2f);
+            for (var count : tokens) {
+                boolean blockCount = count.value() == 2 || count.value() == 4;
+                if (count.value() < 2 || count.value() > 32 || !centeredCount(count, parent)
+                        || (!blockCount && !wideRestRegion)) continue;
+                if (rawStaffs == null) rawStaffs = RawStaffLineDetector.detect(gray, width, height);
+                boolean blockRest = blockCount && printedBlockRest(labels, gray, width, height, parent,
+                        noteRegions.get(index), noteheadPixels[index], noteFreeLimit, count, rawStaffs);
+                boolean wideRest = !blockRest && wideRestRegion
+                        && noteheadPixels[index] - countGlyphHeads(count, labels, width, height,
+                                noteRegions.get(index)) <= noteFreeLimit
+                        && wideCappedRest(labels, gray, width, height, parent, count, rawStaffs);
+                if (blockRest || wideRest) {
+                    result.add(new RestBarCandidate(index, parent));
+                    continue measuresLoop;
+                }
+            }
             // Segmentation can classify a printed rest count as a notehead. Exclude
             // only that verified glyph above the staff, never other heads in the measure.
             MeasureNumberReconciler.NumberToken countGlyph = null;
@@ -197,7 +244,16 @@ final class MultiMeasureRestDetector {
                             - unsupportedLedgerHeads
                             - countGlyphHeads(
                                     countGlyph, labels, width, height, noteRegions.get(index))
-                    > noteFreeLimit) continue;
+                    > noteFreeLimit) {
+                var possibleCounts = nearbyRestCounts(parent, tokens);
+                if (possibleCounts.size() < 2
+                        || !hasThickHorizontalBar(gray, width, height, parent)) continue;
+                if (rawStaffs == null) rawStaffs = RawStaffLineDetector.detect(gray, width, height);
+                var shared = sharedStaffRest(labels, gray, width, height, parent, noteRegions.get(index),
+                        noteheadPixels[index], noteFreeLimit, possibleCounts, rawStaffs);
+                if (shared != null) result.add(new RestBarCandidate(index, shared));
+                continue;
+            }
             int parentLeft = clamp(Math.round(parent.left() * width), 0, width - 1);
             int parentRight = clamp(Math.round(parent.right() * width), parentLeft, width - 1);
             int parentTop = clamp(Math.round(parent.top() * height), 0, height - 1);
@@ -235,6 +291,216 @@ final class MultiMeasureRestDetector {
             }
         }
         return List.copyOf(result);
+    }
+
+    private record InkBand(int top, int bottom) {
+        int thickness() { return bottom - top + 1; }
+        int center() { return (top + bottom) / 2; }
+    }
+
+    /** The bar follows the middle rule and has a thin, bilateral cap at each end. */
+    private static boolean wideCappedRest(
+            byte[] labels, byte[] gray, int width, int height, MeasureRegion parent,
+            MeasureNumberReconciler.NumberToken count, List<RawStaffLineDetector.StaffLines> staffs) {
+        float gap = (parent.bottom() - parent.top()) * height / 8.2f;
+        int left = Math.round(parent.left() * width);
+        int right = Math.min(width - 1, Math.round(parent.right() * width));
+        if (gap < 7 || gap > 36 || right - left < 12 * gap) return false;
+        int x = Math.round((count.left() + count.right()) * .5f * width);
+        float hint = parent.bottom() * height - 2.1f * gap;
+        var rails = PrintedDirectionStaff.printedRules(gray, width, height, x, hint, gap);
+        float bottom;
+        if (rails != null) {
+            bottom = rails[0];
+            gap = rails[1];
+        } else {
+            RawStaffLineDetector.StaffLines match = null;
+            for (var staff : staffs) {
+                if (staff.top() < parent.top() * height || staff.bottom() > parent.bottom() * height
+                        || Math.abs(staff.bottom() - hint) > .65f * gap
+                        || Math.abs(staff.gap() - gap) > .2f * gap) continue;
+                if (match != null) return false;
+                match = staff;
+            }
+            if (match == null) return false;
+            bottom = match.bottom();
+            gap = match.gap();
+        }
+        int top = Math.round(bottom - 4 * gap);
+        if (count.bottom() * height > top + gap * .12f || top - count.bottom() * height > gap
+                || !countAboveRule(count, labels, gray, width, height, top)) return false;
+        int middle = Math.round(bottom - 2 * gap);
+        var ink = inkBand(gray, width, height, x, middle);
+        if (ink == null || ink.thickness() < gap * .35f || ink.thickness() > gap * .9f) return false;
+        int a = walkRestBar(gray, width, height, x, ink.center(), left, -1, gap);
+        int b = walkRestBar(gray, width, height, x, ink.center(), right, 1, gap);
+        return a >= 0 && b >= 0 && b - a >= 9 * gap
+                && Math.abs((a + b) * .5f - x) <= gap;
+    }
+
+    /** A complete staff rule immediately after a long printed H-rest ends the rest's bar. */
+    static boolean afterWideRestBar(
+            byte[] gray, int width, int height, int x, int[] rows, float gap, float shift) {
+        if (gray == null || gap < 7 || gap > 36) return false;
+        int start = x - Math.round(gap * 2.1f);
+        int middle = Math.round(rows[2] + shift);
+        if (start < 0 || x >= width) return false;
+        var ink = inkBand(gray, width, height, start, middle);
+        if (ink == null || ink.thickness() < gap * .35f || ink.thickness() > gap * .9f) return false;
+        int top = Math.max(0, Math.round(rows[0] + shift));
+        int bottom = Math.min(height - 1, Math.round(rows[4] + shift));
+        if (bottom - top < 3.6f * gap) return false;
+        int hits = 0;
+        for (int y = top; y <= bottom; y++)
+            if ((gray[y * width + x] & 255) <= 150) hits++;
+        if (hits < (bottom - top + 1) * .95f) return false;
+        int near = walkRestBar(gray, width, height, start, ink.center(), x - 1, 1, gap);
+        if (near < 0 || x - near < gap * .35f || x - near > gap * 1.8f) return false;
+        int far = walkRestBar(gray, width, height, start, ink.center(),
+                Math.max(0, x - Math.round(36 * gap)), -1, gap);
+        return far >= 0 && near - far >= 9 * gap;
+    }
+
+    private static int walkRestBar(
+            byte[] gray, int width, int height, int start, int middle, int limit, int step, float gap) {
+        int capColumns = 0, fringeColumns = 0;
+        for (int x = start + step; step * (limit - x) >= 0; x += step) {
+            var ink = inkBand(gray, width, height, x, middle);
+            if (ink == null || ink.thickness() < gap * .35f)
+                return capColumns > 0 ? x - step : -1;
+            if (ink.thickness() >= gap * 1.5f) {
+                if (ink.thickness() > gap * 2.7f || ink.top() > middle - gap * .6f
+                        || ink.bottom() < middle + gap * .6f
+                        || ++capColumns > Math.max(2, Math.round(gap * .42f))) return -1;
+                continue;
+            }
+            if (capColumns > 0) {
+                if (ink.thickness() > gap * .88f && Math.abs(ink.center() - middle) > gap * .22f
+                        && ++fringeColumns <= 2) continue;
+                return -1;
+            }
+            if (ink.thickness() > gap * 1.22f
+                    || Math.abs(ink.center() - middle) > 2) return -1;
+            middle = ink.center();
+        }
+        return -1;
+    }
+
+    private static InkBand inkBand(byte[] gray, int width, int height, int x, int y) {
+        if (y < 0 || y >= height || (gray[y * width + x] & 255) > 150) return null;
+        int top = y, bottom = y;
+        while (top > 0 && (gray[(top - 1) * width + x] & 255) <= 150) top--;
+        while (bottom < height - 1 && (gray[(bottom + 1) * width + x] & 255) <= 150) bottom++;
+        return new InkBand(top, bottom);
+    }
+
+    private static boolean centeredCount(MeasureNumberReconciler.NumberToken count, MeasureRegion parent) {
+        float centerX = (count.left() + count.right()) * .5f;
+        float centerY = (count.top() + count.bottom()) * .5f;
+        return Math.abs(centerX - (parent.left() + parent.right()) * .5f)
+                        <= (parent.right() - parent.left()) * .2f
+                && centerY >= parent.top() - (parent.bottom() - parent.top()) * .20f
+                && centerY <= parent.bottom();
+    }
+
+    /** Old-style two- and four-bar rests fill one or two staff spaces with a solid rectangle. */
+    private static boolean printedBlockRest(
+            byte[] labels, byte[] gray, int width, int height, MeasureRegion parent,
+            MeasureRegion noteRegion, int noteheadPixels, int noteFreeLimit,
+            MeasureNumberReconciler.NumberToken count, List<RawStaffLineDetector.StaffLines> staffs) {
+        for (var staff : staffs) {
+            int[] rows = staff.rows();
+            float gap = staff.gap();
+            if (staff.top() < parent.top() * height || staff.bottom() > parent.bottom() * height
+                    || count.bottom() * height > staff.top() + gap * .12f
+                    || staff.top() - count.bottom() * height > gap
+                    || !countAboveRule(count, labels, gray, width, height, staff.top())) continue;
+            int top = rows[1] + Math.max(2, Math.round(gap * .15f));
+            int lastRule = count.value() == 4 ? 3 : 2;
+            int bottom = rows[lastRule] - Math.max(2, Math.round(gap * .12f));
+            if (bottom - top < 4) continue;
+            int center = Math.round((count.left() + count.right()) * .5f * width);
+            int left = Math.max(Math.round(parent.left() * width), center - Math.round(gap));
+            int right = Math.min(Math.round(parent.right() * width), center + Math.round(gap));
+            int coreLeft = right, coreRight = left;
+            int minInk = Math.max(2, Math.round(gap * .35f));
+            int maxInk = Math.round(gap * .85f);
+            boolean rectangle = true;
+            for (int y = top; y <= bottom; y++) {
+                if (lastRule == 3 && Math.abs(y - rows[2]) <= Math.max(1, Math.round(gap * .12f))) continue;
+                int first = right, last = left, ink = 0;
+                for (int x = left; x <= right; x++) {
+                    if ((gray[y * width + x] & 255) > 150) continue;
+                    first = Math.min(first, x);
+                    last = x;
+                    ink++;
+                }
+                if (ink < minInk || ink > maxInk || last - first + 1 != ink
+                        || first == left || last == right) {
+                    rectangle = false;
+                    break;
+                }
+                coreLeft = Math.min(coreLeft, first);
+                coreRight = Math.max(coreRight, last);
+            }
+            if (!rectangle || coreRight - coreLeft + 1 > maxInk
+                    || Math.abs((coreLeft + coreRight) * .5f - center) > gap * .25f) continue;
+            var glyph = new MeasureRegion(
+                    (coreLeft - 1f) / width, (coreRight + 1f) / width,
+                    rows[1] / (float) height, rows[lastRule] / (float) height);
+            int glyphHeads = countLabel(labels, width, height, glyph, OmrMeasurePostProcessor.NOTEHEAD)
+                    + countGlyphHeads(count, labels, width, height, noteRegion);
+            if (noteheadPixels - glyphHeads <= noteFreeLimit) return true;
+        }
+        return false;
+    }
+
+    private static List<MeasureNumberReconciler.NumberToken> nearbyRestCounts(
+            MeasureRegion parent, List<MeasureNumberReconciler.NumberToken> tokens) {
+        float span = parent.right() - parent.left();
+        float middle = (parent.left() + parent.right()) * .5f;
+        float rangeTop = parent.top() - (parent.bottom() - parent.top()) * .35f;
+        return tokens.stream().filter(token -> token.value() >= 2 && token.value() <= 32
+                && Math.abs((token.left() + token.right()) * .5f - middle) <= span * .23f
+                && (token.top() + token.bottom()) * .5f >= rangeTop
+                && (token.top() + token.bottom()) * .5f <= parent.bottom()).toList();
+    }
+
+    /** Staff numbering copies can be false noteheads. Each linked staff must prove the same rest. */
+    private static MeasureRegion sharedStaffRest(
+            byte[] labels, byte[] gray, int width, int height, MeasureRegion parent, MeasureRegion noteRegion,
+            int noteheadPixels, int noteFreeLimit, List<MeasureNumberReconciler.NumberToken> counts,
+            List<RawStaffLineDetector.StaffLines> staffs) {
+        int read = 0, removed = 0, staffCount = 0;
+        int firstRow = height;
+        MeasureRegion firstRest = null;
+        for (var staff : staffs) {
+            int[] rows = staff.rows();
+            float gap = staff.gap();
+            if (rows[0] < parent.top() * height || rows[4] > parent.bottom() * height) continue;
+            staffCount++;
+            var local = new MeasureRegion(parent.left(), parent.right(),
+                    Math.max(parent.top(), (rows[0] - gap) / height),
+                    Math.min(parent.bottom(), (rows[4] + gap) / height));
+            if (!hasThickHorizontalBar(gray, width, height, local)) return null;
+            MeasureNumberReconciler.NumberToken tokenForStaff = null;
+            for (var token : counts) {
+                float above = rows[0] - (token.top() + token.bottom()) * .5f * height;
+                if (above <= 0 || above > 4.5f * gap
+                        || !aboveStaff(token, labels, gray, width, height, local)) continue;
+                if (tokenForStaff != null && (tokenForStaff.value() != token.value()
+                        || !sameCountGlyph(tokenForStaff, token))) return null;
+                tokenForStaff = token;
+            }
+            if (tokenForStaff == null || (read != 0 && tokenForStaff.value() != read)) return null;
+            read = tokenForStaff.value();
+            removed += countGlyphHeads(tokenForStaff, labels, width, height, noteRegion);
+            if (rows[0] < firstRow) {
+                firstRow = rows[0];
+                firstRest = local;
+            }
+        }
+        return staffCount >= 2 && noteheadPixels - removed <= noteFreeLimit ? firstRest : null;
     }
 
     static List<Integer> candidateMeasureIndexes(
@@ -601,7 +867,7 @@ final class MultiMeasureRestDetector {
     /** Standalone single-digit recognition must not read a letter or one digit from adjacent text. */
     private static boolean isolatedCountGlyph(
             byte[] gray, int width, int height, int left, int right, int top, int bottom) {
-        int h = bottom - top + 1, margin = Math.max(2, Math.round(h * .3f));
+        int h = bottom - top + 1, margin = Math.max(2, Math.round(h * .38f));
         for (int direction : new int[] {-1, 1}) {
             int ink = 0;
             for (int y = Math.max(0, top); y <= Math.min(height - 1, bottom); y++)
@@ -887,7 +1153,8 @@ final class MultiMeasureRestDetector {
                 && upperX >= w
                 && lowerX >= 0
                 && lowerX < upperX - w * .25f
-                && rightSpine < h * .60f;
+                && (rightSpine < h * .67f
+                        || (lowerSpan <= w * .44f && upperX - lowerX >= w * .43f));
     }
 
     /** Kept as a narrow compatibility seam for the original four-shape regression tests. */
@@ -976,12 +1243,19 @@ final class MultiMeasureRestDetector {
                 topSpan = 0,
                 middleSpan = 0,
                 bottomSpan = 0,
-                rightSpine = 0;
+                rightSpine = 0, upperCounters = 0, lowerCounters = 0, openWaist = 0;
         for (int y = 0; y < h; y++) {
             if (y >= h * .25f && y <= h * .45f && first[y] >= w * .45f && last[y] >= w * .75f)
                 upperOpen++;
             if (y >= h * .55f && y <= h * .75f && first[y] >= w * .45f && last[y] >= w * .75f)
                 lowerOpen++;
+            if (first[y] <= .2f * w && last[y] >= .7f * w
+                    && (gray[(top + y) * width + left + w / 2] & 255) > 175) {
+                if (y >= .13f * h && y <= .40f * h) upperCounters++;
+                if (y >= .58f * h && y <= .82f * h) lowerCounters++;
+            }
+            if (y >= .40f * h && y <= .61f * h && first[y] >= .24f * w
+                    && last[y] >= .65f * w) openWaist++;
             int span = last[y] - first[y] + 1;
             if (y < h * .20f) topSpan = Math.max(topSpan, span);
             if (y >= h * .40f && y <= h * .60f) middleSpan = Math.max(middleSpan, span);
@@ -989,14 +1263,20 @@ final class MultiMeasureRestDetector {
         }
         for (int x = Math.round(w * .70f); x < w; x++)
             rightSpine = Math.max(rightSpine, columns[x]);
-        // Small raster glyphs can represent a fractional row quota with only one row.
-        // Both open bowls, three broad strokes and the right spine are still required.
-        return upperOpen >= Math.max(1, (int) (h * .06f))
-                && lowerOpen >= Math.max(1, (int) (h * .06f))
-                && topSpan >= w * .7f
-                && bottomSpan >= w * .7f
-                && middleSpan >= w * .45f
-                && rightSpine >= h * .55f;
+        if (topSpan < w * .7f || bottomSpan < w * .7f
+                || middleSpan < w * .45f || rightSpine < h * .55f) return false;
+        int openRows = Math.max(1, (int) (h * .06f));
+        if (upperOpen >= openRows && lowerOpen >= openRows) return true;
+
+        // Engraved ball terminals can almost close both bowls. A figure eight
+        // would close its white counters, while this form opens at the waist.
+        int terminalRows = Math.max(2, (int) (h * .08f));
+        if (upperCounters < terminalRows || lowerCounters < terminalRows
+                || openWaist < Math.max(2, (int) (h * .11f))
+                || OctaveClefDigit.holes(gray, width, left, top, w, h) != 0) return false;
+        var reading = JoinedDigitTemplates.inspect(gray, width, gray.length / width,
+                new java.util.BitSet(), left, top, right, bottom, () -> {});
+        return reading != null && reading.scores()[3] >= .70f;
     }
 
     private static boolean looksLikeTwo(

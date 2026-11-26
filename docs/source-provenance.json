@@ -1,4 +1,40 @@
 {
+  "full_library_recognition_review": {
+    "public_recognition_revision": 191,
+    "verified_app_source": "2e62510143e22e854aa8e6e0de2453f008798838",
+    "scope": "Printed accidentals, navigation and ending ownership, counted rests, tremolo clocks, tuplets, terminal cut time, and grace-note evidence. App and standalone use their own page ingress and timing adapters.",
+    "exact_namespace_ports": {
+      "HandwrittenThreeHeadInk.java": {
+        "app_normalized_sha256": "319577d06d24cd5b292a7b6d854e8f789345ebb2f9bebc1f10f6eb32249bd1f7",
+        "standalone_normalized_sha256": "583d00d6a3422b37245d5b06ba9e800b439b8c6598206aea8fd9b51eefb67135"
+      },
+      "JoinedDigitTemplates.java": {
+        "app_normalized_sha256": "31c88868051a962b961527f03b305c913fe591d2bc15f4ba17fbd678dbf3c043",
+        "standalone_normalized_sha256": "89ea44e2f3a0d460b44c1e934ccda2d5e2ae8f285b10a190216faef6a58f41bb"
+      },
+      "MeasureNumberReconciler.java": {
+        "app_normalized_sha256": "ff107257f68c186f392f9be68a4151936d80dcb548e6a4242f1023e2cf9ba32e",
+        "standalone_normalized_sha256": "094e0a8cd185a1fc717cc3bd6485bcda22fb12d0909ba491c8e46850672d435f"
+      },
+      "NavigationCodaGlyphs.java": {
+        "app_normalized_sha256": "47ec984de42c27b5ad4af844a0d89f98069a059d47607466713e8087834e4b7a",
+        "standalone_normalized_sha256": "a16e426239d2e91b7c1b47af4d4879122bbc266160b8e24c8bc39d3da860c026"
+      },
+      "RepeatedBeamedTriplets.java": {
+        "app_normalized_sha256": "67e46da3b125659454fc2b00bee8a851f69b936d952c15a5147faf10fc585b7d",
+        "standalone_normalized_sha256": "c103c77289a3e483b1b3f711f7332923c1d568e07ddd75a2ff4d37a8161e3dac"
+      },
+      "ScoreNavigationDetector.java": {
+        "app_normalized_sha256": "9f584515ff5f54c081fe838583dde0a0cb86498c0db8b1115e97387d7f991118",
+        "standalone_normalized_sha256": "d9e0bae577bdcabecf320dcf035f570168ac890f88bbbb5d5fcc17ca3e3bf231"
+      },
+      "TerminalCutTime.java": {
+        "app_normalized_sha256": "7d4e160889506eee25c88f3f349e382870f8df82e5ac88b8fc5287d1d1696667",
+        "standalone_normalized_sha256": "ae53284a9ece83e9502115d73206166d28f80c9063cf25b55b1e749a2d2e60f5"
+      }
+    },
+    "test_inputs": "Original procedural geometry and playback controls. Private scores, library corrections, and replay evidence remain outside this repository."
+  },
   "november_24_flesch_app_rollout_review": {
     "reviewed_app_commit": "d0622b051dfaa40ad1ac76a2cd1ed7072186bb90",
     "reviewed_public_base": "a6e6718780a7b4e0311eda73772dcb3a602185c9",
@@ -4719,8 +4755,8 @@
     },
     "JoinedDigitTemplates.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/JoinedDigitTemplates.java",
-      "source_sha256": "6e61a840777267049f3a869d83babbad979980147e5141bab94885a09642bafd",
-      "source_normalized_sha256": "6e61a840777267049f3a869d83babbad979980147e5141bab94885a09642bafd",
+      "source_sha256": "31c88868051a962b961527f03b305c913fe591d2bc15f4ba17fbd678dbf3c043",
+      "source_normalized_sha256": "31c88868051a962b961527f03b305c913fe591d2bc15f4ba17fbd678dbf3c043",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/JoinedDigitTemplates.java",
       "standalone_sha256": "186fd8aea4f94ae8dc4b9dcecabc306b8aa370a5cb5f6b154cb72a7eb90665e4",
       "license": "Apache-2.0",
@@ -4729,8 +4765,8 @@
         "app_commit": "d0622b051dfaa40ad1ac76a2cd1ed7072186bb90",
         "scope": "Shared portable source evidence with namespace and source-wire adaptation."
       },
-      "standalone_normalized_sha256": "5e8f47b958d7c4bdb5bb60e070f76135358bbb639a689fcc0efdafe45f5ede93",
-      "reviewed_app_commit": "ffec5d6c6899aa2d876d4a5d9758dd6b80e5c01b"
+      "standalone_normalized_sha256": "89ea44e2f3a0d460b44c1e934ccda2d5e2ae8f285b10a190216faef6a58f41bb",
+      "reviewed_app_commit": "2e62510143e22e854aa8e6e0de2453f008798838"
     },
     "JoinedLaneWorkBudget.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/JoinedLaneWorkBudget.java",
@@ -5025,15 +5061,15 @@
         "scope": "Unanchored measure-count split guard and raster wiring. Broader source differences remain subject to review."
       },
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/MeasureNumberReconciler.java",
-      "source_sha256": "0f0c970e09fba52e358e96a7ac64f5ff49c80133c02dba4286303bc5e6a2a8ae",
-      "reviewed_app_commit": "2ef00ff20cb5274a3fb2df122ffed457801909fa",
-      "source_normalized_sha256": "0f0c970e09fba52e358e96a7ac64f5ff49c80133c02dba4286303bc5e6a2a8ae",
+      "source_sha256": "ff107257f68c186f392f9be68a4151936d80dcb548e6a4242f1023e2cf9ba32e",
+      "reviewed_app_commit": "2e62510143e22e854aa8e6e0de2453f008798838",
+      "source_normalized_sha256": "ff107257f68c186f392f9be68a4151936d80dcb548e6a4242f1023e2cf9ba32e",
       "reviewed_source_state": "Committed paired recognition47/guide286/audio80 sources; final cumulative package, deployment and runtime verification remain pending.",
       "review_note": "Separate zero-offset agreement from at least two trusted printed system starts from an unknown first-measure number.",
       "scoped_reviewed_app_commit": "21815e0e7f8fc53e0cc41b9667eae3f9be85d4f7",
       "standalone_sha256": "bdee513333d4866b214d5fa97b04b88bd8ddc1f819cabbeca6cd31d9e78b0ac0",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/MeasureNumberReconciler.java",
-      "standalone_normalized_sha256": "bdee513333d4866b214d5fa97b04b88bd8ddc1f819cabbeca6cd31d9e78b0ac0",
+      "standalone_normalized_sha256": "094e0a8cd185a1fc717cc3bd6485bcda22fb12d0909ba491c8e46850672d435f",
       "current_source_review": "Reviewed current source and standalone counterpart for the cumulative source-bound beam, notation, key, articulation and bounded context batch. Original procedural regressions only; physical source observations and model facts do not establish complete musical authority.",
       "optimization_port_review": "Skips row-layout and token routing work when no measure numbers were supplied."
     },
@@ -5503,14 +5539,14 @@
     },
     "NavigationCodaGlyphs.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/NavigationCodaGlyphs.java",
-      "source_sha256": "1ef3f39d31fafcc188afc147784e70e71b15935921931f414a4672ce89986f73",
-      "source_normalized_sha256": "1ef3f39d31fafcc188afc147784e70e71b15935921931f414a4672ce89986f73",
+      "source_sha256": "47ec984de42c27b5ad4af844a0d89f98069a059d47607466713e8087834e4b7a",
+      "source_normalized_sha256": "47ec984de42c27b5ad4af844a0d89f98069a059d47607466713e8087834e4b7a",
       "standalone_sha256": "0f537c8093fe1eba241a79e43ddf704f73f2d6c1a2386ce74e33ab4a09e9a65f",
       "reviewed_source_state": "Reviewed committed recognition138 violin-score repair.",
       "review_note": "Shared recognition and playback-direction changes ported with standalone adapters. Redistributable synthetic regressions cover the changed ink and direction rules.",
-      "reviewed_app_commit": "dbf64cc20818bbed28f0fa3a81188490b0965348",
+      "reviewed_app_commit": "2e62510143e22e854aa8e6e0de2453f008798838",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/NavigationCodaGlyphs.java",
-      "standalone_normalized_sha256": "0f537c8093fe1eba241a79e43ddf704f73f2d6c1a2386ce74e33ab4a09e9a65f",
+      "standalone_normalized_sha256": "a16e426239d2e91b7c1b47af4d4879122bbc266160b8e24c8bc39d3da860c026",
       "app_optimization_port_review": "Scans connected ink once per necessary threshold, retaining coda ownership and template checks."
     },
     "NavigationSegnoGlyphs.java": {
@@ -8824,15 +8860,15 @@
     },
     "ScoreNavigationDetector.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/ScoreNavigationDetector.java",
-      "source_sha256": "bbcc3ea555066264b2492b753a95b63d7d477ddc475decc20221329b68e46d10",
-      "source_normalized_sha256": "f42f03219e383fded8a0766abf589c07b9b714fae74f986a3c7475f353c5f6c0",
+      "source_sha256": "9f584515ff5f54c081fe838583dde0a0cb86498c0db8b1115e97387d7f991118",
+      "source_normalized_sha256": "9f584515ff5f54c081fe838583dde0a0cb86498c0db8b1115e97387d7f991118",
       "review_note": "Shared recognition and playback-direction changes ported with standalone adapters. Redistributable synthetic regressions cover the changed ink and direction rules.",
       "standalone_sha256": "95c4bac807ad3bcf2e9f296029f8b503b5d52dee57e18b8678b961a8aa466f05",
-      "reviewed_source_state": "Reviewed barline anchoring for vertically repeated Segno destinations.",
-      "reviewed_app_commit": "b029dfbb",
+      "reviewed_source_state": "Verified phrase ownership and shared barline anchoring in the app and standalone. Original synthetic controls cover Coda glyphs and repeated Segno.",
+      "reviewed_app_commit": "2e62510143e22e854aa8e6e0de2453f008798838",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/ScoreNavigationDetector.java",
-      "recognition151_review_note": "Both include raised Segno destinations and PDF navigation evidence. Standalone also retains its previously published shared-barline Segno rule from 143532a8; this is an existing standalone-only boundary behavior.",
-      "standalone_normalized_sha256": "6a7f844830063e41350400b9eef91fc7f0fe7d76e3f8e54becd69977e494e92e"
+      "recognition151_review_note": "Both producers retain raised Segno destinations, PDF navigation evidence, and the shared-barline Segno rule.",
+      "standalone_normalized_sha256": "d9e0bae577bdcabecf320dcf035f570168ac890f88bbbb5d5fcc17ca3e3bf231"
     },
     "ScoreNavigationNoteProjection.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/ScoreNavigationNoteProjection.java",
@@ -9672,12 +9708,12 @@
     "PrintedAccidentalSpineRecovery.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/PrintedAccidentalSpineRecovery.java",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/PrintedAccidentalSpineRecovery.java",
-      "source_sha256": "a5d65439a9b12b44500fbce02bba654c34f536b6996bf1b2ebb16bca33f6444e",
-      "source_normalized_sha256": "a5d65439a9b12b44500fbce02bba654c34f536b6996bf1b2ebb16bca33f6444e",
-      "standalone_normalized_sha256": "2bfae4f10b7ee26ec957fd0db9df39e669d8d796a64f81672f5b8e7620994427",
+      "source_sha256": "83e11002946216257497fd4ce247f330642c5f3564e25c58769c96357e42b358",
+      "source_normalized_sha256": "83e11002946216257497fd4ce247f330642c5f3564e25c58769c96357e42b358",
+      "standalone_normalized_sha256": "3b429b8c059587b6de22b4913674588de70453df4314c1fe331fb3cf0fb51759",
       "license": "Apache-2.0",
-      "reviewed_app_commit": "985f93c30f2838c0506193a825718ff79bea8e69",
-      "reviewed_app_state": "Matched source proof stops a centered fingering one from changing the next beamed pitch when both planes show attached shafts and a thick beam. The different callers retain their existing tie and mark handling."
+      "reviewed_app_commit": "5d78cbca06a9e731399a30777a9d219e2b8d5ac8",
+      "reviewed_app_state": "Verified pitched eligibility before diatonic queries. The namespace-equivalent port has original mixed pitched and unpitched controls."
     },
     "SheetInterpreter.java": {
       "unanchored_split_review": {
