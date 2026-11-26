@@ -7,6 +7,7 @@ import java.util.BitSet;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
+import java.util.function.Consumer;
 
 /** Converts the segmentation model's semantic pixel labels into the measure rectangles used by the viewer. */
 final class OmrMeasurePostProcessor {
@@ -101,6 +102,11 @@ final class OmrMeasurePostProcessor {
 
     record StaffSystems(List<SystemRun> systems, byte[] gray, int width, int height) {
         List<MeasureRegion> measures(byte[] headerLabels, SelectedMeasureOrigins origins) {
+            return measures(headerLabels, origins, null);
+        }
+
+        List<MeasureRegion> measures(
+                byte[] headerLabels, SelectedMeasureOrigins origins, Consumer<MeasureRegion> onProvisionalMeasure) {
             List<MeasureRegion> result = new ArrayList<>();
             for (int i = 0; i < systems.size(); i++) {
                 SystemRun system = systems.get(i);
@@ -120,7 +126,8 @@ final class OmrMeasurePostProcessor {
                         result,
                         headTop,
                         headBottom,
-                        origins);
+                        origins,
+                        onProvisionalMeasure);
             }
             // Systems already run top to bottom and their boundaries left to right.
             // Sorting tilted measure boxes by their top edge reverses an uphill row.
@@ -3975,7 +3982,8 @@ final class OmrMeasurePostProcessor {
             List<MeasureRegion> output,
             float headTop,
             float headBottom,
-            SelectedMeasureOrigins origins) {
+            SelectedMeasureOrigins origins,
+            Consumer<MeasureRegion> onProvisionalMeasure) {
         List<Integer> boundaries = system.boundaries;
         for (int index = 0; index + 1 < boundaries.size(); index++) {
             int rawLeft = boundaries.get(index), rawRight = boundaries.get(index + 1);
@@ -4112,6 +4120,7 @@ final class OmrMeasurePostProcessor {
                                 top,
                                 bottom);
                 output.add(region);
+                if (onProvisionalMeasure != null) onProvisionalMeasure.accept(region);
                 if (origins != null) {
                     var members = new ArrayList<SelectedMeasureOrigins.PhysicalMember>();
                     for (StaffRun member : system.members)

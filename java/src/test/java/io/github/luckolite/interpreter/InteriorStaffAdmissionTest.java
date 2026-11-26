@@ -70,4 +70,19 @@ public class InteriorStaffAdmissionTest {
         assertArrayEquals(l, p[0]);
         assertArrayEquals(g, p[1]);
     }
+
+    @Test
+    public void provisionalMeasureObserverKeepsReadingOrderAndDoesNotChangeGeometry() {
+        var page = page(true, 8);
+        var expected = NativeDecoderStages.geometry(page[0], page[1], W, H);
+        var observed = new ArrayList<MeasureRegion>();
+        var actual =
+                NativeDecoderStages.geometry(
+                        page[0], page[1], W, H, new SelectedMeasureOrigins(), observed::add);
+        assertEquals(3, observed.size());
+        assertTrue(observed.get(0).top() < observed.get(1).top());
+        assertTrue(observed.get(1).top() < observed.get(2).top());
+        assertEquals(expected.measures(), actual.measures());
+        assertArrayEquals(expected.labels(), actual.labels());
+    }
 }
