@@ -86,16 +86,31 @@ final class OmrScoreInterpreter {
 
     record PageAnalysis(Analysis score, List<PlayingTechniqueDetector.Staff> physicalStaffs) {}
 
+    interface DecodePreview {
+        void staffs(List<PlayingTechniqueDetector.Staff> staffs);
+        void notehead(int left, int top, int right, int bottom);
+        void noteheadsScanned();
+        void readingKeys();
+        void keySignatures(List<ScoreKeyChange> keys);
+    }
+
     // SheetInterpreter has already validated the page raster. Capture the unfiltered
     // staff lanes before pitch analysis removes rejected ledger rows or refines them.
     static PageAnalysis analyzePage(
             byte[] labels, byte[] gray, int width, int height, List<MeasureRegion> measures,
             byte[] annotationGray, List<MeasureRegion> rejectedLedgerRows) {
+        return analyzePage(labels, gray, width, height, measures, annotationGray, rejectedLedgerRows, null);
+    }
+
+    static PageAnalysis analyzePage(
+            byte[] labels, byte[] gray, int width, int height, List<MeasureRegion> measures,
+            byte[] annotationGray, List<MeasureRegion> rejectedLedgerRows, DecodePreview preview) {
         var staffs = findStaffs(labels, gray, width, height, measures);
         var physicalStaffs = techniqueGeometry(staffs);
+        if (preview != null) preview.staffs(List.copyOf(physicalStaffs));
         var score = measures.isEmpty() ? new Analysis(List.of(), List.of())
                 : analyzeDetectedStaffs(labels, gray, width, height, measures, annotationGray,
-                        new RawCourtesyBudget(64_000_000L, 16L * 1024 * 1024), rejectedLedgerRows, staffs);
+                        new RawCourtesyBudget(64_000_000L, 16L * 1024 * 1024), rejectedLedgerRows, staffs, preview);
         return new PageAnalysis(score, physicalStaffs);
     }
 
@@ -126,13 +141,13 @@ final class OmrScoreInterpreter {
                 || measures == null
                 || measures.isEmpty()) return new Analysis(List.of(), List.of());
         return analyzeDetectedStaffs(labels, gray, width, height, measures, annotationGray, rawCourtesy,
-                rejectedLedgerRows, findStaffs(labels, gray, width, height, measures));
+                rejectedLedgerRows, findStaffs(labels, gray, width, height, measures), null);
     }
 
     private static Analysis analyzeDetectedStaffs(
             byte[] labels, byte[] gray, int width, int height, List<MeasureRegion> measures,
             byte[] annotationGray, RawCourtesyBudget rawCourtesy, List<MeasureRegion> rejectedLedgerRows,
-            List<Staff> staffs) {
+            List<Staff> staffs, DecodePreview preview) {
         removeRejectedLedgerStaffs(staffs, rejectedLedgerRows, measures, height);
         if (staffs.isEmpty())
             return new Analysis(
@@ -160,7 +175,9 @@ final class OmrScoreInterpreter {
                         OmrMeasurePostProcessor.NOTEHEAD,
                         gray,
                         restHeadOrigins,
-                        memberCollector);
+                        memberCollector,
+                        preview);
+        if (preview != null) preview.noteheadsScanned();
         var physicalSplitCache = new java.util.IdentityHashMap<Component, List<Component>>();
         var wideLedgerThirdHeads = java.util.Collections.newSetFromMap(new IdentityHashMap<Component, Boolean>());
         boolean sharedLedgerStorage = false;
@@ -1626,7 +1643,8 @@ final class OmrScoreInterpreter {
         // A repeated key signature may sit close enough to the first note to look local.
         // Keep its recognized glyphs out of both semantic and raw accidental recovery.
         List<Component> headerAccidentals = new ArrayList<>();
-        detectKeyChangesWithHeaders(
+        if (preview != null) preview.readingKeys();
+        var initialKeys = detectKeyChangesWithHeaders(
                 labels,
                 gray,
                 annotationGray,
@@ -1638,6 +1656,7 @@ final class OmrScoreInterpreter {
                 heads,
                 headerAccidentals,
                 rawCourtesy);
+        if (preview != null) preview.keySignatures(List.copyOf(initialKeys));
         var accidentalFragments = new java.util.IdentityHashMap<Object, List<Object>>();
         var rawNaturalGaps = new java.util.IdentityHashMap<Object, Float>();
         var sourceProvedNaturals = new IdentityHashMap<Component, Component>();
@@ -14639,6 +14658,13 @@ final class OmrScoreInterpreter {
             byte[] rawGray,
             java.util.IdentityHashMap<Component, RestFigureOrigins.HeadOrigin> origins,
             ExactComponentMembers.Collector membership) {
+        return findComponents(labels, width, height, target, rawGray, origins, membership, null);
+    }
+
+    private static List<Component> findComponents(
+            byte[] labels, int width, int height, byte target, byte[] rawGray,
+            java.util.IdentityHashMap<Component, RestFigureOrigins.HeadOrigin> origins,
+            ExactComponentMembers.Collector membership, DecodePreview preview) {
         // Keep the prior behavior for non-raster arguments, including partial rows.
         if (width <= 0 || height <= 0 || (long) width * height != labels.length)
             return findComponentsByPixel(labels, width, height, target);
@@ -14712,6 +14738,7 @@ final class OmrScoreInterpreter {
                                 sumX / (float) area,
                                 sumY / (float) area);
                 result.add(accepted);
+                if (preview != null) preview.notehead(minX, minY, maxX + 1, maxY + 1);
                 if (membership != null)
                     membership.record(
                             accepted,

@@ -85,4 +85,36 @@ public class InteriorStaffAdmissionTest {
         assertEquals(expected.measures(), actual.measures());
         assertArrayEquals(expected.labels(), actual.labels());
     }
+
+    @Test
+    public void decodePreviewReportsStaffsAndNoteheadsBeforeKeyWorkWithoutChangingNotes() {
+        var page = page(true, 8);
+        var measures = NativeDecoderStages.geometry(page[0], page[1], W, H).measures();
+        var expected = OmrScoreInterpreter.analyzePage(page[0], page[1], W, H, measures, page[1], List.of());
+        var events = new ArrayList<String>();
+        var actual =
+                OmrScoreInterpreter.analyzePage(page[0], page[1], W, H, measures, page[1], List.of(),
+                        new OmrScoreInterpreter.DecodePreview() {
+                            @Override public void staffs(List<PlayingTechniqueDetector.Staff> staffs) {
+                                assertEquals(expected.physicalStaffs(), staffs);
+                                assertFalse(staffs.isEmpty());
+                                events.add("staves");
+                            }
+                            @Override public void notehead(int left, int top, int right, int bottom) {
+                                assertTrue(left >= 0 && right <= W && right > left);
+                                assertTrue(top >= 0 && bottom <= H && bottom > top);
+                                events.add("head");
+                            }
+                            @Override public void noteheadsScanned() { events.add("heads scanned"); }
+                            @Override public void readingKeys() { events.add("reading keys"); }
+                            @Override public void keySignatures(List<ScoreKeyChange> keys) {
+                                events.add("keys checked");
+                            }
+                        });
+        assertEquals(List.of("staves", "head", "head", "head", "heads scanned", "reading keys", "keys checked"),
+                events);
+        assertEquals(expected.score().notes(), actual.score().notes());
+        assertEquals(expected.score().keyChanges(), actual.score().keyChanges());
+        assertEquals(expected.score().rests(), actual.score().rests());
+    }
 }

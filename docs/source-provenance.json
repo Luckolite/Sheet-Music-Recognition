@@ -6133,6 +6133,12 @@
       }
     },
     "OmrScoreInterpreter.java": {
+      "decode_preview_review": {
+        "reviewed_app_commit": "ce4e7e2237810a8ba3d8d02e2bd356bf37577a63",
+        "app_lf_sha256": "afac3c52a69b77bb826d97bc75e887d955e1f582421bbbf3abe4b4829b491dc1",
+        "standalone_lf_sha256": "91ad20573c71f1c37de99a1a8a07222050518c4c14b304cee1da6f63546a1124",
+        "scope": "Matching synchronous staff, notehead, and provisional key observer hooks. Recognition rules and output records are unchanged. Existing source differences remain open."
+      },
       "head_edge_ledger_review": {
         "reviewed_app_commit": "b029dfbb",
         "app_lf_sha256": "0c5ddcd901b52488148f08bc345d3d297ea6426a9fd52df6a2da24fb7a25c0e0",
