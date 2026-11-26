@@ -250,6 +250,13 @@ def encode(score, guide_version=GUIDE_VERSION):
     if not isinstance(directions,list) or not isinstance(expressions,list):
         raise ValueError("Invalid semantic record lists")
     if guide_version >= 263:
+        if guide_version < semantic_wire.TEMPO_MARKING_VERSION:
+            # Older guides can retain the words, staff and anchor as a generic direction.
+            expressions = [
+                dict(row, kind="UNRESOLVED_DIRECTION")
+                if isinstance(row, dict) and row.get("kind") == "TEMPO_MARKING" else row
+                for row in expressions
+            ]
         output.write(semantic_wire.encode(directions, expressions, len(measures), guide_version))
     else:
         if guide_version==260 and directions:

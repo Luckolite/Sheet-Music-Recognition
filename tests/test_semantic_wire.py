@@ -4,7 +4,7 @@
 import copy
 import struct
 import unittest
-from sheet_music_recognition import semantic_wire as wire
+from sheet_music_recognition import guide_writer, semantic_wire as wire
 from sheet_music_recognition import parenthesized_note_group as group
 
 
@@ -81,6 +81,16 @@ class SemanticWireTest(unittest.TestCase):
             wire.encode(directions, expressions, 1, version - 1)
         with self.assertRaisesRegex(ValueError, 'Verbal tempo marking'):
             wire.decode(data, 1, version - 1)
+
+    def test_default_guide_preserves_verbal_tempo_as_a_generic_direction(self):
+        tempo = next(e for e in fixture(include_tempo=True)[1] if e['kind'] == 'TEMPO_MARKING')
+        score = dict(firstMeasureNumber=1, measures=[dict(left=.1, right=.9, top=.2, bottom=.6)],
+                     notes=[], keyChanges=[], tempoChanges=[], meterChanges=[], rests=[],
+                     techniqueChanges=[], dynamicChanges=[], expressiveEvents=[tempo])
+        generic = dict(tempo, kind='UNRESOLVED_DIRECTION')
+        self.assertEqual(guide_writer.encode(dict(score, expressiveEvents=[generic])),
+                         guide_writer.encode(score))
+        self.assertEqual('TEMPO_MARKING', score['expressiveEvents'][0]['kind'])
 
     def test_every_truncated_prefix_and_trailing_byte_is_rejected(self):
         data = wire.encode(*fixture(), 1, 296)
