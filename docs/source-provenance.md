@@ -1491,6 +1491,9 @@ does not establish a speed or phone-temperature improvement.
 neighbor vetoes before the expensive synchronous beam-owner predicate. Accepted
 numerals still pass every proof in the same raster order. `PrintedTupletBeamOwner`
 computes the last stem's tip candidates once per connected-head check.
+An angular occlusion scan can also stop when checked misses exceed every
+applicable arm's allowance. This shortcut uses the original rounded sample
+geometry and only applies when each sample row is inside the page.
 
 Original generated controls verify that filled beam ink does not trigger an
 ownership search and that a valid numeral still requires ownership. Existing
@@ -1498,6 +1501,13 @@ voice, bracket and beam controls remain applicable. These are Java performance
 changes with unchanged acceptance thresholds, dependencies, models, recognition
 revision and guide/audio layouts. No score-derived examples or private logs are
 included; the controls do not establish phone opening time or temperature gains.
+
+## Rest ownership proof allocation
+
+The rest decoder defers taking an unbudgeted proposal mask snapshot until
+a beam or counter-rest ownership check needs it. It records the original
+ink bounds before trimming and retains the budgeted charge and snapshot
+at the original point. Recognition and record layouts are unchanged.
 
 ## Literal pedal words
 

@@ -3202,10 +3202,12 @@ final class SixteenthRestDetector {
             }
         }
 
+        int firstInk = minY;
         int fullBottom = maxY;
+        // Budgeted calls charge at the same point. Others snapshot the mask on demand.
         RestFigureOrigins.ProposalOrigin finiteProposal =
-                (quarterBudget == null
-                                || quarterBudget.allocate(
+                (quarterBudget != null
+                                && quarterBudget.allocate(
                                         1L + (line == null ? 0 : line.length),
                                         256L + 8L * (line == null ? 0 : line.length))
                         ? new RestFigureOrigins.ProposalOrigin(
@@ -3403,9 +3405,8 @@ final class SixteenthRestDetector {
                         && !noteDotRemoved
                         && supportedCoreBounds == null
                         && gray == ownershipGray
-                        && finiteProposal.direct
-                        && minY == finiteProposal.firstInk
-                        && maxY == finiteProposal.lastInk
+                        && minY == firstInk
+                        && maxY == fullBottom
                         && !straightShafts(
                                 gray,
                                 width,
@@ -3788,11 +3789,13 @@ final class SixteenthRestDetector {
                     }
                 }
 
-                if (quarter
-                        && lowered
-                        && !half
-                        && !whole
-                        && FiniteBeamQuarterOwnership.proposalOwnership(
+                if (quarter && lowered && !half && !whole) {
+                    if (finiteProposal == null) {
+                        finiteProposal = new RestFigureOrigins.ProposalOrigin(
+                                gray, ownershipGray, width, height, top, bottom,
+                                line, left, right, firstInk, fullBottom);
+                    }
+                    if (FiniteBeamQuarterOwnership.proposalOwnership(
                                         gray,
                                         width,
                                         height,
@@ -3809,6 +3812,7 @@ final class SixteenthRestDetector {
                                         maxY,
                                         finiteProposal)
                                 == FiniteBeamQuarterOwnership.ProposalResult.OWNED) return;
+                }
                 List<InkDot> dots =
                         augmentationDots(
                                 gray, width, height, staff, right, region, notes, m, quarterBudget);
@@ -3845,8 +3849,13 @@ final class SixteenthRestDetector {
                                                                                 - rest
                                                                                         .positionInMeasure())
                                                                 < .018f)) return;
-                if (counter != null
-                        && counter.disproves(
+                if (counter != null) {
+                    if (finiteProposal == null) {
+                        finiteProposal = new RestFigureOrigins.ProposalOrigin(
+                                gray, ownershipGray, width, height, top, bottom,
+                                line, left, right, firstInk, fullBottom);
+                    }
+                    if (counter.disproves(
                                 eighth,
                                 deepLowered,
                                 ownershipGray,
@@ -3859,6 +3868,7 @@ final class SixteenthRestDetector {
                                 minY,
                                 maxY,
                                 gap)) counter.record(rest);
+                }
                 if (rest.durationBeats() == 1 && result instanceof ContourRests contours)
                     FaintQuarterRestInk.putAbsent(
                             quarterBudget,

@@ -89,6 +89,9 @@ final class RepeatedTupletNumeral {
         int top = Math.max(0, Math.round(y1 - gap * 7)),
                 bottom = Math.min(h - rh, Math.round(y3 + gap * 7));
         int armReach = Math.round(gap * 1.5f);
+        int rightReach = (int) (rw + gap * 1.5f);
+        // Keep rounded row coordinates and integer hit counts exact in the fast path.
+        boolean exactArmGeometry = w <= (1 << 20) && h <= (1 << 20);
         int maxShift = (int) Math.ceil((rw * .5f + armReach) * .5f) + 1;
         int maskLeft = Math.max(0, left - armReach), maskRight = Math.min(w - 1, right + rw + armReach);
         int maskTop = Math.max(0, top - maxShift), maskBottom = Math.min(h - 1, bottom + rh - 1 + maxShift);
@@ -159,7 +162,19 @@ final class RepeatedTupletNumeral {
                 boolean[] covered = new boolean[rh];
                 int hidden = 0;
                 float requiredCrossing = rw * .9f;
+                int maxLeft = Math.max(0, Math.min(x, armReach) - 1);
+                int maxRight = Math.max(0, Math.min(w - 1 - x, rightReach) - rw);
+                int maxTotal = maxLeft + maxRight;
+                boolean leftCanQualify = ownedJoined && maxLeft >= gap * 1.3f;
+                boolean rightCanQualify = ownedJoined && maxRight >= gap * 1.3f;
+                boolean totalCanQualify = maxTotal >= gap * 2;
+                int maxLeftMisses = maxLeft - (int) Math.ceil(maxLeft * .9f);
+                int maxRightMisses = maxRight - (int) Math.ceil(maxRight * .9f);
+                int maxTotalMisses = maxTotal - (int) Math.ceil(maxTotal * .9f);
                 for (int yy = 0; yy < rh; yy++) {
+                    // The complete arm lengths are known when every sampled row is on-page.
+                    int row = y + yy;
+                    boolean completeArms = exactArmGeometry && row >= maxShift && row < h - maxShift;
                     angleCandidate:
                     for (int angle = -10; angle <= 10 && !covered[yy]; angle++) {
                         float slope = angle * .05f;
@@ -197,6 +212,11 @@ final class RepeatedTupletNumeral {
                                 rightTotal++;
                                 if (rowInk) rightHits++;
                             }
+                            if (completeArms && !rowInk
+                                    && (!totalCanQualify || total - valid > maxTotalMisses)
+                                    && (!leftCanQualify || leftTotal - leftHits > maxLeftMisses)
+                                    && (!rightCanQualify || rightTotal - rightHits > maxRightMisses))
+                                continue angleCandidate;
                         }
                         boolean bilateral = total >= gap * 2 && valid >= total * .9f;
                         if (!ownedJoined) covered[yy] = bilateral;
