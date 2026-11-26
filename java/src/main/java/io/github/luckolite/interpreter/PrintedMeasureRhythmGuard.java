@@ -1240,6 +1240,7 @@ final class PrintedMeasureRhythmGuard {
                 complete = printedBarline(region, cut, gray, width, height)
                         || printedDoubleBarline(region, cut, gray, width, height)
                         || printedBarlineNearCut(region, cut, gray, width, height)
+                        || finiteDetectedSeparator(region, cut, labels, gray, width, height)
                         || pieces.size() == 2 && provesDottedHalfClosingBar(
                                 pieces.get(0), pieces.get(1), raw, labels, gray, width, height);
                 if (!complete && pieces.size() == 2 && provesClosedOctaveQuarter(
@@ -1422,6 +1423,20 @@ final class PrintedMeasureRhythmGuard {
     }
 
     /** A detected two-rule separator can sit inside a crop with extra vertical padding. */
+    private static boolean finiteDetectedSeparator(MeasureRegion bar, float cut,
+            byte[] labels, byte[] gray, int width, int height) {
+        float gap = (bar.bottom() - bar.top()) * height / 8f;
+        if (gap < 8 || gap > 30) return false;
+        float x = cut * width;
+        float center = (bar.top() + bar.bottom()) * height * .5f;
+        var staff = PrintedDirectionStaff.printedRules(gray, width, height, x, center + 2 * gap, gap);
+        if (staff == null) return false;
+        int[] rows = new int[5];
+        for (int i = 0; i < rows.length; i++) rows[i] = Math.round(staff[0] - (4 - i) * staff[1]);
+        return OmrMeasurePostProcessor.provesFiniteBarline(
+                labels, gray, width, height, Math.round(x), rows, staff[1], 0);
+    }
+
     private static boolean printedDoubleBarline(
             MeasureRegion region, float cut, byte[] gray, int width, int height) {
         int top = Math.max(0, Math.round(region.top() * height));

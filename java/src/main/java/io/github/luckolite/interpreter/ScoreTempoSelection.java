@@ -21,7 +21,8 @@ public final class ScoreTempoSelection {
 
     /**
      * Resolve a saved metronome number against a printed opening mark. An unset tempo or a
-     * saved number that matches the printed note unit uses the mark's quarter-note rate.
+     * saved number that matches the printed pulse uses the mark's quarter-note rate.
+     * A different catalog pulse unit also permits a whole-BPM rounded match.
      * Other values keep the caller's already converted quarter-note fallback.
      */
     public static double playbackQuarterBpm(
@@ -29,14 +30,53 @@ public final class ScoreTempoSelection {
         if (printed != null) {
             for (var mark : printed) {
                 if (mark.measureIndex() != 0 || mark.positionInMeasure() != 0) continue;
-                boolean matchesPrintedPulse = savedBpm >= 30 && savedBpm <= 400
-                        && Double.compare(savedBpm * mark.beatUnit(), mark.bpm()) == 0;
-                if (savedBpm <= 0 || matchesPrintedPulse)
+                if (savedBpm <= 0 || (savedBpm >= 30 && savedBpm <= 400
+                        && savedBpm * mark.beatUnit() == mark.bpm()))
+                    return mark.bpm();
+                if (matchesSavedPrintedPulse(savedBpm, fallbackQuarterBpm, mark)
+                        && unambiguousOpening(printed) != null)
                     return mark.bpm();
                 break;
             }
         }
         return fallbackQuarterBpm;
+    }
+
+    /**
+     * A saved BPM that matches the primary edition's opening applies to that edition.
+     * Use an alternate edition's own opening when both printed marks are unambiguous.
+     */
+    public static double arrangementQuarterBpm(
+            int savedBpm, double fallbackQuarterBpm, List<ScoreTempoChange> printed,
+            List<ScoreTempoChange> primaryPrinted) {
+        var primary = unambiguousOpening(primaryPrinted);
+        if (savedBpm >= 30 && savedBpm <= 400 && primary != null
+                && (matchesSavedPrintedPulse(savedBpm, fallbackQuarterBpm, primary)
+                        || fallbackQuarterBpm == primary.bpm())) {
+            var selected = unambiguousOpening(printed);
+            if (selected != null) return selected.bpm();
+        }
+        return playbackQuarterBpm(savedBpm, fallbackQuarterBpm, printed);
+    }
+
+    private static ScoreTempoChange unambiguousOpening(List<ScoreTempoChange> printed) {
+        ScoreTempoChange opening = null;
+        if (printed == null) return null;
+        for (var mark : printed) {
+            if (mark.measureIndex() != 0 || mark.positionInMeasure() != 0) continue;
+            if (opening != null && !opening.equals(mark)) return null;
+            opening = mark;
+        }
+        return opening;
+    }
+
+    private static boolean matchesSavedPrintedPulse(
+            int savedBpm, double fallbackQuarterBpm, ScoreTempoChange mark) {
+        if (savedBpm < 30 || savedBpm > 400) return false;
+        if (savedBpm * mark.beatUnit() == mark.bpm()) return true;
+        // The catalog stores whole BPM. Apply its rounding only when the two pulse units differ.
+        return fallbackQuarterBpm != savedBpm * mark.beatUnit()
+                && Math.round(mark.bpm() / mark.beatUnit()) == savedBpm;
     }
 
     public static List<ScoreTempoChange> atOpeningTempo(

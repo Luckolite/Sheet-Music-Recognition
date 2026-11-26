@@ -205,28 +205,34 @@ final class PrintedRepeatGlyphs {
         int xStart = Math.round(cx - barSide * firstStep);
         int xEnd = Math.round(cx - barSide * lastStep);
         if (Math.min(xStart, xEnd) < 0 || Math.max(xStart, xEnd) >= width) return false;
+        int minimum = (int) Math.ceil(samples * .64f);
         int required = (int) Math.ceil(samples * .7f);
+        int cap = (int) Math.ceil(samples * .85f);
+        int weak = 0, support = 0;
         int flankOffset = flank * width;
         for (int line = 0; line < 5; line++) {
             int center = Math.round(cy + (line - 2) * gap);
             if (center - band - flank < 0 || center + band + flank >= height) return false;
-            int need = required;
+            int hits = 0;
             int low = (center - band) * width, high = (center + band) * width;
-            for (int dx = firstStep; need > 0 && need <= lastStep - dx + 1; dx++) {
+            for (int dx = firstStep; dx <= lastStep && hits < cap; dx++) {
+                if (hits + lastStep - dx + 1 < minimum) return false;
                 int x = Math.round(cx - barSide * dx);
                 for (int p = low + x; p <= high + x; p += width) {
                     int tone = gray[p] & 255;
                     if (tone < 220
                             && (gray[p - flankOffset] & 255) > tone + 15
                             && (gray[p + flankOffset] & 255) > tone + 15) {
-                        need--;
+                        hits++;
                         break;
                     }
                 }
             }
-            if (need > 0) return false;
+            if (hits < minimum || hits < required && ++weak > 1) return false;
+            support += hits;
         }
-        return true;
+        // One faded rule can still belong to a staff with four well-supported neighbors.
+        return weak == 0 || support >= 5 * samples * .77f;
     }
 
     static int boundary(
@@ -286,7 +292,29 @@ final class PrintedRepeatGlyphs {
                 start = -1;
             }
         }
+        joinFadedOuterBar(gray, width, top, bottom, gap, side, result);
         return result;
+    }
+
+    /** A washed stripe inside the thick bar can split its dark core into two thin bands. */
+    private static void joinFadedOuterBar(
+            byte[] gray, int width, int top, int bottom, float gap, int side, List<Bar> bars) {
+        if (bars.size() != 3) return;
+        int outer = side < 0 ? 0 : 1;
+        var left = bars.get(outer);
+        var right = bars.get(outer + 1);
+        int seam = right.left - left.right - 1;
+        if (seam < 1 || seam > gap * .22f || right.right - left.left + 1 > gap * .85f)
+            return;
+        int required = (int) Math.ceil((bottom - top + 1) * .8f);
+        for (int x = left.right + 1; x < right.left; x++) {
+            int ink = 0;
+            for (int y = top; y <= bottom; y++)
+                if ((gray[y * width + x] & 255) < 195) ink++;
+            if (ink < required) return;
+        }
+        bars.set(outer, new Bar(left.left, right.right));
+        bars.remove(outer + 1);
     }
 
     private static List<Dot> dots(

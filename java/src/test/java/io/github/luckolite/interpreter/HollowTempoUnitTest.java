@@ -10,6 +10,11 @@ import static org.junit.Assert.*;
 public class HollowTempoUnitTest {
     private List<ScoreTempoChange> detect(
             int paper, boolean hollow, boolean dotted, boolean open, boolean inside) {
+        return detect(60, paper, hollow, dotted, open, inside);
+    }
+
+    private List<ScoreTempoChange> detect(
+            int rate, int paper, boolean hollow, boolean dotted, boolean open, boolean inside) {
         int w = 300, h = 200;
         byte[] gray = new byte[w * h];
         Arrays.fill(gray, (byte) paper);
@@ -24,7 +29,7 @@ public class HollowTempoUnitTest {
         return TempoChangeDetector.detect(
                 List.of(
                         new MeasureNumberReconciler.NumberToken(
-                                60, 120f / w, 38f / h, 145f / w, 83f / h)),
+                                rate, 120f / w, 38f / h, 145f / w, 83f / h)),
                 gray,
                 w,
                 h,
@@ -93,5 +98,29 @@ public class HollowTempoUnitTest {
         rect(raster, width, 75, 61, 79, 63, 45);
         assertFalse(TempoChangeDetector.detect(List.of(token), raster, width, height, measures)
                 .stream().anyMatch(tempo -> tempo.beatUnit() == 2));
+    }
+    @Test
+    public void slowNumericRateRequiresAProvedHollowPulse() {
+        assertEquals(List.of(new ScoreTempoChange(0, 0, 52, 2)),
+                detect(26, 255, true, false, false, false));
+        assertTrue(detect(26, 255, false, false, false, false).isEmpty());
+    }
+
+    @Test
+    public void hollowHeadCanReachTheRoundedHeightLimit() {
+        int width = 300, height = 200;
+        byte[] raster = new byte[width * height];
+        Arrays.fill(raster, (byte) 255);
+        rect(raster, width, 81, 20, 82, 67, 45);
+        rect(raster, width, 69, 54, 82, 67, 45);
+        rect(raster, width, 72, 55, 79, 65, 255);
+        rect(raster, width, 100, 50, 114, 51, 25);
+        rect(raster, width, 100, 56, 114, 57, 25);
+        rect(raster, width, 120, 43, 124, 66, 25);
+        var digit = new MeasureNumberReconciler.NumberToken(
+                100, 120f / width, 43f / height, 145f / width, 67f / height);
+        var measures = List.of(new MeasureRegion(.2f, .9f, .4f, .8f));
+        assertEquals(List.of(new ScoreTempoChange(0, 0, 200, 2)),
+                TempoChangeDetector.detect(List.of(digit), raster, width, height, measures));
     }
 }

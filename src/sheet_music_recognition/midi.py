@@ -17,6 +17,7 @@ from .guitar_effect import validate as validate_guitar, pitch_offset as guitar_p
 from .continuous_slide_curve import SlideClock
 from .slide_performance import prepare_slides, resolve_slides
 from .articulation_export import bind_performance_gates
+from .rhythmic_feel import realize as realize_rhythmic_feel
 
 
 @dataclass(frozen=True)
@@ -84,6 +85,7 @@ def performed_document(document, bpm=120):
     document = prepare_slides(bind_performance_gates(document))
     unpitched_intervals(document)
     document = resolve_boundary_ties(document)
+    document = realize_rhythmic_feel(document)
     if not math.isfinite(bpm) or not 15 <= bpm <= 400:
         raise ValueError("Initial BPM must be 15..400 quarter notes per minute")
     from .performance import perform_expressions

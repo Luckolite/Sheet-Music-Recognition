@@ -18,7 +18,7 @@ public final class ScoreTupletMeterContext {
         if (inherited != null && meters.stream().noneMatch(m -> m.measureIndex() == 0))
             meters.add(new ScoreMeterChange(0, inherited.numerator(), inherited.denominator()));
         var notes =
-                TripletRhythmDetector.contextualSevens(
+                TripletRhythmDetector.contextualTuplets(
                         score.notes(), meters, score.openingPickup());
         if (notes.equals(score.notes())) return score;
         return score.withNotes(

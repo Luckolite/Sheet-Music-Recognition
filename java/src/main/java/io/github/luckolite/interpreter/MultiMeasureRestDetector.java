@@ -10,7 +10,11 @@ import java.util.List;
 final class MultiMeasureRestDetector {
     private MultiMeasureRestDetector() {}
 
-    record RestBarCandidate(int measureIndex, MeasureRegion region) {}
+    record RestBarCandidate(int measureIndex, MeasureRegion region, boolean compoundOpening) {
+        RestBarCandidate(int measureIndex, MeasureRegion region) {
+            this(measureIndex, region, false);
+        }
+    }
 
     static List<MeasureNumberReconciler.NumberToken> detect(
             byte[] labels,
@@ -74,9 +78,10 @@ final class MultiMeasureRestDetector {
             if (token.value() < 2 || token.value() > 32) continue;
             float centerX = (token.left() + token.right()) * .5f;
             float centerY = (token.top() + token.bottom()) * .5f;
-            RestBarCandidate[] matched = origins == null ? null : new RestBarCandidate[1];
+            RestBarCandidate[] matched = new RestBarCandidate[1];
             int measureIndex = containingRestBar(restBars, measures, centerX, centerY, matched);
-            if (measureIndex < 0 || claimedMeasures[measureIndex]) continue;
+            if (measureIndex < 0 || claimedMeasures[measureIndex]
+                    || matched[0].compoundOpening() && token.value() != 3) continue;
             // The short-bar fallback can share an opening region with a meter. Its count must
             // be above that staff; preserve the existing caller-OCR contract for long bars.
             if (cappedRestWindow(gray, width, height, measures.get(measureIndex)) != null
@@ -178,6 +183,11 @@ final class MultiMeasureRestDetector {
             boolean wideRestRegion = (parent.right() - parent.left()) * width
                     >= (parent.bottom() - parent.top()) * height * (12f / 8.2f);
             for (var count : tokens) {
+                if (index == 0 && count.value() == 3
+                        && compoundOpening(gray, width, height, parent, count)) {
+                    result.add(new RestBarCandidate(index, parent, true));
+                    continue measuresLoop;
+                }
                 boolean blockCount = count.value() == 2 || count.value() == 4;
                 if (count.value() < 2 || count.value() > 32 || !centeredCount(count, parent)
                         || (!blockCount && !wideRestRegion)) continue;
@@ -392,6 +402,81 @@ final class MultiMeasureRestDetector {
         while (top > 0 && (gray[(top - 1) * width + x] & 255) <= 150) top--;
         while (bottom < height - 1 && (gray[(bottom + 1) * width + x] & 255) <= 150) bottom++;
         return new InkBand(top, bottom);
+    }
+
+    /** Engraved three-bar silence can use a breve rest and a hanging whole rest. */
+    private static boolean compoundOpening(
+            byte[] gray, int width, int height, MeasureRegion region,
+            MeasureNumberReconciler.NumberToken count) {
+        float gap = (region.bottom() - region.top()) * height / 8.2f;
+        int left = Math.round(region.left() * width), right = Math.round(region.right() * width);
+        int center = Math.round((count.left() + count.right()) * .5f * width);
+        if (gap < 8 || gap > 30 || center < left + gap * 2 || center > right - gap * .6f
+                || right - left > gap * 9 || (count.right() - count.left()) * width > gap * 3.3f
+                || (count.bottom() - count.top()) * height < gap * 1.3f) return false;
+        float bottom = region.bottom() * height - 2.1f * gap;
+        var rules = PrintedDirectionStaff.printedRules(gray, width, height, center - gap, bottom, gap);
+        if (rules == null || Math.abs(rules[1] - gap) > gap * .12f) return false;
+        gap = rules[1];
+        int firstLine = Math.round(rules[0] - gap * 4);
+        int countBottom = Math.round(count.bottom() * height);
+        if (countBottom > firstLine + gap * .12f || countBottom < firstLine - gap) return false;
+
+        int from = Math.max(left, Math.round(center - gap * 1.8f));
+        int to = Math.min(right, Math.round(center + gap * 1.65f));
+        int firstPlate = -1, lastPlate = -1, firstHanging = -1, lastHanging = -1;
+        int upper = Math.round(firstLine + gap * 1.16f), lip = Math.round(firstLine + gap * 1.36f);
+        int lower = Math.round(firstLine + gap * 1.82f);
+        if (from < 0 || to >= width || upper < 0 || lower >= height) return false;
+        for (int x = from; x <= to; x++) {
+            if (!solidRestColumn(gray, width, x, upper, lip)) continue;
+            if (x < center && !solidRestColumn(gray, width, x, lip, lower)) continue;
+            if (solidRestColumn(gray, width, x, lip, lower)) {
+                if (firstPlate < 0) firstPlate = x;
+                if (lastPlate >= 0 && x > lastPlate + 1) return false;
+                lastPlate = x;
+            } else if (solidRestColumn(gray, width, x, lower - 2, lower)) {
+                return false;
+            } else {
+                if (firstHanging < 0) firstHanging = x;
+                if (lastHanging >= 0 && x > lastHanging + 1) return false;
+                lastHanging = x;
+            }
+        }
+        if (firstPlate < 0 || firstHanging < 0 || firstHanging - lastPlate < gap * .4f
+                || firstHanging - lastPlate > gap * 1.5f
+                || Math.abs(center - (firstPlate + lastHanging) * .5f) > gap * .65f
+                || !restPlateWidth(firstPlate, lastPlate, gap)
+                || !restPlateWidth(firstHanging, lastHanging, gap)) return false;
+        int meterLeft = Math.max(left, Math.round(firstPlate - gap * 2.85f));
+        int meterRight = Math.round(firstPlate - gap * .5f);
+        if (CommonTimeMeter.read(gray, width, height, meterLeft, meterRight, firstLine, gap, 0) != 4)
+            return false;
+
+        // Between the meter and the measure edge only the two plates may interrupt the rails.
+        for (int space = 0; space < 4; space++) {
+            for (int y = Math.round(firstLine + (space + .23f) * gap);
+                    y <= Math.round(firstLine + (space + .77f) * gap); y++) {
+                for (int x = meterRight + 1; x <= right; x++) {
+                    if ((gray[y * width + x] & 255) >= 130) continue;
+                    boolean full = space == 1 && x >= firstPlate - 2 && x <= lastPlate + 2;
+                    boolean hanging = space == 1 && x >= firstHanging - 2 && x <= lastHanging + 2
+                            && y <= firstLine + gap * 1.56f;
+                    if (!full && !hanging) return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    private static boolean solidRestColumn(byte[] gray, int width, int x, int y0, int y1) {
+        int ink = 0;
+        for (int y = y0; y <= y1; y++) if ((gray[y * width + x] & 255) < 150) ink++;
+        return ink >= (y1 - y0 + 1) * .86f;
+    }
+
+    private static boolean restPlateWidth(int first, int last, float gap) {
+        return last - first + 1 >= gap * .42f && last - first + 1 <= gap * 1.1f;
     }
 
     private static boolean centeredCount(MeasureNumberReconciler.NumberToken count, MeasureRegion parent) {

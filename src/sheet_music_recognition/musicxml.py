@@ -1737,7 +1737,9 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
             token = first_event + target
             events[first_event+source]['slide_start'] = token
             events[first_event+target]['slide_stop'] = token
-        from .performance import _column_members, _rest_owned, _rest_span, _rest_identity, _resolve_pedal, _anchor
+        from .performance import (
+            _column_members, _rest_owned, _rest_span, _rest_identity, _resolve_pedal, _anchor, _tempo_rest_start,
+        )
         def absolute(anchor):
             if anchor is None:
                 return None
@@ -1874,6 +1876,10 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
                                   and r['staffCount'] == count and abs(r['positionInMeasure']-position) <= .018]
                     if len(owned_full) == 1:
                         mark['fullRestIdentity'] = owned_full[0]['restIdentity']
+            if mark.get('start') is None:
+                tempo_start = _tempo_rest_start(mark, page)
+                if tempo_start is not None:
+                    mark['start'], mark['scope'] = tempo_start, 'SCORE'
             if cue_caption.owns(mark):
                 mark['start'], mark['end'], mark['scope'] = None, None, 'UNRESOLVED'
             mark['identity'] = f'page:{page_index}/'+mark['eventId']
@@ -1881,7 +1887,7 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
             members = _column_members(mark, page)
             mark['ownerIds'] = [first_event+i for i in members]
             owned = [events[first_event+i] for i in members]
-            if owned and all(not n.get('durationFallback', False) and n['start'] == owned[0]['start'] and n['end'] == owned[0]['end'] for n in owned):
+            if owned and all(not n.get('durationFallback', False) and n['start'] == owned[0]['start'] and (mark['kind'] == 'TEMPO_MARKING' or n['end'] == owned[0]['end']) for n in owned):
                 mark['startTick'] = owned[0]['end'] if mark['kind'] in ('BREATH', 'CAESURA') else owned[0]['start']
                 if cue_caption.owns(mark):
                     mark['scope'] = 'PART'

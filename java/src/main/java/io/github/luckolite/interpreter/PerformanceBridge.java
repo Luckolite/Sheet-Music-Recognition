@@ -69,7 +69,7 @@ public final class PerformanceBridge {
                     throw new IOException("Duplicate expression binding");
             }
             var directions = ScoreSemanticWire.readDirections(in, measures);
-            var expressions = ScoreSemanticWire.readExpressions(in, measures);
+            var expressions = ScoreSemanticWire.readExpressions(in, measures, ScoreSemanticWire.TEMPO_MARKING_VERSION);
             if (in.read() != -1) throw new IOException("Trailing performance bytes");
             var realized =
                     ScoreExpressivePerformance.resolve(
@@ -103,6 +103,7 @@ public final class PerformanceBridge {
                             meter,
                             realized.holdOwnership(),
                             notes.targetMapper());
+            notes = MeasureRepeatProjection.append(notes, source, plan, meter, plan.measureRepeats());
             var attacks = new ArrayList<ScoreExpressivePerformance.Attack>();
             var pedal = PedalPerformance.resolve(expressions, meter, measures);
             var pedalSpans = PedalPerformance.project(pedal.spans(), plan, meter);

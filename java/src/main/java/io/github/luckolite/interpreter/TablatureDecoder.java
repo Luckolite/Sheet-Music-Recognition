@@ -117,11 +117,20 @@ public final class TablatureDecoder {
 
     static Prepared prepare(
             byte[] gray, int width, int height, List<SheetInterpreter.Word> words,
-            List<SheetInterpreter.Word> nativeWords) {
+            List<SheetInterpreter.Word> nativeWords) throws Exception {
+        return prepare(gray, width, height, words, nativeWords, null);
+    }
+
+    static Prepared prepare(
+            byte[] gray, int width, int height, List<SheetInterpreter.Word> words,
+            List<SheetInterpreter.Word> nativeWords, MusicalOcr ocr) throws Exception {
         var combined = java.util.stream.Stream.concat(words.stream(), nativeWords.stream())
                 .map(word -> new Word(word.text(), word.left(), word.top(), word.right(), word.bottom()))
                 .toList();
         var recognized = withWords(detect(gray, width, height), combined, width, height);
+        recognized = ocr == null
+                ? TabFretRaster.supplement(gray, width, height, recognized, combined, null)
+                : ocr.supplementTabFrets(gray, width, height, recognized, combined);
         return new Prepared(
                 combined, recognized, TabNotation.rasterRhythm(recognized, gray, width, height, combined));
     }

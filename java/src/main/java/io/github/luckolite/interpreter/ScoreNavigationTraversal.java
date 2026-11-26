@@ -256,7 +256,7 @@ public final class ScoreNavigationTraversal {
                                 mark.direction().details().totalPlays(),
                                 List.of(mark.anchor())));
             }
-            if (kind == MEASURE_REPEAT)
+            if (kind == MEASURE_REPEAT && !mark.direction().provedMeasureRepeat(measureCount))
                 diagnostic(
                         mark.id(),
                         "UNSUPPORTED_MEASURE_REPEAT",

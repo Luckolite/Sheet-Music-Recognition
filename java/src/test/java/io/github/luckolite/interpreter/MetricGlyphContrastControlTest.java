@@ -171,4 +171,21 @@ public final class MetricGlyphContrastControlTest {
                         .leftQuarterBeats(),
                 0);
     }
+
+    @Test
+    public void shortErasedJointCanBeRejoinedButDetachedShaftCannot() throws Exception {
+        var image = equation("quarter", "quarter", 36, true);
+        var ink = image.createGraphics();
+        ink.setColor(Color.WHITE);
+        ink.fillRect(132, 133, 16, 2);
+        ink.dispose();
+        var event = detect(image, true).expressiveEvents().get(0);
+        assertEquals(Kind.METRIC_MODULATION, event.kind());
+        assertEquals(1.5, MetricModulationText.decode(event.qualifierText()).orElseThrow().leftQuarterBeats(), 0);
+        ink = image.createGraphics();
+        ink.setColor(Color.WHITE);
+        ink.fillRect(132, 126, 16, 10);
+        ink.dispose();
+        assertTrue(detect(image, true).expressiveEvents().isEmpty());
+    }
 }

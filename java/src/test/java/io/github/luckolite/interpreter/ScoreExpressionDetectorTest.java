@@ -8,6 +8,27 @@ import static org.junit.Assert.*;
 import static io.github.luckolite.interpreter.ScoreExpressiveEvent.*;
 
 public final class ScoreExpressionDetectorTest {
+    @Test
+    public void tempoReturnAtARepeatedSilentRectangleUsesItsFirstBarAndOwnPage() {
+        var silent = new MeasureRegion(.20f, .62f, .25f, .65f);
+        var score = new ScorePageInterpretation(List.of(silent, silent, silent, silent),
+                List.of(), 1, List.of(), List.of());
+        var word = new PlayingTechniqueDetector.Word("a tempo", .21f, .20f, .32f, .28f);
+        var events = ScoreExpressionDetector.apply(score, List.of(word),
+                List.of(new PlayingTechniqueDetector.Staff(100, 164, 16, 0, 1)), rails(), W, H)
+                .expressiveEvents();
+        assertEquals(1, events.size());
+        var event = events.get(0);
+        assertEquals(new ScoreAnchor(0, 0), event.start().orElseThrow());
+        assertEquals(Scope.SCORE, event.scope());
+        var first = ScoreDynamicContinuation.offsetEvidence(event, 10, 1);
+        var second = ScoreDynamicContinuation.offsetEvidence(event, 20, 2);
+        assertNotEquals(first.eventId(), second.eventId());
+        assertEquals(2, second.evidence().get(0).pageIndex());
+        assertEquals(new ScoreAnchor(20, 0), second.start().orElseThrow());
+        assertTrue(second.targetEventId().isEmpty());
+    }
+
     private static final int W = 500, H = 300;
 
     private static byte[] rails() {
@@ -135,5 +156,108 @@ public final class ScoreExpressionDetectorTest {
         assertTrue(ScoreExpressionDetector.targetIndices(resolved, malformed).isEmpty());
         assertEquals(inputEvents, input.expressiveEvents());
         assertEquals(input.notes(), resolved.notes());
+    }
+    @Test
+    public void tempoDirectionUsesCommonOnsetWithDifferentReleases() {
+        var notes = List.of(
+                new ScoreNoteEvent(0, .27f, 2, 0, 1, .42f, false, 0, 0, 0, 2f),
+                new ScoreNoteEvent(0, .27f, 0, 0, 1, .54f, false, 0, 0, 0, .5f));
+        var score = new ScorePageInterpretation(List.of(new MeasureRegion(.04f, .92f, .25f, .65f)),
+                notes, 1, List.of(), List.of(), List.of(new ScoreMeterChange(0, 4, 4)),
+                List.of(), List.of(), List.of());
+        var raw = detect("rit.", false, rails()).expressiveEvents();
+        var result = ScoreExpressionDetector.resolve(score.withExpressiveEvents(raw), 4);
+        assertEquals(1, result.expressiveEvents().size());
+        var event = result.expressiveEvents().get(0);
+        assertEquals(Scope.SCORE, event.scope());
+        assertEquals(new ScoreAnchor(0, 1), event.start().orElseThrow());
+        assertEquals(List.of(0, 1), ScoreExpressionDetector.targetIndices(result, event));
+    }
+
+
+    @Test
+    public void standaloneTempoWordRequiresAStaffNearTheWrittenBarStart() {
+        var staff = new PlayingTechniqueDetector.Staff(100, 164, 16, 0, 1);
+        var tempo = new PlayingTechniqueDetector.Word("Presto", .12f, .24f, .25f, .31f);
+        var title = new PlayingTechniqueDetector.Word("Adagio", .60f, .02f, .72f, .09f);
+        var result = ScoreExpressionDetector.apply(
+                score(false), List.of(tempo, title), List.of(staff), rails(), W, H);
+        assertEquals(1, result.expressiveEvents().size());
+        var event = result.expressiveEvents().get(0);
+        assertEquals(Kind.TEMPO_MARKING, event.kind());
+        assertEquals("presto", event.qualifierText());
+        assertEquals(new ScoreAnchor(0, 0), event.start().orElseThrow());
+        assertEquals(Scope.SCORE, event.scope());
+    }
+
+
+    @Test
+    public void fullSlowdownCaptionOwnsTheWordAndItsMildStrength() {
+        var staff = new PlayingTechniqueDetector.Staff(100, 164, 16, 0, 1);
+        var whole = new PlayingTechniqueDetector.Word("Slightly slower", .10f, .24f, .34f, .31f);
+        var fragment = new PlayingTechniqueDetector.Word("slower", .20f, .25f, .33f, .31f);
+        var result = ScoreExpressionDetector.apply(
+                score(true), List.of(fragment, whole), List.of(staff), rails(), W, H);
+        assertEquals(1, result.expressiveEvents().size());
+        var event = result.expressiveEvents().get(0);
+        assertEquals(Kind.RITENUTO, event.kind());
+        assertEquals(Strength.POCO, event.strength());
+        assertEquals("Slightly slower", event.evidence().get(0).printedText());
+    }
+
+    @Test
+    public void midBarTempoOverAnUpperRestCanOwnAnAlignedLowerAttack() {
+        byte[] gray = rails();
+        for (int y = 194; y <= 258; y += 16)
+            Arrays.fill(gray, y * W + 20, y * W + 460, (byte) 0);
+        var notes = List.of(
+                new ScoreNoteEvent(0, .15f, 0, 1, 2, .74f, false, 0, 0, 0, 2f),
+                new ScoreNoteEvent(0, .555f, 0, 1, 2, .75f, false, 0, 0, 0, 2f));
+        var bars = List.of(new MeasureRegion(.04f, .92f, .30f, .89f));
+        var view = new ScorePageInterpretation(bars, notes, 1, List.of(), List.of(),
+                List.of(new ScoreMeterChange(0, 4, 4)), List.of(), List.of(), List.of())
+                .withRests(List.of(new ScoreRestEvent(0, .55f, .44f, .03f, 0, 2, 1)));
+        var staves = List.of(new PlayingTechniqueDetector.Staff(100, 164, 16, 0, 2),
+                new PlayingTechniqueDetector.Staff(194, 258, 16, 1, 2));
+        var word = new PlayingTechniqueDetector.Word("Lento", .524f, .25f, .63f, .31f);
+        var result = ScoreExpressionDetector.apply(view, List.of(word), staves, gray, W, H);
+        assertEquals(1, result.expressiveEvents().size());
+        var event = result.expressiveEvents().get(0);
+        assertEquals(Kind.TEMPO_MARKING, event.kind());
+        assertEquals(List.of(1), ScoreExpressionDetector.targetIndices(result, event));
+        assertEquals(new ScoreAnchor(0, 2), event.start().orElseThrow());
+    }
+
+
+    @Test
+    public void rehearsalTempoNeedsInkSeparatingTheHeadingFromItsVerse() {
+        var score = new ScorePageInterpretation(
+                List.of(new MeasureRegion(.2f, .85f, .23f, .65f)), List.of(), 1, List.of(), List.of());
+        var word = new PlayingTechniqueDetector.Word("D Largo Interlude", 58f/W, 65f/H, 223f/W, 85f/H);
+        var staffs = List.of(new PlayingTechniqueDetector.Staff(100, 164, 16, 0, 1));
+        assertTrue(ScoreExpressionDetector.apply(score, List.of(word), staffs, rails(), W, H)
+                .expressiveEvents().isEmpty());
+        var gray = rails();
+        for (int y = 68; y < 82; y++)
+            for (int x = 60; x <= 210; x++)
+                if (x <= 75 || (x >= 101 && x <= 130) || x >= 136) gray[y * W + x] = 0;
+        var events = ScoreExpressionDetector.apply(score, List.of(word), staffs, gray, W, H).expressiveEvents();
+        assertEquals(1, events.size());
+        assertEquals(Kind.TEMPO_MARKING, events.get(0).kind());
+        assertEquals(new ScoreAnchor(0, 0), events.get(0).start().orElseThrow());
+        assertEquals("largo", events.get(0).qualifierText());
+    }
+
+    @Test
+    public void clippedVerseWordCannotStealTheTempoAtABarline() {
+        var score = new ScorePageInterpretation(
+                List.of(new MeasureRegion(.2f, .85f, .23f, .65f)), List.of(), 1, List.of(), List.of());
+        var fragment = new PlayingTechniqueDetector.Word("lento", .22f, .22f, .31f, .28f);
+        var verse = new PlayingTechniqueDetector.Word("Aria Vento Al Mare", .12f, .20f, .52f, .29f);
+        var staffs = List.of(new PlayingTechniqueDetector.Staff(100, 164, 16, 0, 1));
+        assertEquals(1, ScoreExpressionDetector.apply(score, List.of(fragment), staffs, rails(), W, H)
+                .expressiveEvents().size());
+        assertTrue(ScoreExpressionDetector.apply(score, List.of(fragment, verse), staffs, rails(), W, H)
+                .expressiveEvents().isEmpty());
     }
 }

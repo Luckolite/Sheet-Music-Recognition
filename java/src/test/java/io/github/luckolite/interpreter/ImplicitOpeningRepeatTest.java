@@ -63,6 +63,20 @@ public class ImplicitOpeningRepeatTest {
     }
 
     @Test
+    public void outgoingRepeatClosesBeforeIncomingRepeatAtSameBoundary() {
+        var signs = List.of(
+                new PrintedRepeatGlyphs.Mark(4, false, .2f, 0, 1),
+                new PrintedRepeatGlyphs.Mark(4, true, .9f, 0, 1),
+                new PrintedRepeatGlyphs.Mark(8, true, .9f, 0, 1));
+        assertEquals(
+                List.of(0, 1, 2, 3, 0, 1, 2, 3, 4, 5, 6, 7, 4, 5, 6, 7),
+                route(PrintedRepeatNavigation.assemble(signs, List.of(), 0, true)));
+        assertEquals(
+                List.of(0, 1, 2, 3, 4, 5, 6, 7, 4, 5, 6, 7),
+                route(PrintedRepeatNavigation.assemble(signs, List.of(), 0, false)));
+    }
+
+    @Test
     public void evidenceLabelsImplicitStart() {
         var r = PrintedRepeatNavigation.assemble(end(), endings(), 0, true);
         var start =

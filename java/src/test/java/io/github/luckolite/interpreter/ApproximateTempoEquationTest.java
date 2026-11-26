@@ -300,4 +300,16 @@ public class ApproximateTempoEquationTest {
         assertEquals(1, out.get(0).measureIndex());
         assertEquals(0, out.get(0).positionInMeasure(), 0);
     }
+
+    @Test
+    public void namedCaptionCanWrapAnApproximateMetronomeEquation() throws Exception {
+        var page = page();
+        page.rect(40, 67, 45, 19, (byte) 5);
+        page.rect(90, 55, 3, 39, (byte) 5);
+        page.rect(265, 55, 3, 39, (byte) 5);
+        var marks = read(page, "Tempo Rubato (J = ca. 96)", 39, 39, 274, 98);
+        assertEquals(List.of(new ScoreTempoChange(0, 0, 96)), marks);
+        assertEquals(List.of(), read(page, "Tempo Rubato (J = ca. 96", 39, 39, 274, 98));
+    }
+
 }

@@ -66,9 +66,37 @@ final class OmrMeasurePostProcessor {
         if (origins != null) origins.begin(labels, gray, width, height);
         List<StaffRun> staffs = findStaffs(labels, gray, width, height, origins);
         if (staffs.isEmpty()) return new StaffSystems(List.of(), gray, width, height);
+        if (gray != null && staffs.size() > 1) {
+            byte[] raster = gray;
+            staffs.removeIf(staff -> unsupportedFullWidthStaff(raster, width, height, staff));
+        }
         List<SystemRun> systems = mergeAlignedStaffs(staffs, labels, gray, width, height);
         recoverIndependentGrandStaffBars(systems, labels, gray, width, height);
         return new StaffSystems(systems, gray, width, height);
+    }
+
+    /** Edge-to-edge regions need repeated physical rails to qualify as a system. */
+    private static boolean unsupportedFullWidthStaff(
+            byte[] gray, int width, int height, StaffRun staff) {
+        if (staff.left > width * .04f || staff.right < width * .96f
+                || staff.boundaries.size() != 2) return false;
+        float gap = staff.gap;
+        int stride = Math.max(2, Math.round(gap * .8f));
+        int radius = Math.max(1, Math.round(gap * .22f));
+        int limit = width * 7 / 8, samples = 0, supported = 0;
+        for (int x = width / 8; x < limit; x += stride) {
+            float[] local = staff.track == null ? null : staff.track.at(x);
+            float bottom = local == null ? staff.bottom + staff.slope * (x - width * .5f) : local[0];
+            float localGap = local == null ? gap : local[1];
+            int rules = 0;
+            for (int i = 0; i < 5; i++) {
+                int y = Math.round(bottom - i * localGap);
+                if (thinHorizontalInk(gray, width, height, x, y, radius, localGap)) rules++;
+            }
+            samples++;
+            if (rules >= 3) supported++;
+        }
+        return samples >= 12 && supported < samples * .08f;
     }
 
     record StaffSystems(List<SystemRun> systems, byte[] gray, int width, int height) {
@@ -1747,6 +1775,9 @@ final class OmrMeasurePostProcessor {
                 continue;
             }
             if (!semanticBar) continue;
+            if (attachedHead && gray != null
+                    && provesFiniteBarline(labels, gray, width, height, rawColumn, rows, gap, shift))
+                attachedHead = false;
             if (attachedHead) {
                 if (rawColumn < 0) continue;
                 // Only an otherwise vetoed bar needs printed repeat evidence.
@@ -1907,6 +1938,81 @@ final class OmrMeasurePostProcessor {
 
     private static boolean isVerticalInk(byte label) {
         return label == STEM_OR_REST || label == SYMBOL;
+    }
+
+    /** Checks the printed rule before letting nearby symbols veto its boundary. */
+    static boolean provesFiniteBarline(byte[] labels, byte[] gray, int width, int height,
+            int center, int[] rows, float gap, float shift) {
+        if (gray == null || gap < 8 || gap > 32 || center < 0 || center >= width) return false;
+        var printed = connectionStaffRows(gray, width, height, center, rows, gap, shift);
+        if (printed == null) return false;
+        int top = Math.round(printed[0]), bottom = Math.round(printed[4]);
+        int radius = Math.max(1, Math.round(gap * .12f));
+        for (int x = center - radius; x <= center + radius; x++) {
+            if (!finiteRuleAxis(gray, width, height, x, top, bottom, printed, gap)) continue;
+            if (ClosedHeadBarlineGuard.attached(gray, width, height, x, top, bottom, gap)) continue;
+            if (labels != null
+                    && (headTouchesColumn(labels, gray, width, height, x,
+                                Math.round(top - gap * 1.5f), Math.round(bottom + gap * 1.5f),
+                                rows, gap, shift)
+                            || distantHeadOnSameStem(labels, gray, width, height, x, top, bottom, gap)))
+                continue;
+            return true;
+        }
+        return false;
+    }
+
+    private static boolean finiteRuleAxis(byte[] gray, int width, int height, int x,
+            int top, int bottom, float[] rows, float gap) {
+        int reach = Math.round(gap * .38f);
+        int maxTail = Math.round(gap * 1.22f);
+        if (x - reach < 0 || x + reach >= width || top - maxTail < 1 || bottom + maxTail >= height - 1)
+            return false;
+        int missing = 0;
+        for (int y = top; y <= bottom; y++) {
+            if ((gray[y * width + x] & 255) >= 150 && ++missing > 1) return false;
+        }
+        // A displaced staff boundary can extend a short distance at one end.
+        // Check continuity so a separate mark or line of text cannot extend it.
+        int above = ruleTail(gray, width, x, top, -1, maxTail);
+        int below = ruleTail(gray, width, x, bottom, 1, maxTail);
+        if (Math.min(above, below) > 2) return false;
+        if (above > maxTail || below > maxTail) {
+            int sign = above > maxTail ? -1 : 1;
+            int edge = sign < 0 ? top : bottom;
+            if (!joinsDistantStaff(gray, width, height, x, edge, sign, maxTail, gap)) return false;
+        }
+        int clearSpaces = 0;
+        for (int i = 1; i < rows.length; i++) {
+            int mid = Math.round((rows[i - 1] + rows[i]) * .5f);
+            int clear = 0;
+            for (int y = mid - 2; y <= mid + 2; y++)
+                if ((gray[y * width + x - reach] & 255) >= 180
+                        && (gray[y * width + x + reach] & 255) >= 180) clear++;
+            if (clear >= 4) clearSpaces++;
+        }
+        return clearSpaces >= 3;
+    }
+
+    /** An uninterrupted shared barline can cross even a widely spaced pair of staves. */
+    private static boolean joinsDistantStaff(byte[] gray, int width, int height,
+            int x, int edge, int sign, int shortTail, float gap) {
+        int far = edge + sign * (shortTail + 1);
+        while (far > 0 && far < height - 1 && (gray[(far + sign) * width + x] & 255) < 150)
+            far += sign;
+        if (Math.abs(far - edge) < gap * 8) return false;
+        int[] seed = new int[5];
+        float start = sign < 0 ? far : far - gap * 4;
+        for (int i = 0; i < seed.length; i++) seed[i] = Math.round(start + i * gap);
+        var remote = connectionStaffRows(gray, width, height, x, seed, gap, 0);
+        return remote != null && Math.abs(remote[sign < 0 ? 0 : 4] - far) <= 2;
+    }
+
+    private static int ruleTail(byte[] gray, int width, int x, int edge, int sign, int limit) {
+        int length = 0;
+        while (length <= limit && (gray[(edge + sign * (length + 1)) * width + x] & 255) < 150)
+            length++;
+        return length;
     }
 
     private static boolean isolatedFullHeightRule(
@@ -3997,6 +4103,10 @@ final class OmrMeasurePostProcessor {
                                     Math.round(system.top),
                                     Math.round(system.bottom))
                             == 0) continue;
+            if (index == 0 && boundaries.size() > 2
+                    && outsideOpeningConnector(
+                            labels, gray, width, height, system, rawLeft, rawRight,
+                            Math.round(headTop), Math.round(headBottom))) continue;
             if (playableRight - playableLeft >= Math.max(6, Math.round(system.gap * 2.2f))) {
                 var region =
                         new MeasureRegion(
@@ -4020,6 +4130,53 @@ final class OmrMeasurePostProcessor {
                 }
             }
         }
+    }
+
+    private static boolean outsideOpeningConnector(
+            byte[] labels, byte[] gray, int width, int height, SystemRun system,
+            int left, int right, int headTop, int headBottom) {
+        float gap = system.gap;
+        if (gray == null || system.members.size() < 2 || right - left > gap * 4.5f
+                || right - left < gap * 2.5f
+                || countLabel(labels, width, height, NOTEHEAD,
+                        left, right - Math.round(gap * .55f), headTop, headBottom) > 0) return false;
+        int radius = Math.round(gap * .55f);
+        int from = Math.max(left, right - radius), to = Math.min(width - 1, right + radius);
+        for (int x = from; x <= to; x++) {
+            if (!verticalRuleAt(gray, width, x, system.top, system.bottom, gap)) continue;
+            boolean startsHere = true;
+            for (var staff : system.members) {
+                if (openingRuleCount(gray, width, height, staff, x, -1) > 1
+                        || openingRuleCount(gray, width, height, staff, x, 1) < 4) {
+                    startsHere = false;
+                    break;
+                }
+            }
+            if (startsHere) return true;
+        }
+        return false;
+    }
+
+    private static int openingRuleCount(
+            byte[] gray, int width, int height, StaffRun staff, int edge, int direction) {
+        var gap = staff.gap;
+        int radius = Math.max(1, Math.round(.17f * gap));
+        int first = Math.round(.65f * gap), last = Math.round(1.85f * gap);
+        int[] hits = new int[5];
+        for (int distance = first; distance <= last; distance++) {
+            int x = edge + direction * distance;
+            if (x < 0 || x >= width) return 0;
+            float[] local = staff.track == null ? null : staff.track.at(x);
+            for (int line = 0; line < hits.length; line++) {
+                int row = Math.round(local == null
+                        ? staff.top + line * gap + staff.slope * (x - width * .5f)
+                        : local[0] - (4 - line) * local[1]);
+                if (thinHorizontalInk(gray, width, height, x, row, radius, gap)) hits[line]++;
+            }
+        }
+        int rules = 0;
+        for (int hit : hits) if (hit >= (last - first + 1) * .65f) rules++;
+        return rules;
     }
 
     /** A short key-only tail beyond a printed double bar is a courtesy header, not musical time. */

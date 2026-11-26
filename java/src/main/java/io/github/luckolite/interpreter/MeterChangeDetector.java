@@ -363,7 +363,7 @@ public final class MeterChangeDetector {
     }
 
     public static List<Crop> candidates(byte[] labels, byte[] gray, int width, int height) {
-        return candidates(labels, gray, width, height, crop -> true, null);
+        return candidates(labels, gray, width, height, crop -> true, null, List.of());
     }
 
     /** Apply note ownership before the bounded OCR budget, so body ink cannot starve later headers. */
@@ -386,7 +386,7 @@ public final class MeterChangeDetector {
             return measure >= 0
                     && precedesNotes(crop, labels, gray, width, height, measure, measures, notes);
         };
-        var candidates = candidates(labels, gray, width, height, eligible, staffs);
+        var candidates = candidates(labels, gray, width, height, eligible, staffs, measures);
         if (candidates.size() >= 48 || labels == null || gray == null
                 || labels.length != (long) width * height || gray.length != labels.length) return candidates;
         var result = new ArrayList<>(candidates);
@@ -394,7 +394,7 @@ public final class MeterChangeDetector {
             addCandidate(result, crop, eligible);
             if (result.size() >= 48) break;
         }
-        return List.copyOf(result);
+        return MeterDoubleRuleCrop.supplement(result, labels, gray, width, height, measures, notes);
     }
 
     /** A new clef and meter can restart the staff after an inline double bar and blank strip. */
@@ -477,7 +477,8 @@ public final class MeterChangeDetector {
             byte[] gray,
             int width,
             int height,
-            java.util.function.Predicate<Crop> eligible, List<SignatureStaff> staffs) {
+            java.util.function.Predicate<Crop> eligible, List<SignatureStaff> staffs,
+            List<MeasureRegion> measures) {
         List<Crop> result = new ArrayList<>();
         if (labels == null
                 || gray == null
@@ -730,6 +731,10 @@ public final class MeterChangeDetector {
             if (!hints.contains(hint)) hints.add(hint);
         }
         for (var crop : MeterComponentSeeds.crops(labels, gray, width, height, hints)) {
+            if (!result.contains(crop) && eligible.test(crop)) result.add(crop);
+            if (result.size() >= 48) return List.copyOf(result.subList(0, 48));
+        }
+        for (var crop : MeterComponentSeeds.boundaryCrops(labels, gray, width, height, hints, measures)) {
             if (!result.contains(crop) && eligible.test(crop)) result.add(crop);
             if (result.size() >= 48) return List.copyOf(result.subList(0, 48));
         }
@@ -1051,6 +1056,11 @@ public final class MeterChangeDetector {
             best = i;
             distance = delta;
         }
+        if (best < 0 && !measures.isEmpty()) {
+            var opening = measures.get(0);
+            if (y >= opening.top() && y <= opening.bottom() && center < opening.left()
+                    && (opening.left() - center) * width <= crop.gap() * 21) return 0;
+        }
         return best;
     }
 
@@ -1102,7 +1112,32 @@ public final class MeterChangeDetector {
             List<ScoreNoteEvent> notes) {
         return crop != null
                 && precedesNotes(crop, gray, width, height, measure, measures, notes)
-                && !MeterHeaderInkGuard.owns(crop, labels, gray, width, height);
+                && !MeterHeaderInkGuard.owns(crop, labels, gray, width, height)
+                && (measure != 0
+                        || measures.get(0).left() * width - (crop.left() + crop.right()) * .5f
+                                <= crop.gap() * 7
+                        || printedOpeningPrefix(crop, labels, gray, width, height, measures.get(0)));
+    }
+
+    /** An opening cue can precede the first playable bar after a printed repeat. */
+    private static boolean printedOpeningPrefix(
+            Crop crop, byte[] labels, byte[] gray, int width, int height, MeasureRegion opening) {
+        if (labels == null || gray == null || labels.length != gray.length
+                || gray.length != (long) width * height) return false;
+        int from = Math.max(0, Math.round(crop.left() - crop.gap() * 7));
+        int top = Math.max(0, Math.round(crop.firstLine() - crop.gap()));
+        int bottom = Math.min(height - 1, Math.round(crop.firstLine() + 5 * crop.gap()));
+        int header = 0;
+        for (int y = top; y <= bottom; y++)
+            for (int x = from; x < crop.left(); x++)
+                if (labels[y * width + x] == OmrMeasurePostProcessor.CLEF_OR_KEY
+                        && (gray[y * width + x] & 255) < 180) header++;
+        if (header < crop.gap() * crop.gap()) return false;
+        var repeat = PrintedRepeatGlyphs.provedColumns(
+                gray, width, height, crop.firstLine(), Math.round(crop.firstLine() + 4 * crop.gap()),
+                crop.gap());
+        int column = repeat.nextSetBit(crop.right());
+        return column >= 0 && column < opening.left() * width;
     }
 
     /** A decoded natural beside a chord owns its narrow glyph, even when OCR reads two digits. */

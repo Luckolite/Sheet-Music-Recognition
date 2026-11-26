@@ -60,4 +60,20 @@ public class OctaveClefDigitTest {
         }
         assertFalse(OctaveClefDigit.above(gray, 80, 120, 25, 38, 45, 65, 12));
     }
+
+    @Test
+    public void isolatedSystemEightAtTheLeftOfTheClefDoesNotRaiseAnOctave() {
+        assertFalse(OctaveClefDigit.above(isolatedEight(27), 80, 120, 25, 44, 55, 65, 12));
+        assertTrue(OctaveClefDigit.above(isolatedEight(38), 80, 120, 25, 44, 55, 65, 12));
+    }
+
+    private byte[] isolatedEight(int left) {
+        byte[] gray = new byte[80 * 120];
+        Arrays.fill(gray, (byte) 255);
+        for (int y = 28; y <= 40; y++)
+            for (int x = left; x <= left + 6; x++)
+                if (x == left || x == left + 6 || y == 28 || y == 34 || y == 40)
+                    gray[y * 80 + x] = 0;
+        return gray;
+    }
 }

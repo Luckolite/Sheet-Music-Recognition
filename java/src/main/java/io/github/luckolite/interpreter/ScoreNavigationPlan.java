@@ -10,11 +10,19 @@ public final class ScoreNavigationPlan {
     private final ScoreNavigationTraversal.Result traversal;
     private final boolean navigationApplied;
     private final int sourceMeasureCount;
+    private final java.util.Set<Integer> measureRepeats;
 
-    private ScoreNavigationPlan(int sourceCount, ScoreNavigationTraversal.Result traversal) {
+    private ScoreNavigationPlan(int sourceCount, ScoreNavigationTraversal.Result traversal,
+            List<ScorePlaybackDirection> directions) {
         this.traversal = traversal;
         this.sourceMeasures = traversal.sourceMeasures();
         this.sourceMeasureCount = sourceCount;
+        var repeats = new java.util.HashSet<Integer>();
+        if (directions != null)
+            for (var direction : directions)
+                if (direction != null && direction.provedMeasureRepeat(sourceCount))
+                    repeats.add(direction.measureBoundary());
+        this.measureRepeats = java.util.Set.copyOf(repeats);
         boolean changed = sourceMeasures.size() != sourceCount;
         for (int i = 0; i < sourceMeasures.size(); i++)
             if (sourceMeasures.get(i) != i) changed = true;
@@ -46,6 +54,10 @@ public final class ScoreNavigationPlan {
         return traversal;
     }
 
+    public java.util.Set<Integer> measureRepeats() {
+        return measureRepeats;
+    }
+
     public int sourceMeasureCount() {
         return sourceMeasureCount;
     }
@@ -74,6 +86,6 @@ public final class ScoreNavigationPlan {
             int sourceMeasureCount, List<ScorePlaybackDirection> directions, ScoreMeterMap meter) {
         return new ScoreNavigationPlan(
                 sourceMeasureCount,
-                ScoreNavigationTraversal.traverse(sourceMeasureCount, meter, directions));
+                ScoreNavigationTraversal.traverse(sourceMeasureCount, meter, directions), directions);
     }
 }

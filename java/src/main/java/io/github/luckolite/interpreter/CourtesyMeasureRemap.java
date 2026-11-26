@@ -14,6 +14,17 @@ final class CourtesyMeasureRemap {
         return new ScoreAnchor(map(a.measureIndex(), cut), a.quarterBeatOffset());
     }
 
+    private static Optional<String> remapTarget(ScoreExpressiveEvent event, int cut) {
+        java.util.function.IntUnaryOperator mapper = index -> map(index, cut);
+        if (ScoreDynamicContinuation.ownsCompound(event))
+            return ScoreDynamicContinuation.remapCompound(event, mapper);
+        return ScoreFermataDetector.remapTargetMeasures(event, mapper)
+                .or(() -> ScoreRestFermataDetector.remapTargetMeasures(event, mapper))
+                .or(() -> ScoreArpeggioNotation.remapTargetMeasures(event, mapper))
+                .or(() -> ScoreExpressionDetector.remapTargetMeasures(event, mapper))
+                .or(() -> ScorePedalDetector.remapTargetMeasures(event, mapper));
+    }
+
     static ScorePageInterpretation remove(ScorePageInterpretation s, int cut) {
         if (cut < 0
                 || cut >= s.measures().size()
@@ -138,10 +149,7 @@ final class CourtesyMeasureRemap {
                                                 e.scope(),
                                                 e.staffIndex(),
                                                 e.staffCount(),
-                                                ScoreDynamicContinuation.ownsCompound(e)
-                                                        ? ScoreDynamicContinuation.remapCompound(e, i -> map(i, cut))
-                                                        : ScorePedalDetector.remapTargetMeasures(
-                                                                e, i -> map(i, cut)),
+                                                remapTarget(e, cut),
                                                 e.strength(),
                                                 PairedDynamicWedges.remap(e, i -> map(i, cut)),
                                                 e.evidence()))

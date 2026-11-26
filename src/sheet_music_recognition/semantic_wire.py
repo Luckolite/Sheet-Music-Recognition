@@ -9,12 +9,13 @@ from encodings.utf_16_le import encode as utf16_encode
 KINDS = ('UNRESOLVED_DIRECTION', 'RITARDANDO', 'RALLENTANDO', 'RITENUTO',
          'ACCELERANDO', 'A_TEMPO', 'TEMPO_PRIMO', 'SAME_TEMPO', 'FERMATA',
          'BREATH', 'CAESURA', 'SFORZANDO', 'SFORZATO', 'SFORZANDO_PIANO',
-         'PEDAL_DOWN', 'PEDAL_UP', 'ARPEGGIO', 'CRESCENDO', 'DIMINUENDO', 'METRIC_MODULATION', 'NATURAL_HARMONIC', 'FALL_OFF', 'PARENTHESIZED_NOTE_GROUP')
+         'PEDAL_DOWN', 'PEDAL_UP', 'ARPEGGIO', 'CRESCENDO', 'DIMINUENDO', 'METRIC_MODULATION', 'NATURAL_HARMONIC', 'FALL_OFF', 'PARENTHESIZED_NOTE_GROUP', 'TEMPO_MARKING')
 SCOPES = ('SCORE', 'PART', 'VOICE', 'NOTE', 'REST', 'UNRESOLVED')
 STRENGTHS = ('UNSPECIFIED', 'POCO', 'MOLTO')
 POLICIES = ('DEFAULT', 'SKIP', 'PLAY', 'UNKNOWN')
 JUMPS = (2, 7, 8, 9, 10, 11)
 MAX_RECORD_BYTES = 262144
+TEMPO_MARKING_VERSION = 312
 DEFAULT_DETAILS = dict(quarterBeatOffset=0, eventId='', targetId='', codaTargetId='',
                        repeatGroupId='', totalPlays=2, passes=[], end=None,
                        afterJumpRepeats='DEFAULT', printedText='', evidence=[])
@@ -210,6 +211,8 @@ def encode(directions, expressions, measures, guide_version=277):
         raise ValueError('Falloff requires guide295')
     if guide_version < 296 and any(row['kind'] == 'PARENTHESIZED_NOTE_GROUP' for row in expressions):
         raise ValueError('Parenthesized group requires guide296')
+    if guide_version < TEMPO_MARKING_VERSION and any(row['kind'] == 'TEMPO_MARKING' for row in expressions):
+        raise ValueError('Verbal tempo marking requires guide312')
     out = Writer(); out.put('i', len(directions))
     for row in directions:
         row = direction(row, measures); d = row['details']; r = Writer()
@@ -302,6 +305,8 @@ def decode_prefix(data, measures, guide_version=277):
             raise ValueError('Natural harmonic is outside this guide format')
         if guide_version < 295 and row['kind'] == 'FALL_OFF':
             raise ValueError('Falloff is outside this guide format')
+        if guide_version < TEMPO_MARKING_VERSION and row['kind'] == 'TEMPO_MARKING':
+            raise ValueError('Verbal tempo marking is outside this guide format')
         if guide_version < 296 and row['kind'] == 'PARENTHESIZED_NOTE_GROUP':
             raise ValueError('Parenthesized group is outside this guide format')
         row['scope'] = r.enum(SCOPES); row['staffIndex'], row['staffCount'] = r.take('ii')

@@ -37,12 +37,26 @@ public final class ExpressiveDirectionText {
     private static final Pattern BOW_CAPTION_PATTERN = Pattern.compile(BOW_CAPTION);
     private static final String SHORT_BOW_CAPTION = "^\\s*(?:sp\\.|fr\\.|m\\.|[gh]\\.\\s*b\\.)\\s*$";
     private static final Pattern SHORT_BOW_CAPTION_PATTERN = Pattern.compile(SHORT_BOW_CAPTION);
+    static final String FASTER_RESTORATION = "ma piu mosso";
+    static final String SECTION_SLOWER = "slower";
+    static final String SECTION_MOSSO = "mosso";
+    private static final Pattern MODERATED_ALLEGRO = Pattern.compile("alle[gq]ro n[oe]n molto");
+    private static final Pattern TEMPO_PART_CAPTION = Pattern.compile(
+            "([a-z]+) (?:solo|soto|tutti|iutti)");
+    private static final Pattern REHEARSAL_TEMPO_CAPTION = Pattern.compile(
+            "^[A-Z] +([A-Z][a-z]+) +[A-Z][a-z].*$");
+    private static final Set<String> TEMPO_MARKINGS = Set.of(
+            "adagiosissimo", "molto adagio", "largo", "lento", "adagio",
+            "allegro", "presto", "prestissimo");
+    private static final Pattern RESTORATION_CAPTION = Pattern.compile(
+            "(?:(?:ppp|pp|p|mp|mf|f|ff|fff)\\s+)?a\\s*tempo"
+                    + "(\\s+ma\\s+pi[u�]\\s+mosso)?[.!]?");
 
 
     private static final List<Rule> RULES =
             List.of(
                     rule(Kind.RITARDANDO, "ritardando|ritard\\.?|rit\\.?"),
-                    rule(Kind.RALLENTANDO, "rallentando|rallent\\.?|rall\\.?"),
+                    rule(Kind.RALLENTANDO, "rall[ea]ntando|rallent\\.?|rall\\.?"),
                     rule(Kind.RITENUTO, "ritenuto|riten\\.?|rite\\.?"),
                     rule(Kind.ACCELERANDO, "accelerando|accel\\.?|gradually\\s+faster"),
                     rule(Kind.A_TEMPO, "a\\s+tempo"),
@@ -128,6 +142,10 @@ public final class ExpressiveDirectionText {
 
     public static List<Direction> parse(String printed) {
         if (printed == null || printed.isBlank()) return List.of();
+        var restoration = restorationCaption(printed);
+        if (restoration != null) return List.of(restoration);
+        var sectional = sectionalTempoCaption(printed);
+        if (sectional != null) return List.of(sectional);
         if (SuddenDynamicText.parse(printed).isPresent())
             return List.of(
                     new Direction(Kind.UNRESOLVED_DIRECTION, Strength.UNSPECIFIED, printed, ""));
@@ -180,5 +198,49 @@ public final class ExpressiveDirectionText {
                                                 printed,
                                                 pulses.encode())));
         return List.copyOf(result);
+    }
+
+    static Direction restorationCaption(String printed) {
+        if (printed == null) return null;
+        var match = RESTORATION_CAPTION.matcher(normalized(printed).strip());
+        if (!match.matches()) return null;
+        return new Direction(Kind.A_TEMPO, Strength.UNSPECIFIED, printed,
+                match.group(1) == null ? "" : FASTER_RESTORATION);
+    }
+
+    static String rehearsalTempoLabel(String printed) {
+        if (printed == null || printed.length() > 160) return null;
+        var match = REHEARSAL_TEMPO_CAPTION.matcher(printed.strip());
+        if (!match.matches()) return null;
+        String tempo = normalized(match.group(1));
+        return TEMPO_MARKINGS.contains(tempo) ? tempo : null;
+    }
+
+    static boolean tempoPartCaption(String printed) {
+        return printed != null && TEMPO_PART_CAPTION
+                .matcher(normalized(printed).strip().replaceFirst("[.!]$", "")).matches();
+    }
+
+    static Direction sectionalTempoCaption(String printed) {
+        if (printed == null) return null;
+        String caption = normalized(printed).strip();
+        String label = caption.replaceFirst("[.!]$", "");
+        if (MODERATED_ALLEGRO.matcher(label).matches()) label = "allegro non molto";
+        else {
+            var part = TEMPO_PART_CAPTION.matcher(label);
+            if (part.matches()) label = part.group(1);
+        }
+        if (TEMPO_MARKINGS.contains(label) || label.equals("allegro non molto"))
+            return new Direction(Kind.TEMPO_MARKING, Strength.UNSPECIFIED, printed, label);
+        if (caption.matches("mosso[.!]?"))
+            return new Direction(Kind.A_TEMPO, Strength.UNSPECIFIED, printed, SECTION_MOSSO);
+        if (label.equals("slightly slower"))
+            return new Direction(Kind.RITENUTO, Strength.POCO, printed, SECTION_SLOWER);
+        if (!label.equals("slower")) {
+            String rehearsal = rehearsalTempoLabel(printed);
+            return rehearsal == null ? null
+                    : new Direction(Kind.TEMPO_MARKING, Strength.UNSPECIFIED, printed, rehearsal);
+        }
+        return new Direction(Kind.RITENUTO, Strength.UNSPECIFIED, printed, SECTION_SLOWER);
     }
 }

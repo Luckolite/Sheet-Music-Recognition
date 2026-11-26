@@ -46,6 +46,148 @@ final class MeterComponentSeeds {
         return List.copyOf(result);
     }
 
+    /** Keep both digits of a stacked signature when the numerator has disconnected pieces. */
+    static List<MeterChangeDetector.Crop> boundaryCrops(
+            byte[] labels, byte[] gray, int width, int height,
+            List<Hint> hints, List<MeasureRegion> measures) {
+        var crops = new ArrayList<MeterChangeDetector.Crop>();
+        MeasureRegion previous = null;
+        for (var measure : measures) {
+            if (measure.equals(previous)) continue;
+            boolean opening = previous == null;
+            previous = measure;
+            int edge = Math.round(measure.left() * width);
+            for (var hint : hints) {
+                float gap = hint.gap();
+                int first = hint.firstLine() + Math.round(hint.slope() * (edge - width * .5f));
+                float center = (first + 2 * gap) / height;
+                if (center < measure.top() || center > measure.bottom()) continue;
+                retainBoundaryBody(crops, labels, gray, width, height, edge, first, gap);
+                if (opening) {
+                    int step = Math.max(1, Math.round(2 * gap));
+                    for (int x = edge - 4 * step; x > edge - 21 * gap && x > 3 * gap; x -= step) {
+                        int sample = x + Math.round(1.4f * gap);
+                        int phase = localBoundaryPhase(
+                                labels, gray, width, height, sample, sample, first, gap, 2f);
+                        retainBoundaryBody(crops, labels, gray, width, height, x, phase, gap);
+                    }
+                }
+            }
+        }
+        return crops;
+    }
+
+    private static void retainBoundaryBody(
+            List<MeterChangeDetector.Crop> crops, byte[] labels, byte[] gray, int width,
+            int height, int edge, int first, float gap) {
+        int left = Math.max(0, Math.round(edge - gap * 1.65f));
+        int right = Math.min(width - 1, Math.round(edge + gap * 3.5f));
+        int top = Math.max(0, Math.round(first - gap * .7f));
+        int bottom = Math.min(height - 1, Math.round(first + gap * 4.65f));
+        int[] projection = new int[Math.max(0, right - left + 1)];
+        int firstInk = -1, lastInk = -1, upper = 0, lower = 0;
+        int sumUpper = 0, sumLower = 0, topInk = height, bottomInk = -1;
+        for (int x = left; x <= right + Math.round(gap); x++) {
+            int hi = 0, lo = 0, mint = height, maxb = -1;
+            if (x <= right)
+                for (int y = top; y <= bottom; y++) {
+                    int pixel = y * width + x;
+                    float row = (y - first) / gap;
+                    if (labels[pixel] != OmrMeasurePostProcessor.SYMBOL
+                            || (gray[pixel] & 255) >= 192
+                            || Math.abs(row - Math.round(row)) <= .12f) continue;
+                    if (row < 2) hi++;
+                    else lo++;
+                    mint = Math.min(mint, y);
+                    maxb = Math.max(maxb, y);
+                }
+            if (x <= right) projection[x - left] = hi + lo;
+            if (hi + lo >= gap * .2f) {
+                if (firstInk < 0) firstInk = x;
+                lastInk = x;
+                upper += hi;
+                lower += lo;
+                sumUpper += hi * x;
+                sumLower += lo * x;
+                topInk = Math.min(topInk, mint);
+                bottomInk = Math.max(bottomInk, maxb);
+                continue;
+            }
+            if (firstInk < 0 || x - lastInk <= gap * .45f - 1) continue;
+            int span = lastInk - firstInk + 1;
+            if (span >= gap * .75f && span <= gap * 3.25f
+                    && bottomInk - topInk >= gap * 2.9f
+                    && upper >= gap * gap * .45f && lower >= gap * gap * .45f
+                    && Math.abs(sumUpper / (float) upper - sumLower / (float) lower) <= gap * .8f) {
+                int pad = Math.max(2, Math.round(gap * .17f));
+                int localFirst = localBoundaryPhase(
+                        labels, gray, width, height, firstInk, lastInk, first, gap, .85f);
+                // In wide bodies, shed only the sparse fringe ahead of the first digit.
+                int cropLeft = firstInk - pad;
+                if (span >= gap * 2.58f) {
+                    int fringe = Math.round(gap * .14f);
+                    int retained = firstInk;
+                    while (retained < firstInk + fringe
+                            && projection[retained - left] <= gap * .36f) retained++;
+                    if (retained == firstInk + fringe) cropLeft = retained;
+                }
+                var crop = new MeterChangeDetector.Crop(
+                        Math.max(0, cropLeft),
+                        Math.max(0, localFirst - Math.round(gap * .35f)),
+                        Math.min(width, lastInk + pad + 1),
+                        Math.min(height, Math.round(localFirst + 4 * gap) + Math.round(gap * .4f)),
+                        localFirst, gap);
+                if (topInk >= localFirst - gap * .65f && topInk <= localFirst + gap * .7f
+                        && bottomInk >= localFirst + gap * 3.2f
+                        && bottomInk <= localFirst + gap * 4.65f
+                        && !crops.contains(crop)) crops.add(crop);
+            }
+            firstInk = lastInk = -1;
+            upper = lower = sumUpper = sumLower = 0;
+            topInk = height;
+            bottomInk = -1;
+        }
+    }
+
+    private static int localBoundaryPhase(
+            byte[] labels, byte[] gray, int width, int height,
+            int left, int right, int first, float gap, float search) {
+        int reach = Math.round(gap * .8f);
+        int limit = Math.round(gap * search);
+        if (left < reach || right + reach >= width || first - limit - 1 < 0
+                || Math.round(first + limit + 4 * gap) + 1 >= height) return first;
+        int best = first, most = 0;
+        for (int phase = first - limit; phase <= first + limit; phase++) {
+            int total = 0, rails = 0;
+            for (int k = 0; k < 5; k++) {
+                int center = Math.round(phase + k * gap);
+                int count = 0;
+                for (int x = left - reach; x <= right + reach; x++) {
+                    if (x >= left - 1 && x <= right + 1) {
+                        x = right + 1;
+                        continue;
+                    }
+                    for (int y = center - 1; y <= center + 1; y++) {
+                        int pixel = y * width + x;
+                        if (labels[pixel] == OmrMeasurePostProcessor.STAFF
+                                && (gray[pixel] & 255) < 195) {
+                            count++;
+                            break;
+                        }
+                    }
+                }
+                if (count >= reach) rails++;
+                total += count;
+            }
+            if (rails == 5 && (total > most
+                    || total == most && Math.abs(phase - first) < Math.abs(best - first))) {
+                best = phase;
+                most = total;
+            }
+        }
+        return best;
+    }
+
     private static MeterChangeDetector.Crop fromBody(
             byte[] labels, byte[] gray, int w, int h, Body body, Hint hint) {
         float gap = hint.gap();

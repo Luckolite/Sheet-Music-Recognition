@@ -38,6 +38,16 @@ final class InterruptedStaffHeader {
             if (retained == null) retained = new ArrayList<>(measures);
             retained.remove(candidate);
         }
+        var split = SplitOpeningHeader.prove(measures, labels, gray, source, width, height,
+                (pixels, w, h, crop) -> {
+                    var reading = MeterFontMatcher.readCrop(pixels, w, h, crop);
+                    return MusicalOcrEvidence.fontMeter(reading.text(),
+                            reading.topScore(), reading.bottomScore(), java.util.Set.of(), java.util.Set.of());
+                });
+        if (!split.isEmpty()) {
+            if (retained == null) retained = new ArrayList<>(measures);
+            retained.remove(measures.get(0));
+        }
         return retained == null ? measures : List.copyOf(retained);
     }
 

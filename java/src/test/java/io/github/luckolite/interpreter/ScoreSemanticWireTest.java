@@ -200,4 +200,25 @@ public class ScoreSemanticWireTest {
         } catch (IOException expected) {
         }
     }
+
+    @Test
+    public void writtenTempoKindRoundTripsOnlyAtItsSupportedGuideVersion() throws Exception {
+        var expected = new ScoreExpressiveEvent(
+                "word-tempo", ScoreExpressiveEvent.Kind.TEMPO_MARKING,
+                Optional.of(new ScoreAnchor(1, 0)), Optional.empty(),
+                ScoreExpressiveEvent.Scope.SCORE, 0, 1, Optional.empty(),
+                ScoreExpressiveEvent.Strength.UNSPECIFIED, "adagio", List.of(
+                        new ScoreExpressiveEvent.Evidence("original-synthetic", 0, .25f, 0, 1, "Adagio")));
+        var bytes = new ByteArrayOutputStream();
+        var out = new DataOutputStream(bytes);
+        assertThrows(IOException.class,
+                () -> ScoreSemanticWire.writeExpressions(out, List.of(expected), 3, 311));
+        ScoreSemanticWire.writeExpressions(out, List.of(expected), 3, 312);
+        byte[] data = bytes.toByteArray();
+        assertEquals(List.of(expected), ScoreSemanticWire.readExpressions(
+                new DataInputStream(new ByteArrayInputStream(data)), 3, 312));
+        assertThrows(IOException.class, () -> ScoreSemanticWire.readExpressions(
+                new DataInputStream(new ByteArrayInputStream(data)), 3, 311));
+    }
+
 }

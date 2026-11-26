@@ -401,7 +401,7 @@ public final class ScoreDynamicContinuation {
             return ScorePedalDetector.offsetEvidence(event, offset, page);
         if (ScoreRestFermataDetector.owns(event))
             return ScoreRestFermataDetector.offsetEvidence(event, offset, page);
-        if (ScoreExpressionDetector.owns(event))
+        if (ScoreExpressionDetector.owns(event) || ScoreExpressionDetector.directBarlineDirection(event))
             return ScoreExpressionDetector.offsetEvidence(event, offset, page);
         if (ScoreFermataDetector.owns(event))
             return ScoreFermataDetector.offsetEvidence(event, offset, page);

@@ -292,7 +292,7 @@ public final class SheetInterpreter {
                                 .toList(),
                         sourceNumbers);
         var prepared = preparedTabs == null
-                ? TablatureDecoder.prepare(gray, width, height, annotations.words, annotations.tabWords)
+                ? TablatureDecoder.prepare(gray, width, height, annotations.words, annotations.tabWords, ocr)
                 : preparedTabs;
         var tabWords = prepared.words();
         var tabs = prepared.withRhythm();
@@ -415,7 +415,8 @@ public final class SheetInterpreter {
                 RecognizedMultiRestProjection.apply(
                         score, measures, labels, gray, width, height, recognizedRests);
         var wholeMeterAlias = MeterNumeralWholeNoteAlias.capture(
-                score.notes(), measures, labels, gray, annotationGray, width, height);
+                score.notes(), measures, labels, gray, annotationGray, width, height,
+                ocr == null ? null : ocr::readBoundaryMeterWithOcr);
         var noteOwners = InlineTripleMeterNoteAlias.remove(
                 wholeMeterAlias.notes(), measures, labels, gray, annotationGray, width, height);
         noteOwners = tripleRuns.retain(noteOwners, labels, gray, annotationGray, width, height);
@@ -793,7 +794,7 @@ public final class SheetInterpreter {
                         height);
         finalInterpretation =
                 PrintedRepeatNavigation.apply(
-                        finalInterpretation, words, staffs, gray, width, height, physicalPage);
+                        finalInterpretation, words, staffs, gray, annotationGray, width, height, physicalPage);
         finalInterpretation =
                 finalInterpretation.withOpeningPickup(
                         firstMeasureNumber <= 1
@@ -1111,6 +1112,8 @@ public final class SheetInterpreter {
                     finalInterpretation, labels, gray, width, height, staffs, physicalPage);
         finalInterpretation = ClosedOctaveRailRun.completePrintedBeamQuartets(
                 finalInterpretation, gray, annotationGray, width, height, staffs, physicalPage);
+        finalInterpretation = PrintedMeasureRepeatGlyphs.apply(
+                finalInterpretation, annotationGray, width, height, physicalPage);
         finalInterpretation =
                 finalInterpretation.withClockContextSource(
                         ScoreClockContextCapture.capture(
@@ -1211,7 +1214,8 @@ public final class SheetInterpreter {
         var finalPage = OpeningPortatoSixteenths.restore(phrasing, gray, annotationGray, width, height);
         var continued = RepeatedBeamedTriplets.apply(finalPage, labels, annotationGray, width, height, inheritedMeter);
         return new AnalyzedPage(
-                TerminalCutTime.apply(continued, gray, width, height),
+                PrintedCadenceDurations.restoreCompoundAfterCadenza(
+                        TerminalCutTime.apply(continued, gray, width, height), words),
                 clockAnalysis.notes(),
                 clockAnalysis.clockProducerSource().localAccidentals(),
                 measures,

@@ -41,6 +41,20 @@ def rest_fermata_document(duration=4, supplied_scope='UNRESOLVED'):
     return doc
 
 
+def tempo_rest_document():
+    bits = struct.unpack('>i', struct.pack('>f', .5))[0]
+    mark = expression('TEMPO_MARKING', scope='UNRESOLVED', target=f'expression-rest-column:0:0:1:{bits}',
+                      source='printed-expression-word')
+    mark.update(start=None, qualifierText='lento')
+    mark['evidence'][0]['printedText'] = 'Lento'
+    doc = document([mark])
+    page = doc['pages'][0]
+    page['events'][1].update(startBeat=2.5, durationBeats=1.5)
+    page['score']['rests'] = [dict(measureIndex=0, positionInMeasure=.5, staffIndex=0,
+                                  staffCount=1, durationBeats=.5)]
+    return doc
+
+
 class ExpressivePerformanceTests(unittest.TestCase):
     def test_attack_lookup_preserves_staff_tolerance_and_gain_tie_order(self):
         beat = 1000.
@@ -103,6 +117,20 @@ class ExpressivePerformanceTests(unittest.TestCase):
         unresolved=rest_fermata_document(1);events,end=_sample_events(unresolved,120)
         self.assertEqual(2*SAMPLE_RATE,end)
         self.assertIn('unresolved',perform_expressions(unresolved,120)['expressivePerformance'][0]['diagnostics'][0])
+    def test_tempo_mark_on_a_rest_uses_the_silent_slot(self):
+        doc = tempo_rest_document()
+        result = perform_expressions(doc, 120)['expressivePerformance'][0]
+        self.assertEqual([(0, 120), (2, 54)],
+                         [(s['startBeat'], s['startBpm']) for s in result['segments']])
+
+    def test_written_tempo_uses_the_shared_preview_policy(self):
+        marking = expression('TEMPO_MARKING')
+        marking['qualifierText'] = 'adagio'
+        marking['evidence'][0]['printedText'] = 'Adagio'
+        result = perform_expressions(document([marking]), 120)['expressivePerformance'][0]
+        self.assertEqual(66, result['openingBpm'])
+        self.assertEqual(66, result['segments'][0]['startBpm'])
+
     def test_no_expression_keeps_legacy_export(self):
         self.assertIsNone(perform_expressions(document(),120))
         self.assertEqual(1920,performance_events(document(),120)[2])
@@ -134,6 +162,21 @@ class ExpressivePerformanceTests(unittest.TestCase):
         self.assertEqual(SAMPLE_RATE,stops[0])
         self.assertAlmostEqual(1.125*SAMPLE_RATE,starts[1],delta=30)
         self.assertAlmostEqual(2.125*SAMPLE_RATE,end,delta=30)
+
+    def test_tempo_word_uses_shared_attack_with_unequal_releases(self):
+        bits = struct.unpack('>i', struct.pack('>f', .1))[0]
+        mark = expression('RITARDANDO', scope='UNRESOLVED',
+                          target=f'expression-column:0:0:1:{bits}',
+                          source='printed-expression-word')
+        mark['start'] = None
+        doc = document([mark])
+        page = doc['pages'][0]
+        page['events'][1].update(startBeat=0, durationBeats=.5)
+        page['score']['notes'][1]['positionInMeasure'] = .1
+        result = perform_expressions(doc, 120)['expressivePerformance'][0]
+        first = result['segments'][0]
+        self.assertEqual((0, 4), (first['startBeat'], first['endBeat']))
+        self.assertEqual((120, 96), (first['startBpm'], first['endBpm']))
 
     def test_raster_symbol_column_binds_to_original_sound(self):
         bits=struct.unpack('>i',struct.pack('>f',.1))[0]

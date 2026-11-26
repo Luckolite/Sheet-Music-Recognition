@@ -29,17 +29,66 @@ final class PedalBracketAnchors {
     static List<Hook> locate(
             ScorePageInterpretation score,
             PedalBracketDetector.Bracket bracket,
+            List<PedalBracketDetector.Bracket> brackets,
             List<PlayingTechniqueDetector.Staff> staffs,
             int width,
             int height) {
         var staff = owner(bracket, staffs);
         if (staff == null || width <= 0 || height <= 0) return List.of();
-        var start = geometryEndpoint(score, bracket.left(), staff, width, height, true);
+        var start = bracket.leftHook()
+                ? geometryEndpoint(score, bracket.left(), staff, width, height, true)
+                : pedalWordStart(score, bracket, staff, width, height);
+        if (start == null) return List.of();
         var end = geometryEndpoint(score, bracket.right(), staff, width, height, false);
-        if (start == null || end == null || start.measure() > end.measure()) return List.of();
+        if (end == null || end.kind() != 0) {
+            var repedal = followingHook(score, bracket, brackets, staff, width, height);
+            if (repedal != null) end = repedal;
+        }
+        if (end == null || start.measure() > end.measure()) return List.of();
         for (int m = start.measure(); m < end.measure(); m++)
             if (!ownedMeasure(score, m, staff, height)) return List.of();
         return List.of(start, end);
+    }
+
+    private static Hook pedalWordStart(
+            ScorePageInterpretation score, PedalBracketDetector.Bracket bracket,
+            PlayingTechniqueDetector.Staff staff, int width, int height) {
+        Hook result = null;
+        for (var event : score.expressiveEvents()) {
+            if (event.kind() != ScoreExpressiveEvent.Kind.PEDAL_DOWN || event.start().isEmpty()
+                    || event.staffIndex() != staff.index() || event.staffCount() != staff.count()) continue;
+            for (var proof : event.evidence()) {
+                String text = proof.printedText();
+                if (!proof.sourceId().equals("printed-expression-word")
+                        || !(text.equalsIgnoreCase("Ped.") || text.equalsIgnoreCase("Ped"))) continue;
+                float x = proof.visualX() * width, separation = bracket.left() - x;
+                if (separation < staff.gap() * .8 || separation > staff.gap() * 4.5) continue;
+                var hook = geometryEndpoint(score, x, staff, width, height, true);
+                if (hook == null || hook.measure() != event.start().get().measureIndex()) continue;
+                if (result != null && !hook.equals(result)) return null;
+                result = hook;
+            }
+        }
+        return result;
+    }
+
+    /** Close and reopen at the same written attack when two adjacent hooks bracket a re-pedal. */
+    private static Hook followingHook(
+            ScorePageInterpretation score, PedalBracketDetector.Bracket bracket,
+            List<PedalBracketDetector.Bracket> brackets, PlayingTechniqueDetector.Staff staff,
+            int width, int height) {
+        Hook result = null;
+        for (var next : brackets) {
+            float separation = next.left() - bracket.right();
+            if (!next.leftHook() || separation < staff.gap() * .35 || separation > staff.gap() * 1.45
+                    || next.staffIndex() != bracket.staffIndex() || next.staffCount() != bracket.staffCount()
+                    || Math.abs(next.baseline() - bracket.baseline()) > staff.gap() * .25) continue;
+            var hook = geometryEndpoint(score, next.left(), staff, width, height, true);
+            if (hook == null) continue;
+            if (result != null && !hook.equals(result)) return null;
+            result = hook;
+        }
+        return result;
     }
 
     private static Hook geometryEndpoint(
@@ -62,7 +111,8 @@ final class PedalBracketAnchors {
                     || x < left - staff.gap() * .65f
                     || x > right + staff.gap() * .65f) continue;
             float delta = Math.abs(x - (start ? left : right));
-            if (delta <= staff.gap() * .65f) {
+            float edgeTolerance = !start && x <= right ? 1.02f : .65f;
+            if (delta <= staff.gap() * edgeTolerance) {
                 var hook = new Hook(start ? m : m + 1, 0, 0, 0);
                 if (delta < distance - .01f) {
                     best = hook;

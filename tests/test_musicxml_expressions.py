@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 import xml.etree.ElementTree as ET
 from sheet_music_recognition.musicxml import write_musicxml, DIVISIONS
-from tests.test_expressive_performance import document, expression, fermata, rest_fermata_document
+from tests.test_expressive_performance import document, expression, fermata, rest_fermata_document, tempo_rest_document
 
 
 class MusicXmlExpressionTests(unittest.TestCase):
@@ -18,6 +18,13 @@ class MusicXmlExpressionTests(unittest.TestCase):
             root=ET.parse(path).getroot()
         self.assertEqual(original,doc)
         return root
+
+    def test_verbal_tempo_at_a_rest_keeps_only_its_printed_word(self):
+        root = self.export(tempo_rest_document())
+        direction = next(d for d in root.findall('.//direction')
+                         if d.findtext('direction-type/words') == 'Lento')
+        self.assertEqual(str(2 * DIVISIONS), direction.findtext('offset'))
+        self.assertIsNone(direction.find('sound'))
 
     def test_metric_dots_are_structured_without_absolute_bpm(self):
         mark=expression('METRIC_MODULATION',2);mark['qualifierText']='metric-pulse-v1:0.75:1.75'

@@ -14,6 +14,16 @@ final class BeamOccludedNatural {
             int seedRight,
             float pitchY,
             float gap) {
+        return matches(gray, width, height, seedLeft, seedRight, pitchY, gap, false);
+    }
+
+    static boolean matchesBesidePriorNote(byte[] gray, int width, int height,
+            int seedLeft, int seedRight, float pitchY, float gap) {
+        return matches(gray, width, height, seedLeft, seedRight, pitchY, gap, true);
+    }
+
+    private static boolean matches(byte[] gray, int width, int height,
+            int seedLeft, int seedRight, float pitchY, float gap, boolean besidePrior) {
         if (gray == null || gray.length != width * height || gap < 6) return false;
         for (int left = Math.max(0, seedLeft - 2); left <= seedLeft + 2; left++)
             for (int right = seedRight - 2; right <= Math.min(width - 1, seedRight + 2); right++) {
@@ -68,9 +78,24 @@ final class BeamOccludedNatural {
                                 break;
                             }
                         }
-                        if (joined && beam(gray, width, height, left, right, bridge, gap))
-                            return true;
+                        if (joined && (besidePrior
+                                ? upperBridge(gray, width, left, right, pitchY, gap)
+                                : beam(gray, width, height, left, right, bridge, gap))) return true;
                     }
+            }
+        return false;
+    }
+
+    private static boolean upperBridge(byte[] gray, int width,
+            int left, int right, float pitchY, float gap) {
+        for (int y = Math.round(pitchY - gap * .82f); y <= Math.round(pitchY - gap * .30f); y++)
+            for (int rise = 0; rise <= Math.round(gap * .25f); rise++) {
+                int ink = 0;
+                for (int x = left; x <= right; x++) {
+                    int row = Math.round(y - rise * (x - left) / (float) (right - left));
+                    if (dark(gray, width, x, row) || dark(gray, width, x, row - 1)) ink++;
+                }
+                if (ink >= (right - left + 1) * .95f) return true;
             }
         return false;
     }

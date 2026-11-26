@@ -142,6 +142,12 @@ public final class ScoreFermataDetector {
     }
 
     /** Only detector-owned identities are rebased; independently authored semantics stay intact. */
+    static Optional<String> remapTargetMeasures(
+            ScoreExpressiveEvent event, java.util.function.IntUnaryOperator mapper) {
+        return attack(event)
+                .map(a -> target(mapper.applyAsInt(a.measure), a.staff, a.count, a.position));
+    }
+
     static ScoreExpressiveEvent offsetEvidence(ScoreExpressiveEvent event, int offset, int page) {
         var attack = attack(event);
         if (attack.isEmpty()) return event.offset(offset);

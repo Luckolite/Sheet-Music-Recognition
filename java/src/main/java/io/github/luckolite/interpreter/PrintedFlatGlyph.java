@@ -239,4 +239,126 @@ final class PrintedFlatGlyph {
 
         return (gray[y * w + x] & 255) < inkLimit;
     }
+
+    /** Four engraved flats can share two spines visually across the staff rules. */
+    static boolean stackedTrebleSignature(
+            byte[] gray, int width, int height, float boundary,
+            float staffBottom, float staffGap) {
+        if (gray == null || gray.length != (long) width * height
+                || staffGap < 8 || staffGap > 32) return false;
+        int ruleX = Math.round(boundary + staffGap * 4);
+        var rules = PrintedDirectionStaff.printedRules(
+                gray, width, height, ruleX, staffBottom, staffGap);
+        if (rules == null) return false;
+        float gap = rules[1];
+        int top = Math.round(rules[0] - 4 * gap);
+        int start = Math.round(boundary + .55f * gap);
+        int end = Math.round(boundary + 1.5f * gap);
+        for (int meter = start; meter <= end; meter += Math.max(1, Math.round(.12f * gap))) {
+            int left = Math.round(meter - 3.08f * gap);
+            int right = Math.round(meter - .10f * gap);
+            if (CommonTimeMeter.read(gray, width, height, meter,
+                            Math.round(meter + 2.32f * gap), top, gap, 0) == 4
+                    && fourStackedBowls(gray, width, height, left, right, top, gap)) return true;
+        }
+        return false;
+    }
+
+    private record Bowl(float x, float y) {}
+
+    private static boolean fourStackedBowls(
+            byte[] gray, int width, int height, int left, int right, int top, float gap) {
+        int upper = Math.round(top - 1.4f * gap);
+        int lower = Math.round(top + 3.4f * gap);
+        int across = right - left + 1;
+        int down = lower - upper + 1;
+        int railRadius = Math.max(1, Math.round(.15f * gap));
+        if (left < 0 || right >= width || upper < 0 || lower >= height
+                || across < 2.4f * gap || across > 3.2f * gap) return false;
+        boolean[] visited = new boolean[across * down];
+        for (int y = upper; y <= lower; y++) {
+            int rule = Math.round((y - top) / gap);
+            float ruleY = top + rule * gap;
+            boolean onRule = rule >= 0 && rule < 5 && Math.abs(y - ruleY) < railRadius;
+            for (int x = left; x <= right; x++) {
+                boolean ink = stackedInk(gray, width, x, y);
+                if (onRule) {
+                    ink &= stackedInk(gray, width, x, Math.round(ruleY) - railRadius)
+                            && stackedInk(gray, width, x, Math.round(ruleY) + railRadius);
+                }
+                visited[(y - upper) * across + x - left] = ink;
+            }
+        }
+        Bowl[] bowls = new Bowl[4];
+        int count = 0;
+        int[] queue = new int[visited.length];
+        for (int seed = 0; seed < visited.length; seed++) {
+            if (visited[seed]) continue;
+            int tail = 0;
+            queue[tail++] = seed;
+            visited[seed] = true;
+            int x0 = across, x1 = -1, y0 = down, y1 = -1;
+            for (int head = 0; head < tail; head++) {
+                int at = queue[head], x = at % across, y = at / across;
+                x0 = Math.min(x, x0);
+                x1 = Math.max(x, x1);
+                y0 = Math.min(y, y0);
+                y1 = Math.max(y, y1);
+                if (x > 0) tail = enqueueBowl(visited, queue, at - 1, tail);
+                if (x + 1 < across) tail = enqueueBowl(visited, queue, at + 1, tail);
+                if (y > 0) tail = enqueueBowl(visited, queue, at - across, tail);
+                if (y + 1 < down) tail = enqueueBowl(visited, queue, at + across, tail);
+            }
+            int span = x1 - x0 + 1, depth = y1 - y0 + 1;
+            if (x0 == 0 || x1 == across - 1 || y0 == 0 || y1 == down - 1
+                    || span < .18f * gap || depth < .25f * gap || tail < .055f * gap * gap)
+                continue;
+            if (span > .68f * gap || depth > .84f * gap || count == bowls.length
+                    || !stackedSpine(gray, width, left + x0, upper + y0, upper + y1, gap))
+                return false;
+            bowls[count++] = new Bowl(left + (x0 + x1) * .5f, (upper + (y0 + y1) * .5f - top) / gap);
+        }
+        if (count != 4) return false;
+        java.util.Arrays.sort(bowls, java.util.Comparator.comparingDouble(Bowl::y));
+        // Two columns, E and B at the left, D and A at the right.
+        float spacing = bowls[1].x - bowls[0].x;
+        return spacing >= 1.1f * gap && spacing <= 1.9f * gap
+                && Math.abs(bowls[2].x - bowls[0].x) <= .24f * gap
+                && Math.abs(bowls[3].x - bowls[1].x) <= .24f * gap
+                && nearBowl(bowls[0], .43f) && nearBowl(bowls[1], .93f)
+                && nearBowl(bowls[2], 1.93f) && nearBowl(bowls[3], 2.43f);
+    }
+
+    private static boolean nearBowl(Bowl bowl, float y) {
+        return Math.abs(bowl.y - y) <= .29f;
+    }
+
+    private static int enqueueBowl(boolean[] visited, int[] queue, int at, int tail) {
+        if (visited[at]) return tail;
+        visited[at] = true;
+        queue[tail] = at;
+        return tail + 1;
+    }
+
+    private static boolean stackedSpine(
+            byte[] gray, int width, int bowlLeft, int bowlTop, int bowlBottom, float gap) {
+        int above = Math.round(gap * .65f);
+        for (int x = Math.max(0, bowlLeft - Math.round(gap * .29f)); x < bowlLeft; x++) {
+            int stem = 0, body = 0;
+            for (int y = Math.max(0, bowlTop - above); y <= bowlBottom; y++) {
+                if (stackedInk(gray, width, x, y)) {
+                    body++;
+                    if (y < bowlTop - 2) stem++;
+                }
+            }
+            if (stem >= .72f * (above - 2)
+                    && body >= .85f * (bowlBottom - bowlTop + above + 1)) return true;
+        }
+        return false;
+    }
+
+    private static boolean stackedInk(byte[] gray, int width, int x, int y) {
+        return (gray[y * width + x] & 255) < 145;
+    }
+
 }

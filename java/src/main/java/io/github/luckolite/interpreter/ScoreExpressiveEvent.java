@@ -40,7 +40,8 @@ public record ScoreExpressiveEvent(
         METRIC_MODULATION,
         NATURAL_HARMONIC,
         FALL_OFF,
-        PARENTHESIZED_NOTE_GROUP
+        PARENTHESIZED_NOTE_GROUP,
+        TEMPO_MARKING
     }
 
     public enum Scope {

@@ -9,6 +9,55 @@ import static io.github.luckolite.interpreter.ScoreExpressiveEvent.*;
 import static io.github.luckolite.interpreter.ScorePerformanceTimeline.*;
 
 public final class ScoreExpressivePerformanceTest {
+    @Test
+    public void sectionSlowingAndTheLaterReturnUseTheWrittenAnchors() {
+        var slower = new ScoreExpressiveEvent(
+                "section-slower", Kind.RITENUTO, Optional.of(new ScoreAnchor(1, 0)),
+                Optional.empty(), Scope.SCORE, 0, 1, Optional.empty(),
+                Strength.UNSPECIFIED, "slower",
+                List.of(new Evidence("original-synthetic", 0, .5f, 0, 1, "Slower")));
+        var result = resolve(List.of(slower, event("return", Kind.A_TEMPO, 8, null, Scope.SCORE, 0)),
+                List.of(), Map.of());
+        assertEquals(96, result.timeline().tempoSegments().stream()
+                .filter(segment -> segment.startBeat() == 4).findFirst().orElseThrow().startBpm(), 1e-9);
+        assertEquals(120, result.timeline().tempoSegments().stream()
+                .filter(segment -> segment.startBeat() == 8).findFirst().orElseThrow().startBpm(), 1e-9);
+    }
+
+    @Test
+    public void fasterReturnUsesTheSteadyTempoAndHonorsAnExplicitNumericRate() {
+        var slower = event("slowing", Kind.RITARDANDO, 0, 4d, Scope.SCORE, 0);
+        var faster = new ScoreExpressiveEvent(
+                "return-faster", Kind.A_TEMPO, java.util.Optional.of(new ScoreAnchor(1, 0)),
+                java.util.Optional.empty(), Scope.SCORE, 0, 1, java.util.Optional.empty(),
+                Strength.UNSPECIFIED, "ma piu mosso",
+                List.of(new Evidence("original-synthetic", 0, .5f, 0, 1, "a tempo ma più mosso")));
+        var policy = ScoreExpressivePerformance.Policy.preview();
+        var marks = List.of(slower, faster);
+        var relative = ScoreExpressivePerformance.resolve(
+                120, METER, 3, List.of(), marks, List.of(), Map.of(), policy);
+        assertEquals(120 / policy.ordinaryRatio(), relative.timeline().tempoSegments().stream()
+                .filter(segment -> segment.startBeat() == 4).findFirst().orElseThrow().startBpm(), 1e-9);
+        var explicit = ScoreExpressivePerformance.resolve(
+                120, METER, 3, List.of(new ScoreTempoChange(1, 0, 132)),
+                marks, List.of(), Map.of(), policy);
+        assertEquals(132, explicit.timeline().tempoSegments().stream()
+                .filter(segment -> segment.startBeat() == 4).findFirst().orElseThrow().startBpm(), 1e-9);
+    }
+
+    @Test
+    public void printedRitenutoEquationUsesTheNumericTargetOnce() {
+        var ritenuto = new ScoreExpressiveEvent(
+                "numeric-ritenuto", Kind.RITENUTO, java.util.Optional.of(new ScoreAnchor(1, 0)),
+                java.util.Optional.empty(), Scope.SCORE, 0, 1, java.util.Optional.empty(),
+                Strength.UNSPECIFIED, "= 60",
+                List.of(new Evidence("original-synthetic", 0, .5f, 0, 1, "ritenuto = 60")));
+        var result = ScoreExpressivePerformance.resolve(
+                120, METER, 3, List.of(new ScoreTempoChange(1, 0, 60)),
+                List.of(ritenuto), List.of(), Map.of(), ScoreExpressivePerformance.Policy.preview());
+        assertEquals(10, result.timeline().activeSecondsAtBeat(12), 1e-9);
+    }
+
     private static final ScoreMeterMap METER = new ScoreMeterMap(4, List.of());
 
     private static ScoreExpressiveEvent event(
@@ -362,4 +411,27 @@ public final class ScoreExpressivePerformanceTest {
                         - result.timeline().activeSecondsAtBeat(4),
                 1e-9);
     }
+
+    private static ScoreExpressiveEvent printedTempo(String word, int measure) {
+        return new ScoreExpressiveEvent(
+                word, Kind.TEMPO_MARKING, Optional.of(new ScoreAnchor(measure, 0)),
+                Optional.empty(), Scope.SCORE, 0, 1, Optional.empty(),
+                Strength.UNSPECIFIED, word.toLowerCase(Locale.ROOT),
+                List.of(new Evidence("original-synthetic", 0, .2f, 0, 1, word)));
+    }
+
+    @Test
+    public void tempoPrimoReturnsToTheOriginalPreviewOrPrintedNumericTempo() {
+        var marks = List.of(printedTempo("Presto", 0), printedTempo("Adagio", 1),
+                event("restore-opening", Kind.TEMPO_PRIMO, 8, null, Scope.SCORE, 0));
+        var preview = resolve(marks, List.of(), Map.of());
+        assertEquals(List.of(168d, 66d, 168d), preview.timeline().tempoSegments().stream()
+                .map(TempoSegment::startBpm).toList());
+        var numeric = ScoreExpressivePerformance.resolve(
+                120, METER, 3, List.of(new ScoreTempoChange(0, 0, 140)), marks,
+                List.of(), Map.of(), ScoreExpressivePerformance.Policy.preview());
+        assertEquals(List.of(140d, 66d, 140d), numeric.timeline().tempoSegments().stream()
+                .map(TempoSegment::startBpm).toList());
+    }
+
 }

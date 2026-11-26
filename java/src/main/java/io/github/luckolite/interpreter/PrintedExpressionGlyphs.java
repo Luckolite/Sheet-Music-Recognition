@@ -35,7 +35,10 @@ final class PrintedExpressionGlyphs {
         }
     }
 
-    private record Pulse(Part part, int kind, double value) {}
+    private record Pulse(Part part, int kind, double value, Part head, Part shaft) {
+        Pulse(Part part, int kind, double value) { this(part, kind, value, part, null); }
+        boolean owns(Part input) { return input == head || input == shaft; }
+    }
 
     static PrintedExpressionGlyphs load(InputStream stream) throws IOException {
         var result = new PrintedExpressionGlyphs();
@@ -68,15 +71,17 @@ final class PrintedExpressionGlyphs {
             int height) {
         var scratch = new PrintedInkComponents();
         var result = new ArrayList<>(detect(score, staffs, gray, width, height, 175, true, scratch));
-        for (var candidate : detect(score, staffs, gray, width, height, 155, false, scratch)) {
-            if (MetricModulationText.parse(candidate.text()).isEmpty()) continue;
-            boolean overlap = false;
-            for (var old : result)
-                if (old.left < candidate.right
-                        && candidate.left < old.right
-                        && old.top < candidate.bottom
-                        && candidate.top < old.bottom) overlap = true;
-            if (!overlap) result.add(candidate);
+        for (int threshold : new int[] {155, 195}) {
+            for (var candidate : detect(score, staffs, gray, width, height, threshold, false, scratch)) {
+                if (MetricModulationText.parse(candidate.text()).isEmpty()) continue;
+                boolean overlap = false;
+                for (var old : result)
+                    if (old.left < candidate.right
+                            && candidate.left < old.right
+                            && old.top < candidate.bottom
+                            && candidate.top < old.bottom) overlap = true;
+                if (!overlap) result.add(candidate);
+            }
         }
         return List.copyOf(result);
     }
@@ -126,6 +131,12 @@ final class PrintedExpressionGlyphs {
                     return true;
                 });
                 if (above && detectBreaths) {
+                    for (var measure : score.measures()) {
+                        if (center < measure.top() || center > measure.bottom()) continue;
+                        var caesura = caesuraAt(gray, width, height, staff, measure);
+                        if (caesura != null && seen.add("caesura:" + caesura.left + ":" + caesura.top))
+                            result.add(caesura);
+                    }
                     for (var part : parts) {
                         if (part.right > x1
                                 || part.height() < gap * .6f
@@ -181,7 +192,7 @@ final class PrintedExpressionGlyphs {
                         var a = bands.get(i);
                         var b = bands.get(j);
                         if (!equalsBands(a, b, gap)) continue;
-                        if (notes == null) notes = pulseNotes(parts, gray, width, gap);
+                        if (notes == null) notes = pulseNotes(parts, gray, width, gap, threshold);
                         int el = Math.min(a.left, b.left), er = Math.max(a.right, b.right);
                         float ey = (a.cy() + b.cy()) * .5f;
                         Pulse l = null, r = null;
@@ -235,7 +246,9 @@ final class PrintedExpressionGlyphs {
                                                 r.part.right,
                                                 y0,
                                                 y1)
-                                        == null) continue;
+                                        == null
+                                && !metricStaffRails(staff, gray, width, height, l.part.left, y0, y1)
+                                && !metricStaffRails(staff, gray, width, height, r.part.right, y0, y1)) continue;
                         // Every component inside the equation must be a note, equals stroke or dot.
                         boolean extra = false;
                         for (var p : parts)
@@ -243,8 +256,8 @@ final class PrintedExpressionGlyphs {
                                     && p.right <= rd[1]
                                     && p.top >= y0 - gap * .2f
                                     && p.bottom <= y1 + gap * .2f
-                                    && p != l.part
-                                    && p != r.part
+                                    && !l.owns(p)
+                                    && !r.owns(p)
                                     && p != a
                                     && p != b
                                     && !dot(p, l, gap)
@@ -315,20 +328,156 @@ final class PrintedExpressionGlyphs {
         return new int[] {2, second.right};
     }
 
-    private List<Pulse> pulseNotes(List<Part> parts, byte[] gray, int width, float gap) {
+    private List<Pulse> pulseNotes(List<Part> parts, byte[] gray, int width, float gap, int threshold) {
         var notes = new ArrayList<Pulse>();
         for (var part : parts) {
             if (part.height() >= gap * .65f
                     && part.height() <= gap * 4.2f
                     && part.width() <= gap * 2.5f) {
                 var match = pulses.templateMatch(gray, width, part.bounds());
-                if (match.kind() > 0 && match.score() >= .66f && match.margin() >= .018f) {
+                boolean supportedQuarter = (match.kind() == 5 || match.kind() == 6)
+                        && match.score() >= .52f && match.margin() >= .16f
+                        && plainQuarterInk(part, gray, width, gap, threshold, match.kind() == 5);
+                if (match.kind() > 0 && (match.score() >= .66f && match.margin() >= .018f
+                        || supportedQuarter)) {
                     double value = Math.scalb(4, -((match.kind() - 1) / 2));
                     notes.add(new Pulse(part, match.kind(), value));
                 }
             }
         }
+        for (Part shaft : parts) {
+            if (shaft.width() > gap * .24f || shaft.height() < gap * .8f || shaft.height() > gap * 2.6f)
+                continue;
+            for (Part head : parts) {
+                if (head.width() < gap * .48f || head.width() > gap * 1.35f
+                        || head.height() < gap * .35f || head.height() > gap * 1.02f) continue;
+                boolean upward = shaft.bottom <= head.top;
+                int clear = upward ? head.top - shaft.bottom : shaft.top - head.bottom;
+                if (clear < 0 || clear > gap * .24f
+                        || (upward ? Math.abs(shaft.right - head.right) : Math.abs(shaft.left - head.left))
+                                > gap * .23f) continue;
+                var joined = new Part(Math.min(head.left, shaft.left), Math.min(head.top, shaft.top),
+                        Math.max(head.right, shaft.right), Math.max(head.bottom, shaft.bottom), head.ink + shaft.ink);
+                if (!plainQuarterInk(joined, gray, width, gap, threshold, upward)) continue;
+                var match = pulses.templateMatch(gray, width, joined.bounds());
+                int kind = upward ? 5 : 6;
+                if (match.kind() == kind && match.score() >= .49f && match.margin() >= .14f)
+                    notes.add(new Pulse(joined, kind, 1, head, shaft));
+            }
+        }
         return notes;
+    }
+
+    private static boolean plainQuarterInk(
+            Part part, byte[] gray, int width, float gap, int threshold, boolean upward) {
+        int h = part.height(), w = part.width();
+        if (h < gap * 1.65f || h > gap * 3.6f || w < gap * .48f || w > gap * 1.35f) return false;
+        int headDepth = Math.round(gap * .85f);
+        int shaftWidth = Math.max(2, Math.round(gap * .26f));
+        int leftBound = upward ? part.right - Math.round(w * .42f) : part.left;
+        int rightBound = upward ? part.right : part.left + Math.round(w * .42f);
+        int rows = 0, valid = 0, spread = 0;
+        for (int offset = 1; offset < h - headDepth; offset++) {
+            int y = upward ? part.top + offset : part.bottom - 1 - offset;
+            int left = part.right, right = -1;
+            for (int x = part.left; x < part.right; x++)
+                if ((gray[y * width + x] & 255) < threshold) {
+                    left = Math.min(left, x);
+                    right = x;
+                }
+            rows++;
+            if (right < left) continue;
+            if (right - left + 1 > shaftWidth) spread++;
+            else if (left >= leftBound && right <= rightBound) valid++;
+        }
+        if (valid < rows * .86f || spread > Math.max(1, Math.round(gap * .12f))) return false;
+        int headInk = 0, broadRows = 0;
+        for (int offset = 0; offset < headDepth; offset++) {
+            int y = upward ? part.bottom - 1 - offset : part.top + offset;
+            int ink = 0;
+            for (int x = part.left; x < part.right; x++)
+                if ((gray[y * width + x] & 255) < threshold) ink++;
+            headInk += ink;
+            if (ink >= w * .65f) broadRows++;
+        }
+        return headInk >= w * headDepth * .42f && broadRows >= gap * .30f;
+    }
+
+    private record SlashRow(float left, float right, int y) {}
+
+    /** Two matching diagonal strokes cross the top rule before a closing barline. */
+    static Mark caesuraAt(
+            byte[] gray, int width, int height, PlayingTechniqueDetector.Staff staff, MeasureRegion measure) {
+        float gap = staff.gap(), top = staff.top();
+        int edge = Math.round(measure.right() * width);
+        int left = Math.max(Math.round(measure.left() * width), edge - Math.round(gap * 4.6f));
+        int right = Math.min(width, edge - Math.round(gap * .28f));
+        int first = Math.round(top - gap * .72f), last = Math.round(top + gap * .8f);
+        if (left < 0 || first < 0 || last >= height || right - left < gap * 1.65f) return null;
+        var rows = new ArrayList<SlashRow>();
+        int expected = 0;
+        for (int y = first; y <= last; y++) {
+            if (Math.abs(y - top) < gap * .22f) continue;
+            expected++;
+            var row = slashRow(gray, width, left, right, y, gap);
+            if (row != null) rows.add(row);
+        }
+        if (rows.size() < expected * .9f || rows.size() < 8) return null;
+        var a = rows.get(0);
+        var b = rows.get(rows.size() - 1);
+        float span = b.y - a.y;
+        if (span < gap * 1.33f) return null;
+        float leftSlope = (a.left - b.left) / span, rightSlope = (a.right - b.right) / span;
+        if (leftSlope < .33f || leftSlope > .75f || rightSlope < .33f || rightSlope > .75f
+                || Math.abs(leftSlope - rightSlope) > .1f) return null;
+        for (var row : rows)
+            if (Math.abs(row.left - (a.left - leftSlope * (row.y - a.y))) > gap * .12f
+                    || Math.abs(row.right - (a.right - rightSlope * (row.y - a.y))) > gap * .12f)
+                return null;
+        int x = Math.round((a.left + b.right) * .5f);
+        if (!caesuraStaffRails(staff, gray, width, height, x, first, last)) return null;
+        return new Mark("caesura", b.left - gap * .16f, first, a.right + gap * .16f, last + 1);
+    }
+
+    private static SlashRow slashRow(
+            byte[] gray, int width, int left, int right, int y, float gap) {
+        float first = -1, second = -1;
+        for (int x = left; x < right;) {
+            if ((gray[y * width + x] & 255) >= 151) {
+                x++;
+                continue;
+            }
+            int start = x++;
+            while (x < right && (gray[y * width + x] & 255) < 151) x++;
+            int thickness = x - start;
+            if (thickness < gap * .11f) continue;
+            if (start == left || x == right || thickness > gap * .45f || second >= 0) return null;
+            if (first < 0) first = (start + x - 1) * .5f;
+            else second = (start + x - 1) * .5f;
+        }
+        return second - first >= gap * .4f && second - first <= gap * .8f
+                ? new SlashRow(first, second, y) : null;
+    }
+
+    static boolean caesuraStaffRails(
+            PlayingTechniqueDetector.Staff staff,
+            byte[] gray, int width, int height, int x, int top, int bottom) {
+        float gap = staff.gap();
+        if (top < staff.top() - gap * .9f || top > staff.top() - gap * .53f
+                || bottom < staff.top() + gap * .63f || bottom > staff.top() + gap) return false;
+        var rails = PrintedDirectionStaff.printedRules(gray, width, height, x, staff.bottom(), gap);
+        return rails != null && Math.abs(rails[0] - staff.bottom()) < gap * .45f
+                && Math.abs(rails[1] - gap) < gap * .16f;
+    }
+
+    static boolean metricStaffRails(
+            PlayingTechniqueDetector.Staff staff,
+            byte[] gray, int width, int height, int x, int top, int bottom) {
+        float gap = staff.gap();
+        if (top < staff.top() - gap * 7 || bottom > staff.top() - gap * .35f) return false;
+        var rails = PrintedDirectionStaff.printedRules(gray, width, height, x, staff.bottom(), gap);
+        return rails != null && Math.abs(rails[0] - staff.bottom()) < gap * .5f
+                && Math.abs(rails[1] - gap) < gap * .18f;
     }
 
     private static boolean equalsBands(Part a, Part b, float gap) {

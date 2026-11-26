@@ -83,4 +83,19 @@ public final class BeamOccludedNaturalTest {
         match();
         assertArrayEquals(copy, gray);
     }
+
+    @Test
+    public void priorNoteRecoveryRequiresTwoConnectorsAndTheRightDescender() {
+        page(false, true, true);
+        assertFalse(priorNoteMatch());
+        rect(65, 57, 76, 59);
+        assertTrue(priorNoteMatch());
+        page(false, true, false);
+        rect(65, 57, 76, 59);
+        assertFalse(priorNoteMatch());
+    }
+
+    private boolean priorNoteMatch() {
+        return BeamOccludedNatural.matchesBesidePriorNote(gray, W, H, 65, 76, 70, 20);
+    }
 }

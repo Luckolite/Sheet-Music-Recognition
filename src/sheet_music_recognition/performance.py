@@ -13,17 +13,17 @@ from pathlib import Path
 from .runtime import java_executable
 from .navigation import arrangement_ranges, require_retained_navigation
 from .printed_tempo_spans import preserve_end, resolve_pages, has_open
-from .semantic_wire import encode
+from .semantic_wire import TEMPO_MARKING_VERSION, encode
 from .typed_events import event_kind, validate_unpitched
 from .rest_kinds import rest_kind, full_measure_span
 from .tremolo_wire import performance_pairs
 from .tremolo_performance import source_spans, pulse_windows
 from .tie_owners import releasing_links, sound_lanes
 
-SUPPORTED = {'RITARDANDO', 'RALLENTANDO', 'RITENUTO', 'ACCELERANDO', 'A_TEMPO',
-             'TEMPO_PRIMO', 'SAME_TEMPO', 'FERMATA', 'BREATH', 'CAESURA',
-             'SFORZANDO', 'SFORZATO', 'SFORZANDO_PIANO', 'METRIC_MODULATION',
-             'PEDAL_DOWN', 'PEDAL_UP'}
+_TEMPO_ONSET = {'RITARDANDO', 'RALLENTANDO', 'RITENUTO', 'ACCELERANDO',
+                'A_TEMPO', 'TEMPO_PRIMO', 'TEMPO_MARKING', 'SAME_TEMPO', 'METRIC_MODULATION'}
+SUPPORTED = _TEMPO_ONSET | {'FERMATA', 'BREATH', 'CAESURA', 'SFORZANDO',
+                           'SFORZATO', 'SFORZANDO_PIANO', 'PEDAL_DOWN', 'PEDAL_UP'}
 
 
 def _bridge(data):
@@ -95,11 +95,12 @@ def _rest_owned(expression):
         and any(e['sourceId'] == 'fermata-rest-raw-ink' for e in expression['evidence'])
 
 
-def _rest_identity(expression):
-    if not _rest_owned(expression):
+def _rest_identity(expression, prefix='printed-rest:'):
+    target = expression.get('targetEventId') or ''
+    if not target.startswith(prefix):
         return None
     try:
-        m, staff, count, bits = map(int, expression['targetEventId'][len('printed-rest:'):].split(':'))
+        m, staff, count, bits = map(int, target[len(prefix):].split(':'))
         position = struct.unpack('>f', struct.pack('>I', bits & 0xffffffff))[0]
     except (ValueError, struct.error):
         return None
@@ -111,7 +112,7 @@ def _rest_identity(expression):
 
 def _rest_span(expression, page):
     """Owned full silent voice, or the same exact literal-slot proof as the Java detector."""
-    identity = _rest_identity(expression)
+    identity = _rest_identity(expression) if _rest_owned(expression) else None
     if identity is None:
         return None
     m, staff, count, position = identity
@@ -123,6 +124,17 @@ def _rest_span(expression, page):
                    for r in page.get('score', {}).get('rests', [])):
             return None
     return _rest_column_span(page, m, staff, count, position, .018)
+
+
+def _tempo_rest_start(expression, page):
+    if expression['kind'] != 'TEMPO_MARKING' or not any(
+            e.get('sourceId') == 'printed-expression-word' for e in expression.get('evidence', [])):
+        return None
+    identity = _rest_identity(expression, 'expression-rest-column:')
+    if identity is None or not 0 <= identity[0] < len(page['measureBeats']):
+        return None
+    span = _rest_column_span(page, *identity, .018)
+    return span[0] if span else None
 
 
 def _rest_column_span(page, m, staff, count, position, tolerance):
@@ -407,6 +419,10 @@ def _perform_one(pages, bpm, slide_group=0):
                 span = _rest_span(expression, page)
                 expression['start'], expression['end'] = span if span else (None, None)
                 expression['scope'] = 'REST' if span else 'UNRESOLVED'
+            if expression['start'] is None:
+                tempo_start = _tempo_rest_start(expression, page)
+                if tempo_start is not None:
+                    expression['start'], expression['scope'] = tempo_start, 'SCORE'
             if members:
                 if expression['kind'] == 'FERMATA':
                     pair_ids = {paired[i]['pair'] for i in members if i in paired}
@@ -415,8 +431,10 @@ def _perform_one(pages, bpm, slide_group=0):
                 spans = [(paired[i]['start'], paired[i]['end']) if i in paired else
                          (page['events'][i]['startBeat'], page['events'][i]['startBeat']+page['events'][i]['durationBeats']) for i in members]
                 start, release = spans[0]
+                tempo_onset = expression['kind'] in _TEMPO_ONSET
                 if all(not n.get('durationFallback', False) and math.isclose(span[0], start, abs_tol=1e-7)
-                       and math.isclose(span[1], release, abs_tol=1e-7) for n, span in zip(owned, spans)):
+                       and (tempo_onset or math.isclose(span[1], release, abs_tol=1e-7))
+                       for n, span in zip(owned, spans)):
                     breath = expression['kind'] in ('BREATH', 'CAESURA')
                     resolved_start = _anchor(release if breath else start, starts)
                     resolved_end = preserve_end(expression, resolved_start, page)
@@ -458,7 +476,7 @@ def _perform_one(pages, bpm, slide_group=0):
         data += struct.pack('>i', len(members))
         for member in sorted(members):
             data += _text(sounds[member]['id'])
-    data += encode(directions, expressions, len(beats))
+    data += encode(directions, expressions, len(beats), TEMPO_MARKING_VERSION)
     result = _bridge(data)
     require_retained_navigation(pages, result.get('navigationOccurrences'))
     clock = _PlaybackClock(result)
@@ -546,7 +564,9 @@ def perform_expressions(document, bpm):
             if rest_kind(row) == 'FULL_MEASURE':
                 full_measure_span(page, row)
     if not (any(e['kind'] in SUPPORTED or has_open(e) for page in pages for e in page.get('score', {}).get('expressiveEvents', []))
-            or any(performance_pairs(page.get('score', {}).get('tremoloSource')) for page in pages)):
+            or any(performance_pairs(page.get('score', {}).get('tremoloSource')) for page in pages)
+            or any(mark.get('kind') == 13 and mark.get('details', {}).get('printedText') == '%'
+                   for page in pages for mark in page.get('score', {}).get('playbackDirections', []))):
         return None
     # Use the same arrangement boundaries as ordinary navigation export.
     ranges = arrangement_ranges(pages)

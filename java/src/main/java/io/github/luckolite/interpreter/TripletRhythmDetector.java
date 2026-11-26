@@ -2031,12 +2031,13 @@ final class TripletRhythmDetector {
 
     /** Printed duplets require compound meter and a complete unambiguous staff clock. */
     static List<ScoreNoteEvent> compoundDuplets(
-            List<ScoreNoteEvent> notes,
+            List<ScoreNoteEvent> sourceNotes,
             List<MeasureRegion> measures,
             List<ScoreMeterChange> meters,
             byte[] gray,
             int width,
             int height) {
+        var notes = BracketedDuplets.capture(sourceNotes, measures, gray, width, height);
         if (meters == null || meters.isEmpty() || notes.isEmpty()) return notes;
         var groups = onsets(notes);
         var duplets = beamedTuplets(notes, groups, measures, gray, width, height, 2, notes.size(), false);
@@ -2065,7 +2066,12 @@ final class TripletRhythmDetector {
             });
             if (approved) result.set(i, n);
         }
-        return List.copyOf(result);
+        return BracketedDuplets.resolve(List.copyOf(result), meters, false);
+    }
+
+    static List<ScoreNoteEvent> contextualTuplets(
+            List<ScoreNoteEvent> notes, List<ScoreMeterChange> meters, boolean openingPickup) {
+        return BracketedDuplets.resolve(contextualSevens(notes, meters, openingPickup), meters, openingPickup);
     }
 
     /** Resolve a complete printed seven-sixteenth group against established document meter. */
@@ -3396,6 +3402,43 @@ final class TripletRhythmDetector {
         return false;
     }
 
+    /** A partial numeral between neighboring glyphs on the same text baseline is caption ink. */
+    static boolean joinedNumeralSharesCaption(
+            byte[] gray, int width, int height, int left, int top, int right, int bottom, float gap) {
+        int firstRow = Math.max(0, top - Math.round(gap * .45f));
+        int lastRow = Math.min(height - 1, bottom + Math.round(gap * .2f));
+        int firstColumn = Math.max(0, left - Math.round(gap * 2.5f));
+        int lastColumn = Math.min(width - 1, right + Math.round(gap * 3.5f));
+        int runStart = -1, runTop = height, runBottom = -1;
+        int before = 0, after = 0;
+        for (int x = firstColumn; x <= lastColumn + 1; x++) {
+            int inkTop = height, inkBottom = -1;
+            if (x <= lastColumn)
+                for (int y = firstRow; y <= lastRow; y++) {
+                    if ((gray[y * width + x] & 255) >= 150) continue;
+                    inkTop = Math.min(inkTop, y);
+                    inkBottom = y;
+                }
+            if (inkBottom >= 0) {
+                if (runStart < 0) runStart = x;
+                runTop = Math.min(runTop, inkTop);
+                runBottom = Math.max(runBottom, inkBottom);
+            } else if (runStart >= 0) {
+                int span = x - runStart, glyphHeight = runBottom - runTop + 1;
+                if (span >= gap * .33f && span <= gap * 1.6f
+                        && glyphHeight >= (bottom - top + 1) * .72f
+                        && Math.abs(runBottom - bottom) <= gap * .45f) {
+                    if (x <= left) before++;
+                    if (runStart > right) after++;
+                }
+                runStart = -1;
+                runTop = height;
+                runBottom = -1;
+            }
+        }
+        return before > 0 && after > 0 && before + after >= 3;
+    }
+
     /** A repeated numeral must remain attached to all three sounding attack columns. */
     private static boolean joinedBeamOwnsNumeral(
             Glyph glyph,
@@ -3412,6 +3455,8 @@ final class TripletRhythmDetector {
             float gap,
             List<OwnedPrintedThree> proven) {
         if (group.size() != 3 || first.beamCount() < 1 || first.stemDirection() == 0) return false;
+        if (joinedNumeralSharesCaption(gray, width, height,
+                glyph.left(), glyph.top(), glyph.right(), glyph.bottom(), gap)) return false;
         List<ScoreNoteEvent> attacks = new ArrayList<>();
         for (Onset onset : group) {
             if (onset.indices().isEmpty()) return false;

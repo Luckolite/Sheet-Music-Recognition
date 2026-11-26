@@ -6,6 +6,92 @@ import java.util.*;
 
 /** A terminal stacked meter owns no played ink beyond its preceding full staff barline. */
 final class MeterOnlyCourtesyTail {
+    /** Require two aligned printed numeral bands and a barline on the owning staff. */
+    static boolean matchesStackedSymbols(
+            byte[] labels, byte[] gray, int width, int height,
+            int left, int right, int top, int bottom, float gap) {
+        if (top < 0 || bottom >= height || gap < 6f || right - left > gap * 9f) return false;
+        int rail = -1;
+        for (int x = Math.max(0, Math.round(left - gap));
+                x <= Math.min(right, Math.round(left + gap * .55f)); x++) {
+            int dark = 0;
+            for (int y = top; y <= bottom; y++) if ((gray[y * width + x] & 255) < 180) dark++;
+            if (dark >= (bottom - top + 1) * .90f) rail = x;
+        }
+        if (rail < 0)
+            for (int x = Math.max(0, Math.round(left - gap));
+                    x <= Math.min(right, Math.round(left + gap * .55f)); x++)
+                if (OmrMeasurePostProcessor.verticalRuleAt(gray, width, x, top, bottom, gap)) rail = x;
+        if (rail < 0) return false;
+        // The rightmost rail also handles the last stroke of a double barline.
+        int start = rail + Math.max(2, Math.round(gap * .21f));
+        int[] count = new int[2], sumX = new int[2], first = {right, right}, last = {start, start};
+        for (int y = top; y <= bottom; y++) {
+            float row = (y - top) / gap;
+            if (Math.abs(row - Math.round(row)) < .30f) continue;
+            int half = row < 2 ? 0 : 1;
+            for (int x = start; x <= right; x++) {
+                int pixel = y * width + x;
+                if (labels[pixel] != OmrMeasurePostProcessor.SYMBOL
+                        || (gray[pixel] & 255) >= 165) continue;
+                count[half]++;
+                sumX[half] += x - start;
+                first[half] = Math.min(first[half], x);
+                last[half] = Math.max(last[half], x);
+            }
+        }
+        if (Math.min(count[0], count[1]) < gap * gap * .32f
+                || Math.abs(sumX[0] / (float) count[0] - sumX[1] / (float) count[1]) > gap * .80f
+                || Math.min(last[0], last[1]) - Math.max(first[0], first[1]) < gap * .40f
+                || Math.max(last[0], last[1]) - Math.min(first[0], first[1]) > gap * 4.25f) {
+            return false;
+        }
+        int before = Math.max(start, Math.min(first[0], first[1]) - Math.round(gap * 1.15f));
+        int after = Math.min(right, Math.max(last[0], last[1]) + Math.round(gap * .55f));
+        int scanTop = Math.max(0, Math.round(top - gap * 1.45f));
+        int scanBottom = Math.min(height - 1, Math.round(bottom + gap * 1.45f));
+        // Keep ambiguous tails when noteheads or other substantial ink remain outside the digits.
+        int noise = 0, glyphFragments = 0;
+        for (int y = scanTop; y <= scanBottom; y++)
+            for (int x = start; x <= right; x++) {
+                if ((gray[y * width + x] & 255) >= 180) continue;
+                byte label = labels[y * width + x];
+                if (label == OmrMeasurePostProcessor.STAFF
+                        || label == OmrMeasurePostProcessor.CLEF_OR_KEY && x < Math.max(first[0], first[1])
+                        || (label == OmrMeasurePostProcessor.SYMBOL
+                                || label == OmrMeasurePostProcessor.CLEF_OR_KEY)
+                                && x >= before && x <= after
+                                && y >= top - gap * .25f && y <= bottom + gap * .25f)
+                    continue;
+                float staffRow = (y - top) / gap;
+                if (staffRow >= -.25f && staffRow <= 4.25f
+                        && Math.abs(staffRow - Math.round(staffRow)) <= .28f
+                        && label != OmrMeasurePostProcessor.NOTEHEAD) continue;
+                if (label == OmrMeasurePostProcessor.NOTEHEAD && x >= before && x <= after
+                        && y >= top && y <= bottom && ++glyphFragments <= gap * gap * .14f)
+                    continue;
+                if (label != OmrMeasurePostProcessor.NOTEHEAD && nearbyOwner(
+                        labels, width, height, x, y, Math.max(first[0], first[1]), before, after)) continue;
+                if (label != OmrMeasurePostProcessor.NOTEHEAD && ++noise < gap * gap * .11f)
+                    continue;
+                return false;
+            }
+        return true;
+    }
+
+    private static boolean nearbyOwner(
+            byte[] labels, int width, int height, int x, int y, int keyEnd, int before, int after) {
+        for (int yy = Math.max(0, y - 1); yy <= Math.min(height - 1, y + 1); yy++)
+            for (int xx = Math.max(0, x - 1); xx <= Math.min(width - 1, x + 1); xx++) {
+                byte label = labels[yy * width + xx];
+                if (label == OmrMeasurePostProcessor.STAFF
+                        || label == OmrMeasurePostProcessor.CLEF_OR_KEY && xx < keyEnd
+                        || label == OmrMeasurePostProcessor.SYMBOL && xx >= before && xx <= after)
+                    return true;
+            }
+        return false;
+    }
+
     static boolean matches(
             byte[] labels,
             byte[] gray,

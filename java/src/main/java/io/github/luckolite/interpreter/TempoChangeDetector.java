@@ -15,6 +15,8 @@ final class TempoChangeDetector {
     private static final java.util.regex.Pattern RANGE_EQUATION =
             java.util.regex.Pattern.compile("^[^=0-9]*=\\s*([0-9]{2,3})\\s*[-–—]\\s*([0-9]{2,3})\\s*[)\\]]?$");
 
+    private static final int MIN_HALF_NOTE_RATE = 20;
+
     private TempoChangeDetector() {}
 
     /** OCR may drop the note and equals sign while retaining a separate BPM numeral. */
@@ -38,7 +40,7 @@ final class TempoChangeDetector {
                 if (token == null) continue;
             } else {
                 int value = Integer.parseInt(isolated.group(1));
-                if (value < 30 || value > 400) continue;
+                if (value < MIN_HALF_NOTE_RATE || value > 400) continue;
                 token =
                         new MeasureNumberReconciler.NumberToken(
                                 value, word.left(), word.top(), word.right(), word.bottom());
@@ -101,7 +103,7 @@ final class TempoChangeDetector {
         if (!match.find() || text.substring(match.end()).trim().matches("[-–—/].*|[.,]\\s*[0-9].*"))
             return null;
         int value = Integer.parseInt(match.group(1)), digits = match.group(1).length();
-        if (value < 30
+        if (value < MIN_HALF_NOTE_RATE
                 || value > 400
                 || width < 1
                 || height < 1
@@ -223,7 +225,7 @@ final class TempoChangeDetector {
             java.util.Map<MeasureNumberReconciler.NumberToken, Integer> provedEquals,
             java.util.Map<MeasureNumberReconciler.NumberToken, Double> decimalRates,
             DirectionGeometry geometry) {
-        return detectProved(tokens, gray, width, height, measures, provedEquals, decimalRates, geometry, null);
+        return detectProved(tokens, gray, width, height, measures, provedEquals, decimalRates, geometry, null, List.of());
     }
 
     private static List<ScoreTempoChange> detectProved(
@@ -231,7 +233,8 @@ final class TempoChangeDetector {
             byte[] gray, int width, int height, List<MeasureRegion> measures,
             java.util.Map<MeasureNumberReconciler.NumberToken, Integer> provedEquals,
             java.util.Map<MeasureNumberReconciler.NumberToken, Double> decimalRates,
-            DirectionGeometry geometry, List<BeatGlyph> beatGlyphs) {
+            DirectionGeometry geometry, List<BeatGlyph> beatGlyphs,
+            List<PlayingTechniqueDetector.Word> words) {
         if (tokens == null
                 || tokens.isEmpty()
                 || gray == null
@@ -240,7 +243,7 @@ final class TempoChangeDetector {
                 || height <= 0
                 || measures == null
                 || measures.isEmpty()) return List.of();
-        List<ScoreTempoChange> result = new ArrayList<>();
+        var result = new ArrayList<ProvedTempo>();
         // Measure boxes include clefs and ledger ink above the actual staff.
         // Use a verified five-line top for direction ownership, never for score geometry.
         // The verified staff top is needed only after a token has an actual tempo equation.
@@ -250,7 +253,7 @@ final class TempoChangeDetector {
                         ? null
                         : geometry.measures();
         for (MeasureNumberReconciler.NumberToken token : tokens) {
-            if (token.value() < 30 || token.value() > 400) continue;
+            if (token.value() < MIN_HALF_NOTE_RATE || token.value() > 400) continue;
             double rate = decimalRates.getOrDefault(token, (double) token.value());
             boolean provedApproximation = provedEquals.containsKey(token);
             int equalsLeft =
@@ -289,12 +292,21 @@ final class TempoChangeDetector {
             if (measureIndex < 0)
                 measureIndex =
                         provedOpeningTempo(
-                                token, gray, width, height, equalsLeft, directionMeasures, geometry);
+                                token, gray, width, height, equalsLeft, directionMeasures, geometry, false);
             if (measureIndex < 0)
                 measureIndex =
                         provedElevatedSystemTempo(
                                 token, gray, width, height, equalsLeft, directionMeasures, geometry);
+            boolean heading = measureIndex < 0;
+            if (heading)
+                measureIndex = sectionHeadingOwner(token, gray, width, height, equalsLeft, words, directionMeasures, geometry);
             if (measureIndex < 0) continue;
+            int afterCountedRest = followingRestEquation(
+                    token, gray, width, height, equalsLeft, measureIndex, directionMeasures);
+            if (afterCountedRest >= 0) measureIndex = afterCountedRest;
+            int namedBoundary = namedTempoBoundary(
+                    token, equalsLeft, measureIndex, words, directionMeasures, gray, width, height);
+            if (namedBoundary >= 0) measureIndex = namedBoundary;
             MeasureRegion measure = directionMeasures.get(measureIndex);
             float position =
                     (Math.min(anchor.left(), equationLeft) - measure.left())
@@ -303,8 +315,14 @@ final class TempoChangeDetector {
             // near the barline to beat zero instead of delaying the change by the text width.
             position = Math.max(0f, Math.min(1f, position));
             if (measureIndex == 0 && token.bottom() <= measure.top()) position = 0f;
-            if (position < .22f) position = 0f;
+            if (heading || afterCountedRest >= 0 || namedBoundary >= 0 || position < .22f) position = 0f;
             double unit = printedBeatUnit(token, gray, width, height, equalsLeft);
+
+            // A low printed rate must independently prove a hollow beat note at both thresholds.
+            if (rate < 30 && (unit != 2 && unit != 3
+                    || printedBeatUnit(token, gray, width, height, equalsLeft, 200) != unit
+                    || printedBeatUnit(token, gray, width, height, equalsLeft, 165) != unit)) continue;
+            BeatGlyph glyph = null;
             if (beatGlyphs != null) {
                 int digitHeight = printedDigitHeight(token, gray, width, height);
                 int[] light = new int[8], dark = new int[8];
@@ -313,24 +331,206 @@ final class TempoChangeDetector {
                 if (Double.isFinite(a) && Math.abs(a - b) < .001
                         && Math.abs(light[2] - dark[2]) <= 2 && Math.abs(light[3] - dark[3]) <= 2
                         && light[7] < measure.top() * height)
-                    beatGlyphs.add(new BeatGlyph(
-                            measureIndex, light[4], light[5], light[6], light[7], light[2], light[3]));
+                    glyph = new BeatGlyph(
+                            measureIndex, light[4], light[5], light[6], light[7], light[2], light[3]);
             }
-            result.add(new ScoreTempoChange(measureIndex, position, rate * unit, unit));
+            result.add(new ProvedTempo(
+                    new ScoreTempoChange(measureIndex, position, rate * unit, unit),
+                    token, equalsLeft, glyph));
         }
-        result.sort(
-                Comparator.comparingInt(ScoreTempoChange::measureIndex)
-                        .thenComparingDouble(ScoreTempoChange::positionInMeasure));
+        result.sort(Comparator.comparingInt((ProvedTempo mark) -> mark.change().measureIndex())
+                .thenComparingDouble(mark -> mark.change().positionInMeasure()));
         List<ScoreTempoChange> deduplicated = new ArrayList<>();
-        for (ScoreTempoChange change : result) {
-            if (!deduplicated.isEmpty()) {
-                ScoreTempoChange previous = deduplicated.get(deduplicated.size() - 1);
-                if (previous.measureIndex() == change.measureIndex()
-                        && previous.bpm() == change.bpm()) continue;
+        for (int first = 0; first < result.size();) {
+            int measure = result.get(first).change().measureIndex();
+            int end = first + 1;
+            while (end < result.size() && result.get(end).change().measureIndex() == measure) end++;
+            var sameMeasure = result.subList(first, end);
+            for (int index = first; index < end; index++) {
+                var mark = result.get(index);
+                if (sameMeasure.size() > 1 && isPartialTempoAlias(mark, sameMeasure, width, height))
+                    continue;
+                if (mark.glyph() != null) beatGlyphs.add(mark.glyph());
+                var change = mark.change();
+                if (!deduplicated.isEmpty()) {
+                    var previous = deduplicated.get(deduplicated.size() - 1);
+                    if (previous.measureIndex() == measure && previous.bpm() == change.bpm()) continue;
+                }
+                deduplicated.add(change);
             }
-            deduplicated.add(change);
+            first = end;
         }
         return List.copyOf(deduplicated);
+    }
+
+    /** A combined rest direction can cross the barline before its separate printed equation. */
+    private static int followingRestEquation(
+            MeasureNumberReconciler.NumberToken digits, byte[] gray, int width, int height,
+            int equals, int measure, List<MeasureRegion> regions) {
+        var rest = regions.get(measure);
+        int after = measure + 1;
+        while (after < regions.size() && regions.get(after).equals(rest)) after++;
+        if (after == measure + 1 || after >= regions.size()) return -1;
+        var end = regions.get(after);
+        if (Math.abs(rest.top() - end.top()) > .003f
+                || end.left() <= rest.right() || digits.annotationLeft() < rest.left()
+                || digits.annotationLeft() > rest.right()) return -1;
+        int dh = printedDigitHeight(digits, gray, width, height);
+        int[] light = new int[8], dark = new int[8];
+        double a = printedBeatUnitWithDigitHeight(digits, gray, width, height, equals, 200, dh, light);
+        if (!Double.isFinite(a) || a != printedBeatUnitWithDigitHeight(
+                digits, gray, width, height, equals, 165, dh, dark)
+                || Math.abs(light[0] - dark[0]) > 2 || light[7] >= end.top() * height) return -1;
+        float x = light[0] / (float) width;
+        return x >= end.left() && x - end.left() <= (end.right() - end.left()) * .22f ? after : -1;
+    }
+
+    private static final java.util.regex.Pattern NAMED_TEMPO_HEADING =
+            java.util.regex.Pattern.compile("(?iu)^(?:agitato|vivace|allegro|presto|prestissimo|"
+                    + "andante|adagio|largo|lento|moderato)(?:\\h+(?:assai|molto|non molto|con brio|"
+                    + "ma non troppo))?\\b");
+
+    /** A named heading near a bar edge owns the equation printed to its right. */
+    private static int namedTempoBoundary(
+            MeasureNumberReconciler.NumberToken digits, int equals, int detected,
+            List<PlayingTechniqueDetector.Word> words, List<MeasureRegion> measures,
+            byte[] gray, int width, int height) {
+        if (words.isEmpty() || words.size() > 10000) return -1;
+        int unit = printedDigitHeight(digits, gray, width, height);
+        var existing = measures.get(detected);
+        int result = -1;
+        float distance = Float.POSITIVE_INFINITY;
+        for (var word : words) {
+            if (word == null || word.text() == null || word.left() > digits.annotationLeft() + .003f
+                    || Math.abs(word.top() - digits.top()) * height > unit * .85f
+                    || Math.abs(word.bottom() - digits.bottom()) * height > unit * .85f) continue;
+            String text = word.text().strip();
+            var name = NAMED_TEMPO_HEADING.matcher(text);
+            if (!name.find()) continue;
+            String tail = text.substring(name.end()).strip();
+            boolean merged = !tail.isEmpty();
+            if (merged) {
+                if (!tail.matches("[^=0-9]*=\\h*" + digits.value() + "[.)\\]]?$")
+                        || word.right() < digits.right() - .002f) continue;
+            } else if (word.right() < digits.annotationLeft() - unit * .5f / width
+                    || equals - word.right() * width > unit * 1.75f
+                    || word.right() * width > equals + unit * .2f) continue;
+            for (int i = 0; i < measures.size(); i++) {
+                var bar = measures.get(i);
+                float adjusted = Math.abs(word.left() - bar.left()) * width;
+                if (Math.abs(bar.top() - existing.top()) > .003f || adjusted > unit * 1.7f
+                        || word.right() <= bar.left() || equals < bar.left() * width) continue;
+                if (adjusted < distance) {
+                    distance = adjusted;
+                    result = i;
+                } else if (adjusted == distance && !bar.equals(measures.get(result))) return -1;
+            }
+        }
+        return result;
+    }
+
+    private record ProvedTempo(
+            ScoreTempoChange change, MeasureNumberReconciler.NumberToken digits,
+            int equalsLeft, BeatGlyph glyph) {}
+
+    private static boolean isPartialTempoAlias(
+            ProvedTempo mark, List<ProvedTempo> alternatives, int width, int height) {
+        var partial = mark.digits();
+        for (var alternative : alternatives) {
+            var complete = alternative.digits();
+            if (partial.value() == complete.value()) continue;
+            float digitHeight = (complete.bottom() - complete.top()) * height;
+            float extraWidth = (complete.right() - complete.left()
+                    - partial.right() + partial.left()) * width;
+            // A contained digit read with the same equals sign belongs to the wider OCR numeral.
+            if (digitHeight >= 3 && extraWidth >= digitHeight * .2f
+                    && Math.abs(mark.equalsLeft() - alternative.equalsLeft()) <= digitHeight * .6f
+                    && (complete.left() - partial.left()) * width <= 2
+                    && (partial.right() - complete.right()) * width <= 2
+                    && Math.min(complete.bottom(), partial.bottom())
+                            - Math.max(complete.top(), partial.top())
+                            >= (partial.bottom() - partial.top()) * .8f) return true;
+        }
+        return false;
+    }
+
+    /** A proved equation may sit high above the rails to clear an elevated notehead. */
+    static ScorePageInterpretation recoverAboveLedgerTempos(
+            ScorePageInterpretation score, List<PlayingTechniqueDetector.Word> words,
+            List<PlayingTechniqueDetector.Staff> staffs, byte[] gray, int width, int height) {
+        if (score.notes().isEmpty() || score.meterChanges().isEmpty()
+                || words.isEmpty() || staffs.isEmpty() || gray == null
+                || width <= 0 || height <= 0 || (long) width * height != gray.length) return score;
+        List<ScoreTempoChange> added = new ArrayList<>();
+        var meter = new ScoreMeterMap(Float.NaN, score.meterChanges());
+        for (var token : withIsolatedDigits(List.of(), words, gray, width, height)) {
+            var digits = printedDigitBounds(token, gray, width, height);
+            int equals = equalsSignLeft(digits, gray, width, height);
+            if (equals < 0) continue;
+            int digitHeight = printedDigitHeight(digits, gray, width, height);
+            int[] light = new int[8], dark = new int[8];
+            double pulse = printedBeatUnitWithDigitHeight(
+                    digits, gray, width, height, equals, 200, digitHeight, light);
+            if (!Double.isFinite(pulse) || pulse != printedBeatUnitWithDigitHeight(
+                    digits, gray, width, height, equals, 165, digitHeight, dark)
+                    || Math.abs(light[2] - dark[2]) > 2 || Math.abs(light[7] - dark[7]) > 2) continue;
+            double bpm = pulse * token.value();
+            var note = highTempoOwner(score, staffs, light[2], light[7], width, height);
+            if (note == null || score.tempoChanges().stream()
+                    .anyMatch(mark -> mark.measureIndex() == note.measureIndex() && mark.bpm() == bpm)) continue;
+            float beats = meter.beatsInMeasure(note.measureIndex());
+            if (!Float.isFinite(beats) || beats <= 0) continue;
+            try (var timing = ScoreNoteTiming.beginTimingSession(score)) {
+                var placement = ScoreNoteTiming.writtenPlacement(note, score.notes(), beats).orElse(null);
+                if (placement == null || placement.grace() || placement.onsetBeats() < 0
+                        || placement.onsetBeats() >= beats) continue;
+                var change = new ScoreTempoChange(note.measureIndex(),
+                        (float) (placement.onsetBeats() / beats), bpm, pulse);
+                if (!added.contains(change)) added.add(change);
+            }
+        }
+        if (added.isEmpty()) return score;
+        added.addAll(score.tempoChanges());
+        added.sort(Comparator.comparingInt(ScoreTempoChange::measureIndex)
+                .thenComparingDouble(ScoreTempoChange::positionInMeasure));
+        return score.withTempoChanges(added);
+    }
+
+    private static ScoreNoteEvent highTempoOwner(
+            ScorePageInterpretation score, List<PlayingTechniqueDetector.Staff> staffs,
+            int glyphX, int glyphBottom, int width, int height) {
+        ScoreNoteEvent selected = null;
+        float nearest = Float.POSITIVE_INFINITY;
+        boolean ambiguous = false;
+        for (var staff : staffs) {
+            float gap = staff.gap();
+            if (gap < 6 || staff.top() - glyphBottom < gap * 7
+                    || staff.top() - glyphBottom > gap * 13) continue;
+            float center = (staff.top() + staff.bottom()) * .5f / height;
+            for (var note : score.notes()) {
+                if (note.staffIndex() != staff.index() || note.staffCount() != staff.count()
+                        || note.kind() != ScoreNoteEvent.Kind.PITCHED || note.crossStaffBeam()) continue;
+                var bar = score.measures().get(note.measureIndex());
+                float y = note.pageY() * height;
+                if (center < bar.top() || center > bar.bottom()
+                        || staff.top() - y < gap * 4 || y - glyphBottom < gap * 1.5f
+                        || y - glyphBottom > gap * 6) continue;
+                float x = (bar.left() + note.positionInMeasure() * (bar.right() - bar.left())) * width;
+                if (x < glyphX - gap * .3f || x - glyphX > gap * 2.4f) continue;
+                float distance = Math.abs(x - glyphX);
+                if (distance < nearest - 1) {
+                    selected = note;
+                    nearest = distance;
+                    ambiguous = false;
+                } else if (Math.abs(distance - nearest) <= 1
+                        && (note.measureIndex() != selected.measureIndex()
+                            || note.staffIndex() != selected.staffIndex()
+                            || Math.abs(note.positionInMeasure() - selected.positionInMeasure()) > .003f)) {
+                    ambiguous = true;
+                }
+            }
+        }
+        return ambiguous ? null : selected;
     }
 
     /** Retain an earlier verbal prefix, but never let OCR padding move a proved equation right. */
@@ -364,7 +564,7 @@ final class TempoChangeDetector {
             int width,
             int height,
             int equals,
-            List<MeasureRegion> measures, DirectionGeometry geometry) {
+            List<MeasureRegion> measures, DirectionGeometry geometry, boolean provedBeat) {
         if (measures.isEmpty()) return -1;
         int first = 0;
         for (int i = 1; i < measures.size(); i++) {
@@ -385,7 +585,7 @@ final class TempoChangeDetector {
                 if (Math.abs(m.top() - opening.top()) * height < staff.gap())
                     right = Math.max(right, m.right() * width);
             if (token.annotationLeft() * width < left || token.right() * width > right) continue;
-            if (Double.isFinite(printedBeatUnit(token, gray, width, height, equals, 200))
+            if (provedBeat || Double.isFinite(printedBeatUnit(token, gray, width, height, equals, 200))
                     || Double.isFinite(printedBeatUnit(token, gray, width, height, equals, 165)))
                 return first;
         }
@@ -435,6 +635,63 @@ final class TempoChangeDetector {
             found = first;
         }
         return found;
+    }
+
+    /** A stacked section heading can start left of the first playable bar. */
+    private static int sectionHeadingOwner(
+            MeasureNumberReconciler.NumberToken digits, byte[] gray, int width, int height,
+            int equals, List<PlayingTechniqueDetector.Word> words, List<MeasureRegion> measures,
+            DirectionGeometry geometry) {
+        if (words.isEmpty() || words.size() > 10000 || digits.annotationLeft() >= digits.left()) return -1;
+        var equation = java.util.regex.Pattern.compile(
+                "^\\p{L}[^=]*=\\h*" + digits.value() + "[)\\]]?$");
+        PlayingTechniqueDetector.Word caption = null;
+        for (var word : words) {
+            if (word == null || word.text() == null
+                    || Math.abs(word.left() - digits.annotationLeft()) * width > 2
+                    || word.right() < digits.right() - 2f / width
+                    || word.top() > digits.top() || word.bottom() < digits.bottom()
+                    || !equation.matcher(word.text().strip()).matches()) continue;
+            caption = word;
+            break;
+        }
+        if (caption == null) return -1;
+        double light = printedBeatUnit(digits, gray, width, height, equals, 200);
+        if (!Double.isFinite(light) || printedBeatUnit(digits, gray, width, height, equals, 165) != light)
+            return -1;
+        RawStaffLineDetector.StaffLines next = null;
+        for (var staff : geometry.staffs()) {
+            if (staff.top() > caption.bottom() * height) {
+                next = staff;
+                break;
+            }
+            if (staff.bottom() >= caption.top() * height) return -1;
+        }
+        if (next == null || next.top() - caption.bottom() * height > next.gap() * 12) return -1;
+        float gap = next.gap();
+        int first = -1;
+        for (int i = 0; i < measures.size(); i++) {
+            var bar = measures.get(i);
+            if (Math.abs(bar.top() * height - next.top()) <= gap * .3f
+                    && next.bottom() <= bar.bottom() * height
+                    && (first < 0 || bar.left() < measures.get(first).left())) first = i;
+        }
+        if (first <= 0 || caption.left() >= measures.get(first).left()
+                || (measures.get(first).left() - caption.left()) * width > gap * 7) return -1;
+        for (var number : words) {
+            if (number == null || number.text() == null || !number.text().strip().matches("[0-9]{1,4}")
+                    || number.top() <= caption.bottom()
+                    || next.top() - number.bottom() * height < 0
+                    || next.top() - number.bottom() * height > gap * 2.5f
+                    || Math.abs(number.left() - caption.left()) * width > gap * 2.75f) continue;
+            for (var title : words)
+                if (title != null && title.text() != null
+                        && title.text().strip().matches("\\p{L}+(?:[\\h'’-]+\\p{L}+)+")
+                        && Math.abs(title.left() - caption.left()) * width <= gap * 2
+                        && Math.abs(title.top() - caption.bottom()) * height <= gap
+                        && title.bottom() < number.top()) return first;
+        }
+        return -1;
     }
 
     private static int approximateFollowingMeasure(
@@ -550,7 +807,11 @@ final class TempoChangeDetector {
                 }
                 continue;
             }
-            var match = APPROXIMATE_EQUATION.matcher(word.text().trim());
+            String text = word.text().strip();
+            int open = text.indexOf('(');
+            boolean wrapped = open > 0 && text.endsWith(")")
+                    && open <= 96 && Character.isLetter(text.codePointAt(0));
+            var match = APPROXIMATE_EQUATION.matcher(wrapped ? text.substring(open + 1, text.length() - 1).strip() : text);
             if (!match.matches()) continue;
             int value = Integer.parseInt(match.group(1)), count = match.group(1).length();
             if (value < 30
@@ -573,6 +834,12 @@ final class TempoChangeDetector {
                     || right - left > 12 * h
                     || (long) (right - left + 1) * h > 500_000) continue;
             // The final numeral is a bounded sequence of separate vertical ink groups.
+            if (wrapped) {
+                while (right >= left && !tempoColumnHasInk(gray, width, right, top, bottom)) right--;
+                int closing = right;
+                while (right >= left && tempoColumnHasInk(gray, width, right, top, bottom)) right--;
+                if (right <= left || closing - right > h / 3) continue;
+            }
             int groups = 0, digitLeft = -1, digitRight = -1;
             boolean inside = false;
             for (int x = right; x >= left; x--) {
@@ -606,10 +873,11 @@ final class TempoChangeDetector {
                             height);
             if (digits == null) continue;
             int dh = printedDigitHeight(digits, gray, width, height);
-            if (digitLeft - left > dh * 7) continue;
-            int eq = equalsSignLeft(digits, gray, width, height, 125, left);
-            if (eq < 0) eq = equalsSignLeft(digits, gray, width, height, 175, left);
-            if (eq < left || digitLeft - eq > dh * 6) continue;
+            if (!wrapped && digitLeft - left > dh * 7) continue;
+            int equationLeft = wrapped ? Math.max(left, digitLeft - dh * 7) : left;
+            int eq = equalsSignLeft(digits, gray, width, height, 125, equationLeft);
+            if (eq < 0) eq = equalsSignLeft(digits, gray, width, height, 175, equationLeft);
+            if (eq < equationLeft || digitLeft - eq > dh * 6) continue;
             int[] anchor = {-1, -1};
             double unit =
                     printedBeatUnitWithDigitHeight(
@@ -627,15 +895,22 @@ final class TempoChangeDetector {
                             digits.top(),
                             digits.right(),
                             digits.bottom(),
-                            anchor[1] / (float) width);
+                            wrapped ? word.left() : anchor[1] / (float) width);
             all.add(accepted);
             proved.put(accepted, eq);
         }
         var geometry = new DirectionGeometry(gray, width, height, measures);
-        var ordinary = detectProved(all, gray, width, height, measures, proved, decimalRates, geometry, beatGlyphs);
-        if (measures == null || measures.isEmpty() || all.isEmpty() || words.isEmpty()
-                || all.size() > 10000 || words.size() > 10000)
-            return ordinary;
+        var ordinary = detectProved(all, gray, width, height, measures, proved, decimalRates, geometry, beatGlyphs, words);
+        if (measures == null || measures.isEmpty() || words.isEmpty()
+                || all.size() > 10000 || words.size() > 10000) return ordinary;
+        if (all.isEmpty()) {
+            int first = OpeningPartTempo.firstMeasure(measures);
+            if (first < 0) return ordinary;
+            float openingTop = measures.get(first).top();
+            if (words.stream().noneMatch(word -> word != null && word.text() != null
+                    && word.top() < openingTop
+                    && ISOLATED_DIGITS.matcher(word.text().trim()).matches())) return ordinary;
+        }
         var contextualMeasures = geometry.measures();
         int physicalOpening = OpeningPartTempo.firstMeasure(contextualMeasures);
         if (ordinary.stream()
@@ -643,6 +918,17 @@ final class TempoChangeDetector {
                         event ->
                                 event.measureIndex() == physicalOpening
                                         && event.positionInMeasure() == 0f)) return ordinary;
+        var crossedFlag = crossedFlagOpening(words, gray, width, height, contextualMeasures,
+                physicalOpening, geometry);
+        if (crossedFlag != null) {
+            var result = new ArrayList<>(ordinary);
+            result.add(crossedFlag.change());
+            result.sort(Comparator.comparingInt(ScoreTempoChange::measureIndex)
+                    .thenComparingDouble(ScoreTempoChange::positionInMeasure));
+            if (beatGlyphs != null) beatGlyphs.add(crossedFlag.glyph());
+            return List.copyOf(result);
+        }
+        if (all.isEmpty()) return ordinary;
         var ownedLaterEquations = new java.util.HashSet<PlayingTechniqueDetector.Word>();
         for (var token : all)
             for (var word : words) {
@@ -701,8 +987,64 @@ final class TempoChangeDetector {
 
     private static final java.util.regex.Pattern APPROXIMATE_EQUATION =
             java.util.regex.Pattern.compile(
-                        "^[♩♪♫♬√J.]?\\s*=\\s*(?:ca\\.?|c\\.|circa|~|\u2248)\\s*([0-9]{2,3})$",
+                        "^[♩♪♫♬√J.•]?\\s*=\\s*(?:ca\\.?|c\\.|circa|~|\u2248)\\s*([0-9]{2,3})$",
                         java.util.regex.Pattern.CASE_INSENSITIVE);
+
+    private static boolean tempoColumnHasInk(byte[] gray, int width, int x, int top, int bottom) {
+        for (int y = top; y <= bottom; y++) if ((gray[y * width + x] & 255) <= 155) return true;
+        return false;
+    }
+
+    /** A large printed eighth-note flag may cross both equals strokes at an opening. */
+    private static ProvedTempo crossedFlagOpening(
+            List<PlayingTechniqueDetector.Word> words, byte[] gray, int width, int height,
+            List<MeasureRegion> measures, int opening, DirectionGeometry geometry) {
+        if (opening < 0) return null;
+        ProvedTempo selected = null;
+        var bar = measures.get(opening);
+        for (var word : words) {
+            if (word == null || word.text() == null || word.bottom() >= bar.top()
+                    || word.right() > bar.right() || word.left() < 0 || word.top() < 0
+                    || word.bottom() <= word.top() || word.right() <= word.left()) continue;
+            var digits = ISOLATED_DIGITS.matcher(word.text().trim());
+            if (!digits.matches()) continue;
+            int value = Integer.parseInt(digits.group(1));
+            if (value < 30 || value > 400) continue;
+            var token = printedDigitBounds(new MeasureNumberReconciler.NumberToken(
+                    value, word.left(), word.top(), word.right(), word.bottom()), gray, width, height);
+            if (equalsSignLeft(token, gray, width, height) >= 0) continue;
+            int digitHeight = printedDigitHeight(token, gray, width, height);
+            if (digitHeight < 8 || digitHeight > 60) continue;
+            int digitLeft = Math.round(token.left() * width);
+            int pulseScale = Math.round(digitHeight * 1.55f);
+            for (int clip = digitLeft - Math.round(digitHeight * .85f);
+                    clip <= digitLeft - Math.round(digitHeight * .7f); clip++) {
+                if (clip < 0) continue;
+                int equals = equalsSignLeft(token, gray, width, height, 175, clip);
+                if (equals < 0) continue;
+                int[] light = new int[8], dark = new int[8];
+                if (printedBeatUnitWithDigitHeight(token, gray, width, height, equals, 200,
+                            pulseScale, light) != .5
+                        || printedBeatUnitWithDigitHeight(token, gray, width, height, equals, 165,
+                            pulseScale, dark) != .5
+                        || light[5] != equals - 1 || Math.abs(light[1] - dark[1]) > 2
+                        || Math.abs(light[2] - dark[2]) > 2 || light[7] >= bar.top() * height)
+                    continue;
+                // Two surviving stroke ends must have an independent flagged stem and head.
+                var owned = new MeasureNumberReconciler.NumberToken(value, token.left(), token.top(),
+                        token.right(), token.bottom(), light[0] / (float) width);
+                if (provedOpeningTempo(owned, gray, width, height, equals, measures, geometry, true) != opening)
+                    continue;
+                var mark = new ScoreTempoChange(opening, 0, value * .5, .5);
+                if (selected != null && !selected.change().equals(mark)) return null;
+                var glyph = new BeatGlyph(opening, light[4], light[5], light[6], light[7],
+                        light[2], light[3]);
+                selected = new ProvedTempo(mark, owned, equals, glyph);
+                break;
+            }
+        }
+        return selected;
+    }
 
     private record TempoRange(MeasureNumberReconciler.NumberToken lower, int equalsLeft) { }
 
@@ -1104,12 +1446,23 @@ final class TempoChangeDetector {
             int height,
             int equalsLeft) {
         int digitHeight = printedDigitHeight(token, gray, width, height);
+        int[] light = {-1, -1};
         double normal =
                 printedBeatUnitWithDigitHeight(
-                        token, gray, width, height, equalsLeft, 200, digitHeight);
+                        token, gray, width, height, equalsLeft, 200, digitHeight, light);
         double core =
                 printedBeatUnitWithDigitHeight(
                         token, gray, width, height, equalsLeft, 165, digitHeight);
+        if ((normal == .5 || normal == .75) && equalsLeft - light[1] > digitHeight) {
+            int[] dark = {-1, -1};
+            double separated = printedBeatUnitWithDigitHeight(
+                    token, gray, width, height, equalsLeft, 125, digitHeight, dark);
+            // Dark ink can separate a closer beat note from an abutting tempo word.
+            // Require a different stem near the equals sign before replacing a flag.
+            if ((separated == 1 || separated == 1.5)
+                    && dark[1] - light[1] >= digitHeight * .65f
+                    && equalsLeft - dark[1] <= digitHeight * .75f) return separated;
+        }
         if (!Double.isFinite(normal)) normal = Double.isFinite(core) ? core : 1;
         if (!Double.isFinite(core)) core = normal;
         // A light scan bridge can attach the dot to its notehead. Only use the
@@ -1210,6 +1563,9 @@ final class TempoChangeDetector {
                 }
                 parts.add(new int[] {left + minX, left + maxX, top + minY, top + maxY, count});
             }
+        // The beat note sits closest to the equals sign. An adjacent tempo word
+        // can contain a tall filled letter that otherwise satisfies the glyph bounds.
+        parts.sort(Comparator.<int[]>comparingInt(part -> part[1]).reversed());
         for (int[] note : parts) {
             int nw = note[1] - note[0] + 1, nh = note[3] - note[2] + 1;
             if (nh < unit * .85f || nh > unit * 2.8f || nw < unit * .25f || nw > unit * 1.5f)
@@ -1244,7 +1600,7 @@ final class TempoChangeDetector {
                 }
             }
             if (stem < 0 || best < nh * .5f) continue;
-            int flaggedRows = 0;
+            int flaggedRows = 0, firstFlagRow = note[3];
             for (int y = note[2]; y < note[2] + nh * 2 / 3; y++) {
                 boolean protrudes = false;
                 for (int x = stem + Math.max(2, Math.round(unit * .2f)); x <= note[1]; x++)
@@ -1252,9 +1608,15 @@ final class TempoChangeDetector {
                         protrudes = true;
                         break;
                     }
-                if (protrudes) flaggedRows++;
+                if (protrudes) {
+                    if (flaggedRows == 0) firstFlagRow = y;
+                    flaggedRows++;
+                }
             }
-            boolean flagged = flaggedRows >= Math.max(3, Math.round(unit * .25f));
+            // A flag branches near the stem tip. Lower protrusions can be the
+            // light edge of the equals sign joined to the stem in a small glyph.
+            boolean flagged = flaggedRows >= Math.max(3, Math.round(unit * .25f))
+                    && firstFlagRow - note[2] <= nh * .4f;
             if (hollow && flagged) continue;
             double beat = hollow ? 2 : flagged ? .5 : 1;
             if (anchor != null) {
@@ -1332,7 +1694,7 @@ final class TempoChangeDetector {
                     && maxX - minX + 1 >= unit * .12f
                     && maxY - minY + 1 >= unit * .08f
                     && maxX - minX + 1 <= unit * .8f
-                    && maxY - minY + 1 <= unit * .45f
+                    && maxY - minY + 1 <= Math.round(unit * .45f)
                     && minY >= h - unit * .6f)
                 return new int[] {note[0] + (minX + maxX) / 2, note[2] + (minY + maxY) / 2};
         }

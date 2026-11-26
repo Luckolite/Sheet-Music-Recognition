@@ -179,6 +179,18 @@ public record ScorePlaybackDirection(int measureBoundary, Kind kind, Details det
             throw new IllegalArgumentException("Ending needs an endpoint and pass selector");
     }
 
+    static final String ONE_BAR_SIMILE = "%";
+
+    boolean provedMeasureRepeat(int measureCount) {
+        return kind == Kind.MEASURE_REPEAT && measureBoundary > 0 && measureBoundary < measureCount
+                && details.quarterBeatOffset() == 0 && details.totalPlays() == 1
+                && details.end().isEmpty() && details.eventId().startsWith("measure-repeat:")
+                && details.printedText().equals(ONE_BAR_SIMILE)
+                && details.evidence().size() == 1
+                && details.evidence().get(0).sourceId().equals(details.eventId())
+                && details.evidence().get(0).printedText().equals(ONE_BAR_SIMILE);
+    }
+
     public ScoreAnchor anchor() {
         return new ScoreAnchor(measureBoundary, details.quarterBeatOffset());
     }

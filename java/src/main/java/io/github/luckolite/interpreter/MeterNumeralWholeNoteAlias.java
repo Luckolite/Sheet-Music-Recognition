@@ -12,12 +12,24 @@ final class MeterNumeralWholeNoteAlias {
 
     record Capture(List<ScoreNoteEvent> notes, List<ScoreMeterChange> inlineMeters) {}
 
+    @FunctionalInterface
+    interface NumericReader {
+        String read(byte[] gray, int width, int height, MeterChangeDetector.Crop crop);
+    }
+
     static Capture capture(List<ScoreNoteEvent> notes, List<MeasureRegion> measures,
             byte[] labels, byte[] geometryGray, byte[] sourceGray, int width, int height) {
+        return capture(notes, measures, labels, geometryGray, sourceGray, width, height, null);
+    }
+
+    static Capture capture(List<ScoreNoteEvent> notes, List<MeasureRegion> measures,
+            byte[] labels, byte[] geometryGray, byte[] sourceGray, int width, int height,
+            NumericReader numericReader) {
         var candidates = new ArrayList<Integer>();
         for (int i = 0; i < notes.size(); i++) {
             var note = notes.get(i);
-            if (aliasShape(note) || stemlessQuarterAlias(note)
+            if (InlineMeterLowerDigit.candidate(note) || aliasShape(note) || numericReader != null && historicalDenominatorAlias(note)
+                    || stemlessQuarterAlias(note)
                     && note.measureIndex() > 0 && beginsStaff(measures, note.measureIndex()))
                 candidates.add(i);
         }
@@ -28,6 +40,24 @@ final class MeterNumeralWholeNoteAlias {
         for (int i : candidates) {
             var note = notes.get(i);
             int bar = note.measureIndex();
+            if (InlineMeterLowerDigit.candidate(note)) {
+                var change = InlineMeterLowerDigit.recover(
+                        note, notes, measures, labels, geometryGray, sourceGray, width, height);
+                if (change != null) {
+                    removed.add(i);
+                    inlineMeters.add(change);
+                }
+                continue;
+            }
+            if (historicalDenominatorAlias(note)) {
+                if (numericReader != null && bar > 0 && bar < measures.size()
+                        && provesInlineThreeEight(notes, note, bar, measures, labels, geometryGray,
+                                sourceGray, width, height, numericReader)) {
+                    removed.add(i);
+                    inlineMeters.add(new ScoreMeterChange(bar, 3, 8));
+                }
+                continue;
+            }
             var region = measures.get(bar);
             float x = printedX(note, region, width), y = note.pageY() * height;
             var barHeads = notes.stream().filter(n -> n.measureIndex() == bar && n != note).toList();
@@ -155,6 +185,64 @@ final class MeterNumeralWholeNoteAlias {
                             crop, sourceGray, width, height, staff, seam)) return true;
         }
         return false;
+    }
+
+    private static boolean historicalDenominatorAlias(ScoreNoteEvent note) {
+        return note.positionInMeasure() >= .15f && note.positionInMeasure() <= .6f
+                && note.unbeamedDurationBeats() == 4 && stemlessHead(note);
+    }
+
+    private static boolean provesInlineThreeEight(
+            List<ScoreNoteEvent> notes, ScoreNoteEvent alias, int bar, List<MeasureRegion> measures,
+            byte[] labels, byte[] gray, byte[] source, int width, int height,
+            NumericReader reader) {
+        if (bar + 1 >= measures.size()) return false;
+        var current = measures.get(bar);
+        var previous = measures.get(bar - 1);
+        var next = measures.get(bar + 1);
+        float gap = (current.bottom() - current.top()) * height / 8.2f;
+        float cx = printedX(alias, current, width), cy = alias.pageY() * height;
+        float left = current.left() * width;
+        if (gap < 8 || gap > 28 || Math.abs(current.top() - previous.top()) * height > gap * .4f
+                || Math.abs(current.top() - next.top()) * height > gap * .4f
+                || cx - left < gap * 4.5f || cx - left > gap * 8) return false;
+        var owners = notes.stream().filter(n -> n.measureIndex() == bar && n != alias).toList();
+        var following = notes.stream().filter(n -> n.measureIndex() == bar + 1).toList();
+        if (!closedSixteenthBar(owners) || !closedSixteenthBar(following)) return false;
+        float first = (float) owners.stream().mapToDouble(n -> printedX(n, current, width)).min().orElseThrow();
+        if (first - cx < gap * 1.8f || first - cx > gap * 2.7f) return false;
+
+        float hint = current.bottom() * height - 2.1f * gap;
+        float staffX = (left + cx) * .5f;
+        var rail = PrintedDirectionStaff.printedRules(gray, width, height, staffX, hint, gap);
+        var original = PrintedDirectionStaff.printedRules(source, width, height, staffX, hint, gap);
+        if (rail == null || original == null || Math.abs(rail[0] - original[0]) > gap * .25f
+                || Math.abs(rail[1] - original[1]) > gap * .10f) return false;
+        gap = rail[1];
+        int top = Math.round(rail[0] - 4 * gap);
+        if (cy < top + gap * 2.2f || cy > top + gap * 3.15f) return false;
+        var crop = new MeterChangeDetector.Crop(Math.round(cx - gap * .75f),
+                Math.round(top - gap * .20f), Math.round(Math.min(first - gap * .55f, cx + gap * 1.35f)),
+                Math.round(rail[0] + gap * .34f), top, gap);
+        if (crop.left() < 0 || crop.right() > width || crop.top() < 0 || crop.bottom() > height
+                || crop.right() - crop.left() < gap * 1.7f
+                || !connectedToNoteheadLabels(labels, gray, width, crop, cx, cy)
+                || !connectedToNoteheadLabels(labels, source, width, crop, cx, cy)
+                || MeterChangeDetector.followingMeasure(crop, width, height, measures) != bar
+                || !MeterChangeDetector.precedesNotes(crop, labels, gray, width, height, bar, measures, owners))
+            return false;
+        var staff = new PlayingTechniqueDetector.Staff(top, rail[0], gap, 0, 1);
+        if (PrintedCadenceDurations.boundaryColumn(gray, width, staff, left, true, false) < 0
+                || PrintedCadenceDurations.boundaryColumn(source, width, staff, left, true, false) < 0) return false;
+        return "3/8".equals(reader.read(gray, width, height, crop))
+                && (gray == source || "3/8".equals(reader.read(source, width, height, crop)));
+    }
+
+    private static boolean closedSixteenthBar(List<ScoreNoteEvent> notes) {
+        return notes.size() == 6 && notes.stream().allMatch(n -> n.staffIndex() == 0 && n.staffCount() == 1
+                && n.kind() == ScoreNoteEvent.Kind.PITCHED && n.beamCount() == 2
+                && n.augmentationDots() == 0 && !n.crossStaffBeam()
+                && (n.articulations() & NoteOrnament.GRACE) == 0);
     }
 
     private static boolean aliasShape(ScoreNoteEvent note) {

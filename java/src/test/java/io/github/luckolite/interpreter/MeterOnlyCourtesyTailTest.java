@@ -100,4 +100,45 @@ public final class MeterOnlyCourtesyTailTest {
         for (int i = 0; i < p.labels.length; i++) if (p.labels[i] == 5) p.labels[i] = 0;
         assertFalse(detect(p));
     }
+
+    private static boolean detectStacked(Page p) {
+        return MeterOnlyCourtesyTail.matchesStackedSymbols(
+                p.labels, p.gray, W, H, LEFT, RIGHT, TOP, BOTTOM, GAP);
+    }
+
+    @Test
+    public void stackedMeterWithDoubleRuleAndKeyHasNoOwnMeasure() {
+        var p = page();
+        rect(p, LEFT + 5, TOP, 2, BOTTOM - TOP + 1, 1, 0);
+        rect(p, LEFT + 11, TOP + 6, 4, 26, 3, 0);
+        assertTrue(detectStacked(p));
+    }
+
+    @Test
+    public void stackedSymbolsWithSeparatePlayedInkRetainMeasure() {
+        var p = page();
+        rect(p, 250, 93, 8, 12, 1, 0);
+        assertFalse(detectStacked(p));
+        p = page();
+        rect(p, 250, 113, 8, 6, 2, 0);
+        assertFalse(detectStacked(p));
+    }
+
+    @Test
+    public void stackedSymbolsWithClosingBarlineRetainMeasure() {
+        var p = page();
+        rect(p, 257, TOP, 2, BOTTOM - TOP + 1, 1, 0);
+        assertFalse(detectStacked(p));
+    }
+
+    @Test
+    public void singleRestCannotActAsStackedMeter() {
+        var p = new Page(new byte[W * H], new byte[W * H]);
+        Arrays.fill(p.gray, (byte) 255);
+        for (int y = TOP; y <= BOTTOM; y += 16)
+            rect(p, LEFT, y, W - LEFT, 1, 4, 0);
+        rect(p, LEFT, TOP, 2, BOTTOM - TOP + 1, 1, 0);
+        rect(p, 218, TOP + 18, 16, 7, 5, 0);
+        assertFalse(detectStacked(p));
+    }
 }

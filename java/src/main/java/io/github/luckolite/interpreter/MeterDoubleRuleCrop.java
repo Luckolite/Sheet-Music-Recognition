@@ -2,11 +2,87 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.github.luckolite.interpreter;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /** Detaches verified boundary ink from an otherwise unread meter crop. */
 final class MeterDoubleRuleCrop {
     private MeterDoubleRuleCrop() {}
 
     private record Stroke(int left,int right) {}
+
+    /** Recover a numeral slot from the local rails when skew hid its original crop. */
+    static List<MeterChangeDetector.Crop> supplement(
+            List<MeterChangeDetector.Crop> existing, byte[] labels, byte[] gray, int width, int height,
+            List<MeasureRegion> measures, List<ScoreNoteEvent> notes) {
+        if (gray == null || labels == null || gray.length != (long) width * height
+                || labels.length != gray.length || measures.size() < 2 || notes.isEmpty())
+            return existing;
+        var first = new ScoreNoteEvent[measures.size()];
+        for (var note : notes) {
+            int bar = note.measureIndex();
+            if (bar <= 0 || bar >= first.length || note.kind() != ScoreNoteEvent.Kind.PITCHED) continue;
+            if (first[bar] == null || note.positionInMeasure() < first[bar].positionInMeasure())
+                first[bar] = note;
+        }
+        var result = new ArrayList<>(existing);
+        List<RawStaffLineDetector.StaffLines> staffs = null;
+        for (int i = 1; i < measures.size() && result.size() < 48; i++) {
+            var note = first[i];
+            if (note == null || note.staffStep() < -2 || note.staffStep() > 10) continue;
+            var prior = measures.get(i - 1);
+            var bar = measures.get(i);
+            float left = bar.left() * width, right = prior.right() * width;
+            float barHeight = (bar.bottom() - bar.top()) * height;
+            if (left < right || left - right > barHeight * .24f
+                    || Math.abs(bar.top() - prior.top()) * height > barHeight * .12f) continue;
+            float attack = left + note.positionInMeasure() * (bar.right() * width - left);
+            if (attack - left < barHeight * .30f || attack - left > barHeight * .80f) continue;
+            if (staffs == null) staffs = RawStaffLineDetector.detect(gray, width, height);
+            float boundary = (left + right) * .5f;
+            for (var track : staffs) {
+                float gap = track.gap();
+                float bottomHint = note.pageY() * height + note.staffStep() * gap * .5f;
+                if (Math.abs(bottomHint - track.bottom()) > gap * 1.7f
+                        || attack - left < gap * 3.1f) continue;
+                var rails = DottedDyadMeasureSeparator.localRails(gray, width, height,
+                        Math.round(boundary - gap * .85f), bottomHint, gap);
+                if (rails == null) continue;
+                gap = rails[1];
+                int top = Math.round(rails[0] - gap * 4);
+                int cropRight = Math.round(Math.min(left + gap * 2.45f, attack - gap));
+                var seed = new MeterChangeDetector.Crop(
+                        Math.max(0, Math.round(boundary - gap * .44f)),
+                        Math.max(0, Math.round(top - gap * .4f)), cropRight,
+                        Math.min(height, Math.round(rails[0] + gap * .4f)), top, gap);
+                var crop = trimPair(seed, gray, width, height, left);
+                if (crop == seed || !hasStackedSymbols(crop, labels, width)
+                        || MeterChangeDetector.followingMeasure(crop, width, height, measures) != i
+                        || !MeterChangeDetector.precedesNotes(
+                                crop, labels, gray, width, height, i, measures, notes)
+                        || result.stream().anyMatch(
+                        old -> Math.abs(old.firstLine() - crop.firstLine()) < crop.gap()
+                                && old.left() < crop.right() && old.right() > crop.left()))
+                    continue;
+                result.add(crop);
+                break;
+            }
+        }
+        return List.copyOf(result);
+    }
+
+    private static boolean hasStackedSymbols(MeterChangeDetector.Crop crop, byte[] labels, int width) {
+        int min = Math.max(5, Math.round(crop.gap() * crop.gap() * .24f));
+        int middle = Math.round(crop.firstLine() + crop.gap() * 2);
+        int upper = 0, lower = 0;
+        for (int y = crop.top(); y < crop.bottom(); y++)
+            for (int x = crop.left(); x < crop.right(); x++)
+                if (labels[y * width + x] == OmrMeasurePostProcessor.SYMBOL) {
+                    if (y < middle) upper++;
+                    else lower++;
+                }
+        return upper >= min && lower >= min;
+    }
 
     static MeterChangeDetector.Crop trim(MeterChangeDetector.Crop crop,byte[] gray,
             int width,int height,float ownerLeft) {

@@ -13,6 +13,8 @@ import java.util.*;
  * reach later pages and are validated against the complete score after page joining.
  */
 public final class ScoreSemanticWire {
+    public static final int TEMPO_MARKING_VERSION = 312;
+
     private ScoreSemanticWire() {}
 
     private static final int MAX_RECORD_BYTES = 262144;
@@ -40,7 +42,8 @@ public final class ScoreSemanticWire {
                     ScoreExpressiveEvent.Kind.METRIC_MODULATION,
                     ScoreExpressiveEvent.Kind.NATURAL_HARMONIC,
                     ScoreExpressiveEvent.Kind.FALL_OFF,
-                    ScoreExpressiveEvent.Kind.PARENTHESIZED_NOTE_GROUP);
+                    ScoreExpressiveEvent.Kind.PARENTHESIZED_NOTE_GROUP,
+                    ScoreExpressiveEvent.Kind.TEMPO_MARKING);
     private static final List<ScoreExpressiveEvent.Scope> SCOPES =
             List.of(
                     ScoreExpressiveEvent.Scope.SCORE,
@@ -288,6 +291,9 @@ public final class ScoreSemanticWire {
                                                 == ScoreExpressiveEvent.Kind
                                                         .PARENTHESIZED_NOTE_GROUP))
             throw new IOException("Parenthesized note group requires guide 296");
+        if (guideVersion < TEMPO_MARKING_VERSION
+                && expressions.stream().anyMatch(e -> e.kind() == ScoreExpressiveEvent.Kind.TEMPO_MARKING))
+            throw new IOException("Verbal tempo marking requires guide 312");
         if (expressions.stream()
                 .anyMatch(
                         e ->
@@ -352,6 +358,8 @@ public final class ScoreSemanticWire {
                 if (guideVersion < 296
                         && kind == ScoreExpressiveEvent.Kind.PARENTHESIZED_NOTE_GROUP)
                     throw new IOException("Parenthesized note group is outside this guide format");
+                if (guideVersion < TEMPO_MARKING_VERSION && kind == ScoreExpressiveEvent.Kind.TEMPO_MARKING)
+                    throw new IOException("Verbal tempo marking is outside this guide format");
                 var start = anchor(record);
                 var end = anchor(record);
                 var scope = enumValue(SCOPES, record);

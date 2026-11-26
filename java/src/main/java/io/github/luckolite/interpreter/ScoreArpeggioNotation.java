@@ -186,6 +186,21 @@ public final class ScoreArpeggioNotation {
                         .anyMatch(e -> e.sourceId().equals("printed-arpeggio-wave"));
     }
 
+    static Optional<String> remapTargetMeasures(
+            ScoreExpressiveEvent event, java.util.function.IntUnaryOperator mapper) {
+        if (!owns(event)) return Optional.empty();
+        String target = event.targetEventId().orElseThrow();
+        String prefix = prefix(target);
+        String[] fields = target.substring(prefix.length()).split(":", -1);
+        if (fields.length != 5) return Optional.empty();
+        try {
+            fields[0] = Integer.toString(mapper.applyAsInt(Integer.parseInt(fields[0])));
+            return Optional.of(prefix + String.join(":", fields));
+        } catch (NumberFormatException malformed) {
+            return Optional.empty();
+        }
+    }
+
     static ScoreExpressiveEvent offsetEvidence(ScoreExpressiveEvent event, int offset, int page) {
         if (!owns(event)) return event.offset(offset);
         String prefix = prefix(event.targetEventId().get());

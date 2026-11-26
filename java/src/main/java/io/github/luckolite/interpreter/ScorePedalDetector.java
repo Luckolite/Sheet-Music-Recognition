@@ -225,7 +225,7 @@ public final class ScorePedalDetector {
             List<PlayingTechniqueDetector.Staff> staffs) {
         return withBrackets(
                 score,
-                PedalBracketDetector.detect(gray, width, height, staffs),
+                PedalBracketDetector.detect(gray, width, height, staffs, true),
                 staffs,
                 width,
                 height);
@@ -243,7 +243,7 @@ public final class ScorePedalDetector {
         var ids = new HashSet<String>();
         for (var event : events) ids.add(event.eventId());
         for (var bracket : brackets) {
-            var hooks = PedalBracketAnchors.locate(score, bracket, staffs, width, height);
+            var hooks = PedalBracketAnchors.locate(score, bracket, brackets, staffs, width, height);
             if (hooks.size() != 2) continue;
             var target =
                     new Columns(

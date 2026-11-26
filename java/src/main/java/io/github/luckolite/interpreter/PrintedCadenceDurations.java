@@ -9,6 +9,85 @@ import java.util.List;
 final class PrintedCadenceDurations {
     private PrintedCadenceDurations() {}
 
+    /** Literal beam groups and the closing cadence corroborate a return from brief cadenza time. */
+    static ScorePageInterpretation restoreCompoundAfterCadenza(
+            ScorePageInterpretation score, List<PlayingTechniqueDetector.Word> words) {
+        int index = score.measures().size() - 2;
+        if (index < 1 || score.meterChanges().isEmpty()) return score;
+        var temporary = score.meterChanges().get(score.meterChanges().size() - 1);
+        if (temporary.measureIndex() != index - 1
+                || temporary.numerator() != 2 || temporary.denominator() != 4) return score;
+        var bar = score.measures().get(index);
+        if (words.stream().noneMatch(w -> w.text().strip().equalsIgnoreCase("a tempo")
+                && w.left() <= bar.left() + (bar.right() - bar.left()) * .08f
+                && w.right() >= bar.left() && w.bottom() <= bar.top()
+                && bar.top() - w.bottom() <= (bar.bottom() - bar.top()) * .4f))
+            return score;
+        if (score.rests().stream().anyMatch(r -> r.measureIndex() >= index)) return score;
+        var preceding = score.notes().stream().filter(n -> n.measureIndex() == index - 1).toList();
+        if (preceding.size() < 12 || preceding.stream().anyMatch(
+                n -> n.staffIndex() != 0 || n.staffCount() != 2 || n.beamCount() < 3
+                        || n.tupletDivisor() != 1)) return score;
+        if (!compoundBeamBar(score, index) || !compoundFinalCadence(score, index + 1)) return score;
+        var meters = new ArrayList<>(score.meterChanges());
+        meters.add(new ScoreMeterChange(index, 12, 8));
+        return score.withMeterChanges(meters);
+    }
+
+    private static boolean compoundBeamBar(ScorePageInterpretation score, int index) {
+        var notes = score.notes();
+        int[] groups = new int[2];
+        var covered = new java.util.BitSet(notes.size());
+        for (var group : score.beamSource().resolve().groups()) {
+            var source = group.source();
+            if (source.tupletMark() != null || !source.bridges().equals(List.of(1, 1))
+                    || !source.hooks().isEmpty() || group.columns().stream().anyMatch(c -> !c.usable()))
+                continue;
+            int staff = notes.get(group.columns().get(0).owners().get(0)).staffIndex();
+            if (staff < 0 || staff >= groups.length) continue;
+            var owners = group.columns().stream().flatMap(c -> c.owners().stream()).toList();
+            if (owners.stream().anyMatch(i -> {
+                var note = notes.get(i);
+                return note.measureIndex() != index || note.staffIndex() != staff
+                        || note.staffCount() != 2 || note.kind() != ScoreNoteEvent.Kind.PITCHED
+                        || note.beamCount() != 1 || note.unbeamedDurationBeats() != 0
+                        || note.augmentationDots() != 0 || note.tupletDivisor() != 1;
+            })) continue;
+            groups[staff]++;
+            for (int i : owners) covered.set(i);
+        }
+        if (groups[0] != 4 || groups[1] != 4) return false;
+        for (int i = 0; i < notes.size(); i++)
+            if (notes.get(i).measureIndex() == index && !covered.get(i)) return false;
+        return true;
+    }
+
+    private static boolean compoundFinalCadence(ScorePageInterpretation score, int index) {
+        for (int staff = 0; staff < 2; staff++) {
+            final int owner = staff;
+            var notes = score.notes().stream()
+                    .filter(n -> n.measureIndex() == index && n.staffIndex() == owner)
+                    .sorted(java.util.Comparator.comparingDouble(ScoreNoteEvent::positionInMeasure))
+                    .toList();
+            int column = -1;
+            float position = -.2f;
+            for (var note : notes) {
+                if (note.positionInMeasure() - position > .015f) {
+                    position = note.positionInMeasure();
+                    column++;
+                }
+                if (column < 0 || column >= 3 || note.staffCount() != 2
+                        || note.kind() != ScoreNoteEvent.Kind.PITCHED
+                        || note.beamCount() != 0 || note.augmentationDots() != 1
+                        || note.tupletDivisor() != 1
+                        || note.unbeamedDurationBeats() != (column == 2 ? 2f : 1f))
+                    return false;
+            }
+            if (column != 2) return false;
+        }
+        return true;
+    }
+
     static ScorePageInterpretation capture(
             ScorePageInterpretation score, byte[] labels, byte[] gray, int width, int height) {
         return captureWithRejectedLedgerRows(score, labels, gray, width, height, List.of(), null);

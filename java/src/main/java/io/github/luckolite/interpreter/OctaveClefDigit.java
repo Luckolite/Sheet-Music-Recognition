@@ -60,6 +60,9 @@ final class OctaveClefDigit {
                         b = Math.max(b, queue[i] % w);
                     }
                 int gw = b - a + 1, gh = end - minY + 1;
+                // A system number can sit inside the clef box at its left edge.
+                // Require alignment with the body before interpreting its counters.
+                if (x0 + (a + b) * .5f < left + (right - left) * .25f) continue;
                 boolean legacyDimensions = gw >= gap * .3f && gw <= gap * 1.1f && gh >= gw * 1.1f;
                 if (!legacyDimensions
                         && !ClefEightWaist.proves(gray, width, height, x0 + a, y0 + minY, gw, gh))

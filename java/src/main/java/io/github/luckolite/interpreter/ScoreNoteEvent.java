@@ -811,6 +811,36 @@ public record ScoreNoteEvent(
                 openStringTouch);
     }
 
+    ScoreNoteEvent withFollowingRest(float beats) {
+        return new ScoreNoteEvent(
+                measureIndex,
+                positionInMeasure,
+                staffStep,
+                staffIndex,
+                staffCount,
+                pageY,
+                tiedFromPrevious,
+                augmentationDots,
+                beamCount,
+                writtenAccidental,
+                unbeamedDurationBeats,
+                tupletDivisor,
+                beats,
+                articulations,
+                clefBottomDiatonic,
+                crossStaffBeam,
+                leadingRestBeats,
+                compactOpening,
+                octaveShift,
+                boundaryTies,
+                tupletNormalNotes,
+                stemDirection,
+                kind,
+                visualSize,
+                harmonicSemitones,
+                openStringTouch);
+    }
+
     public ScoreNoteEvent(
             int measureIndex,
             float positionInMeasure,

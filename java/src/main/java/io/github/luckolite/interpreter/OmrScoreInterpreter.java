@@ -771,6 +771,8 @@ final class OmrScoreInterpreter {
                         commonTimeGlyphBounds(
                                         labels, gray, width, height, head, staffs, headerGlyphs)
                                 != null);
+        notationHeads.removeAll(alignedCommonTimeHeads(gray, annotationGray, width, height,
+                notationHeads, staffs, measures));
         notationHeads.removeIf(head -> isTempoUnitHead(gray, width, height, head, staffs));
         notationHeads.removeIf(
                 head ->
@@ -1205,6 +1207,7 @@ final class OmrScoreInterpreter {
         heads.removeAll(curvedExits.heads());
         List<Component> shortTies = shortTieBowlHeads(labels, gray, width, height, heads, staffs);
         shortTies.addAll(graceSlurHeads(gray, width, height, heads, staffs));
+        shortTies.addAll(openingSlurHookHeads(gray, width, height, heads, staffs));
         shortTies.addAll(stemmedSlurHeads(gray, width, height, heads, staffs));
         heads.removeAll(shortTies);
         rejectedSlurHeads.addAll(shortTies);
@@ -2227,6 +2230,12 @@ final class OmrScoreInterpreter {
                                 beamCount,
                                 beamsBeyondTremolo(gray, beamLabels, width, height, head, staff));
             if (flaggedTremolos.containsKey(head)) beamCount = 1;
+            if (!unpitched
+                    && beamCount == 1
+                    && tremolo[0] == 0
+                    && !flaggedTremolos.containsKey(head)
+                    && slurOwnsSingleBeam(beamLabels, gray, width, height, head, localGap))
+                beamCount = 0;
             if (sharedFarStep != 0) beamCount = 2;
             // Keep the measured single rail at the owned start when removing masks changes the
             // semantic beam count.
@@ -2678,6 +2687,7 @@ final class OmrScoreInterpreter {
                                 || rawCompactDoubleSharp(
                                         labels,
                                         gray,
+                                        annotationGray,
                                         width,
                                         height,
                                         crossCandidates,
@@ -2798,6 +2808,10 @@ final class OmrScoreInterpreter {
                                                 labels, gray, annotationGray, width, height,
                                                 localAccidentals, head, accidentalGap)
                                         : -1))
+                    writtenAccidental = ScoreNoteEvent.ACCIDENTAL_NATURAL;
+                if (writtenAccidental == ScoreNoteEvent.ACCIDENTAL_FROM_KEY
+                        && naturalBesidePriorNote(labels, gray, annotationGray, width, height,
+                                localAccidentals, head, heads, accidentalGap))
                     writtenAccidental = ScoreNoteEvent.ACCIDENTAL_NATURAL;
                 if (writtenAccidental == ScoreNoteEvent.ACCIDENTAL_FROM_KEY
                         && naturalFromUpperSpine(
@@ -3096,6 +3110,15 @@ final class OmrScoreInterpreter {
                         height,
                         clefKeyMembers,
                         headerAccidentals);
+        if (staffs.stream().anyMatch(staff -> staff.ledgerStepOffset != 0))
+            for (int i = 0; i < detected.size(); i++) {
+                var note = detected.get(i);
+                if (note.event.kind() != ScoreNoteEvent.Kind.PITCHED) continue;
+                var staff = staffForHead(labels, gray, width, height, staffs, note.head);
+                if (staff == null || staff.ledgerStepOffset == 0) continue;
+                int step = Math.max(-32, Math.min(32, note.event.staffStep() + staff.ledgerStepOffset));
+                detected.set(i, new DetectedNote(note.event.withStaffStep(step), note.head, note.staffGap));
+            }
         detected.sort(
                 Comparator.comparingInt((DetectedNote note) -> note.event.measureIndex())
                         .thenComparingDouble(note -> note.event.positionInMeasure())
@@ -6338,6 +6361,75 @@ final class OmrScoreInterpreter {
         }
     }
 
+    private record OpeningCommonTime(Staff staff, int left, int right) {}
+
+    /** A shared printed C at the first measure belongs to its staffs, including split head paint. */
+    private static List<Component> alignedCommonTimeHeads(
+            byte[] gray, byte[] source, int width, int height, List<Component> heads,
+            List<Staff> staffs, List<MeasureRegion> measures) {
+        if (gray == null || staffs.size() < 2 || measures.isEmpty()) return List.of();
+        var alignedByOpening = new java.util.LinkedHashMap<MeasureRegion, List<OpeningCommonTime>>();
+        for (var staff : staffs) {
+            if (staff.count < 2) continue;
+            float center = (staff.top + staff.bottom) * .5f / height;
+            var opening = measures.stream()
+                    .filter(measure -> center >= measure.top() && center <= measure.bottom())
+                    .min(Comparator.comparingDouble(MeasureRegion::left)).orElse(null);
+            if (opening == null) continue;
+            int reference = Math.round(opening.left() * width);
+            var mark = openingCommonTime(gray, source, width, height, reference, staff);
+            if (mark != null)
+                alignedByOpening.computeIfAbsent(opening, ignored -> new ArrayList<>()).add(mark);
+        }
+        var rejected = new java.util.HashSet<Component>();
+        for (var marks : alignedByOpening.values()) {
+            for (var mark : marks) {
+                float gap = mark.staff.gap;
+                if (marks.stream().noneMatch(other -> other.staff != mark.staff
+                        && other.staff.count == mark.staff.count
+                        && Math.abs(other.left - mark.left) <= gap * .45f
+                        && Math.abs(other.right - mark.right) <= gap * .45f)) continue;
+                float middle = (mark.staff.top + mark.staff.bottom) * .5f;
+                for (var head : heads)
+                    if (head.centerX >= mark.left && head.centerX <= mark.right
+                            && head.minX >= mark.left - gap * .35f && head.maxX <= mark.right + gap * .35f
+                            && Math.abs(head.centerY - middle) <= gap * 1.3f) rejected.add(head);
+            }
+        }
+        return List.copyOf(rejected);
+    }
+
+    private static OpeningCommonTime openingCommonTime(byte[] gray, byte[] source, int width,
+            int height, int reference, Staff staff) {
+        float gap = staff.gap, middle = staff.top + 2 * gap;
+        if (gap < 7 || !Float.isFinite(gap)) return null;
+        int left = Math.max(0, Math.round(reference - gap * .48f));
+        int right = Math.min(width - 1, Math.round(reference + gap * 2.4f));
+        int first = right, last = left;
+        for (int y = Math.max(0, Math.round(middle - gap * 1.65f));
+                y <= Math.min(height - 1, Math.round(middle + gap * 1.65f)); y++) {
+            if (!offHeaderStaffLine(y, staff.top, gap)) continue;
+            for (int x = left; x <= right; x++) {
+                if ((gray[y * width + x] & 255) >= 155) continue;
+                first = Math.min(first, x);
+                last = Math.max(last, x);
+            }
+        }
+        int span = last - first + 1;
+        if (first <= left || last >= right || span < gap * 1.12f || span > gap * 2.25f) return null;
+        int trim = Math.max(1, Math.round(gap * .19f));
+        for (int dy = -trim; dy <= trim; dy++)
+            for (int a = first; a <= first + trim; a++)
+                for (int b = last; b >= last - trim; b--) {
+                    int top = Math.round(staff.top) + dy;
+                    if (CommonTimeMeter.read(gray, width, height, a, b, top, gap, 0) == 4
+                            && (source == null || source == gray
+                                    || CommonTimeMeter.read(source, width, height, a, b, top, gap, 0) == 4))
+                        return new OpeningCommonTime(staff, first, last);
+                }
+        return null;
+    }
+
     /** The tall open-right C can contribute tiny false heads at its curved terminals. */
     private static int[] commonTimeGlyphBounds(
             byte[] labels,
@@ -8086,6 +8178,52 @@ final class OmrScoreInterpreter {
                 && rawBassClef(body, gray, width, height, staff);
     }
 
+    private static boolean inlineBassClefOwnsFlat(
+            byte[] gray, int width, int height, Component glyph, float boundary, float limit, Staff staff) {
+        if (gray == null) return false;
+        float gap = staff.pitchGap, top = staff.pitchBottom - 4 * gap;
+        int x = Math.round(glyph.centerX);
+        int l = Math.max(0, Math.round(boundary + gap * .48f));
+        int r = Math.min(width - 1, Math.round(limit));
+        int t = Math.max(0, Math.round(top - gap * .25f));
+        int b = Math.min(height - 1, Math.round(top + gap * 3.65f));
+        if (x <= l || x >= r) return false;
+        int[] columns = new int[r - l + 1];
+        for (int row = t; row <= b; row++) {
+            if (!offHeaderStaffLine(row, top, gap)) continue;
+            for (int col = l; col <= r; col++)
+                if ((gray[row * width + col] & 255) < 165) columns[col - l]++;
+        }
+        int first = x, last = x;
+        if (columns[x - l] == 0) return false;
+        while (first > l && columns[first - l - 1] > 0) first--;
+        while (last < r && columns[last - l + 1] > 0) last++;
+        if (first == l || last == r || last - first < gap || last - first > gap * 2.8f)
+            return false;
+        int minY = height, maxY = -1, area = 0;
+        for (int row = t; row <= b; row++) {
+            if (!offHeaderStaffLine(row, top, gap)) continue;
+            for (int col = first; col <= last; col++) {
+                if ((gray[row * width + col] & 255) >= 165) continue;
+                minY = Math.min(minY, row);
+                maxY = Math.max(maxY, row);
+                area++;
+            }
+        }
+        if (PrintedFlatGlyph.matches(gray, width, height, first, minY, last, maxY, gap))
+            return false;
+        // An actual flat keeps a straight left shaft, even beside unrelated round dots.
+        for (int col = first; col <= first + (last - first) / 3; col++) {
+            int ink = 0;
+            for (int row = minY; row <= maxY; row++)
+                if ((gray[row * width + col] & 255) < 165) ink++;
+            if (ink >= (maxY - minY + 1) * .78f) return false;
+        }
+        var body = new Component(area, first, last, minY, maxY,
+                (first + last) * .5f, (minY + maxY) * .5f);
+        return rawBassClef(body, gray, width, height, staff);
+    }
+
     /**
      * A small bass-clef tail and one dot may be painted as generic symbols. Confirm its two round
      * dots and descending body in the printed pixels.
@@ -8744,6 +8882,11 @@ final class OmrScoreInterpreter {
                                                     : ScoreNoteEvent.ACCIDENTAL_FROM_KEY;
                     // Recover a substantial fragment in a verified header from the printed
                     // sharp. Tiny semantic specks can also occur on nearby meter digits.
+                    if (!firstInRow && glyph.centerX - boundary <= staff.gap * 3.1f
+                            && (accidental == ScoreNoteEvent.ACCIDENTAL_FLAT
+                                    || accidental == ScoreNoteEvent.ACCIDENTAL_FROM_KEY)
+                            && inlineBassClefOwnsFlat(gray, width, height, glyph, boundary, right, staff))
+                        continue;
                     float signatureX = glyph.centerX;
                     boolean printedFlat =
                             !corroboratedSharps.contains(candidate)
@@ -8950,6 +9093,13 @@ final class OmrScoreInterpreter {
                                     signatureHeader);
                     // countFlatSpines verifies the alternating fourth/fifth heights;
                     // parallel spines of one sharp cannot establish that ordered run.
+                    if (signatureHeader && spines > flats) {
+                        float stop = numericMeterAfterFlats(gray, annotationRaw, width, height,
+                                run.get(run.size() - 1).x, right, staff);
+                        if (Float.isFinite(stop))
+                            spines = countHeaderFlatSpines(
+                                    labels, gray, width, height, left, stop, staff, false, true);
+                    }
                     flats = Math.max(flats, spines);
                     float headerPrefixLimit = left + staff.gap * 2.0f;
                     if (!signatureHeader && firstInRow && clef != null
@@ -11043,6 +11193,31 @@ final class OmrScoreInterpreter {
             owner = clef;
         }
         return owner;
+    }
+
+    /** A proved numeric meter terminates the raw flat-spine recovery window. */
+    private static float numericMeterAfterFlats(
+            byte[] gray, byte[] source, int width, int height, float lastFlat, float right, Staff staff) {
+        if (gray == null) return Float.NaN;
+        float gap = staff.gap;
+        int first = Math.round(staff.top), left = Math.round(lastFlat + gap * .8f);
+        int top = Math.round(staff.top - gap * .22f);
+        int bottom = Math.round(staff.bottom + gap * .32f);
+        for (float span : new float[] {2.4f, 3.2f}) {
+            int end = Math.round(Math.min(right, left + gap * span));
+            if (end - left < gap * 1.25f) continue;
+            var crop = new MeterChangeDetector.Crop(left, top, end, bottom, first, gap);
+            var reading = MeterFontMatcher.readCrop(gray, width, height, crop);
+            if (reading.text().isBlank() || Math.min(reading.topScore(), reading.bottomScore()) < .84f)
+                continue;
+            if (source != null && source != gray) {
+                var original = MeterFontMatcher.readCrop(source, width, height, crop);
+                if (!reading.text().equals(original.text())
+                        || Math.min(original.topScore(), original.bottomScore()) < .84f) continue;
+            }
+            return left - 1;
+        }
+        return Float.NaN;
     }
 
     private static int countHeaderFlatSpines(
@@ -13280,6 +13455,14 @@ final class OmrScoreInterpreter {
                     && (pitch[2] >= 3
                             || (staffs.size() >= 3
                                     && Math.abs(pitch[1] - pageGap) <= pageGap * .08f))) {
+                if (LedgerStaffAlias.retainsBodyPhase(gray, width, height,
+                        staff.bottom, staff.gap, pitch[0], pitch[1], pitch[3])) {
+                    staff.pitchBottom = staff.bottom;
+                    staff.pitchGap = staff.gap;
+                    staff.pitchSlope = 0;
+                    staff.printedPhase = true;
+                    continue;
+                }
                 // One unobscured strip may be at the sloping page edge. When other
                 // staffs corroborate its spacing, keep the central vertical anchor.
                 if (pitch[2] >= 3 || Math.abs(pitch[0] - staff.pitchBottom) > pitch[1] * .5f)
@@ -13541,6 +13724,29 @@ final class OmrScoreInterpreter {
         // Regional recovery can establish the real staff after the earlier alias cleanup.
         removeCompressedOverlappingStaffAliases(staffs);
         staffs.sort(Comparator.comparingDouble(staff -> staff.top));
+        for (int i = staffs.size() - 2; i >= 0; i--) {
+            Staff upper = staffs.get(i), lower = staffs.get(i + 1);
+            float separation = lower.top - upper.bottom;
+            PrintedStaffAdmission.Rules upperRules = (line, x) -> staffRuleAt(upper, line, x, width);
+            PrintedStaffAdmission.Rules lowerRules = (line, x) -> staffRuleAt(lower, line, x, width);
+            if (separation >= -lower.gap * 2.6f && separation <= -lower.gap * 1.2f) {
+                if (LedgerStaffAlias.weakerPhase(gray, width, height,
+                        upper.pitchGap, upperRules, lower.pitchGap, lowerRules, -2, -1, -1))
+                    staffs.remove(i);
+                continue;
+            }
+            if (separation < lower.gap * .75f || separation > lower.gap * 1.25f) continue;
+            float lowerCenter = (lower.top + lower.bottom) * .5f / height;
+            int localLeft = width, localRight = -1;
+            for (var bar : measures) {
+                if (bar.top() > lowerCenter || bar.bottom() < lowerCenter) continue;
+                localLeft = Math.min(localLeft, Math.max(0, Math.round(bar.left() * width)));
+                localRight = Math.max(localRight, Math.min(width, Math.round(bar.right() * width)));
+            }
+            if (LedgerStaffAlias.weakerPhase(gray, width, height,
+                    lower.pitchGap, lowerRules, upper.pitchGap, upperRules, 5, localLeft, localRight))
+                lower.ledgerStepOffset = -10;
+        }
         assignSystemPositions(staffs, measures, height);
         return staffs;
     }
@@ -13568,6 +13774,15 @@ final class OmrScoreInterpreter {
             }
         }
         if (changed) assignSystemPositions(staffs, measures, height);
+    }
+
+    private static float staffRuleAt(Staff staff, int line, int x, int width) {
+        if (staff.pitchTrack != null) {
+            float[] at = staff.pitchTrack.at(x);
+            return at[0] - (4 - line) * at[1];
+        }
+        return staff.pitchBottom - (4 - line) * staff.pitchGap
+                + staff.pitchSlope * (x - width * .5f);
     }
 
     /** A compressed semantic alias can overlap a complete page-scale staff and steal its notes. */
@@ -17783,6 +17998,86 @@ final class OmrScoreInterpreter {
             }
         }
         return result;
+    }
+
+    /** A small detached hook below a regular stemmed attack has no notehead of its own. */
+    private static List<Component> openingSlurHookHeads(
+            byte[] gray, int width, int height, List<Component> heads, List<Staff> staffs) {
+        var rejected = new ArrayList<Component>();
+        if (gray == null) return rejected;
+        for (var head : heads) {
+            var staff = nearestHeadStaff(staffs, head.centerY);
+            if (staff == null) continue;
+            float gap = staff.gap;
+            if (head.centerY < staff.bottom + gap * .65f
+                    || head.maxX - head.minX + 1 > gap * .65f
+                    || head.maxY - head.minY + 1 > gap * .65f
+                    || head.area > gap * gap * .23f) continue;
+            for (var owner : heads) {
+                float dx = owner.centerX - head.centerX, dy = head.centerY - owner.centerY;
+                if (dx < gap * .35f || dx > gap * 1.25f
+                        || dy < gap * 2.2f || dy > gap * 3.5f
+                        || owner.area < gap * gap * .8f
+                        || nearestHeadStaff(staffs, owner.centerY) != staff) continue;
+                if (attachedRawStem(gray, width, height, owner, gap * .65f) == null
+                        || attachedRawStem(gray, width, height, head, gap * .65f) != null) continue;
+                int tone = Math.min(120, Math.round(slurInkThreshold(gray, width, height, head, gap) * .82f));
+                if (thinOpeningHook(gray, width, height, head, gap, tone)) {
+                    rejected.add(head);
+                    break;
+                }
+            }
+        }
+        return rejected;
+    }
+
+    private static boolean thinOpeningHook(
+            byte[] gray, int width, int height, Component head, float gap, int tone) {
+        int left = Math.max(0, Math.round(head.centerX - gap * 2.2f));
+        int right = Math.min(width - 1, Math.round(head.centerX + gap * 1.5f));
+        int top = Math.max(0, Math.round(head.centerY - gap * 1.4f));
+        int bottom = Math.min(height - 1, Math.round(head.centerY + gap));
+        int w = right - left + 1, h = bottom - top + 1;
+        byte[] ink = new byte[w * h];
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++)
+                if ((gray[(top + y) * width + left + x] & 255) <= tone) ink[y * w + x] = 1;
+        for (var c : findComponents(ink, w, h, (byte) 1)) {
+            int span = c.maxX - c.minX + 1;
+            if (span < gap * 1.6f || span > gap * 2.3f
+                    || c.maxY - c.minY + 1 < gap * .65f || c.maxY - c.minY + 1 > gap * 1.35f
+                    || c.minX == 0 || c.maxX == w - 1 || c.minY == 0 || c.maxY == h - 1
+                    || head.centerX - left < c.minX + span * .45f
+                    || head.centerX - left >= c.maxX || head.centerY - top < c.maxY - gap * .55f)
+                continue;
+            var sums = new int[3];
+            var counts = new int[3];
+            int overlap = 0;
+            boolean thin = true;
+            for (int x = c.minX; x <= c.maxX; x++) {
+                int lo = h, hi = -1, count = 0;
+                int band = (x - c.minX) * 3 / span;
+                for (int y = c.minY; y <= c.maxY; y++) {
+                    if (ink[y * w + x] == 0) continue;
+                    lo = Math.min(lo, y);
+                    hi = y;
+                    count++;
+                    sums[band] += y;
+                    if (x + left >= head.minX && x + left <= head.maxX
+                            && y + top >= head.minY && y + top <= head.maxY) overlap++;
+                }
+                if (count == 0 || count > gap * .48f || hi - lo + 1 != count) {
+                    thin = false;
+                    break;
+                }
+                counts[band] += count;
+            }
+            if (!thin || overlap < head.area * .5f) continue;
+            float a = (float) sums[0] / counts[0], b = (float) sums[1] / counts[1],
+                    cEnd = (float) sums[2] / counts[2];
+            if (Math.abs(a - b) <= gap * .16f && b - cEnd >= gap * .28f) return true;
+        }
+        return false;
     }
 
     private static boolean ownedGraceHookAcrossContrasts(
@@ -23446,6 +23741,39 @@ final class OmrScoreInterpreter {
                 : edge;
     }
 
+    private static boolean naturalBesidePriorNote(byte[] labels, byte[] gray, byte[] source,
+            int width, int height, List<AccidentalCandidate> candidates, Component head,
+            List<Component> heads, float gap) {
+        for (var candidate : candidates) {
+            var seed = candidate.component;
+            if (candidate.label != OmrMeasurePostProcessor.CLEF_OR_KEY
+                    || seed.maxX - seed.minX + 1 > gap * .95f
+                    || seed.maxY - seed.minY + 1 < gap * 1.45f
+                    || head.minX - seed.maxX < gap * .16f || head.minX - seed.maxX > gap * .8f
+                    || Math.abs(seed.centerY - head.centerY) > gap * .65f) continue;
+            for (var prior : heads) {
+                if (prior == head || head.centerX - prior.centerX < gap
+                        || head.centerX - prior.centerX > gap * 2.8f
+                        || prior.maxX < seed.minX - gap * .6f
+                        || Math.abs(prior.centerY - head.centerY) > gap * 1.4f) continue;
+                boolean headOverlap = prior.maxX >= seed.minX
+                        && prior.minY <= head.centerY - gap * .45f
+                        && prior.maxY >= head.centerY - gap * .8f;
+                if (!headOverlap) {
+                    int[] stem = attachedRawStem(gray, width, height, prior, gap);
+                    if (stem == null || stem[2] != -1 || Math.abs(stem[0] - seed.minX) > gap * .65f
+                            || !hasCurvedFlag(labels, gray, width, height, prior, gap,
+                                    stem[0], stem[1], true)) continue;
+                }
+                if (BeamOccludedNatural.matchesBesidePriorNote(gray, width, height,
+                            seed.minX, seed.maxX, head.centerY, gap)
+                        && BeamOccludedNatural.matchesBesidePriorNote(source, width, height,
+                            seed.minX, seed.maxX, head.centerY, gap)) return true;
+            }
+        }
+        return false;
+    }
+
     /** A cancellation natural printed before a new flat must not override that flat. */
     private static boolean rawNaturalFromCrossbars(
             byte[] gray,
@@ -24454,6 +24782,7 @@ final class OmrScoreInterpreter {
     private static boolean rawCompactDoubleSharp(
             byte[] labels,
             byte[] gray,
+            byte[] annotationGray,
             int width,
             int height,
             List<AccidentalCandidate> candidates,
@@ -24462,6 +24791,26 @@ final class OmrScoreInterpreter {
             List<Component> heads) {
         for (AccidentalCandidate candidate : candidates) {
             Component c = candidate.component;
+            float distance = head.minX - c.maxX;
+            float pitch = (c.minY + c.maxY) * .5f;
+            if (distance < gap * .1f && distance >= -gap * .15f
+                    && candidate.label == 0
+                    && Math.abs(pitch - head.centerY) <= gap * .35f
+                    && head.centerX - c.centerX >= gap * .85f
+                    && heads.stream().noneMatch(other -> other != head
+                            && other.centerX > c.centerX
+                            && other.centerX <= head.centerX + gap * .5f
+                            && Math.abs(pitch - other.centerY) + gap * .12f
+                                    < Math.abs(pitch - head.centerY))) {
+                // A semantic union can include a column from the adjacent head or shaft.
+                // Recover the complete printed cross from the accidental side of the seam.
+                int edge = Math.min(c.maxX, head.minX - 1);
+                if (DoubleSharpGlyph.matchesRaw(
+                            gray, width, height, c.minX, c.minY, edge, c.maxY, gap)
+                        && DoubleSharpGlyph.matchesRaw(
+                            annotationGray, width, height, c.minX, c.minY, edge, c.maxY, gap))
+                    return true;
+            }
             if (head.minX - c.maxX < gap * .1f
                     || (head.minX - c.maxX > gap * 1.35f
                             && !staggeredChordCrossOwner(
@@ -25232,7 +25581,17 @@ final class OmrScoreInterpreter {
                                 || accidental != ScoreNoteEvent.ACCIDENTAL_NATURAL
                                         && accidental != ScoreNoteEvent.ACCIDENTAL_SHARP
                                         && accidental != ScoreNoteEvent.ACCIDENTAL_FLAT)) continue;
-                if (horizontal > gap * 1.35f) {
+                if (horizontal > gap * 1.35f
+                        && !(accidental == ScoreNoteEvent.ACCIDENTAL_SHARP
+                                && candidate.label == OmrMeasurePostProcessor.CLEF_OR_KEY
+                                && horizontal <= gap * 1.8f
+                                && Math.abs(pitchCenter - head.centerY) <= gap * .20f
+                                && heads.stream().anyMatch(other -> other != head
+                                        && head.centerX - other.centerX >= gap * .70f
+                                        && Math.abs(other.centerY - head.centerY) >= gap * .32f
+                                        && Math.abs(other.centerY - head.centerY) <= gap * 1.15f
+                                        && sharedAccidentalChordShaft(
+                                                labels, width, height, head, other, gap)))) {
                     int chordHeads = 0;
                     boolean displacedPartner = false, headInsideGlyph = false;
                     for (Component other : heads) {
@@ -38716,6 +39075,64 @@ final class OmrScoreInterpreter {
         return Math.min(3, beams);
     }
 
+    private static boolean slurOwnsSingleBeam(
+            byte[] labels, byte[] gray, int width, int height, Component head, float gap) {
+        var shaft = attachedRawStem(gray, width, height, head, gap);
+        if (shaft == null) return false;
+        float length = Math.abs(shaft[1] - head.centerY);
+        boolean up = shaft[2] < 0;
+        return length >= gap * 2.7f
+                && length <= gap * 4.6f
+                && slurApexAtStem(gray, width, height, shaft[0], shaft[1], up, gap)
+                && !hasCurvedFlag(labels, gray, width, height, head, gap, shaft[0], shaft[1], up);
+    }
+
+    /** A slur touching a shaft tip has two thin arms bending toward the head. */
+    static boolean slurApexAtStem(
+            byte[] gray, int width, int height, int stemX, int stemEnd, boolean up, float gap) {
+        int armStart = Math.max(2, Math.round(gap * .42f));
+        int armMiddle = Math.round(gap * 1.6f);
+        int armEnd = Math.round(gap * 3.2f);
+        int towardHead = up ? 1 : -1;
+        int thickness = Math.max(2, Math.round(gap * .46f));
+        int leftStart = 0;
+        for (int side : new int[] {-1, 1}) {
+            int start = 0, middle = 0, previous = 0;
+            for (int distance = armStart; distance <= armEnd; distance++) {
+                int x = stemX + side * distance;
+                if (x < 0 || x >= width) return false;
+                boolean first = distance == armStart;
+                int low = first ? -Math.round(gap * .65f) : previous - Math.round(gap * .15f);
+                int high = first ? Math.round(gap * .5f) : previous + Math.round(gap * .32f);
+                int found = Integer.MAX_VALUE;
+                for (int offset = low; offset <= high; offset++) {
+                    int row = stemEnd + towardHead * offset;
+                    if (row <= thickness || row >= height - thickness - 1
+                            || (gray[row * width + x] & 255) >= 180) continue;
+                    int a = offset, b = offset;
+                    while (offset - a <= thickness
+                            && (gray[(stemEnd + towardHead * (a - 1)) * width + x] & 255) < 180) a--;
+                    while (b - offset <= thickness
+                            && (gray[(stemEnd + towardHead * (b + 1)) * width + x] & 255) < 180) b++;
+                    if (b - a + 1 <= thickness) {
+                        found = (a + b) / 2;
+                        break;
+                    }
+                }
+                if (found == Integer.MAX_VALUE) return false;
+                if (first) start = found;
+                if (distance == armMiddle) middle = found;
+                previous = found;
+            }
+            if (previous - start < gap * .58f
+                    || Math.abs(middle - start) > gap * .42f
+                    || previous - middle < middle - start + gap * .24f) return false;
+            if (side < 0) leftStart = start;
+            else if (Math.abs(leftStart - start) > gap * .3f) return false;
+        }
+        return true;
+    }
+
     private static boolean recenteredFlagRoots(
             byte[] gray,
             byte[] labels,
@@ -42541,6 +42958,7 @@ final class OmrScoreInterpreter {
             List<DetectedNote> source,
             List<Staff> staffs) {
         List<DetectedNote> result = new ArrayList<>(source);
+        restoreDisplacedOpeningTiePitches(labels, gray, width, height, staffs, result);
         List<DetectedNote> printedGeometry = null;
         int[] detachedMarks = null;
         int[] systemPredecessors = new int[result.size()];
@@ -42691,6 +43109,55 @@ final class OmrScoreInterpreter {
         }
         discardSharedSystemTieInk(labels, gray, width, height, source, result, systemPredecessors);
         return result;
+    }
+
+    /** Read a displaced opening half note from neighboring pitch and both written tie spans. */
+    private static void restoreDisplacedOpeningTiePitches(
+            byte[] labels, byte[] gray, int width, int height, List<Staff> staffs,
+            List<DetectedNote> notes) {
+        if (gray == null || staffs.isEmpty()) return;
+        for (int i = 1; i + 1 < notes.size(); i++) {
+            var before = notes.get(i - 1);
+            var opening = notes.get(i);
+            var after = notes.get(i + 1);
+            var a = before.event;
+            var m = opening.event;
+            var b = after.event;
+            if (a.kind() != ScoreNoteEvent.Kind.PITCHED || m.kind() != ScoreNoteEvent.Kind.PITCHED
+                    || b.kind() != ScoreNoteEvent.Kind.PITCHED
+                    || m.measureIndex() != a.measureIndex() + 1 || b.measureIndex() != m.measureIndex()
+                    || a.staffCount() != 1 || m.staffCount() != 1 || b.staffCount() != 1
+                    || a.clefBottomDiatonic() != m.clefBottomDiatonic()
+                    || b.clefBottomDiatonic() != m.clefBottomDiatonic()
+                    || a.diatonicPitchIdentity() != b.diatonicPitchIdentity()
+                    || m.staffStep() + 1 != b.staffStep()
+                    || m.beamCount() != 0 || m.unbeamedDurationBeats() != 2 || m.augmentationDots() != 0
+                    || a.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_FROM_KEY
+                    || m.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_FROM_KEY
+                    || b.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_FROM_KEY
+                    || m.leadingRestBeats() != 0 || a.followingRestBeats() != 0
+                    || !ScoreNoteTiming.hasIndependentSustain(a)
+                    || samePrintedOnset(opening, after)) continue;
+            var shifted = new DetectedNote(m.withStaffStep(b.staffStep()), opening.head, opening.staffGap);
+            if (!systemBreakTieCandidate(before, shifted, width)) continue;
+            var frame = staffForHead(labels, gray, width, height, staffs, opening.head);
+            if (frame == null || frame != staffForHead(labels, gray, width, height, staffs, after.head))
+                continue;
+            var rules = PrintedDirectionStaff.printedRules(
+                    gray, width, height, opening.head.centerX, frame.bottom, frame.gap);
+            var nextRules = PrintedDirectionStaff.printedRules(
+                    gray, width, height, after.head.centerX, frame.bottom, frame.gap);
+            if (rules == null || nextRules == null) continue;
+            float offset = (opening.head.centerY - rules[0]) / rules[1] + b.staffStep() * .5f;
+            float nextOffset = (after.head.centerY - nextRules[0]) / nextRules[1] + b.staffStep() * .5f;
+            float difference = offset - nextOffset;
+            if (offset < .2f || offset > .43f || Math.abs(nextOffset) > .18f
+                    || difference < .18f || difference > .36f
+                    || !enclosedHollowInk(gray, width, opening.head, true)
+                    || !hasTieArc(labels, gray, width, height, before, shifted)
+                    || !hasTieArc(labels, gray, width, height, shifted, after, null, true)) continue;
+            notes.set(i, shifted);
+        }
     }
 
     /** Two chord notes may not claim the same returning ink on both sides of a system break. */
@@ -44690,6 +45157,7 @@ final class OmrScoreInterpreter {
         StaffPitchTrack pitchTrack;
         StaffPitchTrack sharedRuleTrack;
         boolean sharedRuleTrackChecked;
+        int ledgerStepOffset;
         int index, count = 1;
 
         Staff(float top, float bottom, float gap) {

@@ -424,6 +424,13 @@ public record ScorePageInterpretation(
                 slurSource, openingPickup, tremoloSource, multiRestGroups, beamSource);
     }
 
+    ScorePageInterpretation withTempoChanges(List<ScoreTempoChange> changes) {
+        return new ScorePageInterpretation(
+                measures, notes, firstMeasureNumber, keyChanges, changes, meterChanges, rests,
+                techniqueChanges, dynamicChanges, playbackDirections, expressiveEvents, slurSource,
+                openingPickup, tremoloSource, multiRestGroups, beamSource, clockContextSource);
+    }
+
     public ScorePageInterpretation withExpressiveEvents(List<ScoreExpressiveEvent> events) {
         return new ScorePageInterpretation(
                 measures,

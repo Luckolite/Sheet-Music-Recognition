@@ -98,7 +98,7 @@ final class PrintedTempoSpanPages {
                                                                             Kind.RALLENTANDO,
                                                                             Kind.RITENUTO,
                                                                             Kind.A_TEMPO,
-                                                                            Kind.TEMPO_PRIMO,
+                                                                            Kind.TEMPO_PRIMO, Kind.TEMPO_MARKING,
                                                                             Kind.METRIC_MODULATION)
                                                                     .contains(e.kind())
                                                             && ScoreExpressionDetector.measureOf(e)

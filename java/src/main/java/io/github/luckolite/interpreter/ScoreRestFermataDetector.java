@@ -152,6 +152,12 @@ public final class ScoreRestFermataDetector {
         return ref(event).isPresent();
     }
 
+    static Optional<String> remapTargetMeasures(
+            ScoreExpressiveEvent event, java.util.function.IntUnaryOperator mapper) {
+        return ref(event).map(r -> target(
+                new Ref(mapper.applyAsInt(r.measure), r.staff, r.count, r.position)));
+    }
+
     static ScoreExpressiveEvent offsetEvidence(ScoreExpressiveEvent e, int offset, int page) {
 
         var r = ref(e).orElseThrow();

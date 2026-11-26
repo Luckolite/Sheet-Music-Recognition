@@ -641,9 +641,46 @@ public final class ScoreNoteTiming {
                 : session.put(notes, key, uncachedVoiceBeat(target, notes, safeBeats));
     }
 
+    /** A separately stemmed lower voice can fill the bar under a printed tied tremolo. */
+    private static double onsetUnderHeldTremolo(
+            ScoreNoteEvent target, List<ScoreNoteEvent> voice, double beats) {
+        if (voice.size() < 3 || !Double.isFinite(beats) || voice.get(0).positionInMeasure() > .22f)
+            return Double.NaN;
+        ScoreNoteEvent held = null;
+        for (var note : voice) {
+            if (note.positionInMeasure() > voice.get(0).positionInMeasure() + .045f) break;
+            if (note.tiedFromPrevious() && note.stemDirection() == 0
+                    && NoteOrnament.tremoloBeams(note.articulations()) > 0
+                    && Math.abs(advanceDurationBeats(note) - beats) < .001) {
+                if (held != null) return Double.NaN;
+                held = note;
+            }
+        }
+        if (held == null || held.leadingRestBeats() != 0 || held.followingRestBeats() != 0)
+            return Double.NaN;
+        double total = 0, onset = target.equals(held) ? 0 : Double.NaN;
+        float previous = -1;
+        for (var note : voice) {
+            if (note == held) continue;
+            if (note.stemDirection() >= 0 || note.staffStep() >= held.staffStep()
+                    || note.crossStaffBeam() || grace(note) || note.tiedFromPrevious()
+                    || note.leadingRestBeats() != 0 || note.followingRestBeats() != 0
+                    || note.positionInMeasure() - previous <= SAME_ONSET_POSITION)
+                return Double.NaN;
+            double duration = advanceDurationBeats(note);
+            if (!Double.isFinite(duration) || duration <= 0) return Double.NaN;
+            if (note.equals(target)) onset = total;
+            total += duration;
+            previous = note.positionInMeasure();
+        }
+        return Math.abs(total - beats) < .001 ? onset : Double.NaN;
+    }
+
     private static double uncachedVoiceBeat(
             ScoreNoteEvent target, List<ScoreNoteEvent> notes, double safeBeats) {
         List<ScoreNoteEvent> voice = measureVoice(target, notes);
+        double movingOnset = onsetUnderHeldTremolo(target, voice, safeBeats);
+        if (Double.isFinite(movingOnset)) return movingOnset;
         List<RhythmGroup> groups = rhythmGroups(voice);
         if (groups.isEmpty()) return beatInMeasure(target, (float) safeBeats);
         double[] parallelClock = parallelWrittenClock(groups, safeBeats);

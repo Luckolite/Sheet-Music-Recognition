@@ -59,4 +59,28 @@ public class DisplacedSecondAccidentalTest extends TouchingChordAccidentalTest {
         assertEquals(-1, near(result, 3));
         assertEquals(0, near(result, 4));
     }
+
+    @Test
+    public void aSingleSharpReachesTheRightHandNoteOnTheSameShaft() {
+        broadHead(220, 120);
+        broadHead(242, 112);
+        rect(231, 70, 232, 122, 1);
+        sharp(198, 112);
+        var result = notes();
+        assertEquals(2, result.size());
+        assertEquals(ScoreNoteEvent.ACCIDENTAL_FROM_KEY, near(result, 3));
+        assertEquals(ScoreNoteEvent.ACCIDENTAL_SHARP, near(result, 4));
+    }
+
+    @Test
+    public void aNearerSeparateShaftCannotExtendSharpOwnership() {
+        broadHead(220, 120);
+        broadHead(242, 112);
+        rect(209, 117, 210, 159, 1);
+        rect(253, 71, 254, 112, 1);
+        sharp(198, 112);
+        var result = notes();
+        assertEquals(2, result.size());
+        assertEquals(ScoreNoteEvent.ACCIDENTAL_FROM_KEY, near(result, 4));
+    }
 }

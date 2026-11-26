@@ -9,6 +9,35 @@ import org.junit.Test;
 
 public class SavedOpeningPulseTest {
     @Test
+    public void roundedPrintedNumberUsesItsOwnPulseWhenCatalogMeterDiffers() {
+        var printed = List.of(new ScoreTempoChange(0, 0, 161.5),
+                new ScoreTempoChange(8, 0, 80));
+        double bpm = ScoreTempoSelection.playbackQuarterBpm(162, 324, printed);
+        assertEquals(161.5, bpm, 0);
+        assertEquals(printed, ScoreTempoSelection.atOpeningTempo(bpm, printed));
+        assertEquals(360, ScoreTempoSelection.playbackQuarterBpm(180, 360, printed), 0);
+        assertEquals(162, ScoreTempoSelection.playbackQuarterBpm(162, 162, printed), 0);
+        assertEquals(324, ScoreTempoSelection.playbackQuarterBpm(162, 324,
+                List.of(printed.get(0), new ScoreTempoChange(0, 0, 110))), 0);
+    }
+
+    @Test
+    public void alternateEditionOwnsItsOpeningWhenSavedPulseMatchesPrimary() {
+        var primary = List.of(new ScoreTempoChange(0, 0, 84, 1.5));
+        var alternate = List.of(
+                new ScoreTempoChange(0, 0, 105, 1.5), new ScoreTempoChange(8, 0, 120));
+        double bpm = ScoreTempoSelection.arrangementQuarterBpm(56, 84, alternate, primary);
+        assertEquals(105, bpm, 0);
+        assertEquals(alternate, ScoreTempoSelection.atOpeningTempo(bpm, alternate));
+        assertEquals(105, ScoreTempoSelection.arrangementQuarterBpm(84, 84, alternate, primary), 0);
+        assertEquals(90, ScoreTempoSelection.arrangementQuarterBpm(60, 90, alternate, primary), 0);
+        assertEquals(84, ScoreTempoSelection.arrangementQuarterBpm(
+                56, 84, alternate, List.of(primary.get(0), new ScoreTempoChange(0, 0, 60))), 0);
+        assertEquals(84, ScoreTempoSelection.arrangementQuarterBpm(
+                56, 84, List.of(alternate.get(1)), primary), 0);
+    }
+
+    @Test
     public void unsetSavedTempoUsesThePrintedOpeningRate() {
         var opening = List.of(new ScoreTempoChange(0, 0, 130, 2),
                 new ScoreTempoChange(8, 0, 70, 2));

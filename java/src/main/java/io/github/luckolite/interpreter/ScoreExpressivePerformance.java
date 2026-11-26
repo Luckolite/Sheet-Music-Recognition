@@ -9,6 +9,8 @@ import static io.github.luckolite.interpreter.ScorePerformanceTimeline.*;
 /** Versioned preview defaults, separate from the evidence and the written score. */
 public final class ScoreExpressivePerformance {
     public static final String POLICY = "expressive-preview-v1";
+    private static final java.util.regex.Pattern NUMERIC_TEMPO_QUALIFIER =
+            java.util.regex.Pattern.compile("\\s*=\\s*[0-9]+(?:\\.[0-9]+)?\\s*");
 
     public record Policy(
             double pocoRatio,
@@ -37,6 +39,21 @@ public final class ScoreExpressivePerformance {
 
         public static Policy preview() {
             return new Policy(.9, .8, .6, 4, 1, .25, 1.6, .12, .55);
+        }
+
+        double markedTempo(String label) {
+            return switch (label) {
+                case "adagiosissimo" -> 35;
+                case "molto adagio" -> 44;
+                case "largo" -> 48;
+                case "lento" -> 54;
+                case "adagio" -> 66;
+                case "allegro non molto" -> 112;
+                case "allegro" -> 132;
+                case "presto" -> 168;
+                case "prestissimo" -> 200;
+                default -> Double.NaN;
+            };
         }
 
         double ratio(Strength strength) {
@@ -119,6 +136,7 @@ public final class ScoreExpressivePerformance {
                     Kind.ACCELERANDO,
                     Kind.A_TEMPO,
                     Kind.TEMPO_PRIMO,
+                    Kind.TEMPO_MARKING,
                     Kind.SAME_TEMPO);
     private static final Set<Kind> ATTACKS =
             EnumSet.of(Kind.SFORZANDO, Kind.SFORZATO, Kind.SFORZANDO_PIANO);
@@ -215,6 +233,7 @@ public final class ScoreExpressivePerformance {
         }
         var curves = new ArrayList<TempoSegment>();
         double at = 0, current = openingBpm, steady = openingBpm, rampEnd = 0, target = current;
+        double lastNumericBeat = Double.NaN, initialTempo = openingBpm;
         for (int index = 0; index <= controls.size(); index++) {
             double next = index == controls.size() ? extent : controls.get(index).beat();
             if (next > extent) break;
@@ -236,9 +255,27 @@ public final class ScoreExpressivePerformance {
             if (control.expression() == null) {
                 current = steady = target = control.bpm();
                 rampEnd = at;
+                lastNumericBeat = control.beat();
+                if (lastNumericBeat == 0) initialTempo = current;
                 continue;
             }
             var event = control.expression();
+            if (event.kind() == Kind.TEMPO_MARKING) {
+                double value = event.evidence().stream()
+                        .map(e -> ExpressiveDirectionText.sectionalTempoCaption(e.printedText()))
+                        .filter(c -> c != null && c.kind() == Kind.TEMPO_MARKING
+                                && c.qualifierText().equals(event.qualifierText()))
+                        .findFirst().map(c -> policy.markedTempo(c.qualifierText())).orElse(Double.NaN);
+                if (!Double.isFinite(value)) {
+                    diagnostics.add(event.eventId() + ": unverified tempo wording");
+                    continue;
+                }
+                if (Math.abs(control.beat() - lastNumericBeat) <= 1e-7) continue;
+                current = steady = target = value;
+                if (control.beat() == 0) initialTempo = value;
+                rampEnd = at;
+                continue;
+            }
             if (event.kind() == Kind.METRIC_MODULATION) {
                 double value =
                         current
@@ -256,7 +293,43 @@ public final class ScoreExpressivePerformance {
                 continue;
             }
             if (event.kind() == Kind.SAME_TEMPO) continue;
+            // A printed ritenuto equation already supplies its immediate target.
+            if (event.kind() == Kind.RITENUTO
+                    && Math.abs(control.beat() - lastNumericBeat) <= 1e-7
+                    && (NUMERIC_TEMPO_QUALIFIER.matcher(event.qualifierText()).matches()
+                            || ExpressiveDirectionText.SECTION_SLOWER.equals(event.qualifierText())
+                                    && event.evidence().stream().anyMatch(e ->
+                                            ExpressiveDirectionText.sectionalTempoCaption(e.printedText()) != null)))
+                continue;
             if (event.kind() == Kind.A_TEMPO || event.kind() == Kind.TEMPO_PRIMO) {
+                if (event.kind() == Kind.A_TEMPO
+                        && ExpressiveDirectionText.SECTION_MOSSO.equals(event.qualifierText())
+                        && event.evidence().stream().anyMatch(e -> {
+                            var caption = ExpressiveDirectionText.sectionalTempoCaption(e.printedText());
+                            return caption != null && caption.qualifierText().equals(event.qualifierText());
+                        })) {
+                    if (!(Math.abs(control.beat() - lastNumericBeat) <= 1e-7))
+                        current = target = Math.min(1600, steady / policy.pocoRatio());
+                    rampEnd = at;
+                    continue;
+                }
+
+
+                if (event.kind() == Kind.A_TEMPO
+                        && ExpressiveDirectionText.FASTER_RESTORATION.equals(event.qualifierText())
+                        && event.evidence().stream().anyMatch(e -> {
+                            var caption = ExpressiveDirectionText.restorationCaption(e.printedText());
+                            return caption != null && caption.qualifierText().equals(event.qualifierText());
+                        })) {
+                    // A separately printed numeric rate at this anchor already sets the target.
+                    if (Math.abs(control.beat() - lastNumericBeat) > 1e-7
+                            || !Double.isFinite(lastNumericBeat)) {
+                        steady = Math.min(1600, steady / policy.ordinaryRatio());
+                    }
+                    current = target = steady;
+                    rampEnd = at;
+                    continue;
+                }
                 if (event.strength() != Strength.UNSPECIFIED
                         || !event.qualifierText().replaceAll("[\\s.,;:()]+", "").isEmpty()) {
                     diagnostics.add(
@@ -264,7 +337,7 @@ public final class ScoreExpressivePerformance {
                                     + ": qualified tempo restoration requires an explicit target");
                     continue;
                 }
-                current = target = event.kind() == Kind.TEMPO_PRIMO ? openingBpm : steady;
+                current = target = event.kind() == Kind.TEMPO_PRIMO ? initialTempo : steady;
                 rampEnd = at;
                 continue;
             }
@@ -324,7 +397,7 @@ public final class ScoreExpressivePerformance {
         var active =
                 controls.stream().noneMatch(c -> c.expression() != null)
                         ? baseline
-                        : new ScorePerformanceTimeline(openingBpm, curves, List.of());
+                        : new ScorePerformanceTimeline(initialTempo, curves, List.of());
         var pauses = new TreeMap<Double, Pause>();
         var attacks = new ArrayList<Attack>();
         for (var event : resolved) {

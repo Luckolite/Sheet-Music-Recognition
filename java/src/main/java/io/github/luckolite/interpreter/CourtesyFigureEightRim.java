@@ -158,7 +158,7 @@ final class CourtesyFigureEightRim {
             Arrays.fill(seen, false);
             for (int member : a.members) seen[member] = true;
             for (int member : b.members) seen[member] = true;
-            int paper = 0, rows = 0, headPixels = 0, fringe = 0;
+            int paper = 0, rows = 0, headPixels = 0, rimHeads = 0, fringe = 0;
             boolean outside = false;
             for (int y = y0; y <= y1; y++) {
                 if (!ruleRows[y - top]) {
@@ -171,19 +171,21 @@ final class CourtesyFigureEightRim {
                 for (int x = x0; x <= x1; x++)
                     if (labels[y * width + x] == 2) {
                         headPixels++;
-                        if ((gray[y * width + x] & 255) >= 180) fringe++;
-                        outside |=
-                                !nearRimInk(gray, width, height, x, y)
-                                        && !seen[(y - top) * w + x - left];
+                        if (!seen[(y - top) * w + x - left]) {
+                            rimHeads++;
+                            if ((gray[y * width + x] & 255) >= 180) fringe++;
+                            outside |= !nearRimInk(gray, width, height, x, y);
+                        }
                     }
             }
-            // Only small mislabeled rim fragments are eligible; an independently complete
-            // head retains its veto even if it happens to overlap the numeral's rectangle.
+            // Closed paper counters can be mislabeled along with their printed rims.
+            // The existing limits still apply to every head pixel outside those counters.
             if (outside
                     || rows < gap
                     || paper < rows * .8f
                     || headPixels == 0
-                    || headPixels > gap * gap * .2f
+                    || headPixels > gap * gap * .33f
+                    || rimHeads > gap * gap * .2f
                     || fringe > Math.max(2, gap * gap * .04f)) continue;
             for (int y = y0; y <= y1; y++)
                 for (int x = x0; x <= x1; x++)

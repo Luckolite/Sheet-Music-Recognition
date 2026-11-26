@@ -2316,10 +2316,15 @@
     },
     "BeamOccludedNatural.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/BeamOccludedNatural.java",
-      "source_sha256": "2590b2e6268f1a07c8735f34a00e89f935f29b72432b2b323f5adf4b7effffde",
+      "source_sha256": "f13a291200220f700d1c5a37c7b372069ca5247d1dd04846f674ab2ff15204eb",
       "reviewed_app_commit": "650d1b3a312dcd7eb58f83945a6a3be321c9b4dd",
-      "source_normalized_sha256": "2590b2e6268f1a07c8735f34a00e89f935f29b72432b2b323f5adf4b7effffde",
-      "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/BeamOccludedNatural.java"
+      "source_normalized_sha256": "f13a291200220f700d1c5a37c7b372069ca5247d1dd04846f674ab2ff15204eb",
+      "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/BeamOccludedNatural.java",
+      "prior_note_natural_bridge_review": {
+        "reviewed_app_commit": "fe613325afe04800491fac71727ad0f9f814133c",
+        "scope": "Prior-note natural recognition proves both crossbars and the descender. The legacy beam witness continues to use its existing proof.",
+        "shared_source_sha256": "d1451f256d27ddb832b9494919188bf4fbafc9d8874ee93492a8347b98c0a927"
+      }
     },
     "BeamOccludedStaffPhase.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/BeamOccludedStaffPhase.java",
@@ -2674,6 +2679,10 @@
       "november_24_flesch_app_review": {
         "app_commit": "d0622b051dfaa40ad1ac76a2cd1ed7072186bb90",
         "scope": "Common and cut-time optical contour decisions. The standalone row-sampling optimizations remain in its implementation."
+      },
+      "repeat_cut_meter_review": {
+        "reviewed_app_commit": "90a61bf09fd18f3c4287685e2737f7aad6a66131",
+        "scope": "Ports the same independent repeat-column ownership rejection after the cut-time contour check. Existing renderer-specific source differences remain tracked."
       }
     },
     "CompactApproachStrokes.java": {
@@ -3694,24 +3703,30 @@
     },
     "ExpressiveDirectionText.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/ExpressiveDirectionText.java",
-      "source_sha256": "38194a08bc07c8dde85aeb672cff4bda9ca885b22eb2d16450937bfcd9b52111",
-      "source_normalized_sha256": "38194a08bc07c8dde85aeb672cff4bda9ca885b22eb2d16450937bfcd9b52111",
+      "source_sha256": "1316f21f229ffcd6ee390b26159adce2f96621842529ee4abfe91deeb5efe305",
+      "source_normalized_sha256": "1316f21f229ffcd6ee390b26159adce2f96621842529ee4abfe91deeb5efe305",
       "review_note": "Shared recognition and playback-direction changes ported with standalone adapters. Redistributable synthetic regressions cover the changed ink and direction rules.",
       "reviewed_app_base_commit": "51fcc1c40fdaee203d09be6ac848665267f8cec9",
-      "standalone_sha256": "4851dcc8038d488f3a8184b9863d635576ec1837dcfbc7831ab4c3018ee214c7",
-      "reviewed_app_commit": "c54aa86d1633b88b9ffc28a7f79e65b4e7c7d5d6",
+      "standalone_sha256": "65481639e3fa6efef21123f9aefe629be308a12aedf1a60026402203e3c80e59",
+      "reviewed_app_commit": "2382375975d63a6179a0e266c39f03e49c6b5392",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/ExpressiveDirectionText.java",
       "license": "Apache-2.0",
       "recognition93_review_note": "Reviewed recognition93: complete same-owner accent/returning-slur partitions carry their proven chevron classification through the ordinary caller; dot recognition and subsequent contrast/text/numeral/semantic guards remain. The released slur fit and complete finite-strip proof are retained, with one prepaid weighted8M search ledger and at most8 bounded strip certificates; no absolute CPU cap claim. One independent high-arch synthetic rendering remains uncovered. Complete legato directions preserve original unresolved expressive text, without a new performance policy. Tuplet five reads its terminal raster band. A new full-depth bulb-only rest scan requires a complete two-bulb sixteenth and existing note/raw-beam/staff/text ownership. Original procedural regressions only; models, Guide291/audio97 and record layouts unchanged.",
       "reviewed_app_state": "Reviewed recognition108 source committed; cumulative matched rollout deferred during active goal.",
       "recognition97_review_note": "Complete rail-crossing phrase evidence retains finite full-curve checks. Literal neutral full-rest captions require complete original OCR wording, unique existing full-rest ownership and independently registered staff/paper separation when the OCR box includes a rule. Part-local neutral captions preserve literal words on the owning staff without adding pedal sound or changing timing. Guide292/audio97/model lineage unchanged.",
       "recognition98_review_note": "Complete observed hairpin aperture fallback with BAR extent containment and exact half-open score-geometry overlap; app conversion policy stays app-only. Complete-line Sweetly literal joins existing neutral character grammar. No inferred sound/model/wire/audio change. The existing character lexicon also feeds text-ink admission and neutral-mode qualifiers; cached stage/export proofs do not constitute fresh end-to-end recognition evaluation.",
-      "standalone_normalized_sha256": "4851dcc8038d488f3a8184b9863d635576ec1837dcfbc7831ab4c3018ee214c7",
+      "standalone_normalized_sha256": "65481639e3fa6efef21123f9aefe629be308a12aedf1a60026402203e3c80e59",
       "reviewed_source_state": "Reviewed committed recognition138 violin-score repair.",
       "november_24_flesch_app_review": {
         "app_commit": "d0622b051dfaa40ad1ac76a2cd1ed7072186bb90",
         "scope": "Literal bow-caption classification and the same normalized text patterns."
-      }
+      },
+      "tempo_restore_review": "Normalize the intact a tempo caption with a separate dynamic or a qualified faster return.",
+      "sectional_slowdown_review": "Recognize whole printed Slower directions at a verified owner and the printed spelling rallantando. Use the existing qualitative clock policy and preserve a coincident numeric tempo.",
+      "shared_onset_tempo_note": "Recognize the exact sectional mosso direction.",
+      "verbal_tempo_marking_note": "Recognize complete Presto, Adagio and Allegro words as typed tempo markings.",
+      "midbar_written_tempo_note": "Recognize complete named tempo words and retain the mild strength of slightly slower.",
+      "historical_tempo_caption_note": "Recognize bounded historical tempo captions and give optically separated headings their printed section boundary."
     },
     "ExpressiveWordBodyInk.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/ExpressiveWordBodyInk.java",
@@ -5127,6 +5142,15 @@
       "november_24_flesch_app_review": {
         "app_commit": "d0622b051dfaa40ad1ac76a2cd1ed7072186bb90",
         "scope": "Printed meter font evidence and terminal 3/4 recognition. Standalone retains its optimized crop scanner."
+      },
+      "skewed_inline_meter_crop_review": {
+        "reviewed_app_commit": "42614015952902ca08d32b96bcc5e7420e2dc11d",
+        "scope": "Both recognition paths offer the same local crop fallback after regular eligible candidates, subject to the existing OCR budget. The shared MeterDoubleRuleCrop helper retains the note-ownership and two-numeral gates. Standalone explicitly uses its pair-only trim."
+      },
+      "opening_counted_rest_ocr_review": {
+        "reviewed_app_commit": "717147c914bc3577f346baf37c1e51953dcab1ca",
+        "scope": "Android and worker corroborate disagreement between text OCR and the independent meter font after a counted rest. Standalone reads that crop through the meter font and has no competing text OCR reader.",
+        "standalone_control": "java/src/test/java/io/github/luckolite/interpreter/InlineTripleMeterProofTest.java"
       }
     },
     "MeterComponentSeeds.java": {
@@ -5315,6 +5339,10 @@
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/MordentContour.java"
     },
     "MultiMeasureRestDetector.java": {
+      "compound_engraved_rest_review": {
+        "reviewed_app_commit": "23faabccab9497028581ca56b29f5190d6062460",
+        "scope": "Paired compound opening proof with the printed count, common-time header, breve plate and hanging whole plate. Earlier detector differences remain under prior review."
+      },
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/MultiMeasureRestDetector.java",
       "source_sha256": "663e1a5b38bf124d5b2d5d662a8d35adac774adcbf51b4cf1e50cf61f6ea7d72",
       "reviewed_app_commit": "61029a658ee219db344b767df304c5f9555791dc",
@@ -5375,23 +5403,28 @@
     },
     "MusicalOcr.java": {
       "source_path": "tools/native-worker/NativeMusicalOcr.java",
-      "source_sha256": "39b5d060b391659916a6493ae3f1d02e2ff35b58e8f49a287452308befeea100",
-      "source_normalized_sha256": "39b5d060b391659916a6493ae3f1d02e2ff35b58e8f49a287452308befeea100",
-      "standalone_sha256": "8c3f203b90ee32ed775eb2727d98c271c3b698184ce85bff6cdc64292dc07d19",
+      "source_sha256": "68cf82b1ca7eb043e9c1df283aaeaf0e73fbbaa8b538f770847505c2000f2b51",
+      "source_normalized_sha256": "68cf82b1ca7eb043e9c1df283aaeaf0e73fbbaa8b538f770847505c2000f2b51",
+      "standalone_sha256": "80c27f88b37ecbd62ec2803c97918227f302220320ee9f24c1dae55d2089bcf4",
       "license": "Apache-2.0",
       "review_note": "Accepted same-value, same-owner meter readings normalize horizontal padding only when their nonempty sampled global SYMBOL pixel sets match exactly and the union adds none. Rival readings remain visible; no outside-component ink ownership, new OCR votes, models or private fixtures.",
-      "reviewed_app_commit": "2aec089b",
+      "reviewed_app_commit": "c8450ad05cbd99f285372fba07a754ab5f4b9412",
       "reviewed_app_base_commit": "4f88801feec926c413046f6524d47fb8fc185819",
       "scoped_reviewed_app_commit": "a27d30c45fee5b1c64c64a47bcb9277765c6f063",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/MusicalOcr.java",
       "recognition101_review_note": "Complete independently owned rehearsal frames retain bounded cap fringes and full capital-F topology without changing unboxed dynamic recognition. Missing printed system-number crops retain complete clipped components and require full numeric OCR text, one element and overlapping source boxes at two scales before supplementing existing tokens. Conflicting original tokens remain unchanged. General procedural regressions; no song-specific rule, private score image, model or record-layout change.",
       "reviewed_app_state": "Reviewed recognition101 source committed; cumulative matched rollout deferred during active goal.",
-      "standalone_normalized_sha256": "73613e1fc3cd93f6856760bdddcff6aec43890352ba6d3d5f83765d482e72b33",
+      "standalone_normalized_sha256": "80c27f88b37ecbd62ec2803c97918227f302220320ee9f24c1dae55d2089bcf4",
       "current_source_review": "The native OCR producer and standalone MusicalOcr apply the same contradicted-meter filter to the same raster-measure and note inputs before filtering OCR readings by whole-note evidence. Standalone has its existing OCR engine adapter.",
       "qualified_dynamic_source_adapter_review": "Retain standalone caller-owned inference, existing strip acquisition, glyph and supplement ordering. Bind source before actual OCR, normalize final dynamic words from actual crop/scale origins, and preserve exact original expression acquisition. Additive semantic adapter for native source-identity repair; no whole-wrapper copy.",
       "november_24_flesch_app_review": {
         "app_commit": "d0622b051dfaa40ad1ac76a2cd1ed7072186bb90",
         "scope": "App worker OCR adapter and shared optical evidence; source segmentation and models are unchanged."
+      },
+      "inline_three_eight_reader_note": "The bounded numeric reader requires two accepted observations and keeps platform-specific OCR acquisition unchanged.",
+      "standalone_tab_fret_recovery_review": {
+        "reviewed_app_commit": "dcf4b12de8c68354dadbe919a2cc6e3615a83bb1",
+        "scope": "Mirrors the native worker hook for an optional caller-owned recognizer."
       }
     },
     "MusicalOcrEvidence.java": {
@@ -5830,15 +5863,20 @@
     },
     "OctaveClefDigit.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/OctaveClefDigit.java",
-      "source_sha256": "fe9734c67462cee2f4aa98a7b4946713177b20f451601bef1847ce98d5172cb3",
+      "source_sha256": "ae3b046392a537d5bd57190136b43bbe81894c21135eaa7bf02008a9436e3ade",
       "reviewed_app_commit": "7c1bf385dc2974fcdf2dd5de6584df9cc3e33a7c",
-      "source_normalized_sha256": "fe9734c67462cee2f4aa98a7b4946713177b20f451601bef1847ce98d5172cb3",
-      "standalone_sha256": "ff676f848903a15ee38f22460f982ac29590d3bec974bf1f627222ac83035408",
+      "source_normalized_sha256": "ae3b046392a537d5bd57190136b43bbe81894c21135eaa7bf02008a9436e3ade",
+      "standalone_sha256": "e1c1c3dd439c304ca8ce5128c5bc36c9d01e83e858b1e8b0c42acd5b03b9c300",
       "reviewed_source_state": "working-tree",
       "review_note": "Intrinsic octave bass clefs, complete contested ledger ownership, grace accidentals, independently rooted beam/slur separation, and below-staff full octave-word ownership. Original procedural/licensed-font regressions; no private score pixels, model changes or song-specific rules.",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/OctaveClefDigit.java",
       "license": "Apache-2.0",
-      "complete_clef_review": "Whole connected two-counter prefix with exact integer-cell waist supplements existing dimensions; complete in-row raw-connected authenticated clef cohort uses unchanged full-G authority and rejects head/key/accidental rivals. Original OFL fonts only. Known legacy narrow-route B limitation explicitly retained/ignored, not claimed fixed."
+      "complete_clef_review": "Whole connected two-counter prefix with exact integer-cell waist supplements existing dimensions; complete in-row raw-connected authenticated clef cohort uses unchanged full-G authority and rejects head/key/accidental rivals. Original OFL fonts only. Known legacy narrow-route B limitation explicitly retained/ignored, not claimed fixed.",
+      "clef_system_number_ownership_review": {
+        "reviewed_app_commit": "9ffde872c3e0ddd953de0a88437737958b11d25d",
+        "scope": "Identical left-edge number exclusion in octave-eight recognition for app, worker and standalone.",
+        "shared_delta_lf_sha256": "83fa3f5b2764690352b58e5fb104858a6abda927aafb3179ce3d82cbe268709b"
+      }
     },
     "OctaveMarkDetector.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/OctaveMarkDetector.java",
@@ -5917,6 +5955,19 @@
       "november_24_flesch_app_review": {
         "app_commit": "d0622b051dfaa40ad1ac76a2cd1ed7072186bb90",
         "scope": "Reviewed common boundary geometry patch. The native and Android sources retain their own raster implementations."
+      },
+      "voila_ghost_bar_review": {
+        "reviewed_app_commit": "a89978327a4ca34b5351dda095c105c730a802fd",
+        "scope": "Mirrors the narrow leading connected-staff guard before either interpreter emits measure geometry. Prior differences remain tracked."
+      },
+      "full_width_art_staff_review": {
+        "reviewed_app_commit": "fabb4b7457dafb95cace9c1bad3dffa996d16f1f",
+        "scope": "Mirrors the guard for page-width semantic rows without physically contrasted staff rules. Earlier unrelated drift remains listed."
+      },
+      "finite_detected_staff_barline_review": {
+        "reviewed_app_commit": "8717fa7231a7d86744c615dddbe6fc9a72041bed",
+        "scope": "Identical finite staff-rule geometry for notehead vetoes, with independent horizontal rails at both ends of widely spaced shared barlines.",
+        "shared_block_lf_sha256": "aedb4db11ca6f955fc3b09f13bd36c8a34ffc3863c13c0ef56f7dab016c2d847"
       }
     },
     "OmrScoreInterpreter.java": {
@@ -6080,6 +6131,48 @@
         "app_lf_sha256": "3b359a5fc9e2ced75d7b0cd2991a89d9575e54060acceedba737fa65d8dab495",
         "standalone_lf_sha256": "ebbe194cde7ea8345dbf8a37ac4786f0c66963b7408655665c0ed9e57fd98539",
         "scope": "Matching ownership of filled high octave heads with a same-shaft partner and a complete ledger ladder, plus matching expanded-space phase tolerance."
+      },
+      "displaced_system_opening_tie_review": {
+        "reviewed_app_commit": "cdfcab527e13fde676a8386d77e0d70fdbd5b959",
+        "scope": "Ports the same proved staff phase, hollow opening head, neighboring written pitch, and both arc checks before the existing tie resolver. Unrelated drift remains tracked."
+      },
+      "slur_apex_beam_ownership_review": {
+        "reviewed_app_commit": "c74564598bac2fffc7655ab0916fb18459ee3dd0",
+        "scope": "Ports the same oriented two-arm contour and independent flag guard before written duration is assigned. Unrelated drift remains tracked."
+      },
+      "lower_slur_hook_ownership_review": {
+        "reviewed_app_commit": "522e5ffdcca3569a92cf9d281247fdf622aa7017",
+        "scope": "Ports the same detached lower hook morphology and neighboring stemmed note proof. Unrelated drift remains tracked."
+      },
+      "numeric_meter_flat_boundary_review": {
+        "reviewed_app_commit": "c0ee1b4a8d53a6c75c1e7cc30db2024efd88e6c3",
+        "scope": "Ports the same dual-raster font proof for a meter that caps raw flat-spine recovery. Unrelated drift remains tracked."
+      },
+      "winter_header_ink_ownership_review": {
+        "reviewed_app_commit": "9aaa50534c3be2f35aefbdafee1c021a3f47652d",
+        "scope": "Ports the same multiple-staff common-time ownership and printed bass-clef body and dots proof. Independent source differences remain tracked."
+      },
+      "ledger_and_hairpin_staff_phase_review": {
+        "reviewed_app_commit": "c0606d195558e3cacd927631c8ff66e56d02dc3d",
+        "scope": "Shared five-rule phase evidence. Overlapping hairpin phase is discarded and a lower ledger extension keeps its heads with the printed staff pitch. Standalone keeps its preceding staff-admission decisions.",
+        "shared_file": "LedgerStaffAlias.java",
+        "standalone_lf_sha256": "cd11b468ab6b04cc11654db2ce562089bbe137ac2fec31585b654b2b692d079d"
+      },
+      "tight_double_sharp_owner_review": {
+        "reviewed_app_commit": "d7481df4b992494aca2a69a87e9bff248823a06f",
+        "scope": "Identical accidental-side crop and owner checks for a compact printed double sharp beside a notehead. Both raster paths must pass. Existing non-adjacent accidental behavior remains covered by focused controls.",
+        "shared_block_lf_sha256": "b79f8081dccfa247ad84a84548c1a3b649d0bf304011cbd173a0d6a58336d279"
+      },
+      "five_rule_body_phase_review": {
+        "reviewed_app_commit": "c095536ee079e3368f0fcddb60b065d25abe610c",
+        "scope": "Matching five-rule body phase comparison before applying a regional staff pitch proposal in the app, worker and standalone.",
+        "shared_file": "LedgerStaffAlias.java",
+        "standalone_lf_sha256": "5894772c4beab17c34545e6d885668b9b06e9adf91d25ac11838d6397d87e6a6"
+      },
+      "prior_note_and_displaced_accidental_review": {
+        "reviewed_app_commit": "fe613325afe04800491fac71727ad0f9f814133c",
+        "scope": "Identical head ownership and both-raster proof for the adjacent natural. A sharply aligned sign reaches a displaced chord tone only with evidence of their shared shaft.",
+        "shared_source_sha256": "08c02b4a3a4baa5e32ef710dd48f4ddde19a47ae03ef78ae5581d9be6a2fcb09"
       }
     },
     "OnnxOcrInference.java": {
@@ -6453,21 +6546,31 @@
     },
     "PedalBracketAnchors.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/PedalBracketAnchors.java",
-      "source_sha256": "d0c00f5fe4d8b62d68c2eac6901a3e2ed520f52f208268c9d245e0fd6ede1ba0",
-      "source_normalized_sha256": "d0c00f5fe4d8b62d68c2eac6901a3e2ed520f52f208268c9d245e0fd6ede1ba0",
-      "reviewed_app_commit": "95271300e87f128ef5b0194d31a920a7a8b7a6cb",
-      "reviewed_source_state": "Isolated pedal candidate on accepted872 manifest ede2c2383426167237cb4da5d19afeb2f923d5daa581726e930c37b4b710ec45",
+      "source_sha256": "f2d220095a549d9de3c5636ba22b0529f121a913f94173c2b057e02064cfd57f",
+      "source_normalized_sha256": "f2d220095a549d9de3c5636ba22b0529f121a913f94173c2b057e02064cfd57f",
+      "reviewed_app_commit": "a5e6f708942ac8a908f6b3abf7950c16cf23905e",
+      "reviewed_source_state": "Verified whole-file namespace-only port. Local desktop and focused JVM tests passed.",
       "review_note": "Whole-file package-only JDK port. Global continuous-rail geometry, persisted hook columns, musical anchors, navigation or rest-slot timing. Original synthetic regressions; no private score/model/log/library/signing data.",
-      "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/PedalBracketAnchors.java"
+      "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/PedalBracketAnchors.java",
+      "word_led_pedal_rail_review": {
+        "reviewed_app_commit": "a5e6f708942ac8a908f6b3abf7950c16cf23905e",
+        "scope": "Only an independently recognized Ped. starts a word-led rail. Adjacent hooks can share a written re-pedal column."
+      },
+      "standalone_sha256": "058f6d648dd023182cc8eeb3e327faecfed21d08b1afad1d72448ad34c688e09"
     },
     "PedalBracketDetector.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/PedalBracketDetector.java",
-      "source_sha256": "8f9d010deb1ea93e351a01c48fcbdf431b04e856993eccbbe868cf760190e0c8",
-      "source_normalized_sha256": "8f9d010deb1ea93e351a01c48fcbdf431b04e856993eccbbe868cf760190e0c8",
-      "reviewed_app_commit": "95271300e87f128ef5b0194d31a920a7a8b7a6cb",
-      "reviewed_source_state": "Isolated pedal candidate on accepted872 manifest ede2c2383426167237cb4da5d19afeb2f923d5daa581726e930c37b4b710ec45",
+      "source_sha256": "c0d98812ab49e39c75faef1b8464cf5f0ad0abed0f49403edf1501b113826760",
+      "source_normalized_sha256": "c0d98812ab49e39c75faef1b8464cf5f0ad0abed0f49403edf1501b113826760",
+      "reviewed_app_commit": "a5e6f708942ac8a908f6b3abf7950c16cf23905e",
+      "reviewed_source_state": "Verified whole-file namespace-only port. Local desktop and focused JVM tests passed.",
       "review_note": "Whole-file package-only JDK port. Global continuous-rail geometry, persisted hook columns, musical anchors, navigation or rest-slot timing. Original synthetic regressions; no private score/model/log/library/signing data.",
-      "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/PedalBracketDetector.java"
+      "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/PedalBracketDetector.java",
+      "word_led_pedal_rail_review": {
+        "reviewed_app_commit": "a5e6f708942ac8a908f6b3abf7950c16cf23905e",
+        "scope": "Compact rails and one-ended optical candidates with the same proof rules."
+      },
+      "standalone_sha256": "f4fc0bb25827923c6f51f912e411810691ed7d6b21369781ddb89cc1b42a752a"
     },
     "PedalPerformance.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/PedalPerformance.java",
@@ -7145,7 +7248,23 @@
       "review_note": "Global recognition/performance repairs; namespace-equivalent portable helpers and separately reviewed caller adapters. Original synthetic regressions; no private score assets.",
       "reviewed_source_state": "Committed combined source snapshot; paired package deployment and whole-library accuracy acceptance pending.",
       "reviewed_app_commit": "c0374eebf5c075b83813a66051faa22bcb431360",
-      "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/PrintedEndingBrackets.java"
+      "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/PrintedEndingBrackets.java",
+      "plain_paired_ending_selector_review": {
+        "reviewed_app_commit": "d162c3cd289a3152620fa0214e99786f349aff4c",
+        "scope": "Same optical bare 1 and 2 selector admission with adjacent bracket ownership; separate existing standalone scan optimizations keep their recorded provenance."
+      },
+      "tall_cross_system_ending_review": {
+        "reviewed_app_commit": "23034455d9b0fd05dcd249f9442a7d109d3e5b4a",
+        "scope": "Ports the taller roof proof, header-trimmed opening boundary, continued closing roof, and printed selector beside joined chord OCR. Existing standalone optimization provenance remains tracked."
+      },
+      "mid_system_volta_review": {
+        "reviewed_app_commit": "7e3faae50afeb8b02e37aace26305e60f170f444",
+        "scope": "Ports the same optical first-ending continuation through a matching adjacent second ending. Existing source differences remain tracked."
+      },
+      "clef_opening_roof_review": {
+        "reviewed_app_commit": "d060fc71949fcf5dc4da031987a66f2180cc80b8",
+        "scope": "Ports the same extended opening roof reach, constrained to a roof that spans the first measure. Existing source differences remain tracked."
+      }
     },
     "PrintedExpressionGlyphs.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/PrintedExpressionGlyphs.java",
@@ -7158,7 +7277,11 @@
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/PrintedExpressionGlyphs.java",
       "standalone_sha256": "f4bab01bce3a8930082603433c077a3f4a330a4761dc744929d981f32e4f4fe0",
       "standalone_normalized_sha256": "f4bab01bce3a8930082603433c077a3f4a330a4761dc744929d981f32e4f4fe0",
-      "app_optimization_port_review": "Scans printed expression components with shared crop scratch while preserving the app's pulse and note selection."
+      "app_optimization_port_review": "Scans printed expression components with shared crop scratch while preserving the app's pulse and note selection.",
+      "ruled_caesura_review": {
+        "reviewed_app_commit": "a34debddeef8f59129d9b370024394e89c813fd8",
+        "scope": "Mirrors optical recognition of the ruled two-stroke caesura; prior differences keep their existing provenance."
+      }
     },
     "PrintedFallOffContours.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/PrintedFallOffContours.java",
@@ -7182,12 +7305,12 @@
     },
     "PrintedFlatGlyph.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/PrintedFlatGlyph.java",
-      "source_sha256": "535a22b06786126d8608f14f5429dbdb740ddbcc228a5fbd0867755d271cb31b",
-      "source_normalized_sha256": "535a22b06786126d8608f14f5429dbdb740ddbcc228a5fbd0867755d271cb31b",
+      "source_sha256": "e1bf6702c206eaa8e1b3f4ba1b0e1826fa76e366fa82ef3015ac7e0e8d073e05",
+      "source_normalized_sha256": "e1bf6702c206eaa8e1b3f4ba1b0e1826fa76e366fa82ef3015ac7e0e8d073e05",
       "reviewed_source_state": "Committed combined source snapshot; paired package deployment and whole-library accuracy acceptance pending.",
       "review_note": "Global recognition/performance repairs; namespace-equivalent portable helpers and separately reviewed caller adapters. Original synthetic regressions; no private score assets.",
-      "standalone_sha256": "8da2368ee5e5ff99dd8c132def5855c765d151059d9f0ec275ba7d8e173fae9c",
-      "reviewed_app_commit": "c0374eebf5c075b83813a66051faa22bcb431360",
+      "standalone_sha256": "e14200437ca4d6c3ea02e371267b707fb6ca483754c8b0064db77222b2de8e03",
+      "reviewed_app_commit": "d2dfcc1e004d42751b9395f12306d00a6303acf9",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/PrintedFlatGlyph.java",
       "literal_faint_eighth_review": {
         "documentation": "docs/literal-faint-eighth-recovery.md",
@@ -7197,7 +7320,8 @@
         "scope": "Complete literal late eighth proof in genuine retained view/full mapped-source context; actual original64M/64M invocation pool, completed-prior atomic fallback, exact final secondary bounds, same source/frame/raw/meter, all rival/old-priority controls. Parent hook preserved. No native/assembled-clock authority.",
         "rollout": "Source only; matching cumulative packaging deferred during active goal.",
         "app_commit": "b55d17a49272925c65fddbf5c41c14a49b75535a"
-      }
+      },
+      "stacked_opening_flats_review": "Review matched optical bowl and spine proof for four overlapping treble flats ahead of an independently read common-time sign."
     },
     "PrintedHairpinArrival.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/PrintedHairpinArrival.java",
@@ -7245,15 +7369,20 @@
         "scope": "Unanchored measure-count split guard and raster wiring. Broader source differences remain subject to review."
       },
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/PrintedMeasureRhythmGuard.java",
-      "source_sha256": "6bb4141430e557ca82aea2c5a4113c80aa8cb57c0a378a7b94dd20fb4b963f0b",
+      "source_sha256": "08f60e495a83e6d20e65b15c0187e03d24ebac8b23b8324448e8612339ecf137",
       "reviewed_app_commit": "1ffb379bed8c76861854ce72e295893868136eb6",
-      "source_normalized_sha256": "6bb4141430e557ca82aea2c5a4113c80aa8cb57c0a378a7b94dd20fb4b963f0b",
+      "source_normalized_sha256": "08f60e495a83e6d20e65b15c0187e03d24ebac8b23b8324448e8612339ecf137",
       "reviewed_source_state": "working-tree",
       "review_note": "Preserve individual complete written bars only with two agreeing untouched literal-capacity witnesses, independently proved original separators, actual ratio acquisition and unchanged rest records. Revalidate retained sparse filled-head beam roles only with complete owned shafts, strict rail proof and independently filled interiors/rooted beam caps at both ends. Original procedural regressions include mixed valid/invalid splits, printed tuplets and ordinary staff-rail quarter notes. No private score material, song predicates, models or wire layouts.",
       "scoped_reviewed_app_commit": "77c8e3ca3217affaaddcc4a0762cb18298e658f8",
-      "standalone_sha256": "4c31ef2dae6433e7dbf49ea3eae46df1777a14d50939f7d920a40b3b2a600172",
+      "standalone_sha256": "30920f7ee911bd69525f965147180293d2a5f06f8e90443743308dc44d451740",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/PrintedMeasureRhythmGuard.java",
-      "standalone_normalized_sha256": "4c31ef2dae6433e7dbf49ea3eae46df1777a14d50939f7d920a40b3b2a600172"
+      "standalone_normalized_sha256": "30920f7ee911bd69525f965147180293d2a5f06f8e90443743308dc44d451740",
+      "finite_detected_staff_barline_review": {
+        "reviewed_app_commit": "8717fa7231a7d86744c615dddbe6fc9a72041bed",
+        "scope": "Identical finite-separator witness after existing raw barline checks. Standalone retains its additional pre-existing boundary witnesses.",
+        "shared_block_lf_sha256": "9a3b924d27a580d959a64f81766b4c28a6e3bdf5e74af4e9de4a88942b1a890e"
+      }
     },
     "PrintedMultiRestDirection.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/PrintedMultiRestDirection.java",
@@ -7417,13 +7546,14 @@
     },
     "PrintedRepeatGlyphs.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/PrintedRepeatGlyphs.java",
-      "source_sha256": "3d1534effc2b8778ade1033eaa4ce58ad77fe4705d368dcf2efd1bafc6a90e0c",
-      "source_normalized_sha256": "ca7a09d76a8ffe174a5457f02b07c5c4a8317ed5bd4848794df31e26bdcbabf6",
-      "standalone_sha256": "32a6e3b7a5586b3a0893cce63e3574d5f0db53eecd03888df07000eabdd991e4",
+      "source_sha256": "0b43b961be9f50a8509d51b501e3b17a019c560cc1c3ebfb9daf117a0d233361",
+      "source_normalized_sha256": "0b43b961be9f50a8509d51b501e3b17a019c560cc1c3ebfb9daf117a0d233361",
+      "standalone_sha256": "c25e3cf1064b4cc64b2d0281d3f77fb95677c1ba11138271ce4c0ab3a85a01f9",
       "review_note": "Global recognition/performance repairs; namespace-equivalent portable helpers and separately reviewed caller adapters. Original synthetic regressions; no private score assets.",
       "reviewed_source_state": "Committed combined source snapshot; paired package deployment and whole-library accuracy acceptance pending.",
-      "reviewed_app_commit": "c0374eebf5c075b83813a66051faa22bcb431360",
-      "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/PrintedRepeatGlyphs.java"
+      "reviewed_app_commit": "8b265df8a2a860d24642a032a3bfe0e0789b60fb",
+      "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/PrintedRepeatGlyphs.java",
+      "faded_outer_bar_review": "Both repeat and geometry readers join the two dark cores of a thick outside rule only when a bounded faded stripe contains sufficient vertical ink."
     },
     "PrintedRepeatNavigation.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/PrintedRepeatNavigation.java",
@@ -7447,16 +7577,17 @@
     },
     "PrintedRestDirection.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/PrintedRestDirection.java",
-      "source_sha256": "c5c85160667c46b0030d016b5b15a243dda4bec98bcc2b59aa6cb5518f615ea6",
-      "source_normalized_sha256": "8a93cffaa4845c8da04289e08e82718afc09d75f1813e7c154c1c6c3c943ab22",
-      "reviewed_app_commit": "bcc029d88d122ff3e4e0c33c83442e0c015cf30a",
+      "source_sha256": "d53da3454daf55c2b013ce9634f7593c1aa628f98a8dc797af88d018441a9fbe",
+      "source_normalized_sha256": "d53da3454daf55c2b013ce9634f7593c1aa628f98a8dc797af88d018441a9fbe",
+      "reviewed_app_commit": "faaf40f0849e7d6532604a8b5a9a1a0653eb2bab",
       "scoped_reviewed_app_commit": "ca9b73b219aa35b41b1b70b49b82f2e60c8aec5d",
       "review_note": "Reviewed package translation and required AOSP formatting only; parent exact-format comparison passed. Shared full-Current literal rest clocks/target ownership and opt-in binary64 frame semantics; original JDK-only procedural regressions, no score/model/app-history material.",
-      "standalone_sha256": "2e7438b7c6f2690600669cc5781f6bf22d5b8dbedf560a01198a2a95289dff90",
+      "standalone_sha256": "1125336a45fe19d76419a74cecc691502b0dac1c54e29c2f47b5233abaec0881",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/PrintedRestDirection.java",
       "license": "Apache-2.0",
       "recognition97_review_note": "Complete rail-crossing phrase evidence retains finite full-curve checks. Literal neutral full-rest captions require complete original OCR wording, unique existing full-rest ownership and independently registered staff/paper separation when the OCR box includes a rule. Part-local neutral captions preserve literal words on the owning staff without adding pedal sound or changing timing. Guide292/audio97/model lineage unchanged.",
-      "reviewed_app_state": "Reviewed recognition97 source committed; cumulative matched rollout deferred during active goal."
+      "reviewed_app_state": "Reviewed recognition97 source committed; cumulative matched rollout deferred during active goal.",
+      "midbar_written_tempo_note": "Prove the rest under a tempo caption using the caption start and the printed rails."
     },
     "PrintedRestFrameTest.java": {
       "source_path": "app/src/test/java/com/musicsheets/app/pdf/PrintedRestFrameTest.java",
@@ -7779,23 +7910,25 @@
     "PrintedTempoSpanPages.java": {
       "physical_page_review": "Page-edge continuations require consecutive physical pages when source identity is known. The Android conversion caller passes its selection roster, and standalone tempo export reads decoded sourcePage identities.",
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/PrintedTempoSpanPages.java",
-      "source_sha256": "5b635db257ec5edba246e9b0c05ff5d4a9c47a41d1a57bea637427788f6976b3",
-      "source_normalized_sha256": "5b635db257ec5edba246e9b0c05ff5d4a9c47a41d1a57bea637427788f6976b3",
-      "standalone_sha256": "a59c436a4027decbaac7b93348649d9ba0c5baee143b67847d20a916ad04e176",
+      "source_sha256": "5865b47d96a062d1bcba1dc5c249491c8d08cb99539d31da2da8d42e2fd69c80",
+      "source_normalized_sha256": "5865b47d96a062d1bcba1dc5c249491c8d08cb99539d31da2da8d42e2fd69c80",
+      "standalone_sha256": "b25df4fcbb82549bc39040f772a470baad6a6010f2dd060a83938eb75e4bdad2",
       "reviewed_source_state": "Committed combined source snapshot; paired package deployment and whole-library accuracy acceptance pending.",
       "review_note": "Global recognition/performance repairs; namespace-equivalent portable helpers and separately reviewed caller adapters. Original synthetic regressions; no private score assets.",
-      "reviewed_app_commit": "c70b72893e7ef2b116b963a055c41b5f87e8dc5d",
-      "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/PrintedTempoSpanPages.java"
+      "reviewed_app_commit": "170a99da3612780954ac8a61f807a134f441d4e2",
+      "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/PrintedTempoSpanPages.java",
+      "verbal_tempo_marking_note": "A new absolute tempo markup terminates a retained gradual tempo span."
     },
     "PrintedTempoSpans.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/PrintedTempoSpans.java",
-      "source_sha256": "dd89bc6fc9490724c9837388d07ed99ba5ae4beb54583590138e52f189fdd4d0",
-      "source_normalized_sha256": "249cedf62fd699b53c9fdbfa1251107a7d09722324ae169b5f372c5f9faddddc",
-      "standalone_sha256": "417bb2b4406944a3dd4893ef2f7f9cbc0681bfbd7eb74507cab5c8100eaa8ff1",
+      "source_sha256": "41a7865b7cba527b4ae24e8807177a6f0cd7172130740985fee0f99583ed807c",
+      "source_normalized_sha256": "41a7865b7cba527b4ae24e8807177a6f0cd7172130740985fee0f99583ed807c",
+      "standalone_sha256": "2a82fd80b34d43a356003284d6b804c8f3b336372cf216fc9bb3b5e76705faa5",
       "reviewed_source_state": "working-tree",
       "review_note": "Use complete independently witnessed single-part staff rails and an anchored expression side to own printed tempo-dash continuations; competing expression claims veto shared runs, while generic ownership and numeric endpoint rules remain unchanged. Reject an upper partial quarter-rest proposal only when one connected complete open-chevron core owns every dark pixel plus its immediate antialias fringe. Ordinary and lower rest grammar remain unchanged. Twenty-nine original geometric regressions; no private score assets, song predicates, model or wire changes.",
-      "reviewed_app_commit": "c0374eebf5c075b83813a66051faa22bcb431360",
-      "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/PrintedTempoSpans.java"
+      "reviewed_app_commit": "e932121e3febc95fd480c5ffa12a7d2a835009d1",
+      "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/PrintedTempoSpans.java",
+      "printed_numeric_boundary_note": "Use independently printed equations and their written bar boundaries for named tempos and accelerations after counted rests."
     },
     "PrintedTremoloEndpointValue.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/PrintedTremoloEndpointValue.java",
@@ -8170,16 +8303,18 @@
     },
     "RecognizedMultiRestProjection.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/RecognizedMultiRestProjection.java",
-      "source_sha256": "e1cb9f264dfa96efc50d689929df7274c71c79196c97357c4fd40b1b4fcebe4c",
-      "source_normalized_sha256": "7463126a2d381c2580d696e014123bfe3d60ff113e9fed7bf35a6b9c7071755f",
-      "standalone_sha256": "cfe3f83e6b8ea2efd7f4d182189281dc2a007f53dfba73605786469ad587ae84",
+      "source_sha256": "f351a828d2ed704c363ed09fc8b3b59dc1d338c96c8c2079044bf422c8bbca1e",
+      "source_normalized_sha256": "f351a828d2ed704c363ed09fc8b3b59dc1d338c96c8c2079044bf422c8bbca1e",
+      "standalone_sha256": "5ca43114ad87efb0e4a2f08c6aed1c47aba79d75facc8d74e0c74bacb1f4b538",
       "license": "Apache-2.0",
       "reviewed_source_state": "committed paired recognition82 source; cumulative runtime publication pending",
       "review_note": "Invocation-local physical region birth and actual accepted multi-rest identity project logical full rests only for exact source and sealed aliases; no origin is reconstructed from equal values. Interior written heads survive rest-fragment cleanup when an eligible own shaft exists, selected before cap-length competition. Native and standalone consumers use equivalent ordered lifecycle; original procedural regressions contain no private score pixels. Recognition82, Guide290/audio96 unchanged layouts.",
-      "reviewed_app_commit": "61029a658ee219db344b767df304c5f9555791dc",
+      "reviewed_app_commit": "d2dfcc1e004d42751b9395f12306d00a6303acf9",
       "scoped_reviewed_app_commit": "61029a658ee219db344b767df304c5f9555791dc",
       "reviewed_app_base_commit": "42a4f42769d275ea7fea042cc9dafab062c5fc17",
-      "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/RecognizedMultiRestProjection.java"
+      "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/RecognizedMultiRestProjection.java",
+      "compound_engraved_rest_note": "A verified compound opening admits the same printed rest count and suppresses only the misread same-staff glyph owners inside that proved run.",
+      "stacked_opening_flats_review": "The same proved compound opening admits a four-flat signature only with a following single treble staff and no already decoded opening key."
     },
     "RecognizedMultiRestReindexOriginalTest.java": {
       "source_path": "app/src/test/java/com/musicsheets/app/pdf/RecognizedMultiRestReindexOriginalTest.java",
@@ -8630,17 +8765,18 @@
     "ScoreDynamicContinuation.java": {
       "physical_page_review": "Page-edge continuations require consecutive physical pages when source identity is known. The Android conversion caller passes its selection roster, and standalone tempo export reads decoded sourcePage identities.",
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/ScoreDynamicContinuation.java",
-      "source_sha256": "36f0975c846b9ad4a25bbd438d2590d54abcfbaac749d493da404429c6835a7e",
-      "source_normalized_sha256": "d5e21ab24cff73dd36a8b5f7cd8b02a98c142696e0fb2531cf86bfda97499e3f",
-      "reviewed_app_commit": "b029dfbb",
+      "source_sha256": "6441de2a6b0e1021e909f19dee64f5e7df36651062d3f9d74ec1836d946fe0ed",
+      "source_normalized_sha256": "6441de2a6b0e1021e909f19dee64f5e7df36651062d3f9d74ec1836d946fe0ed",
+      "reviewed_app_commit": "c8b6eaf060d0d2d6bcfb4130d7f62d397f4995fc",
       "reviewed_source_state": "committed-app-source",
       "review_note": "Reviewed global text/source-owner repair and original regressions; see docs/audited-ownership-repairs.md. Package-only Java port, except public timeline visibility and the pure written-tie helper API name/visibility. Existing models and record layouts are unchanged.",
-      "standalone_sha256": "acc6f674ddb094302906b94051af0eb62e12ddcb406808e0c2ef83f5a81933ee",
+      "standalone_sha256": "0e86f96ffd5b0b5adc3265e65baeba3a3eb8a472600802f53c836d110ff94fcd",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/ScoreDynamicContinuation.java",
       "license": "Apache-2.0",
-      "standalone_normalized_sha256": "0875b9a47bdcc04da9dddd44f19a5a2ebdaba619a57610b8a22b710f270a63b3",
+      "standalone_normalized_sha256": "0e86f96ffd5b0b5adc3265e65baeba3a3eb8a472600802f53c836d110ff94fcd",
       "recognition139_review_note": "Reviewed app fix merged with the existing standalone adapters and formatting.",
-      "recognition151_review_note": "Both implementations attach the verified compound to the exact dynamic column and remap its target through page assembly. Formatting differs."
+      "recognition151_review_note": "Both implementations attach the verified compound to the exact dynamic column and remap its target through page assembly. Formatting differs.",
+      "tempo_restore_review": "Namespace direct barline tempo, metric, and feel events by physical page when concatenating scores."
     },
     "ScoreDynamicsDetector.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/ScoreDynamicsDetector.java",
@@ -8667,17 +8803,26 @@
     },
     "ScoreExpressionDetector.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/ScoreExpressionDetector.java",
-      "source_sha256": "440518ea36bc1e6c6b0afd186b4d03d29d21bc27b1537697218b215bf65b1059",
-      "source_normalized_sha256": "c9536e42b93f18b0e29c09bc0a6035780e5fd7989950da965b6305335584048d",
+      "source_sha256": "dba2b70e7de513d5d734f2e0af71ac3e9825a453cb31b7ae4835c8305bbfa415",
+      "source_normalized_sha256": "dba2b70e7de513d5d734f2e0af71ac3e9825a453cb31b7ae4835c8305bbfa415",
       "review_note": "Anchor a raster-proved metric equation over the terminal system barline at the following written bar, including a page turn.",
-      "standalone_sha256": "be7b7ca37b6409c24118dd30c91899ee692dddb35b589a8dd23e09e16ffa1960",
-      "reviewed_app_commit": "5a83c7704ff14579edcf52af5c1ab8e8e719a4d7",
+      "standalone_sha256": "9c2b9d96976e433a8f561cd6b768fc3f0dbb894de98dd7583ffa5b5b92a2ad56",
+      "reviewed_app_commit": "a34debddeef8f59129d9b370024394e89c813fd8",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/ScoreExpressionDetector.java",
       "license": "Apache-2.0",
       "recognition97_review_note": "Complete rail-crossing phrase evidence retains finite full-curve checks. Literal neutral full-rest captions require complete original OCR wording, unique existing full-rest ownership and independently registered staff/paper separation when the OCR box includes a rule. Part-local neutral captions preserve literal words on the owning staff without adding pedal sound or changing timing. Guide292/audio97/model lineage unchanged.",
       "reviewed_app_state": "Reviewed recognition109 source committed; cumulative matched rollout deferred during active goal.",
       "scoped_reviewed_app_commit": "5a83c7704ff14579edcf52af5c1ab8e8e719a4d7",
-      "reviewed_source_state": "Reviewed committed recognition138 violin-score repair."
+      "reviewed_source_state": "Reviewed committed recognition138 violin-score repair.",
+      "rhythmic_feel_review": "Port the reviewed physical metric anchors and add score-wide printed eighth-feel direction capture. The standalone and Android adapters retain their existing word and staff ownership differences.",
+      "tempo_restore_review": "Recover physically proved tempo restoration at an exact barline above notes or rests or below the played lane.",
+      "sectional_slowdown_review": "Recognize whole printed Slower directions at a verified owner and the printed spelling rallantando. Use the existing qualitative clock policy and preserve a coincident numeric tempo.",
+      "shared_onset_tempo_note": "Bind proven printed tempo directions to a shared note onset even when releases differ.",
+      "verbal_tempo_marking_note": "Attach exact written tempo words and literal Tempo I to a printed bar start with staff and onset evidence.",
+      "midbar_written_tempo_note": "Place mid-bar tempo words at a proved rest or aligned sounding entry and prefer a complete qualified caption over its overlapping OCR fragment.",
+      "raised_numeric_tempo_note": "Recover independently proved metronome equations before resolving other printed directions.",
+      "historical_tempo_caption_note": "Recognize bounded historical tempo captions and give optically separated headings their printed section boundary.",
+      "ruled_caesura_review": "A proved ruled caesura owns the coincident false rest and targets the preceding written release."
     },
     "ScoreExpressionNotation.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/ScoreExpressionNotation.java",
@@ -8690,27 +8835,36 @@
     },
     "ScoreExpressiveEvent.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/ScoreExpressiveEvent.java",
-      "source_sha256": "d1aecdcfac5010438971049bf084ad45e3188e58b4dce010cf33170c2e5ac398",
-      "reviewed_app_commit": "650d1b3a312dcd7eb58f83945a6a3be321c9b4dd",
-      "source_normalized_sha256": "d1aecdcfac5010438971049bf084ad45e3188e58b4dce010cf33170c2e5ac398",
+      "source_sha256": "c02f7e94c40baf027f0ecfc149f2fd6b23f82ee49d20083d40bbc02524f77b16",
+      "reviewed_app_commit": "170a99da3612780954ac8a61f807a134f441d4e2",
+      "source_normalized_sha256": "c02f7e94c40baf027f0ecfc149f2fd6b23f82ee49d20083d40bbc02524f77b16",
       "reviewed_source_state": "Accepted source130; Guide295, recognition112, audio97",
       "review_note": "Whole-file executable token parity after package-only adaptation. Shared detection/ownership/performance or semantic validation; original generated regressions and licensed OFL glyphs. JDK only, no private score/model/signing/history data.",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/ScoreExpressiveEvent.java",
-      "standalone_sha256": "bf3c9c43e33e3d918f482fc597fbce39962ed68e92517e6d6456c7db2a675738",
+      "standalone_sha256": "330786a810aedaf477ef251711b34231c25d075f0c5cbab6a53a79b52846e1f7",
       "release130_review_note": "Reviewed platform adapter; see release130_source_review. No claim of whole-file token parity.",
-      "standalone_normalized_sha256": "bf3c9c43e33e3d918f482fc597fbce39962ed68e92517e6d6456c7db2a675738",
-      "current_source_review": "Reviewed current source and standalone counterpart for the cumulative source-bound beam, notation, key, articulation and bounded context batch. Original procedural regressions only; physical source observations and model facts do not establish complete musical authority."
+      "standalone_normalized_sha256": "330786a810aedaf477ef251711b34231c25d075f0c5cbab6a53a79b52846e1f7",
+      "current_source_review": "Reviewed current source and standalone counterpart for the cumulative source-bound beam, notation, key, articulation and bounded context batch. Original procedural regressions only; physical source observations and model facts do not establish complete musical authority.",
+      "verbal_tempo_marking_note": "Add a distinct written tempo marking type so the original word and preview tempo can stay separate."
     },
     "ScoreExpressivePerformance.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/ScoreExpressivePerformance.java",
-      "source_sha256": "d4a9feb77708bc240c9a5f9a02d43a57840c0ed3bfecb8794f4d4d8279698a82",
-      "source_normalized_sha256": "d9cd48dc23dd5dc7f0add2df37c0597e04191826b458cf5650bf2800968937fe",
+      "source_sha256": "b41382b6eeaaf4f0ad5f0560ba470cd0b4c6711894c380220dd0d1c2954753de",
+      "source_normalized_sha256": "b41382b6eeaaf4f0ad5f0560ba470cd0b4c6711894c380220dd0d1c2954753de",
       "reviewed_source_state": "committed-app-source",
       "review_note": "Reviewed global text/source-owner repair and original regressions; see docs/audited-ownership-repairs.md. Package-only Java port, except public timeline visibility and the pure written-tie helper API name/visibility. Existing models and record layouts are unchanged.",
-      "standalone_sha256": "f3313d971ada6bb3431a7b4b2f0bbd0eab0da587f2b5531a714c32a2003f1b4e",
-      "reviewed_app_commit": "f976eec8bc8c5f07ae7a775fb9b62af5aeafaf24",
+      "standalone_sha256": "a91938aa414025c765a84019eb56f1c9a951563e1b70ca7446a22fe12647c5a8",
+      "reviewed_app_commit": "2382375975d63a6179a0e266c39f03e49c6b5392",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/ScoreExpressivePerformance.java",
       "license": "Apache-2.0"
+,
+      "metronome_direction_review": "Use a simultaneous explicit metronome equation as the target of a numerically qualified ritenuto direction.",
+      "tempo_restore_review": "Apply a proved faster return relative to the steady clock, and preserve any simultaneous explicit numeric target.",
+      "sectional_slowdown_review": "Recognize whole printed Slower directions at a verified owner and the printed spelling rallantando. Use the existing qualitative clock policy and preserve a coincident numeric tempo.",
+      "shared_onset_tempo_note": "Give sectional mosso a temporary preview tempo without changing the last steady tempo.",
+      "verbal_tempo_marking_note": "Apply qualitative preview presets and honor coincident numeric tempo and the original opening pace.",
+      "midbar_written_tempo_note": "Apply distinct preview rates for Lento, Largo, Prestissimo and qualified Adagio markings.",
+      "historical_tempo_caption_note": "Recognize bounded historical tempo captions and give optically separated headings their printed section boundary."
     },
     "ScoreFallOffNotation.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/ScoreFallOffNotation.java",
@@ -8904,7 +9058,11 @@
       "source_sha256": "fc1172858280ca4a302d92c1da33e78ab6c133fee1818918f698da23c2524c9a",
       "reviewed_app_commit": "650d1b3a312dcd7eb58f83945a6a3be321c9b4dd",
       "source_normalized_sha256": "fc1172858280ca4a302d92c1da33e78ab6c133fee1818918f698da23c2524c9a",
-      "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/ScoreNavigationPlan.java"
+      "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/ScoreNavigationPlan.java",
+      "printed_one_bar_repeat_review": {
+        "reviewed_app_commit": "99e80891402f3e63c763f9e238081bb6a8d1b543",
+        "scope": "Keep admitted source repeat bar indices without inserting route visits."
+      }
     },
     "ScoreNavigationProjection.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/ScoreNavigationProjection.java",
@@ -8946,7 +9104,11 @@
         "scope": "Terminated diagnostic routes remain inspectable but cannot perform; shared constant-time complete and empty-diagnostic gate; no wire or limit change.",
         "reviewed_app_commit": "da1fd953b71cf1b539052c0d16f3b26eb615ac53"
       },
-      "reviewed_source_state": "Reviewed committed recognition138 violin-score repair."
+      "reviewed_source_state": "Reviewed committed recognition138 violin-score repair.",
+      "printed_one_bar_repeat_review": {
+        "reviewed_app_commit": "99e80891402f3e63c763f9e238081bb6a8d1b543",
+        "scope": "Recognize the evidenced single-measure instruction while preserving legacy unsupported diagnostics."
+      }
     },
     "ScoreNoteEvent.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/ScoreNoteEvent.java",
@@ -8963,6 +9125,10 @@
       "november_24_flesch_app_review": {
         "app_commit": "d0622b051dfaa40ad1ac76a2cd1ed7072186bb90",
         "scope": "App convenience constructors retain the same musical note fields and existing Android callers."
+      },
+      "printed_one_bar_repeat_review": {
+        "reviewed_app_commit": "99e80891402f3e63c763f9e238081bb6a8d1b543",
+        "scope": "Mirrored value-copy helper attaches independently recognized source cue rest durations."
       }
     },
     "ScoreNoteTiming.java": {
@@ -8979,20 +9145,30 @@
       "closed_phrase_clock_review": "Same-pass complete printed beam ownership resolves remote/shared-stem phrase caps and cross-staff written clock. Asymmetric arches have independent IDs preserving old arcs. Literal unique opposed-stem single-beam partners sustain independently of faster bass attacks. Optional bounded proofs preserve legacy on refusal. One existing clock capture follows final value projection. Original procedural regressions only; no score data, observers, weights or layouts.",
       "standalone_normalized_sha256": "6820c62c7b46fe5f25731e88b358bd4cbc452bd887787b80877a598eaec4a247",
       "recognition139_review_note": "Reviewed app fix merged with the existing standalone adapters and formatting. Reviewed namespace-equivalent dotted-triplet timing. The standalone caller also retains the inferred ratio for MusicXML written values.",
-      "triplet_fingering_review": "Shared printed-note evidence is reconciled through each producer. Standalone retains its existing direct triplet-clock repair, while Android and native guides use the retained beam ownership with their effective meter."
+      "triplet_fingering_review": "Shared printed-note evidence is reconciled through each producer. Standalone retains its existing direct triplet-clock repair, while Android and native guides use the retained beam ownership with their effective meter.",
+      "held_tremolo_lower_voice_review": {
+        "reviewed_app_commit": "fd2dbe43185ff86bb6c37890b53c68124e637d60",
+        "scope": "Matching exact written lower-voice clock beneath a tied stemless tremolo. Explicit rests, ambiguous head clusters and incomplete voice budgets retain the old timing rules.",
+        "shared_block_sha256": "0d8b5e88776d9a4e2478e7cee899c05f35d26a8a870ca31f964a56952a931aa2"
+      }
     },
     "ScoreOpeningDuration.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/ScoreOpeningDuration.java",
-      "source_sha256": "f53147134691fafd14e0bb1d46b34ac8ba453ea5793cd4f11aa9a2a341697835",
-      "source_normalized_sha256": "f53147134691fafd14e0bb1d46b34ac8ba453ea5793cd4f11aa9a2a341697835",
+      "source_sha256": "5b5a5fef0c3d200e6091215e595cc32158a6bb70e6db644f68553b1813aff692",
+      "source_normalized_sha256": "5b5a5fef0c3d200e6091215e595cc32158a6bb70e6db644f68553b1813aff692",
       "review_note": "Global recognition/performance repairs; namespace-equivalent portable helpers and separately reviewed caller adapters. Original synthetic regressions; no private score assets.",
       "reviewed_source_state": "Committed combined source snapshot; paired package deployment and whole-library accuracy acceptance pending.",
-      "standalone_sha256": "8542f9eff2fb5801ae5da34e051a3dfb8a8a1c9c7ca551c4cbf663f5eb1973ec",
-      "reviewed_app_commit": "a5f38f60fa20c2e2255ad67cd36fb8a19d9d6f96",
+      "standalone_sha256": "73689a4c434e6b5f19574ecf0e78bdaceb0116984e0ebcbd309f778edb235abf",
+      "reviewed_app_commit": "91870cf11543787638c468852dd2762da7e4771e",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/ScoreOpeningDuration.java",
-      "standalone_normalized_sha256": "39cd34b2d42a695d8db617b82d02c293565943b8dc9c5b4b223abc576f8c85c2",
+      "standalone_normalized_sha256": "73689a4c434e6b5f19574ecf0e78bdaceb0116984e0ebcbd309f778edb235abf",
       "license": "Apache-2.0",
-      "current_source_review": "Independently numbered pitched pickup permits wholly absent staff only; legacy unnumbered/silent/terminal behavior retained. Original22 procedural controls; no private material or new clock authority."
+      "current_source_review": "Independently numbered pitched pickup permits wholly absent staff only; legacy unnumbered/silent/terminal behavior retained. Original22 procedural controls; no private material or new clock authority.",
+      "corroborated_printed_pickup_note": "Allow signature space in a shortened opening when independent printed numbering and pitched neighboring bars corroborate the boundary.",
+      "compact_printed_pickup_note": "Recognize a narrow single-staff opening when its written attacks and two metrically complete neighboring bars corroborate its pickup duration.",
+      "aligned_rest_pickup_note": "Recognize a short opening when its notes and an aligned printed rest on a separate staff independently agree on the written span.",
+      "physical_opening_pickup_note": "Validate opening spans with verified document origin, independently timed following measures, and paired printed rests and chord attacks.",
+      "wider_source_opening_pickup_note": "Allow wider single-staff pickups only at a verified physical beginning with a complete short note group and two complete adjacent bars."
     },
     "ScoreOpeningProofWire.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/ScoreOpeningProofWire.java",
@@ -9017,23 +9193,24 @@
     },
     "ScorePageInterpretation.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/ScorePageInterpretation.java",
-      "source_sha256": "3592733d933925b7bd43e8ec2eaa0b12aae1010dd78b5edb1237ff1096828580",
-      "source_normalized_sha256": "de9a1aeaa8bcb6b240634dca79380ad3a3e54e354fbffd222763baf7545eca20",
-      "standalone_sha256": "e97c5ca75fc4f20caaf24257c508b7ca8794f427315342608cbd252465ed86c6",
+      "source_sha256": "56b36e894ca08d41a678372bf56f4f526b1fa2426afd437fe3b8f736f59466ec",
+      "source_normalized_sha256": "56b36e894ca08d41a678372bf56f4f526b1fa2426afd437fe3b8f736f59466ec",
+      "standalone_sha256": "8125747a6069a89b079d612de738635004be7a0d40677c8cec0c1351d738510b",
       "review_note": "Global recognition/performance repairs; namespace-equivalent portable helpers and separately reviewed caller adapters. Original synthetic regressions; no private score assets.",
-      "reviewed_app_commit": "1ffb379bed8c76861854ce72e295893868136eb6",
+      "reviewed_app_commit": "c7ec9f3f8f6c8ea396cea3b1c7d7879491cdd606",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/ScorePageInterpretation.java",
       "license": "Apache-2.0",
       "recognition95_review_note": "Reviewed recognition95: preserve positively recognized printed multi-rest identity through the score, source selections, joins, Guide292 MRG1 cache/native/Python/Hub records, MusicXML and compact layout without changing logical rest timing. Complete raw two-bulb rest recovery uses finite upper-cap ownership and a prepaid optional raster work bound. Raw-proved returning-pitch slur candidates require a same-part nonoverlapping intervening different-pitch attack; exact ties retain precedence and candidate XML endpoints must share the emitted part. Original synthetic regressions only; models, dependencies and audio97 unchanged.",
       "reviewed_app_state": "Reviewed recognition95 source committed; cumulative matched rollout deferred during active goal.",
       "reviewed_source_state": "Accepted source130; Guide295, recognition112, audio97",
       "release130_review_note": "Reviewed platform adapter; see release130_source_review. No claim of whole-file token parity.",
-      "standalone_normalized_sha256": "e97c5ca75fc4f20caaf24257c508b7ca8794f427315342608cbd252465ed86c6",
+      "standalone_normalized_sha256": "8125747a6069a89b079d612de738635004be7a0d40677c8cec0c1351d738510b",
       "current_source_review": "Reviewed current source and standalone counterpart for the cumulative source-bound beam, notation, key, articulation and bounded context batch. Original procedural regressions only; physical source observations and model facts do not establish complete musical authority.",
       "november_24_flesch_app_review": {
         "app_commit": "d0622b051dfaa40ad1ac76a2cd1ed7072186bb90",
         "scope": "App retained-guide expression fields follow final score-note owners. Standalone carries these records in its independent emitted annotation fields."
-      }
+      },
+      "raised_numeric_tempo_note": "Carry recovered tempo changes while retaining all existing source metadata."
     },
     "ScorePageTimeline.java": {
       "physical_page_review": "Page-edge continuations require consecutive physical pages when source identity is known. The Android conversion caller passes its selection roster, and standalone tempo export reads decoded sourcePage identities.",
@@ -9072,13 +9249,17 @@
     },
     "ScorePedalDetector.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/ScorePedalDetector.java",
-      "source_sha256": "3133de027ce0a10dd2d0f81f4efea2c4b4a95778aa099c55629c0bb4d57296bb",
-      "source_normalized_sha256": "3d9c79f0dbe503ef8a0865a8f6d6d266843fc7e22e8c3fb3c22c3b1f7305dbd9",
-      "reviewed_source_state": "Committed combined source snapshot; paired package deployment and whole-library accuracy acceptance pending.",
+      "source_sha256": "40659a73a5cc254132d3f1b821f768acdc08c7573a0def3a7c9d88bce7bbe327",
+      "source_normalized_sha256": "40659a73a5cc254132d3f1b821f768acdc08c7573a0def3a7c9d88bce7bbe327",
+      "reviewed_source_state": "Verified whole-file namespace-only port. Local desktop and focused JVM tests passed.",
       "review_note": "Global recognition/performance repairs; namespace-equivalent portable helpers and separately reviewed caller adapters. Original synthetic regressions; no private score assets.",
-      "standalone_sha256": "efa72203d906673b30fa559249ffc91985fb1b5ef61383d1128a0c8b38bf2576",
-      "reviewed_app_commit": "c0374eebf5c075b83813a66051faa22bcb431360",
-      "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/ScorePedalDetector.java"
+      "standalone_sha256": "7afd4d6a667d129f053f1fd1fea8d0c0cc596d907a678ec8f07513d2f63b572f",
+      "reviewed_app_commit": "a5e6f708942ac8a908f6b3abf7950c16cf23905e",
+      "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/ScorePedalDetector.java",
+      "word_led_pedal_rail_review": {
+        "reviewed_app_commit": "a5e6f708942ac8a908f6b3abf7950c16cf23905e",
+        "scope": "Ports the same candidate rail and anchor context to production pedal guide events."
+      }
     },
     "ScorePerformanceTimeline.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/ScorePerformanceTimeline.java",
@@ -9104,7 +9285,11 @@
       "source_sha256": "4f1ca8bda5c2097d1ad9266356f12fea9285ac0440a071f0deca713b0f91bc02",
       "reviewed_app_commit": "650d1b3a312dcd7eb58f83945a6a3be321c9b4dd",
       "source_normalized_sha256": "4f1ca8bda5c2097d1ad9266356f12fea9285ac0440a071f0deca713b0f91bc02",
-      "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/ScorePlaybackDirection.java"
+      "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/ScorePlaybackDirection.java",
+      "printed_one_bar_repeat_review": {
+        "reviewed_app_commit": "99e80891402f3e63c763f9e238081bb6a8d1b543",
+        "scope": "Only the already assigned wire kind with explicit complete source evidence qualifies for one-bar admission."
+      }
     },
     "ScoreRestEvent.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/ScoreRestEvent.java",
@@ -9137,6 +9322,17 @@
       "review_note": "Global full-measure rest classification requires independently proved raw voice ownership; literal legacy rests remain literal. Complete joined beam/shaft/numeral ownership recovers triplets. Adjacent complete homologous systems and returning raw bows prove incoming ties without widening ordinary distance caps. Guide283 appends actual rest Kind to33-byte records; analysis marker-24, audio77 and recognition25 are implemented, strict and legacy-compatible. Original Apache-2.0 controls; no source scans, private logs, model or dependency changes.",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/ScoreRestTiming.java"
     },
+    "ScoreRhythmicFeel.java": {
+      "source_path": "app/src/main/java/com/musicsheets/app/pdf/ScoreRhythmicFeel.java",
+      "source_sha256": "8b31e49bc9dc5693eb4851d2d9ef706f8c83ab85f674e1a697ddcf6221e54c40",
+      "source_normalized_sha256": "8b31e49bc9dc5693eb4851d2d9ef706f8c83ab85f674e1a697ddcf6221e54c40",
+      "reviewed_app_commit": "7b5928cf534a48b2ae97cb0ddd0650f84c233b8f",
+      "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/ScoreRhythmicFeel.java",
+      "standalone_sha256": "55bca9469c06320c62e94b4516306baa0ac959175cc7bab5599b3c80644d38aa",
+      "standalone_normalized_sha256": "55bca9469c06320c62e94b4516306baa0ac959175cc7bab5599b3c80644d38aa",
+      "license": "Apache-2.0",
+      "review_note": "Package-only port of printed eighth-note feel capture and exact two-to-one playback pairing. Uses the established framed expressive direction payload."
+    },
     "ScoreRhythmProjection.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/ScoreRhythmProjection.java",
       "source_sha256": "3cd8fb57543bb1b661c916df6061ae3049d2e20cd050be31cf6d4402ac11a592",
@@ -9152,16 +9348,17 @@
     },
     "ScoreSemanticWire.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/ScoreSemanticWire.java",
-      "source_sha256": "706bdaf801a02d4e3568b5c5d12f0a0116e890f208744df4429dda4f2825c1cd",
-      "reviewed_app_commit": "650d1b3a312dcd7eb58f83945a6a3be321c9b4dd",
-      "source_normalized_sha256": "706bdaf801a02d4e3568b5c5d12f0a0116e890f208744df4429dda4f2825c1cd",
+      "source_sha256": "5d12f7e8bb93d99a5f878f9ecfa1ea08fc84d17f3e3c3e4903f1d0adbf47f9e4",
+      "reviewed_app_commit": "170a99da3612780954ac8a61f807a134f441d4e2",
+      "source_normalized_sha256": "5d12f7e8bb93d99a5f878f9ecfa1ea08fc84d17f3e3c3e4903f1d0adbf47f9e4",
       "reviewed_source_state": "Accepted source130; Guide295, recognition112, audio97",
       "review_note": "Whole-file executable token parity after package-only adaptation. Shared detection/ownership/performance or semantic validation; original generated regressions and licensed OFL glyphs. JDK only, no private score/model/signing/history data.",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/ScoreSemanticWire.java",
-      "standalone_sha256": "226d633c0c4eabe6a28047d44b8674aeef0e3389ea8971a900348549dc0f922f",
+      "standalone_sha256": "f06622bd67373bbab55ee30805d5cad0d3628cfb373a9248646157639fd00887",
       "release130_review_note": "Namespace-normalized executable tokens or Python AST are equivalent after existing flat-module/package imports.",
-      "standalone_normalized_sha256": "226d633c0c4eabe6a28047d44b8674aeef0e3389ea8971a900348549dc0f922f",
-      "current_source_review": "Reviewed current source and standalone counterpart for the cumulative source-bound beam, notation, key, articulation and bounded context batch. Original procedural regressions only; physical source observations and model facts do not establish complete musical authority."
+      "standalone_normalized_sha256": "f06622bd67373bbab55ee30805d5cad0d3628cfb373a9248646157639fd00887",
+      "current_source_review": "Reviewed current source and standalone counterpart for the cumulative source-bound beam, notation, key, articulation and bounded context batch. Original procedural regressions only; physical source observations and model facts do not establish complete musical authority.",
+      "verbal_tempo_marking_note": "Append verbal tempo kind 23 with a specific Guide 312 compatibility check."
     },
     "ScoreSlurClassification.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/ScoreSlurClassification.java",
@@ -9308,16 +9505,16 @@
     },
     "ScoreTempoSelection.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/playback/ScoreTempoSelection.java",
-      "source_sha256": "91d8fa4b10a8f79fa475af2a85f0cd7955ef469bc8c7635bdd2f3f0280b7437d",
-      "reviewed_app_commit": "e1619e89",
-      "source_normalized_sha256": "91d8fa4b10a8f79fa475af2a85f0cd7955ef469bc8c7635bdd2f3f0280b7437d",
-      "reviewed_source_state": "Opening playback pulse selection reviewed for Music Sheets 1.18.561",
+      "source_sha256": "5e2f02f7b03df14c531ffb40f06487433b41ec4abfafb9b04abfc6d724d7c70c",
+      "reviewed_app_commit": "528a2fd5e926c7cb760e5009b4c6b953978c0308",
+      "source_normalized_sha256": "5e2f02f7b03df14c531ffb40f06487433b41ec4abfafb9b04abfc6d724d7c70c",
+      "reviewed_source_state": "Alternate arrangement and rounded printed opening tempo evidence reviewed",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/ScoreTempoSelection.java",
-      "standalone_sha256": "97c01603f573fc674b9896386eee8234b86c39edf135dd17b6e4d17a3f1efff3",
+      "standalone_sha256": "9dc1cb13589de6785a77d122b04f6c60b9e467980a0d1b3e8254084106a4146b",
       "tempo_unit_135_review": "Song meter-pulse values are converted to quarter-note clocks once. Existing APIs for explicitly selected printed pulses remain compatible. A new quarter-clock engraving entry retains pulse units and later tempo ratios.",
       "playback_pulse_review": "Matching printed pulse values are recovered on both sides. Android takes the meter string and computes its SheetTiming fallback. The standalone Java API takes the caller's already converted quarter-note fallback.",
-      "standalone_normalized_sha256": "97c01603f573fc674b9896386eee8234b86c39edf135dd17b6e4d17a3f1efff3",
-      "current_source_review": "Ported unset and matching saved printed pulse selection; standalone receives its existing caller-provided quarter-note fallback."
+      "standalone_normalized_sha256": "9dc1cb13589de6785a77d122b04f6c60b9e467980a0d1b3e8254084106a4146b",
+      "current_source_review": "Ported alternate-edition clock selection and rounded saved printed pulses with a different catalog pulse unit. Android converts the meter pulse, and standalone receives the already converted fallback."
     },
     "ScoreTiePitchGuard.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/ScoreTiePitchGuard.java",
@@ -9716,6 +9913,12 @@
       "reviewed_app_state": "Verified pitched eligibility before diatonic queries. The namespace-equivalent port has original mixed pitched and unpitched controls."
     },
     "SheetInterpreter.java": {
+      "inline_three_eight_review": {
+        "reviewed_app_commit": "c8450ad05cbd99f285372fba07a754ab5f4b9412",
+        "source": "app/src/main/java/com/musicsheets/app/pdf/InlineWholeMeterAlias.java",
+        "standalone": "java/src/main/java/io/github/luckolite/interpreter/MeterNumeralWholeNoteAlias.java",
+        "scope": "Paired note and meter ownership and bounded reader routing. Existing whole-wrapper drift remains under its prior review."
+      },
       "unanchored_split_review": {
         "reviewed_app_commit": "b029dfbb",
         "app_blob_sha256": {
@@ -9783,7 +9986,29 @@
         "scope": "Matching late quartet and beam-fragment proof in the Android, worker and standalone paths."
       },
       "fingering_alias_review_note": "The native file bridge removes the independently proved staff-rule fingering alias before note grouping. Standalone does the corresponding removal in its existing paired fingering pass and shares the later prior-fingering accidental proof.",
-      "supplemental_fingering_review": "The desktop bridge sends an additional ordinary digit separately from its parenthesized endpoint. Standalone Main serializes both marks with explicit grouped ownership for MusicXML."
+      "supplemental_fingering_review": "The desktop bridge sends an additional ordinary digit separately from its parenthesized endpoint. Standalone Main serializes both marks with explicit grouped ownership for MusicXML.",
+      "inline_meter_lower_digit_review": {
+        "reviewed_app_commit": "c0ee1b4a8d53a6c75c1e7cc30db2024efd88e6c3",
+        "scope": "Namespace-equivalent InlineMeterLowerDigit proof. App InlineWholeMeterAlias and standalone MeterNumeralWholeNoteAlias both remove the proved glyph alias and add the verified meter before rhythmic interpretation."
+      },
+      "standalone_tab_fret_recovery_review": {
+        "reviewed_app_commit": "dcf4b12de8c68354dadbe919a2cc6e3615a83bb1",
+        "scope": "Routes caller-supplied OCR into standalone tab preparation."
+      },
+      "printed_one_bar_repeat_review": {
+        "reviewed_app_commit": "99e80891402f3e63c763f9e238081bb6a8d1b543",
+        "scope": "Mirrored optical ownership and performance expansion, with independent paired app/worker and standalone page inputs.",
+        "mirrored_source_lf_sha256": {
+          "PrintedMeasureRepeatGlyphs.java": "a614dcd5479da1009d6ec9fd454746ea88791d8f440b007c1d248f1ae9fbba45",
+          "MeasureRepeatProjection.java": "3d709dc3f3bd689835e3a44c23938d4e3b5baf2d74a2acae145819c82db846bc"
+        }
+      },
+      "aligned_opening_meter_divider_review": {
+        "reviewed_app_commit": "2815228af27747b0076182b8e6a47e4749ce69e0",
+        "scope": "Shared shape and input checks for removing a false opening measure. App/worker retain accepted meter crops; the standalone adapter uses its bundled font before ordinary meter extraction.",
+        "shared_file": "SplitOpeningHeader.java",
+        "standalone_lf_sha256": "bc31531981394805a6122fd1d2d11a3e96c993e88de300a706b8cf46c413117d"
+      }
     },
     "SheetWrittenTieLinks.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/SheetWrittenTieLinks.java",
@@ -10215,7 +10440,11 @@
       "license": "Apache-2.0",
       "standalone_sha256": "dd3495864696f3390a1c56d2ce97fe7c395f41131a71de2f4fc344581d56b567",
       "reviewed_source_state": "committed-app-source",
-      "review_note": "Reviewed global text/source-owner repair and original regressions; see docs/audited-ownership-repairs.md. Package-only Java port, except public timeline visibility and the pure written-tie helper API name/visibility. Existing models and record layouts are unchanged."
+      "review_note": "Reviewed global text/source-owner repair and original regressions; see docs/audited-ownership-repairs.md. Package-only Java port, except public timeline visibility and the pure written-tie helper API name/visibility. Existing models and record layouts are unchanged.",
+      "standalone_tab_fret_recovery_review": {
+        "reviewed_app_commit": "dcf4b12de8c68354dadbe919a2cc6e3615a83bb1",
+        "scope": "Exact shared recovery code binds isolated standalone fret crops and preserves compact and paired notation."
+      }
     },
     "TabGestureMarks.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/TabGestureMarks.java",
@@ -10359,7 +10588,11 @@
       "license": "Apache-2.0",
       "recognition95_review_note": "Reviewed recognition95: preserve positively recognized printed multi-rest identity through the score, source selections, joins, Guide292 MRG1 cache/native/Python/Hub records, MusicXML and compact layout without changing logical rest timing. Complete raw two-bulb rest recovery uses finite upper-cap ownership and a prepaid optional raster work bound. Raw-proved returning-pitch slur candidates require a same-part nonoverlapping intervening different-pitch attack; exact ties retain precedence and candidate XML endpoints must share the emitted part. Original synthetic regressions only; models, dependencies and audio97 unchanged.",
       "standalone_normalized_sha256": "676b97d17307c92905808aa5cc8edc9d6c120114574d7c9714aa4aa586cdeccb",
-      "current_source_review": "Reviewed inclusive integer raster extent for complete narrow sharps; geometry-only tablature candidates cannot suppress notation until decoded content, crossing bars or explicit tuning supplies independent evidence. All other shape, pitch, model and wire contracts retained; original synthetic regressions only."
+      "current_source_review": "Reviewed inclusive integer raster extent for complete narrow sharps; geometry-only tablature candidates cannot suppress notation until decoded content, crossing bars or explicit tuning supplies independent evidence. All other shape, pitch, model and wire contracts retained; original synthetic regressions only.",
+      "standalone_tab_fret_recovery_review": {
+        "reviewed_app_commit": "dcf4b12de8c68354dadbe919a2cc6e3615a83bb1",
+        "scope": "Standalone preparation applies the same crop recovery before the rhythm pass."
+      }
     },
     "TechniqueClockBoundaryOriginalTest.java": {
       "source_path": "app/src/test/java/com/musicsheets/app/pdf/TechniqueClockBoundaryOriginalTest.java",
@@ -10404,17 +10637,26 @@
     },
     "TempoChangeDetector.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/TempoChangeDetector.java",
-      "source_sha256": "8ce3e4dd0cd8bdc0f90f1330385f2320e46cd29049b9f3a6f8ff961ee8a9a98e",
-      "source_normalized_sha256": "b2ac3d64d3a3b772792e4e48f01ba620e48530623ad8a25db3a9c1b4e1759b58",
+      "source_sha256": "ff380e6233a73af99711ff17804961eb7195d08e430f685e7172c06af9f76970",
+      "source_normalized_sha256": "ff380e6233a73af99711ff17804961eb7195d08e430f685e7172c06af9f76970",
       "review_note": "Own an elevated complete opening metronome equation through an independently printed part caption, paired header rows, unique staff and clear corridor. Recover clipped meter crop staff geometry only with agreeing bilateral printed-rule witnesses and owned stacked ink. Add blank context around isolated OCR digits without changing source pixels, scale consensus or font thresholds. Sixty-six original procedural and licensed-font regressions; no private score assets, song predicates, model or wire-layout changes.",
-      "reviewed_source_state": "working-tree",
-      "standalone_sha256": "8b8a9b3ecb0b37992a40a493686883be9e25d6727488895059f1effc21cf0014",
-      "reviewed_app_commit": "6146b74ac936d1e7dc2afa95418b1a6faa43b18e",
+      "reviewed_source_state": "committed-app-source",
+      "standalone_sha256": "82cb985f56fcc08ad5fc4b48ee7ef0b5a8ec96f36d1706045810dfdb99440013",
+      "reviewed_app_commit": "e932121e3febc95fd480c5ffa12a7d2a835009d1",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/TempoChangeDetector.java",
-      "standalone_normalized_sha256": "8b8a9b3ecb0b37992a40a493686883be9e25d6727488895059f1effc21cf0014",
+      "standalone_normalized_sha256": "82cb985f56fcc08ad5fc4b48ee7ef0b5a8ec96f36d1706045810dfdb99440013",
       "license": "Apache-2.0",
       "current_source_review": "Small hollow metronome pulse and elevated system ownership match after namespace and formatting. Standalone keeps its existing fast return when either input of both subsequent contextual loops is empty, so the same ordinary result is returned.",
       "reviewed_app_state": "Reviewed and committed recognition 147 sources. Original synthetic controls cover tempo dots, paired equation strokes, and a compact staff with real musical ink."
+,
+      "metronome_direction_review": "Prefer the beat note closest to the equals sign; use darker disconnected ink to resolve a displaced competing stem and require a flag to start near the note stem tip.",
+      "partial_numeral_review": "Overlapping smaller numerals attached to the same proved equals sign are discarded. Distinct printed equations and their beat positions remain independent.",
+      "crossed_flag_opening_review": "Recover an opening metronome equation from paired equals-stroke tips and a shared stable flagged eighth glyph. Standalone retains its cached direction geometry.",
+      "low_half_note_tempo_note": "Admit rates from 20 through 29 only for a hollow pulse proved at both thresholds, and round the hollow head pocket height limit to whole raster pixels.",
+      "stacked_section_tempo_note": "A complete optical equation and its aligned title and bar number can identify the first bar of the following system.",
+      "raised_numeric_tempo_note": "Attach optically proved metronome equations above high ledger notes to their written attack.",
+      "wrapped_approximate_tempo_note": "Recognize a parenthesized approximate metronome equation inside a printed heading with independent glyph, equals, and digit proof.",
+      "printed_numeric_boundary_note": "Use independently printed equations and their written bar boundaries for named tempos and accelerations after counted rests."
     },
     "TerminalCreditStroke.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/data/TerminalCreditStroke.java",
@@ -10601,6 +10843,16 @@
       "november_24_flesch_app_review": {
         "app_commit": "d0622b051dfaa40ad1ac76a2cd1ed7072186bb90",
         "scope": "Reviewed unnumbered glyph evidence and locally guarded sixteenth and triplet integration. Standalone retains its own emitted-clock adjustments."
+      },
+      "joined_numeral_caption_ownership_review": {
+        "reviewed_app_commit": "522e5ffdcca3569a92cf9d281247fdf622aa7017",
+        "scope": "Ports the same neighboring caption baseline refusal for repeated joined numeral candidates. Unrelated drift remains tracked."
+      },
+      "mixed_value_bracketed_duplet_review": {
+        "reviewed_app_commit": "db51d66bc8b8dded5e2c05f4d5d07764985eab9d",
+        "scope": "Shared optical ownership and compound-meter timing for an explicitly bracketed mixed-value pair. App/worker and standalone retain the neutral ratio until the document meter establishes a complete lane clock.",
+        "shared_file": "BracketedDuplets.java",
+        "standalone_lf_sha256": "c5107dffce5cf8aa9285cc326f2728b9c9e76b20e6509f264668daa15ae7650e"
       }
     },
     "TupletConsensusFont.java": {
@@ -10826,17 +11078,18 @@
     },
     "WholeRestMeterContext.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/WholeRestMeterContext.java",
-      "source_sha256": "b3c1b39b580e31a3b168085fb4abe7f8e61b178efe5314b65bacc0f0b7674a74",
-      "source_normalized_sha256": "b3c1b39b580e31a3b168085fb4abe7f8e61b178efe5314b65bacc0f0b7674a74",
-      "standalone_sha256": "d2ac0f572117c49f3c92abd1cdb0d6464f697d14be137dc4904167d1ea44656d",
+      "source_sha256": "28ab959d4cfe5dc769bb1b0228ec7e84ac1baf6cdb4aec849ca3d5fa29226921",
+      "source_normalized_sha256": "28ab959d4cfe5dc769bb1b0228ec7e84ac1baf6cdb4aec849ca3d5fa29226921",
+      "standalone_sha256": "dd4d82bfaf19f33fc674bd04f8b424820453870cdc7db9743a6922f1e0550cde",
       "review_note": "Global recognition/performance repairs; namespace-equivalent portable helpers and separately reviewed caller adapters. Original synthetic regressions; no private score assets.",
-      "reviewed_app_commit": "8dd683feff39cb12509561d137584e0f5564353e",
+      "reviewed_app_commit": "8f7c4a613808ebb95df4bea2a2a4a5721032d70e",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/WholeRestMeterContext.java",
       "license": "Apache-2.0",
       "recognition95_review_note": "Reviewed recognition95: preserve positively recognized printed multi-rest identity through the score, source selections, joins, Guide292 MRG1 cache/native/Python/Hub records, MusicXML and compact layout without changing logical rest timing. Complete raw two-bulb rest recovery uses finite upper-cap ownership and a prepaid optional raster work bound. Raw-proved returning-pitch slur candidates require a same-part nonoverlapping intervening different-pitch attack; exact ties retain precedence and candidate XML endpoints must share the emitted part. Original synthetic regressions only; models, dependencies and audio97 unchanged.",
       "reviewed_app_state": "Reviewed recognition95 source committed; cumulative matched rollout deferred during active goal.",
-      "standalone_normalized_sha256": "51a4d998fd72e854e60c6f94587517a0c5221f96a531d008185934c447f3aff7",
-      "current_source_review": "Reviewed current source and standalone counterpart for the cumulative source-bound beam, notation, key, articulation and bounded context batch. Original procedural regressions only; physical source observations and model facts do not establish complete musical authority."
+      "standalone_normalized_sha256": "dd4d82bfaf19f33fc674bd04f8b424820453870cdc7db9743a6922f1e0550cde",
+      "current_source_review": "Reviewed current source and standalone counterpart for the cumulative source-bound beam, notation, key, articulation and bounded context batch. Original procedural regressions only; physical source observations and model facts do not establish complete musical authority.",
+      "meter_crop_rest_overlap_note": "Remove a quarter-rest alias only when its detected center and height belong to an accepted printed meter glyph; preserve any separate leading rest."
     },
     "WideSystemIncomingTieProof.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/WideSystemIncomingTieProof.java",
@@ -11056,17 +11309,18 @@
     },
     "semantic_wire.py": {
       "source_path": "tools/native-worker/semantic_wire.py",
-      "source_sha256": "9383cec08d4030aeea31d22640a058b85510faca6f0b58058581db9affda0257",
-      "reviewed_app_commit": "48c63effa5905c396dde62b847e064573516f047",
-      "source_normalized_sha256": "9383cec08d4030aeea31d22640a058b85510faca6f0b58058581db9affda0257",
+      "source_sha256": "4fbc74ee44df927ade237fdf5de3e84b227205967a0507a07ed7c15af6dd3a63",
+      "reviewed_app_commit": "170a99da3612780954ac8a61f807a134f441d4e2",
+      "source_normalized_sha256": "4fbc74ee44df927ade237fdf5de3e84b227205967a0507a07ed7c15af6dd3a63",
       "review_note": "Expose bounded prefix decoding so the following source section has its own framing. Existing complete semantic decode remains strict. Original procedural controls only; no private scores, library records, masks, model weights or signing material are published.",
       "scoped_reviewed_app_commit": "48c63effa5905c396dde62b847e064573516f047",
       "reviewed_source_state": "Accepted source130; Guide295, recognition112, audio97",
       "standalone_path": "src/sheet_music_recognition/semantic_wire.py",
-      "standalone_sha256": "9383cec08d4030aeea31d22640a058b85510faca6f0b58058581db9affda0257",
+      "standalone_sha256": "4fbc74ee44df927ade237fdf5de3e84b227205967a0507a07ed7c15af6dd3a63",
       "release130_review_note": "Namespace-normalized executable tokens or Python AST are equivalent after existing flat-module/package imports.",
-      "standalone_normalized_sha256": "9383cec08d4030aeea31d22640a058b85510faca6f0b58058581db9affda0257",
-      "current_source_review": "Reviewed current source and standalone counterpart for the cumulative source-bound beam, notation, key, articulation and bounded context batch. Original procedural regressions only; physical source observations and model facts do not establish complete musical authority."
+      "standalone_normalized_sha256": "4fbc74ee44df927ade237fdf5de3e84b227205967a0507a07ed7c15af6dd3a63",
+      "current_source_review": "Reviewed current source and standalone counterpart for the cumulative source-bound beam, notation, key, articulation and bounded context batch. Original procedural regressions only; physical source observations and model facts do not establish complete musical authority.",
+      "verbal_tempo_marking_note": "Use the same Guide 312 kind code and reject it in legacy record streams."
     },
     "slur_wire.py": {
       "source_path": "tools/native-worker/slur_wire.py",
@@ -12247,15 +12501,16 @@
     },
     "CourtesyFigureEightRim.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/CourtesyFigureEightRim.java",
-      "source_sha256": "d79ea83cad45dc1989786c3a992d81f5a2e453fe1f0372aaadcd4988ad4e13f0",
-      "source_normalized_sha256": "d79ea83cad45dc1989786c3a992d81f5a2e453fe1f0372aaadcd4988ad4e13f0",
+      "source_sha256": "d2ba3482c5464f5b1d6141f2c37b2af0833fa05ba84fbc205ad6973ec2bd6706",
+      "source_normalized_sha256": "d2ba3482c5464f5b1d6141f2c37b2af0833fa05ba84fbc205ad6973ec2bd6706",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/CourtesyFigureEightRim.java",
-      "standalone_sha256": "0607deee649e151005762a06c67df6e1dd0b693047661daf8b479d5cd43e661f",
-      "standalone_normalized_sha256": "0607deee649e151005762a06c67df6e1dd0b693047661daf8b479d5cd43e661f",
+      "standalone_sha256": "eaacbc17476258217d31043529d9b8a88cd9c2c0714d17d5bd2df3c0905cbb5f",
+      "standalone_normalized_sha256": "eaacbc17476258217d31043529d9b8a88cd9c2c0714d17d5bd2df3c0905cbb5f",
       "license": "Apache-2.0",
-      "reviewed_app_commit": "a811ad411b1627202807673222ffca8aaf714921",
+      "reviewed_app_commit": "a89978327a4ca34b5351dda095c105c730a802fd",
       "current_source_review": "Complete thin staff-rule crossing continuity preserves a truly attached ledger stem; finite complete figure-eight rim ownership exempts only its sparse model head fragments in a cautionary meter tail. Existing raw, bar, counter, rest and head guards retained. Twenty-one original controls;156 focused tests; separate private full-page proof.",
-      "closed_counter_paper_review": "Sparse semantic head fragments in the exact already-closed counters of a proved courtesy eight belong to the numeral. Counter boxes never supply ownership; existing figure, paper, size, fringe and played-head guards remain. Original procedural tests only."
+      "closed_counter_paper_review": "Sparse semantic head fragments in the exact already-closed counters of a proved courtesy eight belong to the numeral. Counter boxes never supply ownership; existing figure, paper, size, fringe and played-head guards remain. Original procedural tests only.",
+      "voila_counter_rim_review": "Closed denominator counter paper has its own coverage bound and does not consume the existing printed rim limit."
     },
     "CourtesyFigureEightRimBoundsTest.java": {
       "source_path": "app/src/test/java/com/musicsheets/app/pdf/CourtesyFigureEightRimBoundsTest.java",
@@ -12757,10 +13012,14 @@
       "source_path": "app/src/test/java/com/musicsheets/app/pdf/CourtesyClosedCounterPaperOriginalTest.java",
       "standalone_path": "java/src/test/java/io/github/luckolite/interpreter/CourtesyClosedCounterPaperOriginalTest.java",
       "license": "Apache-2.0",
-      "source_sha256": "cab32f5401922ca8562c4edf24750cd3a58ea0147ec937d1f2cfe9656e115626",
-      "source_normalized_sha256": "cab32f5401922ca8562c4edf24750cd3a58ea0147ec937d1f2cfe9656e115626",
-      "standalone_sha256": "92d9f1bdd91ed7c22983d63ddcbc2ee763c373a145cb41c4bc71c6b3bd48533f",
-      "closed_counter_paper_review": "Sparse semantic head fragments in the exact already-closed counters of a proved courtesy eight belong to the numeral. Counter boxes never supply ownership; existing figure, paper, size, fringe and played-head guards remain. Original procedural tests only."
+      "source_sha256": "c59178efe94a5c928d36b92bdcd939f92a11375c234ed70bd2d07f6403d75dab",
+      "source_normalized_sha256": "c59178efe94a5c928d36b92bdcd939f92a11375c234ed70bd2d07f6403d75dab",
+      "standalone_sha256": "cc7fbbb55a1c6d57fef218e95359dfea4f487e642e207346982fdb3d78d0df21",
+      "closed_counter_paper_review": "Sparse semantic head fragments in the exact already-closed counters of a proved courtesy eight belong to the numeral. Counter boxes never supply ownership; existing figure, paper, size, fringe and played-head guards remain. Original procedural tests only.",
+      "voila_ghost_bar_review": {
+        "reviewed_app_commit": "a89978327a4ca34b5351dda095c105c730a802fd",
+        "scope": "Original raster control for partial semantic fill inside a closed eight counter and its printed rim."
+      }
     },
     "BeamShoulderDotOriginalTest.java": {
       "source_path": "app/src/test/java/com/musicsheets/app/pdf/BeamShoulderDotOriginalTest.java",

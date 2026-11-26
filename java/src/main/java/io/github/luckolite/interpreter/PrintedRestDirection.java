@@ -14,6 +14,7 @@ final class PrintedRestDirection {
                             ACCELERANDO,
                             A_TEMPO,
                             TEMPO_PRIMO,
+                            TEMPO_MARKING,
                             SAME_TEMPO,
                             METRIC_MODULATION ->
                     true;
@@ -28,7 +29,7 @@ final class PrintedRestDirection {
             byte[] gray,
             int w,
             int h) {
-        return find(score, staffs, word, gray, w, h, false);
+        return find(score, staffs, word, gray, w, h, false, false);
     }
 
     static ScoreRestEvent findPedalCaption(
@@ -39,7 +40,13 @@ final class PrintedRestDirection {
             int w,
             int h) {
         if (!ExpressiveDirectionText.pedalRingCaption(word.text())) return null;
-        return find(score, staffs, word, gray, w, h, true);
+        return find(score, staffs, word, gray, w, h, true, false);
+    }
+
+    static ScoreRestEvent tempoRest(
+            ScorePageInterpretation score, List<PlayingTechniqueDetector.Staff> staffs,
+            PlayingTechniqueDetector.Word word, byte[] gray, int width, int height) {
+        return find(score, staffs, word, gray, width, height, false, true);
     }
 
     static boolean allowsPedalCaption(ScoreExpressiveEvent.Kind kind, String text) {
@@ -82,7 +89,7 @@ final class PrintedRestDirection {
             byte[] gray,
             int w,
             int h,
-            boolean caption) {
+            boolean caption, boolean tempo) {
         if (gray == null || w <= 0 || h <= 0 || gray.length != (long) w * h) return null;
         float x = word.left() * w, top = word.top() * h, bottom = word.bottom() * h;
         if (!Float.isFinite(x)
@@ -116,7 +123,8 @@ final class PrintedRestDirection {
                     || caption && (word.right() > m.right() || !uniqueFullRest(score, rest)))
                 continue;
             float rx = (m.left() + rest.positionInMeasure() * (m.right() - m.left())) * w;
-            float dx = Math.max(0, Math.max(x - rx, rx - right));
+            float dx = tempo ? Math.abs(rx - x)
+                    : Math.max(0, Math.max(x - rx, rx - right));
             for (var staff : staffs) {
                 float gap = staff.gap(), center = (staff.top() + staff.bottom()) * .5f;
                 if (staff.index() != rest.staffIndex()
@@ -127,7 +135,7 @@ final class PrintedRestDirection {
                         || center / h < m.top()
                         || center / h > m.bottom()
                         || Math.abs(rest.pageY() * h - center) > gap * 2.5f
-                        || (dx > gap * 3 && !measureStartWholeRest(score, rest, word, gap, w)))
+                        || (dx > gap * (tempo ? 1.35f : 3) && !measureStartWholeRest(score, rest, word, gap, w)))
                     continue;
                 if (rulesByStaff == null) rulesByStaff = new IdentityHashMap<>();
                 var rules = rulesByStaff.computeIfAbsent(staff, key -> Optional.ofNullable(
@@ -150,8 +158,11 @@ final class PrintedRestDirection {
                                 : observedTop >= rules[0] + gap * .25f
                                         ? (observedTop - rules[0]) / gap
                                         : Float.POSITIVE_INFINITY;
+                // An OCR margin can touch the top line even though the tempo word is above it.
+                if (tempo && top <= localTop - gap && bottom <= localTop + gap * .3f)
+                    vertical = Math.max(0, (localTop - bottom) / gap);
                 if (vertical > 4.5f) continue;
-                float distance = vertical + dx / gap * .05f;
+                float distance = vertical + dx / gap * (tempo ? .3f : .05f);
                 if (distance < rank - .1f) {
                     best = rest;
                     rank = distance;

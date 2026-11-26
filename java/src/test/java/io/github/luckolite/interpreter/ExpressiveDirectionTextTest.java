@@ -8,6 +8,20 @@ import static org.junit.Assert.*;
 import static io.github.luckolite.interpreter.ScoreExpressiveEvent.*;
 
 public class ExpressiveDirectionTextTest {
+    @Test
+    public void acceptsWholeSlowerAndThePrintedRallantandoSpelling() {
+        assertEquals("slower", one("Slower", Kind.RITENUTO).qualifierText());
+        one("rallantando", Kind.RALLENTANDO);
+        assertTrue(ExpressiveDirectionText.parse("a slower melody").isEmpty());
+    }
+
+    @Test
+    public void normalizesPrintedReturnsWithASeparateDynamicOrFasterQualifier() {
+        assertEquals("", one("p atempo", Kind.A_TEMPO).qualifierText());
+        for (String text : List.of("a tempo ma più mosso", "a tempo ma pi� mosso"))
+            assertEquals("ma piu mosso", one(text, Kind.A_TEMPO).qualifierText());
+    }
+
     private ExpressiveDirectionText.Direction one(String text, Kind kind) {
         var values = ExpressiveDirectionText.parse(text);
         assertEquals(1, values.size());
@@ -220,5 +234,15 @@ public class ExpressiveDirectionTextTest {
         }
         assertEquals(Strength.POCO, one("poco rall.", Kind.RALLENTANDO).strength());
         assertEquals(Strength.MOLTO, one("molto rall.", Kind.RALLENTANDO).strength());
+    }
+
+    @Test
+    public void completeHistoricalTempoHeadingsRetainTheirPrintedEvidence() {
+        assertEquals("allegro non molto", one("Alleqro nen molto", Kind.TEMPO_MARKING).qualifierText());
+        assertEquals("allegro", one("Allegro Soto", Kind.TEMPO_MARKING).qualifierText());
+        assertEquals("lento", one("Lento Tutti", Kind.TEMPO_MARKING).qualifierText());
+        assertEquals("largo", one("D Largo Interlude", Kind.TEMPO_MARKING).qualifierText());
+        assertTrue(ExpressiveDirectionText.parse("the Allegro solo follows").isEmpty());
+        assertTrue(ExpressiveDirectionText.parse("Orrido Vento Al Mare").isEmpty());
     }
 }

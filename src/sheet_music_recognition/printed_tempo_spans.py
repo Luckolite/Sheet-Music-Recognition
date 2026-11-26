@@ -11,7 +11,7 @@ SOURCE = 'printed-tempo-dash-span'
 END = 'printed-tempo-dash-end-v1:'
 OPEN = 'printed-tempo-dash-page-edge-v1:'
 GRADUAL = {'ACCELERANDO', 'RITARDANDO', 'RALLENTANDO'}
-TEMPO = GRADUAL | {'RITENUTO', 'A_TEMPO', 'TEMPO_PRIMO', 'METRIC_MODULATION'}
+TEMPO = GRADUAL | {'RITENUTO', 'A_TEMPO', 'TEMPO_PRIMO', 'TEMPO_MARKING', 'METRIC_MODULATION'}
 
 
 def _hint(event, prefix):

@@ -24,6 +24,14 @@ public final class CourtesyClosedCounterPaperOriginalTest {
     }
 
     @Test
+    public void enclosedPaperDoesNotConsumeThePrintedRimBudget() {
+        var p = MeterOnlyCourtesyTailTest.page();
+        MeterOnlyCourtesyTailTest.rect(p, 223, 95, 7, 7, 2, 255);
+        MeterOnlyCourtesyTailTest.rect(p, 220, 96, 2, 3, 2, 0);
+        assertTrue(MeterOnlyCourtesyTailTest.detect(p));
+    }
+
+    @Test
     public void counterBoxDoesNotOwnExteriorPaper() {
         assertFalse(MeterOnlyCourtesyTailTest.detect(paper(238, 110)));
     }

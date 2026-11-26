@@ -170,4 +170,28 @@ public final class MeterComponentSeedsTest {
         assertArrayEquals(a, p.gray);
         assertArrayEquals(b, p.labels);
     }
+
+    @Test
+    public void boundarySeedKeepsTheLeftNumeratorAndRecoversTheLocalRailPhase() {
+        var p = new Page();
+        for (int y = 112; y <= 136; y++)
+            for (int x = 228; x <= 231; x++) p.pixel(x, y, 0, 5);
+        var boundary = new MeasureRegion(235f / W, .6f, .2f, .7f);
+        var hints = List.of(new MeterComponentSeeds.Hint(FIRST + 8, GAP, 0));
+        var crops = MeterComponentSeeds.boundaryCrops(p.labels, p.gray, W, H, hints, List.of(boundary));
+        assertEquals(1, crops.size());
+        var crop = crops.get(0);
+        assertTrue(crop.left() <= 228 && crop.right() >= 255);
+        assertTrue(Math.abs(crop.firstLine() - FIRST) <= 1);
+    }
+
+    @Test
+    public void upperGlyphsAloneDoNotProduceABoundaryMeter() {
+        var p = new Page();
+        for (int y = 138; y < 168; y++)
+            for (int x = 232; x < 260; x++) p.labels[y * W + x] = 0;
+        var boundary = new MeasureRegion(235f / W, .6f, .2f, .7f);
+        var hints = List.of(new MeterComponentSeeds.Hint(FIRST, GAP, 0));
+        assertTrue(MeterComponentSeeds.boundaryCrops(p.labels, p.gray, W, H, hints, List.of(boundary)).isEmpty());
+    }
 }

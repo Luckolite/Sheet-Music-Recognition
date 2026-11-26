@@ -10,6 +10,37 @@ public final class CourtesyMeasureRemapTest {
         main(new String[0]);
     }
 
+    @org.junit.Test
+    public void remapOpticalAttackAndRestTargets() {
+        var regions = List.of(
+                new MeasureRegion(.1f, .7f, .1f, .2f),
+                new MeasureRegion(.71f, .8f, .1f, .2f),
+                new MeasureRegion(.1f, .8f, .3f, .4f));
+        var score = new ScorePageInterpretation(
+                regions, List.of(), 1, List.of(), List.of(),
+                List.of(new ScoreMeterChange(1, 12, 8)),
+                List.of(), List.of(), List.of(), List.of(),
+                List.of(
+                        fermata("fermata-raw-ink", "printed-attack:2:0:1:0"),
+                        fermata("fermata-rest-raw-ink", "printed-rest:2:0:1:0"),
+                        fermata("external", "printed-attack:2:0:1:0")));
+        var remapped = CourtesyMeasureRemap.remove(score, 1);
+        org.junit.Assert.assertEquals(List.of(new ScoreMeterChange(1, 12, 8)),
+                remapped.meterChanges());
+        org.junit.Assert.assertEquals(
+                List.of("printed-attack:1:0:1:0", "printed-rest:1:0:1:0", "printed-attack:2:0:1:0"),
+                remapped.expressiveEvents().stream().map(e -> e.targetEventId().orElseThrow())
+                        .toList());
+    }
+
+    private static ScoreExpressiveEvent fermata(String source, String target) {
+        return new ScoreExpressiveEvent(
+                source, ScoreExpressiveEvent.Kind.FERMATA, Optional.empty(), Optional.empty(),
+                ScoreExpressiveEvent.Scope.UNRESOLVED, 0, 1, Optional.of(target),
+                ScoreExpressiveEvent.Strength.UNSPECIFIED, "",
+                List.of(new ScoreExpressiveEvent.Evidence(source, 0, .2f, 0, 1, "fermata")));
+    }
+
     public static void main(String[] args) {
         var regions =
                 List.of(

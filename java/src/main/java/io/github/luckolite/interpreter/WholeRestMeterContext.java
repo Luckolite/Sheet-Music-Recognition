@@ -48,6 +48,13 @@ final class WholeRestMeterContext {
                                             && source.get(0).equals(current.get(0));
                                 })
                         .toList();
+        var corrected = withoutHeaderQuarterRests(s, w, h, acceptedHeaders);
+        return qualifyWholeRests(corrected, gray, w, h, staffs, acceptedHeaders);
+    }
+
+    private static ScorePageInterpretation qualifyWholeRests(
+            ScorePageInterpretation s, byte[] gray, int w, int h,
+            List<PlayingTechniqueDetector.Staff> staffs, List<MeterChangeDetector.Crop> acceptedHeaders) {
         var headerBars = new HashSet<Integer>();
         for (var c : acceptedHeaders)
             headerBars.add(MeterChangeDetector.followingMeasure(c, w, h, s.measures()));
@@ -160,5 +167,48 @@ final class WholeRestMeterContext {
                         s.openingPickup(),
                         s.tremoloSource()).withBeamSource(s.beamSource())
                 .carryMultiRestGroupsFrom(s);
+    }
+
+    private static ScorePageInterpretation withoutHeaderQuarterRests(
+            ScorePageInterpretation score, int width, int height,
+            List<MeterChangeDetector.Crop> headers) {
+        if (headers.isEmpty()) return score;
+        var rejected = new HashSet<ScoreRestEvent>();
+        for (var rest : score.rests()) {
+            if (rest.kind() != ScoreRestEvent.Kind.LITERAL || rest.durationBeats() != 1) continue;
+            var bar = score.measures().get(rest.measureIndex());
+            float x = (bar.left() + rest.positionInMeasure() * (bar.right() - bar.left())) * width;
+            float y = rest.pageY() * height;
+            float half = rest.pageHeight() * height * .5f;
+            for (var header : headers) {
+                if (x >= header.left() && x <= header.right()
+                        && y - half >= header.top() - 1 && y + half <= header.bottom() + 1
+                        && MeterChangeDetector.followingMeasure(
+                                header, width, height, score.measures()) == rest.measureIndex()) {
+                    rejected.add(rest);
+                    break;
+                }
+            }
+        }
+        if (rejected.isEmpty()) return score;
+
+        var notes = new ArrayList<>(score.notes());
+        for (int i = 0; i < notes.size(); i++) {
+            var note = notes.get(i);
+            if (note.leadingRestBeats() == 0) continue;
+            double removed = 0, total = 0;
+            for (var rest : score.rests()) {
+                if (rest.measureIndex() != note.measureIndex()
+                        || rest.staffIndex() != note.staffIndex() || rest.staffCount() != note.staffCount()
+                        || rest.positionInMeasure() >= note.positionInMeasure() || rest.isFullMeasure()) continue;
+                total += rest.durationBeats();
+                if (rejected.contains(rest)) removed += rest.durationBeats();
+            }
+            if (removed > 0 && Math.abs(note.leadingRestBeats() - total) < .001)
+                notes.set(i, note.withLeadingRest((float)(total - removed)));
+        }
+        var retained = score.rests().stream().filter(rest -> !rejected.contains(rest)).toList();
+        return score.withRests(retained).withNotes(notes,
+                java.util.stream.IntStream.range(0, notes.size()).boxed().toList());
     }
 }

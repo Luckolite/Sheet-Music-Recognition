@@ -29,9 +29,17 @@ final class PrintedEndingBrackets {
         }
     }
 
+    private record Continuation(
+            int start, int end, int staffIndex, int staffCount, boolean endsSystem,
+            float right, float joinAllowance, boolean closingHook) {}
+
+    private record EndingSpan(Mark mark, int left, int right, double roof, boolean needsPair) {}
+
     private static final Pattern SELECTOR =
             Pattern.compile("\\d{1,3}\\.?\\s*(?:,\\s*\\d{1,3}\\.?\\s*)*");
     private static final Pattern INTEGER = Pattern.compile("\\d+");
+    private static final Pattern SELECTOR_CHORD = Pattern.compile(
+            "([12])\\.\\s*[A-G](?:[#bâ™¯â™­])?(?:(?:m|maj|min|sus|dim|aug)?[0-9]*)?(?:/[A-G](?:[#bâ™¯â™­])?)?");
 
     private record Selector(PlayingTechniqueDetector.Word word, List<Integer> passes) {}
 
@@ -57,15 +65,17 @@ final class PrintedEndingBrackets {
             if (!parsed.isEmpty()) selectors.add(new Selector(word, parsed));
         }
         var result = new ArrayList<Mark>();
+        var continuations = new ArrayList<Continuation>();
         boolean[] seen = new boolean[0];
         int[] runs = new int[256];
         for (var staff : staffs) {
             float gap = staff.gap();
             if (!Float.isFinite(gap) || gap < 5 || gap > Math.min(width, height) / 8f) continue;
-            int top = Math.max(0, Math.round(staff.top() - gap * 8));
+            int top = Math.max(0, Math.round(staff.top() - gap * 11));
             int bottom = Math.min(height - 1, Math.round(staff.top() - gap * .3f));
             if (bottom <= top) continue;
             int rows = bottom - top + 1, bandSize = width * rows, offset = top * width;
+            var spans = new ArrayList<EndingSpan>();
             if (seen.length < bandSize) seen = new boolean[bandSize];
             else Arrays.fill(seen, 0, bandSize, false);
             for (int seed = 0; seed < bandSize; seed++) {
@@ -99,7 +109,12 @@ final class PrintedEndingBrackets {
                     }
                 }
                 int w = right - left + 1, h = last - first + 1;
-                if (w <= gap * 6 || h <= gap * .5f || h >= gap * 7 || first == 0) continue;
+                // A full intermediate system may carry only the roof stroke.
+                boolean possibleMiddle = w >= gap * 12 && h <= Math.max(2, Math.ceil(gap * .35f))
+                        && staff.top() - (top + first) >= gap * 2.5f
+                        && staff.top() - (top + first) <= gap * 8f;
+                if (w <= gap * 6 || !possibleMiddle && h <= gap * .5f
+                        || h >= gap * 10 || first == 0) continue;
                 int[] roof = new int[w], floor = new int[w], count = new int[w];
                 Arrays.fill(roof, h);
                 for (int i = 0; i < queued; i += 2) {
@@ -132,7 +147,7 @@ final class PrintedEndingBrackets {
                 for (int x = margin; x < w - margin; x++)
                     if (roof[x] < h) {
                         if (Math.abs(roof[x] - (slope * x + intercept)) <= gap * .15) straight++;
-                        if (floor[x] - roof[x] + 1 <= Math.max(2, gap * .35f)) thin++;
+                        if (floor[x] - roof[x] + 1 <= Math.max(2, (int) Math.ceil(gap * .35f))) thin++;
                     }
                 if (straight < n * .98 || thin < n * .95) continue;
                 var hooks = new ArrayList<Integer>();
@@ -151,6 +166,18 @@ final class PrintedEndingBrackets {
                     if (x - begin + 1 <= Math.max(2, gap * .4f)) {
                         hooks.add(begin);
                         depths.add(deepest);
+                    }
+                }
+                boolean closingHook = hooks.size() == 1 && w >= gap * 12
+                        && hooks.get(0) > w - gap * 1.25f;
+                if (closingHook || possibleMiddle && hooks.isEmpty()) {
+                    int start = openingBoundary(measures, staff, left, -1, width, height);
+                    int end = PrintedRepeatGlyphs.boundary(measures, staff, right, true, width, height);
+                    if (start >= 0 && end > start) {
+                        boolean lastBar = rowLast(measures, staff, end - 1, height);
+                        if (closingHook || lastBar)
+                            continuations.add(new Continuation(start, end, staff.index(), staff.count(),
+                                    lastBar, right / (float) width, gap * 1.1f / width, closingHook));
                     }
                 }
                 for (int hookIndex = 0; hookIndex < hooks.size(); hookIndex++) {
@@ -226,16 +253,25 @@ final class PrintedEndingBrackets {
                         passes = selector.passes();
                     }
                     if (ambiguous) continue;
+                    double roofY = top + first + slope * origin + intercept;
+                    boolean needsPair = false;
                     if (matched == null) {
-                        double roofY = top + first + slope * origin + intercept;
                         matched = isolatedSelector(gray, width, height, segmentLeft, segmentRight,
-                                roofY, slope, hook, gap);
+                                roofY, slope, hook, gap,
+                                joinedChordSelector(words, width, height, segmentLeft, roofY, gap));
+                        if (matched == null) {
+                            matched = plainSelector(gray, width, height, segmentLeft, segmentRight,
+                                    roofY, slope, hook, gap);
+                            needsPair = true;
+                        }
                         if (matched == null) continue;
                         passes = passes(matched.text());
                     }
                     int start =
                             PrintedRepeatGlyphs.boundary(
                                     measures, staff, segmentLeft, false, width, height);
+                    if (start < 0)
+                        start = openingBoundary(measures, staff, segmentLeft, segmentRight, width, height);
                     int end =
                             PrintedRepeatGlyphs.boundary(
                                     measures, staff, segmentRight, true, width, height);
@@ -251,22 +287,160 @@ final class PrintedEndingBrackets {
                                     staff.count(),
                                     hookIndex + 1 == hooks.size(),
                                     origin > gap * 6);
-                    if (!result.contains(mark)) result.add(mark);
+                    spans.add(new EndingSpan(mark, segmentLeft, segmentRight, roofY, needsPair));
                 }
+            }
+            for (var span : spans)
+                if ((!span.needsPair || hasPairedSelector(span, spans, gap))
+                        && !result.contains(span.mark)) result.add(span.mark);
+        }
+        for (int i = 0; i < result.size(); i++) {
+            var mark = result.get(i);
+            if (!mark.openRight || !mark.passes.contains(1)) continue;
+            // A roof without a hook can connect systems but cannot close an ending.
+            int boundary = mark.end;
+            while (boundary < measures.size()) {
+                final int start = boundary;
+                var matches = continuations.stream().distinct().filter(c -> c.start == start
+                        && c.staffIndex == mark.staffIndex && c.staffCount == mark.staffCount
+                        && measures.get(c.start).top() > measures.get(start - 1).bottom()
+                        && (c.endsSystem || adjacentSecondEnding(c, result))).toList();
+                if (matches.size() != 1) break;
+                var continuation = matches.get(0);
+                boundary = continuation.end;
+                if (!continuation.closingHook) continue;
+                result.set(i, new Mark(mark.start, boundary, mark.passes, mark.text, mark.x,
+                        mark.staffIndex, mark.staffCount, false, mark.precedingRoof));
+                break;
             }
         }
         result.sort(Comparator.comparingInt(Mark::start).thenComparingInt(Mark::end));
         return List.copyOf(result);
     }
 
+    private static boolean adjacentSecondEnding(Continuation continuation, List<Mark> markings) {
+        int matches = 0;
+        for (var mark : markings) {
+            float distance = mark.x - continuation.right;
+            if (mark.start == continuation.end && mark.passes.equals(List.of(2))
+                    && mark.staffIndex == continuation.staffIndex
+                    && mark.staffCount == continuation.staffCount
+                    && distance >= 0 && distance <= continuation.joinAllowance) matches++;
+        }
+        return matches == 1;
+    }
+
+    private static int openingBoundary(
+            List<MeasureRegion> measures, PlayingTechniqueDetector.Staff staff,
+            int x, int roofRight, int width, int height) {
+        float center = (staff.top() + staff.bottom()) * .5f / height;
+        float tolerance = staff.gap() / height;
+        float left = Float.POSITIVE_INFINITY;
+        int first = -1;
+        for (int i = 0; i < measures.size(); i++) {
+            var measure = measures.get(i);
+            if (center < measure.top() - tolerance || center > measure.bottom() + tolerance
+                    || measure.left() >= left) continue;
+            left = measure.left();
+            first = i;
+        }
+        float distance = left * width - x;
+        if (first < 0 || distance < 0) return -1;
+        if (distance <= staff.gap() * 4.65f) return first;
+        // Some roofs begin above the clef, well before the first playable bar.
+        // The longer reach is valid only when the same roof covers that whole bar.
+        return distance <= staff.gap() * 7
+                && roofRight >= measures.get(first).right() * width - staff.gap() * 2.5f
+                ? first : -1;
+    }
+
+    private static boolean rowLast(
+            List<MeasureRegion> measures, PlayingTechniqueDetector.Staff staff, int bar, int height) {
+        if (bar + 1 == measures.size()) return true;
+        var next = measures.get(bar + 1);
+        float y = (staff.top() + staff.bottom()) * .5f / height;
+        return y < next.top() - staff.gap() / height;
+    }
+
+    private static boolean hasPairedSelector(EndingSpan span, List<EndingSpan> spans, float gap) {
+        int matches = 0;
+        for (var other : spans) {
+            if (other == span || Math.abs(span.roof - other.roof) > gap * .3f) continue;
+            var first = span.left < other.left ? span : other;
+            var second = first == span ? other : span;
+            if (!first.mark.openRight && first.mark.passes.equals(List.of(1))
+                    && second.mark.passes.equals(List.of(2)) && first.mark.end == second.mark.start
+                    && second.left >= first.right && second.left - first.right <= gap * 1.1f)
+                matches++;
+        }
+        return matches == 1;
+    }
+
+    /** Adjacent numbered brackets can use plain digits with no printed period. */
+    private static PlayingTechniqueDetector.Word plainSelector(
+            byte[] gray, int width, int height, int left, int right,
+            double roofY, double slope, int hook, float gap) {
+        int x0 = left + Math.max(2, Math.round(.25f * gap));
+        int x1 = Math.min(right - 1, left + Math.round(2.8f * gap));
+        int y0 = Math.max(0, (int) Math.ceil(roofY + Math.max(0, slope * (x1 - left)) + gap * .28f));
+        int y1 = Math.min(height - 1, (int) Math.floor(roofY + Math.min(2.8f * gap, hook + gap * .55f)));
+        if (x1 <= x0 || y1 <= y0 || (long) (x1 - x0 + 1) * (y1 - y0 + 1) > 16_384)
+            return null;
+        var graph = RawNumeralComponents.capture(
+                gray, width, height, x0, y0, x1, y1, () -> {}, () -> {});
+        RawNumeralComponents.Component digit = null;
+        for (var component : graph.components()) {
+            if (component.size() < Math.max(3, gap * gap * .022f)) continue;
+            if (digit != null || component.left == x0 || component.right == x1
+                    || component.top == y0 || component.bottom == y1) return null;
+            digit = component;
+        }
+        if (digit == null || digit.left - left > gap || digit.top - roofY > gap * 1.12f)
+            return null;
+        int w = digit.right - digit.left + 1, h = digit.bottom - digit.top + 1;
+        if (h < .83f * gap || h > 1.75f * gap || w < .23f * gap || w > 1.12f * gap)
+            return null;
+        var reading = JoinedDigitTemplates.inspect(gray, width, height, new BitSet(),
+                digit.left, digit.top, digit.right, digit.bottom, () -> {}, true);
+        if (reading == null) return null;
+        int value;
+        if (w <= .46f * h && reading.scores()[1] >= .52f
+                && reading.scores()[1] - reading.runner() >= .12f && slenderOne(digit, width)) {
+            value = 1;
+        } else if (reading.digit() == 2 && reading.best() >= .62f
+                && reading.best() - reading.runner() >= .15f) {
+            value = 2;
+        } else return null;
+        return new PlayingTechniqueDetector.Word(Integer.toString(value),
+                digit.left / (float) width, digit.top / (float) height,
+                (digit.right + 1) / (float) width, (digit.bottom + 1) / (float) height);
+    }
+
+    private static int joinedChordSelector(
+            List<PlayingTechniqueDetector.Word> words, int width, int height,
+            int left, double roof, float gap) {
+        int value = 0;
+        for (var word : words) {
+            if (word.left() * width < left - gap || word.left() * width > left + gap * 2
+                    || word.top() * height < roof - gap || word.top() * height > roof + gap * 2
+                    || word.right() * width > left + gap * 7) continue;
+            var match = SELECTOR_CHORD.matcher(word.text().strip());
+            if (!match.matches()) continue;
+            int found = Integer.parseInt(match.group(1));
+            if (value != 0 && value != found) return 0;
+            value = found;
+        }
+        return value;
+    }
+
     /** A missing page OCR token can be recovered from a digit and its independent period. */
     private static PlayingTechniqueDetector.Word isolatedSelector(
             byte[] gray, int width, int height, int left, int right,
-            double roofY, double slope, int hook, float gap) {
+            double roofY, double slope, int hook, float gap, int chordSelector) {
         int cropLeft = left + Math.max(2, Math.round(.16f * gap));
         int cropRight = Math.min(right - 1, left + Math.round(3 * gap));
         int top = Math.max(0, (int) Math.ceil(roofY + Math.max(0, slope * (cropRight - left))) + 1);
-        int bottom = Math.min(height - 1, (int) Math.floor(roofY + Math.min(2.7f * gap, hook + .25f * gap)));
+        int bottom = Math.min(height - 1, (int) Math.floor(roofY + Math.min(3.15f * gap, hook + .65f * gap)));
         if (cropLeft > cropRight || top > bottom
                 || (long) (cropRight - cropLeft + 1) * (bottom - top + 1) > 16_384) return null;
         var graph = RawNumeralComponents.capture(gray, width, height, cropLeft, top, cropRight, bottom,
@@ -280,31 +454,51 @@ final class PrintedEndingBrackets {
                     || glyphWidth < .22f * gap || glyphWidth > 1.2f * gap) continue;
             for (var dot : graph.components()) {
                 float dotGap = dot.left - digit.right;
-                if (dotGap <= 0 || dotGap > .55f * gap || dot.right == cropRight
-                        || dot.right - dot.left + 1 > .35f * gap
-                        || dot.bottom - dot.top + 1 > .35f * gap
+                if (dotGap <= 0 || dotGap > .70f * gap || dot.right == cropRight
+                        || dot.right - dot.left + 1 > Math.ceil(.35f * gap)
+                        || dot.bottom - dot.top + 1 > Math.ceil(.35f * gap)
                         || Math.abs(dot.bottom - digit.bottom) > .24f * gap) continue;
                 // A separator in a multi-pass selector must never become a terminal period.
-                if (graph.components().stream().anyMatch(other -> other.left > dot.right
+                boolean followingInk = graph.components().stream().anyMatch(other -> other.left > dot.right
                         && other.left - dot.right <= gap
-                        && other.bottom - other.top + 1 >= .72f * gap)) continue;
+                        && other.bottom - other.top + 1 >= .72f * gap);
+                if (followingInk && chordSelector == 0) continue;
                 var reading = JoinedDigitTemplates.inspect(gray, width, height, new BitSet(),
                         digit.left, digit.top, digit.right, digit.bottom, () -> {}, true);
                 if (reading == null) continue;
-                boolean provedOne = glyphWidth <= .46f * glyphHeight
-                        && reading.scores()[1] >= .52f
+                boolean provedOne = glyphWidth <= .50f * glyphHeight
+                        && reading.scores()[1] >= .50f
                         && reading.scores()[1] - reading.runner() >= .12f
                         && slenderOne(digit, width);
+                // A compressed serif 1 can be too narrow for the digit templates.
+                provedOne |= reading.digit() < 0 && glyphWidth <= .27f * glyphHeight
+                        && glyphHeight >= gap && condensedOne(digit, gray, width);
                 if (!provedOne && (reading.digit() < 1 || reading.best() < .65f
                         || reading.best() - reading.runner() < .12f)) continue;
-                if (candidate != null) return null;
                 int value = provedOne ? 1 : reading.digit();
+                if (followingInk && value != chordSelector) continue;
+                if (candidate != null) return null;
                 candidate = new PlayingTechniqueDetector.Word(value + ".",
                         digit.left / (float) width, digit.top / (float) height,
                         (dot.right + 1) / (float) width, (Math.max(dot.bottom, digit.bottom) + 1) / (float) height);
             }
         }
         return candidate;
+    }
+
+    private static boolean condensedOne(
+            RawNumeralComponents.Component digit, byte[] gray, int width) {
+        int height = digit.bottom - digit.top + 1;
+        int cap = 0, foot = 0, middle = 0, stem = 0;
+        for (int y = digit.top; y <= digit.bottom; y++) {
+            int row = y - digit.top;
+            if ((gray[y * width + digit.left + 1] & 255) < 150) stem++;
+            if ((gray[y * width + digit.left] & 255) >= 150) continue;
+            if (row < height * .25f) cap++;
+            else if (row >= height * .75f) foot++;
+            else middle++;
+        }
+        return stem >= height * .9f && cap >= 2 && foot >= 2 && middle <= height * .1f;
     }
 
     private static boolean slenderOne(RawNumeralComponents.Component glyph, int width) {

@@ -13,12 +13,23 @@ final class PedalBracketDetector {
             float slope,
             float gap,
             int staffIndex,
-            int staffCount) {}
+            int staffCount,
+            boolean leftHook) {
+        Bracket(float left, float right, float baseline, float slope, float gap, int staffIndex, int staffCount) {
+            this(left, right, baseline, slope, gap, staffIndex, staffCount, true);
+        }
+    }
 
     private PedalBracketDetector() {}
 
     static List<Bracket> detect(
             byte[] gray, int width, int height, List<PlayingTechniqueDetector.Staff> staffs) {
+        return detect(gray, width, height, staffs, false);
+    }
+
+    static List<Bracket> detect(
+            byte[] gray, int width, int height, List<PlayingTechniqueDetector.Staff> staffs,
+            boolean allowPedalWord) {
         if (gray == null
                 || width <= 0
                 || height <= 0
@@ -69,9 +80,9 @@ final class PedalBracketDetector {
                 }
                 if (top == first
                         || bottom == last
-                        || right - left < gap * 6
+                        || right - left < gap * 4
                         || bottom - top > gap * 2 + (right - left) * .18) continue;
-                var bracket = prove(queue, count, width, first, left, right, gap, staff);
+                var bracket = prove(queue, count, width, first, left, right, gap, staff, allowPedalWord);
                 if (bracket != null) result.add(bracket);
             }
         }
@@ -88,7 +99,8 @@ final class PedalBracketDetector {
             int left,
             int right,
             float gap,
-            PlayingTechniqueDetector.Staff staff) {
+            PlayingTechniqueDetector.Staff staff,
+            boolean allowPedalWord) {
         int span = right - left + 1;
         var floor = new int[span];
         Arrays.fill(floor, -1);
@@ -135,14 +147,14 @@ final class PedalBracketDetector {
             else if (x >= span - edge) rightHook = Math.max(rightHook, above);
             else if (above > Math.max(2, gap * .22)) return null;
         }
-        if (leftHook < gap * .35
-                || rightHook < gap * .35
-                || leftHook > gap * 1.8
-                || rightHook > gap * 1.8
-                || Math.min(leftHook, rightHook) < Math.max(leftHook, rightHook) * .4) return null;
+        boolean hookedLeft = leftHook >= gap * .35;
+        if (rightHook < gap * .35 || rightHook > gap * 1.8 || leftHook > gap * 1.8
+                || (hookedLeft
+                        ? span < gap * 4.75 || Math.min(leftHook, rightHook) < Math.max(leftHook, rightHook) * .4
+                        : !allowPedalWord || leftHook > gap * .18)) return null;
         double center = intercept + slope * (span - 1) * .5;
         if (center < staff.bottom() + gap * .75 || center > staff.bottom() + gap * 16) return null;
         return new Bracket(
-                left, right, (float) center, (float) slope, gap, staff.index(), staff.count());
+                left, right, (float) center, (float) slope, gap, staff.index(), staff.count(), hookedLeft);
     }
 }

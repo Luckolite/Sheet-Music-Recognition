@@ -24,6 +24,12 @@ public final class MusicalOcr {
         this.meterFont = Objects.requireNonNull(meterFont);
     }
 
+    List<TablatureDecoder.Staff> supplementTabFrets(
+            byte[] gray, int width, int height, List<TablatureDecoder.Staff> tabs,
+            List<TablatureDecoder.Word> words) throws Exception {
+        return TabFretRaster.supplement(gray, width, height, tabs, words, inference);
+    }
+
     List<PlayingTechniqueDetector.Word> tempoWords(byte[] gray, int width, int height)
             throws Exception {
         return StaffHeaderTempoOcr.words(gray, width, height, reader::readGray);
@@ -318,6 +324,15 @@ public final class MusicalOcr {
                 && (original.text().isBlank() || original.text().equals(retry.text())))
             return new BoundMeterReading(retry, refined);
         return new BoundMeterReading(original, crop);
+    }
+
+    String readBoundaryMeterWithOcr(byte[] gray, int width, int height, MeterChangeDetector.Crop crop) {
+        try {
+            var result = meterAt(gray, width, height, crop);
+            return result.votes() >= 2 ? result.text() : "";
+        } catch (Exception ignored) {
+            return "";
+        }
     }
 
     private MeterReading meterAt(byte[] gray, int width, int height, MeterChangeDetector.Crop crop)

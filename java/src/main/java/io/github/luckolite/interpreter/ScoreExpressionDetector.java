@@ -44,6 +44,7 @@ public final class ScoreExpressionDetector {
                     Kind.ACCELERANDO,
                     Kind.A_TEMPO,
                     Kind.TEMPO_PRIMO,
+                    Kind.TEMPO_MARKING,
                     Kind.SAME_TEMPO,
                     Kind.SFORZANDO,
                     Kind.SFORZATO,
@@ -55,6 +56,201 @@ public final class ScoreExpressionDetector {
                     Kind.PEDAL_UP);
 
     private ScoreExpressionDetector() {}
+
+    private record TempoBoundary(int measure, PlayingTechniqueDetector.Staff staff, float rank) {}
+
+    private static TempoBoundary tempoBarline(
+            ScorePageInterpretation score, List<PlayingTechniqueDetector.Staff> staffs,
+            PlayingTechniqueDetector.Word word, byte[] gray, int width, int height, boolean sectional) {
+        if (gray == null || width <= 0 || height <= 0 || gray.length != (long) width * height
+                || !(word.left() >= 0 && word.right() <= 1 && word.right() > word.left()
+                        && word.top() >= 0 && word.bottom() <= 1 && word.bottom() > word.top()))
+            return null;
+        float x = word.left() * width, top = word.top() * height, bottom = word.bottom() * height;
+        float headerAllowance = sectional && ExpressiveDirectionText.tempoPartCaption(word.text()) ? 3.15f : 3;
+        float middle = (top + bottom) * .5f;
+        TempoBoundary best = null;
+        boolean tied = false;
+        var measures = score.measures();
+        List<RawStaffLineDetector.StaffLines> rawRows = null;
+        for (var staff : staffs) {
+            float gap = staff.gap();
+            if (!(gap >= 6) || staff.count() <= staff.index()) continue;
+            float distance;
+            if (middle < staff.top() && bottom <= staff.top() + gap * .3f)
+                distance = Math.max(0, staff.top() - bottom);
+            else if (middle > staff.bottom() && top >= staff.bottom() - gap * .3f)
+                distance = Math.max(0, top - staff.bottom());
+            else continue;
+            if (distance > gap * 5.6f) continue;
+            float center = (staff.top() + staff.bottom()) * .5f / height;
+            for (int i = 0; i < measures.size(); i++) {
+                var bar = measures.get(i);
+                if (i > 0 && bar.equals(measures.get(i - 1))) continue;
+                if (center < bar.top() || center > bar.bottom()) continue;
+                float left = bar.left() * width, right = bar.right() * width;
+                float offset = x - left;
+                if (word.right() * width <= left || offset < -gap * 1.6f
+                        || offset > (right - left) * .24f) continue;
+                if (offset > gap * headerAllowance
+                        && (!sectional || offset > gap * 6 || !nearFirstWrittenColumn(score, i, x, width, gap)))
+                    continue;
+                float probe = Math.max(left + gap, Math.min(x, right - gap));
+                var rails = PrintedDirectionStaff.printedRules(
+                        gray, width, height, probe, staff.bottom(), gap);
+                if (rails == null || Math.abs(rails[0] - staff.bottom()) > gap * .6f
+                        || Math.abs(rails[1] - gap) > gap * .15f) {
+                    if (rawRows == null) rawRows = RawStaffLineDetector.detect(gray, width, height);
+                    if (!restorationRails(rawRows, staff, gray, width, height, probe)) continue;
+                }
+                float rank = (distance + Math.abs(offset) * .6f) / gap;
+                if (best == null || rank < best.rank() - .15f) {
+                    best = new TempoBoundary(i, staff, rank);
+                    tied = false;
+                } else if (Math.abs(rank - best.rank()) <= .15f && i != best.measure()) {
+                    tied = true;
+                }
+            }
+        }
+        return tied ? null : best;
+    }
+
+    private static PlayingTechniqueDetector.Word localizedRehearsalTempo(
+            PlayingTechniqueDetector.Word line, byte[] gray, int width, int height) {
+        if (gray == null || gray.length != (long) width * height) return null;
+        int left = Math.round(line.left() * width), right = Math.round(line.right() * width);
+        int top = Math.round(line.top() * height), bottom = Math.round(line.bottom() * height);
+        if (left < 0 || right > width || top < 0 || bottom > height || right <= left || bottom <= top)
+            return null;
+        int glyphHeight = bottom - top;
+        int requiredGap = Math.max(5, (int) Math.ceil(glyphHeight * .08));
+        int rightOfInitial = -1, emptyFrom = -1;
+        boolean hasInk = false;
+        for (int x = left; x < right && x - left <= glyphHeight * 4; x++) {
+            boolean ink = false;
+            for (int y = top; y < bottom && !ink; y++) ink = (gray[y * width + x] & 255) < 160;
+            if (!ink) {
+                if (hasInk && emptyFrom < 0) emptyFrom = x;
+                continue;
+            }
+            if (emptyFrom >= 0 && x - emptyFrom >= requiredGap) {
+                if (rightOfInitial < 0) {
+                    if (emptyFrom - left > glyphHeight * 1.1f || x - emptyFrom < requiredGap * 2)
+                        return null;
+                    rightOfInitial = x;
+                } else {
+                    if (emptyFrom - rightOfInitial < glyphHeight * .65f) return null;
+                    return new PlayingTechniqueDetector.Word(line.text(), rightOfInitial / (float) width,
+                            line.top(), emptyFrom / (float) width, line.bottom(), line.admission());
+                }
+            }
+            hasInk = true;
+            emptyFrom = -1;
+        }
+        return null;
+    }
+
+    private static boolean clippedLentoInVerse(
+            PlayingTechniqueDetector.Word word, List<PlayingTechniqueDetector.Word> words) {
+        if (!word.text().strip().equalsIgnoreCase("lento")) return false;
+        for (var line : words) {
+            if (line.left() + .006f >= word.left() || line.right() <= word.right()
+                    || ExpressiveDirectionText.sectionalTempoCaption(line.text()) != null) continue;
+            float overlap = Math.min(line.bottom(), word.bottom()) - Math.max(line.top(), word.top());
+            if (overlap < (word.bottom() - word.top()) * .6f) continue;
+            // A second crop can read the leading V in a verse's "vento" as an L or I.
+            if (line.text().strip().toLowerCase(Locale.ROOT).matches(
+                    ".*[ ](?:lento|iento|vento)[ ].*")) return true;
+        }
+        return false;
+    }
+
+    private static boolean startsSystem(ScorePageInterpretation score, int index) {
+        if (index == 0) return true;
+        var bar = score.measures().get(index);
+        var previous = score.measures().get(index - 1);
+        return bar.top() > (previous.top() + previous.bottom()) * .5f;
+    }
+
+    private static boolean nearFirstWrittenColumn(
+            ScorePageInterpretation score, int measure, float x, int width, float gap) {
+        var bar = score.measures().get(measure);
+        float position = Float.POSITIVE_INFINITY;
+        for (var note : score.notes())
+            if (note.measureIndex() == measure) position = Math.min(position, note.positionInMeasure());
+        for (var rest : score.rests())
+            if (rest.measureIndex() == measure) position = Math.min(position, rest.positionInMeasure());
+        float first = (bar.left() + position * (bar.right() - bar.left())) * width;
+        return Math.abs(x - first) <= gap * 1.25f;
+    }
+
+    private static boolean coveredTempoWord(
+            PlayingTechniqueDetector.Word word, List<PlayingTechniqueDetector.Word> words) {
+        String qualified = switch (word.text().strip().toLowerCase(Locale.ROOT)) {
+            case "slower" -> "slightly slower";
+            case "adagio" -> "molto adagio";
+            default -> "";
+        };
+        if (qualified.isEmpty()) return false;
+        for (var other : words) {
+            if (!other.text().strip().replaceFirst("[.!]$", "").equalsIgnoreCase(qualified)
+                    || other.left() >= word.left() || other.right() + .002f < word.right()) continue;
+            float overlap = Math.min(word.bottom(), other.bottom()) - Math.max(word.top(), other.top());
+            if (overlap >= (word.bottom() - word.top()) * .6f) return true;
+        }
+        return false;
+    }
+
+    /** A uniquely aligned sounding column can realize the tempo shared with a silent staff. */
+    private static ScoreNoteEvent alignedTempoAttack(ScorePageInterpretation score, ScoreRestEvent rest) {
+        if (rest.staffCount() < 2 || rest.isFullMeasure()) return null;
+        ScoreNoteEvent selected = null;
+        for (var note : score.notes()) {
+            if (note.measureIndex() != rest.measureIndex() || note.staffCount() != rest.staffCount()
+                    || note.staffIndex() == rest.staffIndex() || note.crossStaffBeam()
+                    || note.kind() != ScoreNoteEvent.Kind.PITCHED
+                    || Math.abs(note.positionInMeasure() - rest.positionInMeasure()) > .008f) continue;
+            if (selected != null && (selected.staffIndex() != note.staffIndex()
+                    || Math.abs(selected.positionInMeasure() - note.positionInMeasure()) > .003f)) return null;
+            selected = note;
+        }
+        return selected;
+    }
+
+    private static boolean localTempoNote(
+            ScorePageInterpretation score, ScoreNoteEvent note, PlayingTechniqueDetector.Staff staff,
+            PlayingTechniqueDetector.Word word, int width, int height) {
+        if (note == null || staff == null) return false;
+        var measure = score.measures().get(note.measureIndex());
+        float column = measure.left() + note.positionInMeasure() * (measure.right() - measure.left());
+        float vertical = staff.top() - word.bottom() * height;
+        return vertical >= -staff.gap() * .3f && vertical <= staff.gap() * 2.5f
+                && Math.abs(column - word.left()) * width <= staff.gap() * .85f;
+    }
+
+    private static boolean restorationRails(
+            List<RawStaffLineDetector.StaffLines> rows, PlayingTechniqueDetector.Staff staff,
+            byte[] gray, int width, int height, float x) {
+        float gap = staff.gap();
+        int left = Math.max(0, Math.round(x - gap)), right = Math.min(width - 1, Math.round(x + gap));
+        if (right - left < 4) return false;
+        for (var row : rows) {
+            if (Math.abs(row.bottom() - staff.bottom()) > gap * .6f
+                    || Math.abs(row.gap() - gap) > gap * .15f) continue;
+            int supported = 0;
+            for (int y : row.rows()) {
+                if (y <= 0 || y + 1 >= height) continue;
+                int ink = 0;
+                for (int col = left; col <= right; col++)
+                    if ((gray[(y - 1) * width + col] & 255) <= 175
+                            || (gray[y * width + col] & 255) <= 175
+                            || (gray[(y + 1) * width + col] & 255) <= 175) ink++;
+                if (ink * 2 >= right - left + 1) supported++;
+            }
+            if (supported >= 4) return true;
+        }
+        return false;
+    }
 
     static ScorePageInterpretation apply(
             ScorePageInterpretation score,
@@ -70,7 +266,39 @@ public final class ScoreExpressionDetector {
                         .map(m -> m.word(width, height))
                         .toList();
         combined.addAll(symbols);
-        return apply(score, combined, staffs, gray, width, height, Set.copyOf(symbols));
+        var releaseScore = removeCaesuraRestAliases(score, symbols);
+        return apply(releaseScore, combined, staffs, gray, width, height, Set.copyOf(symbols));
+    }
+
+    /** Semantic rest detection may claim the first slash of a proved caesura. */
+    private static ScorePageInterpretation removeCaesuraRestAliases(
+            ScorePageInterpretation score, List<PlayingTechniqueDetector.Word> symbols) {
+        List<ScoreRestEvent> cleaned = null;
+        for (var symbol : symbols) {
+            if (!symbol.text().equals("caesura")) continue;
+            ScoreRestEvent owned = null;
+            for (var rest : score.rests()) {
+                if (rest.kind() != ScoreRestEvent.Kind.LITERAL || rest.durationBeats() != .5
+                        || rest.measureIndex() < 0 || rest.measureIndex() >= score.measures().size()
+                        || rest.pageHeight() <= 0) continue;
+                var measure = score.measures().get(rest.measureIndex());
+                float x = measure.left() + rest.positionInMeasure() * (measure.right() - measure.left());
+                if (!(x > symbol.left() && x < symbol.right()
+                        && rest.pageY() > symbol.top() && rest.pageY() < symbol.bottom())) continue;
+                float overlap = Math.min(rest.pageY() + rest.pageHeight() * .5f, symbol.bottom())
+                        - Math.max(rest.pageY() - rest.pageHeight() * .5f, symbol.top());
+                if (!(overlap >= rest.pageHeight() * .7f)) continue;
+                if (owned != null) {
+                    owned = null;
+                    break;
+                }
+                owned = rest;
+            }
+            if (owned == null) continue;
+            if (cleaned == null) cleaned = new ArrayList<>(score.rests());
+            cleaned.remove(owned);
+        }
+        return cleaned == null ? score : score.withRests(List.copyOf(cleaned));
     }
 
     static ScorePageInterpretation apply(
@@ -84,14 +312,19 @@ public final class ScoreExpressionDetector {
     }
 
     private static ScorePageInterpretation apply(
-            ScorePageInterpretation score,
+            ScorePageInterpretation input,
             List<PlayingTechniqueDetector.Word> words,
             List<PlayingTechniqueDetector.Staff> staffs,
             byte[] gray,
             int width,
             int height,
             Set<PlayingTechniqueDetector.Word> symbols) {
+        var score = TempoChangeDetector.recoverAboveLedgerTempos(
+                input, words, staffs, gray, width, height);
         var events = new ArrayList<>(score.expressiveEvents());
+        for (var feel : ScoreRhythmicFeel.capture(score, words, staffs, width, height))
+            if (events.stream().noneMatch(existing -> existing.eventId().equals(feel.eventId())))
+                events.add(feel);
         var printedBindings = new HashSet<PrintedBinding>();
         for (var existing : events) {
             var printed =
@@ -121,14 +354,18 @@ public final class ScoreExpressionDetector {
             var coda = codaCharacterCaption(score, original, staffs, gray, width, height);
             var candidate = coda == null ? original : coda.word();
             boolean shortBowCaption = shortBowCaptionText(candidate.text()) != null;
-            var word = shortBowCaption ? provedShortBowCaption(candidate, gray, width, height) : candidate;
+            boolean rehearsalTempo = ExpressiveDirectionText.rehearsalTempoLabel(candidate.text()) != null;
+            var qualified = rehearsalTempo ? localizedRehearsalTempo(candidate, gray, width, height) : candidate;
+            if (qualified == null) continue;
+            var word = shortBowCaption ? provedShortBowCaption(qualified, gray, width, height) : qualified;
             if (word == null) continue;
             boolean admitted = EnglishCharacterOcrContext.admitted(word);
             boolean stackedCharacter = !admitted
                     && EnglishCharacterOcrContext.stackedCharacter(word.text());
             boolean intensity = !admitted && EnglishCharacterOcrContext.intensity(word.text());
             if (!admitted && !stackedCharacter && !intensity) continue;
-            if (coveredPedalWord(word, words) || coveredVibratoWord(word, words)) continue;
+            if (coveredPedalWord(word, words) || coveredVibratoWord(word, words)
+                    || coveredTempoWord(word, words) || clippedLentoInVerse(word, words)) continue;
             var caption = PrintedTempoCaption.from(word, score);
             String directionText = caption == null ? word.text() : caption.text();
             var directions = shortBowCaption
@@ -178,13 +415,39 @@ public final class ScoreExpressionDetector {
                                 word.right() * width,
                                 word.top() * height,
                                 word.bottom() * height);
+            if (metric && staff == null && symbols.contains(word)) {
+                for (var candidateStaff : staffs) {
+                    if (!PrintedExpressionGlyphs.metricStaffRails(candidateStaff, gray, width, height,
+                            Math.round(x), Math.round(word.top() * height), Math.round(word.bottom() * height))
+                            && !PrintedExpressionGlyphs.metricStaffRails(candidateStaff, gray, width, height,
+                                    Math.round(word.right() * width), Math.round(word.top() * height),
+                                    Math.round(word.bottom() * height))) continue;
+                    if (staff != null) {
+                        staff = null;
+                        break;
+                    }
+                    staff = candidateStaff;
+                }
+            }
+            if (staff == null && symbols.contains(word) && word.text().equals("caesura")) {
+                int gx = Math.round((word.left() + word.right()) * width * .5f);
+                for (var lane : staffs) {
+                    if (!PrintedExpressionGlyphs.caesuraStaffRails(lane, gray, width, height, gx,
+                            Math.round(word.top() * height), Math.round(word.bottom() * height))) continue;
+                    if (staff != null) {
+                        staff = null;
+                        break;
+                    }
+                    staff = lane;
+                }
+            }
             if (coda != null) staff = coda.staff();
             if (staff == null && word.right() > word.left())
                 staff =
                         PrintedDirectionWordStaff.find(
                                 staffs, score.measures(), score.notes(), gray, width, height, word);
             if (staff == null && directions.stream().allMatch(d -> switch (d.kind()) {
-                case RITARDANDO, RALLENTANDO, RITENUTO, ACCELERANDO, A_TEMPO -> true;
+                case RITARDANDO, RALLENTANDO, RITENUTO, ACCELERANDO, A_TEMPO, TEMPO_MARKING -> true;
                 default -> false;
             })) {
                 staff = PrintedDirectionWordStaff.nearTempoWord(
@@ -192,6 +455,7 @@ public final class ScoreExpressionDetector {
             }
             if (metric && staff != null && symbols.contains(word)) {
                 int boundary = terminalMetricBoundary(score.measures(), staff, word, width, height);
+                if (boundary < 0) boundary = metricMeterOnset(score, staff, word, width, height);
                 if (boundary >= 0) {
                     var direction = directions.get(0);
                     String id = "printed-metric-boundary:" + boundary;
@@ -309,6 +573,46 @@ public final class ScoreExpressionDetector {
                                             ? PrintedRestDirection.find(
                                                     score, staffs, word, gray, width, height)
                                             : null;
+            if (directions.stream().anyMatch(direction ->
+                    direction.kind() == Kind.A_TEMPO || direction.kind() == Kind.RITENUTO
+                            || direction.kind() == Kind.TEMPO_MARKING || direction.kind() == Kind.TEMPO_PRIMO)) {
+                var restoration = ExpressiveDirectionText.restorationCaption(word.text());
+                var sectional = ExpressiveDirectionText.sectionalTempoCaption(word.text());
+                boolean tempoPrimo = word.text().strip().matches("(?i)^tempo\\s+(?:i|primo)[.!]?$");
+                boolean absoluteTempo = sectional != null && sectional.kind() == Kind.TEMPO_MARKING;
+                if (sectional != null || tempoPrimo || restoration != null && (closest == null && rest == null
+                        || !word.text().strip().matches("(?i)^a\\s+tempo[.!]?$"))) {
+                    var direction = tempoPrimo ? directions.get(0) : sectional != null ? sectional : restoration;
+                    var boundary = tempoBarline(score, staffs, word, gray, width, height, absoluteTempo);
+                    if (boundary != null && (!rehearsalTempo || startsSystem(score, boundary.measure()))) {
+                        int measure = boundary.measure();
+                        String id = (sectional == null ? "printed-tempo-restoration:"
+                                : "printed-sectional-tempo:") + measure;
+                        var owner = boundary.staff();
+                        var event = new ScoreExpressiveEvent(
+                                id, direction.kind(), Optional.of(new ScoreAnchor(measure, 0)), Optional.empty(),
+                                Scope.SCORE, owner.index(), owner.count(), Optional.empty(), direction.strength(),
+                                direction.qualifierText(), List.of(new Evidence(
+                                        SOURCE, 0, word.left(), owner.index(), owner.count(), word.text())));
+                        if (!direction.qualifierText().isEmpty())
+                            events.removeIf(previous -> previous.eventId().equals(id)
+                                    && previous.qualifierText().isEmpty());
+                        if (events.stream().noneMatch(previous -> previous.eventId().equals(id)))
+                            events.add(event);
+                        continue;
+                    }
+                }
+                if (rehearsalTempo) continue;
+                if (absoluteTempo) {
+                    // A mid-bar word can own a silent printed entry before the next attack.
+                    rest = PrintedRestDirection.tempoRest(score, staffs, word, gray, width, height);
+                    if (rest != null) {
+                        closest = alignedTempoAttack(score, rest);
+                        if (closest != null) rest = null;
+                    }
+                    else if (!localTempoNote(score, closest, staff, word, width, height)) continue;
+                }
+            }
             if (closest == null && rest == null) continue;
             if (caption != null
                     && (closest != null ? closest.measureIndex() : rest.measureIndex())
@@ -848,6 +1152,29 @@ public final class ScoreExpressionDetector {
     }
 
     /** A proved equation straddling the last barline in its system belongs to the next bar. */
+    private static int metricMeterOnset(
+            ScorePageInterpretation score,
+            PlayingTechniqueDetector.Staff staff,
+            PlayingTechniqueDetector.Word equation, int width, int height) {
+        float x = equation.left() * width, right = equation.right() * width;
+        float center = (staff.top() + staff.bottom()) * .5f;
+        float gap = staff.gap();
+        if (equation.bottom() * height > staff.top() - gap * .35f) return -1;
+        int selected = -1;
+        for (var change : score.meterChanges()) {
+            int index = change.measureIndex();
+            if (index < 0 || index >= score.measures().size()) continue;
+            var region = score.measures().get(index);
+            if (center < region.top() * height - gap || center > region.bottom() * height + gap) continue;
+            float left = region.left() * width;
+            if (x < left - gap * 1.5f || x > left + gap * 4.5f || right < left
+                    || right > region.right() * width + gap * .5f) continue;
+            if (selected >= 0 && selected != index) return -1;
+            selected = index;
+        }
+        return selected;
+    }
+
     private static int terminalMetricBoundary(
             List<MeasureRegion> measures,
             PlayingTechniqueDetector.Staff staff,
@@ -1192,8 +1519,23 @@ public final class ScoreExpressionDetector {
         return column(event).isPresent();
     }
 
+    static boolean directBarlineDirection(ScoreExpressiveEvent event) {
+        return event.scope() == Scope.SCORE && event.start().isPresent()
+                && (event.eventId().startsWith("printed-tempo-restoration:")
+                        || event.eventId().startsWith("printed-sectional-tempo:")
+                        || event.eventId().startsWith("printed-metric-boundary:")
+                        || ScoreRhythmicFeel.read(event).isPresent());
+    }
+
+    static Optional<String> remapTargetMeasures(
+            ScoreExpressiveEvent event, java.util.function.IntUnaryOperator mapper) {
+        return column(event).map(c -> target(
+                mapper.applyAsInt(c.measure()), c.staff(), c.count(), c.position(), c.rest()));
+    }
+
     static ScoreExpressiveEvent offsetEvidence(ScoreExpressiveEvent event, int offset, int page) {
-        var c = column(event).orElseThrow();
+        var shiftedTarget = column(event).map(c -> target(
+                Math.addExact(c.measure(), offset), c.staff(), c.count(), c.position(), c.rest()));
         return new ScoreExpressiveEvent(
                 "page:" + page + "/" + event.eventId(),
                 event.kind(),
@@ -1202,13 +1544,7 @@ public final class ScoreExpressionDetector {
                 event.scope(),
                 event.staffIndex(),
                 event.staffCount(),
-                Optional.of(
-                        target(
-                                Math.addExact(c.measure(), offset),
-                                c.staff(),
-                                c.count(),
-                                c.position(),
-                                c.rest())),
+                shiftedTarget,
                 event.strength(),
                 event.qualifierText(),
                 event.evidence().stream()
@@ -1289,10 +1625,17 @@ public final class ScoreExpressionDetector {
                 if (!target.rest()) firstNoteColumn = false;
                 double start = -1, release = -1;
                 boolean proved = !indices.isEmpty();
+                boolean tempoOnset = tempoDirection(event.kind());
                 for (int index : indices) {
                     var note = score.notes().get(index);
                     float beats = meter.beatsInMeasure(note.measureIndex());
                     double onset = ScoreNoteTiming.beatInMeasure(note, score.notes(), beats);
+                    if (tempoOnset) {
+                        if (!Double.isFinite(onset) || onset < 0 || onset >= beats
+                                || start >= 0 && Math.abs(onset - start) > 1e-7) proved = false;
+                        start = onset;
+                        continue;
+                    }
                     double end =
                             onset
                                     + ScoreNoteTiming.resolvedWrittenDurationBeats(
@@ -1384,6 +1727,10 @@ public final class ScoreExpressionDetector {
                             || v.sourceId().equals(SOURCE) && (SuddenDynamicText.parse(v.printedText()).isPresent()
                                 || ExpressiveDirectionText.isShortBowCaption(v.printedText())
                                 || "segue".equalsIgnoreCase(v.printedText()))));
+    }
+
+    public static boolean tempoDirection(Kind kind) {
+        return PrintedRestDirection.allows(kind);
     }
 
     public static List<Integer> targetIndices(

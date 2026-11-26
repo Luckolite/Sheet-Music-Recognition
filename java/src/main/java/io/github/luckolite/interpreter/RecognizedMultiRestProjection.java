@@ -44,6 +44,8 @@ final class RecognizedMultiRestProjection {
                 if (!r.isFullMeasure()) nonFull[r.measureIndex()] = true;
             }
         var added = new ArrayList<ScoreRestEvent>();
+        var compoundAliases = new BitSet(measures.size());
+        boolean stackedOpeningKey = false;
         for (var entry : runs.entrySet()) {
             var parent = entry.getKey();
             var run = entry.getValue();
@@ -65,7 +67,22 @@ final class RecognizedMultiRestProjection {
                 if (rests[i] != 0) empty = false;
                 if (rests[i] != 1) complete = false;
             }
-            if (conflict || complete || !empty) continue;
+            if (a.candidate().compoundOpening()) {
+                if (score.notes().stream().anyMatch(n -> n.measureIndex() >= run.first
+                        && n.measureIndex() < run.end && (n.staffIndex() != 0 || n.staffCount() != 1))
+                        || score.rests().stream().anyMatch(r -> r.measureIndex() >= run.first
+                        && r.measureIndex() < run.end && (r.staffIndex() != 0 || r.staffCount() != 1)))
+                    continue;
+                compoundAliases.set(run.first, run.end);
+                if (run.first == 0
+                        && score.keyChanges().stream().noneMatch(key -> key.measureIndex() == 0)
+                        && score.notes().stream().anyMatch(note -> note.measureIndex() == run.end
+                                && note.staffIndex() == 0 && note.staffCount() == 1
+                                && note.clefBottomDiatonic() == 30)) {
+                    stackedOpeningKey = PrintedFlatGlyph.stackedTrebleSignature(
+                            gray, w, h, parent.left() * w, rows[4], (rows[4] - rows[0]) / 4);
+                }
+            } else if (conflict || complete || !empty) continue;
             for (int i = run.first; i < run.end; i++)
                 added.add(
                         ScoreRestEvent.fullMeasure(
@@ -76,12 +93,20 @@ final class RecognizedMultiRestProjection {
         var result = new ArrayList<ScoreRestEvent>();
         int next = 0;
         for (var old : score.rests()) {
+            if (compoundAliases.get(old.measureIndex())) continue;
             while (next < added.size() && added.get(next).measureIndex() < old.measureIndex())
                 result.add(added.get(next++));
             result.add(old);
         }
         while (next < added.size()) result.add(added.get(next++));
+        var keptNotes = compoundAliases.isEmpty() ? score.notes() : score.notes().stream()
+                .filter(note -> !compoundAliases.get(note.measureIndex())).toList();
+        var keys = score.keyChanges();
+        if (stackedOpeningKey) {
+            keys = new ArrayList<>(keys);
+            keys.add(0, new ScoreKeyChange(0, -4));
+        }
         return new OmrScoreInterpreter.Analysis(
-                score.notes(), score.keyChanges(), result, score.tremoloSource());
+                keptNotes, keys, result, score.tremoloSource());
     }
 }

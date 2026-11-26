@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.github.luckolite.interpreter;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
@@ -11,6 +12,9 @@ import java.awt.Graphics2D;
 import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
 import java.io.File;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import org.junit.Test;
 
 /** Uses independently rendered Bravura digits and hand-drawn rules. */
@@ -33,6 +37,29 @@ public class InlineTripleMeterProofTest {
     @Test
     public void anotherNumeratorCannotOwnThisThreeAlias() throws Exception {
         assertFalse(proves(signature('2', '4', true)));
+    }
+
+    @Test
+    public void openingMeterIsReadBeforeTheCountedRestRectangle() throws Exception {
+        var gray = signature('3', '4', false);
+        var labels = new byte[gray.length];
+        for (int y = TOP; y <= TOP + 4 * GAP; y++) {
+            for (int x = 10; x < WIDTH - 10; x++) {
+                if ((gray[y * WIDTH + x] & 255) >= 150) continue;
+                if ((y - TOP) % GAP == 0) labels[y * WIDTH + x] = OmrMeasurePostProcessor.STAFF;
+                else if (x >= CROP.left() && x < CROP.right()) labels[y * WIDTH + x] = OmrMeasurePostProcessor.CLEF_OR_KEY;
+            }
+        }
+        for (int y = TOP + 2 * GAP - 3; y <= TOP + 2 * GAP + 3; y++)
+            for (int x = 168; x < 227; x++) {
+                gray[y * WIDTH + x] = 0;
+                labels[y * WIDTH + x] = OmrMeasurePostProcessor.STEM_OR_REST;
+            }
+        var rest = new MeasureRegion(162f / WIDTH, 227f / WIDTH, 39f / HEIGHT, 132f / HEIGHT);
+        var measures = new ArrayList<>(Collections.nCopies(8, rest));
+        measures.add(new MeasureRegion(235f / WIDTH, 304f / WIDTH, 39f / HEIGHT, 132f / HEIGHT));
+        assertEquals(List.of(new ScoreMeterChange(0, 3, 4)),
+                MeterFontMatcher.standaloneReadings(labels, gray, WIDTH, HEIGHT, measures, List.of()));
     }
 
     private static boolean proves(byte[] gray) throws Exception {

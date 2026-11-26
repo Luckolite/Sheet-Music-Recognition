@@ -20,15 +20,36 @@ final class PrintedRepeatNavigation {
             int width,
             int height,
             int physicalPage) {
+        return apply(score, words, staffs, gray, gray, width, height, physicalPage);
+    }
+
+    static ScorePageInterpretation apply(
+            ScorePageInterpretation score,
+            List<PlayingTechniqueDetector.Word> words,
+            List<PlayingTechniqueDetector.Staff> staffs,
+            byte[] gray,
+            byte[] annotationGray,
+            int width,
+            int height,
+            int physicalPage) {
         var repeats = PrintedRepeatGlyphs.detect(gray, width, height, staffs, score.measures());
-        var endings =
-                PrintedEndingBrackets.detect(gray, width, height, staffs, score.measures(), words);
-        var found =
-                assemble(
-                        repeats,
-                        endings,
-                        Math.max(0, physicalPage),
-                        physicalPage == 0 && score.firstMeasureNumber() == 1);
+        var endings = new ArrayList<>(PrintedEndingBrackets.detect(
+                gray, width, height, staffs, score.measures(), words));
+        int pageIndex = Math.max(0, physicalPage);
+        // Unnumbered first bars use zero. A known continuation still needs its printed repeat start.
+        boolean scoreBeginning = physicalPage == 0 && score.firstMeasureNumber() <= 1;
+        var found = assemble(repeats, endings, pageIndex, scoreBeginning);
+        // Normalization can interrupt a thin roof. Use the source raster to fill gaps in the
+        // evidence while keeping already proved selector positions and their span.
+        if (annotationGray != gray && !found.unresolved().isEmpty()) {
+            int before = endings.size();
+            for (var alternate : PrintedEndingBrackets.detect(
+                    annotationGray, width, height, staffs, score.measures(), words))
+                if (endings.stream().noneMatch(e -> e.start() < alternate.end() && alternate.start() < e.end()
+                        && e.staffIndex() == alternate.staffIndex()
+                        && e.staffCount() == alternate.staffCount())) endings.add(alternate);
+            if (endings.size() != before) found = assemble(repeats, endings, pageIndex, scoreBeginning);
+        }
         if (found.directions().isEmpty() && found.unresolved().isEmpty()) return score;
         var directions = new ArrayList<>(score.playbackDirections());
         directions.addAll(found.directions());

@@ -13,13 +13,57 @@ final class PrintedTempoSpans {
     static final String OPEN_HINT = "printed-tempo-dash-page-edge-v1:";
     static final String END_HINT = "printed-tempo-dash-end-v1:";
 
+    private static final java.util.regex.Pattern COUNTED_ACCELERATION =
+            java.util.regex.Pattern.compile(
+                    "(?i)^accell?erando\\s+[^=0-9]*=\\s*([0-9]{2,3})[.)]?$");
+
+    private static ScorePageInterpretation countedRestAcceleration(
+            ScorePageInterpretation score, List<PlayingTechniqueDetector.Word> words,
+            List<PlayingTechniqueDetector.Staff> staffs, int height) {
+        if (score.multiRestGroups().isEmpty() || score.tempoChanges().isEmpty() || height <= 0) return score;
+        var events = new ArrayList<>(score.expressiveEvents());
+        for (var word : words) {
+            if (word == null || word.text() == null) continue;
+            var equation = COUNTED_ACCELERATION.matcher(word.text().strip());
+            if (!equation.matches()) continue;
+            int rate = Integer.parseInt(equation.group(1));
+            for (var rest : score.multiRestGroups()) {
+                int start = rest.firstMeasureIndex(), end = start + rest.measureCount();
+                if (rest.staffCount() != 1 || end >= score.measures().size()) continue;
+                var startBar = score.measures().get(start);
+                var endBar = score.measures().get(end);
+                if (Math.abs(startBar.top() - endBar.top()) > .003f
+                        || word.left() < startBar.left() || word.left() > startBar.right()
+                        || word.right() <= endBar.left() || word.right() > endBar.right()
+                        || score.tempoChanges().stream().noneMatch(tempo -> tempo.measureIndex() == end
+                                && tempo.positionInMeasure() == 0
+                                && Math.abs(tempo.bpm() / tempo.beatUnit() - rate) < 1e-7)) continue;
+                boolean above = staffs.stream().anyMatch(staff -> staff.index() == rest.staffIndex()
+                        && staff.count() == 1 && (staff.top() + staff.bottom()) * .5f / height >= startBar.top()
+                        && (staff.top() + staff.bottom()) * .5f / height <= startBar.bottom()
+                        && word.bottom() * height <= staff.top()
+                        && staff.top() - word.bottom() * height <= staff.gap() * 4);
+                if (!above) continue;
+                String id = "printed-counted-rest-acceleration:" + start;
+                if (events.stream().anyMatch(e -> e.eventId().equals(id))) continue;
+                events.add(new ScoreExpressiveEvent(id, Kind.ACCELERANDO,
+                        Optional.of(new ScoreAnchor(start, 0)), Optional.of(new ScoreAnchor(end, 0)),
+                        Scope.SCORE, rest.staffIndex(), rest.staffCount(), Optional.empty(),
+                        Strength.UNSPECIFIED, "", List.of(new Evidence("printed-expression-word",
+                                0, word.left(), rest.staffIndex(), rest.staffCount(), word.text()))));
+            }
+        }
+        return events.size() == score.expressiveEvents().size() ? score : score.withExpressiveEvents(events);
+    }
+
     static ScorePageInterpretation apply(
-            ScorePageInterpretation score,
+            ScorePageInterpretation input,
             List<PlayingTechniqueDetector.Word> words,
             List<PlayingTechniqueDetector.Staff> staffs,
             byte[] gray,
             int width,
             int height) {
+        var score = countedRestAcceleration(input, words, staffs, height);
         // Multipart ownership and open page continuations need document-level evidence.
         if (staffs.isEmpty()
                 || staffs.stream().anyMatch(s -> s.count() != 1)

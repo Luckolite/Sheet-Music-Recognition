@@ -258,6 +258,111 @@ public final class TabFretRaster {
         return false;
     }
 
+    /** Read uncovered fret-sized ink on standalone tab without disturbing owned readings. */
+    static List<TablatureDecoder.Staff> supplement(
+            byte[] gray, int width, int height, List<TablatureDecoder.Staff> tabs,
+            List<TablatureDecoder.Word> words, PortableOcr.Inference inference) throws Exception {
+        byte[] cleaned = null;
+        var result = new ArrayList<>(tabs);
+        for (int index = 0; index < tabs.size(); index++) {
+            var staff = tabs.get(index);
+            if (staff.standardTop() >= 0) continue;
+            var crops = crops(gray, width, height, List.of(staff));
+            var splits = splitFretWords(crops, words, width, height, staff.gap());
+            var readings = new HashMap<Crop, String>();
+            var frets = new ArrayList<>(staff.frets());
+            for (var split : splits) {
+                if (split.joined()) frets.removeIf(split::ownsJoinedFret);
+                for (int i = 0; i < split.crops().size(); i++)
+                    readings.merge(split.crops().get(i), split.digits().get(i),
+                            (old, next) -> old.equals(next) ? old : "");
+            }
+            for (var crop : crops) {
+                float margin = staff.gap() * .2f;
+                if (frets.stream().anyMatch(fret -> fret.string() == crop.string()
+                        && fret.x() >= crop.left() - margin && fret.x() <= crop.right() + margin))
+                    continue;
+                String value = readings.get(crop);
+                if (value == null || value.isEmpty()) {
+                    if (cleaned == null) cleaned = clean(gray, width, height, tabs);
+                    value = openFret(cleaned, width, crop) ? "0"
+                            : isolatedFret(cleaned, gray, width, height, crop, inference);
+                }
+                if (value.isEmpty()) continue;
+                int fret = value.equalsIgnoreCase("x") ? -1 : Integer.parseInt(value);
+                frets.add(new TablatureDecoder.Fret(
+                        (crop.left() + crop.right()) * .5f, crop.stringY(), crop.string(),
+                        fret, 0, 0, 0, 0));
+            }
+            if (!frets.equals(staff.frets())) {
+                frets.sort(Comparator.comparingDouble(TablatureDecoder.Fret::x));
+                result.set(index, staff.withFrets(frets));
+            }
+        }
+        return List.copyOf(result);
+    }
+
+    private record SplitFretWord(List<Crop> crops, List<String> digits, boolean joined) {
+        boolean ownsJoinedFret(TablatureDecoder.Fret fret) {
+            return fret.fret() == Integer.parseInt(String.join("", digits))
+                    && fret.string() == crops.get(0).string()
+                    && fret.x() > crops.get(0).right() && fret.x() < crops.get(1).left();
+        }
+    }
+
+    private static List<SplitFretWord> splitFretWords(
+            List<Crop> crops, List<TablatureDecoder.Word> words,
+            int width, int height, float gap) {
+        var readings = new ArrayList<SplitFretWord>();
+        for (var word : words) {
+            boolean separated = word.text().matches("[0-9]{1,2}(?:\s+[0-9]{1,2})+");
+            if (!separated && !word.text().matches("[0-9]{2}")) continue;
+            var digits = List.of(separated ? word.text().split("\s+") : word.text().split(""));
+            float left = word.left() * width, right = word.right() * width;
+            float centerY = (word.top() + word.bottom()) * .5f * height;
+            var ink = crops.stream().filter(crop -> Math.abs(crop.stringY() - centerY) < gap * .25f
+                    && crop.left() >= left - gap * .2f && crop.right() <= right + gap * .2f)
+                    .sorted(Comparator.comparingInt(Crop::left)).toList();
+            if (ink.size() != digits.size()) continue;
+            if (!separated && ink.get(1).left() - ink.get(0).right() < gap * .55f) continue;
+            boolean valid = true;
+            for (int i = 0; i < digits.size(); i++) {
+                var crop = ink.get(i);
+                String value = digits.get(i);
+                if (Integer.parseInt(value) > 36
+                        || value.length() == 2
+                                && crop.right() - crop.left() < (crop.bottom() - crop.top()) * .65f)
+                    valid = false;
+            }
+            if (valid) readings.add(new SplitFretWord(ink, digits, !separated));
+        }
+        return readings;
+    }
+
+    private static String isolatedFret(
+            byte[] cleaned, byte[] gray, int width, int height, Crop crop,
+            PortableOcr.Inference inference) throws Exception {
+        if (inference == null) return "";
+        int cropWidth = crop.right() - crop.left(), cropHeight = crop.bottom() - crop.top();
+        int contentWidth = Math.max(1, Math.round(48f * cropWidth / cropHeight));
+        int paddedWidth = Math.max(320, contentWidth);
+        String value = "";
+        for (byte[] raster : List.of(cleaned, gray)) {
+            var input = PortableOcr.normalizeGray(raster, width, height,
+                    crop.left(), crop.top(), crop.right(), crop.bottom(),
+                    contentWidth, 48, paddedWidth, false);
+            var reading = OcrCtcDecoder.decode(
+                    inference.recognize(input, paddedWidth, 48), inference.dictionary(), 0);
+            String text = reading.text();
+            if (!(reading.confidence() >= (raster == cleaned ? .98f : .95f)) || !text.matches("[0-9]{1,2}|[xX]")
+                    || text.length() == 2 && (cropWidth < cropHeight * .65f
+                            || Integer.parseInt(text) > 36)
+                    || !value.isEmpty() && !value.equalsIgnoreCase(text)) return "";
+            value = text;
+        }
+        return value;
+    }
+
     public static List<Crop> crops(byte[] gray, int w, int h, List<TablatureDecoder.Staff> tabs) {
         var result = new ArrayList<Crop>();
         for (var t : tabs) {

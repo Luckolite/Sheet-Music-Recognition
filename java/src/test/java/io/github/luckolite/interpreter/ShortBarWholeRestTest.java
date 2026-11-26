@@ -116,4 +116,25 @@ public final class ShortBarWholeRestTest {
         var s = score(List.of(new ScoreMeterChange(0, 1, 4)), List.of(), List.of(r, extra));
         assertSame(s, apply(s, raster(0)));
     }
+
+    @Test
+    public void acceptedMeterOwnsOverlappingRestAndPreservesTheSeparateRest() {
+        var meter = new ScoreMeterChange(0, 6, 8);
+        var header = new MeterChangeDetector.Crop(69, 100, 86, 164, 100, 16);
+        var overlap = new ScoreRestEvent(0, .08f, 132f / H, .10f, 0, 1, 1);
+        var distinct = new ScoreRestEvent(0, .16f, 132f / H, .10f, 0, 1, 1);
+        var note = WholeRestClassificationControlsTest.note(220, 150, -1).withLeadingRest(2);
+        var original = score(List.of(meter), List.of(note), List.of(overlap, distinct));
+        var staff = List.of(new PlayingTechniqueDetector.Staff(100, 164, 16, 0, 1));
+        var plain = new byte[W * H];
+        Arrays.fill(plain, (byte) 255);
+        var corrected = WholeRestMeterContext.apply(
+                original, plain, W, H, staff, List.of(meter), List.of(header));
+        assertEquals(List.of(distinct), corrected.rests());
+        assertEquals(1, corrected.notes().get(0).leadingRestBeats(), 0);
+        assertEquals(List.of(meter), corrected.meterChanges());
+        var wrongMeter = new ScoreMeterChange(0, 3, 4);
+        assertSame(original, WholeRestMeterContext.apply(
+                original, plain, W, H, staff, List.of(wrongMeter), List.of(header)));
+    }
 }

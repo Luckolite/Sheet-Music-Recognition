@@ -3,6 +3,7 @@
 package io.github.luckolite.interpreter;
 
 import java.util.ArrayList;
+import java.util.BitSet;
 import java.util.List;
 
 /** Raw, open-right C signs following a printed clef. Does not infer a tempo or beat unit. */
@@ -27,6 +28,7 @@ final class CommonTimeMeter {
         int middle = Math.round(firstLine + 2 * gap);
         int radius = Math.max(1, Math.round(gap * .12f));
         int[] columns = new int[width];
+        BitSet repeatColumns = null;
         int[] shifts = null;
         if (slope != 0) {
             shifts = new int[width];
@@ -65,6 +67,12 @@ final class CommonTimeMeter {
                     || !precedingClef(labels, width, height, left, firstLine, gap, shifts)) continue;
             int meter = read(gray, width, height, left, last, firstLine, gap, slope);
             if (meter == 0) continue;
+            if (meter == 2) {
+                if (repeatColumns == null)
+                    repeatColumns = PrintedRepeatGlyphs.provedColumns(
+                            gray, width, height, firstLine, firstLine + 4 * gap, gap);
+                if (cutSharesRepeatInk(repeatColumns, left, last, gap)) continue;
+            }
             int localTop = firstLine + Math.round(slope * ((left + last) * .5f - width * .5f));
             int pad = Math.max(2, Math.round(gap * .2f));
             found.add(
@@ -80,6 +88,15 @@ final class CommonTimeMeter {
                             meter));
         }
         return List.copyOf(found);
+    }
+
+    /** An independently proved repeat can supply the apparent cut and both shoulders. */
+    private static boolean cutSharesRepeatInk(BitSet columns, int left, int right, float gap) {
+        int needed = Math.max(2, Math.round(gap * .22f));
+        for (int column = columns.nextSetBit(left); column >= 0 && column <= right;
+                column = columns.nextSetBit(column + 1))
+            if (--needed == 0) return true;
+        return false;
     }
 
     /** Read a bounded system header when ink joins a sign to neighboring components. */
