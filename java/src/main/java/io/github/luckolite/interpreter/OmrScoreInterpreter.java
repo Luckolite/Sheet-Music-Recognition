@@ -29248,13 +29248,40 @@ final class OmrScoreInterpreter {
 
         int[] columns = new int[glyphWidth];
         int[] rows = new int[glyphHeight];
-        for (int y = Math.max(0, glyph.minY); y <= Math.min(height - 1, glyph.maxY); y++)
-            for (int x = Math.max(0, glyph.minX); x <= Math.min(width - 1, glyph.maxX); x++)
-                if (candidate.matches(labels[y * width + x])) {
+        int scanTop = Math.max(0, glyph.minY), scanBottom = Math.min(height - 1, glyph.maxY);
+        int left = Math.max(0, glyph.minX), right = Math.min(width - 1, glyph.maxX);
+        int firstUntalliedColumn = left;
+        // Each byte lane counts one column without carrying into its neighbor.
+        if (scanBottom - scanTop < 255 && right - left >= Long.BYTES - 1
+                && (crossbarInk == null || crossbarInk.length >= labels.length)) {
+            byte primary = candidate.label == 0 ? OmrMeasurePostProcessor.SYMBOL : candidate.label;
+            byte secondary = candidate.label == 0 ? OmrMeasurePostProcessor.CLEF_OR_KEY : candidate.label;
+            long primaryWord = (primary & 255) * 0x0101010101010101L;
+            long secondaryWord = (secondary & 255) * 0x0101010101010101L;
+            for (; firstUntalliedColumn <= right - (Long.BYTES - 1); firstUntalliedColumn += Long.BYTES) {
+                long totals = 0;
+                for (int y = scanTop, at = scanTop * width + firstUntalliedColumn;
+                        y <= scanBottom; y++, at += width) {
+                    long ink = PackedGrayInk.matchingLabelLanes(labels, at, primaryWord, secondaryWord);
+                    totals += ink;
+                    if (crossbarInk != null && ink != 0)
+                        ink &= PackedGrayInk.matchingLabelLanes(crossbarInk, at, primaryWord, secondaryWord);
+                    rows[y - glyph.minY] += Long.bitCount(ink);
+                }
+                int column = firstUntalliedColumn - glyph.minX;
+                for (int byteIndex = 0; byteIndex < Long.BYTES; byteIndex++)
+                    columns[column + byteIndex] = (int) (totals >>> (byteIndex * Byte.SIZE)) & 255;
+            }
+        }
+        for (int y = scanTop; y <= scanBottom; y++) {
+            int at = y * width + firstUntalliedColumn;
+            for (int x = firstUntalliedColumn; x <= right; x++, at++)
+                if (candidate.matches(labels[at])) {
                     columns[x - glyph.minX]++;
-                    if (crossbarInk == null || candidate.matches(crossbarInk[y * width + x]))
+                    if (crossbarInk == null || candidate.matches(crossbarInk[at]))
                         rows[y - glyph.minY]++;
                 }
+        }
 
         int leftSpine = 0;
         int rightSpine = Math.max(0, glyphWidth / 2);

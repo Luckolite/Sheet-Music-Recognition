@@ -149,9 +149,20 @@ final class PackedGrayInk {
     }
 
     private static long matchingByteBits(long mismatch) {
+        return ((matchingByteLanes(mismatch) >>> 7) * 0x0102040810204080L) >>> 56;
+    }
+
+    /** One low bit per byte for either allowed label. */
+    static long matchingLabelLanes(byte[] labels, int offset, long first, long second) {
+        long values = (long) PIXEL_WORDS.get(labels, offset);
+        long matches = matchingByteLanes(values ^ first);
+        if (first != second) matches |= matchingByteLanes(values ^ second);
+        return matches >>> 7;
+    }
+
+    private static long matchingByteLanes(long mismatch) {
         long lowBits = ~HIGH_BITS;
-        long selected = ~(((mismatch & lowBits) + lowBits) | mismatch) & HIGH_BITS;
-        return ((selected >>> 7) * 0x0102040810204080L) >>> 56;
+        return ~(((mismatch & lowBits) + lowBits) | mismatch) & HIGH_BITS;
     }
 
     // One high bit per grayscale sample in the rest contrast interval [170, 205).
