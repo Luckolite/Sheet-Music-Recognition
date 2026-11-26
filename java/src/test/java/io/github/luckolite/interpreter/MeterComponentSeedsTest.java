@@ -186,6 +186,16 @@ public final class MeterComponentSeedsTest {
     }
 
     @Test
+    public void firstPlayableBoundaryCanHaveAFullStaffPhaseShift() {
+        var p = new Page();
+        var opening = new MeasureRegion(235f / W, .6f, .2f, .7f);
+        var hints = List.of(new MeterComponentSeeds.Hint(FIRST + 20, GAP, 0));
+        var crops = MeterComponentSeeds.boundaryCrops(p.labels, p.gray, W, H, hints, List.of(opening));
+        assertTrue(crops.stream().anyMatch(c -> c.left() <= 235 && c.right() >= 255
+                && Math.abs(c.firstLine() - FIRST) <= 1));
+    }
+
+    @Test
     public void upperGlyphsAloneDoNotProduceABoundaryMeter() {
         var p = new Page();
         for (int y = 138; y < 168; y++)

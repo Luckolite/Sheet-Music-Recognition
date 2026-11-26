@@ -64,12 +64,17 @@ final class MeterComponentSeeds {
                 if (center < measure.top() || center > measure.bottom()) continue;
                 retainBoundaryBody(crops, labels, gray, width, height, edge, first, gap);
                 if (opening) {
+                    int local = edge + Math.round(2.2f * gap);
+                    int phase = localBoundaryPhase(
+                            labels, gray, width, height, local, local, first, gap, 2f);
+                    if (phase != first)
+                        retainBoundaryBody(crops, labels, gray, width, height, edge, phase, gap);
                     int step = Math.max(1, Math.round(2 * gap));
                     for (int x = edge - 4 * step; x > edge - 21 * gap && x > 3 * gap; x -= step) {
                         int sample = x + Math.round(1.4f * gap);
-                        int phase = localBoundaryPhase(
+                        int prefixPhase = localBoundaryPhase(
                                 labels, gray, width, height, sample, sample, first, gap, 2f);
-                        retainBoundaryBody(crops, labels, gray, width, height, x, phase, gap);
+                        retainBoundaryBody(crops, labels, gray, width, height, x, prefixPhase, gap);
                     }
                 }
             }
