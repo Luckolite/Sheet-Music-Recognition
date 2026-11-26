@@ -6342,7 +6342,9 @@
         "reviewed_app_commit": "fe613325afe04800491fac71727ad0f9f814133c",
         "scope": "Identical head ownership and both-raster proof for the adjacent natural. A sharply aligned sign reaches a displaced chord tone only with evidence of their shared shaft.",
         "shared_source_sha256": "08c02b4a3a4baa5e32ef710dd48f4ddde19a47ae03ef78ae5581d9be6a2fcb09"
-      }
+      },
+      "optical_grace_reviewed_app_commit": "fe3840f1cc5e468dc24734dd1959d7bc85054c86",
+      "optical_grace_port_scope": "Ports the call at final optical note assembly before source context capture. Existing broader app and standalone file differences are outside this scoped review."
     },
     "OnnxOcrInference.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/OnnxOcrInference.java",
@@ -9302,24 +9304,25 @@
     },
     "ScoreNoteTiming.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/ScoreNoteTiming.java",
-      "source_sha256": "7ab801332e88d01e3bea4e368dc755270732ead3c3fd838abe125738a0986e8a",
+      "source_sha256": "074a452ec678d938bb011ca0872cbae2723069c5cf80be1d3557c1d1ea4d542a",
       "review_note": "Global recognition/performance repairs; namespace-equivalent portable helpers and separately reviewed caller adapters. Original synthetic regressions; no private score assets.",
-      "source_normalized_sha256": "7ab801332e88d01e3bea4e368dc755270732ead3c3fd838abe125738a0986e8a",
+      "source_normalized_sha256": "074a452ec678d938bb011ca0872cbae2723069c5cf80be1d3557c1d1ea4d542a",
       "reviewed_app_state": "Reviewed six-class interpreter worktree extension; package/diagnostic token parity verified against standalone port.",
       "reviewed_source_state": "Committed combined source snapshot; paired package deployment and whole-library accuracy acceptance pending.",
-      "standalone_sha256": "6820c62c7b46fe5f25731e88b358bd4cbc452bd887787b80877a598eaec4a247",
-      "reviewed_app_commit": "06a423201200de304e89e74a6f3c09deece2883f",
+      "standalone_sha256": "bf552179e5c4143b45eeb4bec4da6755c669b0003caa2c7ecf7fd86c4faad4b9",
+      "reviewed_app_commit": "fe3840f1cc5e468dc24734dd1959d7bc85054c86",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/ScoreNoteTiming.java",
       "license": "Apache-2.0",
       "closed_phrase_clock_review": "Same-pass complete printed beam ownership resolves remote/shared-stem phrase caps and cross-staff written clock. Asymmetric arches have independent IDs preserving old arcs. Literal unique opposed-stem single-beam partners sustain independently of faster bass attacks. Optional bounded proofs preserve legacy on refusal. One existing clock capture follows final value projection. Original procedural regressions only; no score data, observers, weights or layouts.",
-      "standalone_normalized_sha256": "6820c62c7b46fe5f25731e88b358bd4cbc452bd887787b80877a598eaec4a247",
+      "standalone_normalized_sha256": "bf552179e5c4143b45eeb4bec4da6755c669b0003caa2c7ecf7fd86c4faad4b9",
       "recognition139_review_note": "Reviewed app fix merged with the existing standalone adapters and formatting. Reviewed namespace-equivalent dotted-triplet timing. The standalone caller also retains the inferred ratio for MusicXML written values.",
       "triplet_fingering_review": "Shared printed-note evidence is reconciled through each producer. Standalone retains its existing direct triplet-clock repair, while Android and native guides use the retained beam ownership with their effective meter.",
       "held_tremolo_lower_voice_review": {
         "reviewed_app_commit": "fd2dbe43185ff86bb6c37890b53c68124e637d60",
         "scope": "Matching exact written lower-voice clock beneath a tied stemless tremolo. Explicit rests, ambiguous head clusters and incomplete voice budgets retain the old timing rules.",
         "shared_block_sha256": "0d8b5e88776d9a4e2478e7cee899c05f35d26a8a870ca31f964a56952a931aa2"
-      }
+      },
+      "optical_grace_review": "Shares a fresh optical reading check for grace marks that lack supported pitched ownership. Preserves the note roster and original strict validators for explicit or imported score records. Original procedural regression preserves pitched grace and checks both unsupported attachment directions."
     },
     "ScoreOpeningDuration.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/ScoreOpeningDuration.java",

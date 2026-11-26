@@ -4067,6 +4067,7 @@ final class OmrScoreInterpreter {
         }
         var recoveredNaturalGlyphs = new IdentityHashMap<>(beamedThirdNaturals);
         sourceProvedNaturals.forEach(recoveredNaturalGlyphs::putIfAbsent);
+        voicedNotes = ScoreNoteTiming.retainSupportedOpticalGrace(voicedNotes);
         var capturedAnalysis =
                 new Analysis(
                         voicedNotes,

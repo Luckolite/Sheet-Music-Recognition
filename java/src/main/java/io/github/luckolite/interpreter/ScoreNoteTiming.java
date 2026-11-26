@@ -423,6 +423,34 @@ public final class ScoreNoteTiming {
         return note != null && (note.articulations() & NoteOrnament.GRACE) != 0;
     }
 
+    /** Discard provisional grace marks whose optical owner cannot supply a pitched clock. */
+    static List<ScoreNoteEvent> retainSupportedOpticalGrace(List<ScoreNoteEvent> notes) {
+        if (notes.stream().noneMatch(ScoreNoteTiming::grace)
+                || notes.stream().noneMatch(n -> n.kind() == ScoreNoteEvent.Kind.UNPITCHED))
+            return notes;
+        List<ScoreNoteEvent> retained = new ArrayList<>(notes);
+        try (var timing = beginTimingSession()) {
+            for (int index = 0; index < notes.size(); index++) {
+                var target = notes.get(index);
+                if (!grace(target)) continue;
+                ScoreNoteEvent principal = null;
+                if (target.kind() != ScoreNoteEvent.Kind.UNPITCHED) {
+                    boolean afterTarget = false;
+                    for (var event : measureVoice(target, notes)) {
+                        if (event == target) afterTarget = true;
+                        if (grace(event) && event.kind() != ScoreNoteEvent.Kind.UNPITCHED) continue;
+                        principal = event;
+                        if (afterTarget) break;
+                    }
+                }
+                if (target.kind() == ScoreNoteEvent.Kind.UNPITCHED
+                        || principal != null && principal.kind() == ScoreNoteEvent.Kind.UNPITCHED)
+                    retained.set(index, target.withArticulations(target.articulations() & ~NoteOrnament.GRACE));
+            }
+        }
+        return List.copyOf(retained);
+    }
+
     private static boolean metricalNote(ScoreNoteEvent note) {
         boolean marked = grace(note);
         if (marked && note.kind() == ScoreNoteEvent.Kind.UNPITCHED)

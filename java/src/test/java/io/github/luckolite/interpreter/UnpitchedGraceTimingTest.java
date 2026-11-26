@@ -112,6 +112,26 @@ public final class UnpitchedGraceTimingTest {
     }
 
     @Test
+    public void opticalProposalsPreserveAttacksAndDiscardUnsupportedGraceOwnership() {
+        var proposed = List.of(
+                grace(0, .1f, ScoreNoteEvent.Kind.PITCHED),
+                note(0, .3f, ScoreNoteEvent.Kind.UNPITCHED),
+                note(1, .1f, ScoreNoteEvent.Kind.UNPITCHED),
+                grace(1, .8f, ScoreNoteEvent.Kind.PITCHED),
+                grace(2, .1f, ScoreNoteEvent.Kind.PITCHED),
+                note(2, .3f, ScoreNoteEvent.Kind.PITCHED),
+                grace(3, .4f, ScoreNoteEvent.Kind.UNPITCHED));
+        var retained = ScoreNoteTiming.retainSupportedOpticalGrace(proposed);
+        assertEquals(proposed.size(), retained.size());
+        for (int index : new int[] {0, 3, 6}) {
+            assertEquals(proposed.get(index).withArticulations(0), retained.get(index));
+            assertTrue(Double.isFinite(ScoreNoteTiming.beatInMeasure(retained.get(index), retained, 4)));
+        }
+        for (int index : new int[] {1, 2, 4, 5}) assertSame(proposed.get(index), retained.get(index));
+        assertTrue(ScoreNoteTiming.writtenPlacement(retained.get(4), retained, 4).orElseThrow().grace());
+    }
+
+    @Test
     public void pitchedTerminalCannotInferAnUnpitchedPrincipalOwner() {
         rejectEveryOwnedTiming(
                 List.of(
