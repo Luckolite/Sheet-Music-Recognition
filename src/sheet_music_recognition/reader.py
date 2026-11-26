@@ -42,6 +42,17 @@ _LARGE_PREDICTION_CACHE_BYTES = 2 * (_REUSABLE_PREDICTION_PIXELS - _REUSABLE_PAG
 _LARGE_PREDICTION_CACHE_PAGES = 8
 
 
+def _release_inference_runtime(engine):
+    try:
+        runtime = engine.runtime
+    except AttributeError:
+        return
+    del engine.runtime
+    release = getattr(runtime, "_release_page_arena", None)
+    if release is not None:
+        release()
+
+
 def tile_starts(size):
     """Tail tiles retain the app's exact 320/192 ownership order."""
     if size < 1:
@@ -483,7 +494,7 @@ class Interpreter:
             # Release the short arena before allocating its replacement.
             pending = self._pending_model = (compact_path, True)
             self._compact_model_path = None
-            del self.runtime
+            _release_inference_runtime(self)
         ch, cw = min(320, height), min(320, width)
         rows = [slice(top, top + ch) for top in tile_starts(height)]
         columns = [slice(left, left + cw) for left in tile_starts(width)]
@@ -516,7 +527,7 @@ class Interpreter:
             elif window == 320:
                 tile_layout = self._tile_layout = None
             else:
-                del self.runtime
+                _release_inference_runtime(self)
                 pending = self._pending_model = (path, True)
                 tile_layout = self._tile_layout = None
         if tile_layout is not None and pending is None:
@@ -528,7 +539,7 @@ class Interpreter:
                                                  active_mode=mode, active_column=column)
             if selection is None:
                 self._pending_model = (path, True)
-                del self.runtime
+                _release_inference_runtime(self)
                 self._initialize_model(path, True)
         elif (pending is not None and pending[1] and compact_path is None and sys.platform == "win32"
               and self.edge is _tile_edges()):
@@ -862,7 +873,7 @@ class Interpreter:
                     self._last_page_prediction = None
                     self._compact_model_path = self._tile_layout = None
                     self._pending_model = (Path(__file__).parent / "data" / MODEL_NAME, True)
-                    del self.runtime
+                    _release_inference_runtime(self)
             finally:
                 if prediction_done is not None:
                     prediction_done.set()

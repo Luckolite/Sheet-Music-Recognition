@@ -177,8 +177,7 @@ def predict(engine, gray, rows, columns, path, previous):
         for window, column, jobs in phases:
             recipe = (path, window, column)
             if previous != recipe:
-                if hasattr(engine, "runtime"):
-                    del engine.runtime
+                reader._release_inference_runtime(engine)
                 try:
                     if window == 320:
                         engine._initialize_model(path, True)
@@ -203,7 +202,6 @@ def predict(engine, gray, rows, columns, path, previous):
 
 
 def _reset(engine, path):
-    if hasattr(engine, "runtime"):
-        del engine.runtime
+    reader._release_inference_runtime(engine)
     engine._pending_model = (path, True)
     engine._tile_layout = engine._mixed_tile_recipe = None

@@ -412,10 +412,16 @@ class SparseInterpreter:
         self._output_ports = {item["index"]: (i, item) for i, item in enumerate(self._outputs)}
         self.fallback_reason = ""
 
+    def _release_page_arena(self):
+        # The registered callbacks can keep the session alive after its wrapper is gone.
+        if self._native is not None:
+            native = self._native
+            self._native = None
+            native.close()
+
     def _fallback(self, error):
         self.fallback_reason = str(error)
-        self._native.close()
-        self._native = None
+        self._release_page_arena()
         self._reference = self._stock(model_content=self._original, num_threads=2)
         self._reference.allocate_tensors()
 

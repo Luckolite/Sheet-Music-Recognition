@@ -153,13 +153,15 @@ class TileDecoderTest(unittest.TestCase):
     def check_mixed_allocation_failure(self, mixed, gray, plan, memory_error):
         engine = SimpleNamespace(edge=None, _tile_layout=None, _mixed_tile_recipe=None)
         windows = []
+        released = []
 
         def initialize(path, selection):
             self.assertFalse(hasattr(engine, "runtime"))
             windows.append(selection.window)
             if len(windows) == 1:
-                engine.runtime = object()
+                engine.runtime = SimpleNamespace(_release_page_arena=lambda: released.append(224))
                 return True
+            self.assertEqual(released, [224])
             if memory_error:
                 raise MemoryError
             return False
