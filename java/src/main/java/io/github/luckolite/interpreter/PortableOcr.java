@@ -30,6 +30,28 @@ public final class PortableOcr {
     // Full-page detector inputs can otherwise allocate tens of MiB twice.
     private static final int DIRECT_DETECTOR_MIN_PIXELS = 2_000_000;
 
+    private static final int REGIONAL_DIRECT_MIN_PIXELS = 32_768;
+    private static final int REGIONAL_DIRECT_MAX_PIXELS = 400_000;
+    // Consume these bounded regional inputs synchronously on the calling thread.
+    private static final ThreadLocal<DetectorBuffer> DETECTOR_BUFFERS =
+            ThreadLocal.withInitial(DetectorBuffer::new);
+
+    private static final class DetectorBuffer {
+        FloatBuffer data;
+        float[] row;
+        boolean inUse;
+
+        void prepare(int width, int height) {
+            int values = 3 * width * height;
+            if (data == null || data.capacity() < values)
+                data = ByteBuffer.allocateDirect(values * Float.BYTES)
+                        .order(ByteOrder.nativeOrder())
+                        .asFloatBuffer();
+            data.clear().limit(values);
+            if (row == null || row.length < 3 * width) row = new float[3 * width];
+        }
+    }
+
     public PortableOcr(Inference inference) {
         this.inference = Objects.requireNonNull(inference);
     }
@@ -110,21 +132,10 @@ public final class PortableOcr {
         double scale = Math.min(1, 2048.0 / Math.max(width, height));
         int dw = Math.max(32, (int) Math.round(width * scale / 32) * 32);
         int dh = Math.max(32, (int) Math.round(height * scale / 32) * 32);
-        float[][] prediction =
-                gray != null
-                                && (long) dw * dh >= DIRECT_DETECTOR_MIN_PIXELS
-                                && inference instanceof DirectDetectorInference direct
-                        ? direct.detectDirect(normalizeGrayDirect(gray, width, height, dw, dh), dw, dh)
-                        : inference.detect(
-                                gray == null
-                                        ? normalize(
-                                                argb, width, height, 0, 0, width, height, dw, dh,
-                                                dw, true)
-                                        : normalizeGrayView(
-                                                gray, 0, 0, width, height, dw, dh,
-                                                dw, true),
-                                dw,
-                                dh);
+        float[][] prediction = gray == null
+                ? inference.detect(normalize(argb, width, height, 0, 0, width, height, dw, dh, dw, true),
+                        dw, dh)
+                : detectGray(gray, width, height, dw, dh);
         IntPredicate isInk = gray == null
                 ? index -> isColorInk(argb[index])
                 : gray.ink(width);
@@ -294,6 +305,42 @@ public final class PortableOcr {
                 output,
                 null);
         return output;
+    }
+
+    private float[][] detectGray(
+            GrayView gray, int width, int height, int outWidth, int outHeight) throws Exception {
+        int pixels = outWidth * outHeight;
+        if (inference instanceof DirectDetectorInference direct) {
+            if (pixels >= DIRECT_DETECTOR_MIN_PIXELS)
+                return direct.detectDirect(normalizeGrayDirect(gray, width, height, outWidth, outHeight),
+                        outWidth, outHeight);
+            if (pixels >= REGIONAL_DIRECT_MIN_PIXELS
+                    && pixels <= REGIONAL_DIRECT_MAX_PIXELS)
+                return detectRegional(direct, gray, width, height, outWidth, outHeight);
+        }
+        return inference.detect(
+                normalizeGrayView(gray, 0, 0, width, height, outWidth, outHeight, outWidth, true),
+                outWidth, outHeight);
+    }
+
+    private static float[][] detectRegional(
+            DirectDetectorInference detector, GrayView gray,
+            int width, int height, int outWidth, int outHeight) throws Exception {
+        var buffer = DETECTOR_BUFFERS.get();
+        if (buffer.inUse)
+            return detector.detectDirect(normalizeGrayDirect(gray, width, height, outWidth, outHeight),
+                    outWidth, outHeight);
+        buffer.inUse = true;
+        try {
+            buffer.prepare(outWidth, outHeight);
+            normalizeGrayRows(
+                    gray, 0, 0, width, height, outWidth, outHeight, outWidth, true,
+                    buffer.row, buffer.data);
+            buffer.data.position(0);
+            return detector.detectDirect(buffer.data, outWidth, outHeight);
+        } finally {
+            buffer.inUse = false;
+        }
     }
 
     private static FloatBuffer normalizeGrayDirect(

@@ -300,6 +300,56 @@ public class PortableOcrGrayTest {
     }
 
     @Test
+    public void regionalDetectorResetsTheReusedTensorAfterFailure() throws Exception {
+        int[] widths = {480, 256}, heights = {128, 160};
+        byte[][] rasters = {gray(widths[0], heights[0], 405), gray(widths[1], heights[1], 514)};
+        var failure = new java.io.IOException("detector failure");
+        var detector = new PortableOcr.DirectDetectorInference() {
+            private java.nio.FloatBuffer first;
+            private int calls;
+
+            @Override
+            public float[][] detect(float[] chw, int width, int height) {
+                throw new AssertionError("Expected the regional direct detector");
+            }
+
+            @Override
+            public float[][] detectDirect(java.nio.FloatBuffer chw, int width, int height)
+                    throws Exception {
+                int index = calls++;
+                assertEquals(widths[index], width);
+                assertEquals(heights[index], height);
+                var expected = PortableOcr.normalizeGray(rasters[index], width, height, 0, 0,
+                        width, height, width, height, width, true);
+                float[] captured = new float[chw.remaining()];
+                chw.get(captured);
+                bits(expected, captured);
+                chw.clear().limit(1);
+                if (index == 0) {
+                    first = chw;
+                    throw failure;
+                }
+                assertSame(first, chw);
+                return new float[][] {{0f}};
+            }
+
+            @Override
+            public float[][] recognize(float[] chw, int width, int height) {
+                throw new AssertionError("Expected an empty detection map");
+            }
+
+            @Override
+            public List<String> dictionary() {
+                return List.of("");
+            }
+        };
+        var reader = new PortableOcr(detector);
+        assertSame(failure, assertThrows(java.io.IOException.class,
+                () -> reader.readGray(rasters[0], widths[0], heights[0])));
+        assertTrue(reader.readGray(rasters[1], widths[1], heights[1]).blocks().isEmpty());
+    }
+
+    @Test
     public void invalidGrayGuardsFailBeforeInference() {
         Mock mock = new Mock(new float[8][8], 0);
         for (int[] size : new int[][] {{0, 1}, {1, 0}, {2, 2}, {20_000_001, 1}})
