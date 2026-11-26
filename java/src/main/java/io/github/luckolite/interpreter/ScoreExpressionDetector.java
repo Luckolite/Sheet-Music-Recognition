@@ -88,6 +88,9 @@ public final class ScoreExpressionDetector {
                 var bar = measures.get(i);
                 if (i > 0 && bar.equals(measures.get(i - 1))) continue;
                 if (center < bar.top() || center > bar.bottom()) continue;
+                // A below-staff word without a written onset must use the printed-rest proof.
+                if (middle > staff.bottom() && !sectional
+                        && !hasWrittenEntry(score, i)) continue;
                 float left = bar.left() * width, right = bar.right() * width;
                 float offset = x - left;
                 if (word.right() * width <= left || offset < -gap * 1.6f
@@ -113,6 +116,12 @@ public final class ScoreExpressionDetector {
             }
         }
         return tied ? null : best;
+    }
+
+    private static boolean hasWrittenEntry(ScorePageInterpretation score, int measure) {
+        for (var note : score.notes()) if (note.measureIndex() == measure) return true;
+        for (var rest : score.rests()) if (rest.measureIndex() == measure) return true;
+        return false;
     }
 
     private static PlayingTechniqueDetector.Word localizedRehearsalTempo(

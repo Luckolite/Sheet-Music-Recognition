@@ -59,7 +59,7 @@ final class TempoChangeDetector {
                     unit =
                             printedBeatUnitWithDigitHeight(
                                     bounded, gray, width, height, equals, 165, digitHeight, anchor);
-                if (!Double.isFinite(unit) || anchor[0] < 0) continue;
+                if (!Double.isFinite(unit) || anchor[0] < 0 || value < 24 && unit < 2) continue;
                 // The printed beat note owns the direction start, before OCR's equals/digit edge.
                 token =
                         new MeasureNumberReconciler.NumberToken(

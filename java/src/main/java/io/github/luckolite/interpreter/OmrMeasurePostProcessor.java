@@ -1775,9 +1775,6 @@ final class OmrMeasurePostProcessor {
                 continue;
             }
             if (!semanticBar) continue;
-            if (attachedHead && gray != null
-                    && provesFiniteBarline(labels, gray, width, height, rawColumn, rows, gap, shift))
-                attachedHead = false;
             if (attachedHead) {
                 if (rawColumn < 0) continue;
                 // Only an otherwise vetoed bar needs printed repeat evidence.

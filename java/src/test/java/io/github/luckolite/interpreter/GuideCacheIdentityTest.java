@@ -51,7 +51,7 @@ public final class GuideCacheIdentityTest {
     @Test
     public void currentRecognitionRejectsAllPriorEpochsAtLayout286() {
 
-        assertEquals(192, GuideCacheIdentity.RECOGNITION_REVISION);
+        assertEquals(193, GuideCacheIdentity.RECOGNITION_REVISION);
         String source = "same source", variant = "0|unchanged cleanup";
 
         String portable =

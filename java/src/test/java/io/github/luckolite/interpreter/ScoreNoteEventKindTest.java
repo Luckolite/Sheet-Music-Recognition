@@ -131,6 +131,7 @@ public class ScoreNoteEventKindTest {
         assertCopy(source, source.withOctaveShift(2), Map.of("octaveShift", 2));
         assertCopy(source, source.withCompactOpening(), Map.of("compactOpening", true));
         assertCopy(source, source.withLeadingRest(2f), Map.of("leadingRestBeats", 2f));
+        assertCopy(source, source.withFollowingRest(2f), Map.of("followingRestBeats", 2f));
         assertCopy(
                 source,
                 source.withCrossStaffBeam(),
@@ -182,6 +183,7 @@ public class ScoreNoteEventKindTest {
                         "withWrittenAccidental",
                         "withCompactOpening",
                         "withLeadingRest",
+                        "withFollowingRest",
                         "withCrossStaffBeam",
                         "withClef",
                         "withArticulations",
@@ -204,6 +206,7 @@ public class ScoreNoteEventKindTest {
         assertCopy(source, source.withOctaveShift(2), Map.of("octaveShift", 2));
         assertCopy(source, source.withCompactOpening(), Map.of("compactOpening", true));
         assertCopy(source, source.withLeadingRest(2f), Map.of("leadingRestBeats", 2f));
+        assertCopy(source, source.withFollowingRest(2f), Map.of("followingRestBeats", 2f));
         assertCopy(
                 source,
                 source.withCrossStaffBeam(),

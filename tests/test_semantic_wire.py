@@ -8,7 +8,7 @@ from sheet_music_recognition import semantic_wire as wire
 from sheet_music_recognition import parenthesized_note_group as group
 
 
-def fixture():
+def fixture(include_tempo=False):
     evidence = [dict(sourceId='original-synthetic', pageIndex=0, visualX=.25,
                      staffIndex=0, staffCount=1, printedText='café 🎵')]
     directions = [dict(measureBoundary=0, kind=6, details=dict(
@@ -21,6 +21,8 @@ def fixture():
         end=dict(measureIndex=3, quarterBeatOffset=0), scope='UNRESOLVED',
         staffIndex=0, staffCount=1, targetEventId=None, strength='POCO',
         qualifierText='metric-pulse-v1:1.5:1.0' if kind == 'METRIC_MODULATION' else 'original wire fixture', evidence=evidence) for kind in wire.KINDS]
+    if not include_tempo:
+        expressions = [row for row in expressions if row['kind'] != 'TEMPO_MARKING']
     for row in expressions:
         if row['kind'] in ('NATURAL_HARMONIC', 'FALL_OFF'):
             prefix = 'natural-harmonic-note-v1' if row['kind'] == 'NATURAL_HARMONIC' else 'fall-off-note-v1'
@@ -69,6 +71,16 @@ class SemanticWireTest(unittest.TestCase):
         self.assertEqual((directions, expressions), wire.decode(data, 1, 296))
         self.assertEqual(before, (directions, expressions))
         self.assertEqual(data, wire.encode(*wire.decode(data, 1, 296), 1, 296))
+
+    def test_verbal_tempo_requires_guide312(self):
+        directions, expressions = fixture(include_tempo=True)
+        version = wire.TEMPO_MARKING_VERSION
+        data = wire.encode(directions, expressions, 1, version)
+        self.assertEqual((directions, expressions), wire.decode(data, 1, version))
+        with self.assertRaisesRegex(ValueError, 'Verbal tempo marking'):
+            wire.encode(directions, expressions, 1, version - 1)
+        with self.assertRaisesRegex(ValueError, 'Verbal tempo marking'):
+            wire.decode(data, 1, version - 1)
 
     def test_every_truncated_prefix_and_trailing_byte_is_rejected(self):
         data = wire.encode(*fixture(), 1, 296)
