@@ -117,6 +117,20 @@ final class OmrMeasurePostProcessor {
                 if (i > 0) headTop = Math.max(headTop, (systems.get(i - 1).bottom + system.top) / 2f);
                 if (i + 1 < systems.size())
                     headBottom = Math.min(headBottom, (system.bottom + systems.get(i + 1).top) / 2f);
+                if (i > 0
+                        && i == systems.size() - 1
+                        && system.members.size() == 1
+                        && system.boundaries.size() == 2
+                        && unusedManuscriptStaff(
+                                headerLabels,
+                                gray,
+                                width,
+                                height,
+                                system.firstStaff,
+                                headTop,
+                                headBottom)
+                        && hasStaffNotes(headerLabels, width, height, systems.get(i - 1)))
+                    continue;
                 addMeasures(
                         headerLabels,
                         gray,
@@ -133,6 +147,52 @@ final class OmrMeasurePostProcessor {
             // Sorting tilted measure boxes by their top edge reverses an uphill row.
             return List.copyOf(result);
         }
+    }
+
+    /** A set of spare manuscript rules has no playable measure. Require the raster to
+     * corroborate the lack of symbols so a missed rest or unlabelled bar can keep the system. */
+    private static boolean unusedManuscriptStaff(
+            byte[] labels, byte[] gray, int width, int height, StaffRun staff,
+            float headTop, float headBottom) {
+        if (gray == null) return false;
+        if (countLabel(labels, width, height, NOTEHEAD, staff.left, staff.right,
+                Math.round(headTop), Math.round(headBottom)) != 0) return false;
+        int minStroke = Math.max(3, Math.round(staff.gap * .32f));
+        for (int x = staff.left; x <= staff.right; x++) {
+            float[] phase = staff.track == null ? null : staff.track.at(x);
+            float bottom = phase == null
+                    ? staff.bottom + staff.slope * (x - width * .5f) : phase[0];
+            float localGap = phase == null ? staff.gap : phase[1];
+            int top = Math.max(0, Math.round(bottom - 5 * localGap));
+            int end = Math.min(height - 1, Math.round(bottom + localGap));
+            int run = 0;
+            for (int y = top; y <= end; y++) {
+                int pixel = y * width + x;
+                if (labels[pixel] == CLEF_OR_KEY || labels[pixel] == STEM_OR_REST) return false;
+                float line = (bottom - y) / localGap;
+                boolean nearRule = line >= -.25f && line <= 4.25f
+                        && Math.abs(line - Math.round(line)) <= .22f;
+                if (!nearRule && (gray[pixel] & 255) < RAW_BARLINE_DARK) {
+                    if (++run >= minStroke) return false;
+                } else {
+                    run = 0;
+                }
+            }
+        }
+        return true;
+    }
+
+    private static boolean hasStaffNotes(byte[] labels, int width, int height, SystemRun system) {
+        return countLabel(
+                        labels,
+                        width,
+                        height,
+                        NOTEHEAD,
+                        system.firstStaff.left,
+                        system.lastStaff.right,
+                        Math.round(system.top - system.gap),
+                        Math.round(system.bottom + system.gap))
+                >= Math.max(2, Math.round(system.gap * system.gap * .1f));
     }
 
     /** Carry creation rows only along a real same-frame object replacement. */

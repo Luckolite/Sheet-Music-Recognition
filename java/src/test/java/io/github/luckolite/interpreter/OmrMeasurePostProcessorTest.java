@@ -28,6 +28,37 @@ public final class OmrMeasurePostProcessorTest {
     }
 
     @Test
+    public void spareManuscriptRulesDoNotAddAMeasureButUnclassifiedInkDoes() {
+        int width = 600, height = 500;
+        byte[] labels = page(width, height), gray = page(width, height);
+        java.util.Arrays.fill(gray, (byte) 255);
+        int[] bars = {60, 180, 300, 420, 540};
+        staffWithBars(labels, width, 100, bars);
+        rawStaffAndBars(gray, width, 100, bars);
+        staff(labels, width, 270, false);
+        rawStaffAndBars(gray, width, 270, new int[0]);
+        gray[282 * width + 200] = 0;
+        gray[289 * width + 360] = 0;
+
+        // Preserve a printed empty row if the preceding system has no note evidence.
+        assertEquals(5, OmrMeasurePostProcessor.process(labels, gray, width, height).size());
+        for (int x = 133; x <= 141; x++) {
+            set(labels, width, x, 116, OmrMeasurePostProcessor.NOTEHEAD);
+        }
+        assertEquals(4, OmrMeasurePostProcessor.process(labels, gray, width, height).size());
+
+        // A single very high ledger note can be the only note in an open staff.
+        for (int x = 300; x < 310; x++)
+            set(labels, width, x, 247, OmrMeasurePostProcessor.NOTEHEAD);
+        assertEquals(5, OmrMeasurePostProcessor.process(labels, gray, width, height).size());
+        for (int x = 300; x < 310; x++) set(labels, width, x, 247, (byte) 0);
+
+        // A rest or stem missing from the segmentation still witnesses playable notation.
+        for (int y = 272; y <= 298; y++) gray[y * width + 250] = 0;
+        assertEquals(5, OmrMeasurePostProcessor.process(labels, gray, width, height).size());
+    }
+
+    @Test
     public void headerSymbolsDoNotCreateAnEmptyOpeningMeasure() {
         int width = 600, height = 500;
         byte[] labels = page(width, height);

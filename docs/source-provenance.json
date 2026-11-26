@@ -6086,11 +6086,11 @@
         "standalone_lf_sha256": "eb03c7b77d6f48f31a0d6281a8ec89dcec114bace3aedf3a12f7651d573ed40c",
         "scope": "Opening two-over-four repair. The production patches match after path normalization. Broader source differences remain subject to review."
       },
-      "source_sha256": "1e692fa7af965c129a29be09614df6879f2167957865c9e132250cb809442ad3",
-      "source_normalized_sha256": "1e692fa7af965c129a29be09614df6879f2167957865c9e132250cb809442ad3",
+      "source_sha256": "49d1e5eb566790345c03189a8d1d0d12e6d01210fe46ca2fbf017cadc9daea21",
+      "source_normalized_sha256": "49d1e5eb566790345c03189a8d1d0d12e6d01210fe46ca2fbf017cadc9daea21",
       "review_note": "Reviewed global text/source-owner repair and original regressions; see docs/audited-ownership-repairs.md. Package-only Java port, except public timeline visibility and the pure written-tie helper API name/visibility. Existing models and record layouts are unchanged.",
-      "standalone_sha256": "13bcac8bb15f2eb4f43b506602ae626cda45403e56463e39a192988626807217",
-      "reviewed_app_commit": "5d5cd218e875d386fd8b1bc8dad5586ede8d1585",
+      "standalone_sha256": "9536897975e39dd9a36fa1aca2de071dd1dae1e9ea09c0704da191446c945fe2",
+      "reviewed_app_commit": "8b4a35b10496179feab9fc84300a85878a808076",
       "scoped_reviewed_app_commit": "61029a658ee219db344b767df304c5f9555791dc",
       "reviewed_app_base_commit": "42a4f42769d275ea7fea042cc9dafab062c5fc17",
       "license": "Apache-2.0",
@@ -6109,7 +6109,7 @@
         "rollout": "Cumulative matched rollout deferred during active goal; released recognition116 predates repair."
       },
       "reviewed_source_state": "committed-app-source",
-      "standalone_normalized_sha256": "a33604ea5cd762ea9ca5970a34364d9d46ed7a0eb06803371b53361e0ad4211b",
+      "standalone_normalized_sha256": "9536897975e39dd9a36fa1aca2de071dd1dae1e9ea09c0704da191446c945fe2",
       "current_source_review": "Reviewed new 2/4 counter geometry and both production callers. Standalone retains equivalent bounded early termination for the previous shaded bar connector and unchanged ordering in bar-axis reconciliation.",
       "owned_head_bar_review": "A full common bar may contact a complete independently stemmed head. Every excessive branch member must be exact validated head ink or a full common axis; unchanged width, paper, body, shaft and negative guards. Original procedural tests only.",
       "app_optimization_port_review": "Reuses bounded page geometry and labels in existing recognition stages.",
@@ -6130,7 +6130,8 @@
         "reviewed_app_commit": "8717fa7231a7d86744c615dddbe6fc9a72041bed",
         "scope": "Identical finite staff-rule geometry for notehead vetoes, with independent horizontal rails at both ends of widely spaced shared barlines.",
         "shared_block_lf_sha256": "aedb4db11ca6f955fc3b09f13bd36c8a34ffc3863c13c0ef56f7dab016c2d847"
-      }
+      },
+      "spare_manuscript_staff_review_note": "Ports the staff geometry predicate and synthetic controls. A trailing unbarred staff following a system with note evidence needs musical ink to add time. Ledger notes and raw rest or stem ink preserve that staff. Real empty printed systems retain their established behavior. No new dependency, cache format, or model."
     },
     "OmrScoreInterpreter.java": {
       "decode_preview_review": {
