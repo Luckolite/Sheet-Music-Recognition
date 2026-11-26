@@ -3197,7 +3197,7 @@ final class FingeringAnnotationFilter {
                 * (end / (float) endCount - center / (float) centerCount) >= gap * .15f ? digit : null;
     }
 
-    private static boolean sameDetachedDigit(byte[] plane, int width,
+    static boolean sameDetachedDigit(byte[] plane, int width,
             RawNumeralComponents.Component a, RawNumeralComponents.Component b) {
         int same = 0, covered = 0;
         for (int y = 0; y < 12; y++)

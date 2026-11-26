@@ -323,6 +323,16 @@ final class EighthTripletsBeforeSixteenths {
                             source, normalized, width, height, bars, notes, i, ordered,
                             ruledAlias || ledgerHandoff || detachedQuartet, ledgerHandoff);
                 }
+                if (ordinaryOpening && unnumbered == 0) {
+                    var bar = bars.get(i);
+                    var rows = UnnumberedTripletInk.sourceRows(bar, bars, height);
+                    var music = ordered.stream().map(notes::get).toList();
+                    unnumbered = ClosedArpeggioTriplets.unnumberedOpenings(
+                            source, width, height, bar, rows, music);
+                    if (normalized != source && unnumbered != 0)
+                        unnumbered &= ClosedArpeggioTriplets.unnumberedOpenings(
+                                normalized, width, height, bar, rows, music);
+                }
                 if (wideOpening || detachedTerminal || ledgerHandoff || detachedQuartet || unnumbered != 0) {
                     var retained = List.copyOf(ordered);
                     wideMixedBars.add(new BeamRun(retained, retained, unnumbered));

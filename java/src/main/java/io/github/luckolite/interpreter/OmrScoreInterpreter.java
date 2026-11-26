@@ -162,6 +162,7 @@ final class OmrScoreInterpreter {
                         restHeadOrigins,
                         memberCollector);
         var physicalSplitCache = new java.util.IdentityHashMap<Component, List<Component>>();
+        var wideLedgerThirdHeads = java.util.Collections.newSetFromMap(new IdentityHashMap<Component, Boolean>());
         boolean sharedLedgerStorage = false;
         java.util.IdentityHashMap<Component, Component> exactStackOwners = null;
         java.util.IdentityHashMap<Component, Staff> sharedLedgerOwners = null;
@@ -192,6 +193,14 @@ final class OmrScoreInterpreter {
                         labels, gray, annotationGray, width, height, original, staffs,
                         rawHeadComponents, measures, memberCollector);
                 if (!bridged.isEmpty()) exactSplit = bridged;
+            }
+            if (exactSplit.size() <= 2) {
+                var wide = splitWidelyBeamedLedgerThird(labels, gray, annotationGray, width, height,
+                        original, staffs, rawHeadComponents, measures, exactSplit.size() == 1 ? memberCollector : null);
+                if (!wide.isEmpty()) {
+                    if (exactSplit.size() == 1) exactSplit = wide;
+                    wideLedgerThirdHeads.addAll(exactSplit);
+                }
             }
             physicalSplitCache.put(original, exactSplit);
             boolean exactSplitOwnersCaptured = false;
@@ -2002,6 +2011,7 @@ final class OmrScoreInterpreter {
                     && !ledgerHalfUnisonCache.containsKey(head)
                     && !(sharedLedgerBodies != null && sharedLedgerBodies.containsKey(head))
                     && !(sharedUpperLedgerRails != null && sharedUpperLedgerRails.containsKey(head))
+                    && !wideLedgerThirdHeads.contains(head)
                     && !hasHeadLedgerSupport(
                             labels,
                             gray,
@@ -2129,7 +2139,7 @@ final class OmrScoreInterpreter {
                     && shortBeamedLedgerStep == 0
                     && !upperSpaceAtBeamBoundary) {
                 int compressed = compressedUpperLedgerPitch(gray, annotationGray, width, height, head,
-                        localPitch[0], localGap, step);
+                        localPitch[0], localGap, step, true);
                 step = compressed != step ? compressed : expandedLedgerDyadPitch(
                         gray, annotationGray, width, height, head, heads, localPitch[0], localGap, step);
             }
@@ -9000,6 +9010,19 @@ final class OmrScoreInterpreter {
                         if (!added) break;
                     }
                 }
+                if (rawHeader.size() == 1 && glyphs.size() == 1) {
+                    var printed = rawHeader.get(0);
+                    var classified = glyphs.get(0);
+                    var body = printed.printedBody;
+                    // A complete F-sharp can leave only a flat-shaped fragment in the mask.
+                    if (classified.accidental == ScoreNoteEvent.ACCIDENTAL_FLAT
+                            && body != null && body.minX >= left && body.maxX <= right
+                            && classified.x >= body.minX && classified.x <= body.maxX
+                            && Math.abs(printed.x - classified.x) < staff.gap * .45f
+                            && firstPrintedHeaderSharp(printed, clef, staff)) {
+                        glyphs.set(0, printed);
+                    }
+                }
                 boolean completeSharpBodies = corroboratePrintedSharpHeader(
                         glyphs, rawHeader, clef, staff, firstInRow, left, right);
                 glyphs.sort(Comparator.comparingDouble(SignatureGlyph::x));
@@ -12967,6 +12990,87 @@ final class OmrScoreInterpreter {
         var parts = List.of(componentSlice(labels, width, parent, parent.minY, cut, lineage),
                 componentSlice(labels, width, parent, cut + 1, parent.maxY, lineage));
         return lineage.commit(parts) ? parts : List.of();
+    }
+
+    /** A ledger-bound third can have a full-height mask even when both noteheads are printed. */
+    private static List<Component> splitWidelyBeamedLedgerThird(
+            byte[] labels, byte[] gray, byte[] raw, int width, int height, Component parent,
+            List<Staff> staffs, List<Component> heads, List<MeasureRegion> measures,
+            ExactComponentMembers.Collector collector) {
+        if (gray == null || raw == null || gray.length != raw.length) return List.of();
+        var staff = nearestHeadStaff(staffs, parent.centerY);
+        if (staff == null || staff.count != 1 || staff.gap < 12 || staff.gap > 24) return List.of();
+        float gap = staff.gap;
+        if (!compactLedgerThird(parent, gap, 2.42f)
+                || parent.centerY > staff.top - 2.9f * gap || parent.centerY < staff.top - 5.1f * gap)
+            return List.of();
+        MeasureRegion bar = null;
+        for (var region : measures) {
+            if (parent.centerX <= region.left() * width || parent.centerX >= region.right() * width
+                    || parent.centerY < region.top() * height - 3f * gap
+                    || parent.centerY >= region.bottom() * height) continue;
+            if (bar != null) return List.of();
+            bar = region;
+        }
+        if (bar == null) return List.of();
+        int cut = (parent.minY + parent.maxY) / 2;
+        var upper = componentSlice(labels, width, parent, parent.minY, cut);
+        var lower = componentSlice(labels, width, parent, cut + 1, parent.maxY);
+        if (upper == null || lower == null) return List.of();
+        for (var ink : List.of(gray, raw)) {
+            var budget = new PrintedBeamShafts.Budget(100_000);
+            var target = wideLedgerThirdShaft(ink, width, height, upper, lower, gap, budget);
+            if (target == null) return List.of();
+            var left = linkedWideLedgerThird(labels, ink, width, height, heads, bar, parent, target, -1, gap, budget);
+            var right = linkedWideLedgerThird(labels, ink, width, height, heads, bar, parent, target, 1, gap, budget);
+            if (left == null && right == null) return List.of();
+            if (left == null || right == null) {
+                var single = left == null ? right : left;
+                int direction = left == null ? 1 : -1;
+                if (linkedWideLedgerThird(labels, ink, width, height, heads, bar, single.head(), single.shaft(),
+                        direction, gap, budget) == null) return List.of();
+            }
+        }
+        if (collector == null) return List.of(upper, lower);
+        var lineage = collector.beginSplit(parent, labels, width);
+        if (lineage == null) return List.of();
+        var parts = List.of(componentSlice(labels, width, parent, parent.minY, cut, lineage),
+                componentSlice(labels, width, parent, cut + 1, parent.maxY, lineage));
+        return lineage.commit(parts) ? parts : List.of();
+    }
+
+    private record LedgerThirdBeam(Component head, PrintedBeamShafts.Shaft shaft) {}
+
+    private static LedgerThirdBeam linkedWideLedgerThird(byte[] labels, byte[] ink, int width, int height,
+            List<Component> heads, MeasureRegion bar, Component parent, PrintedBeamShafts.Shaft axis,
+            int direction, float gap, PrintedBeamShafts.Budget budget) {
+        Component closest = null;
+        float distance = 5.65f * gap;
+        for (var peer : heads) {
+            float dx = direction * (peer.centerX - parent.centerX);
+            if (dx < 1.8f * gap || dx >= distance || Math.abs(peer.centerY - parent.centerY) > 1.33f * gap
+                    || peer.centerX <= bar.left() * width || peer.centerX >= bar.right() * width
+                    || !compactLedgerThird(peer, gap, 2.42f)) continue;
+            closest = peer;
+            distance = dx;
+        }
+        if (closest == null) return null;
+        int cut = (closest.minY + closest.maxY) / 2;
+        var above = componentSlice(labels, width, closest, closest.minY, cut);
+        var below = componentSlice(labels, width, closest, cut + 1, closest.maxY);
+        var shaft = wideLedgerThirdShaft(ink, width, height, above, below, gap, budget);
+        return shaft != null && WrappedEighthTriplets.matchesBeamRails(ink, width, height,
+                direction < 0 ? shaft : axis, direction < 0 ? axis : shaft, gap, 2)
+                ? new LedgerThirdBeam(closest, shaft) : null;
+    }
+
+    private static PrintedBeamShafts.Shaft wideLedgerThirdShaft(byte[] ink, int width, int height,
+            Component upper, Component lower, float gap, PrintedBeamShafts.Budget budget) {
+        var axis = sharedFilledThirdShaft(ink, width, height, upper, lower, gap, false);
+        if (axis == null) return null;
+        var shaft = downShaft(ink, width, height, lower, gap, budget);
+        return shaft != null && !budget.refused() && Math.abs(axis[0] - shaft.left()) <= 2
+                && Math.abs(axis[1] - shaft.endY()) <= 2 ? shaft : null;
     }
 
     private record LinkedThird(Component parent, int[] axis) {}
@@ -27849,7 +27953,7 @@ final class OmrScoreInterpreter {
                 || head.minX - union.maxX > gap * 1.75f) return false;
         for (Component prior : heads) {
             float advance = head.centerX - prior.centerX;
-            float heightChange = head.centerY - prior.centerY;
+            float heightChange = Math.abs(head.centerY - prior.centerY);
             if (advance < gap * 1.35f || advance > gap * 1.95f
                     || heightChange < .40f * gap || heightChange > .64f * gap
                     || union.maxX < prior.minX || union.maxX > prior.centerX) continue;
@@ -27863,6 +27967,11 @@ final class OmrScoreInterpreter {
                 if (naturalBetweenContinuedRules(gray, raw, width, height, core, prior, gap)
                         && rawNaturalAtSeed(gray, width, height, core, prior, gap)
                         && rawNaturalAtSeed(raw, width, height, core, prior, gap)) return true;
+                // An ascending neighbor can absorb the upper staff ink and widen the mask.
+                // The entire natural must fit in the earlier owner's original sign box.
+                if (head.centerY < prior.centerY
+                        && rawNaturalAtSeed(gray, width, height, core, prior, gap, 0)
+                        && rawNaturalAtSeed(raw, width, height, core, prior, gap, 0)) return true;
             }
         }
         return false;
@@ -29942,6 +30051,11 @@ final class OmrScoreInterpreter {
     /** Count printed ledgers from the staff when their spacing compresses above the system. */
     private static int compressedUpperLedgerPitch(byte[] gray, byte[] raw, int width, int height,
             Component head, float staffBottom, float gap, int step) {
+        return compressedUpperLedgerPitch(gray, raw, width, height, head, staffBottom, gap, step, false);
+    }
+
+    private static int compressedUpperLedgerPitch(byte[] gray, byte[] raw, int width, int height,
+            Component head, float staffBottom, float gap, int step, boolean repairExpandedSpace) {
         if (raw == null || gray == null || raw.length != gray.length || gap < 12 || gap > 24
                 || step < 12 || step > 23) return step;
         boolean filled = FilledSparseBeamHead.completeInterior(gray, width, height, head.centerX, head.centerY, gap)
@@ -29950,6 +30064,10 @@ final class OmrScoreInterpreter {
         float top=staffBottom-4*gap;
         var normalized=upperLedgerLadder(gray,width,height,head,top,gap);
         var original=upperLedgerLadder(raw,width,height,head,top,gap);
+        if (repairExpandedSpace && filled && step >= 14 && step % 2 == 0
+                && (provesExpandedUpperLedgerSpace(normalized.rows(), original.rows(), head, gap, step)
+                    || stemCrossedUpperSpace(gray, raw, width, height, head, staffBottom, gap, step)))
+            return step - 1;
         if(normalized.step()!=step+1 || original.step()!=normalized.step()
                 || original.rows().size()!=normalized.rows().size()) return step;
         for(int i=0;i<original.rows().size();i++) {
@@ -29959,11 +30077,122 @@ final class OmrScoreInterpreter {
             if (normalized.rows().size() < 3
                     || !hasOpenCenter(null, gray, width, height, head, gap)
                     || !hasOpenCenter(null, raw, width, height, head, gap)) return step;
+            if (disconnectedHollowLedgerWing(gray, width, height, head, gap, normalized.rows())
+                    && disconnectedHollowLedgerWing(raw, width, height, head, gap, original.rows())) return step;
             var shaft = attachedRawStem(gray, width, height, head, gap, 2, 170);
             var printedShaft = attachedRawStem(raw, width, height, head, gap, 2, 170);
             if (shaft == null || shaft[2] != 1 || !sameDownwardLedgerShaft(shaft, printedShaft)) return step;
         }
         return normalized.step();
+    }
+
+    /** A sign next to a hollow oval can serve as a bilateral stripe without touching the oval. */
+    private static boolean disconnectedHollowLedgerWing(
+            byte[] ink, int width, int height, Component head, float gap, List<Float> lines) {
+        int count = lines.size();
+        float last = lines.get(count - 1), inner = lines.get(count - 2), deeper = lines.get(count - 3);
+        float offset = inner - head.centerY;
+        if (offset < .46f * gap || offset > .67f * gap
+                || Math.abs(deeper - inner - gap) > .12f * gap) return false;
+        int center = Math.round(head.centerX), half = Math.round(.44f * gap);
+        int radius = Math.round(.11f * gap);
+        int gapWidth = Math.round(.18f * gap), reach = Math.round(.55f * gap);
+        if (head.minX - reach < 0 || center + half >= width
+                || last - radius < 0 || deeper + radius >= height) return false;
+        for (float ruled : new float[] {inner, deeper}) {
+            boolean continuous = false;
+            for (int y = Math.round(ruled) - radius; y <= Math.round(ruled) + radius && !continuous; y++) {
+                int dark = 0;
+                for (int x = center - half; x <= center + half; x++)
+                    if ((ink[y * width + x] & 255) < 155) dark++;
+                continuous = dark >= 2 * half;
+            }
+            if (!continuous) return false;
+        }
+        for (int y = Math.round(last) - radius; y <= Math.round(last) + radius; y++) {
+            int left = 0;
+            for (int x = head.minX - reach; x < head.minX - gapWidth; x++)
+                if ((ink[y * width + x] & 255) < 155) left++;
+            if (left < gapWidth) return false;
+            for (int x = head.minX - gapWidth; x < head.minX; x++)
+                if ((ink[y * width + x] & 255) <= 190) return false;
+        }
+        return true;
+    }
+
+    private static boolean stemCrossedUpperSpace(byte[] gray, byte[] raw, int width, int height,
+            Component head, float staffBottom, float gap, int step) {
+        if (step < 16 || step % 2 != 0) return false;
+        float phase = step - (staffBottom - head.centerY) * 2 / gap;
+        if (phase < .24f || phase > .53f) return false;
+        var shaft = attachedRawStem(gray, width, height, head, gap, 2, 170);
+        var original = attachedRawStem(raw, width, height, head, gap, 2, 170);
+        if (shaft == null || shaft[2] != 1 || !sameDownwardLedgerShaft(shaft, original)
+                || Math.abs(shaft[0] - head.minX) > .25f * gap
+                || Math.abs(shaft[1] - (staffBottom - 2 * gap)) > .55f * gap) return false;
+        float a = stemCrossedUpperSpaceIn(gray, width, height, head, staffBottom, gap, step, shaft[0]);
+        float b = stemCrossedUpperSpaceIn(raw, width, height, head, staffBottom, gap, step, original[0]);
+        return Float.isFinite(a) && Float.isFinite(b) && Math.abs(a - b) <= .12f * gap;
+    }
+
+    private static float stemCrossedUpperSpaceIn(byte[] ink, int width, int height, Component head,
+            float staffBottom, float gap, int step, int shaft) {
+        float near = printedLedgerLine(ink, width, height, head, head.centerY + .57f * gap, gap, false);
+        if (!Float.isFinite(near)) near = shortRuleBelowSpace(ink, width, height, head, gap);
+        float top = printedLedgerLine(ink, width, height, head, staffBottom - 4 * gap, gap, false);
+        if (!Float.isFinite(near) || !Float.isFinite(top)
+                || near - head.centerY < .40f * gap || near - head.centerY > .69f * gap
+                || !shortLedgerRule(ink, width, Math.round(near), head, gap)
+                || shortLedgerRule(ink, width, Math.round(top), head, gap)) return Float.NaN;
+        int count = (step - 10) / 2;
+        float stride = (top - near) / count;
+        if (stride < .98f * gap || stride > 1.15f * gap
+                || Float.isFinite(printedLedgerLine(ink, width, height, head, head.centerY, gap, true))
+                || Float.isFinite(printedLedgerLine(ink, width, height, head, near - stride, gap, true))
+                || finiteStemsideLedger(ink, width, height, head.centerX, shaft, near - stride, gap))
+            return Float.NaN;
+        for (int offset : new int[] {1, 2, count - 1}) {
+            float expected = near + offset * stride;
+            if (finiteStemsideLedger(ink, width, height, head.centerX, shaft, expected, gap)) continue;
+            float row = printedLedgerLine(ink, width, height, head, expected, gap, false);
+            if (!Float.isFinite(row) || Math.abs(row - expected) > .16f * gap
+                    || !shortLedgerRule(ink, width, Math.round(row), head, gap)) return Float.NaN;
+        }
+        return near;
+    }
+
+    private static float shortRuleBelowSpace(byte[] ink, int width, int height, Component head, float gap) {
+        int x = Math.round(head.centerX), span = Math.round(.79f * gap);
+        int first = Math.round(head.centerY + .40f * gap), last = Math.round(head.centerY + .74f * gap);
+        if (x - span < 0 || x + span >= width || first < 1 || last >= height - 1) return Float.NaN;
+        int start = -1, stop = -1;
+        for (int y = first; y <= last; y++) {
+            int dark = 0;
+            for (int col = x - span; col <= x + span; col++) if ((ink[y * width + col] & 255) < 155) dark++;
+            if (dark < .90f * (2 * span + 1)) continue;
+            if (stop >= 0 && y != stop + 1) return Float.NaN;
+            if (start < 0) start = y;
+            stop = y;
+        }
+        return start >= 0 && stop - start + 1 <= .34f * gap ? (start + stop) * .5f : Float.NaN;
+    }
+
+    /** Count inward from the staff when the crest is above the last complete ruled ledger. */
+    private static boolean provesExpandedUpperLedgerSpace(
+            List<Float> normalized, List<Float> original, Component head, float gap, int nominal) {
+        int innerLines = (nominal - 10) / 2;
+        if (normalized.size() != innerLines || original.size() != innerLines) return false;
+        for (int i = 0; i < innerLines; i++)
+            if (Math.abs(normalized.get(i) - original.get(i)) > .12f * gap) return false;
+        for (var lines : List.of(normalized, original)) {
+            float near = lines.get(innerLines - 1);
+            float spacing = lines.get(innerLines - 2) - near;
+            float offset = near - head.centerY;
+            if (offset < .46f * gap || offset > .68f * gap
+                    || spacing < .89f * gap || spacing > 1.13f * gap
+                    || near < head.maxY - .07f * gap) return false;
+        }
+        return true;
     }
 
     private static UpperLedgerLadder upperLedgerLadder(byte[] plane,int width,int height,

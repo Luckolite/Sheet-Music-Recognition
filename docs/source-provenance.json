@@ -1,4 +1,8 @@
 {
+  "combined_library_and_notation_review": {
+    "public_recognition_revision": 193,
+    "scope": "Reviewed library notation and playback fixes and complementary optical notation and export fixes use the existing standalone ingress and wire formats. Regressions are original procedural cases. Model artifacts are unchanged."
+  },
   "full_library_recognition_review": {
     "public_recognition_revision": 191,
     "verified_app_source": "2e62510143e22e854aa8e6e0de2453f008798838",
@@ -1749,24 +1753,138 @@
     "WrappedEighthTriplets.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/WrappedEighthTriplets.java",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/WrappedEighthTriplets.java",
-      "source_sha256": "1070da91fad31e3ed723b345c5b0170e8146e84171940ba3b442c4295c3ac56d",
-      "source_normalized_sha256": "1070da91fad31e3ed723b345c5b0170e8146e84171940ba3b442c4295c3ac56d",
-      "standalone_normalized_sha256": "b62300a311306d8a5e4669d045ea36aa5e491b6cfa8e4aa99d33e6b0881f185f",
+      "source_sha256": "29b462c34cb98a9317fe5817a4bea2b52d337e6b3dad7ef51c728923970fa699",
+      "source_normalized_sha256": "29b462c34cb98a9317fe5817a4bea2b52d337e6b3dad7ef51c728923970fa699",
+      "standalone_normalized_sha256": "c32ac1f1407fdb9566eb40e3524846e3a27b3f722657b11cfb63b8b538ebf166",
       "license": "Apache-2.0",
       "reviewed_app_commit": "92ae8ad156a125259b27dfd55be30e907b611b7f",
       "reviewed_app_state": "Matching five-rule staff witness and masking only observed carrier pixels at octave-quartet boundaries.",
       "triplet_fingering_review": "Shared printed-note evidence is reconciled through each producer. Standalone retains its existing direct triplet-clock repair, while Android and native guides use the retained beam ownership with their effective meter.",
-      "standalone_sha256": "394e44833ce8e212734c52b0100711957a8af99fe6f87a393cbdf41e00443986"
+      "standalone_sha256": "c32ac1f1407fdb9566eb40e3524846e3a27b3f722657b11cfb63b8b538ebf166",
+      "ledger_overlaid_triplets_review": {
+        "app_commit": "cec0f48558d2975c84c3d9c1bb68aa020c806097",
+        "app_inputs": {
+          "app/src/main/java/com/musicsheets/app/pdf/WrappedEighthTriplets.java": "b3cb7dcfecad5ff0e5f8cebeb348759f6b81915b8c36f56bdc18dd55e8e74416",
+          "app/src/main/java/com/musicsheets/app/pdf/PrintedPageExpressions.java": "62b00c67dcdfde0fa8a61f534a6c46f72279cb0ed3f6ef6ec162c4e95ba985f3"
+        },
+        "standalone_inputs": {
+          "java/src/main/java/io/github/luckolite/interpreter/WrappedEighthTriplets.java": "d5be24620e489b4e9243002607016eeb2eced81a65855d00430fb88e46b5ee61",
+          "java/src/main/java/io/github/luckolite/interpreter/SheetInterpreter.java": "e3ff9483c91549eaff43425280e710846d941b3a4c9fb07a7e01611dd855c1c2"
+        },
+        "scope": "At the final retained note stage, both paths independently prove two-plane source ownership of the complete four single-rail groups in a closed 4/4 bar, then preserve the printed rhythmic clock. The native adapter distinguishes head-connected ledger projections from augmentation dots. The portable adapter uses its existing staff-overlap rail verifier. The native closing-triplet carrier separation restores only the app/worker terminal case already exact in the standalone baseline."
+      },
+      "recovered_downstem_engraving_review": {
+        "app_commit": "96effc6baad9befcc80861503ed5758867a11efb",
+        "scope": "Both runtimes independently check the clean above and below engraving windows of optically recovered downstem triplets. Bracket or numeral evidence in either raster vetoes hiding. An existing engraving decision still counts toward the high-ledger four-group context while retaining its earlier mark.",
+        "app_inputs": {
+          "app/src/main/java/com/musicsheets/app/pdf/UnnumberedTripletInk.java": "f4db3604d24042a119513851ff42c87db1cf961d8466b23ced1ef1f2518132f4",
+          "app/src/main/java/com/musicsheets/app/pdf/PrintedFingeringDigits.java": "2d25bff86c161dee67bc340e42a85eb78785471c346c8ee646b88be7412aacb8",
+          "app/src/main/java/com/musicsheets/app/pdf/WrappedEighthTriplets.java": "e25fa79670f5e6933f70429199a5fc0ad413f08fdc6c099d47d945d228fb4d41"
+        },
+        "standalone_inputs": {
+          "java/src/main/java/io/github/luckolite/interpreter/UnnumberedTripletInk.java": "da6d9e5373b7c26d2248f46c2c549983124cf9274681ab0e07ff73e9c9fd9389",
+          "java/src/main/java/io/github/luckolite/interpreter/PrintedFingeringDigits.java": "45842c07ca02ad6cbe261877e2ed08d4c5520baaba5cc866c77b43cb5e061a60",
+          "java/src/main/java/io/github/luckolite/interpreter/WrappedEighthTriplets.java": "b4f46e08b67c8488a29d30114a8f4e95a8a1d4ec4f52b1043eeadb8e183bd0c1"
+        }
+      },
+      "cross_system_bow_engraving_review": {
+        "app_commit": "d44bf0816597b928b3f6f2157bcc095de8ba0229",
+        "scope": "Near the lower system boundary, both recovered-triplet paths reject a false bracket only when a continuous slim fitted bow explains both apparent arms. An independently drawn bracket or a visible numeral in either input plane still preserves the label.",
+        "app_inputs": {
+          "app/src/main/java/com/musicsheets/app/pdf/UnnumberedTripletInk.java": "d034b06a40c1cda53baf589625ad0671db4dd0dcaebc3ea5181b1feb35a4fdfa"
+        },
+        "standalone_inputs": {
+          "java/src/main/java/io/github/luckolite/interpreter/UnnumberedTripletInk.java": "c7cf5498a4247656f96068f632ffc0e73de6930b0024039577e9d1acfa187da8",
+          "java/src/test/java/io/github/luckolite/interpreter/UnnumberedTripletInkTest.java": "89bdbd5b44e8e8218070846889d8ba108bd43f2539b77f05a95fb29b6c7c7deb"
+        }
+      },
+      "borrowed_triplet_rail_review": {
+        "app_commit": "509907fd29554068e8dd04905253de3013cd7ab6",
+        "scope": "A dedicated common-time path discards only source-proven beam fragments mistaken for notes, after proving the complete four-group single-rail topology in each raster. Surviving notes retain their source identities, clock observations are remapped, and conflicting printed beam or clock evidence vetoes the edit.",
+        "app_inputs": {
+          "app/src/main/java/com/musicsheets/app/pdf/WrappedEighthTriplets.java": "e6ff883f4ba3987e735db154abdff5498fcdd19a6c1d8fdaacf9d29d4271cfe8",
+          "app/src/main/java/com/musicsheets/app/pdf/PrintedPageExpressions.java": "d628399f3c293b8fb35d05d89e5748777df0fb2a8d17d7ecea86b3ac27c7f80d"
+        },
+        "standalone_inputs": {
+          "java/src/main/java/io/github/luckolite/interpreter/WrappedEighthTriplets.java": "6c3a8eff93157c9f8fc2003320296c6f30d15ed0561f5e9cd517662d1b131d6a",
+          "java/src/main/java/io/github/luckolite/interpreter/SheetInterpreter.java": "f2e071408d755c07f7d680b4239205f91338180416129118f03cc5b40698ea43"
+        }
+      },
+      "recovered_contrast_shaft_engraving_review": {
+        "app_commit": "fdf19d55adb89c2652a8922eb853b520b6be1568",
+        "scope": "Both paths recheck a faint downstem for tuplet engraving with the same contrast tracer used by timing. At most one unambiguous traced shaft is eligible, and both single-rail links must be independently proved before the existing numeral, bracket and fingering checks.",
+        "app_inputs": {
+          "app/src/main/java/com/musicsheets/app/pdf/UnnumberedTripletInk.java": "d6abaa0725d767050fde71fd8e204fdd6746872e342324ac038da207115a5400"
+        },
+        "standalone_inputs": {
+          "java/src/main/java/io/github/luckolite/interpreter/UnnumberedTripletInk.java": "7dcbaf2810a43dc6ee69f23f1c7cb908b286ae8c96bcc1ab84dac951cf163639"
+        }
+      },
+      "stemless_quartet_alias_review": {
+        "app_commit": "a8eb5da3200abfd89f36181bff789e4b520a6972",
+        "scope": "Both runtimes use independently verified closing double rails and detached parenthetical fingering pairs to reject stemless false attacks. The literal parenthetical digits remain attached to their printed note owners, and the retained clock and expression evidence follows the original owner mapping.",
+        "app_inputs": {
+          "app/src/main/java/com/musicsheets/app/pdf/WrappedEighthTriplets.java": "29b462c34cb98a9317fe5817a4bea2b52d337e6b3dad7ef51c728923970fa699",
+          "app/src/main/java/com/musicsheets/app/pdf/ParentheticalFingerings.java": "29080e26cc5f110bc03abadb1dcdff23aeb12ff7e73eda7cd0038b8c84cdcf47",
+          "app/src/main/java/com/musicsheets/app/pdf/PrintedPageExpressions.java": "9c8e79852ad3e094084750ffb9ff75e2f405fbe905d169c92e65352053d98c33"
+        },
+        "standalone_inputs": {
+          "java/src/main/java/io/github/luckolite/interpreter/WrappedEighthTriplets.java": "c32ac1f1407fdb9566eb40e3524846e3a27b3f722657b11cfb63b8b538ebf166",
+          "java/src/main/java/io/github/luckolite/interpreter/ParentheticalFingerings.java": "7f94db62fdd58ba9dc919f53de944ddb8f806f36d453c564973f71b8601ed431",
+          "java/src/main/java/io/github/luckolite/interpreter/SheetInterpreter.java": "e04658e87a1728bbf910462a787b1ecf514a4515d4a599457112a0d02eeda1cf"
+        }
+      }
+    },
+    "ClosedArpeggioTriplets.java": {
+      "source_path": "app/src/main/java/com/musicsheets/app/pdf/ClosedArpeggioTriplets.java",
+      "source_sha256": "10804ba14653975ea41937834c77c248e48509897b00b267678b994c3a624e98",
+      "source_normalized_sha256": "10804ba14653975ea41937834c77c248e48509897b00b267678b994c3a624e98",
+      "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/ClosedArpeggioTriplets.java",
+      "standalone_sha256": "96247f1298ee84a96c2393c96c62a74b7958b0044f4a0ecbc96c3bba9f94c4ca",
+      "standalone_normalized_sha256": "96247f1298ee84a96c2393c96c62a74b7958b0044f4a0ecbc96c3bba9f94c4ca",
+      "reviewed_app_commit": "be552261ef3bd3fe12ad30c731bdf3b9d5b97bee",
+      "review_note": "The app and worker accept one contrast-proved interior downshaft only with both neighboring double rails and closed meter evidence. Standalone already resolves that clock with its independent system-opening proof. Both use the same bounded optical absence check to preserve unnumbered engraving.",
+      "standalone_inputs": {
+        "java/src/main/java/io/github/luckolite/interpreter/EighthTripletsBeforeSixteenths.java": "63cd992026b4c8e2cdfdd560d9c802c207a03d4a2c28aa7f69b90152ed5c7034"
+      },
+      "license": "Apache-2.0"
     },
     "ClosedMonophonicSixteenths.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/ClosedMonophonicSixteenths.java",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/ClosedMonophonicSixteenths.java",
-      "source_sha256": "d3726581d14bbbed56e9695dab3934f7855a0b6f92b5f70d1363b8a539f8e890",
-      "source_normalized_sha256": "d3726581d14bbbed56e9695dab3934f7855a0b6f92b5f70d1363b8a539f8e890",
-      "standalone_normalized_sha256": "13468909b81892d2f434d76a5b7f8ec8b280d168c41aab5afbb0e2e03b45dd26",
+      "source_sha256": "cb21f3f330f4047094abbee57b9af5b0101a6e74276686254b9929bd6197f7fa",
+      "source_normalized_sha256": "cb21f3f330f4047094abbee57b9af5b0101a6e74276686254b9929bd6197f7fa",
+      "standalone_normalized_sha256": "3ad59e7337bd968c2d82e04792d9c3c4f94b4846bae1e4fc9a90ea83bc92aa85",
       "license": "Apache-2.0",
       "reviewed_app_commit": "3707075d6567e9c60852d17ca16c6f72b208fcee",
-      "reviewed_app_state": "Shared common-time clock and rail ownership proof covers inherited and unmarked full bars without changing the prior meter-specific repairs."
+      "reviewed_app_state": "Shared common-time clock and rail ownership proof covers inherited and unmarked full bars without changing the prior meter-specific repairs.",
+      "detached_upper_one_review": {
+        "app_commit": "a0d0906247c1ee1f26dc89013e51fb2a89768d7d",
+        "scope": "Expose the same existing full-head eligibility for both one-beam and two-beam notes.",
+        "app_inputs": {
+          "app/src/main/java/com/musicsheets/app/pdf/ClosedMonophonicSixteenths.java": "5e3470ad27bfdcd102d17357b8deb6c102372072af688c86505fc6ac4716fe3f"
+        },
+        "standalone_inputs": {
+          "java/src/main/java/io/github/luckolite/interpreter/ClosedMonophonicSixteenths.java": "829ad1e7e0ea27f446fe1a98713bb1d6e60149fdc3cc0812ceeb5ba684ce1e2c"
+        }
+      },
+      "standalone_sha256": "3ad59e7337bd968c2d82e04792d9c3c4f94b4846bae1e4fc9a90ea83bc92aa85",
+      "literal_straight_quartet_review": {
+        "app_commit": "91c701deaeb13f565389a29807db519075ff8710",
+        "scope": "Late common-time and triple-time timing repair requires two source-proved rails across all four head columns and independent separations. The bounded faint-shaft and staff-rule cases keep full-bar closure. Written bracket protection covers the reduced subgroup and its containing quartet. Recovered ratios and literal beam groups preserve unrelated expression and clock evidence.",
+        "app_inputs": {
+          "app/src/main/java/com/musicsheets/app/pdf/ClosedMonophonicSixteenths.java": "c35562b1559ae51582c5137108b827ca40d4ed14623fd42d8284c09be0da07e7",
+          "app/src/main/java/com/musicsheets/app/pdf/WrappedEighthTriplets.java": "eb996b224a6ab8467a33a3a83e68f54646fd2e20365ac8210cdf8d39992420a5",
+          "app/src/main/java/com/musicsheets/app/pdf/FingeringAnnotationFilter.java": "58146d8277b3c3ef6aaf0211c653aa599bb9e647e773e8484ae0d74bf40cc8c3",
+          "app/src/main/java/com/musicsheets/app/pdf/PrintedPageExpressions.java": "d829de86f2e3e6e9d18e22798a934ca2971b379dc94a2928dda7ebd7b71bae81"
+        },
+        "standalone_inputs": {
+          "java/src/main/java/io/github/luckolite/interpreter/ClosedMonophonicSixteenths.java": "baf11dcce64f23d17a6d977be1f9c50b3acc52111db76b178904d15a102dcc6c",
+          "java/src/main/java/io/github/luckolite/interpreter/WrappedEighthTriplets.java": "8f03f1073324f134f6d7d96f943684ac7e15a5bbb732b2e58ca3e0d7df50f542",
+          "java/src/main/java/io/github/luckolite/interpreter/FingeringAnnotationFilter.java": "6cd8db6d3f6ef0bdca648fdbb63c25dbc718f1bbd58d7c0c97e98e06724b2d36",
+          "java/src/main/java/io/github/luckolite/interpreter/SheetInterpreter.java": "88c29cce8d794451210975475df380216db80f5bf5568d536b8d21576a8f1149"
+        }
+      }
     },
     "ClosedOctaveRailRun.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/ClosedOctaveRailRun.java",
@@ -3986,9 +4104,9 @@
     },
     "FingeringAnnotationFilter.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/FingeringAnnotationFilter.java",
-      "source_sha256": "08dc3b2fc2080cb679dc905186e417e1d7f8d367196d2f639d95d2db02200797",
+      "source_sha256": "58146d8277b3c3ef6aaf0211c653aa599bb9e647e773e8484ae0d74bf40cc8c3",
       "reviewed_app_commit": "3eadc13f2c90cde82ec504ef51f3125f7631c9da",
-      "source_normalized_sha256": "08dc3b2fc2080cb679dc905186e417e1d7f8d367196d2f639d95d2db02200797",
+      "source_normalized_sha256": "58146d8277b3c3ef6aaf0211c653aa599bb9e647e773e8484ae0d74bf40cc8c3",
       "review_note": "Both runtimes reuse the independently proved staff-rule shape. The app additionally removes all localized stemless lookalikes when the 16 real notes, both parentheses and both digit shapes are proved.",
       "reviewed_source_state": "Reviewed geometric parenthesis and fingering ownership",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/FingeringAnnotationFilter.java",
@@ -3996,8 +4114,16 @@
         "app_commit": "d0622b051dfaa40ad1ac76a2cd1ed7072186bb90",
         "scope": "Scoped paired-fingering and note-mask evidence. The standalone projection retains its additional export-stage checks."
       },
-      "standalone_normalized_sha256": "db8c8018b048780333269e766100ae7207f11520205598d84eab0c2cda48bd83",
-      "license": "Apache-2.0"
+      "standalone_normalized_sha256": "6cd8db6d3f6ef0bdca648fdbb63c25dbc718f1bbd58d7c0c97e98e06724b2d36",
+      "license": "Apache-2.0",
+      "ruled_fingering_beam_alias_review": {
+        "app_commit": "815b5da5469b174b2872e755544953f89ea8240c",
+        "scope": "The app and native worker allow a provisional three-rail count only through the existing dual-plane stemless parenthesized-digit proof and independently closed written beam ownership. Portable source already rejects its corresponding stemless glyph alias.",
+        "app_inputs": {
+          "app/src/main/java/com/musicsheets/app/pdf/FingeringAnnotationFilter.java": "c38ed179508876c2b16bea094a8941dc935cabfaeb9c62a75e38dda2a928547b"
+        }
+      },
+      "standalone_sha256": "6cd8db6d3f6ef0bdca648fdbb63c25dbc718f1bbd58d7c0c97e98e06724b2d36"
     },
     "FiniteBarlineSlideInk.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/FiniteBarlineSlideInk.java",
@@ -4350,10 +4476,10 @@
     },
     "GuideCacheIdentity.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/GuideCacheIdentity.java",
-      "source_sha256": "94b477655e9a37cc3027d675aed121cc16edd7db2c5f4ea3d3574da19dffef7e",
-      "source_normalized_sha256": "94b477655e9a37cc3027d675aed121cc16edd7db2c5f4ea3d3574da19dffef7e",
+      "source_sha256": "5c3cee2c74d5ff0c994c53476e1e2474401154d94a01d8ffa020b14b4ce37a7e",
+      "source_normalized_sha256": "5c3cee2c74d5ff0c994c53476e1e2474401154d94a01d8ffa020b14b4ce37a7e",
       "review_note": "App and desktop revision 168 and standalone revision 188 refresh their respective caches for printed fingering recognition.",
-      "standalone_sha256": "90beb4a841f035f1cdf2b3f31be56222c70c1f82820c11049a26f667bc247290",
+      "standalone_sha256": "e3bfc7302ff901de0c1ad3ef15e8fdb63ebe043ea68f44450cafe89eb285e9a5",
       "reviewed_app_commit": "bd726502235465a6d3e91e6f5abdbaada211d4c8",
       "scoped_reviewed_app_commit": "5a83c7704ff14579edcf52af5c1ab8e8e719a4d7",
       "license": "Apache-2.0",
@@ -4421,14 +4547,18 @@
       "downstem_quartet_review": {
         "app_commit": "17d480ed2ff9f6c49875061d23f921e61435e311",
         "scope": "App/worker revision 170 and standalone 190 invalidate caches for the verified quartet and fingering repair."
+      },
+      "mixed_beam_fingering_review": {
+        "app_commit": "3403240d122e823cd273a1b56aadc4d5a83a22e2",
+        "scope": "App and worker recognition 171 and standalone recognition 192 invalidate cached recognition for the fingering update."
       }
     },
     "GuideCacheIdentityTest.java": {
       "source_path": "app/src/test/java/com/musicsheets/app/pdf/GuideCacheIdentityTest.java",
       "standalone_path": "java/src/test/java/io/github/luckolite/interpreter/GuideCacheIdentityTest.java",
-      "source_sha256": "f17a7911a3a6f93598f0718999858e0d1835baaf96383a2ee73a8613962c793d",
-      "source_normalized_sha256": "f17a7911a3a6f93598f0718999858e0d1835baaf96383a2ee73a8613962c793d",
-      "standalone_sha256": "7fc8636fbf0adf09ece9e5da2053c8b7b7133d39d6fa9741406f21be517730a4",
+      "source_sha256": "7e5b97164a829c192b4757dbeafdac36858452a7fbb933b3c8c37ebaf469c6ef",
+      "source_normalized_sha256": "7e5b97164a829c192b4757dbeafdac36858452a7fbb933b3c8c37ebaf469c6ef",
+      "standalone_sha256": "0e787c89b9f7c80f1b1f1251c29195e08ba40f659b0f4dbe86a8f1cdc85fa011",
       "license": "Apache-2.0",
       "recognition88_review_note": "Reviewed exact contextual global changes and namespace twins with original synthetic regressions. New helpers are selected explicitly by desktop decoder manifest; no models, private fixtures, schema, wire or audio changes.",
       "reviewed_app_commit": "b954c0cc5f30c21a302a8f65141d0c297d4177c3",
@@ -4489,6 +4619,10 @@
       "downstem_quartet_review": {
         "app_commit": "17d480ed2ff9f6c49875061d23f921e61435e311",
         "scope": "Both cache fixtures preserve Guide 311 and audio 106 behavior while checking their own recognition revision."
+      },
+      "mixed_beam_fingering_review": {
+        "app_commit": "3403240d122e823cd273a1b56aadc4d5a83a22e2",
+        "scope": "Each runtime verifies its own updated recognition epoch and the existing guide and audio layouts."
       }
     },
     "HairpinApertureBarExtentOriginalTest.java": {
@@ -5254,13 +5388,28 @@
       "scoped_reviewed_app_commit": "5e485a719c2b5dbcb8c03a7124b239b7979f4be8",
       "reviewed_source_state": "Committed paired recognition43 source review; final cumulative package/deployment/runtime checks remain pending.",
       "review_note": "Desktop font raster adapter delegates unchanged scoring to shared helper; existing overloads remain compatible. Original Bravura fixtures contain no private score pixels.",
-      "standalone_sha256": "363d4d3aa267b987aa6d3967e32e70e88209d43737c036708ea813a3eed1e114",
+      "standalone_sha256": "5f59e5c13dd130e6ba621adbac29810dd45ac3d0a24c2b933d0da6b29c2b2e2f",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/MeterFontMatcher.java",
-      "standalone_normalized_sha256": "363d4d3aa267b987aa6d3967e32e70e88209d43737c036708ea813a3eed1e114",
+      "standalone_normalized_sha256": "5f59e5c13dd130e6ba621adbac29810dd45ac3d0a24c2b933d0da6b29c2b2e2f",
       "optimization_port_review": "Worker reuses the ordinary AWT render context and a bounded mask cache. The classpath atlas stays in the standalone renderer, and Android retains its own glyph renderer.",
       "november_24_flesch_app_review": {
         "app_commit": "d0622b051dfaa40ad1ac76a2cd1ed7072186bb90",
         "scope": "Desktop app worker supplies Bravura through the common Java source font interface. Standalone has a separate renderer adapter."
+      },
+      "cached_label_meter_review": {
+        "app_commit": "3bda3f1c81d795c309f7ed05ea08a8f0c43f635f",
+        "scope": "The cached-label desktop worker uses the existing uniquely owned stacked-meter font reader. The portable page decoder already uses its corresponding font reader with the packaged Bravura resource.",
+        "app_inputs": {
+          "tools/native-worker/NativePageGuide.java": "3172fffdc15ee23bff427cf874ccee4a19c66f79c013b096949cadfa855213bb",
+          "app/src/main/java/com/musicsheets/app/pdf/MeterFontMatcher.java": "60cd972660e8362f403cf8e8884501ef30cba2f9a295cdd32152df6f1718e67b"
+        }
+      },
+      "native_ocr_meter_challenge_review": {
+        "app_commit": "815b5da5469b174b2872e755544953f89ea8240c",
+        "scope": "The native OCR resolver can accept a uniquely owned font challenge to an OCR numerator when two complete written bars corroborate it. The optional portable OCR adapter applies the same challenge using its caller-supplied matcher. The default optical route retains its existing behavior.",
+        "app_inputs": {
+          "tools/native-worker/NativeMusicalOcr.java": "a2c82a878c791a180c9a07e544e44747cf426e39e35b4f98923f12eeb1004ebd"
+        }
       }
     },
     "MeterGlyphMatcher.java": {
@@ -5415,6 +5564,12 @@
       "recognition101_review_note": "Complete independently owned rehearsal frames retain bounded cap fringes and full capital-F topology without changing unboxed dynamic recognition. Missing printed system-number crops retain complete clipped components and require full numeric OCR text, one element and overlapping source boxes at two scales before supplementing existing tokens. Conflicting original tokens remain unchanged. General procedural regressions; no song-specific rule, private score image, model or record-layout change.",
       "reviewed_app_state": "Reviewed recognition101 source committed; cumulative matched rollout deferred during active goal.",
       "standalone_normalized_sha256": "80c27f88b37ecbd62ec2803c97918227f302220320ee9f24c1dae55d2089bcf4",
+      "flesch_ocr_source_review": {
+        "source_sha256": "a2c82a878c791a180c9a07e544e44747cf426e39e35b4f98923f12eeb1004ebd",
+        "source_normalized_sha256": "a2c82a878c791a180c9a07e544e44747cf426e39e35b4f98923f12eeb1004ebd",
+        "standalone_sha256": "638267cdd1b286698b980c15cfcac4518b9e4349d4b5ccf999bc246607b18841",
+        "standalone_normalized_sha256": "638267cdd1b286698b980c15cfcac4518b9e4349d4b5ccf999bc246607b18841"
+      },
       "current_source_review": "The native OCR producer and standalone MusicalOcr apply the same contradicted-meter filter to the same raster-measure and note inputs before filtering OCR readings by whole-note evidence. Standalone has its existing OCR engine adapter.",
       "qualified_dynamic_source_adapter_review": "Retain standalone caller-owned inference, existing strip acquisition, glyph and supplement ordering. Bind source before actual OCR, normalize final dynamic words from actual crop/scale origins, and preserve exact original expression acquisition. Additive semantic adapter for native source-identity repair; no whole-wrapper copy.",
       "november_24_flesch_app_review": {
@@ -9860,13 +10015,42 @@
     "ParentheticalFingerings.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/ParentheticalFingerings.java",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/ParentheticalFingerings.java",
-      "source_sha256": "47f135c430b85a9723f6c3c10925bac011f9a17c19b3ad2a4160487fc7081755",
-      "source_normalized_sha256": "47f135c430b85a9723f6c3c10925bac011f9a17c19b3ad2a4160487fc7081755",
-      "standalone_normalized_sha256": "e3a95f9c9f9561c10cd6383efbbae470cb188b3ff203bec3420b1d7d9901430b",
+      "source_sha256": "d87c53ed4b94237e2809a4ac86bc914c5fb72ea07c44184f771c8059c1a8537c",
+      "source_normalized_sha256": "d87c53ed4b94237e2809a4ac86bc914c5fb72ea07c44184f771c8059c1a8537c",
+      "standalone_normalized_sha256": "69e464c344a86ef37ae1fd56477206ac52f137fad4bc6e2591a3088ff02c4ee6",
       "reviewed_app_commit": "2bdb8536b043182f1898ef53e00749b7a50d1748",
       "license": "Apache-2.0",
       "review_note": "Both runtimes project the same verified pairs and reuse two already retained same-line samples to support the weaker detached upper 2 in both image planes.",
-      "supplemental_fingering_review": "Explicit two-plane shaft and parenthesis proofs bind the pair on either side. The additional ordinary two uses the independently witnessed staff rule and at least three detached same-font references across distinct measures."
+      "supplemental_fingering_review": "Explicit two-plane shaft and parenthesis proofs bind the pair on either side. The additional ordinary two uses the independently witnessed staff rule and at least three detached same-font references across distinct measures.",
+      "standalone_sha256": "69e464c344a86ef37ae1fd56477206ac52f137fad4bc6e2591a3088ff02c4ee6",
+      "stemless_quartet_alias_review": {
+        "app_commit": "a8eb5da3200abfd89f36181bff789e4b520a6972",
+        "scope": "Both runtimes use independently verified closing double rails and detached parenthetical fingering pairs to reject stemless false attacks. The literal parenthetical digits remain attached to their printed note owners, and the retained clock and expression evidence follows the original owner mapping.",
+        "app_inputs": {
+          "app/src/main/java/com/musicsheets/app/pdf/WrappedEighthTriplets.java": "29b462c34cb98a9317fe5817a4bea2b52d337e6b3dad7ef51c728923970fa699",
+          "app/src/main/java/com/musicsheets/app/pdf/ParentheticalFingerings.java": "29080e26cc5f110bc03abadb1dcdff23aeb12ff7e73eda7cd0038b8c84cdcf47",
+          "app/src/main/java/com/musicsheets/app/pdf/PrintedPageExpressions.java": "9c8e79852ad3e094084750ffb9ff75e2f405fbe905d169c92e65352053d98c33"
+        },
+        "standalone_inputs": {
+          "java/src/main/java/io/github/luckolite/interpreter/WrappedEighthTriplets.java": "c32ac1f1407fdb9566eb40e3524846e3a27b3f722657b11cfb63b8b538ebf166",
+          "java/src/main/java/io/github/luckolite/interpreter/ParentheticalFingerings.java": "7f94db62fdd58ba9dc919f53de944ddb8f806f36d453c564973f71b8601ed431",
+          "java/src/main/java/io/github/luckolite/interpreter/SheetInterpreter.java": "e04658e87a1728bbf910462a787b1ecf514a4515d4a599457112a0d02eeda1cf"
+        }
+      },
+      "ruled_quartet_parenthetical_review": {
+        "app_commit": "7fce6223ae8345e45677a901af90befd209d5d6b",
+        "scope": "Both runtimes require independently read opposing parentheses and owned digits in each raster, plus complete source-proved straight double-rail groups. The app retains the existing ordinary two through its supplemental fingering records. Standalone keeps the existing digit and explicitly identifies the parenthesized endpoint.",
+        "app_inputs": {
+          "app/src/main/java/com/musicsheets/app/pdf/ParentheticalFingerings.java": "d87c53ed4b94237e2809a4ac86bc914c5fb72ea07c44184f771c8059c1a8537c",
+          "app/src/main/java/com/musicsheets/app/pdf/ClosedMonophonicSixteenths.java": "cb21f3f330f4047094abbee57b9af5b0101a6e74276686254b9929bd6197f7fa",
+          "app/src/main/java/com/musicsheets/app/pdf/PrintedPageExpressions.java": "8e9fe762115d13f1bec39d83e5c8f19e8183dc2d7cac6d26612d974ac9d5ba13"
+        },
+        "standalone_inputs": {
+          "java/src/main/java/io/github/luckolite/interpreter/ParentheticalFingerings.java": "69e464c344a86ef37ae1fd56477206ac52f137fad4bc6e2591a3088ff02c4ee6",
+          "java/src/main/java/io/github/luckolite/interpreter/ClosedMonophonicSixteenths.java": "3ad59e7337bd968c2d82e04792d9c3c4f94b4846bae1e4fc9a90ea83bc92aa85",
+          "java/src/main/java/io/github/luckolite/interpreter/Main.java": "979271e289614625d6607f329faacd002dc63fe71c69d6d877baec73f80ce98f"
+        }
+      }
     },
     "IncompleteDownstemQuartets.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/IncompleteDownstemQuartets.java",
@@ -9889,10 +10073,10 @@
     "PrintedFingeringDigits.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/PrintedFingeringDigits.java",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/PrintedFingeringDigits.java",
-      "source_sha256": "c8cb175dddd9c0853b80bf7a40f27d5840faa65dd2d7aaf6162ec00486f85e01",
+      "source_sha256": "2d25bff86c161dee67bc340e42a85eb78785471c346c8ee646b88be7412aacb8",
       "notes": "Shared detached numeral sequence proof. Standalone uses SheetInterpreter OCR words and playback events; the app uses PlayingTechniqueDetector words and guide heads. Both use original glyph templates and bounded two-raster optical checks.",
-      "source_normalized_sha256": "c8cb175dddd9c0853b80bf7a40f27d5840faa65dd2d7aaf6162ec00486f85e01",
-      "standalone_sha256": "722681c04a563305a44ce45eda7c626bee2f46beff71780709b44811ec971b68",
+      "source_normalized_sha256": "2d25bff86c161dee67bc340e42a85eb78785471c346c8ee646b88be7412aacb8",
+      "standalone_sha256": "45842c07ca02ad6cbe261877e2ed08d4c5520baaba5cc866c77b43cb5e061a60",
       "staff_rule_review": "Both runtimes independently witness the staff rule and shaft, then verify the digit shape. The opposed quartet uses score order even when note columns on multiple systems share the same x coordinate.",
       "detached_reference_review": "Both decoders compare a partly hidden upper digit against independently retained printed examples. A verified four-note double beam with three existing marks can support the fourth detached digit.",
       "ledger_fingering_review": "The app and standalone require verified high ledger note shafts and detached numeral ink. Established upper fingerings supply independent examples when the generic templates have a close rival.",
@@ -9900,6 +10084,109 @@
       "downstem_quartet_review": {
         "app_commit": "17d480ed2ff9f6c49875061d23f921e61435e311",
         "scope": "Detached upper digits in closed descending sixteenth-note bars reuse complete double-rail group ownership and exact detached ink from both images. For detached threes, bounded alignment must independently match two already owned same-row examples in both rasters. Only an established reference can use the larger crop."
+      },
+      "mixed_beam_fingering_review": {
+        "app_commit": "3403240d122e823cd273a1b56aadc4d5a83a22e2",
+        "scope": "Retains detached upper digits, staff-crossed ones, and an open-string zero in complete mixed-beam measures. Both image planes must show the same owned mark. Complete high-ledger single-rail runs also retain detached upper digits, with  two independently owned printed examples needed to resolve an ambiguous three."
+      },
+      "unnumbered_ledger_triplet_review": {
+        "app_commit": "3403240d122e823cd273a1b56aadc4d5a83a22e2",
+        "scope": "Both decoders retain unnumbered source engraving after independent ink checks in a complete printed 4/4 high-ledger run. The app writer accepts the proven marker when the resolved 3:2 clock precedes raw ratio tagging. The standalone MusicXML already preserves the unnumbered appearance.",
+        "app_inputs": {
+          "app/src/main/java/com/musicsheets/app/pdf/PrintedPageExpressions.java": "cbc018453721d28dd38975586a6c2423d83889ef498681d5c570a43d446e8013",
+          "app/src/main/java/com/musicsheets/app/pdf/UnnumberedTripletInk.java": "ed302fea79f4f14e595cdbbe89704bf4b0e7e5ac14c0a01a784c48810228b61d",
+          "app/src/main/java/com/musicsheets/app/pdf/SheetMusicXml.java": "eb0c05d72cdc25a3dfa79dabf99c2763700f7bf63a12f2c587bb63fdacfff169"
+        },
+        "standalone_inputs": {
+          "java/src/main/java/io/github/luckolite/interpreter/UnnumberedTripletInk.java": "966b50423f8787cf628a4bc9c33bcaf4ec08a305bbba87eef743cbcf5c02068e",
+          "java/src/main/java/io/github/luckolite/interpreter/Main.java": "e42169da9dd103847ee66fbad039b863f4539174d88b1af286ab20a348e39e1d"
+        }
+      },
+      "unnumbered_eighth_triplet_engraving_review": {
+        "app_commit": "9b0a2cf2aae8623df4138bc3adb583a173b49439",
+        "scope": "Android and the native worker preserve absent triplet numbers on an exact resolved three-eighth-note triplet clock, with optical shaft, beam, numeral and bracket checks. The writer rechecks effective timing using export meter. The standalone writer already retains the engraving on confirmed raw 3:2 beams.",
+        "app_inputs": {
+          "app/src/main/java/com/musicsheets/app/pdf/PrintedPageExpressions.java": "8f3ea690230f072f2141d0bf3392ed4988079ecf7f32d32d61e8f3a383adaeb2",
+          "app/src/main/java/com/musicsheets/app/pdf/UnnumberedEighthTripletEngraving.java": "1103e79e2718dafe7899de7a0ec2d411747791985a8db4bf6b464d5c91403c23",
+          "app/src/main/java/com/musicsheets/app/pdf/SheetMusicXml.java": "eb0c05d72cdc25a3dfa79dabf99c2763700f7bf63a12f2c587bb63fdacfff169",
+          "app/src/test/java/com/musicsheets/app/pdf/SheetMusicXmlUnnumberedTripletTest.java": "81bb020f737f860dd15897497c0602fd36d5c680aadecc219556c4507595ac15",
+          "tools/native-worker/decoder-sources.txt": "b4b7004200f06d95e09fa554d5582297bc067c610181e005d3a180a34242954e"
+        }
+      },
+      "detached_upper_one_review": {
+        "app_commit": "a0d0906247c1ee1f26dc89013e51fb2a89768d7d",
+        "scope": "Both runtimes retain a compact detached upper one only after agreeing optical glyphs and a downshaft in both planes, unique note ownership, and existing marks from two distinct bars.",
+        "app_inputs": {
+          "app/src/main/java/com/musicsheets/app/pdf/PrintedFingeringDigits.java": "5af99a21001e8ca988cf8eed5f40fd735005a6a7469d671e2092a0616586bb00"
+        },
+        "standalone_inputs": {
+          "java/src/main/java/io/github/luckolite/interpreter/PrintedFingeringDigits.java": "056ab203ee532f48e27c835f4232d797ce9ba254a246f4ba8eb69e1e225caa3d"
+        }
+      },
+      "detached_upper_digit_review": {
+        "app_commit": "1258f4922e37795d43709d25071d40bfee122faf",
+        "scope": "Both paths recognize detached upper twos, threes and fours from two already owned examples in different measures. Both source rasters, a verified downshaft and unique head ownership are required.",
+        "app_inputs": {
+          "app/src/main/java/com/musicsheets/app/pdf/PrintedFingeringDigits.java": "e897d214167174863e6365987519ffbb13d2b600cd6566d0d97c88b59e7ad5b2"
+        },
+        "standalone_inputs": {
+          "java/src/main/java/io/github/luckolite/interpreter/PrintedFingeringDigits.java": "e697040db8344da61daf6824b7c26600a365cf8d793e30f2d10c50db89d40559"
+        }
+      },
+      "close_upper_digit_review": {
+        "app_commit": "f8206c8a320c0ff6e561b62d8b818a1e370fd85a",
+        "scope": "Both paths admit close detached digits with their existing independent references and unique ownership proof. High ledger half notes may use the existing detached upper one proof with a full head and an independent downshaft.",
+        "app_inputs": {
+          "app/src/main/java/com/musicsheets/app/pdf/PrintedFingeringDigits.java": "4a38e0e5dc57617028f6d69614bafe946e3c82cb393a3effc4ea57b94e1b77b1"
+        },
+        "standalone_inputs": {
+          "java/src/main/java/io/github/luckolite/interpreter/PrintedFingeringDigits.java": "dcd3554931d816c03d2a20eaf0e61318a8b0fdfe022bbd011ed12f5f1f8fa9cb"
+        }
+      },
+      "beam_end_digit_review": {
+        "app_commit": "f290351fca7e36c6a05542576eb3e4d6bea3e69c",
+        "scope": "Both runtimes match compact digits beyond the verified beam and shaft against two already owned examples on distinct measures. The shared matching code still collects head-side references. Both raster planes and unique note ownership are required.",
+        "app_inputs": {
+          "app/src/main/java/com/musicsheets/app/pdf/PrintedFingeringDigits.java": "95c5cd1f9bb338cc0d3922d5a0c79aa088402f8529f7b56b755ca02567ec38c2"
+        },
+        "standalone_inputs": {
+          "java/src/main/java/io/github/luckolite/interpreter/PrintedFingeringDigits.java": "086759bea37c1a9af0d3fcc4a8c732cf1317c1bb44ae2f37a10f5f951278f272"
+        }
+      },
+      "detached_open_zero_review": {
+        "app_commit": "c2c10dc553879b8ee23fce0b228d3a70cd5eda50",
+        "scope": "Both paths preserve an independently owned detached open-string zero below the staff on a dotted upstem half note. Both source rasters must agree on the bounding box, upright closed interior, numeral score, and observed shaft.",
+        "app_inputs": {
+          "app/src/main/java/com/musicsheets/app/pdf/PrintedFingeringDigits.java": "8b9df83aa68b79384c3dab613b9eae698d22752c43abda5a4003b0b4ffadb303"
+        },
+        "standalone_inputs": {
+          "java/src/main/java/io/github/luckolite/interpreter/PrintedFingeringDigits.java": "be7743ef06662a75d5c945b78297e09d94c9f943bcce4a0de03a88f2a10c582d"
+        }
+      },
+      "staff_crossed_digit_review": {
+        "app_commit": "0ff5303c5d2b88d942db97ef7ff7ce3758666f9c",
+        "scope": "Both paths identify fingerings from independent visible strokes around a witnessed staff rule, with unique shaft and note ownership, agreement in both rasters, and matching detached glyphs from two other measures.",
+        "app_inputs": {
+          "app/src/main/java/com/musicsheets/app/pdf/PrintedFingeringDigits.java": "9ea3ac2129beb635c499bcc0c8931f43dd2008133e8087795138ab367ba9395d"
+        },
+        "standalone_inputs": {
+          "java/src/main/java/io/github/luckolite/interpreter/PrintedFingeringDigits.java": "a9cf27c058d3548c4e132b967d17575351bf861e959b8ac5a908fede0c7cd8e5"
+        }
+      },
+      "standalone_normalized_sha256": "45842c07ca02ad6cbe261877e2ed08d4c5520baaba5cc866c77b43cb5e061a60",
+      "recovered_downstem_engraving_review": {
+        "app_commit": "96effc6baad9befcc80861503ed5758867a11efb",
+        "scope": "Both runtimes independently check the clean above and below engraving windows of optically recovered downstem triplets. Bracket or numeral evidence in either raster vetoes hiding. An existing engraving decision still counts toward the high-ledger four-group context while retaining its earlier mark.",
+        "app_inputs": {
+          "app/src/main/java/com/musicsheets/app/pdf/UnnumberedTripletInk.java": "f4db3604d24042a119513851ff42c87db1cf961d8466b23ced1ef1f2518132f4",
+          "app/src/main/java/com/musicsheets/app/pdf/PrintedFingeringDigits.java": "2d25bff86c161dee67bc340e42a85eb78785471c346c8ee646b88be7412aacb8",
+          "app/src/main/java/com/musicsheets/app/pdf/WrappedEighthTriplets.java": "e25fa79670f5e6933f70429199a5fc0ad413f08fdc6c099d47d945d228fb4d41"
+        },
+        "standalone_inputs": {
+          "java/src/main/java/io/github/luckolite/interpreter/UnnumberedTripletInk.java": "da6d9e5373b7c26d2248f46c2c549983124cf9274681ab0e07ff73e9c9fd9389",
+          "java/src/main/java/io/github/luckolite/interpreter/PrintedFingeringDigits.java": "45842c07ca02ad6cbe261877e2ed08d4c5520baaba5cc866c77b43cb5e061a60",
+          "java/src/main/java/io/github/luckolite/interpreter/WrappedEighthTriplets.java": "b4f46e08b67c8488a29d30114a8f4e95a8a1d4ec4f52b1043eeadb8e183bd0c1"
+        }
       }
     },
     "PrintedAccidentalSpineRecovery.java": {
@@ -9907,10 +10194,33 @@
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/PrintedAccidentalSpineRecovery.java",
       "source_sha256": "83e11002946216257497fd4ce247f330642c5f3564e25c58769c96357e42b358",
       "source_normalized_sha256": "83e11002946216257497fd4ce247f330642c5f3564e25c58769c96357e42b358",
-      "standalone_normalized_sha256": "3b429b8c059587b6de22b4913674588de70453df4314c1fe331fb3cf0fb51759",
+      "standalone_normalized_sha256": "6dcc177d0e0832a110acf36df17e2b94602d8e96bec6fee6acccdabbcf00a6c3",
       "license": "Apache-2.0",
       "reviewed_app_commit": "5d78cbca06a9e731399a30777a9d219e2b8d5ac8",
-      "reviewed_app_state": "Verified pitched eligibility before diatonic queries. The namespace-equivalent port has original mixed pitched and unpitched controls."
+      "reviewed_app_state": "Verified pitched eligibility before diatonic queries. The namespace-equivalent port has original mixed pitched and unpitched controls.",
+      "beamed_flat_over_sharp_review": {
+        "app_commit": "1c6e764fb6fd59e788d91a86e723dac01b604d9c",
+        "scope": "Both paths correct a sharp classification only with an owned flat in both rasters, no sharp-spine alternative, and an independently retained double beam. Different pre-existing app changes remain flagged by source drift.",
+        "app_inputs": {
+          "app/src/main/java/com/musicsheets/app/pdf/PrintedAccidentalSpineRecovery.java": "caaa962a10f76871693447d447fa0f9ac12d1debc764760349c7319ad0508e1f",
+          "app/src/main/java/com/musicsheets/app/pdf/PrintedRhythmRepairs.java": "cff23f76605189ba9ae136b7910f3fd247e5cc467480a57ebaeb5d59e66eb9c7"
+        },
+        "standalone_inputs": {
+          "java/src/main/java/io/github/luckolite/interpreter/PrintedAccidentalSpineRecovery.java": "dda284de89aa156013335d160cf77e1c1e37f42a66ac02943379fb2c2f6d2148",
+          "java/src/main/java/io/github/luckolite/interpreter/SheetInterpreter.java": "0db3ec0bae17c4f07dcb84c785c48c643ecc33d43c2ab34fdffc3d4f3c81b3a6"
+        }
+      },
+      "standalone_sha256": "6dcc177d0e0832a110acf36df17e2b94602d8e96bec6fee6acccdabbcf00a6c3",
+      "upstem_double_beam_flat_review": {
+        "app_commit": "1416d41dfcfc96eddecdab3e7644c43b7035ff53",
+        "scope": "Extends the existing owned flat versus sharp evidence to consecutive upstem owners under a retained double-beam bridge. Both source planes must prove the flat and neither may prove a competing sharp. Existing accidental continuation, geometry and printed ownership checks apply.",
+        "app_inputs": {
+          "app/src/main/java/com/musicsheets/app/pdf/PrintedAccidentalSpineRecovery.java": "9de5903e46063f977170d8fb8c4f3c2da9cb854ea6bc58c53f3c6d5c288f4d07"
+        },
+        "standalone_inputs": {
+          "java/src/main/java/io/github/luckolite/interpreter/PrintedAccidentalSpineRecovery.java": "6dcc177d0e0832a110acf36df17e2b94602d8e96bec6fee6acccdabbcf00a6c3"
+        }
+      }
     },
     "SheetInterpreter.java": {
       "inline_three_eight_review": {
@@ -9931,7 +10241,7 @@
       "source_path": "tools/native-worker/NativePageGuide.java",
       "source_sha256": "86942e22c40f85a35b2708c9a89f7300ad9d556d84a6b3db600d020e1e06e5b1",
       "source_normalized_sha256": "86942e22c40f85a35b2708c9a89f7300ad9d556d84a6b3db600d020e1e06e5b1",
-      "standalone_sha256": "5a6499d487f0b5679e4145aa61816d593d02e7fab631e8f71c38e5ad8fe62f1b",
+      "standalone_sha256": "e04658e87a1728bbf910462a787b1ecf514a4515d4a599457112a0d02eeda1cf",
       "license": "Apache-2.0",
       "review_note": "Shared recognition and playback-direction changes ported with standalone adapters. Redistributable synthetic regressions cover the changed ink and direction rules.",
       "reviewed_app_commit": "2bdb8536b043182f1898ef53e00749b7a50d1748",
@@ -9946,7 +10256,7 @@
       "recognition103_review_note": "Recognition103 preserves accepted multi-rest origin identity when logical bars are inserted or removed. Reindexing runs after rhythm reconciliation and only relocates previously accepted identity; it adds no admission, rest count, timing, record, wire, Guide292, model, OCR, or dependency change. The 12 procedural originals are mirrored once in app and once in standalone, yielding 12 unique regressions and 24 invocations; 17 existing controls per namespace remain controls. No private score material.",
       "reviewed_source_state": "Reviewed committed recognition138 violin-score repair.",
       "release130_review_note": "Reviewed platform adapter; see release130_source_review. No claim of whole-file token parity.",
-      "standalone_normalized_sha256": "5a6499d487f0b5679e4145aa61816d593d02e7fab631e8f71c38e5ad8fe62f1b",
+      "standalone_normalized_sha256": "e04658e87a1728bbf910462a787b1ecf514a4515d4a599457112a0d02eeda1cf",
       "current_source_review": "Reviewed current source and standalone counterpart for the cumulative source-bound beam, notation, key, articulation and bounded context batch. Original procedural regressions only; physical source observations and model facts do not establish complete musical authority.",
       "qualified_dynamic_source_adapter_review": "Retain standalone caller-owned inference, existing strip acquisition, glyph and supplement ordering. Bind source before actual OCR, normalize final dynamic words from actual crop/scale origins, and preserve exact original expression acquisition. Additive semantic adapter for native source-identity repair; no whole-wrapper copy.",
       "recognition127_clock_adapter_review": "Reviewed equivalent final lifecycle change: bind existing full clock context before PrintedBeamSource.apply; native and standalone inference/word/port adapters remain separate. No full-wrapper token-parity claim, generic clock weakening, models or layouts change.",
@@ -9966,7 +10276,7 @@
       },
       "harmonic_guide_review": {
         "app_commit": "68d2e9e1beb05bf160b685c1327490eef64c0356",
-        "standalone_normalized_sha256": "41b3c55f0e2b64247057e954b92823a303fe972e9d3a3a6a214e0d36ae53358b",
+        "standalone_normalized_sha256": "0db3ec0bae17c4f07dcb84c785c48c643ecc33d43c2ab34fdffc3d4f3c81b3a6",
         "scope": "Reviewed the shared analytic helpers and the different transport adapters. The app worker forwards source-owned harmonic touches through its compact triplets, closing quarter, and sixteenth runs. Standalone supplies equivalent written and sounding roles directly to its MusicXML path."
       },
       "dense_printed_beam_budget_review": {
@@ -10008,6 +10318,72 @@
         "scope": "Shared shape and input checks for removing a false opening measure. App/worker retain accepted meter crops; the standalone adapter uses its bundled font before ordinary meter extraction.",
         "shared_file": "SplitOpeningHeader.java",
         "standalone_lf_sha256": "bc31531981394805a6122fd1d2d11a3e96c993e88de300a706b8cf46c413117d"
+      },
+      "ledger_overlaid_triplets_review": {
+        "app_commit": "cec0f48558d2975c84c3d9c1bb68aa020c806097",
+        "app_inputs": {
+          "app/src/main/java/com/musicsheets/app/pdf/WrappedEighthTriplets.java": "b3cb7dcfecad5ff0e5f8cebeb348759f6b81915b8c36f56bdc18dd55e8e74416",
+          "app/src/main/java/com/musicsheets/app/pdf/PrintedPageExpressions.java": "62b00c67dcdfde0fa8a61f534a6c46f72279cb0ed3f6ef6ec162c4e95ba985f3"
+        },
+        "standalone_inputs": {
+          "java/src/main/java/io/github/luckolite/interpreter/WrappedEighthTriplets.java": "d5be24620e489b4e9243002607016eeb2eced81a65855d00430fb88e46b5ee61",
+          "java/src/main/java/io/github/luckolite/interpreter/SheetInterpreter.java": "e3ff9483c91549eaff43425280e710846d941b3a4c9fb07a7e01611dd855c1c2"
+        },
+        "scope": "At the final retained note stage, both paths independently prove two-plane source ownership of the complete four single-rail groups in a closed 4/4 bar, then preserve the printed rhythmic clock. The native adapter distinguishes head-connected ledger projections from augmentation dots. The portable adapter uses its existing staff-overlap rail verifier. The native closing-triplet carrier separation restores only the app/worker terminal case already exact in the standalone baseline."
+      },
+      "long_triplet_phrase_review": {
+        "app_commit": "565ff4a9d5709da7c7db20f14357352038eccf44",
+        "scope": "Both page expression paths recover the same whole-measure above-staff slurs from independent raw and normalized raster evidence, after the four source triplet groups are established. Updating slurs preserves existing score clock context. Broader entry-point differences remain outside this review.",
+        "app_inputs": {
+          "app/src/main/java/com/musicsheets/app/pdf/PrintedTripletTransitionSlurs.java": "300523cf427d126020eebedbae9d8a6275858a827d1b2eb769a48c8edb1fb08a",
+          "app/src/main/java/com/musicsheets/app/pdf/PrintedPageExpressions.java": "30ee51c6f20f128a055c4da4d2dda7e2d3efaeda2ee7aaa42d98d1b39aab5094"
+        },
+        "standalone_inputs": {
+          "java/src/main/java/io/github/luckolite/interpreter/PrintedTripletTransitionSlurs.java": "0c2c885dc52257e93ecd0cf6cee4f1c85a014d2c0e799c5fe567c3ed9c5ad223",
+          "java/src/main/java/io/github/luckolite/interpreter/SheetInterpreter.java": "e94b65936f500c95692ba3bae8d5e8aca24034f994c20c8b028c19197edc7431"
+        }
+      },
+      "borrowed_triplet_rail_review": {
+        "app_commit": "509907fd29554068e8dd04905253de3013cd7ab6",
+        "scope": "A dedicated common-time path discards only source-proven beam fragments mistaken for notes, after proving the complete four-group single-rail topology in each raster. Surviving notes retain their source identities, clock observations are remapped, and conflicting printed beam or clock evidence vetoes the edit.",
+        "app_inputs": {
+          "app/src/main/java/com/musicsheets/app/pdf/WrappedEighthTriplets.java": "e6ff883f4ba3987e735db154abdff5498fcdd19a6c1d8fdaacf9d29d4271cfe8",
+          "app/src/main/java/com/musicsheets/app/pdf/PrintedPageExpressions.java": "d628399f3c293b8fb35d05d89e5748777df0fb2a8d17d7ecea86b3ac27c7f80d"
+        },
+        "standalone_inputs": {
+          "java/src/main/java/io/github/luckolite/interpreter/WrappedEighthTriplets.java": "6c3a8eff93157c9f8fc2003320296c6f30d15ed0561f5e9cd517662d1b131d6a",
+          "java/src/main/java/io/github/luckolite/interpreter/SheetInterpreter.java": "f2e071408d755c07f7d680b4239205f91338180416129118f03cc5b40698ea43"
+        }
+      },
+      "literal_straight_quartet_review": {
+        "app_commit": "91c701deaeb13f565389a29807db519075ff8710",
+        "scope": "Late common-time and triple-time timing repair requires two source-proved rails across all four head columns and independent separations. The bounded faint-shaft and staff-rule cases keep full-bar closure. Written bracket protection covers the reduced subgroup and its containing quartet. Recovered ratios and literal beam groups preserve unrelated expression and clock evidence.",
+        "app_inputs": {
+          "app/src/main/java/com/musicsheets/app/pdf/ClosedMonophonicSixteenths.java": "c35562b1559ae51582c5137108b827ca40d4ed14623fd42d8284c09be0da07e7",
+          "app/src/main/java/com/musicsheets/app/pdf/WrappedEighthTriplets.java": "eb996b224a6ab8467a33a3a83e68f54646fd2e20365ac8210cdf8d39992420a5",
+          "app/src/main/java/com/musicsheets/app/pdf/FingeringAnnotationFilter.java": "58146d8277b3c3ef6aaf0211c653aa599bb9e647e773e8484ae0d74bf40cc8c3",
+          "app/src/main/java/com/musicsheets/app/pdf/PrintedPageExpressions.java": "d829de86f2e3e6e9d18e22798a934ca2971b379dc94a2928dda7ebd7b71bae81"
+        },
+        "standalone_inputs": {
+          "java/src/main/java/io/github/luckolite/interpreter/ClosedMonophonicSixteenths.java": "baf11dcce64f23d17a6d977be1f9c50b3acc52111db76b178904d15a102dcc6c",
+          "java/src/main/java/io/github/luckolite/interpreter/WrappedEighthTriplets.java": "8f03f1073324f134f6d7d96f943684ac7e15a5bbb732b2e58ca3e0d7df50f542",
+          "java/src/main/java/io/github/luckolite/interpreter/FingeringAnnotationFilter.java": "6cd8db6d3f6ef0bdca648fdbb63c25dbc718f1bbd58d7c0c97e98e06724b2d36",
+          "java/src/main/java/io/github/luckolite/interpreter/SheetInterpreter.java": "88c29cce8d794451210975475df380216db80f5bf5568d536b8d21576a8f1149"
+        }
+      },
+      "stemless_quartet_alias_review": {
+        "app_commit": "a8eb5da3200abfd89f36181bff789e4b520a6972",
+        "scope": "Both runtimes use independently verified closing double rails and detached parenthetical fingering pairs to reject stemless false attacks. The literal parenthetical digits remain attached to their printed note owners, and the retained clock and expression evidence follows the original owner mapping.",
+        "app_inputs": {
+          "app/src/main/java/com/musicsheets/app/pdf/WrappedEighthTriplets.java": "29b462c34cb98a9317fe5817a4bea2b52d337e6b3dad7ef51c728923970fa699",
+          "app/src/main/java/com/musicsheets/app/pdf/ParentheticalFingerings.java": "29080e26cc5f110bc03abadb1dcdff23aeb12ff7e73eda7cd0038b8c84cdcf47",
+          "app/src/main/java/com/musicsheets/app/pdf/PrintedPageExpressions.java": "9c8e79852ad3e094084750ffb9ff75e2f405fbe905d169c92e65352053d98c33"
+        },
+        "standalone_inputs": {
+          "java/src/main/java/io/github/luckolite/interpreter/WrappedEighthTriplets.java": "c32ac1f1407fdb9566eb40e3524846e3a27b3f722657b11cfb63b8b538ebf166",
+          "java/src/main/java/io/github/luckolite/interpreter/ParentheticalFingerings.java": "7f94db62fdd58ba9dc919f53de944ddb8f806f36d453c564973f71b8601ed431",
+          "java/src/main/java/io/github/luckolite/interpreter/SheetInterpreter.java": "e04658e87a1728bbf910462a787b1ecf514a4515d4a599457112a0d02eeda1cf"
+        }
       }
     },
     "SheetWrittenTieLinks.java": {
@@ -11123,10 +11499,10 @@
     },
     "guide_writer.py": {
       "source_path": "tools/native-worker/guide_writer.py",
-      "source_sha256": "4fb0fdb22cdb19d016b0e2350a2bb86d4fa29c7394795b34fb0a0b9ddb4b7e8f",
-      "source_normalized_sha256": "4fb0fdb22cdb19d016b0e2350a2bb86d4fa29c7394795b34fb0a0b9ddb4b7e8f",
+      "source_sha256": "dbf856f94e41e02897aebacfcc8e8d1421d2c7d01670a33f975568a5df87ca42",
+      "source_normalized_sha256": "dbf856f94e41e02897aebacfcc8e8d1421d2c7d01670a33f975568a5df87ca42",
       "review_note": "App and desktop revision 168 and standalone revision 188 refresh their respective caches for printed fingering recognition.",
-      "standalone_sha256": "6b55ce6fed314e4518b49377677f841a85247910ac95730d7718b93bff6ebb75",
+      "standalone_sha256": "aa2f937de0adb6a9b449bced4ba37fbe46125d755f3e5d59f76e381a2b748f25",
       "reviewed_app_commit": "2bdb8536b043182f1898ef53e00749b7a50d1748",
       "license": "Apache-2.0",
       "scoped_reviewed_app_commit": "5a83c7704ff14579edcf52af5c1ab8e8e719a4d7",
@@ -11175,6 +11551,10 @@
       "downstem_quartet_review": {
         "app_commit": "17d480ed2ff9f6c49875061d23f921e61435e311",
         "scope": "Runtime recognition constants advance without changing the guide record layouts."
+      },
+      "mixed_beam_fingering_review": {
+        "app_commit": "3403240d122e823cd273a1b56aadc4d5a83a22e2",
+        "scope": "Recognition epoch advances without changing the guide record layout."
       }
     },
     "hairpin-export.js": {

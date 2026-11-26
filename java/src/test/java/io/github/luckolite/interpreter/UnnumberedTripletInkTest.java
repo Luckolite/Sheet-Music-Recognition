@@ -76,6 +76,29 @@ public class UnnumberedTripletInkTest {
                 line, WIDTH, HEIGHT, GAP, X[0], X[2], 134, 171, 174, rows, null, true));
     }
 
+    @Test public void shallowBowAtNextSystemBoundaryKeepsIndependentBracket() {
+        byte[] paper = new byte[WIDTH * HEIGHT];
+        Arrays.fill(paper, (byte) 255);
+        float[] heads = {91, 132, 173};
+        for (int x = 9; x < 254; x++) {
+            int distance = x - 132;
+            int y = 253 + Math.round(.0004f * distance * distance - .15f * distance);
+            for (int dy = -4; dy <= 3; dy++) paper[(y + dy) * WIDTH + x] = 0;
+        }
+        var rows = new UnnumberedTripletInk.Rows(0, 268);
+        var staff = StaffPitchTrack.fromVerifiedSamples(List.of(new float[] {10, 163, GAP},
+                new float[] {250, 163, GAP}));
+        assertTrue(UnnumberedTripletInk.clearRuledFingeringBands(
+                paper, WIDTH, HEIGHT, GAP, heads, Y, 134, 134, 170, 171, rows, staff));
+
+        for (int x = 86; x <= 178; x++) {
+            if (Math.abs(x - 132) > 9) paper[242 * WIDTH + x] = 0;
+        }
+        for (int y = 233; y < 242; y++) paper[y * WIDTH + 86] = paper[y * WIDTH + 178] = 0;
+        assertFalse(UnnumberedTripletInk.clearRuledFingeringBands(
+                paper, WIDTH, HEIGHT, GAP, heads, Y, 134, 134, 170, 171, rows, staff));
+    }
+
     @Test public void matchedBowCaptionDoesNotHideAnIndependentBracket() {
         var paper = clearBeam();
         bracket(paper, 107);

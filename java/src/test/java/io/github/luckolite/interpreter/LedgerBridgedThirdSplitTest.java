@@ -26,21 +26,36 @@ public class LedgerBridgedThirdSplitTest {
         }
     }
 
+    @Test
+    public void remoteThirdKeepsBothHeadsAcrossWideBeamSpacing() throws Exception {
+        var page = new Fixture(true);
+        assertEquals(2, page.wideSplit(page.gray).size());
+        for (int[] range : new int[][] {{192, 205}, {262, 276}}) {
+            byte[] changed = page.gray.clone();
+            fill(changed, range[0], range[1], 244, 267, (byte) 255);
+            assertTrue(page.wideSplit(changed).isEmpty());
+        }
+    }
+
     private static final class Fixture {
         final byte[] gray = new byte[WIDTH * HEIGHT];
         final byte[] labels = new byte[WIDTH * HEIGHT];
 
         Fixture() {
+            this(false);
+        }
+
+        Fixture(boolean wide) {
             Arrays.fill(gray, (byte) 255);
             for (int y = 230; y <= 294; y += (int) GAP) {
                 fill(gray, 30, 410, y, y + 1, (byte) 0);
                 fill(labels, 30, 410, y, y + 1, (byte) 4);
             }
-            third(180, 182);
-            third(220, 174);
-            third(260, 166);
-            fill(gray, 169, 252, 245, 252, (byte) 0);
-            fill(gray, 169, 252, 258, 266, (byte) 0);
+            third(wide ? 170 : 180, 182);
+            third(wide ? 230 : 220, 174);
+            third(wide ? 300 : 260, 166);
+            fill(gray, wide ? 159 : 169, wide ? 292 : 252, 245, 252, (byte) 0);
+            fill(gray, wide ? 159 : 169, wide ? 292 : 252, 258, 266, (byte) 0);
         }
 
         private void third(int x, int y) {
@@ -60,6 +75,14 @@ public class LedgerBridgedThirdSplitTest {
         }
 
         List<?> split(byte[] raw) throws ReflectiveOperationException {
+            return split(raw, false);
+        }
+
+        List<?> wideSplit(byte[] raw) throws ReflectiveOperationException {
+            return split(raw, true);
+        }
+
+        private List<?> split(byte[] raw, boolean wide) throws ReflectiveOperationException {
             Class<?> omr = OmrScoreInterpreter.class;
             Class<?> component = Class.forName(omr.getName() + "$Component");
             Class<?> staffType = Class.forName(omr.getName() + "$Staff");
@@ -75,7 +98,15 @@ public class LedgerBridgedThirdSplitTest {
             centerX.setAccessible(true);
             Object parent = null;
             for (var head : heads) {
-                if (Math.abs((float) centerX.invoke(head) - 220) < 2) parent = head;
+                if (Math.abs((float) centerX.invoke(head) - (wide ? 230 : 220)) < 2) parent = head;
+            }
+            if (wide) {
+                var proof = omr.getDeclaredMethod("splitWidelyBeamedLedgerThird",
+                        byte[].class, byte[].class, byte[].class, int.class, int.class, component,
+                        List.class, List.class, List.class, ExactComponentMembers.Collector.class);
+                proof.setAccessible(true);
+                return (List<?>) proof.invoke(null, labels, gray, raw, WIDTH, HEIGHT, parent,
+                        List.of(staff), heads, List.of(new MeasureRegion(.08f, .92f, .57f, .90f)), null);
             }
             var proof = omr.getDeclaredMethod("splitLedgerBridgedBeamedThird",
                     byte[].class, byte[].class, byte[].class, int.class, int.class, component,

@@ -391,6 +391,7 @@ public final class SheetInterpreter {
                 rawMeasures, measures, labels, gray, annotationGray, width, height);
         measures = InterruptedStaffHeader.discard(
                 measures, labels, gray, annotationGray, width, height);
+        measures = InterruptedClosingDyadBoundary.recover(measures, labels, gray, annotationGray, width, height);
         recognizedRests.reindexed(measures);
         var numberingAnchors =
                 rejectedAnchorTops.isEmpty()
@@ -1186,6 +1187,8 @@ public final class SheetInterpreter {
                 terminalCadence, annotationGray, gray, width, height, provedDyadAccidentals::add);
         terminalCadence = PrintedAccidentalSpineRecovery.rejectPriorFingeringFlats(
                 terminalCadence, labels, annotationGray, gray, width, height);
+        terminalCadence = PrintedAccidentalSpineRecovery.reconcileBeamedFlats(
+                terminalCadence, labels, annotationGray, gray, width, height, provedDyadAccidentals::add);
         terminalCadence = PrintedAccidentalSpineRecovery.reconcileRepeatedMonophonicSigns(
                 terminalCadence, labels, annotationGray, gray, width, height, provedDyadAccidentals::add);
         terminalCadence = PrintedAccidentalSpineRecovery.reconcileDyadSigns(
@@ -1207,8 +1210,24 @@ public final class SheetInterpreter {
                 provedDyadAccidentals::add).withClockContextSource(terminalCadence.clockContextSource());
         terminalCadence = ClosedLedgerHalfDyad.captureTerminalSpaceSixth(
                 terminalCadence, annotationGray, gray, width, height);
+        terminalCadence = ClosedLedgerHalfDyad.captureTerminalStaffLine(
+                terminalCadence, annotationGray, gray, width, height);
         if (annotationGray != gray)
             terminalCadence = TripletRhythmDetector.recoverSourceTriplets(terminalCadence, gray, annotationGray, width, height);
+        terminalCadence = WrappedEighthTriplets.restoreStaffOverlappedTriplets(
+                terminalCadence, gray, annotationGray, width, height);
+        terminalCadence = WrappedEighthTriplets.restoreBorrowedTripletRail(
+                terminalCadence, gray, annotationGray, width, height);
+        terminalCadence = WrappedEighthTriplets.removeStemlessQuartetAliases(
+                terminalCadence, gray, annotationGray, width, height);
+        terminalCadence = WrappedEighthTriplets.restoreDottedLineRailOwnership(
+                terminalCadence, gray, annotationGray, width, height);
+        terminalCadence = WrappedEighthTriplets.restoreClosingUpstemHook(
+                terminalCadence, gray, annotationGray, width, height);
+        terminalCadence = ClosedMonophonicSixteenths.restoreMisreadQuartets(
+                terminalCadence, gray, annotationGray, width, height);
+        terminalCadence = PrintedTripletTransitionSlurs.recoverLongPhrases(
+                terminalCadence, annotationGray, gray, width, height);
         var phrasing = PrintedStaccatoSlurs.apply(
                 terminalCadence, physicalPage, labels, gray, annotationGray, width, height);
         var finalPage = OpeningPortatoSixteenths.restore(phrasing, gray, annotationGray, width, height);

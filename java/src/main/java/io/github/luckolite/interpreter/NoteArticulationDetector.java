@@ -5382,12 +5382,11 @@ final class NoteArticulationDetector {
                     && Math.abs(l + (minX + maxX) * .5f - dot.x()) <= gap * .35f
                     && l + minX <= dot.x() - gap * .45f
                     && l + maxX >= dot.x() + gap * .45f
-                    && curvedRoof(queue, count, w, minX, maxX, gap, direction)
-                    && !angularFermataRoof(
-                            new Glyph(minX, minY, maxX, maxY, count, Arrays.copyOf(queue, count)),
-                            w,
-                            gap,
-                            direction < 0)) return true;
+                    && curvedRoof(queue, count, w, minX, maxX, gap, direction)) {
+                var roof = new Glyph(minX, minY, maxX, maxY, count, Arrays.copyOf(queue, count));
+                if (!angularFermataRoof(roof, w, gap, direction < 0)
+                        && !(direction < 0 && completeDownBowShape(roof, w))) return true;
+            }
         }
         return false;
     }

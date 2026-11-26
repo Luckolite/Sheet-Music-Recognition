@@ -46,6 +46,16 @@ public class ConnectedFermataRoofTest {
     }
 
     @Test
+    public void downBowOverStaccatoCannotAddAFermata() {
+        for (int y = 480; y <= 494; y++)
+            for (int x = 491; x <= 509; x++)
+                if (y <= 483 || x <= 492 || x >= 508) g[y * W + x] = 0;
+        var note = new NoteArticulationDetector.Anchor(500, 530, 16, 0);
+        assertTrue(NoteArticulationDetector.fermataMarks(labels, g, W, H, List.of(note)).isEmpty());
+        assertEquals(NoteArticulation.STACCATO, marks() & NoteArticulation.STACCATO);
+    }
+
+    @Test
     public void fiveIndependentSpecksDoNotMakeAFermata() {
         for (int x : new int[] {490, 495, 500, 505, 510}) g[488 * W + x] = 0;
         assertEquals(NoteArticulation.STACCATO, marks());

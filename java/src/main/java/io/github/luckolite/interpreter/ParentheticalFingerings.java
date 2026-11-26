@@ -30,6 +30,8 @@ final class ParentheticalFingerings {
                 || normalized == null || labels.length != (long) width * height
                 || raw.length != labels.length || normalized.length != raw.length) return unchanged;
         var ruled = staffRulePair(existing, score, words, raw, normalized, width, height);
+        ruled = captureDetachedQuartetPairs(ruled, score, raw, normalized, width, height);
+        ruled = captureRuledQuartetPairs(ruled, score, raw, normalized, width, height);
         if (!ruled.groups().isEmpty()) {
             existing = ruled.marks();
             unchanged = ruled;
@@ -119,6 +121,280 @@ final class ParentheticalFingerings {
         marks.sort(Comparator.comparingInt(PrintedFingeringDigits.Mark::noteIndex)
                 .thenComparing(PrintedFingeringDigits.Mark::placement));
         return new Result(List.copyOf(marks), List.copyOf(groups));
+    }
+
+    private record DetachedPair(Glyph opening, Glyph closing) {}
+
+    /** The same detached fingering pair can supply expression and disprove a false head. */
+    static boolean detachedQuartetFingeringOwnsHead(List<ScoreNoteEvent> row, MeasureRegion bar,
+            ScoreNoteEvent response, byte[] raw, byte[] gray, int width, int height) {
+        var pair = agreedDetachedQuartetPair(row, bar, raw, gray, width, height);
+        if (pair == null) return false;
+        var digit = pair.opening().digit();
+        float x = headColumn(bar, response, width), y = response.pageY() * height;
+        if (x < digit.left() || x > digit.right() || y < digit.top() || y > digit.bottom()) return false;
+        float gap = (bar.bottom() - bar.top()) * height / 8.2f;
+        for (var raster : new byte[][]{raw, gray}) {
+            var budget = new PrintedBeamShafts.Budget(35_000);
+            if (!PrintedBeamShafts.at(raster, width, height, x, y, gap, budget).isEmpty() || budget.refused())
+                return false;
+        }
+        return true;
+    }
+
+    private static Result captureDetachedQuartetPairs(Result existing, ScorePageInterpretation score,
+            byte[] raw, byte[] gray, int width, int height) {
+        var bars = score.measures();
+        var notes = score.notes();
+        var rows = new ArrayList<List<Integer>>(bars.size());
+        for (int i = 0; i < bars.size(); i++) rows.add(new ArrayList<>());
+        for (int i = 0; i < notes.size(); i++) rows.get(notes.get(i).measureIndex()).add(i);
+        var marks = new ArrayList<>(existing.marks());
+        var groups = new ArrayList<>(existing.groups());
+        for (int i = 0; i < bars.size(); i++) {
+            var owners = rows.get(i);
+            if (owners.size() != 16) continue;
+            owners.sort(Comparator.comparingDouble(j -> notes.get(j).positionInMeasure()));
+            int first = owners.get(5), last = owners.get(11);
+            if (conflict(marks, first) || conflict(marks, last)
+                    || groups.stream().anyMatch(g -> g.placement() == PrintedFingeringDigits.Placement.BELOW
+                            && g.startNoteIndex() <= last && g.endNoteIndex() >= first)) continue;
+            var row = owners.stream().map(notes::get).toList();
+            var bar = bars.get(i);
+            if (agreedDetachedQuartetPair(row, bar, raw, gray, width, height) == null
+                    && !agreesOnDetachedDottedPair(row, bar, raw, gray, width, height)) continue;
+            var side = PrintedFingeringDigits.Placement.BELOW;
+            addMark(marks, first, 3, side);
+            addMark(marks, last, 3, side);
+            groups.add(new Group(first, last, side));
+        }
+        if (groups.size() == existing.groups().size()) return existing;
+        marks.sort(Comparator.comparingInt(PrintedFingeringDigits.Mark::noteIndex)
+                .thenComparing(PrintedFingeringDigits.Mark::placement));
+        groups.sort(Comparator.comparingInt(Group::startNoteIndex));
+        return new Result(List.copyOf(marks), List.copyOf(groups));
+    }
+
+    private static DetachedPair agreedDetachedQuartetPair(List<ScoreNoteEvent> row, MeasureRegion bar,
+            byte[] raw, byte[] gray, int width, int height) {
+        if (row.size() != 16 || row.stream().anyMatch(n -> !ClosedMonophonicSixteenths.regularQuartetHead(n)
+                || n.stemDirection() != -1 || n.tupletDivisor() != 1 || n.augmentationDots() != 0
+                || n.staffStep() < 9)) return null;
+        var a = detachedQuartetPair(row, bar, raw, width, height);
+        var b = detachedQuartetPair(row, bar, gray, width, height);
+        return a != null && b != null && agreeAbove(a.opening(), b.opening())
+                && agreeAbove(a.closing(), b.closing()) ? a : null;
+    }
+
+    private static DetachedPair detachedQuartetPair(List<ScoreNoteEvent> row, MeasureRegion bar,
+            byte[] ink, int width, int height) {
+        float gap = (bar.bottom() - bar.top()) * height / 8.2f;
+        if (gap < 10 || gap > 25) return null;
+        var track = WrappedMeasureBoundaries.verifiedTripletStaff(ink, width, height, bar, true);
+        if (track == null) return null;
+        float first = headColumn(bar, row.get(5), width), last = headColumn(bar, row.get(11), width);
+        if (!track.verifiedAt(first) || !track.verifiedAt(last)
+                || last - first < 10f * gap || last - first > 16f * gap) return null;
+        var a = readDetachedQuartetGlyph(ink, width, height, first, track.at(first)[0], gap, true);
+        var b = readDetachedQuartetGlyph(ink, width, height, last, track.at(last)[0], gap, false);
+        if (a == null || b == null || Math.abs(a.digit().top() - b.digit().top()) > .20f * gap
+                || Math.abs(a.digit().bottom() - b.digit().bottom()) > .20f * gap
+                || !MixedUpperLedgerBeamSource.provesUpperSixteenthLine(ink, width, height, track, bar, row)) return null;
+        return new DetachedPair(a, b);
+    }
+
+    private static boolean agreesOnDetachedDottedPair(List<ScoreNoteEvent> row, MeasureRegion bar,
+            byte[] raw, byte[] gray, int width, int height) {
+        if (row.stream().anyMatch(n -> n.kind() != ScoreNoteEvent.Kind.PITCHED || n.staffCount() != 1
+                    || n.staffStep() < 7 || n.stemDirection() != -1 || n.beamCount() < 2
+                    || n.tupletDivisor() != 1 || n.crossStaffBeam())
+                || row.stream().filter(n -> n.augmentationDots() == 1).count() < 6) return false;
+        var a = detachedDottedPair(row, bar, raw, width, height);
+        var b = raw == gray ? a : detachedDottedPair(row, bar, gray, width, height);
+        return a != null && b != null && agreeAbove(a.opening(), b.opening())
+                && agreeAbove(a.closing(), b.closing());
+    }
+
+    private static DetachedPair detachedDottedPair(List<ScoreNoteEvent> row, MeasureRegion bar,
+            byte[] ink, int width, int height) {
+        float gap = (bar.bottom() - bar.top()) * height / 8.2f;
+        if (gap < 10 || gap > 25) return null;
+        var first = row.get(5);
+        var last = row.get(11);
+        float x1 = headColumn(bar, first, width), x2 = headColumn(bar, last, width);
+        if (x2 - x1 < 10 * gap || x2 - x1 > 16 * gap) return null;
+        var a = detachedDottedGlyph(ink, width, height, bar, gap, row.get(4), first, null);
+        if (a == null) return null;
+        var b = detachedDottedGlyph(ink, width, height, bar, gap, row.get(10), last, a);
+        if (b == null || Math.abs(a.digit().top() - b.digit().top()) > .36f * gap
+                || Math.abs(a.digit().bottom() - b.digit().bottom()) > .36f * gap) return null;
+        return new DetachedPair(a, b);
+    }
+
+    private static Glyph detachedDottedGlyph(byte[] ink, int width, int height, MeasureRegion bar,
+            float gap, ScoreNoteEvent previous, ScoreNoteEvent owner, Glyph openingGlyph) {
+        float x = headColumn(bar, owner, width), y = owner.pageY() * height;
+        float estimatedFloor = y + owner.staffStep() * gap * .5f;
+        var rules = ClosedDottedSixteenths.localDottedPairStaff(ink, width, height, x, estimatedFloor, gap);
+        // The sloping beam can cover the staff next to the owner. Sample the same staff alongside it.
+        float beside = x - 4 * gap;
+        if (rules == null && beside > bar.left() * width)
+            rules = ClosedDottedSixteenths.localDottedPairStaff(ink, width, height, beside, estimatedFloor, gap);
+        if (rules == null || Math.abs(rules[0] - estimatedFloor) > .5f * gap) return null;
+        var glyph = readDetachedQuartetGlyph(ink, width, height, x, rules[0], gap,
+                openingGlyph == null, true, openingGlyph);
+        if (glyph == null) return null;
+        var budget = new PrintedBeamShafts.Budget(50_000);
+        var shafts = PrintedBeamShafts.at(ink, width, height, x, y, gap, budget);
+        var preceding = PrintedBeamShafts.at(ink, width, height,
+                headColumn(bar, previous, width), previous.pageY() * height, gap, budget);
+        return !budget.refused() && shafts.size() == 1 && preceding.size() == 1
+                && shafts.get(0).direction() == 1 && preceding.get(0).direction() == 1
+                && WrappedEighthTriplets.matchesBeamRails(ink, width, height, preceding.get(0), shafts.get(0), gap, 2)
+                ? glyph : null;
+    }
+
+    private static float headColumn(MeasureRegion bar, ScoreNoteEvent note, int width) {
+        return (bar.left() + (bar.right() - bar.left()) * note.positionInMeasure()) * width;
+    }
+
+    private static Glyph readDetachedQuartetGlyph(byte[] ink, int width, int height,
+            float x, float floor, float gap, boolean opening) {
+        return readDetachedQuartetGlyph(ink, width, height, x, floor, gap, opening, false, null);
+    }
+
+    private static Glyph readDetachedQuartetGlyph(byte[] ink, int width, int height,
+            float x, float floor, float gap, boolean opening, boolean dotted, Glyph reference) {
+        float halfWidth = (dotted ? 1.62f : 1.45f) * gap;
+        int left = Math.round(x - halfWidth), right = Math.round(x + halfWidth);
+        int top = Math.round(floor + (dotted ? .12f : .22f) * gap), bottom = Math.round(floor + 2.35f * gap);
+        if (left < 0 || right >= width || top < 0 || bottom >= height) return null;
+        var parts = RawNumeralComponents.captureLongWindow(ink, width, height, left, top, right, bottom, 165)
+                .components().stream().filter(c -> c.size() >= .17f * gap * gap).toList();
+        if (parts.size() != 2) return null;
+        var a = parts.get(0);
+        var b = parts.get(1);
+        var parenthesis = (a.left < b.left) == opening ? a : b;
+        var digit = parenthesis == a ? b : a;
+        int gapBetween = opening ? digit.left - parenthesis.right : parenthesis.left - digit.right;
+        var box = new Box(digit.left, digit.top, digit.right, digit.bottom);
+        if (parenthesis.left <= left || parenthesis.right >= right || parenthesis.bottom >= bottom
+                || Math.abs(x - (digit.left + digit.right) * .5f) > .32f * gap
+                || gapBetween < .15f * gap || gapBetween > .48f * gap
+                || parenthesis.top > digit.top - (dotted ? .12f : .15f) * gap || parenthesis.bottom < digit.bottom + (dotted ? -.12f : .20f) * gap
+                || curve(parenthesis, width, gap, new BitSet()) != (opening ? 1 : -1)
+                || box.width() < .63f * gap || box.width() > .98f * gap
+                || box.height() < .93f * gap || box.height() > (dotted ? 1.32f : 1.27f) * gap) return null;
+        var fit = JoinedDigitTemplates.inspect(ink, width, height, new BitSet(),
+                box.left(), box.top(), box.right(), box.bottom(), () -> {});
+        if (fit == null || fit.scores()[3] < (dotted ? .65f : .69f)
+                || fit.best() - fit.scores()[3] > (dotted ? .08f : opening ? .015f : .045f)) return null;
+        boolean lower = FingeringThreeInk.opening(ink, width, null, box.left(), box.top(),
+                box.width(), box.height(), .57f, .83f);
+        if (dotted && !FingeringThreeInk.opening(ink, width, null, box.left(), box.top(),
+                box.width(), box.height(), .17f, .46f)) return null;
+        if (!lower && (reference == null || !matchesPairedDetachedThree(ink, width, box, reference.digit()))) return null;
+        return new Glyph(box, new Box(parenthesis.left, parenthesis.top, parenthesis.right, parenthesis.bottom),
+                opening, false);
+    }
+
+    private static boolean matchesPairedDetachedThree(byte[] ink, int width, Box box, Box reference) {
+        var shape = MatchedDetachedThreeShape.vector(ink, width, box.left(), box.top(), box.right(), box.bottom());
+        var other = MatchedDetachedThreeShape.vector(
+                ink, width, reference.left(), reference.top(), reference.right(), reference.bottom());
+        float similarity = 0;
+        for (int i = 0; i < shape.length; i++) similarity += shape[i] * other[i];
+        return similarity >= Math.max(.90f, JoinedDigitTemplates.maxEightSimilarity(shape) + .12f);
+    }
+
+    private static Result captureRuledQuartetPairs(Result existing, ScorePageInterpretation score,
+            byte[] raw, byte[] gray, int width, int height) {
+        var notes = score.notes();
+        var bars = score.measures();
+        var rows = new ArrayList<List<Integer>>(bars.size());
+        for (int i = 0; i < bars.size(); i++) rows.add(new ArrayList<>());
+        for (int i = 0; i < notes.size(); i++) rows.get(notes.get(i).measureIndex()).add(i);
+        var rests = new BitSet(bars.size());
+        for (var rest : score.rests()) rests.set(rest.measureIndex());
+        var marks = new ArrayList<>(existing.marks());
+        var groups = new ArrayList<>(existing.groups());
+        int[] sixteenthQuartets = {4, 4, 4, 4};
+        ScoreMeterChange meter = null;
+        int nextMeter = 0;
+        for (int i = 0; i < bars.size(); i++) {
+            while (nextMeter < score.meterChanges().size() && score.meterChanges().get(nextMeter).measureIndex() <= i)
+                meter = score.meterChanges().get(nextMeter++);
+            var owners = rows.get(i);
+            var bar = bars.get(i);
+            if (meter == null || meter.numerator() != 4 || meter.denominator() != 4 || owners.size() != 16
+                    || rests.get(i) || bar.cadenceQuarterBeats() != 0) continue;
+            owners.sort(Comparator.comparingDouble(j -> notes.get(j).positionInMeasure()));
+            var row = owners.stream().map(notes::get).toList();
+            if (row.stream().anyMatch(n -> !ClosedMonophonicSixteenths.regularQuartetHead(n)
+                    || n.stemDirection() != -1 || n.tupletDivisor() != 1 || n.augmentationDots() != 0)) continue;
+            int first = owners.get(5), last = owners.get(11);
+            for (var side : PrintedFingeringDigits.Placement.values()) {
+                boolean above = side == PrintedFingeringDigits.Placement.ABOVE;
+                if (groups.stream().anyMatch(g -> g.placement() == side && g.startNoteIndex() <= last
+                            && g.endNoteIndex() >= first)
+                        || marks.stream().anyMatch(m -> m.placement() == side && m.digit() != 3
+                                && (m.noteIndex() == last || m.noteIndex() == first && !(above && m.digit() == 2))))
+                    continue;
+                var original = ruledQuartetPair(row, bar, raw, width, height, above);
+                var normalized = ruledQuartetPair(row, bar, gray, width, height, above);
+                if (original == null || normalized == null
+                        || !(above ? agreeAbove(original.opening(), normalized.opening())
+                                && agreeAbove(original.closing(), normalized.closing()) : original.equals(normalized))
+                        || !ClosedMonophonicSixteenths.confirmsCommonTimeRailClock(
+                                raw, width, height, bars, i, row, sixteenthQuartets, true)
+                        || !ClosedMonophonicSixteenths.confirmsCommonTimeRailClock(
+                                gray, width, height, bars, i, row, sixteenthQuartets, true)) continue;
+                addMark(marks, first, 3, side);
+                addMark(marks, last, 3, side);
+                groups.add(new Group(first, last, side));
+            }
+        }
+        if (groups.size() == existing.groups().size()) return existing;
+        marks.sort(Comparator.comparingInt(PrintedFingeringDigits.Mark::noteIndex)
+                .thenComparing(PrintedFingeringDigits.Mark::placement));
+        groups.sort(Comparator.comparingInt(Group::startNoteIndex)
+                .thenComparing(Group::placement));
+        return new Result(List.copyOf(marks), List.copyOf(groups));
+    }
+
+    private static DetachedPair ruledQuartetPair(List<ScoreNoteEvent> row, MeasureRegion bar,
+            byte[] ink, int width, int height, boolean above) {
+        float gap = (bar.bottom() - bar.top()) * height / 8.2f;
+        if (gap < 10 || gap > 25) return null;
+        float floor = bar.bottom() * height - 2.1f * gap;
+        var track = StaffPitchTrack.forPrintedSlurs(ink, width, height, floor - 4 * gap, floor, gap);
+        if (track == null) return null;
+        var first = row.get(5);
+        var last = row.get(11);
+        float x1 = headColumn(bar, first, width), x2 = headColumn(bar, last, width);
+        if (x2 - x1 < 9 * gap || x2 - x1 > 16 * gap) return null;
+        var a = readQuartetGlyph(ink, width, height, track, x1, first.pageY() * height, gap, true, above);
+        var b = readQuartetGlyph(ink, width, height, track, x2, last.pageY() * height, gap, false, above);
+        if (a == null || b == null || Math.abs(a.digit().top() - b.digit().top()) > .32f * gap
+                || Math.abs(a.digit().bottom() - b.digit().bottom()) > .34f * gap) return null;
+        return new DetachedPair(a, b);
+    }
+
+    private static Glyph readQuartetGlyph(byte[] ink, int width, int height, StaffPitchTrack track,
+            float x, float headY, float gap, boolean opening, boolean above) {
+        if (!track.verified() || above && !track.verifiedAt(x) && !track.verifiedAt(x - 2 * gap)) return null;
+        float floor = track.at(x)[0];
+        int center = Math.round(x);
+        int left = center - Math.round(1.65f * gap), right = center + Math.round(1.4f * gap);
+        int top = Math.round(floor + (above ? opening ? -8.03f : -7.79f : .045f) * gap);
+        int bottom = Math.round(floor + (above ? opening ? -6.32f : -5.98f : 1.76f) * gap);
+        var glyph = read(ink, width, height, left, top, right, bottom,
+                opening, floor, gap, List.of(), false, above && !opening);
+        if (glyph == null || glyph.ruleClipped() == above
+                || Math.abs(x - (glyph.digit().left() + glyph.digit().right()) * .5f) > .46f * gap)
+            return null;
+        float separation = above ? headY - glyph.digit().bottom() : glyph.digit().top() - headY;
+        return separation >= 1.85f * gap && separation <= 6.2f * gap ? glyph : null;
     }
 
     private static Result staffRulePair(List<PrintedFingeringDigits.Mark> existing,
@@ -379,6 +655,13 @@ final class ParentheticalFingerings {
         int right = Math.round(word.right() * width + .18f * gap);
         int top = Math.round(word.top() * height - .18f * gap);
         int bottom = Math.round(word.bottom() * height + .18f * gap);
+        return read(image, width, height, left, top, right, bottom,
+                orientation(word.text()) > 0, floor, gap, references, normalized, false);
+    }
+
+    private static Glyph read(byte[] image, int width, int height, int left, int top, int right, int bottom,
+            boolean opening, float floor, float gap, List<MatchedDetachedThreeShape.Reference> references,
+            boolean normalized, boolean compactClosingCurve) {
         int flank = Math.round(.9f * gap);
         if (left < flank || right + flank >= width || top < 0 || bottom >= height) return null;
         int stride = right - left + 1, tall = bottom - top + 1;
@@ -400,11 +683,10 @@ final class ParentheticalFingerings {
         var cc = RawNumeralComponents.capture(copied, stride, tall, 0, 0, stride - 1, tall - 1, () -> {}, () -> {});
         var curves = new ArrayList<Box>();
         var digits = new ArrayList<Box>();
-        boolean opening = orientation(word.text()) > 0;
         boolean clipped = false;
         for (var c : cc.components()) {
             var box = new Box(left + c.left, top + c.top, left + c.right, top + c.bottom);
-            int direction = curve(c, stride, gap, rule);
+            int direction = curve(c, stride, gap, rule, compactClosingCurve);
             if (direction == (opening ? 1 : -1)) {
                 curves.add(box);
                 clipped = c.top > 0 && rule.get(c.top - 1);
@@ -450,6 +732,11 @@ final class ParentheticalFingerings {
     }
 
     private static int curve(RawNumeralComponents.Component c, int stride, float gap, BitSet rule) {
+        return curve(c, stride, gap, rule, false);
+    }
+
+    private static int curve(RawNumeralComponents.Component c, int stride, float gap, BitSet rule,
+            boolean compactClosingCurve) {
         int width = c.right - c.left + 1, height = c.bottom - c.top + 1;
         if (width < .25f * gap || width > .72f * gap || c.size() < height * 1.7f
                 || c.size() > width * height * .65f) return 0;
@@ -476,6 +763,8 @@ final class ParentheticalFingerings {
             if (bend >= .10f * gap) return 1;
             if (bend <= -.10f * gap) return -1;
         }
+        if (compactClosingCurve && height >= 1.26f * gap && height < 1.35f * gap && bend <= -.10f * gap)
+            return -1;
         if (height >= 1.15f * gap && height < 1.35f * gap && bend >= .08f * gap
                 && c.top > 0 && rule.get(c.top - 1)) return 1;
         return 0;

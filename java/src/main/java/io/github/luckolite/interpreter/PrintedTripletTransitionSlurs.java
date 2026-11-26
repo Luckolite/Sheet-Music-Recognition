@@ -98,6 +98,140 @@ final class PrintedTripletTransitionSlurs {
                 : score.withSlurSource(new ScoreSlurSource(spans, slurs.noteOrigins(), candidates));
     }
 
+    /** Retain a complete thin phrase arc spanning four independently owned triplet groups. */
+    static ScorePageInterpretation recoverLongPhrases(ScorePageInterpretation score,
+            byte[] raw, byte[] normalized, int width, int height) {
+        if (raw == null || normalized == null || raw.length != (long) width * height
+                || normalized.length != raw.length) return score;
+        var source = score.slurSource();
+        var notes = score.notes();
+        if (source.noteOrigins().size() != notes.size()) return score;
+        var bars = score.measures();
+        var byBar = new HashMap<Integer, List<List<Integer>>>();
+        for (var group : score.beamSource().resolve().groups()) {
+            if (!group.source().bridges().equals(List.of(1, 1)) || !group.source().hooks().isEmpty()
+                    || group.columns().stream().anyMatch(c -> !c.usable() || c.owners().size() != 1)) continue;
+            var owners = group.columns().stream().map(c -> c.owners().get(0)).toList();
+            int measure = notes.get(owners.get(0)).measureIndex();
+            if (owners.stream().map(notes::get).anyMatch(n -> n.measureIndex() != measure
+                    || n.stemDirection() != -1 || n.beamCount() != 1 || n.tupletDivisor() != 3
+                    || n.tupletNormalNotes() != 2 || n.augmentationDots() != 0
+                    || !ClosedMonophonicSixteenths.regularBeamHead(n, 1))) continue;
+            byBar.computeIfAbsent(measure, m -> new ArrayList<>()).add(owners);
+        }
+        var notesPerBar = new int[bars.size()];
+        for (var note : notes) notesPerBar[note.measureIndex()]++;
+        var spans = new ArrayList<>(source.spans());
+        var candidates = new ArrayList<>(source.candidates());
+        for (int measure = 0; measure < bars.size(); measure++) {
+            var parts = byBar.get(measure);
+            if (parts == null || parts.size() != 4 || notesPerBar[measure] != 12) continue;
+            var row = parts.stream().flatMap(List::stream).distinct()
+                    .sorted(Comparator.comparingDouble(i -> notes.get(i).positionInMeasure())).toList();
+            if (row.size() != 12) continue;
+            var start = source.noteOrigins().get(row.get(0)).orElse(null);
+            var end = source.noteOrigins().get(row.get(11)).orElse(null);
+            if (start == null || end == null || start.pageIndex() != end.pageIndex()
+                    || start.noteIndex() >= end.noteIndex()
+                    || spans.stream().anyMatch(s -> s.start().pageIndex() == start.pageIndex()
+                            && s.end().pageIndex() == end.pageIndex() && s.start().noteIndex() <= end.noteIndex()
+                            && s.end().noteIndex() >= start.noteIndex())) continue;
+            var pending = candidates.stream().filter(s -> s.start().equals(start) && s.end().equals(end)).toList();
+            if (pending.size() > 1 || !pending.isEmpty() && (pending.get(0).placement() != ScoreSlurSpan.Placement.ABOVE
+                    || pending.get(0).lineType() != ScoreSlurSpan.LineType.SOLID)) continue;
+            var bar = bars.get(measure);
+            var a = longPhrase(raw, width, height, bar, bars, notes.get(row.get(0)), notes.get(row.get(11)));
+            if (a == null) continue;
+            var b = raw == normalized ? a
+                    : longPhrase(normalized, width, height, bar, bars, notes.get(row.get(0)), notes.get(row.get(11)));
+            if (!agrees(a, b)) continue;
+            int page = start.pageIndex();
+            var evidence = new ScoreSlurSpan.ArcEvidence(page, a.start().x() / (float) width,
+                    a.start().y() / height, a.end().x() / (float) width, a.end().y() / height);
+            String id = pending.isEmpty() ? "printed-long-triplet-phrase:" + page + ":" + start.noteIndex()
+                    : pending.get(0).id();
+            spans.add(new ScoreSlurPages.Span(id, start, end, ScoreSlurSpan.Placement.ABOVE,
+                    ScoreSlurSpan.LineType.SOLID, List.of(evidence)));
+            candidates.removeAll(pending);
+        }
+        return spans.size() == source.spans().size() ? score
+                : score.withSlurSource(new ScoreSlurSource(spans, source.noteOrigins(), candidates))
+                        .withClockContextSource(score.clockContextSource());
+    }
+
+    private static PrintedSlurContours.Bow longPhrase(byte[] ink, int width, int height,
+            MeasureRegion bar, List<MeasureRegion> page, ScoreNoteEvent first, ScoreNoteEvent last) {
+        float gap = (bar.bottom() - bar.top()) * height / 8.2f;
+        float span = (bar.right() - bar.left()) * width;
+        float ax = bar.left() * width + first.positionInMeasure() * span;
+        float bx = bar.left() * width + last.positionInMeasure() * span;
+        float ay = first.pageY() * height, by = last.pageY() * height;
+        if (gap < 10 || gap > 25 || bx - ax < 19 * gap || bx - ax > 38 * gap) return null;
+        var staff = WrappedMeasureBoundaries.verifiedStaffPockets(ink, width, height, bar, true);
+        if (staff == null) return null;
+        int left = Math.round(ax - gap), right = Math.round(bx + gap);
+        int top = Math.round(Math.min(ay, by) - 8 * gap), bottom = Math.round(Math.max(ay, by) - .75f * gap);
+        for (var other : page)
+            if (other.bottom() < bar.top() && other.left() * width <= right && other.right() * width >= left)
+                top = Math.max(top, Math.round(other.bottom() * height + .12f * gap));
+        if (left < 0 || right >= width || top < 0 || bottom >= height || bottom - top < 2 * gap) return null;
+        int w = right - left + 1, h = bottom - top + 1;
+        var patch = new byte[w * h];
+        for (int row = 0; row < h; row++) System.arraycopy(ink, (top + row) * width + left, patch, row * w, w);
+        for (int x = 0; x < w; x++) {
+            var frame = staff.at(left + x);
+            for (int i = 0; i < 5; i++) {
+                int y = Math.round(frame[0] - i * frame[1]) - top;
+                for (int row = Math.max(0, y - 2); row <= Math.min(h - 1, y + 2); row++)
+                    patch[row * w + x] = (byte) 255;
+            }
+        }
+        PrintedSlurContours.Bow result = null;
+        for (var component : RawNumeralComponents.captureLongWindow(patch, w, h, 0, 0, w - 1, h - 1, 165).components()) {
+            if (component.top <= 0 || component.bottom >= h - 1 || component.left <= 0 || component.right >= w - 1
+                    || Math.abs(left + component.left - ax) > gap * .78f
+                    || Math.abs(left + component.right - bx) > gap * .78f
+                    || component.bottom - component.top < 1.65f * gap) continue;
+            var bow = fitLongPhrase(component, patch, w, left, top, staff, gap);
+            if (bow == null || ay - bow.start().y() < .8f * gap || by - bow.end().y() < .8f * gap
+                    || ay - bow.start().y() > 3.5f * gap || by - bow.end().y() > 3.5f * gap) continue;
+            if (result != null) return null;
+            result = bow;
+        }
+        return result;
+    }
+
+    private static PrintedSlurContours.Bow fitLongPhrase(RawNumeralComponents.Component component,
+            byte[] patch, int width, int left, int top, StaffPitchTrack staff, float gap) {
+        int count = component.right - component.left + 1;
+        var upper = new int[count];
+        var lower = new int[count];
+        java.util.Arrays.fill(upper, Integer.MAX_VALUE);
+        for (int i = 0; i < component.size(); i++) {
+            int at = component.pixel(i), x = at % width - component.left, y = at / width;
+            upper[x] = Math.min(upper[x], y);
+            lower[x] = Math.max(lower[x], y);
+        }
+        var columns = new ArrayList<PrintedSlurContours.ForeignRun>(count);
+        for (int i = 0; i < count; i++) {
+            if (upper[i] == Integer.MAX_VALUE) return null;
+            int x = component.left + i, first = upper[i], last = first;
+            while (last < lower[i] && (patch[(last + 1) * width + x] & 255) <= 165) last++;
+            if (last - first + 1 > .43f * gap) {
+                if (i > .08f * count && i < .92f * count) return null;
+                continue;
+            }
+            columns.add(new PrintedSlurContours.ForeignRun(left + x,
+                    List.of(new PrintedSlurContours.RawBand(top + first, top + last))));
+        }
+        if (columns.size() < .91f * count) return null;
+        int trim = Math.round(.55f * gap);
+        var core = PrintedSlurContours.fitPixelCells(columns.subList(trim, columns.size() - trim), staff);
+        if (core == null || !core.above() || core.bendInGaps() < 1.6f || core.rmsInGaps() > .09f) return null;
+        return core;
+    }
+
+
     private static boolean agrees(PrintedSlurContours.Bow a, PrintedSlurContours.Bow b) {
         return a != null && b != null && Math.abs(a.start().x() - b.start().x()) <= 2
                 && Math.abs(a.end().x() - b.end().x()) <= 2

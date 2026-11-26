@@ -192,6 +192,10 @@ public final class MeterFontMatcher {
                 : readCrop(matcher, gray, width, refined, refined.firstLine(), refined.gap());
     }
 
+    Reading readOwnedCrop(byte[] gray, int width, MeterChangeDetector.Crop crop) {
+        return readCrop(this, gray, width, crop, crop.firstLine(), crop.gap());
+    }
+
     private static Reading readCrop(MeterFontMatcher matcher, byte[] gray, int width,
             MeterChangeDetector.Crop crop, int firstLine, float gap) {
         int cw = crop.right() - crop.left(), ch = crop.bottom() - crop.top();

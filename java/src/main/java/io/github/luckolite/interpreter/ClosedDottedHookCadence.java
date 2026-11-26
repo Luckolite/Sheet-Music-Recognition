@@ -41,13 +41,32 @@ final class ClosedDottedHookCadence {
                     || score.rests().stream().anyMatch(rest -> rest.measureIndex() == barIndex)) continue;
             boolean chromatic = meter.numerator() == 3 && row.size() == 13;
             boolean commonTime = meter.numerator() == 4
-                    && (row.size() == 10 || row.size() == 12 || row.size() == 18 || row.size() == 19 || row.size() == 20);
+                    && (row.size() == 10 || row.size() == 11 || row.size() == 12 || row.size() == 16 || row.size() == 18 || row.size() == 19 || row.size() == 20);
             if (!chromatic && !commonTime) continue;
             var bar = regions.get(m);
             var owners = row.stream().filter(i -> notes.get(i).stemDirection() == -1)
                     .sorted(Comparator.comparingDouble(i -> notes.get(i).positionInMeasure())).toList();
             var guests = row.stream().filter(i -> notes.get(i).stemDirection() != -1).toList();
-            boolean cadence = owners.size() == 9 && guests.size() == 1 && shaped(notes, owners, guests.get(0));
+            if (commonTime && owners.size() == 14 && (guests.size() == 2 || guests.size() == 4)
+                    && ClosedDottedSixteenths.provesEighthAndDottedGroups(
+                            notes, owners, guests, bar, raw, normalized, width, height)) {
+                var projected = projectRun(beams, owners, guests, physicalPage, true);
+                if (projected == beams) continue;
+                beams = projected;
+                for (int i = 0; i < owners.size(); i++) {
+                    int owner = owners.get(i), slot = i % 7;
+                    replacements[owner] = rhythm(notes.get(owner), slot == 0 ? 1 : slot % 2 == 1 ? 2 : 3,
+                            slot % 2);
+                }
+                repaired = true;
+                for (int guest : guests) suppressed.set(guest);
+                continue;
+            }
+            boolean ribbonCadence = owners.size() == 9 && guests.size() == 2
+                    && ClosedDottedSixteenths.provesDottedPairsWithBeamAliases(
+                            notes, row, bar, raw, normalized, width, height);
+            boolean cadence = ribbonCadence
+                    || owners.size() == 9 && guests.size() == 1 && shaped(notes, owners, guests.get(0));
             boolean fullRun = owners.size() == 16 && guests.size() == 4 && shapedRun(notes, owners, guests);
             boolean lowerRibbon = owners.size() == 16 && guests.size() == 3
                     && shapedLowerRibbon(notes, owners, guests);
@@ -72,7 +91,7 @@ final class ClosedDottedHookCadence {
                     if (note.beamCount() != depth || note.augmentationDots() != dots)
                         replacements[owner] = rhythm(note, depth, dots);
                 }
-                beams = projectRun(beams, owners, guests, physicalPage);
+                beams = projectRun(beams, owners, guests, physicalPage, false);
                 repaired = true;
                 for (int guest : guests) suppressed.set(guest);
                 continue;
@@ -104,18 +123,18 @@ final class ClosedDottedHookCadence {
                 repaired = true;
                 continue;
             }
-            if (cadence) {
+            if (cadence && !ribbonCadence) {
                 boolean atShoulder = notes.get(guests.get(0)).beamCount() == 2;
                 if (!proves(normalized, width, height, regions, m, heads, fragments.get(0),
                             normalizedStaffs, atShoulder)
                         || !proves(raw, width, height, regions, m, heads, fragments.get(0),
                             rawStaffs, atShoulder)) continue;
-            } else if (!provesRun(normalized, width, height, regions, m, heads, fragments,
+            } else if (!cadence && (!provesRun(normalized, width, height, regions, m, heads, fragments,
                             normalizedStaffs, lowerRibbon)
                     || !provesRun(raw, width, height, regions, m, heads, fragments,
-                            rawStaffs, lowerRibbon)) continue;
+                            rawStaffs, lowerRibbon))) continue;
             beams = projectRun(beams, cadence ? owners.subList(0, 8) : owners,
-                    guests, lowerRibbon ? physicalPage : -1);
+                    guests, lowerRibbon || ribbonCadence ? physicalPage : -1, false);
             if (lowerRibbon) {
                 for (int i = 0; i < owners.size(); i += 2) {
                     int owner = owners.get(i);
@@ -141,8 +160,8 @@ final class ClosedDottedHookCadence {
         return score.withBeamSource(beams).withNotes(retained, indices);
     }
 
-    private static ScoreBeamSource projectRun(ScoreBeamSource source, List<Integer> owners,
-            List<Integer> fragments, int physicalPage) {
+    static ScoreBeamSource projectRun(ScoreBeamSource source, List<Integer> owners,
+            List<Integer> fragments, int physicalPage, boolean eighthEntries) {
         var origins = new ArrayList<>(source.noteOrigins());
         if (physicalPage >= 0 && owners.stream().anyMatch(i -> origins.get(i).isEmpty())) {
             var unavailable = new HashSet<ScoreBeamSource.Anchor>();
@@ -185,12 +204,16 @@ final class ClosedDottedHookCadence {
         }
         var hooks = List.of(new ScoreBeamSource.Hook(1, 3, ScoreBeamSource.Direction.BACKWARD),
                 new ScoreBeamSource.Hook(3, 3, ScoreBeamSource.Direction.BACKWARD));
-        for (int first = 0; first < anchors.size(); first += 4) {
-            var columns = anchors.subList(first, first + 4).stream()
+        for (int first = 0; first < anchors.size();) {
+            boolean eighth = eighthEntries && first % 7 == 0;
+            int length = eighth ? 3 : 4;
+            var columns = anchors.subList(first, first + length).stream()
                     .map(a -> new ScoreBeamSource.Column(List.of(a))).toList();
             String id = "printed-beam:" + page + ":" + anchors.get(first).noteIndex();
             if (!ids.add(id)) return source;
-            groups.add(new ScoreBeamSource.Group(id, columns, List.of(3, 3, 3), hooks));
+            groups.add(new ScoreBeamSource.Group(id, columns, eighth ? List.of(1, 3) : List.of(3, 3, 3),
+                    eighth ? List.of(new ScoreBeamSource.Hook(2, 3, ScoreBeamSource.Direction.BACKWARD)) : hooks));
+            first += length;
         }
         return new ScoreBeamSource(groups, detached, origins);
     }

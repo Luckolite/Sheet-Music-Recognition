@@ -1592,6 +1592,665 @@ final class WrappedEighthTriplets {
         return normalized;
     }
 
+    /** A quarter-like response in the middle of a sloping beam can borrow the next head's shaft. */
+    static ScorePageInterpretation restoreBorrowedTripletRail(ScorePageInterpretation score,
+            byte[] gray, byte[] raw, int width, int height) {
+        if (gray == null || raw == null || gray.length != (long) width * height || raw.length != gray.length
+                || score.notes().isEmpty() || score.meterChanges().isEmpty()) return score;
+        var notes = score.notes();
+        var bars = score.measures();
+        var byBar = new ArrayList<List<Integer>>(bars.size());
+        for (int i = 0; i < bars.size(); i++) byBar.add(new ArrayList<>());
+        for (int i = 0; i < notes.size(); i++) byBar.get(notes.get(i).measureIndex()).add(i);
+        var excluded = new java.util.BitSet(bars.size());
+        for (var rest : score.rests()) excluded.set(rest.measureIndex());
+        var removed = new java.util.BitSet(notes.size());
+        var repaired = new ArrayList<Integer>();
+        var revised = new ArrayList<>(notes);
+        var meters = score.meterChanges();
+        ScoreMeterChange meter = null;
+        int next = 0;
+        for (int i = 0; i < bars.size(); i++) {
+            while (next < meters.size() && meters.get(next).measureIndex() <= i) meter = meters.get(next++);
+            var row = byBar.get(i);
+            if ((row.size() != 13 && row.size() != 14) || excluded.get(i) || meter == null || meter.numerator() != 4
+                    || meter.denominator() != 4 || bars.get(i).cadenceQuarterBeats() != 0) continue;
+            int clef = notes.get(row.get(0)).clefBottomDiatonic();
+            if (clef == ScoreNoteEvent.CLEF_UNKNOWN
+                    || row.stream().map(notes::get).anyMatch(n -> n.clefBottomDiatonic() != clef)) continue;
+            var aliases = row.stream().filter(owner -> borrowedTripletCandidate(notes.get(owner))).toList();
+            if (aliases.size() != row.size() - 12
+                    || aliases.stream().filter(owner -> notes.get(owner).beamCount() == 0).count() != 1) continue;
+            row.removeAll(aliases);
+            row.sort(Comparator.comparingDouble(owner -> notes.get(owner).positionInMeasure()));
+            if (row.stream().map(notes::get).filter(n -> n.beamCount() == 2).count() > 1
+                    || row.stream().map(notes::get).anyMatch(n -> n.beamCount() < 1 || n.beamCount() > 2
+                            || !ClosedMonophonicSixteenths.regularBeamHead(n, n.beamCount())
+                            || n.stemDirection() != -1 || n.augmentationDots() != 0 || n.tiedFromPrevious()
+                            || !(n.tupletDivisor() == 1 || n.tupletDivisor() == 3 && n.tupletNormalNotes() == 2)))
+                continue;
+            boolean proved = true;
+            var affectedGroups = new java.util.BitSet(4);
+            for (int owner : aliases) {
+                var alias = notes.get(owner);
+                int slot = 0;
+                while (slot < row.size()
+                        && notes.get(row.get(slot)).positionInMeasure() < alias.positionInMeasure()) slot++;
+                if (slot >= 12 || slot % 3 == 0 || affectedGroups.get(slot / 3)
+                        || !provesBorrowedTripletRail(gray, width, height, bars.get(i), notes, row, alias, slot)
+                        || !provesBorrowedTripletRail(raw, width, height, bars.get(i), notes, row, alias, slot)) {
+                    proved = false;
+                    break;
+                }
+                affectedGroups.set(slot / 3);
+            }
+            if (!proved) continue;
+            for (int owner : row) {
+                var note = notes.get(owner);
+                revised.set(owner, (note.beamCount() == 2 ? ClosingTripletRhythm.singleBeam(note) : note)
+                        .withTupletRatio(3, 2));
+            }
+            aliases.forEach(removed::set);
+            repaired.add(i);
+        }
+        if (removed.isEmpty()) return score;
+        var retained = java.util.stream.IntStream.range(0, notes.size()).filter(i -> !removed.get(i)).boxed().toList();
+        var edited = retained.stream().map(revised::get).toList();
+        var context = retainedBorrowedRailClock(score.clockContextSource(), notes, edited, retained);
+        if (context == null) return score;
+        var updated = score.withNotes(edited, retained);
+        var beams = projectBorrowedTripletRails(updated, repaired);
+        if (beams == null) return score;
+        return UnnumberedTripletInk.markRecoveredDownstemTriplets(
+                updated.withBeamSource(beams), repaired, raw, gray, width, height).withClockContextSource(context);
+    }
+
+    /** A closing double rail or detached parenthetical digit can imitate a stemless attack. */
+    static ScorePageInterpretation removeStemlessQuartetAliases(ScorePageInterpretation score,
+            byte[] gray, byte[] raw, int width, int height) {
+        if (gray == null || raw == null || gray.length != (long) width * height || raw.length != gray.length
+                || score.meterChanges().isEmpty()) return score;
+        var notes = score.notes();
+        var bars = score.measures();
+        var rows = new ArrayList<List<Integer>>(bars.size());
+        for (int i = 0; i < bars.size(); i++) rows.add(new ArrayList<>());
+        for (int i = 0; i < notes.size(); i++) rows.get(notes.get(i).measureIndex()).add(i);
+        var rests = new java.util.BitSet(bars.size());
+        for (var rest : score.rests()) rests.set(rest.measureIndex());
+        var removed = new java.util.BitSet(notes.size());
+        ScoreMeterChange meter = null;
+        int next = 0;
+        for (int i = 0; i < bars.size(); i++) {
+            while (next < score.meterChanges().size() && score.meterChanges().get(next).measureIndex() <= i)
+                meter = score.meterChanges().get(next++);
+            var bar = bars.get(i);
+            var row = rows.get(i);
+            if (meter == null || meter.denominator() != 4 || rests.get(i) || bar.cadenceQuarterBeats() != 0)
+                continue;
+            if (meter.numerator() == 4 && (row.size() == 17 || row.size() == 18))
+                removeDottedRailAliases(row, notes, bar, gray, raw, width, height, removed);
+            if (!(meter.numerator() == 3 && row.size() == 13
+                    || meter.numerator() == 4 && row.size() == 17)) continue;
+            row.sort(Comparator.comparingDouble(j -> notes.get(j).positionInMeasure()));
+            var aliases = row.stream().filter(j -> stemlessThirdRailHead(notes.get(j))).toList();
+            if (aliases.size() != 1) continue;
+            int owner = aliases.get(0), slot = row.indexOf(owner);
+            var response = notes.get(owner);
+            row.remove(slot);
+            var music = row.stream().map(notes::get).toList();
+            if (music.stream().anyMatch(n -> !ClosedMonophonicSixteenths.regularQuartetHead(n)
+                    || n.tupletDivisor() != 1 || n.augmentationDots() != 0 || n.tiedFromPrevious())) continue;
+            if (meter.numerator() == 3) {
+                if (slot == 11 && response.octaveShift() == 0
+                        && music.subList(8, 12).stream().allMatch(n -> n.stemDirection() == 1)
+                        && closingBeamOwnsHead(gray, width, height, bar, music, response)
+                        && closingBeamOwnsHead(raw, width, height, bar, music, response)) removed.set(owner);
+            } else if (slot >= 5 && slot <= 6 && ParentheticalFingerings.detachedQuartetFingeringOwnsHead(
+                    music, bar, response, raw, gray, width, height)) removed.set(owner);
+        }
+        if (removed.isEmpty()) return score;
+        var retained = java.util.stream.IntStream.range(0, notes.size())
+                .filter(i -> !removed.get(i)).boxed().toList();
+        var edited = retained.stream().map(notes::get).toList();
+        var context = retainedBorrowedRailClock(score.clockContextSource(), notes, edited, retained);
+        return context == null ? score : score.withNotes(edited, retained).withClockContextSource(context);
+    }
+
+    /** An alternating dotted line can produce both a stemless rail head and a reversed shaft reading. */
+    private static void removeDottedRailAliases(List<Integer> row, List<ScoreNoteEvent> notes,
+            MeasureRegion bar, byte[] gray, byte[] raw, int width, int height, java.util.BitSet removed) {
+        row.sort(Comparator.comparingDouble(i -> notes.get(i).positionInMeasure()));
+        var music = row.stream().map(notes::get).filter(n -> n.stemDirection() == -1).toList();
+        if (music.size() != 16) return;
+        for (int i = 0; i < music.size(); i++) {
+            var note = music.get(i);
+            if (note.beamCount() < 2 || note.beamCount() > 3
+                    || !ClosedMonophonicSixteenths.regularBeamHead(note, note.beamCount())
+                    || note.tupletDivisor() != 1
+                    || note.tiedFromPrevious() || note.augmentationDots() != (1 - i % 2)) return;
+        }
+        for (int owner : row) {
+            var response = notes.get(owner);
+            boolean stemless = stemlessThirdRailHead(response);
+            if (!stemless && !(response.stemDirection() == 1 && response.beamCount() == 0
+                    && response.unbeamedDurationBeats() == 1
+                    && plainRailAlias(response))) continue;
+            for (int i = 0; i + 2 < music.size(); i += 2) {
+                var before = music.get(i);
+                var after = music.get(i + 1);
+                if (response.positionInMeasure() <= before.positionInMeasure()
+                        || response.positionInMeasure() >= after.positionInMeasure()) continue;
+                if (before.octaveShift() == response.octaveShift() && after.octaveShift() == response.octaveShift()
+                        && dottedRailOwnsHead(gray, width, height, bar, before, after, music.get(i + 2), response)
+                        && dottedRailOwnsHead(raw, width, height, bar, before, after, music.get(i + 2), response))
+                    removed.set(owner);
+                break;
+            }
+        }
+    }
+
+    private static boolean dottedRailOwnsHead(byte[] ink, int width, int height, MeasureRegion bar,
+            ScoreNoteEvent before, ScoreNoteEvent after, ScoreNoteEvent next, ScoreNoteEvent response) {
+        float gap = (bar.bottom() - bar.top()) * height / 8.2f;
+        float left = bar.left() * width, span = (bar.right() - bar.left()) * width;
+        float x = left + span * response.positionInMeasure(), y = response.pageY() * height;
+        float bx = left + span * before.positionInMeasure(), ax = left + span * after.positionInMeasure();
+        if (gap < 10 || gap > 25 || x - bx < .35f * gap || x - bx > .82f * gap
+                || ax - x < 1.18f * gap || ax - x > 2.9f * gap
+                || y - after.pageY() * height < 2.9f * gap) return false;
+
+        var budget = new PrintedBeamShafts.Budget(120_000);
+        var preceding = PrintedBeamShafts.at(ink, width, height, bx, before.pageY() * height, gap, budget);
+        var following = PrintedBeamShafts.at(ink, width, height, ax, after.pageY() * height, gap, budget);
+        var alias = PrintedBeamShafts.at(ink, width, height, x, y, gap, budget);
+        if (preceding.size() != 1 || following.size() != 1) return false;
+        var a = preceding.get(0);
+        var b = following.get(0);
+        if (a.direction() != 1 || b.direction() != 1) return false;
+        if (response.stemDirection() == 0) {
+            if (!alias.isEmpty() || !matchesBeamRails(ink, width, height, a, b, gap, 2)) return false;
+        } else {
+            var beyond = PrintedBeamShafts.at(ink, width, height,
+                    left + span * next.positionInMeasure(), next.pageY() * height, gap, budget);
+            if (alias.size() != 1 || beyond.size() != 1 || beyond.get(0).direction() != 1
+                    || !matchesBeamRails(ink, width, height, b, beyond.get(0), gap, 2)) return false;
+            var reverse = alias.get(0);
+            if (reverse.direction() != -1 || reverse.left() < b.left() || reverse.right() > b.right()
+                    || Math.abs(reverse.endY() - after.pageY() * height) > .35f * gap) return false;
+        }
+        if (budget.refused()) return false;
+
+        float slope = (b.endY() - a.endY()) / ((b.left() + b.right() - a.left() - a.right()) * .5f);
+        int from = Math.round(x - .30f * gap), to = Math.round(x + .30f * gap);
+        if (slope < .05f || slope > .32f || from <= a.right() + 1 || to >= b.left() - 1
+                || y < 2 * gap || y + 2 * gap >= height) return false;
+        int min = height, max = 0;
+        for (int col = from; col <= to; col++) {
+            int center = Math.round(y + slope * (col - x));
+            int top = center, bottom = center;
+            if ((ink[center * width + col] & 255) >= 165) return false;
+            while (center - top < gap && (ink[(top - 1) * width + col] & 255) < 165) top--;
+            while (bottom - center < gap && (ink[(bottom + 1) * width + col] & 255) < 165) bottom++;
+            if (center - top < .56f * gap || center - top > .90f * gap
+                    || bottom - center < .42f * gap || bottom - center > .80f * gap) return false;
+            int thickness = bottom - top + 1;
+            min = Math.min(min, thickness);
+            max = Math.max(max, thickness);
+        }
+        return max - min <= .24f * gap;
+    }
+
+
+    private static boolean stemlessThirdRailHead(ScoreNoteEvent n) {
+        return n.beamCount() == 3 && n.stemDirection() == 0 && n.unbeamedDurationBeats() == 0
+                && plainRailAlias(n);
+    }
+
+    private static boolean plainRailAlias(ScoreNoteEvent n) {
+        return n.kind() == ScoreNoteEvent.Kind.PITCHED && n.visualSize() == ScoreNoteEvent.VisualSize.FULL
+                && n.staffIndex() == 0 && n.staffCount() == 1
+                && n.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_FROM_KEY
+                && n.tupletDivisor() == 1 && n.augmentationDots() == 0 && !n.crossStaffBeam()
+                && !n.tiedFromPrevious() && n.boundaryTies() == 0 && n.articulations() == 0
+                && n.harmonicSemitones() == 0 && n.openStringTouch() == null
+                && n.leadingRestBeats() == 0 && n.followingRestBeats() == 0;
+    }
+
+    private static boolean closingBeamOwnsHead(byte[] ink, int width, int height, MeasureRegion bar,
+            List<ScoreNoteEvent> notes, ScoreNoteEvent response) {
+        float gap = (bar.bottom() - bar.top()) * height / 8.2f;
+        if (gap < 10 || gap > 25
+                || !ClosedMonophonicSixteenths.provesRegularQuartets(ink, width, height, bar, notes.subList(8, 12)))
+            return false;
+        float left = bar.left() * width, span = (bar.right() - bar.left()) * width;
+        float x = left + span * response.positionInMeasure(), y = response.pageY() * height;
+        var penultimate = notes.get(10);
+        var last = notes.get(11);
+        float px = left + span * penultimate.positionInMeasure(), lx = left + span * last.positionInMeasure();
+        float ly = last.pageY() * height;
+        if (lx - x < .2f * gap || lx - x > .65f * gap || ly - y < 2.45f * gap || ly - y > 3.75f * gap)
+            return false;
+        var budget = new PrintedBeamShafts.Budget(90_000);
+        var a = PrintedBeamShafts.at(ink, width, height, px, penultimate.pageY() * height, gap, budget);
+        var b = PrintedBeamShafts.at(ink, width, height, lx, ly, gap, budget);
+        if (a.size() != 1 || b.size() != 1
+                || !PrintedBeamShafts.at(ink, width, height, x, y, gap, budget).isEmpty() || budget.refused())
+            return false;
+        var first = a.get(0);
+        var lastShaft = b.get(0);
+        float x0 = (first.left() + first.right()) * .5f, x1 = (lastShaft.left() + lastShaft.right()) * .5f;
+        float slope = (lastShaft.endY() - first.endY()) / (x1 - x0);
+        float tip = first.endY() + slope * (x - x0);
+        if (!(x0 + .9f * gap < x && x < x1 - .6f * gap) || Math.abs(slope) > .28f
+                || y - tip < .35f * gap || y - tip > .85f * gap) return false;
+        int from = Math.round(x - .65f * gap), to = Math.round(x + .27f * gap);
+        int smallest = height, largest = 0;
+        for (int col = from; col <= to; col++) {
+            float beamTop = tip + slope * (col - x);
+            int center = Math.round(y + slope * (col - x));
+            int top = center, bottom = center, edge = Math.round(beamTop + 1.57f * gap);
+            if (col < 0 || col >= width || top < 2 * gap || edge + 2 >= height
+                    || (ink[center * width + col] & 255) >= 165) return false;
+            while (top > beamTop - .34f * gap && (ink[(top - 1) * width + col] & 255) < 165) top--;
+            while (bottom < edge && (ink[(bottom + 1) * width + col] & 255) < 165) bottom++;
+            int thick = bottom - top + 1;
+            if (Math.abs(beamTop - top) > .24f * gap || thick < 1.03f * gap || thick > 1.48f * gap
+                    || (ink[(top - 1) * width + col] & 255) < 165
+                    || (ink[(bottom + 1) * width + col] & 255) < 165) return false;
+            smallest = Math.min(smallest, thick);
+            largest = Math.max(largest, thick);
+        }
+        return largest - smallest <= .22f * gap;
+    }
+
+    /** Recover a printed third hook where an overlong terminal sixteenth spills into the next bar. */
+    static ScorePageInterpretation restoreClosingUpstemHook(ScorePageInterpretation score,
+            byte[] gray, byte[] raw, int width, int height) {
+        if (gray == null || raw == null || gray.length != (long) width * height
+                || raw.length != gray.length || score.meterChanges().isEmpty()) return score;
+        var notes = score.notes();
+        var bars = score.measures();
+        var owners = java.util.stream.IntStream.range(0, notes.size()).boxed().toList();
+        var rows = new ArrayList<List<Integer>>(bars.size());
+        for (int i = 0; i < bars.size(); i++) rows.add(new ArrayList<>());
+        for (int owner : owners) rows.get(notes.get(owner).measureIndex()).add(owner);
+        var edited = new ArrayList<>(notes);
+        ScoreMeterChange meter = null;
+        int nextMeter = 0;
+        for (int i = 0; i < rows.size(); i++) {
+            while (nextMeter < score.meterChanges().size() && score.meterChanges().get(nextMeter).measureIndex() <= i)
+                meter = score.meterChanges().get(nextMeter++);
+            var row = rows.get(i);
+            var bar = bars.get(i);
+            final int measure = i;
+            if (meter == null || meter.numerator() != 4 || meter.denominator() != 4 || row.size() < 4
+                    || bar.cadenceQuarterBeats() != 0
+                    || score.rests().stream().anyMatch(r -> r.measureIndex() == measure)) continue;
+            row.sort(Comparator.comparingDouble(owner -> notes.get(owner).positionInMeasure()));
+            var music = row.stream().map(notes::get).toList();
+            if (music.stream().anyMatch(n -> n.tupletDivisor() != 1 || n.beamCount() < 1 || n.beamCount() > 3
+                    || !ClosedMonophonicSixteenths.regularBeamHead(n, n.beamCount()) || n.tiedFromPrevious())
+                    || music.stream().mapToDouble(ScoreNoteTiming::writtenDurationBeats).sum() != 4.125) continue;
+            var tail = music.subList(music.size() - 4, music.size());
+            if (!tail.stream().map(ScoreNoteEvent::beamCount).toList().equals(List.of(2, 3, 2, 2))
+                    || !tail.stream().map(ScoreNoteEvent::augmentationDots).toList().equals(List.of(1, 0, 1, 0))
+                    || tail.stream().anyMatch(n -> n.stemDirection() != 1)) continue;
+            if (!closingUpstemHook(gray, width, height, bar, tail)
+                    || !closingUpstemHook(raw, width, height, bar, tail)) continue;
+            int last = row.get(row.size() - 1);
+            edited.set(last, notes.get(last).withBeamAndStem(3, 1));
+        }
+        if (edited.equals(notes)) return score;
+        var context = retainedBorrowedRailClock(score.clockContextSource(), notes, edited, owners);
+        return context == null ? score : score.withNotes(edited, owners).withClockContextSource(context);
+    }
+
+    private static boolean closingUpstemHook(byte[] ink, int width, int height,
+            MeasureRegion bar, List<ScoreNoteEvent> tail) {
+        float gap = (bar.bottom() - bar.top()) * height / 8.2f;
+        if (gap < 10 || gap > 25 || !ClosedDottedSixteenths.hasClosingRule(ink, width, height, bar))
+            return false;
+        var budget = new PrintedBeamShafts.Budget(120_000);
+        var shafts = new ArrayList<PrintedBeamShafts.Shaft>(4);
+        float previous = Float.NaN;
+        for (var n : tail) {
+            float x = (bar.left() + (bar.right() - bar.left()) * n.positionInMeasure()) * width;
+            if (x - previous < 1.45f * gap || x - previous > 3.4f * gap) return false;
+            var found = PrintedBeamShafts.at(ink, width, height, x, n.pageY() * height, gap, budget);
+            if (found.size() != 1 || found.get(0).direction() != -1 || budget.refused()) return false;
+            var shaft = found.get(0);
+            if (!shafts.isEmpty() && !matchesBeamRails(ink, width, height, shafts.get(shafts.size() - 1),
+                    shaft, gap, 2)) return false;
+            shafts.add(shaft);
+            previous = x;
+        }
+        return bar.right() * width - previous < 2.35f * gap
+                && OwnedTertiaryBeamlets.hasShortHook(ink, width, height, shafts.get(1), gap, -1)
+                && !OwnedTertiaryBeamlets.hasShortHook(ink, width, height, shafts.get(2), gap, -1)
+                && OwnedTertiaryBeamlets.hasShortHook(ink, width, height, shafts.get(3), gap, -1);
+    }
+
+
+    /** Recover a closed dotted line when its rails also register a head and a dot. */
+    static ScorePageInterpretation restoreDottedLineRailOwnership(ScorePageInterpretation score,
+            byte[] gray, byte[] raw, int width, int height) {
+        if (gray == null || raw == null || gray.length != (long) width * height
+                || raw.length != gray.length || score.meterChanges().isEmpty()) return score;
+        var notes = score.notes();
+        var bars = score.measures();
+        var rows = new ArrayList<List<Integer>>(bars.size());
+        for (int i = 0; i < bars.size(); i++) rows.add(new ArrayList<>());
+        for (int i = 0; i < notes.size(); i++) rows.get(notes.get(i).measureIndex()).add(i);
+        var removed = new java.util.BitSet(notes.size());
+        var edited = new ArrayList<>(notes);
+        ScoreMeterChange meter = null;
+        int nextMeter = 0;
+        for (int i = 0; i < bars.size(); i++) {
+            while (nextMeter < score.meterChanges().size() && score.meterChanges().get(nextMeter).measureIndex() <= i)
+                meter = score.meterChanges().get(nextMeter++);
+            var bar = bars.get(i);
+            var row = rows.get(i);
+            final int measure = i;
+            if (meter == null || meter.numerator() != 4 || meter.denominator() != 4 || row.size() != 15
+                    || bar.cadenceQuarterBeats() != 0
+                    || score.rests().stream().anyMatch(r -> r.measureIndex() == measure)) continue;
+            row.sort(Comparator.comparingDouble(owner -> notes.get(owner).positionInMeasure()));
+            var aliases = row.stream().filter(owner -> {
+                var n = notes.get(owner);
+                return n.stemDirection() == 0 && n.beamCount() == 0 && n.unbeamedDurationBeats() == 1
+                        && plainRailAlias(n);
+            }).toList();
+            if (aliases.size() != 1) continue;
+            int alias = aliases.get(0), slot = row.indexOf(alias);
+            if (slot < 2 || slot >= 11) continue;
+            row.remove(slot);
+            var music = row.stream().map(notes::get).toList();
+            if (music.stream().anyMatch(n -> n.stemDirection() != -1 || n.tupletDivisor() != 1
+                    || n.beamCount() < 1 || n.beamCount() > 3 || n.tiedFromPrevious()
+                    || !ClosedMonophonicSixteenths.regularBeamHead(n, n.beamCount()))
+                    || music.stream().mapToDouble(ScoreNoteTiming::writtenDurationBeats).sum() != 4.25) continue;
+            var last = music.subList(10, 14);
+            if (!last.stream().map(ScoreNoteEvent::beamCount).toList().equals(List.of(2, 2, 2, 3))
+                    || !last.stream().map(ScoreNoteEvent::augmentationDots).toList().equals(List.of(1, 1, 1, 0)))
+                continue;
+            var before = music.get(slot - 1);
+            var after = music.get(slot);
+            if (before.beamCount() != 2 || before.augmentationDots() != 1 || after.beamCount() != 3
+                    || after.augmentationDots() != 0) continue;
+            var guest = notes.get(alias);
+            if (!coveredDoubleRail(gray, width, height, bar, before, after, guest)
+                    || !coveredDoubleRail(raw, width, height, bar, before, after, guest)
+                    || !ownsDottedClosingHook(gray, width, height, bar, last)
+                    || !ownsDottedClosingHook(raw, width, height, bar, last)) continue;
+            removed.set(alias);
+            edited.set(row.get(11), ClosedDottedHookCadence.rhythm(last.get(1), 3, 0));
+        }
+        if (removed.isEmpty()) return score;
+        var owners = java.util.stream.IntStream.range(0, notes.size()).filter(i -> !removed.get(i)).boxed().toList();
+        var retained = owners.stream().map(edited::get).toList();
+        var context = retainedBorrowedRailClock(score.clockContextSource(), notes, retained, owners);
+        return context == null ? score : score.withNotes(retained, owners).withClockContextSource(context);
+    }
+
+    private static boolean coveredDoubleRail(byte[] ink, int width, int height, MeasureRegion bar,
+            ScoreNoteEvent before, ScoreNoteEvent after, ScoreNoteEvent guest) {
+        float gap = (bar.bottom() - bar.top()) * height / 8.2f;
+        if (gap < 10 || gap > 25) return false;
+        float left = bar.left() * width, span = (bar.right() - bar.left()) * width;
+        float x = left + span * guest.positionInMeasure(), y = guest.pageY() * height;
+        var budget = new PrintedBeamShafts.Budget(90_000);
+        var a = PrintedBeamShafts.at(ink, width, height, left + span * before.positionInMeasure(),
+                before.pageY() * height, gap, budget);
+        var b = PrintedBeamShafts.at(ink, width, height, left + span * after.positionInMeasure(),
+                after.pageY() * height, gap, budget);
+        if (a.size() != 1 || b.size() != 1
+                || !PrintedBeamShafts.at(ink, width, height, x, y, gap, budget).isEmpty()
+                || budget.refused()) return false;
+        var first = a.get(0);
+        var last = b.get(0);
+        if (first.direction() != 1 || last.direction() != 1
+                || !matchesBeamRails(ink, width, height, first, last, gap, 2)) return false;
+        float sx = (first.left() + first.right()) * .5f;
+        float ex = (last.left() + last.right()) * .5f;
+        if (x - sx < gap || ex - x < gap || ex - sx > 4.2f * gap || y < gap || y + gap >= height)
+            return false;
+        float slope = (last.endY() - first.endY()) / (ex - sx);
+        float depth = first.endY() + (x - sx) * slope - y;
+        if (Math.abs(slope) > .20f || depth < .45f * gap || depth > .82f * gap) return false;
+        for (int col = Math.round(x - .34f * gap); col <= Math.round(x + .34f * gap); col++) {
+            int center = Math.round(y + slope * (col - x));
+            if ((ink[center * width + col] & 255) >= 165) return false;
+            int top = center, bottom = center;
+            while (center - top < gap && (ink[(top - 1) * width + col] & 255) < 165) top--;
+            while (bottom - center < gap && (ink[(bottom + 1) * width + col] & 255) < 165) bottom++;
+            if (center - top < .49f * gap || center - top > .87f * gap
+                    || bottom - center < .40f * gap || bottom - center > .73f * gap) return false;
+        }
+        return true;
+    }
+
+    private static boolean ownsDottedClosingHook(byte[] ink, int width, int height,
+            MeasureRegion bar, List<ScoreNoteEvent> tail) {
+        float gap = (bar.bottom() - bar.top()) * height / 8.2f;
+        if (gap < 10 || gap > 25 || !ClosedDottedSixteenths.hasClosingRule(ink, width, height, bar)) return false;
+        float left = bar.left() * width, span = (bar.right() - bar.left()) * width;
+        float[] x = new float[4], y = new float[4];
+        var shafts = new ArrayList<PrintedBeamShafts.Shaft>(4);
+        var budget = new PrintedBeamShafts.Budget(100_000);
+        for (int i = 0; i < 4; i++) {
+            x[i] = left + span * tail.get(i).positionInMeasure();
+            y[i] = tail.get(i).pageY() * height;
+            var found = PrintedBeamShafts.at(ink, width, height, x[i], y[i], gap, budget);
+            if (found.size() != 1 || found.get(0).direction() != 1 || budget.refused()) return false;
+            var s = found.get(0);
+            if (i > 0 && !matchesBeamRails(ink, width, height, shafts.get(i - 1), s, gap, 2)) return false;
+            shafts.add(s);
+        }
+        return WrappedTripletDotInk.uniqueCore(ink, width, height, x[0], y[0], x[1], gap) != null
+                && WrappedTripletDotInk.uniqueCore(ink, width, height, x[1], y[1], x[2], gap) == null
+                && WrappedTripletDotInk.uniqueCore(ink, width, height, x[2], y[2], x[3], gap) != null
+                && OwnedTertiaryBeamlets.hasShortHook(ink, width, height, shafts.get(1), gap, -1)
+                && OwnedTertiaryBeamlets.hasShortHook(ink, width, height, shafts.get(3), gap, -1);
+    }
+
+
+    private static ScoreClockContextSource retainedBorrowedRailClock(ScoreClockContextSource source,
+            List<ScoreNoteEvent> before, List<ScoreNoteEvent> after, List<Integer> retained) {
+        if (source.noteCount() != before.size()) return null;
+        int[] dest = new int[before.size()];
+        java.util.Arrays.fill(dest, -1);
+        for (int i = 0; i < retained.size(); i++) dest[retained.get(i)] = i;
+        var values = new ArrayList<ScoreClockContextSource.PrintedValue>();
+        for (var v : source.printedValues()) {
+            int index = dest[v.noteIndex()];
+            if (index < 0 || before.get(v.noteIndex()).beamCount() != after.get(index).beamCount()) {
+                if (v.status() == ScoreClockContextSource.Status.SOURCE_PREMISE) return null;
+                continue;
+            }
+            values.add(index == v.noteIndex() ? v : new ScoreClockContextSource.PrintedValue(
+                    index, v.measure(), v.staff(), v.staffs(), v.kind(), v.baseBeats(), v.dots(), v.beams(),
+                    v.route(), v.originalExit(), v.admissionFlags(), v.selectedMembers(), v.parentMembers(),
+                    v.parentLeaves(), v.residualMembers(), v.selectedSha256(), v.parentSha256(), v.model(), v.status()));
+        }
+        var voices = new ArrayList<ScoreClockContextSource.VoiceGroup>();
+        for (var group : source.voiceGroups()) {
+            var indices = group.noteIndices().stream().map(i -> dest[i]).toList();
+            if (indices.contains(-1)) return null;
+            voices.add(indices.equals(group.noteIndices()) ? group : new ScoreClockContextSource.VoiceGroup(
+                    group.measure(), group.staff(), group.staffs(), group.voiceId(), group.ordinal(), group.kind(),
+                    indices, group.restIndices(), group.membersSha256(), group.sourceRoute(), group.status()));
+        }
+        return new ScoreClockContextSource(source.origin(), after.size(), source.measureCount(), source.restCount(),
+                source.partWords(), source.numbers(), source.meters(), values, source.glyphLedgers(),
+                source.restValues(), voices, source.syncAnchors(), source.missing());
+    }
+
+    private static ScoreBeamSource projectBorrowedTripletRails(ScorePageInterpretation score, List<Integer> repaired) {
+        var source = score.beamSource();
+        var groups = new ArrayList<>(source.groups());
+        var detached = new ArrayList<>(source.detachedColumns());
+        for (int measure : repaired) {
+            var owners = java.util.stream.IntStream.range(0, score.notes().size())
+                    .filter(i -> score.notes().get(i).measureIndex() == measure).boxed()
+                    .sorted(Comparator.comparingDouble(i -> score.notes().get(i).positionInMeasure())).toList();
+            var anchors = owners.stream().map(source.noteOrigins()::get).flatMap(java.util.Optional::stream).toList();
+            var owned = new java.util.HashSet<>(anchors);
+            if (anchors.size() != 12 || owned.size() != 12
+                    || source.noteOrigins().stream().flatMap(java.util.Optional::stream).filter(owned::contains).count() != 12
+                    || anchors.stream().anyMatch(a -> a.pageIndex() != anchors.get(0).pageIndex())) return null;
+            var expected = new java.util.HashMap<List<ScoreBeamSource.Column>, ScoreBeamSource.Group>();
+            var columns = anchors.stream().map(a -> new ScoreBeamSource.Column(List.of(a))).toList();
+            for (int start = 0; start < columns.size(); start += 3) {
+                var key = columns.subList(start, start + 3);
+                var anchor = anchors.get(start);
+                expected.put(key, new ScoreBeamSource.Group(
+                        "borrowed-triplet-rail:" + anchor.pageIndex() + ":" + anchor.noteIndex(),
+                        key, List.of(1, 1), List.of()));
+            }
+            var retained = new ArrayList<ScoreBeamSource.Group>();
+            for (var group : groups) {
+                var members = group.columns().stream().flatMap(c -> c.members().stream()).toList();
+                if (members.stream().noneMatch(owned::contains)) {
+                    retained.add(group);
+                } else {
+                    if (!owned.containsAll(members)) return null;
+                    if (expected.containsKey(group.columns()) && group.bridges().equals(List.of(1, 1))
+                            && group.hooks().isEmpty())
+                        expected.put(group.columns(), group);
+                    else if (group.tupletMark() != null && group.tupletMark().numbered()) return null;
+                }
+            }
+            for (var column : detached) {
+                if (column.members().stream().anyMatch(owned::contains) && !owned.containsAll(column.members()))
+                    return null;
+            }
+            detached.removeIf(c -> owned.containsAll(c.members()));
+            for (int start = 0; start < columns.size(); start += 3)
+                retained.add(expected.get(columns.subList(start, start + 3)));
+            groups = retained;
+        }
+        return new ScoreBeamSource(groups, detached, source.noteOrigins());
+    }
+
+    private static boolean borrowedTripletCandidate(ScoreNoteEvent n) {
+        return n.kind() == ScoreNoteEvent.Kind.PITCHED && n.visualSize() == ScoreNoteEvent.VisualSize.FULL
+                && n.staffIndex() == 0 && n.staffCount() == 1
+                && (n.beamCount() == 0 && n.unbeamedDurationBeats() == 1
+                            && (n.stemDirection() == 0 || n.stemDirection() == 1)
+                        || n.beamCount() == 1 && n.unbeamedDurationBeats() == 0 && n.stemDirection() == 1)
+                && n.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_FROM_KEY && n.tupletDivisor() == 1
+                && n.augmentationDots() == 0 && !n.crossStaffBeam() && !n.tiedFromPrevious()
+                && n.boundaryTies() == 0 && n.articulations() == 0 && n.harmonicSemitones() == 0
+                && n.openStringTouch() == null && n.leadingRestBeats() == 0 && n.followingRestBeats() == 0;
+    }
+
+    static boolean provesBorrowedTripletRail(byte[] ink, int width, int height, MeasureRegion bar,
+            List<ScoreNoteEvent> notes, List<Integer> owners, ScoreNoteEvent alias, int slot) {
+        float left = bar.left() * width, span = (bar.right() - bar.left()) * width;
+        float gap = (bar.bottom() - bar.top()) * height / 8.2f;
+        if (gap < 10 || gap > 25) return false;
+        var staff = WrappedMeasureBoundaries.closedTripletStaff(ink, width, height, bar);
+        if (staff == null) return false;
+        float[] x = new float[12], y = new float[12];
+        var shafts = new PrintedBeamShafts.Shaft[12];
+        var budget = new PrintedBeamShafts.Budget(160_000);
+        int recovered = 0;
+        for (int i = 0; i < 12; i++) {
+            var n = notes.get(owners.get(i));
+            x[i] = left + span * n.positionInMeasure();
+            y[i] = n.pageY() * height;
+            if (i > 0 && (x[i] - x[i - 1] < 1.65f * gap || x[i] - x[i - 1] > 3.85f * gap)) return false;
+            var found = PrintedBeamShafts.at(ink, width, height, x[i], y[i], gap, budget);
+            if (budget.refused() || found.size() > 1) return false;
+            shafts[i] = found.isEmpty() ? OpeningShaftTrace.scan(ink, width, height, x[i], y[i], gap, 1)
+                    : found.get(0);
+            if (shafts[i] == null || shafts[i].direction() != 1 || found.isEmpty() && ++recovered > 1) return false;
+        }
+        if (!WrappedMeasureBoundaries.confirmsClosedTripletBar(ink, width, height, bar, x[0], x[11]))
+            return false;
+        for (int i = 0; i < 11; i++) {
+            var a = shafts[i];
+            var b = shafts[i + 1];
+            var dot = WrappedTripletDotInk.uniqueCore(ink, width, height, x[i], y[i], x[i + 1], gap);
+            if (dot != null && !headConnectedLedger(ink, width, height, x[i], y[i], dot, gap, .48f)) {
+                return false;
+            }
+            if (i % 3 == 2) {
+                if (!matchesBeamRails(ink, width, height, a, b, gap, 0)
+                        && !separateBorrowedTripletRails(ink, width, height, staff, a, b, gap)) {
+                    return false;
+                }
+            } else if (!matchesBeamRails(ink, width, height, a, b, gap, 1)) {
+                return false;
+            }
+        }
+        float ax = left + span * alias.positionInMeasure(), ay = alias.pageY() * height;
+        var a = shafts[slot - 1];
+        var b = shafts[slot];
+        if (ax - a.right() < .62f * gap || b.left() - ax < .26f * gap
+                || b.left() - ax > 1.55f * gap) {
+            return false;
+        }
+        var rival = PrintedBeamShafts.at(ink, width, height, ax, ay, gap, budget);
+        if (budget.refused() || rival.size() > 1) return false;
+        if (!rival.isEmpty()) {
+            var reverse = rival.get(0);
+            if (reverse.direction() != -1 || reverse.right() < b.left()
+                    || reverse.left() > b.right() || Math.abs(reverse.endY() - y[slot]) > .45f * gap)
+                return false;
+        }
+        float first = (a.left() + a.right()) * .5f, last = (b.left() + b.right()) * .5f;
+        float slope = (b.endY() - a.endY()) / (last - first);
+        float edge = a.endY() + slope * (ax - first);
+        if (Math.abs(slope) < .10f || Math.abs(slope) > .40f
+                || ay > edge + .12f * gap || ay < edge - .69f * gap) {
+            return false;
+        }
+        int from = Math.round(ax - .38f * gap);
+        int to = Math.min(b.left() - 3, Math.round(ax + .13f * gap));
+        if (from < 0 || to >= width || to - from < .44f * gap) return false;
+        for (int col = from; col <= to; col++) {
+            int bottom = Math.round(edge + slope * (col - ax));
+            if (bottom < Math.ceil(1.12f * gap) || bottom + Math.ceil(.53f * gap) >= height) return false;
+            int inner = 0;
+            for (int row = bottom - Math.round(.70f * gap); row <= bottom + Math.round(.06f * gap); row++)
+                if ((ink[row * width + col] & 255) < 165) inner++;
+            if (inner < .19f * gap) return false;
+            for (int side : new int[]{-1, 1}) {
+                int at = bottom + Math.round(side < 0 ? -.79f * gap : .20f * gap);
+                int limit = at + side * Math.round(.32f * gap);
+                boolean paper = false;
+                for (int row = at; row != limit; row += side)
+                    if ((ink[row * width + col] & 255) >= 205) { paper = true; break; }
+                if (!paper) return false;
+            }
+        }
+        return true;
+    }
+
+    static boolean separateBorrowedTripletRails(byte[] ink, int width, int height,
+            StaffPitchTrack staff, PrintedBeamShafts.Shaft a, PrintedBeamShafts.Shaft b, float gap) {
+        int mid = (a.right() + b.left()) / 2, half = Math.round(.34f * gap);
+        if (mid - half <= a.right() || mid + half >= b.left()) return false;
+        int top = Math.round(Math.min(a.endY(), b.endY()) - .65f * gap);
+        int bottom = Math.round(Math.max(a.endY(), b.endY()) + .4f * gap);
+        if (top < 0 || bottom >= height) return false;
+        for (int x = mid - half; x <= mid + half; x++) {
+            if (!staff.verifiedAt(x)) return false;
+            var frame = staff.at(x);
+            int run = 0;
+            for (int y = top; y <= bottom; y++) {
+                if ((ink[y * width + x] & 255) >= 155) { run = 0; continue; }
+                float line = (frame[0] - y) / frame[1];
+                int rule = Math.round(line);
+                if (rule < 0 || rule > 4 || Math.abs(line - rule) > .22f
+                        || ++run > Math.round(.31f * gap)) return false;
+            }
+        }
+        return true;
+    }
+
+
     private static boolean provesBoundedUpstemTriplets(byte[] ink, int width, int height, MeasureRegion bar,
             List<ScoreNoteEvent> notes, List<Integer> owners, float first, float last) {
         return WrappedMeasureBoundaries.confirmsClosedTripletBar(ink, width, height, bar, first, last)
@@ -2542,6 +3201,45 @@ final class WrappedEighthTriplets {
         projectNaturalNeighborBeams(score, groups, labels, corrected, original, width, height, words);
         return groups.equals(previous.groups()) ? score : score.withBeamSource(
                 new ScoreBeamSource(groups, previous.detachedColumns(), previous.noteOrigins()));
+    }
+
+    static ScorePageInterpretation restoreStaffOverlappedTriplets(
+            ScorePageInterpretation score, byte[] gray, byte[] raw, int width, int height) {
+        var notes = score.notes();
+        var meters = score.meterChanges();
+        if (gray == null || raw == null || gray.length != (long) width * height
+                || raw.length != gray.length || notes.isEmpty() || meters.isEmpty()) return score;
+        var regions = score.measures();
+        var grouped = new ArrayList<List<Integer>>(regions.size());
+        for (int i = 0; i < regions.size(); i++) grouped.add(new ArrayList<>());
+        for (int i = 0; i < notes.size(); i++) grouped.get(notes.get(i).measureIndex()).add(i);
+        var rests = new java.util.BitSet(regions.size());
+        for (var rest : score.rests()) rests.set(rest.measureIndex());
+        var recovered = new ArrayList<Integer>();
+        var changed = new ArrayList<>(notes);
+        ScoreMeterChange meter = null;
+        int nextMeter = 0;
+        for (int measure = 0; measure < regions.size(); measure++) {
+            while (nextMeter < meters.size() && meters.get(nextMeter).measureIndex() <= measure)
+                meter = meters.get(nextMeter++);
+            var owners = grouped.get(measure);
+            if (meter == null || meter.numerator() != 4 || meter.denominator() != 4
+                    || rests.get(measure) || owners.size() != 12
+                    || owners.stream().map(notes::get).anyMatch(note -> note.beamCount() != 1)
+                    || owners.stream().map(notes::get).allMatch(note -> note.tupletDivisor() == 3)
+                    || owners.stream().map(notes::get).noneMatch(note -> note.augmentationDots() == 1
+                            || note.tupletDivisor() == 3 && note.tupletNormalNotes() == 2)) continue;
+            var proof = proveCommonTimeSingleRails(notes, owners, regions, measure, gray, raw,
+                    width, height, true, false);
+            if (proof == null) continue;
+            for (int owner : owners) changed.set(owner, proof.get(owner).withTupletRatio(3, 2));
+            recovered.add(measure);
+        }
+        if (recovered.isEmpty()) return score;
+        var updated = score.withNotes(changed, java.util.stream.IntStream.range(0, notes.size()).boxed().toList())
+                .withClockContextSource(score.clockContextSource());
+        var beamed = completeRestoredTripletBeams(updated, recovered, gray, raw, width, height);
+        return UnnumberedTripletInk.markRecoveredDownstemTriplets(beamed, recovered, raw, gray, width, height);
     }
 
     static ScorePageInterpretation completeRestoredTripletBeams(

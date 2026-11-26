@@ -11,6 +11,83 @@ final class UnnumberedTripletInk {
 
     record Rows(int first, int last) {}
 
+    /** Preserve missing numerals only on closed single-rail groups recovered against both source planes. */
+    static ScorePageInterpretation markRecoveredDownstemTriplets(ScorePageInterpretation score,
+            List<Integer> recovered, byte[] raw, byte[] normalized, int width, int height) {
+        if (recovered.isEmpty() || raw == null || normalized == null
+                || raw.length != (long) width * height || normalized.length != raw.length) return score;
+        var beam = score.beamSource();
+        var bars = score.measures();
+        var notes = score.notes();
+        var selected = new java.util.HashSet<String>();
+        for (var group : beam.resolve().groups()) {
+            var original = group.source();
+            if (original.tupletMark() != null || !original.bridges().equals(List.of(1, 1))
+                    || !original.hooks().isEmpty()
+                    || group.columns().stream().anyMatch(c -> !c.usable() || c.owners().size() != 1)) continue;
+            var members = group.columns().stream().map(c -> notes.get(c.owners().get(0))).toList();
+            int measure = members.get(0).measureIndex();
+            if (!recovered.contains(measure) || members.stream().anyMatch(note ->
+                    note.measureIndex() != measure || note.stemDirection() != -1 || note.beamCount() != 1
+                            || note.tupletDivisor() != 3 || note.tupletNormalNotes() != 2
+                            || note.augmentationDots() != 0)) continue;
+            var bar = bars.get(measure);
+            var rows = sourceRows(bar, bars, height);
+            if (clearRecoveredDownstemTriplet(raw, width, height, bar, rows, members)
+                    && clearRecoveredDownstemTriplet(normalized, width, height, bar, rows, members))
+                selected.add(original.id());
+        }
+        if (selected.isEmpty()) return score;
+        var groups = beam.groups().stream().map(g -> selected.contains(g.id())
+                ? new ScoreBeamSource.Group(g.id(), g.columns(), g.bridges(), g.hooks(),
+                        ScoreBeamSource.TupletMark.UNNUMBERED) : g).toList();
+        return score.withBeamSource(new ScoreBeamSource(groups, beam.detachedColumns(), beam.noteOrigins()));
+    }
+
+    private static boolean clearRecoveredDownstemTriplet(byte[] ink, int width, int height,
+            MeasureRegion bar, Rows rows, List<ScoreNoteEvent> members) {
+        float gap = (bar.bottom() - bar.top()) * height / 8.2f;
+        if (gap < 10 || gap > 25) return false;
+        var staff = WrappedMeasureBoundaries.verifiedTripletStaff(ink, width, height, bar);
+        if (staff == null) staff = WrappedMeasureBoundaries.verifiedTripletStaff(ink, width, height, bar, true);
+        if (staff == null) return false;
+        float[] x = new float[3], y = new float[3];
+        int firstTip = height, lastTip = 0;
+        var traced = new PrintedBeamShafts.Shaft[3];
+        boolean usedContrastTrace = false;
+        var budget = new PrintedBeamShafts.Budget(100_000);
+        for (int i = 0; i < 3; i++) {
+            var note = members.get(i);
+            x[i] = (bar.left() + note.positionInMeasure() * (bar.right() - bar.left())) * width;
+            y[i] = note.pageY() * height;
+            var shafts = PrintedBeamShafts.at(ink, width, height, x[i], y[i], gap, budget);
+            if (budget.refused() || shafts.size() > 1) return false;
+            var shaft = shafts.isEmpty() ? null : shafts.get(0);
+            if (shaft == null) {
+                // Timing can already have proved a faint shaft using local contrast.
+                if (usedContrastTrace || OpeningShaftTrace.scan(ink, width, height, x[i], y[i], gap, -1) != null)
+                    return false;
+                shaft = OpeningShaftTrace.scan(ink, width, height, x[i], y[i], gap, 1);
+                usedContrastTrace = true;
+            }
+            if (shaft == null || shaft.direction() != 1) return false;
+            traced[i] = shaft;
+            int tip = shaft.endY();
+            firstTip = Math.min(firstTip, tip);
+            lastTip = Math.max(lastTip, tip);
+        }
+        if (usedContrastTrace
+                && (!WrappedEighthTriplets.matchesBeamRails(ink, width, height, traced[0], traced[1], gap, 1)
+                        || !WrappedEighthTriplets.matchesBeamRails(ink, width, height, traced[1], traced[2], gap, 1)))
+            return false;
+        float top = Math.min(y[0], Math.min(y[1], y[2])), bottom = Math.max(y[0], Math.max(y[1], y[2]));
+        return !centeredThree(ink, width, height, x[1], top - 3.4f * gap, top - .4f * gap, gap, rows, staff)
+                && !centeredThree(ink, width, height, x[1], lastTip + .35f * gap,
+                        lastTip + 3.65f * gap, gap, rows, staff)
+                && clearRuledFingeringBands(ink, width, height, gap, x, y,
+                        top, bottom, firstTip, lastTip, rows, staff);
+    }
+
     /** A nearby system can place strokes inside an otherwise plausible search window. */
     static Rows sourceRows(MeasureRegion bar, List<MeasureRegion> page, int height) {
         float first = 0, last = 1;
@@ -1374,6 +1451,16 @@ final class UnnumberedTripletInk {
     /** A separate centered numeral can be joined to a staff rule at this print scale. */
     static boolean centeredThree(byte[] gray, int width, int height, float x,
             float top, float bottom, float gap, Rows rows, StaffPitchTrack staff) {
+        return centeredNumeral(gray, width, height, x, top, bottom, gap, rows, staff, false);
+    }
+
+    static boolean centeredNumeralCandidate(byte[] gray, int width, int height, float x,
+            float top, float bottom, float gap, Rows rows, StaffPitchTrack staff) {
+        return centeredNumeral(gray, width, height, x, top, bottom, gap, rows, staff, true);
+    }
+
+    private static boolean centeredNumeral(byte[] gray, int width, int height, float x,
+            float top, float bottom, float gap, Rows rows, StaffPitchTrack staff, boolean unresolved) {
         int l = Math.round(x - gap * 1.05f), r = Math.round(x + gap * 1.05f);
         int t = Math.max(rows.first(), Math.round(top));
         int b = Math.min(rows.last(), Math.round(bottom));
@@ -1393,6 +1480,10 @@ final class UnnumberedTripletInk {
             if (glyph.left <= 0 || glyph.right >= span - 1 || glyph.top <= 0 || glyph.bottom >= depth - 1
                     || w < gap * .36f || w > gap * 1.35f || h < gap * .72f || h > gap * 2.18f
                     || Math.abs(l + (glyph.left + glyph.right) * .5f - x) > gap * .65f) continue;
+            if (unresolved) {
+                if (glyph.size() >= gap * gap * .16f) return true;
+                continue;
+            }
             if (TripletRhythmDetector.isIsolatedThree(glyph, span)) return true;
             var shape = JoinedDigitTemplates.inspect(crop, span, depth, new java.util.BitSet(),
                     glyph.left, glyph.top, glyph.right, glyph.bottom, () -> {});
@@ -1518,6 +1609,9 @@ final class UnnumberedTripletInk {
                                     && !hasProtrudingStaffTick(start, end, gap, y, middle, slope * .06f, a, d))
                             && !(headsX != null && slope == 0
                                     && ownsTopStaffAndHeads(track,y,a,d,gap,headsX,headsY))
+                            && !(headsX != null && track != null && y > lower + 3.65f * gap
+                                    && y >= sourceRows.last - 1.65f * gap
+                                    && continuingBoundaryBow(staff, track, y, middle, slope * .06f, a, b, c, d, gap))
                             && (!octaveMarks
                                     || !dottedRibbonOwnsArm(staff, y, middle, slope * .06f, a, b, c, d, gap)
                                     && !archOwnsBracketArm(staff, y, middle, slope * .06f, a, b, c, d, gap))
@@ -1799,6 +1893,49 @@ final class UnnumberedTripletInk {
                 }
             }
             return dots >= 9 && across >= 3 && dots - across >= 3;
+        }
+
+        /** Ink near the lower system boundary can trace a shallow curve through both arm windows. */
+        private boolean continuingBoundaryBow(boolean[] staff, StaffPitchTrack track, int y,
+                float middle, float slope, int a, int b, int c, int d, float gap) {
+            int sheetHeight = plane.length / stride;
+            int extension = Math.round(4.5f * gap), vertical = Math.round(2.25f * gap);
+            int from = a - extension, to = d + extension;
+            if (from < 0 || to >= stride || y < vertical || y + vertical >= sheetHeight) return false;
+            var ink = RawNumeralComponents.captureLongWindow(
+                    plane, stride, sheetHeight, from, y - vertical, to, y + vertical, 205);
+            for (var stroke : ink.components()) {
+                if (stroke.left != from || stroke.right != to
+                        || stroke.top == y - vertical || stroke.bottom == y + vertical) continue;
+                int[] first = new int[to - from + 1], last = new int[first.length], counts = new int[first.length];
+                java.util.Arrays.fill(first, Integer.MAX_VALUE);
+                for (int i = 0; i < stroke.size(); i++) {
+                    int pixel = stroke.pixel(i), x = pixel % stride - from, row = pixel / stride;
+                    first[x] = Math.min(first[x], row);
+                    last[x] = Math.max(last[x], row);
+                    counts[x]++;
+                }
+                var columns = new java.util.ArrayList<PrintedSlurContours.ForeignRun>(first.length);
+                for (int i = 0; i < first.length; i++) {
+                    int thickness = last[i] - first[i] + 1;
+                    if (counts[i] == 0 || counts[i] != thickness || thickness > .62f * gap) break;
+                    columns.add(new PrintedSlurContours.ForeignRun(from + i,
+                            List.of(new PrintedSlurContours.RawBand(first[i], last[i]))));
+                }
+                if (columns.size() != first.length) continue;
+                var bow = PrintedSlurContours.fitPixelCells(columns, track);
+                if (bow == null || !bow.above() || bow.bendInGaps() < .30f || bow.rmsInGaps() > .07f) continue;
+                int leftResidual = 0, rightResidual = 0;
+                for (int x = a; x <= d; x++) {
+                    if (x > b && x < c) continue;
+                    int row = y + Math.round(slope * (x - middle));
+                    if (!dark(x, row, staff) || row >= first[x - from] && row <= last[x - from]) continue;
+                    if (x <= b) leftResidual++;
+                    else rightResidual++;
+                }
+                if (leftResidual < .63f * (b - a + 1) && rightResidual < .63f * (d - c + 1)) return true;
+            }
+            return false;
         }
 
         private boolean archOwnsBracketArm(boolean[] staff, int y, float middle, float slope,

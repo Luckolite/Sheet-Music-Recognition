@@ -605,6 +605,14 @@ public final class Main {
         if (tabs.isEmpty()) {
             score = IncompleteDownstemQuartets.complete(score,
                     decoderGray == null ? gray : decoderGray, gray, width, height);
+            score = ClosedDottedSixteenths.completeDottedQuartetBeams(score,
+                    new ScoreMeterMap(initialMeter.quarterBeats(), score.meterChanges()),
+                    gray, decoderGray == null ? gray : decoderGray, width, height);
+            var printedAccidentalOwners = new java.util.HashSet<Integer>();
+            for (var mark : accidentals)
+                printedAccidentalOwners.add(mark.noteIndex());
+            score = PrintedDottedPairSlurs.apply(score, gray, decoderGray == null ? gray : decoderGray,
+                    width, height, printedAccidentalOwners::contains);
             result.put("score", score);
             var fingerings = PrintedFingeringDigits.capture(
                     gray, decoderGray == null ? gray : decoderGray, width, height,
@@ -632,21 +640,38 @@ public final class Main {
             var extraTwos = ParentheticalFingerings.staffCrossedTwos(
                     parenthetical, fingerings, score, gray, decoderGray == null ? gray : decoderGray,
                     width, height);
+            var retained = new ArrayList<>(fingerings);
+            retained.addAll(extraTwos);
+            ClosedDottedSixteenths.includeDottedPairTerminalDigits(retained, score,
+                    new ScoreMeterMap(initialMeter.quarterBeats(), score.meterChanges()),
+                    gray, decoderGray == null ? gray : decoderGray, width, height);
             if (!fingerings.isEmpty()) {
-                var retained = new ArrayList<>(fingerings);
-                retained.addAll(extraTwos);
-                result.put("printedFingerings", retained);
-                result.put("score", WrappedEighthTriplets.retainTerminalFingerTriplets(
-                        score, fingerings, gray, decoderGray == null ? gray : decoderGray, width, height));
+                PrintedFingeringDigits.includeDottedTripletTerminalDigits(
+                        retained, score, events, gray, decoderGray == null ? gray : decoderGray,
+                        width, height);
+                var withTerminalFingers = WrappedEighthTriplets.retainTerminalFingerTriplets(
+                        score, fingerings, gray, decoderGray == null ? gray : decoderGray, width, height);
+                result.put("score", PrintedFingeringDigits.retainUnnumberedHighLedgerRuns(
+                        withTerminalFingers, fingerings, gray, decoderGray == null ? gray : decoderGray, width, height,
+                        java.util.Set.copyOf(wrapped.continuations())));
             }
+            var floorMeter = new ScoreMeterMap(initialMeter.quarterBeats(), score.meterChanges());
+            ClosedDottedSixteenths.includeDottedPairFloorDigits(retained, score, floorMeter,
+                    gray, decoderGray == null ? gray : decoderGray, width, height);
+            PrintedFingeringDigits.includeBeamedFloorFingerings(retained, score, floorMeter,
+                    gray, decoderGray == null ? gray : decoderGray, width, height);
+            if (!retained.isEmpty()) result.put("printedFingerings", retained);
+            var primaryFingerings = fingerings;
             if (!parenthetical.groups().isEmpty()) {
                 result.put("printedFingeringGroups", parenthetical.groups().stream().map(group -> {
                     var row = new java.util.LinkedHashMap<String,Object>();
                     row.put("startNoteIndex", group.startNoteIndex());
                     row.put("endNoteIndex", group.endNoteIndex());
                     row.put("placement", group.placement());
-                    if (extraTwos.stream().anyMatch(mark -> mark.noteIndex() == group.startNoteIndex()
-                            && mark.placement() == group.placement())) row.put("startDigit", 3);
+                    if (primaryFingerings.stream().anyMatch(mark -> mark.noteIndex() == group.startNoteIndex()
+                            && mark.placement() == group.placement() && mark.digit() != 3)
+                            || extraTwos.stream().anyMatch(mark -> mark.noteIndex() == group.startNoteIndex()
+                                    && mark.placement() == group.placement())) row.put("startDigit", 3);
                     return row;
                 }).toList());
             }

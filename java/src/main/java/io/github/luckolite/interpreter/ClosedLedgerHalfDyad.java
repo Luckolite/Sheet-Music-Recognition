@@ -107,6 +107,71 @@ final class ClosedLedgerHalfDyad {
                 .withClockContextSource(score.clockContextSource());
     }
 
+    /** Corrects a hollow closing head whose centroid fell in the adjacent staff space. */
+    static ScorePageInterpretation captureTerminalStaffLine(ScorePageInterpretation score,
+            byte[] raw, byte[] normalized, int width, int height) {
+        if (raw == null || normalized == null || raw.length != (long) width * height
+                || normalized.length != raw.length) return score;
+        var notes = score.notes();
+        ArrayList<ScoreNoteEvent> edited = null;
+        for (int i = 0; i + 1 < notes.size(); i++) {
+            var a = notes.get(i);
+            var b = notes.get(i + 1);
+            int barIndex = a.measureIndex();
+            if (b.measureIndex() != barIndex || i + 2 < notes.size()
+                    && notes.get(i + 2).measureIndex() == barIndex
+                    || !plainHalf(a, 0, 1) || !plainHalf(b, 0, 1)
+                    || a.stemDirection() != 1 || b.stemDirection() != 1) continue;
+            int lowerIndex = a.pageY() > b.pageY() ? i : i + 1;
+            var lower = notes.get(lowerIndex);
+            var upper = lowerIndex == i ? b : a;
+            int line = lower.staffStep() + 1;
+            if (line < 2 || line > 6 || line % 2 != 0 || upper.staffStep() != line + 2
+                    || upper.clefBottomDiatonic() != lower.clefBottomDiatonic()) continue;
+            var bar = score.measures().get(barIndex);
+            if (barIndex + 1 < score.measures().size()
+                    && score.measures().get(barIndex + 1).top() <= bar.bottom()) continue;
+            float nominal = (bar.bottom() - bar.top()) * height / 8.2f;
+            float x = headX(bar, lower, width), y = lower.pageY() * height;
+            float upperX = headX(bar, upper, width), upperY = upper.pageY() * height;
+            float right = bar.right() * width;
+            if (nominal < 12 || nominal > 23 || x < 4 * nominal || x + 4 * nominal >= width
+                    || upperY < 5 * nominal || y + 2 * nominal >= height
+                    || right - x < 2.4f * nominal || right - x > 4.8f * nominal
+                    || Math.abs(x - upperX) > .17f * nominal
+                    || y - upperY < 1.13f * nominal || y - upperY > 1.33f * nominal) continue;
+            if (!provesTerminalStaffLine(raw, width, height, bar, x, y, upperX, upperY, line, nominal)
+                    || !provesTerminalStaffLine(normalized, width, height, bar, x, y, upperX, upperY, line, nominal))
+                continue;
+            if (edited == null) edited = new ArrayList<>(notes);
+            edited.set(lowerIndex, lower.withStaffStep(line));
+        }
+        return edited == null ? score : score.withNotes(edited,
+                java.util.stream.IntStream.range(0, notes.size()).boxed().toList())
+                .withClockContextSource(score.clockContextSource());
+    }
+
+    private static boolean provesTerminalStaffLine(byte[] ink, int width, int height, MeasureRegion bar,
+            float x, float y, float upperX, float upperY, int step, float nominal) {
+        var rules = PrintedDirectionStaff.printedRules(ink, width, height, x,
+                bar.bottom() * height - 2.1f * nominal, nominal);
+        if (rules == null || Math.abs(rules[1] - nominal) > .12f * nominal) return false;
+        float gap = rules[1], line = rules[0] - .5f * step * gap;
+        if (Math.abs(line - gap - upperY) > .14f * gap || y - line < .19f * gap
+                || y - line > .35f * gap || !hollow(ink, width, upperX, line - gap, gap)
+                || !hollow(ink, width, x, line, gap)) return false;
+        // Below the line-centered oval, there must be paper before the next staff space.
+        int left = Math.round(x - .43f * gap), right = Math.round(x + .43f * gap);
+        int rim = Math.round(line + .46f * gap);
+        int rimInk = 0;
+        for (int col = left; col <= right; col++) if (dark(ink, width, col, rim)) rimInk++;
+        if (rimInk < .5f * (right - left + 1)) return false;
+        for (int row = Math.round(line + .68f * gap); row <= Math.round(line + .80f * gap); row++)
+            for (int col = left; col <= right; col++)
+                if (dark(ink, width, col, row)) return false;
+        return true;
+    }
+
     private static boolean repeatsWrittenSixth(ScoreNoteEvent prior, ScoreNoteEvent next, int step) {
         return next.staffStep() == step && next.clefBottomDiatonic() == prior.clefBottomDiatonic()
                 && next.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_FROM_KEY

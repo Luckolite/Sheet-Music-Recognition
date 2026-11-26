@@ -73,6 +73,67 @@ final class PrintedAccidentalSpineRecovery {
                 java.util.stream.IntStream.range(0, notes.size()).boxed().toList());
     }
 
+    /** Distinguish an owned flat from a sharp before a head with a corroborated double rail. */
+    static ScorePageInterpretation reconcileBeamedFlats(
+            ScorePageInterpretation score, byte[] labels, byte[] raw, byte[] normalized,
+            int width, int height, java.util.function.Consumer<SourceLocalAccidental.ProvedMark> printed) {
+        if (raw == null || normalized == null || labels == null || raw.length != (long) width * height
+                || raw.length != normalized.length || raw.length != labels.length) return score;
+        var notes = score.notes();
+        var candidates = new java.util.TreeSet<Integer>();
+        for (var group : score.beamSource().resolve().groups())
+            for (int i = 1; i < group.columns().size(); i++) {
+                var current = group.columns().get(i);
+                var previous = group.columns().get(i - 1);
+                if (group.bridgeMask(i - 1) != 3 || current.owners().size() != 1
+                        || previous.owners().size() != 1
+                        || previous.owners().get(0) + 1 != current.owners().get(0)) continue;
+                candidates.add(current.owners().get(0));
+            }
+        ArrayList<ScoreNoteEvent> edits = null;
+        for (int owner : candidates) {
+            var note = notes.get(owner);
+            var previous = notes.get(owner - 1);
+            if (note.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_SHARP
+                    || note.kind() != ScoreNoteEvent.Kind.PITCHED || note.staffCount() != 1
+                    || (note.stemDirection() != -1 && (note.stemDirection() != 1 || previous.stemDirection() != 1))
+                    || note.tiedFromPrevious() || note.boundaryTies() != 0
+                    || note.crossStaffBeam() || note.octaveShift() != 0
+                    || note.measureIndex() != previous.measureIndex()
+                    || note.visualSize() != ScoreNoteEvent.VisualSize.FULL) continue;
+            var bar = score.measures().get(note.measureIndex());
+            float gap = (bar.bottom() - bar.top()) * height / 8.2f;
+            float left = bar.left() * width, span = (bar.right() - bar.left()) * width;
+            float x = left + note.positionInMeasure() * span;
+            float px = left + previous.positionInMeasure() * span;
+            float y = note.pageY() * height;
+            if (gap < 10 || gap > 24 || x - px < 2.25f * gap || x - px > 4.4f * gap) continue;
+            boolean rawFlat = PrintedFlatGlyph.matchesOwnedInk(labels, raw, width, height, x, y, gap);
+            boolean normFlat = PrintedFlatGlyph.matchesOwnedInk(labels, normalized, width, height, x, y, gap);
+            boolean sharp = !AccidentalSlurSpines.proveInterruptedSharp(raw, width, px, x, y, gap).isEmpty()
+                    || !AccidentalSlurSpines.proveInterruptedSharp(normalized, width, px, x, y, gap).isEmpty();
+            if (!rawFlat || !normFlat || sharp) continue;
+            // This proof owns only the visible sign. A later occurrence may carry it.
+            boolean hasCarry = false;
+            for (int later = owner + 1; later < notes.size(); later++) {
+                var repeated = notes.get(later);
+                if (repeated.measureIndex() != note.measureIndex()) break;
+                if (repeated.diatonicPitchIdentity() == note.diatonicPitchIdentity()) {
+                    hasCarry = true;
+                    break;
+                }
+            }
+            if (hasCarry) continue;
+            if (edits == null) edits = new ArrayList<>(notes);
+            var flat = note.withWrittenAccidental(ScoreNoteEvent.ACCIDENTAL_FLAT);
+            edits.set(owner, flat);
+            printed.accept(new SourceLocalAccidental.ProvedMark(flat, ScoreNoteEvent.ACCIDENTAL_FLAT, false));
+        }
+        return edits == null ? score : score.withNotes(edits,
+                java.util.stream.IntStream.range(0, notes.size()).boxed().toList())
+                .withClockContextSource(score.clockContextSource());
+    }
+
     /** A narrow printed 1 above the preceding head can be misread as a flat on the next head. */
     static ScorePageInterpretation rejectPriorFingeringFlats(ScorePageInterpretation score,
             byte[] labels, byte[] raw, byte[] gray, int width, int height) {
@@ -168,7 +229,7 @@ final class PrintedAccidentalSpineRecovery {
         return end > start && thick >= .85f * (end - start + 1);
     }
 
-    /** Replace a decoded natural only when the repeat's printed shoulder proves another sign. */
+    /** Recover the owned accidental on a shortened repeat in a beamed pair. */
     static ScorePageInterpretation reconcileRepeatedMonophonicSigns(
             ScorePageInterpretation score, byte[] labels, byte[] raw, byte[] normalized,
             int width, int height, java.util.function.Consumer<SourceLocalAccidental.ProvedMark> printed) {
@@ -180,9 +241,15 @@ final class PrintedAccidentalSpineRecovery {
             var note = notes.get(i);
             var past = notes.get(i - 1);
             int measure = note.measureIndex();
+            int accidental = note.writtenAccidental();
+            boolean dottedFlat = (accidental == ScoreNoteEvent.ACCIDENTAL_FROM_KEY
+                            || accidental == ScoreNoteEvent.ACCIDENTAL_FLAT)
+                    && ClosedMonophonicSixteenths.regularBeamHead(note, 3) && regularDottedLead(past)
+                    && note.stemDirection() == -1 && note.augmentationDots() == 0
+                    && note.tupletDivisor() == 1 && !note.tiedFromPrevious();
             if (measure != past.measureIndex() || measure < 0 || measure >= score.measures().size()
-                    || note.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_NATURAL
-                    || !regularDyadHead(note) || !regularDyadHead(past)
+                    || (!dottedFlat && (accidental != ScoreNoteEvent.ACCIDENTAL_NATURAL
+                            || !regularDyadHead(note) || !regularDyadHead(past)))
                     || note.diatonicPitchIdentity() != past.diatonicPitchIdentity()
                     || note.octaveShift() != past.octaveShift()
                     || past.tiedFromPrevious()) continue;
@@ -190,7 +257,8 @@ final class PrintedAccidentalSpineRecovery {
             float gap = (bar.bottom() - bar.top()) * height / 8.2f;
             float x = headX(bar, note, width), previous = headX(bar, past, width);
             float y = note.pageY() * height;
-            if (gap < 10 || gap > 24 || x - previous < 1.85f * gap || x - previous > 3.3f * gap) continue;
+            if (gap < 10 || gap > 24 || x - previous < 1.85f * gap
+                    || x - previous > (dottedFlat ? 3.65f : 3.3f) * gap) continue;
             if (i + 1 < notes.size() && notes.get(i + 1).measureIndex() == measure
                     && headX(bar, notes.get(i + 1), width) - x < gap * 1.65f) continue;
             if (!AccidentalSlurSpines.prove(raw, width, previous, x, y, gap, ScoreNoteEvent.ACCIDENTAL_NATURAL).isEmpty()
@@ -199,16 +267,34 @@ final class PrintedAccidentalSpineRecovery {
             boolean sharp = agreedSign(raw, normalized, width, previous, x, y, gap, ScoreNoteEvent.ACCIDENTAL_SHARP);
             boolean flat = PrintedFlatGlyph.matchesOwnedInk(labels, raw, width, height, x, y, gap)
                     && PrintedFlatGlyph.matchesOwnedInk(labels, normalized, width, height, x, y, gap);
-            if (sharp == flat) continue;
+            if (sharp == flat || dottedFlat && (!flat || anySharp(raw, normalized, width, previous, x, y, gap)))
+                continue;
             int sign = sharp ? ScoreNoteEvent.ACCIDENTAL_SHARP : ScoreNoteEvent.ACCIDENTAL_FLAT;
-            if (edited == null) edited = new ArrayList<>(notes);
             var corrected = note.withWrittenAccidental(sign);
-            edited.set(i, corrected);
+            if (sign != accidental) {
+                if (dottedFlat && repeatedLater(notes, i, note)) continue;
+                if (edited == null) edited = new ArrayList<>(notes);
+                edited.set(i, corrected);
+            }
             printed.accept(new SourceLocalAccidental.ProvedMark(corrected, sign, false));
         }
         return edited == null ? score : score.withNotes(edited,
                 java.util.stream.IntStream.range(0, notes.size()).boxed().toList())
                 .withClockContextSource(score.clockContextSource());
+    }
+
+    private static boolean regularDottedLead(ScoreNoteEvent note) {
+        return ClosedMonophonicSixteenths.regularQuartetHead(note) && note.stemDirection() == -1
+                && note.augmentationDots() == 1 && note.tupletDivisor() == 1;
+    }
+
+    private static boolean repeatedLater(List<ScoreNoteEvent> notes, int owner, ScoreNoteEvent current) {
+        for (int i = owner + 1; i < notes.size(); i++) {
+            var later = notes.get(i);
+            if (later.measureIndex() != current.measureIndex()) return false;
+            if (later.diatonicPitchIdentity() == current.diatonicPitchIdentity()) return true;
+        }
+        return false;
     }
 
     /** Recover printed signs whose two spines belong to a head in a beamed sixth. */
@@ -788,6 +874,7 @@ final class PrintedAccidentalSpineRecovery {
                 || labels.length != area || source.length != area || normalized.length != area
                 || score.notes().size() > 2048) return original;
         original = retainTripletSharps(original, score, source, normalized, width, height);
+        original = retainBeamedFlatAndNaturalMarks(original, score, labels, source, normalized, width, height);
         var notes = score.notes();
         var marked = new HashSet<Integer>();
         for (var mark : original) marked.add(mark.noteIndex());
@@ -843,6 +930,43 @@ final class PrintedAccidentalSpineRecovery {
             }
         }
         return SourceLocalAccidental.includeProvedLocalMarks(original, proved, notes);
+    }
+
+    /** Attach a literal sign to an already decoded single-note beam without changing its pitch. */
+    private static List<SourceLocalAccidental.PrintedMark> retainBeamedFlatAndNaturalMarks(
+            List<SourceLocalAccidental.PrintedMark> known, ScorePageInterpretation score,
+            byte[] labels, byte[] raw, byte[] normalized, int width, int height) {
+        var notes = score.notes();
+        var owners = new HashSet<Integer>();
+        for (var mark : known) owners.add(mark.noteIndex());
+        var proved = new ArrayList<SourceLocalAccidental.ProvedMark>();
+        for (int i = 1; i < notes.size(); i++) {
+            var note = notes.get(i);
+            var prior = notes.get(i - 1);
+            int sign = note.writtenAccidental();
+            if (owners.contains(i) || (sign != ScoreNoteEvent.ACCIDENTAL_FLAT
+                        && sign != ScoreNoteEvent.ACCIDENTAL_NATURAL)
+                    || !eligiblePitched(note) || !eligiblePitched(prior)
+                    || note.measureIndex() != prior.measureIndex()
+                    || note.stemDirection() != -1 || prior.stemDirection() != -1
+                    || note.beamCount() < 2 || prior.beamCount() < 2
+                    || note.tupletDivisor() != 1 || prior.tupletDivisor() != 1
+                    || note.boundaryTies() != 0 || note.tiedFromPrevious()
+                    || note.crossStaffBeam() || prior.crossStaffBeam()
+                    || ((note.articulations() | prior.articulations()) & NoteOrnament.GRACE) != 0)
+                continue;
+            var bar = score.measures().get(note.measureIndex());
+            float gap = (bar.bottom() - bar.top()) * height / 8.2f;
+            float x = headX(bar, note, width), previous = headX(bar, prior, width), y = note.pageY() * height;
+            if (gap < 10 || gap > 24 || x - previous < 2.45f * gap || x - previous > 4.15f * gap)
+                continue;
+            boolean glyph = sign == ScoreNoteEvent.ACCIDENTAL_FLAT
+                    ? PrintedFlatGlyph.matchesOwnedInk(labels, raw, width, height, x, y, gap)
+                            && PrintedFlatGlyph.matchesOwnedInk(labels, normalized, width, height, x, y, gap)
+                    : agreedSign(raw, normalized, width, previous, x, y, gap, sign);
+            if (glyph) proved.add(new SourceLocalAccidental.ProvedMark(note, sign, false));
+        }
+        return proved.isEmpty() ? known : SourceLocalAccidental.includeProvedLocalMarks(known, proved, notes);
     }
 
     private static List<SourceLocalAccidental.PrintedMark> retainTripletSharps(

@@ -13,6 +13,16 @@ final class WrappedTripletDotInk {
         return uniqueCore(gray, width, height, headX, headY, nextX, gap, 1.44f);
     }
 
+    static Center singleAugmentationCore(byte[] gray, int width, int height,
+            float headX, float headY, float nextX, float gap) {
+        return uniqueCore(gray, width, height, headX, headY, nextX, gap, 2.4f);
+    }
+
+    static boolean hasIndependentCore(byte[] gray, int width, int height,
+            float headX, float headY, float nextX, float gap) {
+        return findCore(gray, width, height, headX, headY, nextX, gap, 1.44f, false) != null;
+    }
+
     static Center dottedHalfCore(byte[] gray, int width, int height,
             float headX, float headY, float closingX, float gap) {
         return uniqueCore(gray, width, height, headX, headY, closingX, gap, 1.65f);
@@ -20,6 +30,11 @@ final class WrappedTripletDotInk {
 
     private static Center uniqueCore(byte[] gray, int width, int height,
             float headX, float headY, float nextX, float gap, float horizontalReach) {
+        return findCore(gray, width, height, headX, headY, nextX, gap, horizontalReach, true);
+    }
+
+    private static Center findCore(byte[] gray, int width, int height,
+            float headX, float headY, float nextX, float gap, float horizontalReach, boolean requireUnique) {
         if (gray == null || gray.length != (long) width * height
                 || !Float.isFinite(headX + headY + nextX + gap) || gap < 10 || gap > 30) return null;
         int left = Math.round(headX + gap * .87f);
@@ -61,6 +76,7 @@ final class WrappedTripletDotInk {
                 if (attachedFaces > 1) continue;
                 if (lowerInk > faceMaximum && !ruleBeside(gray, width, x, y, gap, 1)
                         || upperInk > faceMaximum && !ruleBeside(gray, width, x, y, gap, -1)) continue;
+                if (!requireUnique) return new Center(x, y);
                 if (first == null) first = new Center(x, y);
                 if (Math.abs(x - first.x) > sameGlyph || Math.abs(y - first.y) > sameGlyph)
                     return null;

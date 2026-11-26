@@ -944,12 +944,59 @@ final class ClosedDottedSixteenths {
                 meter = score.meterChanges().get(nextMeter++);
             final int bar = i;
             if (meter == null
-                    || meter.numerator() != 4
                     || meter.denominator() != 4
-                    || (bars.get(i).size() != 9 && bars.get(i).size() != 16)
                     || score.rests().stream().anyMatch(rest -> rest.measureIndex() == bar))
                 continue;
             var region = score.measures().get(i);
+            int expected = 4 * meter.numerator();
+            var heads = bars.get(i);
+            if ((meter.numerator() == 3 || meter.numerator() == 4)
+                    && (heads.size() == expected || heads.size() == expected + 1)
+                    && raw != null && raw.length == gray.length) {
+                var original = new Ink(raw, w, h);
+                var order = new ArrayList<>(heads);
+                order.sort(Comparator.comparingDouble(Head::x));
+                Head alias = null;
+                boolean digitAlias = false;
+                if (order.size() > expected) {
+                    alias = provedInnerBeamAlias(original, ink, region, order);
+                    if (alias == null) {
+                        alias = terminalDottedPairAlias(order, region, h);
+                        digitAlias = alias != null;
+                    }
+                    if (alias != null) order.remove(alias);
+                }
+                if (order.size() == expected) {
+                    var repaired = repairVerifiedDottedPairs(original, ink, region, order, digitAlias);
+                    if (repaired != null && digitAlias
+                            && readDottedPairTerminal(score, original, ink, region, order, alias, List.of()) < 1)
+                        repaired = null;
+                    if (repaired != null) {
+                        if (alias != null) corrected.set(alias.index, null);
+                        for (int slot = 0; slot < order.size(); slot++)
+                            corrected.set(order.get(slot).index, repaired.get(slot));
+                        continue;
+                    }
+                }
+            }
+            if ((meter.numerator() == 3 || meter.numerator() == 4)
+                    && heads.size() > expected + 1 && heads.size() <= expected + 5
+                    && raw != null && raw.length == gray.length) {
+                var original = new Ink(raw, w, h);
+                var owners = heads.stream().filter(hd -> hd.note.stemDirection() == -1)
+                        .sorted(Comparator.comparingDouble(Head::x)).toList();
+                if (owners.size() == expected && provesDownstemRibbonAliases(score, original, ink, region, heads, owners)) {
+                    var repaired = repairVerifiedDottedPairs(original, ink, region, owners, true, true);
+                    if (repaired != null) {
+                        for (var head : heads)
+                            if (head.note.stemDirection() != -1) corrected.set(head.index, null);
+                        for (int slot = 0; slot < owners.size(); slot++)
+                            corrected.set(owners.get(slot).index, repaired.get(slot));
+                        continue;
+                    }
+                }
+            }
+            if (meter.numerator() != 4 || (bars.get(i).size() != 9 && bars.get(i).size() != 16)) continue;
             if (bars.get(i).size() == 9) {
                 if (raw != null && raw.length == gray.length) {
                     var missing = dottedPairsBeforeHalf(new Ink(raw, w, h), ink, region, bars.get(i));
@@ -1001,11 +1048,515 @@ final class ClosedDottedSixteenths {
                             gray, w, h, head.x, head.y, prior.x, prior.y, rules[1]))
                 corrected.set(head.index, rhythm(head.note, false));
         }
-        return corrected.equals(notes)
-                ? score
-                : score.withNotes(
-                        corrected,
-                        java.util.stream.IntStream.range(0, notes.size()).boxed().toList());
+        if (corrected.equals(notes)) return score;
+        var owners = IntStream.range(0, corrected.size()).filter(i -> corrected.get(i) != null).boxed().toList();
+        return score.withNotes(owners.stream().map(corrected::get).toList(), owners);
+    }
+
+    /** Reconcile multiple false attacks only when every disputed head is owned by printed beam ink. */
+    private static boolean provesDownstemRibbonAliases(
+            ScorePageInterpretation score, Ink raw, Ink normalized, MeasureRegion bar,
+            List<Head> heads, List<Head> owners) {
+        float gap = (bar.bottom() - bar.top()) * raw.h / 8.2f;
+        if (gap < 12 || gap > 24) return false;
+        int clef = owners.get(0).note.clefBottomDiatonic();
+        var claimedPairs = new java.util.HashMap<Integer, Head>();
+        for (var alias : heads) {
+            var n = alias.note;
+            if (n.stemDirection() == -1) continue;
+            if (!regularMarkings(n.withArticulations(n.articulations() & ~NoteOrnament.GRACE), 0)
+                    || n.unbeamedDurationBeats() != 0 && !(n.stemDirection() == 1
+                            && n.beamCount() == 0 && n.unbeamedDurationBeats() == 1)
+                    || n.clefBottomDiatonic() != clef || n.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_FROM_KEY
+                    || n.beamCount() > 2
+                    || (n.articulations() & ~NoteOrnament.GRACE) != 0
+                    || n.augmentationDots() != 0) return false;
+            if (n.stemDirection() == 0 && digitBelowPair(score, raw, normalized, bar, owners, alias, gap))
+                continue;
+            int pair = 0;
+            while (pair < owners.size() && alias.x >= owners.get(pair + 1).x) pair += 2;
+            if (pair == owners.size() || alias.x <= owners.get(pair).x) return false;
+            var priorAlias = claimedPairs.putIfAbsent(pair, alias);
+            if (priorAlias != null && (n.stemDirection() != 1 || priorAlias.note.stemDirection() != 1
+                    || Math.abs(priorAlias.x - alias.x) > .32f * gap
+                    || Math.abs(priorAlias.y - alias.y) < .87f * gap
+                    || Math.abs(priorAlias.y - alias.y) > 1.34f * gap)) return false;
+            var lead = owners.get(pair);
+            var hook = owners.get(pair + 1);
+            for (var ink : List.of(raw, normalized)) {
+                var a = PairedTremoloInk.stem(ink.pixels, ink.w, ink.h, lead.x, lead.y, gap, -1);
+                var b = PairedTremoloInk.stem(ink.pixels, ink.w, ink.h, hook.x, hook.y, gap, -1);
+                if (a == null || b == null || !ribbonInkOwnsAlias(ink, alias, lead, hook, a, b, gap))
+                    return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean digitBelowPair(ScorePageInterpretation score, Ink original, Ink prepared,
+            MeasureRegion bar, List<Head> owners, Head alias, float gap) {
+        for (int i = 1; i < owners.size(); i += 2) {
+            var owner = owners.get(i);
+            if (Math.abs(alias.x - owner.x) > .30f * gap || alias.y - owner.y < 4 * gap
+                    || alias.y - owner.y > 8 * gap) continue;
+            return readDottedPairTerminal(score, original, prepared, bar, owners.subList(0, i + 1),
+                    alias, List.of()) > 0;
+        }
+        return false;
+    }
+
+    private static boolean ribbonInkOwnsAlias(Ink ink, Head alias, Head lead, Head hook,
+            PairedTremoloInk.Stem a, PairedTremoloInk.Stem b, float gap) {
+        if (alias.x - a.x() < .55f * gap || alias.x > b.x() + 1
+                || alias.y - Math.max(lead.y, hook.y) < (alias.note.stemDirection() == 1 ? 1.95f : 2.15f) * gap)
+            return false;
+        float slope = (b.endY() - a.endY()) / (float) (b.x() - a.x());
+        if (Math.abs(slope) > .30f || !supportsPairRail(ink, a, b, slope, gap, .20f, .45f)
+                || !supportsPairRail(ink, a, b, slope, gap, .94f, 1.34f)) return false;
+        var shafts = PrintedBeamShafts.at(ink.pixels, ink.w, ink.h, alias.x, alias.y, gap,
+                new PrintedBeamShafts.Budget(24_000));
+        if (alias.note.stemDirection() == 1) {
+            if (shafts.size() != 1 || shafts.get(0).direction() != -1
+                    || b.x() < shafts.get(0).left() - 2 || b.x() > shafts.get(0).right() + 2
+                    || Math.abs(shafts.get(0).endY() - hook.y) > .35f * gap) return false;
+        } else if (!shafts.isEmpty()) return false;
+        float depth = b.endY() + slope * (alias.x - b.x()) - alias.y;
+        if (alias.note.stemDirection() == 1 && depth >= .35f * gap && depth <= 2.42f * gap
+                && b.x() - alias.x >= .18f * gap && b.x() - alias.x < .55f * gap) {
+            int x = Math.round(alias.x), y = Math.round(alias.y);
+            for (int px = x; px <= b.x(); px++)
+                if (ink.weight(px, y, 2) < 4) return false;
+            return provesBackwardDottedHook(ink, hook, lead, gap);
+        }
+        if (depth >= .35f * gap && depth <= 1.43f * gap && b.x() - alias.x >= .55f * gap) {
+            int radius = Math.round(.18f * gap), span = Math.round(.55f * gap), supported = 0;
+            for (int dx = -span; dx <= span; dx++)
+                if (ink.weight(Math.round(alias.x) + dx, Math.round(alias.y + slope * dx), radius)
+                        >= 2 * radius) supported++;
+            return supported >= 2 * span;
+        }
+        return depth >= 1.50f * gap && depth <= 2.62f * gap && b.x() - alias.x <= 1.03f * gap
+                && compactDownstemHook(ink, a, b, gap, depth);
+    }
+
+    /** A thick inward lobe is attached to the right shaft and ends well before the left shaft. */
+    private static boolean compactDownstemHook(Ink ink, PairedTremoloInk.Stem a, PairedTremoloInk.Stem b,
+            float gap, float aliasDepth) {
+        int span = b.x() - a.x();
+        if (span < 1.9f * gap || span > 3.8f * gap) return false;
+        float slope = (b.endY() - a.endY()) / (float) span;
+        if (Math.abs(slope) > .30f || !supportsPairRail(ink, a, b, slope, gap, .20f, .45f)
+                || !supportsPairRail(ink, a, b, slope, gap, .94f, 1.34f)) return false;
+        int near = Math.round(.65f * gap), far = Math.round(1.42f * gap);
+        for (int depth = Math.round(1.66f * gap); depth <= Math.round(2.42f * gap); depth++) {
+            if (aliasDepth > 0 && Math.abs(aliasDepth - depth) > .34f * gap) continue;
+            int hit = 0;
+            for (int dx = 1; dx <= near; dx++) {
+                int y = Math.round(b.endY() - slope * dx) - depth;
+                if (ink.weight(b.x() - dx, y, 2) >= 4) hit++;
+            }
+            int outer = Math.round(b.endY() - slope * far) - depth;
+            if (hit >= near - 1 && ink.weight(b.x() - far, outer, 2) == 0) return true;
+        }
+        return false;
+    }
+
+    private static boolean supportsPairRail(Ink ink, PairedTremoloInk.Stem a, PairedTremoloInk.Stem b,
+            float slope, float gap, float shallow, float deep) {
+        int margin = Math.round(.27f * gap);
+        int left = a.x() + margin, right = b.x() - margin;
+        if (right - left < gap) return false;
+        for (int depth = Math.round(shallow * gap); depth <= Math.round(deep * gap); depth++) {
+            int support = 0;
+            for (int x = left; x <= right; x++) {
+                int y = Math.round(b.endY() + slope * (x - b.x())) - depth;
+                if (ink.weight(x, y, 1) == 3) support++;
+            }
+            if (support >= (right - left + 1) * .85f) return true;
+        }
+        return false;
+    }
+
+    private static Head provedInnerBeamAlias(Ink raw, Ink normalized, MeasureRegion bar, List<Head> row) {
+        float gap = (bar.bottom() - bar.top()) * raw.h / 8.2f;
+        if (gap < 10 || gap > 27) return null;
+        var stemless = row.stream().filter(h -> h.note.stemDirection() == 0).toList();
+        if (stemless.size() != 1) return null;
+        var alias = stemless.get(0);
+        int slot = row.indexOf(alias);
+        if (slot == 0 || slot + 1 >= row.size() || !regular(alias.note, 2)) return null;
+        var owner = row.get(slot + 1);
+        if (alias.note.beamCount() == 1 && alias.note.augmentationDots() == 0
+                && alias.note.articulations() == 0 && slot % 2 == 1) {
+            var lead = row.get(slot - 1);
+            return provesMergedDownstemPair(raw, lead, alias, owner, gap)
+                    && provesMergedDownstemPair(normalized, lead, alias, owner, gap) ? alias : null;
+        }
+        if (slot % 2 != 0 || alias.note.beamCount() != 3
+                || (alias.note.articulations() & ~NoteArticulation.STACCATO) != 0) return null;
+        if (owner.note.stemDirection() != -1 || owner.note.clefBottomDiatonic() != alias.note.clefBottomDiatonic())
+            return null;
+        var terminal = row.get(row.size() - 1);
+        for (var source : List.of(raw, normalized)) {
+            var rules = localRules(source, bar.right() * raw.w - gap * .72f,
+                    terminal.y + terminal.note.staffStep() * gap * .5f, gap);
+            if (rules == null) return null;
+            var track = StaffPitchTrack.fromVerifiedSamples(List.of(
+                    new float[] {owner.x - gap, rules[0], rules[1]},
+                    new float[] {owner.x + gap, rules[0], rules[1]}));
+            if (!shaftBandAlias(source, alias, owner, rules[1], track)
+                    || !PrintedBeamShafts.at(source.pixels, source.w, source.h, alias.x, alias.y, rules[1],
+                            new PrintedBeamShafts.Budget(20_000)).isEmpty()) return null;
+        }
+        return alias;
+    }
+
+    /** A thick rail can borrow an apparent head between the two printed shafts of a dotted pair. */
+    private static boolean provesMergedDownstemPair(Ink ink, Head lead, Head alias, Head hook, float gap) {
+        if (lead.note.stemDirection() != -1 || hook.note.stemDirection() != -1
+                || lead.note.clefBottomDiatonic() != alias.note.clefBottomDiatonic()
+                || hook.note.clefBottomDiatonic() != alias.note.clefBottomDiatonic()
+                || lead.note.beamCount() != 2 || lead.note.augmentationDots() != 1
+                || alias.y - Math.max(lead.y, hook.y) < 2.5f * gap
+                || !PrintedBeamShafts.at(ink.pixels, ink.w, ink.h, alias.x, alias.y, gap,
+                        new PrintedBeamShafts.Budget(20_000)).isEmpty()) return false;
+        var left = PairedTremoloInk.stem(ink.pixels, ink.w, ink.h, lead.x, lead.y, gap, -1);
+        var right = PairedTremoloInk.stem(ink.pixels, ink.w, ink.h, hook.x, hook.y, gap, -1);
+        return left != null && right != null && Math.abs(left.endY() - right.endY()) <= .6f * gap
+                && liesInsideMergedRibbon(ink,
+                        List.of(new Shaft(left.x(), left.endY()), new Shaft(right.x(), right.endY())), alias, gap)
+                && WrappedTripletDotInk.singleAugmentationCore(
+                        ink.pixels, ink.w, ink.h, lead.x, lead.y, hook.x, gap) != null
+                && provesBackwardDottedHook(ink, hook, lead, gap);
+    }
+
+    /** A below-staff glyph can be misread as a stemless attack beneath a closing downstem. */
+    private static Head terminalDottedPairAlias(List<Head> row, MeasureRegion bar, int height) {
+        float gap = (bar.bottom() - bar.top()) * height / 8.2f;
+        if (gap < 10 || gap > 27) return null;
+        var stemless = row.stream().filter(h -> h.note.stemDirection() == 0).toList();
+        if (stemless.size() != 1) return null;
+        var alias = stemless.get(0);
+        int last = row.size() - 1;
+        var terminal = row.get(row.get(last) == alias ? last - 1 : last);
+        if ((row.get(last) != alias && row.get(last - 1) != alias)
+                || !regular(alias.note, 2) || alias.note.beamCount() != 3
+                || (alias.note.articulations() & ~NoteArticulation.STACCATO) != 0
+                || terminal.note.stemDirection() != -1
+                || alias.note.clefBottomDiatonic() != terminal.note.clefBottomDiatonic()
+                || Math.abs(alias.x - terminal.x) > .35f * gap
+                || alias.y - terminal.y < 4 * gap || alias.y - terminal.y > 9 * gap) return null;
+        return alias;
+    }
+
+    /** Restore four complete groups from the printed connectors after the clock has been fixed. */
+    static ScorePageInterpretation completeDottedQuartetBeams(ScorePageInterpretation score,
+            ScoreMeterMap meter, byte[] raw, byte[] normalized, int w, int h) {
+        if (raw == null || normalized == null || raw.length != (long) w * h
+                || raw.length != normalized.length || score.beamSource().noteOrigins().size() != score.notes().size())
+            return score;
+        var original = new Ink(raw, w, h);
+        var prepared = new Ink(normalized, w, h);
+        var beams = score.beamSource();
+        var complete = new java.util.HashSet<List<Integer>>();
+        for (var g : beams.resolve().groups())
+            if (g.columns().size() == 4 && g.columns().stream().allMatch(c -> c.usable() && c.owners().size() == 1)
+                    && g.source().bridges().equals(List.of(3, 3, 3)) && g.source().hooks().size() == 2)
+                complete.add(g.columns().stream().map(c -> c.owners().get(0)).toList());
+        var rows = groupedHeads(score, w, h);
+        for (int bar = 0; bar < rows.size(); bar++) {
+            final int index = bar;
+            if (meter.beatsInMeasure(bar) != 4 || rows.get(bar).size() != 16
+                    || score.rests().stream().anyMatch(r -> r.measureIndex() == index)) continue;
+            var row = rows.get(bar).stream().sorted(Comparator.comparingDouble(Head::x)).toList();
+            var owners = row.stream().map(Head::index).toList();
+            if (java.util.stream.IntStream.range(0, 4)
+                    .allMatch(group -> complete.contains(owners.subList(4 * group, 4 * group + 4)))) continue;
+            var region = score.measures().get(bar);
+            var proof = repairVerifiedDottedPairs(original, prepared, region, row, true, true);
+            if (proof == null || row.stream().anyMatch(hd -> hd.note.stemDirection() != -1)
+                    || !proof.equals(row.stream().map(Head::note).toList())
+                    || !dottedQuartetInk(original, region, row)
+                    || raw != normalized && !dottedQuartetInk(prepared, region, row)) continue;
+            beams = ClosedDottedHookCadence.projectRun(beams, owners, List.of(), -1, false);
+        }
+        return beams == score.beamSource() ? score : score.withBeamSource(beams);
+    }
+
+    private static boolean dottedQuartetInk(Ink ink, MeasureRegion bar, List<Head> row) {
+        float gap = (bar.bottom() - bar.top()) * ink.h / 8.2f;
+        var budget = new PrintedBeamShafts.Budget(420_000);
+        PrintedBeamShafts.Shaft previousAxis = null;
+        PairedTremoloInk.Stem previousStem = null;
+        for (int slot = 0; slot < row.size(); slot++) {
+            var head = row.get(slot);
+            var found = PrintedBeamShafts.at(ink.pixels, ink.w, ink.h, head.x, head.y, gap, budget);
+            if (budget.refused() || found.size() != 1 || found.get(0).direction() != 1) return false;
+            var axis = found.get(0);
+            var stem = PairedTremoloInk.stem(ink.pixels, ink.w, ink.h, head.x, head.y, gap, -1);
+            if (stem == null) return false;
+            if (previousAxis != null) {
+                if (slot % 4 == 0) {
+                    if (!WrappedEighthTriplets.cutBetweenRecoveredGroups(
+                            ink.pixels, ink.w, ink.h, bar, previousAxis, axis, gap)
+                            && !staffOnlyQuartetGap(ink, previousStem, stem, head, gap)) return false;
+                } else if (!WrappedEighthTriplets.matchesBeamRails(
+                        ink.pixels, ink.w, ink.h, previousAxis, axis, gap, 2)) return false;
+            }
+            if (slot % 2 == 0) {
+                if (WrappedTripletDotInk.singleAugmentationCore(
+                        ink.pixels, ink.w, ink.h, head.x, head.y, row.get(slot + 1).x, gap) == null) return false;
+            } else if (!provesBackwardDottedHook(ink, head, row.get(slot - 1), gap)
+                    && !compactDownstemHook(ink, previousStem, stem, gap, -1)) return false;
+            previousAxis = axis;
+            previousStem = stem;
+        }
+        return true;
+    }
+
+    // The gap may cross a staff stripe. Require bare paper between both groups off the ruled rows.
+    private static boolean staffOnlyQuartetGap(Ink ink, PairedTremoloInk.Stem left,
+            PairedTremoloInk.Stem right, Head owner, float gap) {
+        int distance = right.x() - left.x(), inset = Math.round(.34f * gap);
+        int mid = (left.x() + right.x()) / 2;
+        var rules = localRules(ink, mid, owner.y + owner.note.staffStep() * gap * .5f, gap);
+        if (rules == null || distance < 1.65f * gap) return false;
+        int top = Math.min(left.endY(), right.endY()) - Math.round(1.65f * gap);
+        int bottom = Math.max(left.endY(), right.endY()) + Math.round(.17f * gap);
+        int clear = 0;
+        for (int x = left.x() + inset; x <= right.x() - inset; x++) {
+            boolean empty = true;
+            for (int y = top; y <= bottom; y++) {
+                if (!ink.dark(x, y)) continue;
+                if (!(onRule(rules, y, .18f)
+                        && ink.dark(x - Math.round(.42f * gap), y)
+                        && ink.dark(x + Math.round(.42f * gap), y))) {
+                    empty = false;
+                    break;
+                }
+            }
+            clear = empty ? clear + 1 : 0;
+            if (clear >= .27f * gap) return true;
+        }
+        return false;
+    }
+
+
+    static void includeDottedPairTerminalDigits(List<PrintedFingeringDigits.Mark> marks,
+            ScorePageInterpretation score, ScoreMeterMap meter, byte[] raw, byte[] normalized, int w, int h) {
+        if (raw == null || normalized == null || raw.length != (long) w * h || raw.length != normalized.length)
+            return;
+        var original = new Ink(raw, w, h);
+        var prepared = new Ink(normalized, w, h);
+        var bars = groupedHeads(score, w, h);
+        var occupied = new java.util.HashSet<Integer>();
+        for (var mark : marks)
+            if (mark.placement() == PrintedFingeringDigits.Placement.BELOW) occupied.add(mark.noteIndex());
+        for (int i = 0; i < bars.size(); i++) {
+            float beats = meter.beatsInMeasure(i);
+            final int barIndex = i;
+            if ((beats != 3 && beats != 4) || bars.get(i).size() != 4 * beats
+                    || score.rests().stream().anyMatch(rest -> rest.measureIndex() == barIndex)) continue;
+            var region = score.measures().get(i);
+            var order = bars.get(i).stream().sorted(Comparator.comparingDouble(Head::x)).toList();
+            var terminal = order.get(order.size() - 1);
+            boolean downstems = order.stream().allMatch(head -> head.note.stemDirection() == -1);
+            if (terminal.note.stemDirection() != -1
+                    || repairVerifiedDottedPairs(original, prepared, region, order, true, downstems) == null) continue;
+            var owners = order.stream().map(Head::index).toList();
+            PrintedFingeringDigits.includeClosedDottedPairBeamDigits(marks, occupied, score, owners,
+                    raw, normalized, w, h);
+            if (downstems) {
+                float gap = (region.bottom() - region.top()) * h / 8.2f;
+                float floor = terminal.y + terminal.note.staffStep() * gap * .5f;
+                float edge = region.right() * w - gap * .72f;
+                var a = localRules(original, edge, floor, gap);
+                var b = localRules(prepared, edge, floor, gap);
+                if (a != null && b != null)
+                    PrintedFingeringDigits.includeClosedPairStaffThrees(
+                            marks, occupied, score, owners, raw, normalized, w, h, a, b);
+            }
+            if (downstems && beats == 4) {
+                var additions = new ArrayList<PrintedFingeringDigits.Mark>();
+                for (int end = 3; end + 1 < order.size(); end += 4) {
+                    var owner = order.get(end);
+                    if (occupied.contains(owner.index)) continue;
+                    int digit = readDottedPairTerminal(score, original, prepared, region,
+                            order.subList(0, end + 1), null, marks);
+                    if (digit > 0) additions.add(new PrintedFingeringDigits.Mark(
+                            owner.index, digit, PrintedFingeringDigits.Placement.BELOW));
+                }
+                marks.addAll(additions);
+            }
+            if (occupied.contains(terminal.index)) continue;
+            int digit = readDottedPairTerminal(score, original, prepared, region, order, null, marks);
+            if (digit > 0)
+                marks.add(new PrintedFingeringDigits.Mark(
+                        terminal.index, digit, PrintedFingeringDigits.Placement.BELOW));
+        }
+    }
+
+    static void includeDottedPairFloorDigits(List<PrintedFingeringDigits.Mark> marks,
+            ScorePageInterpretation score, ScoreMeterMap meter, byte[] raw, byte[] normalized, int width, int height) {
+        if (marks.size() < 3 || raw == null || normalized == null || raw.length != (long) width * height
+                || raw.length != normalized.length) return;
+        var original = new Ink(raw, width, height);
+        var prepared = new Ink(normalized, width, height);
+        var known = List.copyOf(marks);
+        var below = new java.util.HashMap<Integer, Integer>();
+        for (var mark : known) {
+            if (mark.placement() != PrintedFingeringDigits.Placement.BELOW) continue;
+            below.put(mark.noteIndex(), mark.digit());
+        }
+        var rows = groupedHeads(score, width, height);
+        for (int i = 0; i < rows.size(); i++) {
+            float span = meter.beatsInMeasure(i);
+            final int measure = i;
+            var row = rows.get(i);
+            long anchored = row.stream().filter(h -> below.containsKey(h.index)).count();
+            if ((span != 3 && span != 4) || row.size() != 4 * span || anchored < 3 || anchored == row.size()
+                    || row.stream().anyMatch(h -> h.note.stemDirection() != -1)
+                    || score.rests().stream().anyMatch(r -> r.measureIndex() == measure)) continue;
+            var ordered = row.stream().sorted(Comparator.comparingDouble(Head::x)).toList();
+            var proof = repairVerifiedDottedPairs(original, prepared, score.measures().get(i), ordered, true, true);
+            if (proof == null || !proof.equals(ordered.stream().map(Head::note).toList())) continue;
+            PrintedFingeringDigits.includeProvedStaffDigitRow(marks, score,
+                    ordered.stream().map(Head::index).toList(), below, raw, normalized, width, height);
+        }
+    }
+
+    private static int readDottedPairTerminal(ScorePageInterpretation score, Ink raw, Ink prepared,
+            MeasureRegion region, List<Head> row, Head alias, List<PrintedFingeringDigits.Mark> marks) {
+        var terminal = row.get(row.size() - 1);
+        float gap = (region.bottom() - region.top()) * raw.h / 8.2f;
+        float floor = terminal.y + terminal.note.staffStep() * gap * .5f;
+        float edge = region.right() * raw.w - gap * .72f;
+        var tracks = new ArrayList<StaffPitchTrack>(2);
+        for (var source : List.of(raw, prepared)) {
+            var rules = localRules(source, edge, floor, gap);
+            if (rules == null) return -1;
+            if (alias != null && !PrintedBeamShafts.at(source.pixels, source.w, source.h,
+                    alias.x, alias.y, rules[1], new PrintedBeamShafts.Budget(20_000)).isEmpty()) return -1;
+            tracks.add(StaffPitchTrack.fromVerifiedSamples(List.of(
+                    new float[] {terminal.x - gap, rules[0], rules[1]},
+                    new float[] {terminal.x + gap, rules[0], rules[1]})));
+        }
+        return PrintedFingeringDigits.readClosedDottedPairDigit(score, terminal.index,
+                alias == null ? -1 : alias.x, alias == null ? -1 : alias.y,
+                marks, raw.pixels, prepared.pixels, tracks.get(0), tracks.get(1), raw.w, raw.h);
+    }
+
+    /** The existing pairs supply the clock. Each changed dot or hook still needs its own ink. */
+    private static List<ScoreNoteEvent> repairVerifiedDottedPairs(
+            Ink raw, Ink normalized, MeasureRegion bar, List<Head> row, boolean verifyTerminalPair) {
+        return repairVerifiedDottedPairs(raw, normalized, bar, row, verifyTerminalPair, false);
+    }
+
+    private static List<ScoreNoteEvent> repairVerifiedDottedPairs(
+            Ink raw, Ink normalized, MeasureRegion bar, List<Head> row, boolean verifyTerminalPair,
+            boolean verifiedRibbon) {
+        float gap = (bar.bottom() - bar.top()) * raw.h / 8.2f;
+        float left = bar.left() * raw.w, right = bar.right() * raw.w;
+        if (gap < 10 || gap > 27 || bar.cadenceQuarterBeats() != 0
+                || row.get(0).x - left > (row.size() == 12 ? 5 : 2.7f) * gap
+                || right - row.get(row.size() - 1).x > 2.7f * gap) return null;
+        var next = new ArrayList<ScoreNoteEvent>(row.size());
+        int fixes = 0, exact = 0, clef = row.get(0).note.clefBottomDiatonic();
+        for (int i = 0; i < row.size(); i++) {
+            var h = row.get(i);
+            var n = h.note;
+            boolean dotted = i % 2 == 0;
+            if (!regular(n, 2) || n.clefBottomDiatonic() != clef || n.stemDirection() == 0
+                    || n.beamCount() < (verifiedRibbon && !dotted ? 1 : 2) || dotted && n.beamCount() != 2
+                    || !dotted && (n.stemDirection() != row.get(i - 1).note.stemDirection()
+                            || n.augmentationDots() > 1)
+                    || i > 0 && (h.x - row.get(i - 1).x < 1.45f * gap
+                            || h.x - row.get(i - 1).x > 4.5f * gap)) return null;
+            boolean match = n.beamCount() == (dotted ? 2 : 3) && n.augmentationDots() == (dotted ? 1 : 0);
+            if (match) exact++;
+            else fixes++;
+            next.add(match ? n : rhythm(n, dotted));
+        }
+        if ((!verifyTerminalPair && fixes == 0) || exact < row.size() * .60f) return null;
+        var terminal = row.get(row.size() - 1);
+        float floor = terminal.y + terminal.note.staffStep() * gap * .5f;
+        for (var source : List.of(raw, normalized)) {
+            var rules = localRules(source, right - gap * .72f, floor, gap);
+            if (rules == null || !barline(source, right, rules)) return null;
+            for (int i = 0; i < row.size(); i++) {
+                var head = row.get(i);
+                if (head.note == next.get(i) && (!verifyTerminalPair || i < row.size() - 2)) continue;
+                float nextX = i + 1 < row.size() ? row.get(i + 1).x : right;
+                if (i % 2 == 0) {
+                    if (WrappedTripletDotInk.singleAugmentationCore(
+                            source.pixels, source.w, source.h, head.x, head.y, nextX, gap) == null)
+                        return null;
+                    continue;
+                }
+                var lead = row.get(i - 1);
+                if (head.note.augmentationDots() != 0 && WrappedTripletDotInk.hasIndependentCore(
+                        source.pixels, source.w, source.h, head.x, head.y, nextX, gap)) return null;
+                if (head.note.beamCount() == 1) {
+                    var a = PairedTremoloInk.stem(source.pixels, source.w, source.h, lead.x, lead.y, gap, -1);
+                    var b = PairedTremoloInk.stem(source.pixels, source.w, source.h, head.x, head.y, gap, -1);
+                    if (a == null || b == null || b.x() <= a.x()) return null;
+                    float slope = (b.endY() - a.endY()) / (float) (b.x() - a.x());
+                    if (Math.abs(slope) > .30f || !supportsPairRail(source, a, b, slope, gap, .20f, .45f)
+                            || !supportsPairRail(source, a, b, slope, gap, .94f, 1.34f)) return null;
+                }
+                if (!provesBackwardDottedHook(source, head, lead, gap)) {
+                    if (!verifiedRibbon) return null;
+                    var a = PairedTremoloInk.stem(source.pixels, source.w, source.h, lead.x, lead.y, gap, -1);
+                    var b = PairedTremoloInk.stem(source.pixels, source.w, source.h, head.x, head.y, gap, -1);
+                    if (a == null || b == null || !compactDownstemHook(source, a, b, gap, -1)) return null;
+                }
+            }
+        }
+        float meter = row.size() / 4f;
+        for (int i = 0; i < next.size(); i++) {
+            var placement = ScoreNoteTiming.writtenPlacement(next.get(i), next, meter).orElse(null);
+            if (placement == null || placement.onsetBeats() != i / 2 * .5f + (i % 2 == 0 ? 0 : .375f)
+                    || placement.durationBeats() != (i % 2 == 0 ? .375f : .125f)) return null;
+        }
+        return next;
+    }
+
+    private static boolean provesBackwardDottedHook(Ink ink, Head head, Head lead, float gap) {
+        var owner = new OwnedTertiaryBeamlets.Head(head.index, head.note, head.x, head.y, gap);
+        var peer = new OwnedTertiaryBeamlets.Head(lead.index, lead.note, lead.x, lead.y, gap);
+        return OwnedTertiaryBeamlets.provesMonophonicBackwardHook(ink.pixels, ink.w, ink.h, owner, peer, gap)
+                || (head.note.stemDirection() == -1 && OwnedTertiaryBeamlets.provesBackwardHookOnJoinedRails(
+                        ink.pixels, ink.w, ink.h, head.x, head.y, lead.x, lead.y, gap))
+                || OwnedTertiaryBeamlets.provesBackwardHookFromStemTrace(ink.pixels, ink.w, ink.h, owner, peer, gap)
+                || thickUpstemHook(ink, head, lead, gap);
+    }
+
+    /** A heavy third hook can touch the inner rail, but ends before the clear double rail. */
+    private static boolean thickUpstemHook(Ink ink, Head head, Head lead, float gap) {
+        if (head.note.stemDirection() != 1) return false;
+        var b = PairedTremoloInk.stem(ink.pixels, ink.w, ink.h, head.x, head.y, gap, 1);
+        var a = PairedTremoloInk.stem(ink.pixels, ink.w, ink.h, lead.x, lead.y, gap, 1);
+        if (a == null || b == null || b.x() - a.x() < 2.15f * gap) return false;
+        float slope = (b.endY() - a.endY()) / (float) (b.x() - a.x());
+        if (Math.abs(slope) > .27f) return false;
+        int exposed = 0;
+        for (int d = Math.round(1.23f * gap); d <= Math.round(1.68f * gap); d++) {
+            int y = Math.round(b.endY() - slope * d), x = b.x() - d;
+            if (ink.weight(x, y + Math.round(.28f * gap), 1) == 3
+                    && ink.weight(x, y + Math.round(1.04f * gap), 1) == 3
+                    && ink.weight(x, y + Math.round(.73f * gap), 0) == 0) exposed++;
+        }
+        if (exposed < .23f * gap) return false;
+        for (int depth = Math.round(1.72f * gap); depth <= Math.round(2.08f * gap); depth++) {
+            int attached = 0, near = Math.round(.72f * gap);
+            for (int d = 1; d <= near; d++)
+                if (ink.weight(b.x() - d, Math.round(b.endY() - slope * d) + depth, 1) == 3) attached++;
+            int far = Math.round(1.25f * gap);
+            if (attached >= near - 1
+                    && ink.weight(b.x() - far, Math.round(b.endY() - slope * far) + depth, 1) == 0)
+                return true;
+        }
+        return false;
     }
 
     /** Recovers one misread short note in four fully owned dotted pairs before a half note. */
@@ -1064,6 +1615,112 @@ final class ClosedDottedSixteenths {
             }
         }
         return wrong;
+    }
+
+    /** Prove four dotted pairs, their beam fragments, and the independently barred half note. */
+    static boolean provesDottedPairsWithBeamAliases(
+            List<ScoreNoteEvent> notes, List<Integer> members, MeasureRegion region,
+            byte[] raw, byte[] normalized, int width, int height) {
+        var row = members.stream().map(index -> {
+            var note = notes.get(index);
+            float x = (region.left() + note.positionInMeasure() * (region.right() - region.left())) * width;
+            return new Head(index, note, x, note.pageY() * height);
+        }).toList();
+        return provesDottedPairsWithBeamAliases(new Ink(raw, width, height),
+                new Ink(normalized, width, height), region, row);
+    }
+
+    private static boolean provesDottedPairsWithBeamAliases(
+            Ink raw, Ink normalized, MeasureRegion region, List<Head> row) {
+        float gap = (region.bottom() - region.top()) * raw.h / 8.2f;
+        if (region.cadenceQuarterBeats() != 0 || gap < 10 || gap > 23) return false;
+
+        var ordered = row.stream().filter(h -> h.note.stemDirection() != 0)
+                .sorted(Comparator.comparingDouble(Head::x)).toList();
+        if (ordered.size() != 9) return false;
+        var aliases = row.stream().filter(h -> h.note.stemDirection() == 0).toList();
+        var last = ordered.get(8);
+        var direction = ordered.get(0).note.stemDirection();
+        if (direction != -1 || aliases.size() != 2) return false;
+        var clef = ordered.get(0).note.clefBottomDiatonic();
+        for (int slot = 0; slot < ordered.size(); slot++) {
+            var head = ordered.get(slot);
+            var note = head.note;
+            if (!regularMarkings(note, 1) || note.stemDirection() != direction
+                    || note.clefBottomDiatonic() != clef) return false;
+            if (slot > 0) {
+                float space = head.x - ordered.get(slot - 1).x;
+                if (space < gap * 1.3f || space > gap * 4.3f) return false;
+            }
+            if (slot == 8) {
+                if (note.unbeamedDurationBeats() != 2 || note.beamCount() != 0
+                        || note.augmentationDots() != 0) return false;
+            } else if (note.unbeamedDurationBeats() != 0) {
+                return false;
+            } else if (slot % 2 == 0) {
+                if (note.beamCount() != 2 || note.augmentationDots() != 1) return false;
+            } else if (note.beamCount() < 2 || note.beamCount() > 3 || note.augmentationDots() != 0) {
+                return false;
+            }
+        }
+        float right = region.right() * raw.w;
+        float floor = last.y + last.note.staffStep() * gap * .5f;
+        for (var plane : List.of(raw, normalized)) {
+            var rules = localRules(plane, right - gap * .72f, floor, gap);
+            if (rules == null || !barline(plane, right, rules) || !hollowDyadHead(plane, last, rules[1]))
+                return false;
+            PairedTremoloInk.Stem previous = null;
+            for (int slot = 0; slot < 8; slot++) {
+                var owner = ordered.get(slot);
+                var stem = PairedTremoloInk.stem(plane.pixels, plane.w, plane.h, owner.x, owner.y, gap, -1);
+                if (stem == null) return false;
+                if (previous != null) {
+                    if (stem.x() <= previous.x()) return false;
+                    float slope = (stem.endY() - previous.endY()) / (float) (stem.x() - previous.x());
+                    boolean connected = slot != 4;
+                    if (Math.abs(slope) > .30f
+                            || supportsPairRail(plane, previous, stem, slope, gap, .20f, .45f) != connected
+                            || supportsPairRail(plane, previous, stem, slope, gap, .94f, 1.34f) != connected)
+                        return false;
+                }
+                previous = stem;
+            }
+            for (var alias : aliases)
+                if (!cadenceBeamOwnsAlias(plane, ordered, alias, gap, clef)) return false;
+            for (int slot = 0; slot < 8; slot += 2) {
+                var dotted = ordered.get(slot);
+                var shortNote = ordered.get(slot + 1);
+                if (!dot(plane, dotted, shortNote.x, rules[1])
+                        || dot(plane, shortNote, ordered.get(slot + 2).x, rules[1])) return false;
+                boolean hook = provesBackwardDottedHook(plane, shortNote, dotted, gap);
+                if (!hook && !OwnedTertiaryBeamlets.provesMonophonicBackwardHook(
+                                plane.pixels, plane.w, plane.h,
+                                new OwnedTertiaryBeamlets.Head(
+                                        shortNote.index, shortNote.note, shortNote.x, shortNote.y, rules[1]),
+                                new OwnedTertiaryBeamlets.Head(
+                                        dotted.index, dotted.note, dotted.x, dotted.y, rules[1]),
+                                rules[1])) return false;
+            }
+        }
+        return true;
+    }
+
+    /** A stemless mask inside the two shared rails belongs to the printed beam. */
+    private static boolean cadenceBeamOwnsAlias(Ink ink, List<Head> owners, Head alias, float gap, int clef) {
+        var note = alias.note;
+        if (!regularMarkings(note, 0) || note.clefBottomDiatonic() != clef || note.articulations() != 0
+                || note.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_FROM_KEY)
+            return false;
+        for (int slot = 1; slot < 8; slot++) {
+            var left = owners.get(slot - 1);
+            var right = owners.get(slot);
+            if (alias.x <= left.x || alias.x >= right.x) continue;
+            var a = PairedTremoloInk.stem(ink.pixels, ink.w, ink.h, left.x, left.y, gap, -1);
+            var b = PairedTremoloInk.stem(ink.pixels, ink.w, ink.h, right.x, right.y, gap, -1);
+            return a != null && b != null && b.x() > a.x()
+                    && ribbonInkOwnsAlias(ink, alias, left, right, a, b, gap);
+        }
+        return false;
     }
 
     /** The first and final short notes may carry hooks on opposite sides of the staff. */
@@ -2274,7 +2931,7 @@ final class ClosedDottedSixteenths {
             if (missing.get(i) && !provesBackwardSixthHook(ink, left, right, gap, radius, ledgerRun))
                 return false;
         }
-        return aliases.stream().allMatch(alias -> liesInsideSixthRibbon(ink, axes, alias, gap));
+        return aliases.stream().allMatch(alias -> liesInsideMergedRibbon(ink, axes, alias, gap));
     }
 
     private static List<Shaft> dottedSixthAxes(
@@ -2348,7 +3005,7 @@ final class ClosedDottedSixteenths {
         return false;
     }
 
-    private static boolean liesInsideSixthRibbon(Ink ink, List<Shaft> axes, Head alias, float gap) {
+    private static boolean liesInsideMergedRibbon(Ink ink, List<Shaft> axes, Head alias, float gap) {
         for (int i = 1; i < axes.size(); i++) {
             if (i % 4 == 0) continue;
             var left = axes.get(i - 1);
@@ -3532,6 +4189,148 @@ final class ClosedDottedSixteenths {
         return new Proof(fragment,owners);
     }
 
+    /** Two eighths lead six dotted pairs in four independently separated, common-time groups. */
+    static boolean provesEighthAndDottedGroups(List<ScoreNoteEvent> notes, List<Integer> owners,
+            List<Integer> guests, MeasureRegion bar, byte[] raw, byte[] normalized, int width, int height) {
+        var heads = owners.stream().map(i -> dottedGroupHead(notes, i, bar, width, height)).toList();
+        var aliases = guests.stream().map(i -> dottedGroupHead(notes, i, bar, width, height)).toList();
+        for (int slot = 0; slot < heads.size(); slot++) {
+            var note = heads.get(slot).note;
+            int depth = slot % 7 == 0 ? 1 : 2;
+            if (!regular(note, 1) || note.clefBottomDiatonic() != heads.get(0).note.clefBottomDiatonic()
+                    || (slot % 7 == 0 && note.augmentationDots() != 0)
+                    || note.beamCount() != depth && !(slot % 7 > 0 && slot % 7 % 2 == 0 && note.beamCount() == 3))
+                return false;
+        }
+        for (var alias : aliases) {
+            var n = alias.note;
+            if (!regularMarkings(n, 0) || n.writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_FROM_KEY
+                    || n.clefBottomDiatonic() != heads.get(0).note.clefBottomDiatonic()
+                    || (n.articulations() & ~NoteArticulation.STACCATO) != 0) return false;
+        }
+        var original = new Ink(raw, width, height);
+        return provesEighthAndDottedGroups(original, bar, heads, aliases)
+                && (raw == normalized
+                        || provesEighthAndDottedGroups(new Ink(normalized, width, height), bar, heads, aliases));
+    }
+
+    private static Head dottedGroupHead(List<ScoreNoteEvent> notes, int index, MeasureRegion bar, int w, int h) {
+        var note = notes.get(index);
+        return new Head(index, note, (bar.left() + note.positionInMeasure() * (bar.right() - bar.left())) * w,
+                note.pageY() * h);
+    }
+
+    private static boolean provesEighthAndDottedGroups(
+            Ink ink, MeasureRegion bar, List<Head> heads, List<Head> aliases) {
+        float gap = (bar.bottom() - bar.top()) * ink.h / 8.2f;
+        float right = bar.right() * ink.w;
+        if (gap < 10 || gap > 25 || bar.cadenceQuarterBeats() != 0 || !hasClosingRule(ink.pixels, ink.w, ink.h, bar))
+            return false;
+        var budget = new PrintedBeamShafts.Budget(420_000);
+        var axes = new ArrayList<PrintedBeamShafts.Shaft>();
+        var stems = new ArrayList<PairedTremoloInk.Stem>();
+        for (int i = 0; i < heads.size(); i++) {
+            var head = heads.get(i);
+            var found = PrintedBeamShafts.at(ink.pixels, ink.w, ink.h, head.x, head.y, gap, budget);
+            if (budget.refused() || found.size() != 1 || found.get(0).direction() != 1) return false;
+            var shaft = found.get(0);
+            if (i > 0) {
+                var prior = axes.get(i - 1);
+                float distance = head.x - heads.get(i - 1).x;
+                int rails = i == 3 || i == 7 || i == 10 ? 0 : i == 1 || i == 8 ? 1 : 2;
+                if (distance < 1.55f * gap || distance > 4.25f * gap
+                        || !(rails == 0
+                                ? WrappedEighthTriplets.cutBetweenRecoveredGroups(
+                                        ink.pixels, ink.w, ink.h, bar, prior, shaft, gap)
+                                : WrappedEighthTriplets.matchesBeamRails(
+                                        ink.pixels, ink.w, ink.h, prior, shaft, gap, rails))) return false;
+            }
+            axes.add(shaft);
+            var stem = PairedTremoloInk.stem(ink.pixels, ink.w, ink.h, head.x, head.y, gap, -1);
+            if (stem == null) return false;
+            stems.add(stem);
+            if (i % 7 == 0) continue;
+            float next = i + 1 < heads.size() ? heads.get(i + 1).x : right;
+            if (i % 7 % 2 == 1) {
+                next = Math.min(next, head.x + 2.23f * gap);
+                var mark = WrappedTripletDotInk.singleAugmentationCore(
+                        ink.pixels, ink.w, ink.h, head.x, head.y, next, gap);
+                if (mark == null) mark = WrappedTripletDotInk.singleAugmentationCore(
+                        ink.pixels, ink.w, ink.h, head.x + .24f * gap, head.y, next, gap);
+                if (mark == null || mark.x() - head.x < .98f * gap) return false;
+            } else if (!provesBackwardDottedHook(ink, head, heads.get(i - 1), gap)
+                    && !compactDownstemHook(ink, stems.get(i - 1), stem, gap, -1)) {
+                return false;
+            }
+        }
+
+        for (var alias : aliases) {
+            if (staffAttachedGlyph(ink, alias, heads.get(10), stems.get(10), gap)) continue;
+            boolean owned = false;
+            for (int i = 2; i < heads.size(); i++) {
+                if (i == 3 || i == 7 || i == 8 || i == 10
+                        || alias.x <= stems.get(i - 1).x() || alias.x > stems.get(i).x() + 1) continue;
+                if (ribbonInkOwnsAlias(ink, alias, heads.get(i - 1), heads.get(i), stems.get(i - 1), stems.get(i), gap)
+                        || attachedShortHookAlias(ink, alias, heads.get(i), stems.get(i - 1), stems.get(i), gap)) {
+                    owned = true;
+                    break;
+                }
+            }
+            if (!owned) return false;
+        }
+        return true;
+    }
+
+    private static boolean attachedShortHookAlias(Ink ink, Head alias, Head hook,
+            PairedTremoloInk.Stem left, PairedTremoloInk.Stem right, float gap) {
+        float distance = right.x() - alias.x;
+        if (distance < .13f * gap || distance > .55f * gap || alias.y - hook.y < 2.4f * gap
+                || alias.note.stemDirection() == -1 || right.x() <= left.x()) return false;
+        var budget = new PrintedBeamShafts.Budget(24_000);
+        var claims = PrintedBeamShafts.at(ink.pixels, ink.w, ink.h, alias.x, alias.y, gap, budget);
+        if (budget.refused() || !claims.isEmpty()) return false;
+        float slope = (right.endY() - left.endY()) / (float) (right.x() - left.x());
+        float depth = right.endY() - slope * distance - alias.y;
+        if (depth < 1.45f * gap || depth > 2.40f * gap
+                || !compactDownstemHook(ink, left, right, gap, -1)) return false;
+        int y = Math.round(alias.y);
+        for (int x = Math.round(alias.x); x <= right.x(); x++)
+            if (ink.weight(x, y, 2) < 4) return false;
+        return true;
+    }
+
+    /** A tall glyph crossing the ruled floor below a proved stem is not a second attack. */
+    private static boolean staffAttachedGlyph(
+            Ink ink, Head alias, Head owner, PairedTremoloInk.Stem stem, float gap) {
+        if (alias.note.stemDirection() != 0 || Math.abs(alias.x - owner.x) > .20f * gap
+                || alias.y - stem.endY() < 1.25f * gap) return false;
+        var rules = localRules(ink, owner.x, owner.y + owner.note.staffStep() * gap * .5f, gap);
+        if (rules == null || alias.y - rules[0] < .30f * gap || alias.y - rules[0] > .85f * gap) return false;
+        var budget = new PrintedBeamShafts.Budget(24_000);
+        if (!PrintedBeamShafts.at(ink.pixels, ink.w, ink.h, alias.x, alias.y, gap, budget).isEmpty()
+                || budget.refused()) return false;
+        int left = Math.round(owner.x - .66f * gap), right = Math.round(owner.x + .66f * gap);
+        int top = Math.round(rules[0] - .40f * gap), bottom = Math.round(rules[0] + 1.34f * gap);
+        if (left < 2 || right + 2 >= ink.w || top < 0 || bottom >= ink.h) return false;
+        int minX = right, maxX = left, minY = bottom, maxY = top, above = 0, below = 0;
+        for (int y = top; y <= bottom; y++) {
+            boolean ruled = Math.abs(y - rules[0]) <= .22f * gap;
+            if (ruled && (ink.pixels[y * ink.w + left - 1] & 255) < 165
+                    && (ink.pixels[y * ink.w + right + 1] & 255) < 165) continue;
+            for (int x = left; x <= right; x++) {
+                if (!ink.dark(x, y)) continue;
+                minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+                minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+                if (y < rules[0]) above++; else below++;
+            }
+        }
+        return above >= .08f * gap * gap && below >= .25f * gap * gap
+                && minX > left && maxX < right && minY > top && maxY < bottom
+                && maxX - minX >= .51f * gap && maxY - minY >= 1.08f * gap
+                && Math.abs((minX + maxX) * .5f - alias.x) <= .28f * gap;
+    }
+
+
     /** Two eighth-note entries each lead three dotted-sixteenth and hook pairs. */
     private static boolean closedEighthAndDottedPairs(
             Ink ink, MeasureRegion bar, List<Head> row, ScoreNoteEvent[] replacement) {
@@ -3907,6 +4706,11 @@ final class ClosedDottedSixteenths {
                 && n.openStringTouch() == null
                 && n.clefBottomDiatonic() != ScoreNoteEvent.CLEF_UNKNOWN
                 && (n.articulations() & NoteOrnament.GRACE) == 0;
+    }
+
+    static float[] localDottedPairStaff(
+            byte[] ink, int width, int height, float x, float floor, float gap) {
+        return localRules(new Ink(ink, width, height), x, floor, gap);
     }
 
     private static float[] localRules(Ink ink,float x,float floor,float gap) {

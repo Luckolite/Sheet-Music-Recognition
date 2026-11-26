@@ -254,6 +254,9 @@ public final class MusicalOcr {
                             Integer.parseInt(parts[0]),
                             Integer.parseInt(parts[1])));
         }
+        reconcileFontReadings(
+                found, headerReadings, rasterMeasures, notes, measures.size(),
+                gray, width, clockMeterSource, clockMeterObservations);
         var accepted =
                 MeterChangeDetector.filterWholeNoteOcrReadings(
                         MeterChangeDetector.filterContradictedOcrMeters(
@@ -311,6 +314,52 @@ public final class MusicalOcr {
                 headers,
                 ScoreMeterProducerSource.capture(
                         clockMeterSource, clockMeterObservations, accepted));
+    }
+
+    /** A decisive OCR reading can still misread a stacked digit on an owned crop. */
+    private void reconcileFontReadings(
+            List<ScoreMeterChange> meters, List<HeaderReading> headers, Set<Integer> rasterMeasures,
+            List<ScoreNoteEvent> notes, int measureCount, byte[] gray, int width,
+            AcceptedMeterHeaderBounds.Source source, List<ScoreMeterProducerSource.Observation> observations) {
+        var corrections = new ArrayList<HeaderReading>();
+        for (int i = 0; i < meters.size(); i++) {
+            var chosen = meters.get(i);
+            int measure = chosen.measureIndex();
+            if (rasterMeasures.contains(measure)) continue;
+            String accepted = chosen.numerator() + "/" + chosen.denominator();
+            var alternatives = new HashMap<ScoreMeterChange, List<HeaderReading>>();
+            for (var header : headers) {
+                if (header.measure() != measure || !header.text().equals(accepted)) continue;
+                String optical = readBoundaryMeterFont(gray, width, header.crop());
+                if (optical.isBlank() || optical.equals(accepted)) continue;
+                String[] digits = optical.split("/");
+                int denominator = Integer.parseInt(digits[1]);
+                if (denominator != chosen.denominator()) continue;
+                var other = new ScoreMeterChange(measure, Integer.parseInt(digits[0]), denominator);
+                alternatives.computeIfAbsent(other, ignored -> new ArrayList<>())
+                        .add(new HeaderReading(measure, optical, header.crop()));
+            }
+            if (alternatives.size() != 1) continue;
+            var alternative = alternatives.entrySet().iterator().next();
+            var fontMeter = alternative.getKey();
+            int next = i + 1 < meters.size() ? meters.get(i + 1).measureIndex() : measureCount;
+            if (!fontMeter.equals(MeterChangeDetector.resolveConflict(Set.of(chosen, fontMeter), notes, next)))
+                continue;
+            meters.set(i, fontMeter);
+            for (var header : alternative.getValue()) {
+                corrections.add(header);
+                observations.add(new ScoreMeterProducerSource.Observation(
+                        source, observations.size(), measure, header.crop(), header.text(), 2,
+                        "PORTABLE_BOUNDARY_FONT_WITH_WRITTEN_BARS"));
+            }
+        }
+        headers.addAll(corrections);
+    }
+
+    private String readBoundaryMeterFont(byte[] gray, int width, MeterChangeDetector.Crop crop) {
+        var reading = meterFont.readOwnedCrop(gray, width, crop);
+        return MusicalOcrEvidence.fontMeter(
+                reading.text(), reading.topScore(), reading.bottomScore(), Set.of(), Set.of());
     }
 
     private BoundMeterReading meterWithBounds(

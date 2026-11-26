@@ -301,6 +301,20 @@ final class OwnedTertiaryBeamlets {
                 && !proveSide(gray, width, height, peer, own, gap, 1);
     }
 
+    /** A rail can mask the shaft tip. Use the independent stem trace only if the beams also agree. */
+    static boolean provesBackwardHookFromStemTrace(
+            byte[] gray, int width, int height, Head owner, Head preceding, float gap) {
+        int stem = owner.note().stemDirection();
+        if (stem != -1 || preceding.note().stemDirection() != stem) return false;
+        var own = PairedTremoloInk.stem(gray, width, height, owner.x(), owner.y(), gap, stem);
+        var peer = PairedTremoloInk.stem(gray, width, height, preceding.x(), preceding.y(), gap, stem);
+        if (own == null || peer == null) return false;
+        var a = List.of(new Axis(own.x(), own.endY(), -stem));
+        var b = List.of(new Axis(peer.x(), peer.endY(), -stem));
+        return proveSide(gray, width, height, a, b, gap, -1)
+                && !proveSide(gray, width, height, b, a, gap, 1);
+    }
+
     private static boolean plain(Head head, int beams, int dots, int stem) {
         var n = head.note();
         return n.kind() == ScoreNoteEvent.Kind.PITCHED && n.staffCount() == 1

@@ -428,6 +428,10 @@ final class PrintedStaccatoSlurs {
         // MusicXML attaches the slur to the lead head of the chord. The upper head locates the ink.
         var open = origins.get(first.lower().owner()).orElse(null);
         var close = origins.get(last.lower().owner()).orElse(null);
+        if (!score.slurSource().hasOriginalOwners()) {
+            open = new ScoreSlurPages.Anchor(page, first.lower().owner());
+            close = new ScoreSlurPages.Anchor(page, last.lower().owner());
+        }
         if (open == null || close == null || open.pageIndex() != page || close.pageIndex() != page) return;
         for (var source : List.of(spans, candidates)) {
             for (var startHead : List.of(first.lower(), first.upper())) {
@@ -440,6 +444,8 @@ final class PrintedStaccatoSlurs {
         }
         var printed = descendingSixthArc(raw, w, h, page, a, b, gap);
         if (printed == null || !printed.equals(descendingSixthArc(gray, w, h, page, a, b, gap))) return;
+        origins.set(first.lower().owner(), Optional.of(open));
+        origins.set(last.lower().owner(), Optional.of(close));
         spans.add(new ScoreSlurPages.Span("printed-page-" + page + "-descending-portato-"
                 + open.noteIndex() + "-" + close.noteIndex(), open, close,
                 ScoreSlurSpan.Placement.ABOVE, ScoreSlurSpan.LineType.SOLID, List.of(printed)));
