@@ -63,13 +63,21 @@ class TileDecoderTest(unittest.TestCase):
         columns = [slice(x, x + 320) for x in reader.tile_starts(width)]
         edge = reader._tile_edges()
         self.assertIsNone(decoder.select(gray, rows, columns, edge))
-        regions, _, small, full, _, wide_column, window = mixed._plan_page(gray, edge, rows, columns)
-        self.assertEqual(window, decoder.CORE_WINDOW)
-        self.assertIsNone(wide_column)
-        self.assertGreaterEqual(len(small), 32)
-        self.assertTrue(full)
-        self.assertTrue(all(job.top == 0 for job in full))
-        owners = [index for job in small + full for index, _ in job.members]
+        regions, profiles, phases = mixed._plan_page(gray, edge, rows, columns)
+        self.assertEqual(phases[0][0], decoder.CORE_WINDOW)
+        self.assertGreaterEqual(len(phases[0][2]), 32)
+        self.assertTrue(any(window == decoder.WINDOW for window, _, _ in phases))
+        for window, left, jobs in phases:
+            for job in jobs:
+                if window == 320:
+                    self.assertEqual(job.top, 0)
+                    self.assertIsNone(left)
+                    continue
+                for index, box in job.members:
+                    row_span, column_span = decoder._owned_spans(gray, profiles, regions[index], box)
+                    self.assertTrue(decoder._fits(job.top, row_span, window))
+                    self.assertTrue(decoder._fits(left, column_span, window))
+        owners = [index for _, _, jobs in phases for job in jobs for index, _ in job.members]
         self.assertEqual(sorted(owners), list(range(len(regions))))
 
     def test_deferred_model_falls_back_when_compact_selection_is_declined(self):
@@ -145,7 +153,7 @@ class TileDecoderTest(unittest.TestCase):
         from sheet_music_recognition import _mixed_tile_decoder as mixed
 
         gray = np.zeros((320, 320), dtype=np.uint8)
-        plan = ([], None, [object()], [object()], 0, 0, 224)
+        plan = ([], None, [(224, 0, [object()]), (272, 0, [object()])])
         for memory_error in (False, True):
             with self.subTest(memory_error=memory_error):
                 self.check_mixed_allocation_failure(mixed, gray, plan, memory_error)

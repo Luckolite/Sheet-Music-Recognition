@@ -1,6 +1,6 @@
 # Copyright 2026 Luckolite
 # SPDX-License-Identifier: Apache-2.0
-"""Run two decoder windows while writing only the final owners of each tile."""
+"""Run compact decoder windows while writing only the final owners of each tile."""
 from dataclasses import dataclass
 
 import numpy as np
@@ -9,6 +9,7 @@ from . import _tile_decoder as decoder
 from . import reader
 
 _MIN_NARROW_JOBS = 32
+_MIN_WIDE_JOBS = 8
 
 
 @dataclass(slots=True)
@@ -20,7 +21,7 @@ class _Job:
 
 def _placements(spans, window):
     """Choose a shared column and a row offset for every eligible job."""
-    offsets = range(0, 321 - decoder.TIGHT_WINDOW, 8)
+    offsets = range(0, 321 - max(window, decoder.TIGHT_WINDOW), 8)
     available = [(next((offset for offset in offsets if decoder._fits(offset, row, window)), None), column)
                  for row, column in spans]
     left = max(offsets, key=lambda offset: sum(
@@ -28,6 +29,29 @@ def _placements(spans, window):
     placements = [top if top is not None and decoder._fits(left, column, window) else None
                   for top, column in available]
     return left, placements, sum(top is not None for top in placements)
+
+
+def _fallback_phases(remaining):
+    """Try two shared wider windows before using full tiles for the remainder."""
+    phases = []
+    for _ in range(2):
+        if len(remaining) < _MIN_WIDE_JOBS:
+            break
+        left, tops, count = _placements([span for _, span in remaining], decoder.WINDOW)
+        if count < _MIN_WIDE_JOBS:
+            break
+        cropped, residual = [], []
+        for (job, span), top in zip(remaining, tops, strict=True):
+            if top is None:
+                residual.append((job, span))
+            else:
+                job.top = top
+                cropped.append(job)
+        phases.append((decoder.WINDOW, left, cropped))
+        remaining = residual
+    if remaining:
+        phases.append((320, None, [job for job, _ in remaining]))
+    return phases
 
 
 def _plan_page(gray, edge, rows, cols):
@@ -92,14 +116,20 @@ def _plan_page(gray, edge, rows, cols):
     if core_count >= _MIN_NARROW_JOBS and 20 * core_count >= 19 * count:
         window, left, tops = decoder.CORE_WINDOW, core_left, core_tops
     small, large = [], []
-    for job, top in zip(jobs_with_owners, tops, strict=True):
+    for job, top, span in zip(jobs_with_owners, tops, spans, strict=True):
         if top is None:
             job.top = plan.rows[job.members[0][0]] if plan is not None else 0
-            large.append(job)
+            large.append((job, span))
         else:
             job.top = top
             small.append(job)
-    return regions, profiles, small, large, left, None if plan is None else plan.column, window
+
+    phases = [(window, left, small)]
+    if plan is None:
+        phases.extend(_fallback_phases(large))
+    elif large:
+        phases.append((decoder.WINDOW, plan.column, [job for job, _ in large]))
+    return regions, profiles, phases
 
 
 def _copy_owned(labels, prediction, profiles, region, box, top, left, window):
@@ -109,7 +139,7 @@ def _copy_owned(labels, prediction, profiles, region, box, top, left, window):
     x = slice(max(x.start, left), min(x.stop, left + window))
     if y.start >= y.stop or x.start >= x.stop:
         return
-    # Final owners let the two shape groups run in either order.
+    # Final owners let the shape groups run in any order.
     owned = decoder._owned_mask(profiles, region, y, x)
     local_y = slice(y.start - top, y.stop - top)
     local_x = slice(x.start - left, x.stop - left)
@@ -164,15 +194,12 @@ def predict(engine, gray, rows, columns, path, previous):
     plan = _plan_page(gray, engine.edge, rows, columns)
     if plan is None:
         return None
-    regions, profiles, small, large, left, wide_left, narrow_window = plan
+    regions, profiles, phases = plan
     labels = np.zeros_like(gray)
-    phases = [(narrow_window, left, small)]
-    if large:
-        phases.append((320 if wide_left is None else decoder.WINDOW, wide_left, large))
     if previous:
         phases.sort(key=lambda phase: (path, phase[0], phase[1]) != previous)
 
-    # Do not retain a second arena even when the larger shape is needed.
+    # Release each arena before opening the next.
     try:
         for window, column, jobs in phases:
             recipe = (path, window, column)
