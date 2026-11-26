@@ -18,14 +18,14 @@ spec.loader.exec_module(build_java)
 def fault_instrumented_copy(raw):
     """Replace only verification IO and dictionary IO in an isolated test copy."""
     text = raw.decode('utf-8')
-    verifier = re.search(r'    private static void verify\(.*?(?=    public List<String> dictionary)', text, re.S)
+    verifier = re.search(r'    private static String verify\(.*?(?=    public List<String> dictionary)', text, re.S)
     if verifier is None:
         raise AssertionError('Checksum verifier boundary must be unique')
     original_verify = verifier.group(0)
     if 'Unrecognized OCR artifact checksum' not in original_verify:
         raise AssertionError('Only the known verifier body may be replaced')
-    verify_hook = ('    private static void verify(String path, java.util.Set<String> allowed) throws Exception {\n'
-                   '        ai.onnxruntime.FakeOrt.verify(path, allowed);\n'
+    verify_hook = ('    private static String verify(String path, java.util.Set<String> allowed) throws Exception {\n'
+                   '        return ai.onnxruntime.FakeOrt.verify(path, allowed);\n'
                    '    }\n\n')
     dictionary = re.compile(
         r'java\.nio\.file\.Files\.readAllLines\(\s*'
@@ -56,7 +56,7 @@ class OnnxOcrLifecycleTest(unittest.TestCase):
         raw = binding.read_bytes()
         instrumented = fault_instrumented_copy(raw)
         fixtures = sorted((ROOT / 'tests/fixtures/ocr_lifecycle/java').rglob('*.java'))
-        self.assertEqual(7, len(fixtures))
+        self.assertEqual(8, len(fixtures))
         with tempfile.TemporaryDirectory(prefix='ocr lifecycle ') as folder:
             work = Path(folder)
             source = work / 'source/io/github/luckolite/interpreter/OnnxOcrInference.java'
@@ -88,6 +88,13 @@ class OnnxOcrLifecycleTest(unittest.TestCase):
                 with self.subTest(case=row['name']):
                     self.assertEqual('PASS', row['criteria'], row)
                     self.assertTrue(row['expectedResult'], row)
+            fused = subprocess.run(
+                [build_java.jdk_tool('java'), '-XX:ActiveProcessorCount=1', '-Xmx96m',
+                 '-cp', str(classes), 'io.github.luckolite.interpreter.FusedDetectorLifecycleControls',
+                 str(work)],
+                text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=60)
+            self.assertEqual(0, fused.returncode, fused.stdout)
+            self.assertIn('FUSED_LIFECYCLE_PASS cases=5', fused.stdout)
         self.assertEqual(raw, binding.read_bytes(), 'Fault hooks must never alter the optional binding')
 
 

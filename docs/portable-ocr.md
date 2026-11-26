@@ -146,6 +146,12 @@ generated graph compresses repeated activations on 320-pixel inputs and retains
 the original operations for other input widths. The existing Java constructors
 and the Python CLI continue to use their usual models.
 
+For the exact-affine detector, run
+`optional/ocr/native/generate_fused_detector.py` with the pinned stock v5 detector
+and an output path. Pass `--with-fused-detector` to `build_packed_recognizer.py`
+to generate the companion ARM64 library. Supply the generated detector and
+companion library to the same `openPackedArm64` entry point.
+
 ## Optional local worker
 
 The same optional build also provides `NativeOcrServer` on loopback port 45925.

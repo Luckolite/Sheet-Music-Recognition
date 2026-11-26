@@ -26,7 +26,9 @@ public final class FakeOrt {
             tensorsClosed,
             resultsCreated,
             resultsClosed;
-    public static boolean dictionaryWithNull;
+    public static boolean dictionaryWithNull, requestFusedDetector;
+    public static int failRegistrationThreads;
+    private static boolean fusedLibraryVerified;
     public static final float[][] detectorOutput = {
         {Float.intBitsToFloat(0x80000000), Float.intBitsToFloat(0x7fc12345)}
     };
@@ -55,6 +57,8 @@ public final class FakeOrt {
         sessionSettings.clear();
         recognizerConfigFailure = null;
         libraryRegisterFailure = null;
+        failRegistrationThreads = 0;
+        requestFusedDetector = fusedLibraryVerified = false;
         verifyFailure =
                 optionsNewFailure =
                         configFailure =
@@ -96,21 +100,35 @@ public final class FakeOrt {
         throw new AssertionError("unsupported fake IO failure", t);
     }
 
-    public static void verify(String path, Set<String> allowed) throws IOException {
+    public static String verify(String path, Set<String> allowed) throws IOException {
         events.add("verify:" + path);
-        Set<String> expected = switch (new File(path).getName()) {
-            case "detector" -> Set.of(
-                    "d2a7720d45a54257208b1e13e36a8479894cb74155a5efe29462512d42f49da9",
-                    "4d97c44a20d30a81aad087d6a396b08f786c4635742afc391f6621f5c6ae78ae");
+        String name = new File(path).getName();
+        String detectorV4 = "d2a7720d45a54257208b1e13e36a8479894cb74155a5efe29462512d42f49da9";
+        String detectorV5 = "4d97c44a20d30a81aad087d6a396b08f786c4635742afc391f6621f5c6ae78ae";
+        String fusedDetector = "60a49903b55f3333ffe3bfc9b52fc93d791a4b9bf33d7373387924abfd18f1d4";
+        String packedLibrary = "33e277d9de0a25cbe2568f220d0765dd53772c40efa8100ff900acd73be5d054";
+        String fusedLibrary = "eb51cd1c2164b2db1fa342cb2d4ca41760f3a0f5c49ce11133886e674ef43c7f";
+        Set<String> expected = switch (name) {
+            case "detector" -> fusedLibraryVerified
+                    ? Set.of(detectorV4, detectorV5, fusedDetector) : Set.of(detectorV4, detectorV5);
             case "recognizer" -> Set.of("b20bd37c168a570f583afbc8cd7925603890efbcdc000a59e22c269d160b5f5a");
             case "packed" -> Set.of("751b79329b420192022f8e9901bbdb243c60efa627f8abbc9d08b6fb4b47f740");
-            case "packed-test.so" -> Set.of("33e277d9de0a25cbe2568f220d0765dd53772c40efa8100ff900acd73be5d054");
+            case "packed-test.so", "fused-test.so" -> Set.of(packedLibrary, fusedLibrary);
             case "recognizer.dictionary", "packed.dictionary" ->
                     Set.of("1169fb297871f7a14d6a0f20c14af56de789c48b170e59dfb66950448e31c062");
             default -> throw new AssertionError("Unexpected artifact path " + path);
         };
         if (!allowed.equals(expected)) throw new AssertionError("allowed checksum set changed");
         throwIo(verifyFailure);
+        String digest = switch (name) {
+            case "detector" -> requestFusedDetector ? fusedDetector : detectorV5;
+            case "packed-test.so" -> packedLibrary;
+            case "fused-test.so" -> fusedLibrary;
+            default -> expected.iterator().next();
+        };
+        if (!allowed.contains(digest)) throw new IOException("Unrecognized OCR artifact checksum");
+        fusedLibraryVerified |= name.equals("fused-test.so");
+        return digest;
     }
 
     public static List<String> readDictionary(String path, Charset charset) throws IOException {

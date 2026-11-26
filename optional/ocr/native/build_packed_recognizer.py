@@ -16,6 +16,10 @@ def main():
         "headers", type=Path, help="Extracted ONNX Runtime Android 1.25.1 headers"
     )
     parser.add_argument("output", type=Path)
+    parser.add_argument(
+        "--with-fused-detector", action="store_true",
+        help="Include the exact-affine detector operations",
+    )
     args = parser.parse_args()
     zig = args.zig.resolve(strict=True)
     headers = args.headers.resolve(strict=True)
@@ -30,6 +34,11 @@ def main():
             parser.error(f"Unexpected header checksum for {name}")
     includes = zig.parent / "lib/libc/include"
     source = Path(__file__).with_name("packed_recognizer.c").resolve()
+    sources = [source]
+    flags = []
+    if args.with_fused_detector:
+        sources.append(source.with_name("detector_affine.c"))
+        flags.append("-DSCORE_READER_FUSED_DETECTOR")
     with TemporaryDirectory(dir=args.output.resolve().parent) as temp:
         binary = Path(temp) / "libscore_reader_packed_ocr.so"
         subprocess.run(
@@ -55,14 +64,20 @@ def main():
                 includes / "any-linux-any",
                 "-I",
                 headers,
-                source,
+                *flags,
+                *sources,
                 "-o",
                 binary,
             ],
             check=True,
         )
         digest = sha256(binary.read_bytes()).hexdigest()
-        if digest != "33e277d9de0a25cbe2568f220d0765dd53772c40efa8100ff900acd73be5d054":
+        expected = (
+            "eb51cd1c2164b2db1fa342cb2d4ca41760f3a0f5c49ce11133886e674ef43c7f"
+            if args.with_fused_detector
+            else "33e277d9de0a25cbe2568f220d0765dd53772c40efa8100ff900acd73be5d054"
+        )
+        if digest != expected:
             parser.error(f"Unexpected custom library checksum {digest}")
         binary.replace(args.output.resolve())
     print(digest)

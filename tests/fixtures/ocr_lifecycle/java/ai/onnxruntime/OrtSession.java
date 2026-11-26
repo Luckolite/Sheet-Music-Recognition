@@ -9,8 +9,11 @@ public final class OrtSession implements AutoCloseable {
     public int closeCalls;
     public boolean closed;
 
-    OrtSession(String path) {
+    private final SessionOptions options;
+
+    OrtSession(String path, SessionOptions options) {
         this.path = path;
+        this.options = options;
     }
 
     public Set<String> getInputNames() {
@@ -20,11 +23,13 @@ public final class OrtSession implements AutoCloseable {
     public Result run(Map<String, OnnxTensor> values) throws OrtException {
         if (closed || !values.keySet().equals(Set.of("x")))
             throw new AssertionError("invalid fake run");
+        options.checkRegisteredLifetime();
         FakeOrt.events.add("run:" + path);
         return new Result(path);
     }
 
     public void close() throws OrtException {
+        options.checkRegisteredLifetime();
         closeCalls++;
         FakeOrt.events.add("close:" + path);
         closed = true;
@@ -36,6 +41,11 @@ public final class OrtSession implements AutoCloseable {
 
     public static final class SessionOptions implements AutoCloseable {
         public int intraThreads, interThreads;
+        private boolean registered, closed;
+
+        void checkRegisteredLifetime() {
+            if (registered && closed) throw new AssertionError("Native registration ended before its session");
+        }
         public final Map<String, String> configEntries = new LinkedHashMap<>();
 
         public SessionOptions() {
@@ -67,10 +77,14 @@ public final class OrtSession implements AutoCloseable {
 
         public void registerCustomOpLibrary(String library) throws OrtException {
             FakeOrt.events.add("register:" + library);
-            FakeOrt.throwOrt(FakeOrt.libraryRegisterFailure);
+            if (FakeOrt.failRegistrationThreads == 0 || FakeOrt.failRegistrationThreads == intraThreads)
+                FakeOrt.throwOrt(FakeOrt.libraryRegisterFailure);
+            registered = true;
         }
 
         public void close() {
+            if (closed) throw new AssertionError("Duplicate option close");
+            closed = true;
             FakeOrt.optionsCloseCalls++;
             FakeOrt.events.add("options.close");
             FakeOrt.throwUnchecked(FakeOrt.optionsCloseFailure);

@@ -21,7 +21,7 @@ public final class OrtEnvironment {
                 path.equals("detector")
                         ? FakeOrt.detectorCreateFailure
                         : FakeOrt.recognizerCreateFailure);
-        OrtSession session = new OrtSession(path);
+        OrtSession session = new OrtSession(path, options);
         FakeOrt.sessions.add(session);
         return session;
     }

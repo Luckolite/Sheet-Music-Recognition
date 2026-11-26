@@ -319,6 +319,10 @@ static const char *ORT_API_CALL pack_chain_name(const OrtCustomOp *op) {
 static const OrtCustomOp pack_chain_op = OP(pack_chain_name, pack_chain, one, two);
 static const OrtCustomOp expand_columns_op = OP(expand_columns_name, expand_columns, two, one);
 
+#ifdef SCORE_READER_FUSED_DETECTOR
+OrtStatusPtr ORT_API_CALL RegisterDetectorAffineOps(OrtSessionOptions *, const OrtApiBase *);
+#endif
+
 /* The Java binding pins this library for the process. ORT borrows the
  * domain, so reuse it across sessions and retain it with the operation code. */
 __attribute__((visibility("default")))
@@ -341,5 +345,10 @@ OrtStatusPtr ORT_API_CALL RegisterCustomOps(OrtSessionOptions *options, const Or
         if (atomic_compare_exchange_strong(&shared_domain, &domain, created)) domain = created;
         else api->ReleaseCustomOpDomain(created);
     }
+#ifdef SCORE_READER_FUSED_DETECTOR
+    CHECK(api->AddCustomOpDomain(options, domain));
+    return RegisterDetectorAffineOps(options, base);
+#else
     return api->AddCustomOpDomain(options, domain);
+#endif
 }
