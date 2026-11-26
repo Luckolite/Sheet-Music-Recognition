@@ -1042,18 +1042,7 @@ public final class MusicalOcr {
                 || scaledWidth * scaledHeight > 20_000_000)
             return new OcrText("", List.of());
         int outWidth = (int) scaledWidth, outHeight = (int) scaledHeight;
-        byte[] pixels = new byte[outWidth * outHeight];
-        for (int y = top, row = 0; y < bottom; y++, row += outWidth * scale) {
-            int source = y * width + left;
-            int column = row;
-            for (int x = left; x < right; x++) {
-                byte value = gray[source++];
-                for (int repeat = 0; repeat < scale; repeat++) pixels[column++] = value;
-            }
-            for (int repeat = 1; repeat < scale; repeat++)
-                System.arraycopy(pixels, row, pixels, row + repeat * outWidth, outWidth);
-        }
-        return reader.readGray(pixels, outWidth, outHeight);
+        return reader.readGrayCrop(gray, width, top * width + left, outWidth, outHeight, scale);
     }
 
     private OcrText readPixels(

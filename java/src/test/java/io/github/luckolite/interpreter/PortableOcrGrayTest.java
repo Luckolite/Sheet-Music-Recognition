@@ -274,6 +274,32 @@ public class PortableOcrGrayTest {
     }
 
     @Test
+    public void scaledCropViewPreservesExpandedInputsAndBoxes() throws Exception {
+        int stride = 80, left = 7, top = 5, cropWidth = 56, cropHeight = 31;
+        byte[] gray = new byte[stride * 43];
+        Arrays.fill(gray, (byte) 255);
+        fill(gray, stride, 11, 10, 39, 24, 189);
+        fill(gray, stride, 30, 17, 60, 30, 0);
+        float[][] map = new float[8][8];
+        for (float[] row : map) Arrays.fill(row, .9f);
+        for (int scale : new int[] {2, 3}) {
+            int width = cropWidth * scale, height = cropHeight * scale;
+            byte[] expanded = new byte[width * height];
+            for (int y = 0; y < height; y++)
+                for (int x = 0; x < width; x++)
+                    expanded[y * width + x] = gray[(top + y / scale) * stride + left + x / scale];
+
+            Mock original = new Mock(map, 0), view = new Mock(map, 0);
+            var expected = new PortableOcr(original).readGray(expanded, width, height);
+            var actual = new PortableOcr(view)
+                    .readGrayCrop(gray, stride, top * stride + left, width, height, scale);
+            assertFalse(expected.blocks().isEmpty());
+            assertEquals(expected, actual);
+            assertCallsEqual(original, view);
+        }
+    }
+
+    @Test
     public void invalidGrayGuardsFailBeforeInference() {
         Mock mock = new Mock(new float[8][8], 0);
         for (int[] size : new int[][] {{0, 1}, {1, 0}, {2, 2}, {20_000_001, 1}})

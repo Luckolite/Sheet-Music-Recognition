@@ -77,6 +77,21 @@ public final class PortableOcr {
         return readPixels(null, gray, width, height);
     }
 
+    /** Read an integer-scaled crop using original pixels and expanded coordinates. */
+    OcrText readGrayCrop(
+            byte[] gray, int stride, int offset, int width, int height, int scale) throws Exception {
+        return readRaster(null, new GrayView(gray, stride, offset, scale), width, height);
+    }
+
+    private record GrayView(byte[] pixels, int stride, int offset, int scale) {
+        IntPredicate ink(int width) {
+            if (stride == width && offset == 0 && scale == 1)
+                return index -> (pixels[index] & 255) < 190;
+            return index -> (pixels[offset + (index / width / scale) * stride
+                    + index % width / scale] & 255) < 190;
+        }
+    }
+
     /** Materialize only at a platform/remote boundary that still requires opaque ARGB. */
     public static int[] opaqueGrayPixels(byte[] gray) {
         int[] pixels = new int[gray.length];
@@ -88,6 +103,10 @@ public final class PortableOcr {
     }
 
     private OcrText readPixels(int[] argb, byte[] gray, int width, int height) throws Exception {
+        return readRaster(argb, gray == null ? null : new GrayView(gray, width, 0, 1), width, height);
+    }
+
+    private OcrText readRaster(int[] argb, GrayView gray, int width, int height) throws Exception {
         double scale = Math.min(1, 2048.0 / Math.max(width, height));
         int dw = Math.max(32, (int) Math.round(width * scale / 32) * 32);
         int dh = Math.max(32, (int) Math.round(height * scale / 32) * 32);
@@ -101,14 +120,14 @@ public final class PortableOcr {
                                         ? normalize(
                                                 argb, width, height, 0, 0, width, height, dw, dh,
                                                 dw, true)
-                                        : normalizeGray(
-                                                gray, width, height, 0, 0, width, height, dw, dh,
+                                        : normalizeGrayView(
+                                                gray, 0, 0, width, height, dw, dh,
                                                 dw, true),
                                 dw,
                                 dh);
         IntPredicate isInk = gray == null
                 ? index -> isColorInk(argb[index])
-                : index -> (gray[index] & 255) < 190;
+                : gray.ink(width);
         var regions = regions(prediction, width, height);
         var boxes = new ArrayList<OcrText.Box>(regions.size());
         for (var region : regions) boxes.addAll(splitStackedRows(width, region, isInk));
@@ -133,10 +152,8 @@ public final class PortableOcr {
                                             48,
                                             rw,
                                             false)
-                                    : normalizeGray(
+                                    : normalizeGrayView(
                                             gray,
-                                            width,
-                                            height,
                                             box.left,
                                             box.top,
                                             box.right,
@@ -255,10 +272,17 @@ public final class PortableOcr {
             boolean detector) {
         validateGrayResize(
                 pixels, width, height, left, top, right, bottom, outWidth, outHeight, paddedWidth);
+        return normalizeGrayView(
+                new GrayView(pixels, width, 0, 1), left, top, right, bottom,
+                outWidth, outHeight, paddedWidth, detector);
+    }
+
+    private static float[] normalizeGrayView(
+            GrayView gray, int left, int top, int right, int bottom,
+            int outWidth, int outHeight, int paddedWidth, boolean detector) {
         float[] output = new float[3 * paddedWidth * outHeight];
         normalizeGrayRows(
-                pixels,
-                width,
+                gray,
                 left,
                 top,
                 right,
@@ -273,16 +297,14 @@ public final class PortableOcr {
     }
 
     private static FloatBuffer normalizeGrayDirect(
-            byte[] pixels, int width, int height, int outWidth, int outHeight) {
-        validateGrayResize(
-                pixels, width, height, 0, 0, width, height, outWidth, outHeight, outWidth);
+            GrayView gray, int width, int height, int outWidth, int outHeight) {
         FloatBuffer direct =
                 ByteBuffer.allocateDirect(3 * outWidth * outHeight * Float.BYTES)
                         .order(ByteOrder.nativeOrder())
                         .asFloatBuffer();
         float[] row = new float[3 * outWidth];
         normalizeGrayRows(
-                pixels, width, 0, 0, width, height, outWidth, outHeight, outWidth, true, row,
+                gray, 0, 0, width, height, outWidth, outHeight, outWidth, true, row,
                 direct);
         direct.position(0);
         return direct;
@@ -316,8 +338,7 @@ public final class PortableOcr {
     }
 
     private static void normalizeGrayRows(
-            byte[] pixels,
-            int width,
+            GrayView gray,
             int left,
             int top,
             int right,
@@ -328,6 +349,8 @@ public final class PortableOcr {
             boolean detector,
             float[] output,
             FloatBuffer direct) {
+        byte[] pixels = gray.pixels();
+        int stride = gray.stride(), offset = gray.offset(), scale = gray.scale();
         int planeStride = direct == null ? paddedWidth * outHeight : paddedWidth;
         int[] xs0 = new int[outWidth], xs1 = new int[outWidth];
         float[] fractions = new float[outWidth];
@@ -336,9 +359,10 @@ public final class PortableOcr {
                     Math.max(
                             left,
                             Math.min(right - 1, left + (x + .5) * (right - left) / outWidth - .5));
-            xs0[x] = (int) sx;
-            xs1[x] = Math.min(right - 1, xs0[x] + 1);
-            fractions[x] = (float) (sx - xs0[x]);
+            int x0 = (int) sx;
+            xs0[x] = x0 / scale;
+            xs1[x] = Math.min(right - 1, x0 + 1) / scale;
+            fractions[x] = (float) (sx - x0);
         }
         for (int y = 0; y < outHeight; y++) {
             if (Thread.currentThread().isInterrupted())
@@ -349,7 +373,8 @@ public final class PortableOcr {
                             Math.min(bottom - 1, top + (y + .5) * (bottom - top) / outHeight - .5));
             int y0 = (int) sy, y1 = Math.min(bottom - 1, y0 + 1);
             float fy = (float) (sy - y0);
-            int row0 = y0 * width, row1 = y1 * width;
+            int row0 = offset + (y0 / scale) * stride;
+            int row1 = offset + (y1 / scale) * stride;
             int destination = direct == null ? y * paddedWidth : 0;
             for (int x = 0; x < outWidth; x++) {
                 int x0 = xs0[x], x1 = xs1[x];
