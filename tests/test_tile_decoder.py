@@ -54,6 +54,62 @@ class TileDecoderTest(unittest.TestCase):
         self.assertEqual(mixed._placements(spans, 192), (0, [0, None], 1))
         self.assertEqual(mixed._placements(spans, 224), (0, [0, 0], 2))
 
+    def test_shaded_page_keeps_certified_core_tiles_when_wide_layout_fails(self):
+        from sheet_music_recognition import _mixed_tile_decoder as mixed, _tile_decoder as decoder
+
+        height, width = 1664, 2048
+        gray = np.random.default_rng(31).integers(252, 255, size=(height, width), dtype=np.uint8)
+        rows = [slice(y, y + 320) for y in reader.tile_starts(height)]
+        columns = [slice(x, x + 320) for x in reader.tile_starts(width)]
+        edge = reader._tile_edges()
+        self.assertIsNone(decoder.select(gray, rows, columns, edge))
+        regions, _, small, full, _, wide_column, window = mixed._plan_page(gray, edge, rows, columns)
+        self.assertEqual(window, decoder.CORE_WINDOW)
+        self.assertIsNone(wide_column)
+        self.assertGreaterEqual(len(small), 32)
+        self.assertTrue(full)
+        self.assertTrue(all(job.top == 0 for job in full))
+        owners = [index for job in small + full for index, _ in job.members]
+        self.assertEqual(sorted(owners), list(range(len(regions))))
+
+    def test_deferred_model_falls_back_when_compact_selection_is_declined(self):
+        from sheet_music_recognition import _mixed_tile_decoder as mixed, _tile_decoder as decoder
+
+        gray = np.full((1664, 2048), 254, dtype=np.uint8)
+        loaded = []
+        runtime = SimpleNamespace(
+            set_tensor=lambda *_: None,
+            invoke=lambda: None,
+            get_tensor=lambda _: np.zeros((1, 320, 320), dtype=np.int64),
+        )
+
+        def initialize(engine, path, *_args, **_options):
+            loaded.append(path)
+            engine.runtime = runtime
+            engine.input = {"index": 0}
+            engine.output = {"index": 1}
+
+        with patch.object(reader.sys, "platform", "win32"), patch.object(
+            reader.Path, "is_file", return_value=True
+        ), patch.object(mixed, "predict", return_value=None) as compact, patch.object(
+            decoder, "select", return_value=None
+        ), patch.object(reader.Interpreter, "_initialize_model", initialize):
+            engine = reader.Interpreter(threads=2, _defer_model=True)
+            np.testing.assert_array_equal(engine.predict(gray), np.zeros_like(gray))
+            compact.assert_called_once()
+            self.assertIs(engine.runtime, runtime)
+            self.assertIsNone(engine._pending_model)
+
+            # A later page can keep a resident stock engine from the prior mixed plan.
+            path = engine.jar
+            engine._tile_layout = (path, "mixed", None)
+            engine._mixed_tile_recipe = (path, 320, None)
+            np.testing.assert_array_equal(engine.predict(gray), np.zeros_like(gray))
+            self.assertIs(engine.runtime, runtime)
+            self.assertIsNone(engine._tile_layout)
+            self.assertIsNone(engine._mixed_tile_recipe)
+            self.assertEqual(len(loaded), 1)
+
     @unittest.skipUnless(sys.platform == "win32", "Tile decoder requires qualified Windows LiteRT")
     def test_core_copies_the_correct_offset_with_stock_litert(self):
         if inference_interpreter(bundled=True).__module__ != "ai_edge_litert.interpreter":

@@ -33,24 +33,30 @@ def _placements(spans, window):
 def _plan_page(gray, edge, rows, cols):
     h, w = gray.shape
     plan = decoder.select(gray, rows, cols, edge)
-    if plan is None or plan.mode != "joint":
+    if edge is not reader._tile_edges() or (plan is not None and plan.mode != "joint"):
         return None
     regions = [(row, column) for row in rows for column in cols]
-    followers = {second for second, *_ in plan.pairs.values()}
+    if plan is None:
+        # The full graph covers jobs for which no compact window can prove every owner.
+        decisions = list(reader._repeated_tile_plan(gray, rows, cols))
+        pairs, _ = reader._sparse_pairs(gray, regions, decisions)
+    else:
+        decisions, pairs = plan.decisions, plan.pairs
+    followers = {second for second, *_ in pairs.values()}
     axis = edge.max(axis=0)
     profiles = (decoder._axis_profile(h, rows, axis),
                 decoder._axis_profile(w, cols, axis), edge)
     jobs = []
     repeated = {}
-    for index, (region, (key, keep)) in enumerate(zip(regions, plan.decisions)):
+    for index, (region, (key, keep)) in enumerate(zip(regions, decisions)):
         if index in followers:
             continue
         gray_tile = gray[region]
         earlier = repeated.pop(key, None)
         if gray_tile[0, 0] == 255 and gray_tile.min() == 255:
             continue
-        if index in plan.pairs:
-            second, first_box, second_box = plan.pairs[index]
+        if index in pairs:
+            second, first_box, second_box = pairs[index]
             jobs.append(_Job([(index, first_box), (second, second_box)], second))
             continue
         if earlier is not None and np.array_equal(gray_tile, gray[regions[earlier.members[0][0]]]):
@@ -88,12 +94,12 @@ def _plan_page(gray, edge, rows, cols):
     small, large = [], []
     for job, top in zip(jobs_with_owners, tops, strict=True):
         if top is None:
-            job.top = plan.rows[job.members[0][0]]
+            job.top = plan.rows[job.members[0][0]] if plan is not None else 0
             large.append(job)
         else:
             job.top = top
             small.append(job)
-    return regions, profiles, small, large, left, plan.column, window
+    return regions, profiles, small, large, left, None if plan is None else plan.column, window
 
 
 def _copy_owned(labels, prediction, profiles, region, box, top, left, window):
@@ -117,9 +123,9 @@ def _run_jobs(runtime, gray, labels, regions, profiles, jobs, left, window):
     input_buffer = runtime.tensor(inputs[0]["index"])
     output_buffer = runtime.tensor(target["index"])
     previous = None
-    ports = decoder.row_ports(window)
+    ports = decoder.row_ports(window) if window < 320 else ()
     inset = decoder.CORE_INSET if window == decoder.CORE_WINDOW else 0
-    overlap_supported = getattr(runtime, "supports_encoder_overlap", False)
+    overlap_supported = window < 320 and getattr(runtime, "supports_encoder_overlap", False)
     reuse = False
     for at, job in enumerate(jobs):
         index = job.members[0][0]
@@ -162,7 +168,7 @@ def predict(engine, gray, rows, columns, path, previous):
     labels = np.zeros_like(gray)
     phases = [(narrow_window, left, small)]
     if large:
-        phases.append((decoder.WINDOW, wide_left, large))
+        phases.append((320 if wide_left is None else decoder.WINDOW, wide_left, large))
     if previous:
         phases.sort(key=lambda phase: (path, phase[0], phase[1]) != previous)
 
@@ -173,15 +179,19 @@ def predict(engine, gray, rows, columns, path, previous):
             if previous != recipe:
                 if hasattr(engine, "runtime"):
                     del engine.runtime
-                selection = decoder.Selection("joint", {}, column, [], {}, set(), window)
                 try:
-                    initialized = engine._initialize_tile_decoder(path, selection)
+                    if window == 320:
+                        engine._initialize_model(path, True)
+                        initialized = True
+                    else:
+                        selection = decoder.Selection("joint", {}, column, [], {}, set(), window)
+                        initialized = engine._initialize_tile_decoder(path, selection)
                 except MemoryError:
                     initialized = False
                 if not initialized:
                     _reset(engine, path)
                     return None
-            _run_jobs(engine.runtime, gray, labels, regions, profiles, jobs, column, window)
+            _run_jobs(engine.runtime, gray, labels, regions, profiles, jobs, column or 0, window)
             previous = recipe
     except Exception:
         _reset(engine, path)

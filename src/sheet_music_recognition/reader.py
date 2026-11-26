@@ -301,6 +301,7 @@ class Interpreter:
         self.ocr = None
         self._decoder_scope = None
         self._reusable_decoder = None
+        self._tile_layout = None
         self.paper_whitening = PaperBackgroundWhitening(threads=threads)
         self._pending_model = (path, model_path is None) if _defer_model else None
         if self._pending_model is None:
@@ -512,6 +513,8 @@ class Interpreter:
             self._mixed_tile_recipe = None
             if window == _tile_decoder.WINDOW:
                 tile_layout = self._tile_layout = (path, "joint", column)
+            elif window == 320:
+                tile_layout = self._tile_layout = None
             else:
                 del self.runtime
                 pending = self._pending_model = (path, True)
