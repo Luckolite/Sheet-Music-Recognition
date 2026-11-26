@@ -1,4 +1,11 @@
 {
+  "standalone_fixed_thread_ocr_review": {
+    "reviewed_app_commit": "872547cbc6d69919caa9cbb33ffcd959f5c8f9f3",
+    "standalone_base": "8b971923277a402f0de4af3f00924c5fb304046b",
+    "scope": "Standalone grayscale OCR crop and buffer paths, packed pitch-centering raster counts, and opt-in ONNX detector and recognizer graphs with their custom operations. These graph generators derive from the pinned inputs in the optional OCR documentation.",
+    "adapter_boundary": "The app owns its Android OCR session selection and the desktop worker owns its NativeMusicalOcr adapter. This standalone change does not port or release either app integration. The mapped drift report for this app commit was identical before and after, and the existing source hashes remain recorded.",
+    "validation": "Fixed two detector and four recognizer threads. Raw output and complete saved-segmentation score comparisons on physical Android ARM64 and Windows x64. Public lifecycle controls use original fake inputs. No private fixtures or generated model or native binaries are included."
+  },
   "combined_library_and_notation_review": {
     "public_recognition_revision": 193,
     "scope": "Reviewed library notation and playback fixes and complementary optical notation and export fixes use the existing standalone ingress and wire formats. Regressions are original procedural cases. Model artifacts are unchanged."

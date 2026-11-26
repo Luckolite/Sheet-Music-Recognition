@@ -9,6 +9,21 @@ import subprocess
 from tempfile import TemporaryDirectory
 
 
+def pinned_toolchain(zig, headers):
+    zig = zig.resolve(strict=True)
+    headers = headers.resolve(strict=True)
+    if subprocess.check_output([zig, "version"], text=True).strip() != "0.15.2":
+        raise ValueError("Expected Zig 0.15.2")
+    expected_headers = {
+        "onnxruntime_c_api.h": "4763b298a1ab8b5df88c3949b560c1e00a3605e61995d2d3243fd8007679d585",
+        "onnxruntime_ep_c_api.h": "cf9d5508894b09cb0b0f84405de873a0ba78a35c01ffc28b14096c65fe7abbff",
+    }
+    for name, expected in expected_headers.items():
+        if sha256((headers / name).read_bytes()).hexdigest() != expected:
+            raise ValueError(f"Unexpected header checksum for {name}")
+    return zig, headers
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("zig", type=Path)
@@ -21,17 +36,10 @@ def main():
         help="Include the exact-affine detector operations",
     )
     args = parser.parse_args()
-    zig = args.zig.resolve(strict=True)
-    headers = args.headers.resolve(strict=True)
-    if subprocess.check_output([zig, "version"], text=True).strip() != "0.15.2":
-        parser.error("Expected Zig 0.15.2")
-    expected_headers = {
-        "onnxruntime_c_api.h": "4763b298a1ab8b5df88c3949b560c1e00a3605e61995d2d3243fd8007679d585",
-        "onnxruntime_ep_c_api.h": "cf9d5508894b09cb0b0f84405de873a0ba78a35c01ffc28b14096c65fe7abbff",
-    }
-    for name, expected in expected_headers.items():
-        if sha256((headers / name).read_bytes()).hexdigest() != expected:
-            parser.error(f"Unexpected header checksum for {name}")
+    try:
+        zig, headers = pinned_toolchain(args.zig, args.headers)
+    except ValueError as error:
+        parser.error(str(error))
     includes = zig.parent / "lib/libc/include"
     source = Path(__file__).with_name("packed_recognizer.c").resolve()
     sources = [source]

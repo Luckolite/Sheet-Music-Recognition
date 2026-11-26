@@ -17,6 +17,8 @@ public final class OnnxOcrInference implements PortableOcr.DirectDetectorInferen
             "33e277d9de0a25cbe2568f220d0765dd53772c40efa8100ff900acd73be5d054";
     private static final String FUSED_LIBRARY_SHA =
             "eb51cd1c2164b2db1fa342cb2d4ca41760f3a0f5c49ce11133886e674ef43c7f";
+    private static final String WINDOWS_DETECTOR_LIBRARY_SHA =
+            "8c1ee63c6529d4f7eced11719fa23a0badd63915924e1282f68b54d6deab9d10";
     private static final String DETECTOR_V4_SHA =
             "d2a7720d45a54257208b1e13e36a8479894cb74155a5efe29462512d42f49da9";
     private static final String DETECTOR_V5_SHA =
@@ -25,12 +27,12 @@ public final class OnnxOcrInference implements PortableOcr.DirectDetectorInferen
             "60a49903b55f3333ffe3bfc9b52fc93d791a4b9bf33d7373387924abfd18f1d4";
 
     public OnnxOcrInference(String detectorPath, String recognizerPath) throws Exception {
-        this(detectorPath, recognizerPath, false, null, false);
+        this(detectorPath, recognizerPath, false, null, null);
     }
 
     /** Own only the recognizer when text crops have already been located. */
     public static OnnxOcrInference recognizerOnly(String recognizerPath) throws Exception {
-        return new OnnxOcrInference(null, recognizerPath, true, null, false);
+        return new OnnxOcrInference(null, recognizerPath, true, null, null);
     }
 
     /** Open the optional Android ARM64 CPU recognizer with a generated graph and custom operations. */
@@ -41,21 +43,37 @@ public final class OnnxOcrInference implements PortableOcr.DirectDetectorInferen
             throw new UnsupportedOperationException("Packed OCR requires Android ARM64");
         var library = java.nio.file.Path.of(libraryPath).toRealPath().toString();
         String digest = verify(library, Set.of(PACKED_LIBRARY_SHA, FUSED_LIBRARY_SHA));
-        return new OnnxOcrInference(
-                detectorPath, recognizerPath, false, library, digest.equals(FUSED_LIBRARY_SHA));
+        String detectorLibrary = digest.equals(FUSED_LIBRARY_SHA) ? library : null;
+        return new OnnxOcrInference(detectorPath, recognizerPath, false, library, detectorLibrary);
+    }
+
+    /** Open the generated exact-affine detector with the standard recognizer on Windows x64. */
+    public static OnnxOcrInference openFusedDetectorWindows(
+            String detectorPath, String recognizerPath, String libraryPath) throws Exception {
+        String arch = System.getProperty("os.arch");
+        if (!System.getProperty("os.name", "").startsWith("Windows")
+                || !("amd64".equals(arch) || "x86_64".equals(arch)))
+            throw new UnsupportedOperationException("Fused detector requires Windows x64");
+        var library = java.nio.file.Path.of(libraryPath).toRealPath().toString();
+        verify(library, Set.of(WINDOWS_DETECTOR_LIBRARY_SHA));
+        return new OnnxOcrInference(detectorPath, recognizerPath, false, null, library);
     }
 
     private OnnxOcrInference(
             String detectorPath, String recognizerPath, boolean recognizerOnly,
-            String packedLibrary, boolean supportsFusedDetector)
+            String packedLibrary, String detectorLibrary)
             throws Exception {
-        if (packedLibrary != null && !"1.25.1".equals(environment.getVersion()))
-            throw new UnsupportedOperationException("Packed OCR requires ONNX Runtime 1.25.1");
+        if ((packedLibrary != null || detectorLibrary != null)
+                && !"1.25.1".equals(environment.getVersion()))
+            throw new UnsupportedOperationException("Custom OCR requires ONNX Runtime 1.25.1");
         boolean fusedDetector = !recognizerOnly && verify(
                 detectorPath,
-                supportsFusedDetector
-                        ? Set.of(DETECTOR_V4_SHA, DETECTOR_V5_SHA, FUSED_DETECTOR_SHA)
-                        : Set.of(DETECTOR_V4_SHA, DETECTOR_V5_SHA)).equals(FUSED_DETECTOR_SHA);
+                detectorLibrary == null
+                        ? Set.of(DETECTOR_V4_SHA, DETECTOR_V5_SHA)
+                        : packedLibrary == null
+                                ? Set.of(FUSED_DETECTOR_SHA)
+                                : Set.of(DETECTOR_V4_SHA, DETECTOR_V5_SHA, FUSED_DETECTOR_SHA))
+                .equals(FUSED_DETECTOR_SHA);
         verify(
                 recognizerPath,
                 Set.of(packedLibrary == null
@@ -78,8 +96,8 @@ public final class OnnxOcrInference implements PortableOcr.DirectDetectorInferen
                         registeredDetectorOptions.setIntraOpNumThreads(2);
                         registeredDetectorOptions.setInterOpNumThreads(1);
                         registeredDetectorOptions.addConfigEntry("session.force_spinning_stop", "1");
-                        pinLibrary(packedLibrary);
-                        registeredDetectorOptions.registerCustomOpLibrary(packedLibrary);
+                        pinLibrary(detectorLibrary);
+                        registeredDetectorOptions.registerCustomOpLibrary(detectorLibrary);
                     }
                     openedDetector = environment.createSession(
                             detectorPath, registeredDetectorOptions == null ? options : registeredDetectorOptions);

@@ -95,6 +95,13 @@ class OnnxOcrLifecycleTest(unittest.TestCase):
                 text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=60)
             self.assertEqual(0, fused.returncode, fused.stdout)
             self.assertIn('FUSED_LIFECYCLE_PASS cases=5', fused.stdout)
+            windows = subprocess.run(
+                [build_java.jdk_tool('java'), '-XX:ActiveProcessorCount=1', '-Xmx96m',
+                 '-cp', str(classes), 'io.github.luckolite.interpreter.FusedDetectorLifecycleControls',
+                 str(work), 'windows'],
+                text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=60)
+            self.assertEqual(0, windows.returncode, windows.stdout)
+            self.assertIn('WINDOWS_FUSED_LIFECYCLE_PASS cases=4', windows.stdout)
         self.assertEqual(raw, binding.read_bytes(), 'Fault hooks must never alter the optional binding')
 
 

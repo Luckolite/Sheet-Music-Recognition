@@ -152,6 +152,24 @@ and an output path. Pass `--with-fused-detector` to `build_packed_recognizer.py`
 to generate the companion ARM64 library. Supply the generated detector and
 companion library to the same `openPackedArm64` entry point.
 
+## Optional Windows x64 detector
+
+Build the DLL using `optional/ocr/native/build_fused_detector_windows.py` with
+Zig 0.15.2 and the same ONNX Runtime 1.25.1 headers. Call
+`OnnxOcrInference.openFusedDetectorWindows(detectorPath, recognizerPath, libraryPath)`
+with the generated exact-affine detector and the pinned stock recognizer.
+
+The generators derive both graphs from checksum-pinned RapidOCR PP-OCRv5
+models. The native builders pin the ONNX Runtime headers and verify the generated
+libraries. The repository ships the generator and native source code.
+
+With two detector threads and four recognizer threads, the Samsung ARM64
+comparison matched all 24,251,536 output values bit for bit. The detector took
+16.6% less time and the mixed full-page and strip OCR batch took 14.1% less time.
+On Windows x64 the detector-only comparison matched all 62,232,576 output values
+and took 16.6% less time. Both complete saved-segmentation score replays matched
+their stock controls. Whole-score timing varied by page.
+
 ## Optional local worker
 
 The same optional build also provides `NativeOcrServer` on loopback port 45925.
