@@ -13656,23 +13656,25 @@
     },
     "PaperBackgroundWhitening.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/PaperBackgroundWhitening.java",
-      "source_sha256": "e9459586d9c72f8f1a80122dde3c52803090aecfdfec04c24964c1f6fbab5fc1",
-      "source_normalized_sha256": "3da05b43be17224d2772a3984e1da1bbc094da1c9beabd211b286b518f5fd6bf",
+      "source_sha256": "cf36345fa0c829c80003a6d23c268d6a5795eadee0961aac528a212cff79cc51",
+      "source_normalized_sha256": "fbb1b2a6a246e38def3035395a0a28ffd680e0b081696b9ece4b5fc117e8f182",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/PaperBackgroundWhitening.java",
-      "standalone_sha256": "f677416fa506b02d22870a58f30a6436771efae7ecaeb114000b987123e6b40b",
+      "standalone_sha256": "fbf731b979731c239668ee67f09f68c54d0b6d67ef867e8fb12c669cad01bcc9",
       "license": "Apache-2.0",
       "recognition140_review_note": "Reviewed decoder-only illumination correction and namespace twins; original segmentation/OCR/annotation authority retained. Recognition140 cache invalidation, guide299/audio102 record layouts unchanged. Original synthetic regressions and model lineage only.",
-      "reviewed_app_commit": "14068c43637e478ed3c4e4e72cef8c905362b757"
+      "reviewed_app_commit": "3885c0219d967a5b2b9e78c54751d28bfbd18c6d",
+      "paper_contrast_review_note": "Reviewed exact bounded axial contrast witnesses, full closing fallback, and synthetic boundary regressions; the Java app and standalone sources differ only by package."
     },
     "PaperBackgroundWhiteningTest.java": {
       "source_path": "app/src/test/java/com/musicsheets/app/pdf/PaperBackgroundWhiteningTest.java",
-      "source_sha256": "588e72e4e51d2620babbbccbed278320bceec4919a83929dc2f700799cb605f2",
-      "source_normalized_sha256": "07aabb795e17b8018ab015fc02e2e1a40753cf8433beca089a5d1fc55270bfa5",
+      "source_sha256": "787ce2cdd014353f2297f95205eea29b7ffc12bf7d2ca93e6b32fefa5b8ce24c",
+      "source_normalized_sha256": "8b9c14a8f5e79a4a20906bda28fa6b5f84d0be961c2a33d58d1a5e1ff096592d",
       "standalone_path": "java/src/test/java/io/github/luckolite/interpreter/PaperBackgroundWhiteningTest.java",
-      "standalone_sha256": "dfe93f86c42090a2261881e6153d5c79646b47dd8c974a79f9c49b600433521c",
+      "standalone_sha256": "435b868cea7d026b21a0b9664a4aca2ecc486ff6ddb30b28b86f75b618236324",
       "license": "Apache-2.0",
       "recognition140_review_note": "Reviewed decoder-only illumination correction and namespace twins; original segmentation/OCR/annotation authority retained. Recognition140 cache invalidation, guide299/audio102 record layouts unchanged. Original synthetic regressions and model lineage only.",
-      "reviewed_app_commit": "14068c43637e478ed3c4e4e72cef8c905362b757"
+      "reviewed_app_commit": "3885c0219d967a5b2b9e78c54751d28bfbd18c6d",
+      "paper_contrast_review_note": "Reviewed exact bounded axial contrast witnesses, full closing fallback, and synthetic boundary regressions; the Java app and standalone sources differ only by package."
     },
     "OnnxPaperFieldInference.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/OnnxPaperFieldInference.java",

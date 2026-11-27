@@ -92,6 +92,37 @@ public class PaperBackgroundWhiteningTest {
         assertArrayEquals(beforeLabels, labels);
     }
 
+
+    @Test
+    public void requiresPaperOnBothSidesOrChecksTheExactClosing() {
+        int width = 41, height = 35, x = 15, y = 16;
+        byte[] gray = new byte[width * height];
+        byte[] labels = new byte[gray.length];
+        int marked = y * width + x;
+        labels[marked] = 3;
+        Arrays.fill(gray, (byte) 150);
+        gray[marked - 12] = (byte) 182;
+        gray[marked + 12] = (byte) 181;
+        assertSame(gray, PaperBackgroundWhitening.darkenFadedInk(gray, labels, width, height));
+        gray[marked + 12] = (byte) 182;
+        assertEquals(98, PaperBackgroundWhitening.darkenFadedInk(gray, labels, width, height)[marked] & 255);
+
+        // All four diagonal quadrants can satisfy the closing without an axial witness.
+        Arrays.fill(gray, (byte) 150);
+        for (int dx : new int[] {-12, 12})
+            for (int dy : new int[] {-12, 12}) gray[marked + dy * width + dx] = (byte) 182;
+        assertEquals(98, PaperBackgroundWhitening.darkenFadedInk(gray, labels, width, height)[marked] & 255);
+
+        // At the left edge, a bright pixel at the end of the preceding row cannot count.
+        Arrays.fill(gray, (byte) 150);
+        Arrays.fill(labels, (byte) 0);
+        int edge = y * width;
+        labels[edge] = 3;
+        gray[edge - 1] = (byte) 182;
+        gray[edge + 13] = (byte) 182;
+        assertSame(gray, PaperBackgroundWhitening.darkenFadedInk(gray, labels, width, height));
+    }
+
     @Test
     public void polishesRemainingFadedInkAfterWhitening() throws Exception {
         int width = 96, height = 64;

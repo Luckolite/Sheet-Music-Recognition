@@ -99,6 +99,8 @@ public final class PaperBackgroundWhitening {
             byte[] gray, byte[] labels, int width, int height, byte[] paper) {
         if (labels == null) return gray;
         byte[] output = gray;
+        // Bound speculative work on dense pages; the full close handles the remainder.
+        int localChecks = 1 + gray.length / 256;
         for (int y = 0; y < height; y++) {
             for (int x = 0; x < width; x++) {
                 int index = y * width + x;
@@ -111,8 +113,10 @@ public final class PaperBackgroundWhitening {
                 }
                 int core = darkestNeighbor(gray, width, height, x, y);
                 if (core < MIN_FADED_TONE) continue;
-                if (paper == null) paper = close(gray, width, height);
-                if ((paper[index] & 255) - tone < MIN_PAPER_CONTRAST) continue;
+                if (paper == null && (localChecks-- == 0
+                        || !oppositePaper(gray, width, height, x, y, tone + MIN_PAPER_CONTRAST)))
+                    paper = close(gray, width, height);
+                if (paper != null && (paper[index] & 255) - tone < MIN_PAPER_CONTRAST) continue;
                 int gain = limitFadedInkGain(tone, core - MIN_FADED_TONE + 1);
                 if (output == gray) output = gray.clone();
                 output[index] = (byte) (tone - gain);
@@ -132,6 +136,26 @@ public final class PaperBackgroundWhitening {
                 if (tone >= MIN_FADED_TONE && tone < MAX_FADED_TONE
                         && darkestNeighbor(gray, width, height, x, y) >= MIN_FADED_TONE) return true;
             }
+        }
+        return false;
+    }
+
+    // Every dilation window participating in this pixel's closing contains the
+    // pixel. Along its row (or column), that window includes the whole radius
+    // on at least one side. Bright witnesses on both sides prove the threshold.
+    private static boolean oppositePaper(byte[] gray, int width, int height, int x, int y,
+            int threshold) {
+        int index = y * width + x;
+        return (paperOnRay(gray, index, -1, Math.min(RADIUS, x), threshold)
+                        && paperOnRay(gray, index, 1, Math.min(RADIUS, width - 1 - x), threshold))
+                || (paperOnRay(gray, index, -width, Math.min(RADIUS, y), threshold)
+                        && paperOnRay(gray, index, width, Math.min(RADIUS, height - 1 - y), threshold));
+    }
+
+    private static boolean paperOnRay(byte[] gray, int index, int step, int length, int threshold) {
+        for (int i = 0; i < length; i++) {
+            index += step;
+            if ((gray[index] & 255) >= threshold) return true;
         }
         return false;
     }
