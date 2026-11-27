@@ -464,8 +464,6 @@ public final class SheetInterpreter {
                         ocr.crossRowPortWords(
                                 annotationGray, width, height, staffs, measures, notes));
             // Note filtering can change staff ownership. Realign the surviving notes.
-            var ornamentStaffs = ocr == null ? physicalStaffs
-                    : OmrScoreInterpreter.techniqueStaffs(labels, gray, width, height, measures);
             notes =
                     PortableNoteOrnaments.applyWithAlignedStaffs(
                             GlyphResources.ornaments(),
@@ -476,7 +474,7 @@ public final class SheetInterpreter {
                             measures,
                             notes,
                             ornamentWords,
-                            ScoreDynamicsDetector.alignStaffs(ornamentStaffs, notes, height));
+                            ScoreDynamicsDetector.alignStaffs(physicalStaffs, notes, height));
         }
         notes = SixteenthBeamRailAlias.remove(notes, measures, gray, annotationGray, width, height);
         var beamedTouches = new java.util.ArrayList<ArtificialHarmonics.BeamedTouch>();
