@@ -53,3 +53,26 @@ identical internal floating-point operations; complete labels and downstream
 page output are checked separately before desktop release. A private comparison
 of 22 complete pages produced identical pixel-label hashes and every serialized
 page field; the source images and decoded private data are not distributed.
+
+## Optional DirectML worker on Windows
+
+Use a separate Python environment with `onnxruntime-directml==1.23.0`, NumPy,
+and Pillow. Add the checkout's `src` directory to that environment's
+`PYTHONPATH`. Use `onnx==1.19.1` to build the companion graph from the pinned
+desktop conversion. The builder verifies both artifact hashes.
+
+```sh
+python scripts/build_directml_guard.py /models/music_sheets_v3_float16.onnx /models/guarded-margin.onnx
+python optional/segmentation/directml_worker.py /models/music_sheets_v3_float16.onnx gray.npy labels.npy --adapter 1
+```
+
+Choose the DirectML adapter index for the machine. The worker accepts a
+two-dimensional `uint8` grayscale array and writes a `uint8` label array with
+the same shape. The companion graph adds a boolean flag for small class-score
+margins. The worker reruns affected tiles with the checked CPU model and merges
+them using the stock tile ownership rules.
+
+The companion artifact SHA-256 is
+`fbd4c8a767538ff53eca8c10507d68ab81e60bd584a54cb2321f60101b3ba282`.
+The retry threshold is empirical. Qualify a device and workload against the
+stock Java segmentation before enabling this provider in a host application.
