@@ -69,14 +69,25 @@ public final class PaperBackgroundWhitening {
         validate(fields.paper(), fieldWidth, fieldHeight, .23f);
         validate(fields.contrast(), fieldWidth, fieldHeight, .35f);
         byte[] output = new byte[original.length];
+        int[] left = new int[width];
+        int[] right = new int[width];
+        float[] fraction = new float[width];
+        for (int x = 0; x < width; x++) {
+            double position = Math.max(0., (x + .5) * fieldWidth / width - .5);
+            left[x] = (int) position;
+            right[x] = Math.min(fieldWidth - 1, left[x] + 1);
+            fraction[x] = (float) (position - left[x]);
+        }
         for (int y = 0; y < height; y++) {
+            double position = Math.max(0., (y + .5) * fieldHeight / height - .5);
+            int top = (int) position, bottom = Math.min(fieldHeight - 1, top + 1);
+            float fy = (float) (position - top);
+            float[] paperTop = fields.paper()[top], paperBottom = fields.paper()[bottom];
+            float[] contrastTop = fields.contrast()[top], contrastBottom = fields.contrast()[bottom];
             for (int x = 0; x < width; x++) {
                 int index = y * width + x;
-                float paper =
-                        interpolate(fields.paper(), fieldWidth, fieldHeight, x, y, width, height);
-                float contrast =
-                        interpolate(
-                                fields.contrast(), fieldWidth, fieldHeight, x, y, width, height);
+                float paper = interpolate(paperTop, paperBottom, left[x], right[x], fraction[x], fy);
+                float contrast = interpolate(contrastTop, contrastBottom, left[x], right[x], fraction[x], fy);
                 float ink = Math.max(0f, 1f - (original[index] & 255) / (255f * paper));
                 float restored = 255f * (1f - ink / contrast);
                 int value = Math.max(0, Math.min(255, (int) Math.rint(restored)));
@@ -333,21 +344,9 @@ public final class PaperBackgroundWhitening {
         return result;
     }
 
-    private static float interpolate(
-            float[][] source,
-            int width,
-            int height,
-            int x,
-            int y,
-            int targetWidth,
-            int targetHeight) {
-        double px = Math.max(0., (x + .5) * width / targetWidth - .5);
-        double py = Math.max(0., (y + .5) * height / targetHeight - .5);
-        int left = (int) px, top = (int) py;
-        int right = Math.min(width - 1, left + 1), bottom = Math.min(height - 1, top + 1);
-        float fx = (float) (px - left), fy = (float) (py - top);
-        float upper = source[top][left] * (1f - fx) + source[top][right] * fx;
-        float lower = source[bottom][left] * (1f - fx) + source[bottom][right] * fx;
+    private static float interpolate(float[] top, float[] bottom, int left, int right, float fx, float fy) {
+        float upper = top[left] * (1f - fx) + top[right] * fx;
+        float lower = bottom[left] * (1f - fx) + bottom[right] * fx;
         return upper * (1f - fy) + lower * fy;
     }
 }

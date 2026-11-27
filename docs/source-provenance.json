@@ -13656,25 +13656,27 @@
     },
     "PaperBackgroundWhitening.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/PaperBackgroundWhitening.java",
-      "source_sha256": "cf36345fa0c829c80003a6d23c268d6a5795eadee0961aac528a212cff79cc51",
-      "source_normalized_sha256": "fbb1b2a6a246e38def3035395a0a28ffd680e0b081696b9ece4b5fc117e8f182",
+      "source_sha256": "676d0a592b19333340dd7c2344ad2f6206fe87d53536065dc5a7c789a8c1d1a4",
+      "source_normalized_sha256": "6025df9065e0afbbfaa06baea6bd3f8c7381a0e29372ce5806d405628ffce00f",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/PaperBackgroundWhitening.java",
-      "standalone_sha256": "fbf731b979731c239668ee67f09f68c54d0b6d67ef867e8fb12c669cad01bcc9",
+      "standalone_sha256": "60e82da5414a5e65fad385cc296687c0fbce09069ef67d17be1c0b2a5c258885",
       "license": "Apache-2.0",
       "recognition140_review_note": "Reviewed decoder-only illumination correction and namespace twins; original segmentation/OCR/annotation authority retained. Recognition140 cache invalidation, guide299/audio102 record layouts unchanged. Original synthetic regressions and model lineage only.",
-      "reviewed_app_commit": "3885c0219d967a5b2b9e78c54751d28bfbd18c6d",
-      "paper_contrast_review_note": "Reviewed exact bounded axial contrast witnesses, full closing fallback, and synthetic boundary regressions; the Java app and standalone sources differ only by package."
+      "reviewed_app_commit": "bb0865e27c69d44138dbebae7441ac8589da9c82",
+      "paper_contrast_review_note": "Reviewed exact bounded axial contrast witnesses, full closing fallback, and synthetic boundary regressions; the Java app and standalone sources differ only by package.",
+      "paper_interpolation_review_note": "Reviewed shared sampling coordinates for paper and contrast restoration and a generated fractional-grid rounding regression."
     },
     "PaperBackgroundWhiteningTest.java": {
       "source_path": "app/src/test/java/com/musicsheets/app/pdf/PaperBackgroundWhiteningTest.java",
-      "source_sha256": "787ce2cdd014353f2297f95205eea29b7ffc12bf7d2ca93e6b32fefa5b8ce24c",
-      "source_normalized_sha256": "8b9c14a8f5e79a4a20906bda28fa6b5f84d0be961c2a33d58d1a5e1ff096592d",
+      "source_sha256": "74ec276495188d62e5d207b8a83a778d6f80f605ced820b0af15d02021539d19",
+      "source_normalized_sha256": "ed80952b92432c2748f90400503f1b4ef2f6a929be5a148d51a0a5d2e5134a4d",
       "standalone_path": "java/src/test/java/io/github/luckolite/interpreter/PaperBackgroundWhiteningTest.java",
-      "standalone_sha256": "435b868cea7d026b21a0b9664a4aca2ecc486ff6ddb30b28b86f75b618236324",
+      "standalone_sha256": "59a84b33e0989046f292d39e763e61f2852f50f9ef82a9142cf8113e432cba78",
       "license": "Apache-2.0",
       "recognition140_review_note": "Reviewed decoder-only illumination correction and namespace twins; original segmentation/OCR/annotation authority retained. Recognition140 cache invalidation, guide299/audio102 record layouts unchanged. Original synthetic regressions and model lineage only.",
-      "reviewed_app_commit": "3885c0219d967a5b2b9e78c54751d28bfbd18c6d",
-      "paper_contrast_review_note": "Reviewed exact bounded axial contrast witnesses, full closing fallback, and synthetic boundary regressions; the Java app and standalone sources differ only by package."
+      "reviewed_app_commit": "bb0865e27c69d44138dbebae7441ac8589da9c82",
+      "paper_contrast_review_note": "Reviewed exact bounded axial contrast witnesses, full closing fallback, and synthetic boundary regressions; the Java app and standalone sources differ only by package.",
+      "paper_interpolation_review_note": "Reviewed shared sampling coordinates for paper and contrast restoration and a generated fractional-grid rounding regression."
     },
     "OnnxPaperFieldInference.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/OnnxPaperFieldInference.java",

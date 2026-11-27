@@ -8,6 +8,25 @@ import org.junit.Test;
 
 public class PaperBackgroundWhiteningTest {
     @Test
+    public void fractionalCoordinatesPreservePaperAndContrastRounding() throws Exception {
+        int width = 997, height = 47;
+        byte[] gray = new byte[width * height];
+        for (int i = 0; i < gray.length; i++) gray[i] = (byte) (84 + (i * 17) % 117);
+        var result = PaperBackgroundWhitening.apply(gray, width, height, (features, w, h) -> {
+            float[][] paper = new float[h][w], contrast = new float[h][w];
+            for (int y = 0; y < h; y++) {
+                for (int x = 0; x < w; x++) {
+                    paper[y][x] = .65f + ((x + 3 * y) % 19) * .015f;
+                    contrast[y][x] = .55f + ((2 * x + y) % 13) * .025f;
+                }
+            }
+            return new PaperBackgroundWhitening.Fields(paper, contrast);
+        });
+        assertEquals("98b68e467c385d21991374ac579c7691c21efd4521fefd6affba65446f009168",
+                result.decoderSha256());
+    }
+
+    @Test
     public void cleanInkBypassesModelWithoutChangingSource() throws Exception {
         byte[] source = new byte[128 * 96];
         Arrays.fill(source, (byte) 255);
