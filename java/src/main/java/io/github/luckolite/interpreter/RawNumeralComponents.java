@@ -102,44 +102,52 @@ final class RawNumeralComponents {
                 || h < 1
                 || (long) w * h > maxCells)
             throw new IllegalArgumentException("raw core graph bounds");
-        BitSet seen = new BitSet(w * h);
-        int[] queue = new int[w * h];
+        int cells = w * h;
+        BitSet seen = null;
+        int[] queue = null;
         var components = new ArrayList<Component>();
-        for (int seed = 0; seed < w * h; seed++) {
-            charge.tick();
-            int x = left + seed % w, y = top + seed / w;
-            if (seen.get(seed) || (gray[y * width + x] & 255) > threshold) continue;
-            newComponent.run();
-            int take = 0, size = 1, l = width, r = -1, t = height, b = -1;
-            queue[0] = seed;
-            seen.set(seed);
-            while (take < size) {
+        for (int y = top, seed = 0; y <= bottom; y++) {
+            int position = y * width + left;
+            for (int x = left; x <= right; x++, position++, seed++) {
                 charge.tick();
-                int q = queue[take++], xx = left + q % w, yy = top + q / w;
-                l = Math.min(l, xx);
-                r = Math.max(r, xx);
-                t = Math.min(t, yy);
-                b = Math.max(b, yy);
-                for (int dy = -1; dy <= 1; dy++)
-                    for (int dx = -1; dx <= 1; dx++) {
-                        int nx = xx + dx, ny = yy + dy;
-                        if (nx < left || nx > right || ny < top || ny > bottom) continue;
-                        int next = (ny - top) * w + nx - left;
-                        charge.tick();
-                        if (!seen.get(next) && (gray[ny * width + nx] & 255) <= threshold) {
-                            seen.set(next);
-                            queue[size++] = next;
+                if ((gray[position] & 255) > threshold || seen != null && seen.get(seed)) continue;
+                newComponent.run();
+                if (seen == null) {
+                    seen = new BitSet(cells);
+                    queue = new int[Math.min(64, cells)];
+                }
+                int take = 0, size = 1, l = width, r = -1, t = height, b = -1;
+                queue[0] = position;
+                seen.set(seed);
+                while (take < size) {
+                    charge.tick();
+                    int pixel = queue[take++], yy = pixel / width, xx = pixel - yy * width;
+                    l = Math.min(l, xx);
+                    r = Math.max(r, xx);
+                    t = Math.min(t, yy);
+                    b = Math.max(b, yy);
+                    int minX = Math.max(left, xx - 1), maxX = Math.min(right, xx + 1);
+                    int lastY = Math.min(bottom, yy + 1);
+                    for (int ny = Math.max(top, yy - 1); ny <= lastY; ny++) {
+                        int next = (ny - top) * w + minX - left;
+                        int neighbor = ny * width + minX;
+                        for (int nx = minX; nx <= maxX; nx++, next++, neighbor++) {
+                            charge.tick();
+                            if (!seen.get(next) && (gray[neighbor] & 255) <= threshold) {
+                                seen.set(next);
+                                if (size == queue.length) {
+                                    int capacity = size >= Math.min(8192, cells / 4) ? cells : size * 2;
+                                    queue = Arrays.copyOf(queue, capacity);
+                                }
+                                queue[size++] = neighbor;
+                            }
                         }
                     }
+                }
+                // Keep the coordinate-freezing budget even though the queue already holds raw coordinates.
+                for (int i = 0; i < size; i++) charge.tick();
+                components.add(new Component(queue, size, l, t, r, b));
             }
-            // Replace local offsets with original raw coordinates before freezing the private
-            // array.
-            for (int i = 0; i < size; i++) {
-                charge.tick();
-                int q = queue[i];
-                queue[i] = (top + q / w) * width + left + q % w;
-            }
-            components.add(new Component(queue, size, l, t, r, b));
         }
         return new RawNumeralComponents(components, left, top, right, bottom);
     }

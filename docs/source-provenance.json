@@ -8466,15 +8466,23 @@
     },
     "RawNumeralComponents.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/RawNumeralComponents.java",
-      "source_sha256": "ce530e6f74c5b38d9607fcef96a68c54d63c194f53cbfadffbd151d4fabde78d",
-      "source_normalized_sha256": "ce530e6f74c5b38d9607fcef96a68c54d63c194f53cbfadffbd151d4fabde78d",
+      "source_sha256": "9d7a29568f0b4b5fb861fd49fea751584a6a8e02f37322716657749e0e5cc7f0",
+      "source_normalized_sha256": "9d7a29568f0b4b5fb861fd49fea751584a6a8e02f37322716657749e0e5cc7f0",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/RawNumeralComponents.java",
-      "standalone_sha256": "e83abe5d6dc538e9db966886906b9b5085a7ce2f7cc0aa859e4c83645e777f11",
+      "standalone_sha256": "f4bd5011193e1cb9aac970ef718459b4d7c8c352b1a0e54ec611c4158e0d6926",
       "license": "Apache-2.0",
       "review_note": "Shared source130 helper with namespace-only executable token adaptation, explicit native decoder selection and source-free original regressions. No model, private score, device, signing or app-history data.",
       "november_24_flesch_app_review": {
         "app_commit": "d0622b051dfaa40ad1ac76a2cd1ed7072186bb90",
         "scope": "Shared connected digit geometry. The app validates the caller-supplied threshold at its entry point."
+      },
+      "bounded_scan_review": {
+        "app_commit": "9d6edc4ca2bf37a892bbed362c90307834f8819e",
+        "scope": "Lazy component queues and row-major scan retain original-coordinate breadth-first ordering and individual callback charges. The Android-only threshold bounds check remains in place.",
+        "app_test": "RawNumeralComponentOrderTest.java",
+        "app_test_lf_sha256": "7d9e527b86d7e530f1698a0147f712b7e34449fde281d784328f34c758bbbeee",
+        "standalone_test": "RawNumeralComponentOrderTest.java",
+        "standalone_test_lf_sha256": "94966e3e40715021adfa36e5462bab280e9bc203018afcdb5cd2bded30c4f56b"
       }
     },
     "RawPrimaryBeamAbsence.java": {
