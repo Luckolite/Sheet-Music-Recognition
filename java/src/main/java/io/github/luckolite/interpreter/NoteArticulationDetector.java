@@ -215,6 +215,7 @@ final class NoteArticulationDetector {
                     && event.visualSize() == ScoreNoteEvent.VisualSize.FULL && event.staffCount() == 1)
                 lowerAnchors.add(i);
         }
+        var lowerDyads = lowerBowDyads(notes, events, staffs);
         List<BowMark> result = new ArrayList<>();
         for (Glyph g : glyphs) {
             int owner = -1, geometryCount = 0;
@@ -250,12 +251,21 @@ final class NoteArticulationDetector {
                 var frame = staffs.get(n.staff);
                 float above = (frame.top() - g.bottom) / gap;
                 if (above < -.6f
-                        || above > 4.2f
                         || glyphWidth < gap * .65f
                         || glyphHeight < gap * .8f
                         // Staff gap and raw positions are pixel-center coordinates.
                         || g.bottom - g.top > gap * 3.5f
                         || n.y - g.bottom < gap * .7f) continue;
+                if (above > 4.2f) {
+                    if (above > 6.5f || frame.top() - n.y < gap * 2.5f
+                            || Math.abs(g.x() - n.x) > gap * .45f
+                            || n.y - g.bottom < gap || n.y - g.bottom > gap * 2.2f
+                            || glyphWidth > gap * 1.9f || glyphHeight > gap * 1.9f) continue;
+                    // A high ledger attack has its own nearby open-bottom bow cap.
+                    work += 12L * g.count + 64;
+                    if (work > 256_000_000L) return List.of();
+                    if (!openDownBowBody(g, width) || !completeDownBowShape(g, width)) continue;
+                }
                 if (glyphWidth > gap * 3) {
                     // A peer outside both existing anchor tolerances cannot own this mark.
                     if (Math.abs(g.x() - n.x) > gap * .7f && Math.abs(tipX - n.x) > gap * .7f)
@@ -284,10 +294,8 @@ final class NoteArticulationDetector {
                 if (owner >= 0) {
                     var a = events.get(owner);
                     var b = events.get(i);
-                    if (a.measureIndex() != b.measureIndex()
-                            || a.staffIndex() != b.staffIndex()
-                            || a.staffCount() != b.staffCount()
-                            || a.positionInMeasure() != b.positionInMeasure()) ambiguous = true;
+                    if (!sameBowAttack(a, b, notes.get(owner), notes.get(i), gray, width, height))
+                        ambiguous = true;
                 } else owner = i;
             }
             // Qualify the new anchor only when it can add a peer to the legacy domain.
@@ -306,8 +314,8 @@ final class NoteArticulationDetector {
                 // and the UP row certificate before any new arrays or scans.
                 work += 32L * g.count + 64L * h + 4L * w * h + 512;
                 if (work > 256_000_000L) return List.of();
-                boolean downShape =
-                        completeDownBowShape(g, width) || measuredDownBowShape(g, width);
+                boolean downShape = openDownBowBody(g, width)
+                        && (completeDownBowShape(g, width) || measuredDownBowShape(g, width));
                 if (!downShape && !capMeasured) {
                     work += completeUpBowCapWork(g);
                     if (work > 256_000_000L) return List.of();
@@ -327,13 +335,21 @@ final class NoteArticulationDetector {
                         if (owner >= 0) {
                             var a = events.get(owner);
                             var b = events.get(i);
-                            if (a.measureIndex() != b.measureIndex()
-                                    || a.staffIndex() != b.staffIndex()
-                                    || a.staffCount() != b.staffCount()
-                                    || a.positionInMeasure() != b.positionInMeasure())
+                            if (!sameBowAttack(a, b, notes.get(owner), notes.get(i), gray, width, height))
                                 ambiguous = true;
                         } else owner = i;
                     }
+            }
+            if (owner < 0 && !ambiguous && !lowerDyads.isEmpty()
+                    && glyphWidth >= 9 && glyphWidth <= 38 && glyphHeight >= 13 && glyphHeight <= 52) {
+                work += 20L * lowerDyads.size() + 8L * glyphs.size() + 48L * g.count
+                        + 128L * glyphHeight + 6L * (long) glyphWidth * (long) glyphHeight + 8192;
+                if (work > 256_000_000L) return List.of();
+                var lower = provedLowerDyadBow(g, glyphs, width, height, gray, notes, staffs, lowerDyads);
+                if (lower != null) {
+                    result.add(lower);
+                    continue;
+                }
             }
             if (owner < 0 && !ambiguous && aspect <= 1.5f && !lowerAnchors.isEmpty()
                     && glyphWidth >= 9 && glyphWidth <= 35 && glyphHeight >= 10 && glyphHeight <= 40) {
@@ -388,7 +404,7 @@ final class NoteArticulationDetector {
                     || !printedBodyContrast(g, gray, width, height)
                     || directionText(g, context, n.gap, labels)) continue;
             boolean down =
-                    aspect <= 2.2f && !tipQualified
+                    aspect <= 2.2f && !tipQualified && openDownBowBody(g, width)
                             && (completeDownBowShape(g, width) || measuredDownBowShape(g, width));
             if (!down && !capMeasured) {
                 work += completeUpBowCapWork(g);
@@ -426,6 +442,124 @@ final class NoteArticulationDetector {
         }
         conflicts.forEach(unique::remove);
         return List.copyOf(unique.values());
+    }
+
+    private static boolean sameBowAttack(ScoreNoteEvent a, ScoreNoteEvent b, Anchor first, Anchor second,
+            byte[] gray, int width, int height) {
+        if (a.measureIndex() != b.measureIndex() || a.staffIndex() != b.staffIndex()
+                || a.staffCount() != b.staffCount() || first.staff != second.staff) return false;
+        if (a.positionInMeasure() == b.positionInMeasure()) return true;
+        int direction = a.stemDirection();
+        float gap = first.gap;
+        if (gap > 24 || direction == 0 || direction != b.stemDirection()
+                || Math.abs(first.x - second.x) > .19f * gap
+                || Math.abs(first.y - second.y) > 3.5f * gap
+                || a.kind() != ScoreNoteEvent.Kind.PITCHED || b.kind() != ScoreNoteEvent.Kind.PITCHED
+                || a.visualSize() != ScoreNoteEvent.VisualSize.FULL
+                || b.visualSize() != ScoreNoteEvent.VisualSize.FULL) return false;
+        var one = PairedTremoloInk.stem(gray, width, height, first.x, first.y, gap, direction);
+        var two = PairedTremoloInk.stem(gray, width, height, second.x, second.y, gap, direction);
+        return one != null && two != null && Math.abs(one.x() - two.x()) <= 2
+                && Math.abs(one.endY() - two.endY()) <= 2;
+    }
+
+
+    // A fingering zero closes the bottom of its counter. A down-bow has two open legs.
+    private static boolean openDownBowBody(Glyph glyph, int width) {
+        int span = glyph.right - glyph.left;
+        float left = glyph.left + .34f * span, right = glyph.right - .34f * span;
+        float bottomBand = glyph.top + .76f * (glyph.bottom - glyph.top);
+        for (int pixel : glyph.pixels) {
+            int x = pixel % width;
+            if (pixel / width >= bottomBand && x >= left && x <= right) return false;
+        }
+        return true;
+    }
+
+    private record LowerBowDyad(int owner, int partner) {}
+
+    private static List<LowerBowDyad> lowerBowDyads(List<Anchor> notes, List<ScoreNoteEvent> events,
+            List<PlayingTechniqueDetector.Staff> staffs) {
+        var found = new ArrayList<LowerBowDyad>();
+        for (int i = 1; i < notes.size(); i++) {
+            boolean secondIsLower = notes.get(i).y >= notes.get(i - 1).y;
+            int lower = secondIsLower ? i : i - 1;
+            int upper = secondIsLower ? i - 1 : i;
+            var a = notes.get(lower);
+            var b = notes.get(upper);
+            var low = events.get(lower);
+            var high = events.get(upper);
+            if (a.staff < 0 || a.staff >= staffs.size() || b.staff != a.staff
+                    || a.gap < 10 || a.gap > 24 || low.staffCount() != 1 || high.staffCount() != 1
+                    || low.measureIndex() != high.measureIndex() || low.staffIndex() != high.staffIndex()
+                    || low.stemDirection() != 1 || high.stemDirection() != 1
+                    || low.kind() != ScoreNoteEvent.Kind.PITCHED || high.kind() != ScoreNoteEvent.Kind.PITCHED
+                    || low.visualSize() != ScoreNoteEvent.VisualSize.FULL
+                    || high.visualSize() != ScoreNoteEvent.VisualSize.FULL
+                    || low.clefBottomDiatonic() != high.clefBottomDiatonic()
+                    || high.staffStep() - low.staffStep() != 5
+                    || Math.abs(a.x - b.x) > .19f * a.gap
+                    || Math.abs(a.y - b.y - 2.5f * a.gap) > .25f * a.gap) continue;
+            float depth = a.y - staffs.get(a.staff).bottom();
+            if (depth >= -.20f * a.gap && depth <= 1.15f * a.gap) found.add(new LowerBowDyad(lower, upper));
+        }
+        return found;
+    }
+
+    /** A conventional bow below an upstem sixth owns its lower head and the separate dot between them. */
+    private static BowMark provedLowerDyadBow(Glyph glyph, List<Glyph> glyphs, int width, int height,
+            byte[] gray, List<Anchor> notes, List<PlayingTechniqueDetector.Staff> staffs,
+            List<LowerBowDyad> dyads) {
+        LowerBowDyad selected = null;
+        int w = glyph.right - glyph.left + 1, h = glyph.bottom - glyph.top + 1;
+        for (var dyad : dyads) {
+            var note = notes.get(dyad.owner());
+            float gap = note.gap;
+            if (Math.abs(glyph.x() - note.x) > .32f * gap
+                    || glyph.top - note.y < 1.48f * gap || glyph.top - note.y > 2.30f * gap
+                    || glyph.top - staffs.get(note.staff).bottom() < 1.55f * gap
+                    || w < .70f * gap || w > 1.58f * gap || h < 1.05f * gap || h > 2.18f * gap)
+                continue;
+            if (selected != null) return null;
+            selected = dyad;
+        }
+        if (selected == null || !printedBodyContrast(glyph, gray, width, height)) return null;
+        boolean down = openDownBowBody(glyph, width)
+                && (completeDownBowShape(glyph, width) || measuredDownBowShape(glyph, width));
+        boolean up = upBowShape(glyph, width) && completeUpBowRowsStrict(glyph, width);
+        if (up == down) return null;
+
+        var note = notes.get(selected.owner());
+        var peer = notes.get(selected.partner());
+        var lower = PairedTremoloInk.stem(gray, width, height, note.x, note.y, note.gap, 1);
+        var upper = PairedTremoloInk.stem(gray, width, height, peer.x, peer.y, note.gap, 1);
+        if (lower == null || upper == null || Math.abs(lower.x() - upper.x()) > 2
+                || Math.abs(lower.endY() - upper.endY()) > 2
+                || !separateLowerBowDot(glyph, glyphs, note)) return null;
+        return new BowMark(selected.owner(), up ? ScoreTechniqueChange.UP_BOW : ScoreTechniqueChange.DOWN_BOW,
+                ScoreTechniqueChange.BowPlacement.BELOW);
+    }
+
+    private static boolean separateLowerBowDot(Glyph bow, List<Glyph> glyphs, Anchor note) {
+        float gap = note.gap;
+        boolean found = false;
+        for (var dot : glyphs) {
+            // Raw flood components arrive in top-row order. Neither the head nor bow can own this dot.
+            if (dot.top >= bow.top) break;
+            if (dot.top - note.y < .55f * gap || bow.top - dot.bottom < .20f * gap
+                    || dot.y() - note.y < .80f * gap || dot.y() - note.y > 1.28f * gap
+                    || Math.abs(dot.x() - note.x) > .17f * gap
+                    || !compactFilledDot(dot, gap)) continue;
+            if (found) return false;
+            found = true;
+        }
+        return found;
+    }
+
+    private static boolean compactFilledDot(Glyph dot, float gap) {
+        int w = dot.right - dot.left + 1, h = dot.bottom - dot.top + 1;
+        return w >= .18f * gap && h >= .18f * gap && w <= .52f * gap && h <= .52f * gap
+                && w * 2 >= h && h * 2 >= w && dot.count >= .52f * w * h;
     }
 
     /** An inverted square bow beneath an isolated low attack opens away from the staff. */

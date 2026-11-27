@@ -135,6 +135,30 @@ final class ClosedOctaveBeamSource {
         return printed;
     }
 
+    static ScoreBeamSource captureMixedDottedSixthRibbons(
+            ScoreBeamSource source, int page, byte[] gray, byte[] original,
+            int width, int height, float gap, List<Attack> attacks, List<Integer> directions) {
+        if (page < 0 || attacks.size() != 16 || directions.size() != 16
+                || directions.subList(0, 8).stream().anyMatch(direction -> direction != -1)
+                || directions.subList(8, 16).stream().anyMatch(direction -> direction != 1))
+            return source;
+        for (int start = 0; start < attacks.size(); start += 4) {
+            var group = attacks.subList(start, start + 4);
+            int direction = directions.get(start);
+            if (!provesMixedSixthGroup(gray, width, height, gap, page, group, direction, start)
+                    || original != gray && !provesMixedSixthGroup(
+                            original, width, height, gap, page, group, direction, start))
+                return source;
+        }
+        return projectDottedRibbons(source, page, attacks);
+    }
+
+    private static boolean provesMixedSixthGroup(byte[] gray, int width, int height, float gap, int page,
+            List<Attack> attacks, int direction, int start) {
+        return provesDetachedDyadRibbon(gray, width, height, gap, attacks, direction, page)
+                || start == 0 && provesDetachedDyadRibbon(gray, width, height, gap, attacks, direction, page, true);
+    }
+
     static ScoreBeamSource captureStaffRuleHookOctaves(
             ScoreBeamSource source, int page, byte[] gray, byte[] original,
             int width, int height, float gap, List<Attack> attacks, int group, float x, float y) {
@@ -152,6 +176,12 @@ final class ClosedOctaveBeamSource {
     private static boolean provesDetachedDyadRibbon(
             byte[] gray, int width, int height, float gap,
             List<Attack> attacks, int direction, int page) {
+        return provesDetachedDyadRibbon(gray, width, height, gap, attacks, direction, page, false);
+    }
+
+    private static boolean provesDetachedDyadRibbon(
+            byte[] gray, int width, int height, float gap,
+            List<Attack> attacks, int direction, int page, boolean compressedOpening) {
         var budget = new PrintedBeamShafts.Budget(1_200_000);
         var frame = new PrintedBeamShaftPixels.Frame(attacks, gray, width, height, page, budget::take, true);
         var axes = new ArrayList<Axis>(4);
@@ -160,7 +190,7 @@ final class ClosedOctaveBeamSource {
             if (axis == null || budget.refused()) return false;
             axes.add(axis);
         }
-        return closedRibbon(new Ink(gray, width, height, direction < 0), axes, gap, null, true);
+        return closedRibbon(new Ink(gray, width, height, direction < 0), axes, gap, null, true, compressedOpening);
     }
 
     private static Axis sharedDyadAxis(
@@ -341,6 +371,11 @@ final class ClosedOctaveBeamSource {
 
     private static boolean closedRibbon(
             Ink ink, List<Axis> axes, float gap, Fragment fragment, boolean detached) {
+        return closedRibbon(ink, axes, gap, fragment, detached, false);
+    }
+
+    private static boolean closedRibbon(Ink ink, List<Axis> axes, float gap, Fragment fragment,
+            boolean detached, boolean compressedOpening) {
         int radius = Math.max(1, Math.round(.12f * gap));
         var first = axes.get(0);
         var last = axes.get(3);
@@ -360,7 +395,7 @@ final class ClosedOctaveBeamSource {
                     var rails = new Rails(first, last, a, b, separation);
                     if ((fragment == null
                                     || fragmentInsideFusedRails(ink, rails, fragment, gap, radius))
-                            && coversBridges(ink, rails, axes, radius, margin, fragment != null)
+                            && coversBridges(ink, rails, axes, radius, margin, fragment != null, compressedOpening)
                             && shortBackwardHook(ink, rails, axes.get(1).x, gap, radius)
                             && shortBackwardHook(ink, rails, axes.get(3).x, gap, radius)
                             && (!detached || terminatesAtOwnStem(ink, rails, first, -1, gap, radius)
@@ -390,8 +425,8 @@ final class ClosedOctaveBeamSource {
         return true;
     }
 
-    private static boolean coversBridges(
-            Ink ink, Rails rail, List<Axis> axes, int radius, int margin, boolean allowFirstFused) {
+    private static boolean coversBridges(Ink ink, Rails rail, List<Axis> axes, int radius, int margin,
+            boolean allowFirstFused, boolean compressedOpening) {
         for (int i = 1; i < axes.size(); i++) {
             int start = axes.get(i - 1).x + margin, end = axes.get(i).x - margin;
             int both = 0, separated = 0;
@@ -403,8 +438,13 @@ final class ClosedOctaveBeamSource {
                 if (!ink.core(x, primary - rail.separation / 2, radius)) separated++;
             }
             int samples = end - start + 1;
-            if (both < .94f * samples || (!allowFirstFused || i > 1) && separated < .35f * samples)
+            if (both < .94f * samples) return false;
+            if (compressedOpening) {
+                // Continuous ink on both beam tracks must open into two separate rails before the final shaft.
+                if (i < 3 ? separated > .20f * samples : separated < .45f * samples) return false;
+            } else if ((!allowFirstFused || i > 1) && separated < .35f * samples) {
                 return false;
+            }
         }
         return true;
     }

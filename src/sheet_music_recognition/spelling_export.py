@@ -24,26 +24,26 @@ def printed_accidentals(page):
                 or event_kind(notes[index]) != 'PITCHED'
                 or type(value) is not int or value not in PRINTED_ACCIDENTALS):
             raise ValueError('Invalid printed accidental owner or sign')
-        if 'naturalPrefix' in row and (row['naturalPrefix'] is not True or value != 1):
-            raise ValueError('Natural prefix requires a printed sharp')
+        if 'naturalPrefix' in row and (row['naturalPrefix'] is not True or value not in (-1, 1)):
+            raise ValueError('Natural prefix requires a printed flat or sharp')
         result[index] = value
     return result
 
 
-def cancellation_sharps(page):
-    """The printed cancellation and sharp share one pitch owner."""
+def cancellation_prefixes(page):
+    """The printed cancellation and following sign share one pitch owner."""
     return {mark['noteIndex'] for mark in page.get('printedAccidentals', [])
             if mark.get('naturalPrefix') is True}
 
 
-def printed_mark(rows, index, spelling, cancelled_sharps=()):
+def printed_mark(rows, index, spelling, prefixed_accidentals=()):
     if spelling is None or index not in rows:
         return None
     alter, mark = PRINTED_ACCIDENTALS[rows[index]]
     # A boundary tie, edit or retune can replace the original spelling. Keep only matching ink.
     if spelling[1] != alter:
         return None
-    return 'natural-sharp' if mark == 'sharp' and index in cancelled_sharps else mark
+    return 'natural-' + mark if mark in ('flat', 'sharp') and index in prefixed_accidentals else mark
 
 
 def retained(page, index, key, printed=None):

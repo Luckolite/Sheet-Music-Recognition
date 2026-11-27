@@ -1202,6 +1202,8 @@ public final class SheetInterpreter {
         terminalCadence = BeamedDoubleFlatCarry.reconcile(
                 terminalCadence, gray, annotationGray, width, height, provedDyadAccidentals::add)
                 .withClockContextSource(terminalCadence.clockContextSource());
+        terminalCadence = BeamedCancellationAccidental.recover(
+                terminalCadence, annotationGray, gray, width, height, provedDyadAccidentals::add);
         terminalCadence = CompactDyadOctaveSpan.repair(
                 terminalCadence, staffs, annotationGray, gray, width, height, printedOctaveSpans,
                 provedDyadAccidentals::add).withClockContextSource(terminalCadence.clockContextSource());

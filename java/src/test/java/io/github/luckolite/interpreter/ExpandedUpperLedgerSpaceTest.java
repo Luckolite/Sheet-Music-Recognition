@@ -88,6 +88,36 @@ public class ExpandedUpperLedgerSpaceTest {
         assertFalse(Float.isFinite(stemCrossedSpace(source)));
     }
 
+    @Test
+    public void detachedFlanksDoNotSupplyAnOuterLedger() throws Exception {
+        byte[] source = ink(204, new int[] {229, 213});
+        for (int y = 201; y <= 204; y++) {
+            Arrays.fill(source, y * WIDTH + X - 17, y * WIDTH + X - 13, (byte) 0);
+            Arrays.fill(source, y * WIDTH + X + 15, y * WIDTH + X + 19, (byte) 0);
+        }
+        assertEquals(13, read(source, source.clone(), 204, 14));
+        byte[] joined = source.clone(), incomplete = source.clone();
+        for (int y = 201; y <= 204; y++)
+            Arrays.fill(joined, y * WIDTH + X - 16, y * WIDTH + X + 18, (byte) 0);
+        line(incomplete, 229, (byte) 255);
+        assertTrue(hasDetachedLedgerWings(source));
+        assertFalse(hasDetachedLedgerWings(joined));
+        assertFalse(hasDetachedLedgerWings(incomplete));
+    }
+
+    private static boolean hasDetachedLedgerWings(byte[] source) throws Exception {
+        var headType = Class.forName(OmrScoreInterpreter.class.getName() + "$Component");
+        var constructor = headType.getDeclaredConstructor(int.class, int.class, int.class, int.class,
+                int.class, float.class, float.class);
+        constructor.setAccessible(true);
+        var head = constructor.newInstance(260, X - 11, X + 11, 196, 212, (float) X, 204f);
+        var reader = OmrScoreInterpreter.class.getDeclaredMethod("detachedOuterLedgerWings",
+                byte[].class, int.class, int.class, headType, float.class, List.class);
+        reader.setAccessible(true);
+        return (boolean) reader.invoke(null, source, WIDTH, HEIGHT, head, (float) GAP,
+                List.of(229f, 213f, 202f));
+    }
+
     private static float stemCrossedSpace(byte[] source) throws Exception {
         var headType = Class.forName(OmrScoreInterpreter.class.getName() + "$Component");
         var constructor = headType.getDeclaredConstructor(int.class, int.class, int.class, int.class,
@@ -101,9 +131,13 @@ public class ExpandedUpperLedgerSpaceTest {
     }
 
     private static byte[] ink(int centerY) {
+        return ink(centerY, LEDGERS);
+    }
+
+    private static byte[] ink(int centerY, int[] ledgers) {
         byte[] plane = new byte[WIDTH * HEIGHT];
         Arrays.fill(plane, (byte) 255);
-        for (int y : LEDGERS) line(plane, y, (byte) 0);
+        for (int y : ledgers) line(plane, y, (byte) 0);
         for (int y = FLOOR - 4 * GAP; y <= FLOOR; y += GAP)
             Arrays.fill(plane, y * WIDTH + 25, y * WIDTH + WIDTH - 25, (byte) 0);
         for (int dy = -8; dy <= 8; dy++)
@@ -119,6 +153,10 @@ public class ExpandedUpperLedgerSpaceTest {
     }
 
     private static int read(byte[] original, byte[] normalized, int y) throws Exception {
+        return read(original, normalized, y, 20);
+    }
+
+    private static int read(byte[] original, byte[] normalized, int y, int step) throws Exception {
         var headType = Class.forName(OmrScoreInterpreter.class.getName() + "$Component");
         var constructor = headType.getDeclaredConstructor(int.class, int.class, int.class, int.class,
                 int.class, float.class, float.class);
@@ -129,6 +167,6 @@ public class ExpandedUpperLedgerSpaceTest {
                 int.class, boolean.class);
         detector.setAccessible(true);
         return (int) detector.invoke(null, normalized, original, WIDTH, HEIGHT, head, (float) FLOOR,
-                (float) GAP, 20, true);
+                (float) GAP, step, true);
     }
 }

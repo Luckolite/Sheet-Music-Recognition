@@ -89,6 +89,17 @@ class Guide307WireTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "guide308"):
             guide_writer.encode(score, 307)
 
+    def test_guide_profiles_project_natural_flat_to_printed_flat(self):
+        score = original_score()
+        score["notes"][0]["writtenAccidental"] = -1
+        score["printedAccidentals"] = [dict(noteIndex=0, accidental=-1)]
+        for version in range(305, 309):
+            with self.subTest(version=version):
+                plain = guide_writer.encode(score, version)
+                score["printedAccidentals"][0]["naturalPrefix"] = True
+                self.assertEqual(plain, guide_writer.encode(score, version))
+                del score["printedAccidentals"][0]["naturalPrefix"]
+
     def test_bad_owners_and_unrepresentable_new_metadata_are_rejected(self):
         score = original_score()
         for key, rows, version in [

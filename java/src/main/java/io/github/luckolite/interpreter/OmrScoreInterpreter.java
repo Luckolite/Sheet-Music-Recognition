@@ -3245,7 +3245,7 @@ final class OmrScoreInterpreter {
                                 width,
                                 height,
                                 removeSplitDuplicates(detected),
-                                staffs),
+                                staffs, gray, annotationGray),
                         beamedThirdNaturals.keySet(), sharpFragments.keySet(), flatBowls.keySet(),
                         accidentalCarryOwners);
         logHeadCoverage(staffs, rawHeadComponents, headComponents, heads, demotedDotHeads, joined);
@@ -30121,6 +30121,11 @@ final class OmrScoreInterpreter {
         var original=upperLedgerLadder(raw,width,height,head,top,gap);
         if (repairExpandedSpace && filled && step >= 14 && step % 2 == 0
                 && (provesExpandedUpperLedgerSpace(normalized.rows(), original.rows(), head, gap, step)
+                    || step == 14 && normalized.step() == step && original.step() == step
+                        && detachedOuterLedgerWings(gray, width, height, head, gap, normalized.rows())
+                        && detachedOuterLedgerWings(raw, width, height, head, gap, original.rows())
+                        && provesExpandedUpperLedgerSpace(normalized.rows().subList(0, 2),
+                                original.rows().subList(0, 2), head, gap, step)
                     || stemCrossedUpperSpace(gray, raw, width, height, head, staffBottom, gap, step)))
             return step - 1;
         if(normalized.step()!=step+1 || original.step()!=normalized.step()
@@ -30173,6 +30178,45 @@ final class OmrScoreInterpreter {
                 if ((ink[y * width + x] & 255) <= 190) return false;
         }
         return true;
+    }
+
+    /** A flat and a detached dot can masquerade as the two flanks of a ledger. */
+    private static boolean detachedOuterLedgerWings(byte[] ink, int width, int height,
+            Component head, float gap, List<Float> rows) {
+        if (rows.size() != 3) return false;
+        int near = Math.round(rows.get(1)), inner = Math.round(rows.get(0));
+        int outer = Math.round(rows.get(2));
+        int x = Math.round(head.centerX), span = Math.round(.69f * gap);
+        int reach = Math.round(.62f * gap);
+        int margin = Math.round(.12f * gap);
+        if (head.minX < reach || head.maxX + reach >= width || x < span || x + span >= width
+                || outer - margin < 0 || inner >= height || near >= height) return false;
+        for (int y : new int[] {near, inner}) {
+            int inkCount = 0;
+            for (int col = x - span; col <= x + span; col++)
+                if ((ink[y * width + col] & 255) < 165) inkCount++;
+            if (inkCount < (2 * span + 1) * .90f) return false;
+        }
+        int separated = 0;
+        for (int y = outer - margin; y <= outer + margin; y++) {
+            int row = y * width;
+            if (separatedLedgerFlank(ink, row, head.minX, -1, reach)
+                    && separatedLedgerFlank(ink, row, head.maxX, 1, reach)) separated++;
+        }
+        return separated >= 3;
+    }
+
+    private static boolean separatedLedgerFlank(byte[] ink, int row, int edge, int side, int reach) {
+        int paper = 0, distalInk = 0;
+        for (int i = 1; i <= reach; i++) {
+            int value = ink[row + edge + i * side] & 255;
+            if (value > 200 && distalInk == 0) paper++;
+            if (value < 165) {
+                if (paper < 2) return false;
+                distalInk++;
+            }
+        }
+        return distalInk >= 2;
     }
 
     private static boolean stemCrossedUpperSpace(byte[] gray, byte[] raw, int width, int height,
@@ -43241,6 +43285,18 @@ final class OmrScoreInterpreter {
             int height,
             List<DetectedNote> source,
             List<Staff> staffs) {
+        return markTieContinuations(labels, gray, width, height, source, staffs, gray, gray);
+    }
+
+    private static List<DetectedNote> markTieContinuations(
+            byte[] labels,
+            byte[] gray,
+            int width,
+            int height,
+            List<DetectedNote> source,
+            List<Staff> staffs,
+            byte[] guideGray,
+            byte[] annotationGray) {
         List<DetectedNote> result = new ArrayList<>(source);
         restoreDisplacedOpeningTiePitches(labels, gray, width, height, staffs, result);
         List<DetectedNote> printedGeometry = null;
@@ -43329,6 +43385,18 @@ final class OmrScoreInterpreter {
                                     current),
                             true)) tied = true;
             if (tied && previousIndex >= 0) {
+                var previous = result.get(previousIndex);
+                float gap = (previous.staffGap + current.staffGap) * .5f;
+                if (current.event.measureIndex() == previous.event.measureIndex() + 1
+                        && current.event.staffStep() >= 14 && previous.event.staffStep() >= 14
+                        && Math.abs(previous.head.centerY - current.head.centerY) <= .18f * gap) {
+                    float center = (previous.head.centerY + current.head.centerY) * .5f;
+                    float left = previous.head.centerX, right = current.head.centerX;
+                    if (PeakedTieGuide.isOnlyGuide(guideGray, width, height, left, right, center, gap)
+                            && (annotationGray == null || annotationGray == guideGray
+                                || PeakedTieGuide.isOnlyGuide(annotationGray, width, height, left, right, center, gap)))
+                        continue;
+                }
                 // Both independently owned detached marks retain two attacks on every tie path.
                 if (detachedMarks == null) {
                     List<NoteArticulationDetector.Anchor> tieAnchors = new ArrayList<>();

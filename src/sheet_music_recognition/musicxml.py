@@ -1563,7 +1563,7 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
         written = grace_export.plan(page, ticks)
         paired_tremolos = tremolo_export.retained(page)
         printed_accidentals = spelling_export.printed_accidentals(page)
-        cancelled_sharps = spelling_export.cancellation_sharps(page)
+        prefixed_accidentals = spelling_export.cancellation_prefixes(page)
         printed_fingerings = fingering_export.retained(page)
         printed_strings = printed_string_export.retained(page)
         printed_string_count += len(printed_strings)
@@ -1611,7 +1611,7 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
                                retainedPrintedString=printed_strings.get(note_index),
                                retainedVisualSize=visual_size.retained(page, note_index),
                                retainedSpelling=spelling,
-                               retainedAccidental=spelling_export.printed_mark(printed_accidentals, note_index, spelling, cancelled_sharps),
+                               retainedAccidental=spelling_export.printed_mark(printed_accidentals, note_index, spelling, prefixed_accidentals),
                                retainedOrnamentFlags=ornament_export.retained(page, note_index),
                                retainedTremolo=paired_tremolos.get(note_index), retainedArpeggio=False, retainedNaturalHarmonic=False))
             owner = n.get('sourceNoteIndex')
@@ -1657,7 +1657,7 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
                 if (beamed_fourth or note_index in shared_terminal or n.get('sharedDownstemHarmonicQuarter') is True
                         or (note_index in shared_quarters and third and source.get('writtenAccidental') == -2)):
                     events[-1]['retainedAccidental'] = spelling_export.printed_mark(
-                        printed_accidentals, note_index, engraved[0], cancelled_sharps)
+                        printed_accidentals, note_index, engraved[0], prefixed_accidentals)
             if n.get('beamedOpenStringHarmonic') is True:
                 if (note_index in compound_open or note_index >= len(source_notes)
                         or events[-1].get('retainedArtificialHarmonic')):
@@ -1710,7 +1710,7 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
                 event['mixedHarmonicLowerZero'] = note_index in lower_zeros
                 engraved_harmonic = event.get('retainedArtificialHarmonic') or event.get('retainedCompoundOpenHarmonic')
                 event['retainedAccidental'] = spelling_export.printed_mark(
-                    printed_accidentals, note_index, engraved_harmonic[0], cancelled_sharps)
+                    printed_accidentals, note_index, engraved_harmonic[0], prefixed_accidentals)
                 if note_index in mixed_fingers:
                     event['retainedReversedStoppedPair'] = note_index in reversed_stopped
                     event['retainedMixedHarmonicFingering'] = mixed_fingers[note_index]

@@ -312,7 +312,20 @@ final class PrintedAccidentalSpineRecovery {
             if (measure < 0 || measure >= score.measures().size()) continue;
             var bar = score.measures().get(measure);
             float gap = (bar.bottom() - bar.top()) * height / 8.2f;
-            if (gap < 10 || gap > 24 || !beamedSixth(first, second, bar, width, gap)) continue;
+            if (gap < 10 || gap > 24) continue;
+            if (provedRepeatedDottedSixthSharps(notes.get(i - 2), notes.get(i - 1),
+                    first, second, bar, raw, normalized, width, height, gap)) {
+                if (edited == null) edited = new ArrayList<>(notes);
+                for (int owner = i; owner <= i + 1; owner++) {
+                    var corrected = notes.get(owner).withWrittenAccidental(ScoreNoteEvent.ACCIDENTAL_SHARP);
+                    edited.set(owner, corrected);
+                    printed.accept(new SourceLocalAccidental.ProvedMark(corrected,
+                            ScoreNoteEvent.ACCIDENTAL_SHARP, false));
+                }
+                i++;
+                continue;
+            }
+            if (!beamedSixth(first, second, bar, width, gap)) continue;
             int start = i++;
             var previous = notes.get(start - 2);
             var previousPartner = notes.get(start - 1);
@@ -787,6 +800,54 @@ final class PrintedAccidentalSpineRecovery {
 
     private static boolean dyadHead(ScoreNoteEvent note) {
         return note.stemDirection() == -1 && regularDyadHead(note);
+    }
+
+    // A dotted sixth can repeat the previous attack's written pitches under two new sharps.
+    // Requiring both complete glyphs avoids extending the search window for ordinary single signs.
+    private static boolean provedRepeatedDottedSixthSharps(
+            ScoreNoteEvent previous, ScoreNoteEvent previousPartner, ScoreNoteEvent first, ScoreNoteEvent second,
+            MeasureRegion bar, byte[] raw, byte[] normalized, int width, int height, float gap) {
+        if (!dottedSixthSharpHead(first) || !dottedSixthSharpHead(second)
+                || first.measureIndex() != second.measureIndex()
+                || Math.abs(first.diatonicPitchIdentity() - second.diatonicPitchIdentity()) != 5) return false;
+        var upper = first.pageY() < second.pageY() ? first : second;
+        var lower = upper == first ? second : first;
+        var priorUpper = previous.pageY() < previousPartner.pageY() ? previous : previousPartner;
+        var priorLower = priorUpper == previous ? previousPartner : previous;
+        if (!undottedSixthPredecessor(priorUpper, upper) || !undottedSixthPredecessor(priorLower, lower))
+            return false;
+
+        float x = headX(bar, upper, width), y = upper.pageY() * height;
+        float lowerX = headX(bar, lower, width), lowerY = lower.pageY() * height;
+        float priorX = headX(bar, priorUpper, width), priorLowerX = headX(bar, priorLower, width);
+        float previousX = Math.max(priorX, priorLowerX);
+        if (Math.abs(x - lowerX) > .20f * gap || Math.abs(priorX - priorLowerX) > .20f * gap
+                || lowerY - y < 2.25f * gap || lowerY - y > 2.75f * gap
+                || Math.abs(priorUpper.pageY() * height - y) > .20f * gap
+                || Math.abs(priorLower.pageY() * height - lowerY) > .20f * gap
+                || Math.min(x, lowerX) - previousX < 2.7f * gap
+                || Math.max(x, lowerX) - previousX > 4.2f * gap) return false;
+
+        return agreedSharp(raw, normalized, width, previousX, x, y, gap)
+                && agreedSharp(raw, normalized, width, previousX, lowerX, lowerY, gap)
+                && !agreedSign(raw, normalized, width, previousX, x, y, gap, ScoreNoteEvent.ACCIDENTAL_NATURAL)
+                && !agreedSign(raw, normalized, width, previousX, lowerX, lowerY, gap, ScoreNoteEvent.ACCIDENTAL_NATURAL);
+    }
+
+    private static boolean dottedSixthSharpHead(ScoreNoteEvent note) {
+        int sign = note.writtenAccidental();
+        return ClosedMonophonicSixteenths.regularQuartetHead(note) && note.stemDirection() == -1
+                && !note.tiedFromPrevious() && note.augmentationDots() == 1 && note.tupletDivisor() == 1
+                && (sign == ScoreNoteEvent.ACCIDENTAL_FROM_KEY || sign == ScoreNoteEvent.ACCIDENTAL_NATURAL);
+    }
+
+    private static boolean undottedSixthPredecessor(ScoreNoteEvent previous, ScoreNoteEvent note) {
+        return previous.measureIndex() == note.measureIndex()
+                && previous.diatonicPitchIdentity() == note.diatonicPitchIdentity()
+                && previous.octaveShift() == note.octaveShift()
+                && previous.stemDirection() == -1 && !previous.tiedFromPrevious()
+                && ClosedMonophonicSixteenths.regularBeamHead(previous, 3)
+                && previous.augmentationDots() == 0 && previous.tupletDivisor() == 1;
     }
 
     private static boolean beamedSixth(ScoreNoteEvent a, ScoreNoteEvent b, MeasureRegion bar, int width, float gap) {

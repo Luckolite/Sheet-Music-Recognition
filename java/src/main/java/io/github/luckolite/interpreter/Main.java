@@ -201,6 +201,8 @@ public final class Main {
         PrintedOpeningSixteenthExamples.apply(
                 score, labels, decoderGray == null ? gray : decoderGray, gray, width, height, beats);
         int[] keys = measureKeys(beats.length, initialKey, score.keyChanges());
+        score = ClosedDottedSixteenths.removeClosedSixthRibbonAliases(
+                score, initialMeter, rhythmRaster, gray, width, height);
         var wrapped =
                 WrappedTripletMeasure.capture(
                         score,

@@ -2666,6 +2666,134 @@ final class ClosedDottedSixteenths {
         return score.withNotes(edited, IntStream.range(0, edited.size()).boxed().toList());
     }
 
+    /** A head detected in a continuous rail has no independent attack. */
+    static ScorePageInterpretation removeClosedSixthRibbonAliases(
+            ScorePageInterpretation score, ScoreMeterChange inherited,
+            byte[] gray, byte[] original, int width, int height) {
+        if (gray == null || original == null || gray.length != (long) width * height
+                || gray.length != original.length) return score;
+        var bars = groupedHeads(score, width, height);
+        var ink = new Ink(gray, width, height);
+        var raw = new Ink(original, width, height);
+        var meter = inherited;
+        int change = 0;
+        var removed = new java.util.BitSet(score.notes().size());
+        var recoveredHooks = new java.util.BitSet(score.notes().size());
+        for (int measure = 0; measure < bars.size(); measure++) {
+            int index = measure;
+            while (change < score.meterChanges().size()
+                    && score.meterChanges().get(change).measureIndex() <= index)
+                meter = score.meterChanges().get(change++);
+            var row = bars.get(measure);
+            var bar = score.measures().get(measure);
+            if ((row.size() != 19 && row.size() != 33 && row.size() != 34)
+                    || meter == null || meter.numerator() != 4 || meter.denominator() != 4
+                    || bar.cadenceQuarterBeats() != 0
+                    || score.rests().stream().anyMatch(rest -> rest.measureIndex() == index)) continue;
+            float gap = (bar.bottom() - bar.top()) * height / 8.2f;
+            if (gap < 12 || gap > 24) continue;
+            var aliases = row.stream().filter(head -> head.note.stemDirection() == 0).toList();
+            var owners = row.stream().filter(head -> head.note.stemDirection() == -1)
+                    .sorted(Comparator.comparingDouble(Head::x)).toList();
+            boolean endsInHalf = row.size() == 19;
+            int beamed = endsInHalf ? 8 : 16;
+            if (aliases.isEmpty() || aliases.size() + owners.size() != row.size()
+                    || owners.size() != 2 * (beamed + (endsInHalf ? 1 : 0))
+                    || aliases.stream().anyMatch(head -> !isSixthRibbonAlias(head.note)
+                            || score.beamSource().noteOrigins().get(head.index).isPresent())) continue;
+            var pairs = new ArrayList<Dyad>(owners.size() / 2);
+            for (int slot = 0; slot < owners.size() / 2; slot++) {
+                var first = owners.get(slot * 2);
+                var second = owners.get(slot * 2 + 1);
+                var pair = first.y < second.y ? new Dyad(first, second) : new Dyad(second, first);
+                var top = pair.upper.note;
+                var lower = pair.lower.note;
+                if (second.x - first.x > .24f * gap
+                        || Math.abs(pair.lower.y - pair.upper.y - 2.5f * gap) > .35f * gap
+                        || top.staffStep() - lower.staffStep() != 5
+                        || top.clefBottomDiatonic() != lower.clefBottomDiatonic()
+                        || !regularMarkings(top, 1, true) || !regularMarkings(lower, 1, true)
+                        || top.beamCount() != lower.beamCount()) break;
+                if (slot == beamed) {
+                    if (top.unbeamedDurationBeats() != 2 || lower.unbeamedDurationBeats() != 2
+                            || top.augmentationDots() != 0 || lower.augmentationDots() != 0
+                            || top.beamCount() != 0) break;
+                } else {
+                    boolean dotted = (slot & 1) == 0;
+                    if (!isPrintedSixthClockHead(top, dotted) || !isPrintedSixthClockHead(lower, dotted)) break;
+                }
+                if (slot > 0) {
+                    float spacing = pair.upper.x - pairs.get(slot - 1).upper.x;
+                    if (spacing < 1.5f * gap || spacing > 3.4f * gap) break;
+                }
+                pairs.add(pair);
+            }
+            if (pairs.size() != owners.size() / 2) continue;
+            if (!hasClosingRule(ink.pixels, width, height, bar)
+                    || !hasClosingRule(raw.pixels, width, height, bar)) continue;
+            if (aliases.stream().anyMatch(head -> !provesSixthRibbonAlias(ink, pairs, beamed, head, gap)
+                    || !provesSixthRibbonAlias(raw, pairs, beamed, head, gap))) continue;
+            for (var alias : aliases) removed.set(alias.index);
+            for (int start = 0; start < beamed; start += 4) {
+                var group = pairs.subList(start, start + 4);
+                if (!provesLocalSixthRibbon(ink, group, gap) || !provesLocalSixthRibbon(raw, group, gap)) continue;
+                for (int slot : new int[]{1, 3}) {
+                    var pair = group.get(slot);
+                    if (pair.upper.note.beamCount() == 2) {
+                        recoveredHooks.set(pair.upper.index);
+                        recoveredHooks.set(pair.lower.index);
+                    }
+                }
+            }
+        }
+        if (removed.isEmpty()) return score;
+        var owners = IntStream.range(0, score.notes().size()).filter(index -> !removed.get(index)).boxed().toList();
+        return score.withNotes(owners.stream().map(index -> recoveredHooks.get(index)
+                ? rhythm(score.notes().get(index), false) : score.notes().get(index)).toList(), owners);
+    }
+
+    private static boolean isSixthRibbonAlias(ScoreNoteEvent note) {
+        return regularMarkings(note, 0) && note.articulations() == 0 && note.octaveShift() == 0
+                && note.writtenAccidental() == ScoreNoteEvent.ACCIDENTAL_FROM_KEY
+                && (note.beamCount() == 2 && note.unbeamedDurationBeats() == 0
+                    || note.beamCount() == 0 && note.unbeamedDurationBeats() == 1);
+    }
+
+    private static boolean provesLocalSixthRibbon(Ink ink, List<Dyad> pairs, float gap) {
+        var axes = new ArrayList<Shaft>(pairs.size());
+        for (var pair : pairs) {
+            var axis = sharedSixthShaft(ink, pair, gap, true);
+            if (axis == null) return false;
+            axes.add(axis);
+        }
+        return provesSixthRibbons(ink, axes, gap);
+    }
+
+
+    private static boolean provesSixthRibbonAlias(Ink ink, List<Dyad> pairs, int count, Head alias, float gap) {
+        for (int slot = 1; slot < count; slot++) {
+            if (slot % 4 == 0) continue;
+            var previous = pairs.get(slot - 1);
+            var current = pairs.get(slot);
+            if (alias.x <= previous.lower.x || alias.x >= current.lower.x - .4f * gap) continue;
+            var left = sharedSixthShaft(ink, previous, gap, true);
+            var right = sharedSixthShaft(ink, current, gap, true);
+            if (left == null || right == null || right.x - left.x < 1.4f * gap
+                    || alias.x - left.x < .72f * gap || right.x - alias.x < .72f * gap) continue;
+            var rail = new Beam(left, right, 0, 0);
+            float depth = rail.outer(alias.x) - alias.y;
+            if (depth < .30f * gap || depth > 1.10f * gap) continue;
+            int radius = Math.round(.20f * gap);
+            int halfSpan = Math.round(.80f * gap);
+            int hits = 0;
+            for (int x = Math.round(alias.x) - halfSpan; x <= Math.round(alias.x) + halfSpan; x++) {
+                if (ink.weight(x, Math.round(rail.outer(x) - depth), radius) >= 2 * radius) hits++;
+            }
+            if (hits >= .92f * (2 * halfSpan + 1)) return true;
+        }
+        return false;
+    }
+
     static ScorePageInterpretation restoreClosedDottedSixthHooks(
             ScorePageInterpretation score, ScoreMeterChange inherited,
             byte[] gray, byte[] original, int width, int height, int physicalPage) {
@@ -2959,7 +3087,10 @@ final class ClosedDottedSixteenths {
     private static boolean provesSixthBeamGroups(Ink ink, MeasureRegion bar, List<Dyad> pairs, float gap) {
         boolean ledgerRun = pairs.get(0).upper.note.staffStep() >= 16;
         var axes = dottedSixthAxes(ink, bar, pairs, gap, ledgerRun);
-        if (axes.isEmpty()) return false;
+        return !axes.isEmpty() && provesSixthRibbons(ink, axes, gap);
+    }
+
+    private static boolean provesSixthRibbons(Ink ink, List<Shaft> axes, float gap) {
         int radius = Math.round(.19f * gap);
         for (int i = 1; i < axes.size(); i++) {
             var left = axes.get(i - 1);
@@ -3496,14 +3627,18 @@ final class ClosedDottedSixteenths {
             var attacks = new ArrayList<ClosedOctaveBeamSource.Attack>(16);
             var directions = new ArrayList<Integer>(16);
             boolean octaves = Math.abs(ordered.get(0).y - ordered.get(1).y) >= gap * 2.8f;
-            float distance = octaves ? 3.5f * gap : gap;
+            boolean sixths = !octaves && Math.abs(ordered.get(0).note.staffStep()
+                    - ordered.get(1).note.staffStep()) == 5;
+            float distance = (octaves ? 3.5f : sixths ? 2.5f : 1) * gap;
             for (int k = 0; k < 16; k++) {
                 var a = ordered.get(2 * k);
                 var b = ordered.get(2 * k + 1);
                 if (b.x - a.x > gap * .30f
                         || Math.abs(Math.abs(a.y - b.y) - distance) > .55f * gap
                         || a.note.stemDirection() == 0 || a.note.stemDirection() != b.note.stemDirection()
-                        || !octaves && a.note.stemDirection() != -1
+                        || !octaves && !sixths && a.note.stemDirection() != -1
+                        || sixths && (Math.abs(a.note.staffStep() - b.note.staffStep()) != 5
+                                || a.note.clefBottomDiatonic() != b.note.clefBottomDiatonic())
                         || !writtenDottedOctaveHead(a.note, notes, k)
                         || !writtenDottedOctaveHead(b.note, notes, k)) break;
                 var upper = a.y <= b.y ? a : b;
@@ -3513,7 +3648,11 @@ final class ClosedDottedSixteenths {
                 directions.add(-a.note.stemDirection());
             }
             if (attacks.size() != 16) continue;
-            if (octaves && directions.stream().allMatch(d -> d == 1)) {
+            if (sixths) {
+                if (!hasClosingRule(original, width, height, region)) continue;
+                current = ClosedOctaveBeamSource.captureMixedDottedSixthRibbons(
+                        current, physicalPage, gray, original, width, height, gap, attacks, directions);
+            } else if (octaves && directions.stream().allMatch(d -> d == 1)) {
                 current = ClosedOctaveBeamSource.captureSeparateDottedOctaveGroups(
                         current, physicalPage, gray, original, width, height, gap, attacks);
             } else {

@@ -17,7 +17,7 @@ from . import semantic_wire
 
 
 # Recognition revisions 264/265/266/267/268/269/270/271/272/273/274/275 retain the complete framed 263 record layout.
-RECOGNITION_REVISION = 193
+RECOGNITION_REVISION = 194
 GUIDE_VERSION = 302
 SUPPORTED_GUIDE_VERSIONS = tuple(range(260, 309))
 MAX_GUIDE_BYTES = 128 * 1024 * 1024
@@ -336,11 +336,12 @@ def encode(score, guide_version=GUIDE_VERSION):
                         or notes[owner]["writtenAccidental"] != accidental):
                     raise ValueError("Invalid printed accidental ownership")
                 natural_prefix = row.get("naturalPrefix")
-                if "naturalPrefix" in row and (natural_prefix is not True or accidental != 1):
-                    raise ValueError("Natural prefix requires a printed sharp")
-                if natural_prefix and guide_version < 308:
+                if "naturalPrefix" in row and (natural_prefix is not True or accidental not in (-1, 1)):
+                    raise ValueError("Natural prefix requires a printed flat or sharp")
+                if natural_prefix and accidental == 1 and guide_version < 308:
                     raise ValueError("Natural-sharp requires guide308")
-                _pack(output, "ib", owner, 4 if natural_prefix else accidental)
+                # Legacy guides preserve the flat alteration without its cancellation prefix.
+                _pack(output, "ib", owner, 4 if natural_prefix and accidental == 1 else accidental)
                 prior = owner
         roman = score.get("pendingRomanStrings", [])
         if not isinstance(roman, list) or len(roman) > len(notes):

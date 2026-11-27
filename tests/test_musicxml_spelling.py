@@ -127,7 +127,15 @@ class MusicXmlSpellingTests(unittest.TestCase):
         self.assertEqual([None, 'sharp'], [n.findtext('accidental')
                           for n in self.export(doc).findall('.//note[pitch]')])
 
-    def test_cancellation_prefix_requires_an_explicit_sharp(self):
+    def test_cancellation_flat_keeps_its_literal_print_and_sounding_pitch(self):
+        doc = document(29, -1, 61)
+        page = doc['pages'][0]
+        page['printedAccidentals'] = [dict(noteIndex=0, accidental=-1, naturalPrefix=True)]
+        note = self.export(doc).find('.//note[pitch]')
+        self.assertEqual(('D', '-1', 'natural-flat'),
+                         (note.findtext('pitch/step'), note.findtext('pitch/alter'), note.findtext('accidental')))
+
+    def test_cancellation_prefix_requires_an_explicit_flat_or_sharp(self):
         for sign, prefix in ((0, True), (1, 1), (1, False)):
             doc = document()
             doc['pages'][0]['printedAccidentals'] = [

@@ -789,7 +789,8 @@ final class SourceLocalAccidental {
             if (index < 0 || retained.get(index).writtenAccidental() != accidental
                     || retained.get(index).clefBottomDiatonic() != note.clefBottomDiatonic()) continue;
             var existing = combined.get(index);
-            boolean prefix = proof.naturalPrefix() && accidental == ScoreNoteEvent.ACCIDENTAL_SHARP;
+            boolean prefix = proof.naturalPrefix() && (accidental == ScoreNoteEvent.ACCIDENTAL_SHARP
+                    || accidental == ScoreNoteEvent.ACCIDENTAL_FLAT);
             if (existing == null || prefix && existing.accidental() == accidental)
                 combined.put(index, new PrintedMark(index, accidental, prefix ? Boolean.TRUE : null));
         }

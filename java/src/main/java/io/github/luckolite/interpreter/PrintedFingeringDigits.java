@@ -131,6 +131,7 @@ final class PrintedFingeringDigits {
         includeDetachedUpperOnes(marks, heads, gray, normalized, width, height);
         includeDetachedOpenStringZeros(marks, heads, gray, normalized, width, height);
         includeDetachedBeamDigits(marks, heads, gray, normalized, width, height);
+        includeDottedThirdFingerings(marks, heads, score, gray, normalized, width, height);
         marks.sort(Comparator.comparingInt(Mark::noteIndex).thenComparing(Mark::placement));
         return List.copyOf(marks);
     }
@@ -935,7 +936,92 @@ final class PrintedFingeringDigits {
         return result;
     }
 
+    /** Detached digits above the higher head of a complete barred dotted-third run. */
+    private static void includeDottedThirdFingerings(List<Mark> marks, List<Head> heads,
+            ScorePageInterpretation score, byte[] raw, byte[] normalized, int width, int height) {
+        if (raw == null || normalized == null || raw.length != (long) width * height
+                || normalized.length != raw.length) return;
+        var rows = new ArrayList<List<Head>>(score.measures().size());
+        for (var ignored : score.measures()) rows.add(new ArrayList<>());
+        for (var head : heads) rows.get(head.note().measureIndex()).add(head);
+        var occupied = new HashSet<Integer>();
+        for (var mark : marks)
+            if (mark.placement() == Placement.ABOVE) occupied.add(mark.noteIndex());
+        for (int measure = 0; measure < rows.size(); measure++) {
+            var row = rows.get(measure);
+            if (row.size() != 32) continue;
+            var bar = score.measures().get(measure);
+            float gap = (bar.bottom() - bar.top()) * height / 8.2f;
+            if (gap < 12 || gap > 23 || bar.cadenceQuarterBeats() != 0 || !completeDottedThirdRow(row, gap)
+                    || !ClosedDottedSixteenths.hasClosingRule(raw, width, height, bar)
+                    || !ClosedDottedSixteenths.hasClosingRule(normalized, width, height, bar)) continue;
+            for (int i = 0; i < row.size(); i += 2) {
+                var a = row.get(i);
+                var b = row.get(i + 1);
+                var upper = a.y() < b.y() ? a : b;
+                var lower = upper == a ? b : a;
+                if (occupied.contains(upper.index())) continue;
+                var glyph = detachedDigitGlyph(raw, width, height, upper, gap);
+                if (glyph == null || !singleUpperOneOwner(heads, upper, glyph, gap)) continue;
+                var prepared = detachedDigitGlyph(normalized, width, height, upper, gap);
+                if (prepared == null || !glyph.agrees(prepared)) continue;
+                int digit = clearDottedThirdDigit(raw, width, height, glyph);
+                if (digit < 0 || digit != clearDottedThirdDigit(normalized, width, height, prepared)) continue;
+                if (!sharedThirdDownstem(raw, width, height, upper, lower, gap)
+                        || !sharedThirdDownstem(normalized, width, height, upper, lower, gap)) continue;
+                marks.add(new Mark(upper.index(), digit, Placement.ABOVE));
+            }
+        }
+    }
+
+    private static boolean completeDottedThirdRow(List<Head> row, float gap) {
+        for (int i = 0; i < row.size(); i += 2) {
+            var a = row.get(i);
+            var b = row.get(i + 1);
+            var upper = a.y() < b.y() ? a : b;
+            var lower = upper == a ? b : a;
+            if (Math.abs(a.x() - b.x()) > .18f * gap
+                    || lower.y() - upper.y() < .85f * gap || lower.y() - upper.y() > 1.22f * gap
+                    || upper.note().staffStep() - lower.note().staffStep() != 2) return false;
+            if (i > 0) {
+                double advance = a.x() - row.get(i - 2).x();
+                if (advance < 1.65f * gap || advance > 3.40f * gap) return false;
+            }
+            boolean dotted = i % 4 == 0;
+            for (var head : List.of(upper, lower)) {
+                var note = head.note();
+                if (head.harmonic() || note.stemDirection() != -1 || note.tupletDivisor() != 1
+                        || note.augmentationDots() != (dotted ? 1 : 0)
+                        || note.beamCount() != 2 && (dotted || note.beamCount() != 3)
+                        || !ClosedMonophonicSixteenths.regularBeamHead(note, note.beamCount())) return false;
+            }
+        }
+        return true;
+    }
+
+    private static int clearDottedThirdDigit(byte[] plane, int width, int height, WordDigit glyph) {
+        var fit = JoinedDigitTemplates.inspect(plane, width, height, new BitSet(),
+                glyph.left(), glyph.top(), glyph.right(), glyph.bottom(), () -> {}, true);
+        return fit != null && fit.digit() >= 0 && fit.digit() <= 4 && fit.best() >= .63f
+                && fit.best() - fit.runner() >= .09f ? fit.digit() : -1;
+    }
+
+    private static boolean sharedThirdDownstem(
+            byte[] plane, int width, int height, Head upper, Head lower, float gap) {
+        var a = PairedTremoloInk.stem(plane, width, height, (float) upper.x(), (float) upper.y(), gap, -1);
+        var b = PairedTremoloInk.stem(plane, width, height, (float) lower.x(), (float) lower.y(), gap, -1);
+        return a != null && b != null && Math.abs(a.x() - b.x()) <= 2 && Math.abs(a.endY() - b.endY()) <= 2;
+    }
+
     private static WordDigit detachedDigitBox(byte[] ink, int width, int height, Head head, float gap) {
+        var result = detachedDigitGlyph(ink, width, height, head, gap);
+        if (result == null) return null;
+        var budget = new PrintedBeamShafts.Budget(60_000);
+        var shafts = PrintedBeamShafts.at(ink, width, height, (float) head.x(), (float) head.y(), gap, budget);
+        return !budget.refused() && shafts.size() == 1 && shafts.get(0).direction() == 1 ? result : null;
+    }
+
+    private static WordDigit detachedDigitGlyph(byte[] ink, int width, int height, Head head, float gap) {
         float x = (float) head.x(), y = (float) head.y();
         int left = Math.round(x - gap), right = Math.round(x + gap);
         int top = Math.round(y - 2.95f * gap), bottom = Math.round(y - .56f * gap);
@@ -953,12 +1039,8 @@ final class PrintedFingeringDigits {
             if (result != null) return null;
             result = new WordDigit(glyph.left, glyph.top, glyph.right, glyph.bottom);
         }
-        if (result == null) return null;
-        var budget = new PrintedBeamShafts.Budget(60_000);
-        var shafts = PrintedBeamShafts.at(ink, width, height, x, y, gap, budget);
-        return !budget.refused() && shafts.size() == 1 && shafts.get(0).direction() == 1 ? result : null;
+        return result;
     }
-
 
     private static void includeDetachedOpenStringZeros(List<Mark> marks, List<Head> heads,
             byte[] raw, byte[] normalized, int width, int height) {
