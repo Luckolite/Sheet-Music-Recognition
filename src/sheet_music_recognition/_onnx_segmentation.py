@@ -26,10 +26,12 @@ def _read_model(path, digest):
     return model
 
 
-def _open_session(ort, model, threads, adapter=None):
+def _open_session(ort, model, threads, adapter=None, *, cpu_arena=True):
     options = ort.SessionOptions()
     options.intra_op_num_threads = threads
     options.log_severity_level = 3
+    if not cpu_arena:
+        options.enable_cpu_mem_arena = False
     provider = _CPU_PROVIDER
     providers = [provider]
     if adapter is not None:
@@ -88,7 +90,11 @@ class OnnxTileSegmentation:
 
     def _load_cpu(self):
         if self._cpu is None:
-            self._cpu = _open_session(self._ort, self._stock_model, self._threads)
+            # Guarded GPU runs use CPU inference only for individual ambiguous tiles.
+            # Release those work buffers before the rest of the page is decoded.
+            self._cpu = _open_session(
+                self._ort, self._stock_model, self._threads, cpu_arena=self._gpu is None
+            )
             self._stock_model = None
         return self._cpu
 
