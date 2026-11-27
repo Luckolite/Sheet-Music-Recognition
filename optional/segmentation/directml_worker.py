@@ -3,6 +3,7 @@
 """Segment a grayscale NumPy raster using the optional Windows DirectML provider."""
 import argparse
 from pathlib import Path
+import sys
 
 import numpy as np
 
@@ -10,6 +11,11 @@ from sheet_music_recognition._onnx_segmentation import OnnxTileSegmentation
 
 
 def main():
+    if sys.argv[1:2] == ["--detector-service"]:
+        from directml_detector import main as detect
+
+        detect(sys.argv[2:])
+        return
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("stock_model", type=Path)
     parser.add_argument("source", type=Path)

@@ -44,6 +44,28 @@ decoding. Validate its length against the output vocabulary. Android ONNX Runtim
 checks. Windows Java also used 1.25.1 with a compatible C++ runtime. These are
 evaluation dependencies, not additions to the JDK-only default package.
 
+## Optional DirectML detector service on Windows
+
+The [isolated desktop DirectML worker](portable-segmentation.md#optional-directml-worker-on-windows)
+can also serve the pinned mobile v5 detector from the same environment.
+
+```sh
+python optional/segmentation/directml_worker.py --detector-service /models/ch_PP-OCRv5_det_mobile.onnx detector.map --adapter 1
+```
+
+The host owns a private 5,242,880-byte scratch mapping for the lifetime of the
+service. Write a normalized little-endian float32 BGR tensor at offset zero,
+then send its width and height as two unsigned big-endian 32-bit integers.
+Supported widths and heights are 480×128, 2048×64, 2048×96, and 2048×160.
+Wait for the one-byte `K` acknowledgement before reading the float32 map at
+offset 3,932,160 or reusing the input area. Close stdin and wait for the helper
+before deleting the mapping.
+
+The host must impose a request timeout, fall back to the stock detector on
+failure, and apply CPU parity checks for its chosen hardware and workload.
+The evaluated host also retried maps on CPU when foreground probability or
+component confidence was within 0.0003 of the existing OCR thresholds.
+
 ## Optional desktop evaluation
 
 Build the normal Java core first. Obtain the desktop `onnxruntime-1.25.1.jar`
