@@ -2,15 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.github.luckolite.interpreter;
 
-import java.lang.invoke.MethodHandles;
-import java.lang.invoke.VarHandle;
-import java.nio.ByteOrder;
 import java.util.Arrays;
 
 /** Keeps shaded paper out of the narrow ink bands used to count beams. */
 final class BeamInkThreshold {
-    private static final VarHandle GRAY_WORDS =
-            MethodHandles.byteArrayViewVarHandle(long[].class, ByteOrder.nativeOrder());
     private static final long HIGH_BITS = 0x8080808080808080L;
     private static final long BYTE_ONES = 0x0101010101010101L;
     private static final long BRIGHT_BIAS = BYTE_ONES * (197 - 128);
@@ -54,7 +49,7 @@ final class BeamInkThreshold {
             int bright = 0, dark = 0;
             int pixel = start;
             for (int end = start + wordWidth; pixel < end; pixel += Long.BYTES) {
-                long tones = (long) GRAY_WORDS.get(gray, pixel);
+                long tones = PackedRasterBytes.readLittleEndian(gray, pixel);
                 if (tones == -1L) {
                     bright += Long.BYTES;
                 } else {
@@ -81,7 +76,7 @@ final class BeamInkThreshold {
                 int dark = 0;
                 int pixel = start;
                 for (int end = start + wordWidth; pixel < end; pixel += Long.BYTES)
-                    dark += darkPixels((long) GRAY_WORDS.get(gray, pixel));
+                    dark += darkPixels(PackedRasterBytes.readLittleEndian(gray, pixel));
                 for (int end = start + rowWidth; pixel < end; pixel++)
                     dark += ((gray[pixel] & 255) - 73) >>> 31;
                 darkNeeded -= dark;
@@ -94,7 +89,7 @@ final class BeamInkThreshold {
                 int bright = 0;
                 int pixel = start;
                 for (int end = start + wordWidth; pixel < end; pixel += Long.BYTES) {
-                    long tones = (long) GRAY_WORDS.get(gray, pixel);
+                    long tones = PackedRasterBytes.readLittleEndian(gray, pixel);
                     bright += tones == -1L ? Long.BYTES : brightPixels(tones);
                 }
                 for (int end = start + rowWidth; pixel < end; pixel++)
@@ -132,7 +127,7 @@ final class BeamInkThreshold {
         for (int y = 0, start = firstPixel; y < rows; y++, start += width) {
             int end = start + rowWidth;
             if (gray[start] != tone
-                    || Arrays.mismatch(gray, start, end - 1, gray, start + 1, end) >= 0) {
+                    || !PackedRasterBytes.sameRange(gray, start, start + 1, end - start - 1)) {
                 return false;
             }
         }

@@ -2441,10 +2441,20 @@
     },
     "BeamInkThreshold.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/BeamInkThreshold.java",
-      "source_sha256": "f28e9da14a9a264edea80f9a6eefd2080f680e04c46c9e2af57891c852c798d9",
-      "reviewed_app_commit": "650d1b3a312dcd7eb58f83945a6a3be321c9b4dd",
-      "source_normalized_sha256": "f28e9da14a9a264edea80f9a6eefd2080f680e04c46c9e2af57891c852c798d9",
-      "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/BeamInkThreshold.java"
+      "source_sha256": "5d5b44513ddb3777c1f52ca47e6b4f9bca39fa0d854f8e000a14fafdb2dfc336",
+      "reviewed_app_commit": "a12bb7fda6748008e88a8f70a09926ff28b38b85",
+      "source_normalized_sha256": "5d5b44513ddb3777c1f52ca47e6b4f9bca39fa0d854f8e000a14fafdb2dfc336",
+      "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/BeamInkThreshold.java",
+      "standalone_sha256": "3f7339250ef2274575e5728d3b048b162f0d8c2f1ad1e6ade867006b273a4e70",
+      "standalone_normalized_sha256": "3f7339250ef2274575e5728d3b048b162f0d8c2f1ad1e6ade867006b273a4e70",
+      "license": "Apache-2.0",
+      "packed_raster_review": {
+        "prior_reviewed_app_commit": "650d1b3a312dcd7eb58f83945a6a3be321c9b4dd",
+        "basis": "The threshold matches the app source after adapting the package. Standalone packed reads keep JVM array views and Arrays.mismatch. The app keeps its API 26 compatible packed byte primitives.",
+        "standalone_adapter": "java/src/main/java/io/github/luckolite/interpreter/PackedRasterBytes.java",
+        "standalone_adapter_normalized_sha256": "bc637363ec3339ac16388051dbac2359bc96621232e6e7ddc9b2e00dcb4486be",
+        "verification": "Seven focused tests per implementation and 32,768 generated threshold comparisons. Paired JVM timing preserved the previous standalone throughput."
+      }
     },
     "BeamOccludedNatural.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/BeamOccludedNatural.java",
