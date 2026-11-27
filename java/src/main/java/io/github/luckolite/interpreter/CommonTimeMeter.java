@@ -558,7 +558,9 @@ final class CommonTimeMeter {
     }
 
     private static boolean rule(int y, int firstLine, float gap, int radius) {
-        for (int i = 0; i < 5; i++) if (Math.abs(y - (firstLine + i * gap)) <= radius) return true;
+        // Center the mask on the same discrete row used by the raster.
+        for (int i = 0; i < 5; i++)
+            if (Math.abs(y - Math.round(firstLine + i * gap)) <= radius) return true;
         return false;
     }
 

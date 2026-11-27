@@ -2793,14 +2793,17 @@
     },
     "CommonTimeMeter.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/CommonTimeMeter.java",
-      "source_sha256": "dd42ad42b9b1385989375439c75de07b84c51f2cb74783ea690c8b9edcf3bd47",
-      "source_normalized_sha256": "dd42ad42b9b1385989375439c75de07b84c51f2cb74783ea690c8b9edcf3bd47",
+      "source_sha256": "e1a1ecece7ac6900e9839fbb83f7511813617251905207064715401394f3b539",
+      "source_normalized_sha256": "e1a1ecece7ac6900e9839fbb83f7511813617251905207064715401394f3b539",
       "reviewed_source_state": "Committed recognition57/guide287/audio90 source; paired package deployment and device acceptance pending.",
       "review_note": "Reviewed paired recognition57 source; namespace-only Java adaptation or relative Python imports. Guide287 supports end-boundary signatures; audio90 invalidates derived playback.",
-      "standalone_sha256": "fb426ce9402ae8acf9395a5f9293571e420ad05be774ffbd876e66a3cdbc5afa",
-      "reviewed_app_commit": "bfdbf8ffd34400e72afacb03560270a4d888e0b6",
+      "standalone_sha256": "4b3b708817fecc9023e12835788871e06b3da75db9d204a6efdaec735513d9c9",
+      "reviewed_app_commit": "db1739353b73cf5c476007e515e691374d4c92d7",
       "scoped_reviewed_app_commit": "bfdbf8ffd34400e72afacb03560270a4d888e0b6",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/CommonTimeMeter.java",
+      "fractional_staff_rule_review": {
+        "scope": "Rounds each five-line staff-rule center to a raster row in both decoders. Original synthetic coverage preserves common time and rejects a flat on fractional staff spacing."
+      },
       "november_24_flesch_app_review": {
         "app_commit": "d0622b051dfaa40ad1ac76a2cd1ed7072186bb90",
         "scope": "Common and cut-time optical contour decisions. The standalone row-sampling optimizations remain in its implementation."

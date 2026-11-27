@@ -153,4 +153,41 @@ public class CommonTimeMeterTest {
         return page;
     }
 
+
+    @Test public void fractionalStaffRulesDoNotTurnAFlatIntoCommonTime() {
+        assertEquals(0, CommonTimeMeter.read(halfPixelStaff(false), WIDTH, HEIGHT,
+                90, 135, TOP, GAP, 0));
+        assertEquals(4, CommonTimeMeter.read(halfPixelStaff(true), WIDTH, HEIGHT,
+                90, 127, TOP, GAP, 0));
+    }
+
+    private static final int WIDTH = 300, HEIGHT = 200, TOP = 60;
+    private static final float GAP = 17.5f;
+    private static byte[] halfPixelStaff(boolean common) {
+        byte[] gray = new byte[WIDTH * HEIGHT];
+        java.util.Arrays.fill(gray, (byte) 255);
+        for (int line = 0; line < 5; line++) {
+            int center = Math.round(TOP + line * GAP);
+            for (int y = center - 1; y <= center + 2; y++)
+                java.util.Arrays.fill(gray, y * WIDTH + 25, y * WIDTH + 275, (byte) 20);
+        }
+        if (common) {
+            for (int y = 71; y <= 118; y++)
+                for (int x = 90; x <= 128; x++) {
+                    double outer = Math.pow((x - 109) / 18d, 2) + Math.pow((y - 95) / 23d, 2);
+                    double inner = Math.pow((x - 109) / 13d, 2) + Math.pow((y - 95) / 17d, 2);
+                    if (outer <= 1 && inner >= 1 && (x < 117 || Math.abs(y - 95) >= 12))
+                        gray[y * WIDTH + x] = 15;
+                }
+            return gray;
+        }
+        for (int y = 66; y <= 106; y++)
+            java.util.Arrays.fill(gray, y * WIDTH + 90, y * WIDTH + 94, (byte) 15);
+        for (int y = 84; y <= 106; y++)
+            for (int x = 91; x <= 107; x++) {
+                double outer = Math.pow((x - 95) / 12d, 2) + Math.pow((y - 92) / 9d, 2);
+                if (outer <= 1 && (x >= 101 || y <= 87 || y >= 97)) gray[y * WIDTH + x] = 15;
+            }
+        return gray;
+    }
 }
