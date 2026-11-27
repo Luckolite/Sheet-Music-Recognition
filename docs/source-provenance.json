@@ -5711,12 +5711,21 @@
     },
     "NativeSegmentation.java": {
       "source_path": "tools/native-worker/NativeSegmentation.java",
-      "source_sha256": "457279f71333699f932211dd9f49307c856f1e51a43306df28a16279c82b14d8",
-      "source_normalized_sha256": "457279f71333699f932211dd9f49307c856f1e51a43306df28a16279c82b14d8",
-      "reviewed_source_snapshot": "Reviewed native edge-weight table successor to accepted app891",
-      "review_note": "The optional adapter computes the unchanged four-border distance once per class and reads unsigned byte weights in both cached-white and native-output paths. The existing >= overlap tie rule, class validation/read/cast/write order, clipping, model options and cache/session lifetime are unchanged. An original independent border-distance regression verifies all102400 weights, including signed-byte centers; original10 tile raster controls retained. No model, dependency, format, private score, device or signing data changed.",
-      "reviewed_app_state": "Reviewed uncommitted native source; recorded app commit remains the origin base.",
-      "reviewed_source_state": "Global precomputed tile-edge geometry with identical unsigned weights, class validation and stitch order"
+      "source_sha256": "7079d7b2c3d71801319b378f32868fff757b5e4a1b4f943a6fe5d34b37979392",
+      "source_normalized_sha256": "7079d7b2c3d71801319b378f32868fff757b5e4a1b4f943a6fe5d34b37979392",
+      "reviewed_app_commit": "fe84e8d6d46a9d66180cb8ca26db590f05cbf1d9",
+      "standalone_path": "optional/segmentation/java/io/github/luckolite/interpreter/NativeSegmentation.java",
+      "standalone_sha256": "670bd8f4de8f683150989d9db37248b1b8480044f2dd0c3b71c6ccc38a68a4ba",
+      "review_note": "Reviewed stock tile geometry extraction. Both ONNX adapters keep their original session, prediction cache and stitch loops. Window, stride, edge scores, overlap order and model are identical."
+    },
+    "SegmentationTiles.java": {
+      "source_path": "app/src/main/java/com/musicsheets/app/pdf/SegmentationTiles.java",
+      "source_sha256": "64361e4f89fc2d733362d3285d616e19e0f2692999ac690078c05f6a35a61fe5",
+      "source_normalized_sha256": "64361e4f89fc2d733362d3285d616e19e0f2692999ac690078c05f6a35a61fe5",
+      "reviewed_app_commit": "fe84e8d6d46a9d66180cb8ca26db590f05cbf1d9",
+      "standalone_path": "optional/segmentation/java/io/github/luckolite/interpreter/SegmentationTiles.java",
+      "standalone_sha256": "2ea0fea368e7aeecf22700e49354459d6c717d9973759a9fbea726aa9cb9ff23",
+      "review_note": "Package-name-only copy of the shared stock tile geometry. The optional ONNX adapter and Android use the same 320-pixel window, 192-pixel stride, clamped starts and unsigned edge scores."
     },
     "NaturalHarmonicRingProof.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/NaturalHarmonicRingProof.java",

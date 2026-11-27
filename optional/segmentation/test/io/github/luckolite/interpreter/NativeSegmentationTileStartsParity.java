@@ -2,29 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.github.luckolite.interpreter;
 
-import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
 
 /** Original model-free tile enumeration controls; no segmentation session is created. */
 public final class NativeSegmentationTileStartsParity {
-    private static final Method STARTS;
-
-    static {
-        try {
-            STARTS = NativeSegmentation.class.getDeclaredMethod("tileStarts", int.class);
-            STARTS.setAccessible(true);
-        } catch (ReflectiveOperationException error) {
-            throw new ExceptionInInitializerError(error);
-        }
-    }
-
-    @SuppressWarnings("unchecked")
-    private static List<Integer> starts(int size) throws Exception {
-        return (List<Integer>) STARTS.invoke(null, size);
-    }
-
-    public static void main(String[] args) throws Exception {
+    public static void main(String[] args) {
         if (args.length != 0)
             throw new IllegalArgumentException("No models or input arguments accepted");
         if (!visits(384, 513, true)
@@ -47,9 +30,7 @@ public final class NativeSegmentationTileStartsParity {
                 })
             if (!visits(size[0], size[1], false).equals(visits(size[0], size[1], true)))
                 throw new AssertionError("Raster sequence changed: " + size[0] + "x" + size[1]);
-        var field = NativeSegmentation.class.getDeclaredField("TILE_EDGE_WEIGHTS");
-        field.setAccessible(true);
-        byte[] weights = (byte[]) field.get(null);
+        byte[] weights = SegmentationTiles.edgeScores();
         if (weights.length != 320 * 320)
             throw new AssertionError("Unexpected edge-weight geometry");
         // Distance to the four independently enumerated borders is the legacy definition.
@@ -69,11 +50,11 @@ public final class NativeSegmentationTileStartsParity {
                 "PASS tile-start goldens,10raster sequences and102400 edge-weight controls; models0");
     }
 
-    private static List<String> visits(int width, int height, boolean reuse) throws Exception {
-        List<Integer> yStarts = starts(height), xStarts = reuse ? starts(width) : null;
+    private static List<String> visits(int width, int height, boolean reuse) {
+        List<Integer> yStarts = SegmentationTiles.tileStarts(height), xStarts = reuse ? SegmentationTiles.tileStarts(width) : null;
         List<String> result = new ArrayList<>();
         for (int top : yStarts)
-            for (int left : reuse ? xStarts : starts(width)) result.add(top + ":" + left);
+            for (int left : reuse ? xStarts : SegmentationTiles.tileStarts(width)) result.add(top + ":" + left);
         return result;
     }
 }

@@ -12,15 +12,13 @@ import java.nio.LongBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
 /** Windows segmentation candidate using the app model converted to ONNX. */
 public final class NativeSegmentation implements AutoCloseable {
-    private static final int WINDOW = 320;
-    private static final int STEP = 192;
-    private static final byte[] TILE_EDGE_WEIGHTS = tileEdgeWeights();
+    private static final int WINDOW = SegmentationTiles.WINDOW;
+    private static final byte[] TILE_EDGE_WEIGHTS = SegmentationTiles.edgeScores();
     public static final String MODEL_SHA256 =
             "e436efe12ddc598add9540378d6772622a2ad9d7bdb1f9d4c0ab87e3144402a7";
     private final OrtEnvironment environment = OrtEnvironment.getEnvironment();
@@ -71,8 +69,8 @@ public final class NativeSegmentation implements AutoCloseable {
         int plane = WINDOW * WINDOW;
         long[] whitePrediction = cachedWhitePrediction.get();
         if (whitePrediction == closedWhitePrediction) whitePrediction = null;
-        List<Integer> yStarts = tileStarts(height);
-        List<Integer> xStarts = tileStarts(width);
+        List<Integer> yStarts = SegmentationTiles.tileStarts(height);
+        List<Integer> xStarts = SegmentationTiles.tileStarts(width);
         for (int top : yStarts)
             for (int left : xStarts) {
                 boolean exactWhite =
@@ -136,30 +134,6 @@ public final class NativeSegmentation implements AutoCloseable {
             if (current == closedWhitePrediction) return;
             if (cachedWhitePrediction.compareAndSet(current, null)) return;
         }
-    }
-
-    // Identical geometry for every tile; retain unsigned weights when read.
-    private static byte[] tileEdgeWeights() {
-        byte[] weights = new byte[WINDOW * WINDOW];
-        for (int y = 0; y < WINDOW; y++)
-            for (int x = 0; x < WINDOW; x++)
-                weights[y * WINDOW + x] =
-                        (byte)
-                                (Math.min(Math.min(x, WINDOW - 1 - x), Math.min(y, WINDOW - 1 - y))
-                                        + 1);
-        return weights;
-    }
-
-    private static List<Integer> tileStarts(int size) {
-        var starts = new ArrayList<Integer>();
-        int finalStart = Math.max(0, size - WINDOW);
-        for (int value = 0; value < size; value += STEP) {
-            int start = Math.min(value, finalStart);
-            if (starts.isEmpty() || starts.get(starts.size() - 1) != start) starts.add(start);
-            if (start == finalStart) break;
-        }
-        if (starts.isEmpty()) starts.add(0);
-        return starts;
     }
 
     @Override
