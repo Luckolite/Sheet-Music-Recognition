@@ -9,6 +9,7 @@ final class PortableNoteOrnaments {
     /** Right and bottom are exclusive, matching Android crop bounds. */
     static final class Bounds {
         int left, top, right, bottom;
+        int trillWaveRight;
 
         Bounds(int left, int top, int right, int bottom) {
             this.left = left;
@@ -59,7 +60,11 @@ final class PortableNoteOrnaments {
         }
     }
 
-    record Anchor(float x, float y, float gap, int staff, int measure) {}
+    record Anchor(float x, float y, float gap, int staff, int measure, int stemDirection, int staffStep) {
+        Anchor(float x, float y, float gap, int staff, int measure) {
+            this(x, y, gap, staff, measure, 0, Integer.MIN_VALUE);
+        }
+    }
 
     record Found(Bounds bounds, int marks, int noteIndex) {}
 
@@ -131,7 +136,9 @@ final class PortableNoteOrnaments {
                             note.pageY() * h,
                             best < 0 ? 12 : staffs.get(best).gap(),
                             best,
-                            note.measureIndex()));
+                            note.measureIndex(),
+                            note.stemDirection(),
+                            note.staffStep()));
         }
         int[] marks = new int[notes.size()];
         for (var found : detect(recognizer, labels, gray, w, h, staffs, anchors, trills))
@@ -425,6 +432,8 @@ final class PortableNoteOrnaments {
                 }
             }
             if (owner < 0) continue;
+            if (box.trillWaveRight > 0 && match.kind() == NoteOrnament.TRILL)
+                owner = upperTrillUnison(notes, owner, box);
             var anchor = notes.get(owner);
             int marks = match.kind() | (delayed ? NoteOrnament.DELAYED : 0);
             // Accidentals beside/above/below an ornament modify its auxiliary pitch only.
@@ -483,6 +492,7 @@ final class PortableNoteOrnaments {
             for (var prior : found) if (prior.noteIndex() == owner) duplicate = true;
             if (!duplicate) found.add(new Found(box, marks, owner));
         }
+        extendTrillUpperVoice(found, notes);
         return List.copyOf(found);
     }
 
@@ -587,15 +597,109 @@ final class PortableNoteOrnaments {
         for (var b : parts) {
             Bounds prior = null;
             for (var a : joined)
-                if (!completeMordents.contains(a)
+                if (a.trillWaveRight == 0
+                        && !completeMordents.contains(a)
                         && !completeMordents.contains(b)
                         && b.left >= a.left
                         && b.left - a.right < Math.min(a.height(), b.height()) * .32
                         && Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top)
                                 > Math.min(a.height(), b.height()) * .55) prior = a;
             if (prior == null) joined.add(new Bounds(b));
-            else prior.union(b);
+            else {
+                prior.trillWaveRight = trillExtensionAfter(gray, w, prior, b, recognizer);
+                if (prior.trillWaveRight == 0) prior.union(b);
+            }
         }
         return joined;
+    }
+
+    private static int upperTrillUnison(List<Anchor> notes, int owner, Bounds mark) {
+        var lower = notes.get(owner);
+        if (lower.stemDirection >= 0) return owner;
+        int upper = -1;
+        for (int i = 0; i < notes.size(); i++) {
+            var other = notes.get(i);
+            if (other.staff == lower.staff && other.measure == lower.measure
+                    && other.stemDirection > 0 && Math.abs(other.y - lower.y) <= lower.gap * .35f
+                    && Math.abs(other.x - lower.x) <= lower.gap * 1.5f
+                    && Math.abs(other.x - mark.exactCenterX()) <= lower.gap * 1.5f) {
+                if (upper >= 0) return owner;
+                upper = i;
+            }
+        }
+        return upper < 0 ? owner : upper;
+    }
+
+    private static void extendTrillUpperVoice(List<Found> found, List<Anchor> notes) {
+        if (found.stream().noneMatch(mark -> mark.bounds().trillWaveRight > 0)) return;
+        var owned = new BitSet(notes.size());
+        for (var mark : found) owned.set(mark.noteIndex());
+        int printed = found.size();
+        for (int i = 0; i < printed; i++) {
+            var mark = found.get(i);
+            var lead = notes.get(mark.noteIndex());
+            if (mark.bounds().trillWaveRight == 0 || NoteOrnament.type(mark.marks()) != NoteOrnament.TRILL
+                    || lead.stemDirection <= 0 || lead.staffStep == Integer.MIN_VALUE) continue;
+            float end = mark.bounds().trillWaveRight;
+            for (int j = 0; j < notes.size(); j++) {
+                var note = notes.get(j);
+                if (note.staff == lead.staff && note.stemDirection > 0
+                        && note.x > lead.x + lead.gap * .8f && note.x <= end
+                        && (owned.get(j) || note.staffStep != lead.staffStep)) end = note.x;
+            }
+            for (int j = 0; j < notes.size(); j++) {
+                var note = notes.get(j);
+                if (note.staff == lead.staff && note.stemDirection > 0 && note.staffStep == lead.staffStep
+                        && note.x > lead.x + lead.gap * .8f && note.x < end && !owned.get(j)) {
+                    found.add(new Found(mark.bounds(), mark.marks(), j));
+                    owned.set(j);
+                }
+            }
+        }
+    }
+
+    /** Keep a proved trill head intact and trace only the directly supported printed wave. */
+    private static int trillExtensionAfter(
+            byte[] gray, int width, Bounds head, Bounds firstWave,
+            PortableOrnamentGlyphs recognizer) {
+        int waveHeight = firstWave.height();
+        if (recognizer == null || waveHeight < 3 || waveHeight * 2 > head.height()
+                || firstWave.width() < waveHeight || head.width() > head.height() * 2.6f
+                || firstWave.left < head.right - 1) return 0;
+        var match = recognizer.templateMatch(gray, width, head);
+        if (match.kind() != NoteOrnament.TRILL || !match.accepted()) return 0;
+        float minimumTravel = Math.max(1.5f, waveHeight * .22f);
+        float extremum = Float.NaN;
+        int direction = 0, reversals = 0, blank = 0;
+        int lastTurn = firstWave.left, right = firstWave.left;
+        for (int x = firstWave.left; x < width && x - lastTurn <= waveHeight * 7; x++) {
+            int sum = 0, count = 0;
+            for (int y = firstWave.top; y < firstWave.bottom; y++) {
+                if ((gray[y * width + x] & 255) < 149) {
+                    sum += y;
+                    count++;
+                }
+            }
+            if (count == 0) {
+                if (++blank > Math.max(1, waveHeight / 2)) break;
+                continue;
+            }
+            blank = 0;
+            right = x + 1;
+            float center = sum / (float) count;
+            if (!Float.isFinite(extremum)) extremum = center;
+            float travel = center - extremum;
+            if (direction * travel > 0) {
+                extremum = center;
+            } else if (Math.abs(travel) >= minimumTravel) {
+                if (direction != 0) {
+                    reversals++;
+                    lastTurn = x;
+                }
+                direction = travel > 0 ? 1 : -1;
+                extremum = center;
+            }
+        }
+        return reversals >= 5 ? Math.min(right, lastTurn + waveHeight * 2) : 0;
     }
 }
