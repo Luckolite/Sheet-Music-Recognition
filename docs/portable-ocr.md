@@ -44,10 +44,11 @@ decoding. Validate its length against the output vocabulary. Android ONNX Runtim
 checks. Windows Java also used 1.25.1 with a compatible C++ runtime. These are
 evaluation dependencies, not additions to the JDK-only default package.
 
-## Optional DirectML detector service on Windows
+## Optional DirectML OCR service on Windows
 
 The [isolated desktop DirectML worker](portable-segmentation.md#optional-directml-worker-on-windows)
-can also serve the pinned mobile v5 detector from the same environment.
+can also serve the pinned mobile v5 detector and Latin recognizer from the
+same environment.
 
 ```sh
 python optional/segmentation/directml_worker.py --detector-service /models/ch_PP-OCRv5_det_mobile.onnx detector.map --adapter 1
@@ -65,6 +66,15 @@ The host must impose a request timeout, fall back to the stock detector on
 failure, and apply CPU parity checks for its chosen hardware and workload.
 The evaluated host also retried maps on CPU when foreground probability or
 component confidence was within 0.0003 of the existing OCR thresholds.
+
+Pass `--recognizer-model /models/latin_PP-OCRv5_rec_mobile.onnx` to enable
+recognition alongside detection. Write a normalized 320×48 float32 crop with
+the same channel layout and send the reserved header `(0, 48)`. On `K`, the
+result at offset 3,932,160 starts with a little-endian unsigned 32-bit step
+count followed by 504 little-endian float32 probabilities per step.
+A response of `R` leaves detector requests available and tells the caller to
+use its CPU recognizer. The evaluated host also retried close character
+probabilities and confidence decisions at the caller's existing threshold.
 
 ## Optional desktop evaluation
 
