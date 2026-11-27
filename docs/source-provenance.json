@@ -2442,7 +2442,7 @@
     "BeamInkThreshold.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/BeamInkThreshold.java",
       "source_sha256": "5d5b44513ddb3777c1f52ca47e6b4f9bca39fa0d854f8e000a14fafdb2dfc336",
-      "reviewed_app_commit": "a12bb7fda6748008e88a8f70a09926ff28b38b85",
+      "reviewed_app_commit": "8aad1573fb1607f272a803192d082a3d8c018621",
       "source_normalized_sha256": "5d5b44513ddb3777c1f52ca47e6b4f9bca39fa0d854f8e000a14fafdb2dfc336",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/BeamInkThreshold.java",
       "standalone_sha256": "3f7339250ef2274575e5728d3b048b162f0d8c2f1ad1e6ade867006b273a4e70",
@@ -5753,7 +5753,7 @@
       "source_path": "tools/native-worker/NativeSegmentation.java",
       "source_sha256": "7079d7b2c3d71801319b378f32868fff757b5e4a1b4f943a6fe5d34b37979392",
       "source_normalized_sha256": "7079d7b2c3d71801319b378f32868fff757b5e4a1b4f943a6fe5d34b37979392",
-      "reviewed_app_commit": "fe84e8d6d46a9d66180cb8ca26db590f05cbf1d9",
+      "reviewed_app_commit": "8aad1573fb1607f272a803192d082a3d8c018621",
       "standalone_path": "optional/segmentation/java/io/github/luckolite/interpreter/NativeSegmentation.java",
       "standalone_sha256": "670bd8f4de8f683150989d9db37248b1b8480044f2dd0c3b71c6ccc38a68a4ba",
       "review_note": "Reviewed stock tile geometry extraction. Both ONNX adapters keep their original session, prediction cache and stitch loops. Window, stride, edge scores, overlap order and model are identical."
@@ -5762,7 +5762,7 @@
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/SegmentationTiles.java",
       "source_sha256": "64361e4f89fc2d733362d3285d616e19e0f2692999ac690078c05f6a35a61fe5",
       "source_normalized_sha256": "64361e4f89fc2d733362d3285d616e19e0f2692999ac690078c05f6a35a61fe5",
-      "reviewed_app_commit": "fe84e8d6d46a9d66180cb8ca26db590f05cbf1d9",
+      "reviewed_app_commit": "8aad1573fb1607f272a803192d082a3d8c018621",
       "standalone_path": "optional/segmentation/java/io/github/luckolite/interpreter/SegmentationTiles.java",
       "standalone_sha256": "2ea0fea368e7aeecf22700e49354459d6c717d9973759a9fbea726aa9cb9ff23",
       "review_note": "Package-name-only copy of the shared stock tile geometry. The optional ONNX adapter and Android use the same 320-pixel window, 192-pixel stride, clamped starts and unsigned edge scores."
@@ -6083,7 +6083,7 @@
     "OctaveClefDigit.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/OctaveClefDigit.java",
       "source_sha256": "793bda0d89cd4f2610c2bc93978b855221573ceec97b6a6aa3eb3889ef3d7182",
-      "reviewed_app_commit": "a12bb7fda6748008e88a8f70a09926ff28b38b85",
+      "reviewed_app_commit": "8aad1573fb1607f272a803192d082a3d8c018621",
       "source_normalized_sha256": "793bda0d89cd4f2610c2bc93978b855221573ceec97b6a6aa3eb3889ef3d7182",
       "standalone_sha256": "6eac5b921a4308e5fe1d8c984c6c1f25e01867117439682abb0e9b69f5c37ce2",
       "reviewed_source_state": "committed",
@@ -13011,7 +13011,7 @@
       "standalone_sha256": "7b2b598d620b1b20ce292df01f7d40334b6c3020fecb994b257aadf7560daf57",
       "standalone_normalized_sha256": "7b2b598d620b1b20ce292df01f7d40334b6c3020fecb994b257aadf7560daf57",
       "license": "Apache-2.0",
-      "reviewed_app_commit": "46ff5eb9f113fdf7fa8a7295c87dea2e3fbc68b1",
+      "reviewed_app_commit": "8aad1573fb1607f272a803192d082a3d8c018621",
       "current_source_review": "Complete thin staff-rule crossing continuity preserves a truly attached ledger stem; finite complete figure-eight rim ownership exempts only its sparse model head fragments in a cautionary meter tail. Existing raw, bar, counter, rest and head guards retained. Twenty-one original controls;156 focused tests; separate private full-page proof.",
       "closed_counter_paper_review": "Sparse semantic head fragments in the exact already-closed counters of a proved courtesy eight belong to the numeral. Counter boxes never supply ownership; existing figure, paper, size, fringe and played-head guards remain. Original procedural tests only.",
       "voila_counter_rim_review": "Closed denominator counter paper has its own coverage bound and does not consume the existing printed rim limit.",
