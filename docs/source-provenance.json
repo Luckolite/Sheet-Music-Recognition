@@ -1750,12 +1750,19 @@
     "OwnedTertiaryBeamlets.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/OwnedTertiaryBeamlets.java",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/OwnedTertiaryBeamlets.java",
-      "source_sha256": "00aeecba1386610dd5cb74231d1098bdbbe6eb215af67fb01c7d9e3b10341b9a",
-      "source_normalized_sha256": "00aeecba1386610dd5cb74231d1098bdbbe6eb215af67fb01c7d9e3b10341b9a",
-      "standalone_normalized_sha256": "abbab02aa3bfa194f3b4b8a018b1837896d93cddf34addf7befbcb153d415923",
+      "source_sha256": "6797c013a8d9502b0a047115dfaa9e8e3268f575b643a2d764f75ea9e6e83aaf",
+      "source_normalized_sha256": "6797c013a8d9502b0a047115dfaa9e8e3268f575b643a2d764f75ea9e6e83aaf",
+      "standalone_normalized_sha256": "1f820fe3f7358d8c09311fecd86cf2744489e4b806d36851fa75be9e89bae5b6",
       "license": "Apache-2.0",
-      "reviewed_app_commit": "778cd590b0340b965946c828338dbc5cdf011e21",
-      "reviewed_app_state": "Matching connected short-hook evidence with independently witnessed staff-rule exclusion."
+      "reviewed_app_commit": "872547cbc6d69919caa9cbb33ffcd959f5c8f9f3",
+      "reviewed_app_state": "Matching connected short-hook evidence with independently witnessed staff-rule exclusion.",
+      "baseline_source_reconciliation": {
+        "public_commit": "96cdc043633ad40293379bb8692ee18691195b36",
+        "public_blob": "d2af7b09ac552502bc01ee8d356730424526d751",
+        "prior_reviewed_app_commit": "778cd590b0340b965946c828338dbc5cdf011e21",
+        "prior_source_normalized_sha256": "00aeecba1386610dd5cb74231d1098bdbbe6eb215af67fb01c7d9e3b10341b9a",
+        "basis": "Exact source match after normalizing line endings and the leading Java package declaration."
+      }
     },
     "WrappedEighthTriplets.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/WrappedEighthTriplets.java",
@@ -2563,14 +2570,22 @@
     },
     "BoundedSecondaryBeam.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/BoundedSecondaryBeam.java",
-      "source_sha256": "847eab6fcce08fd9ef519855b01fb763a5c6c95f0e9d1b4c74a4278ea25ab52c",
-      "source_normalized_sha256": "2492be2e64c406340eafaa4d584997a79768c47ca72a7c4816f4d502a763eed4",
+      "source_sha256": "3a1174b22fb2fbddd982c5932505593af7216d90d06bab79f93f51c5135169d8",
+      "source_normalized_sha256": "3a1174b22fb2fbddd982c5932505593af7216d90d06bab79f93f51c5135169d8",
       "review_note": "Retain short upper returns in a printed six using a height-scaled pocket bound. Extend fully connected bounded secondary-beam and owned-numeral proof to ten staff gaps. Original hooked-six and tall-rail positive/reject, timing/grid, mirrored/sloped/partial-beam controls; no score-specific rules.",
       "reviewed_app_state": "Reviewed uncommitted app902 source on released app901; origin app commit retained.",
       "reviewed_source_state": "working-tree",
-      "standalone_sha256": "a2939ee7659124f5daa7a953295c60191126347ac16069b1f29046eee0189284",
-      "reviewed_app_commit": "c0374eebf5c075b83813a66051faa22bcb431360",
-      "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/BoundedSecondaryBeam.java"
+      "standalone_sha256": "4a36696fcbd2fbb8f715d31cb494dbf9a22755ef87c754daccbdf5c7e4902e85",
+      "reviewed_app_commit": "872547cbc6d69919caa9cbb33ffcd959f5c8f9f3",
+      "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/BoundedSecondaryBeam.java",
+      "standalone_normalized_sha256": "4a36696fcbd2fbb8f715d31cb494dbf9a22755ef87c754daccbdf5c7e4902e85",
+      "baseline_source_reconciliation": {
+        "public_commit": "96cdc043633ad40293379bb8692ee18691195b36",
+        "public_blob": "433757bfc7087ea6f2386915b8fda929452472ea",
+        "prior_reviewed_app_commit": "c0374eebf5c075b83813a66051faa22bcb431360",
+        "prior_source_normalized_sha256": "2492be2e64c406340eafaa4d584997a79768c47ca72a7c4816f4d502a763eed4",
+        "basis": "Exact source match after normalizing line endings and the leading Java package declaration."
+      }
     },
     "BoundedTupletBeam.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/BoundedTupletBeam.java",
@@ -3755,13 +3770,20 @@
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/ExactComponentMembers.java",
       "license": "Apache-2.0",
       "review_note": "Reviewed global source-bound interpretation helper with namespace-equivalent standalone code and original procedural regressions. Unknown or conflicting evidence is retained; no score-specific rules, private fixtures or model changes.",
-      "source_sha256": "e7b0f65d8a279f21b1cbebbae12648bfaf22e7dda3a2d6d3a7512e07ac4a2fcc",
-      "source_normalized_sha256": "e7b0f65d8a279f21b1cbebbae12648bfaf22e7dda3a2d6d3a7512e07ac4a2fcc",
-      "standalone_sha256": "394ca12debed3a5a5555a208ad41c11ec5bbd240a83f8c96729a69690b4739b2",
-      "standalone_normalized_sha256": "394ca12debed3a5a5555a208ad41c11ec5bbd240a83f8c96729a69690b4739b2",
+      "source_sha256": "860daefba4615def280107de221f82fafab40788690ff4695008cdaba752e4f5",
+      "source_normalized_sha256": "860daefba4615def280107de221f82fafab40788690ff4695008cdaba752e4f5",
+      "standalone_sha256": "4f528e2de19b85e05b9c82fce41236c5398bef0dab0af17cd7c95368e76d6c46",
+      "standalone_normalized_sha256": "4f528e2de19b85e05b9c82fce41236c5398bef0dab0af17cd7c95368e76d6c46",
       "current_source_review": "Reviewed current source and standalone counterpart for the cumulative source-bound beam, notation, key, articulation and bounded context batch. Original procedural regressions only; physical source observations and model facts do not establish complete musical authority.",
-      "reviewed_app_commit": "2ef00ff20cb5274a3fb2df122ffed457801909fa",
-      "optimization_port_review": "Shares raster signatures within the existing independent collector budgets."
+      "reviewed_app_commit": "872547cbc6d69919caa9cbb33ffcd959f5c8f9f3",
+      "optimization_port_review": "Shares raster signatures within the existing independent collector budgets.",
+      "baseline_source_reconciliation": {
+        "public_commit": "96cdc043633ad40293379bb8692ee18691195b36",
+        "public_blob": "aeb20dcda2a29021c519d2060d84974b52e5c6e4",
+        "prior_reviewed_app_commit": "2ef00ff20cb5274a3fb2df122ffed457801909fa",
+        "prior_source_normalized_sha256": "e7b0f65d8a279f21b1cbebbae12648bfaf22e7dda3a2d6d3a7512e07ac4a2fcc",
+        "basis": "Exact source match after normalizing line endings and the leading Java package declaration."
+      }
     },
     "ExactCoverCropCache.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/importer/ExactCoverCropCache.java",
@@ -4239,10 +4261,10 @@
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/FiniteRawBeamStrip.java",
       "license": "Apache-2.0",
       "review_note": "Original bounded raw beam/shaft/staff/flag evidence; exact package-only standalone counterpart. Working-tree integration reviewed against this baseline commit; exact formatted source hashes identify the integrated changes. Original procedural tests only; no score ink, model change or general accuracy claim.",
-      "source_sha256": "a3a60d5eea024996fadbd68662c04f83dee242360ff291bf5b1cb880b1ce10ea",
-      "source_normalized_sha256": "2d7fc0b4b3f04e652fc1edb410ad604122f66184f9603472028096db77997d89",
-      "standalone_sha256": "364ea3851f9cd0fcaa88b9b5cc3f278720ecb6aac4c4447641a73f735736e782",
-      "reviewed_app_commit": "28889c6160420f03f1ce778e652db95fef25b034",
+      "source_sha256": "527fb0a3784d5110f3f87b3da945b6bfdbd6a80214653e44e7038daea9dc79c7",
+      "source_normalized_sha256": "527fb0a3784d5110f3f87b3da945b6bfdbd6a80214653e44e7038daea9dc79c7",
+      "standalone_sha256": "bb7cf74ac96171d423a65a0b33af2a771aa6f27830c5e7a41da63b54e851de36",
+      "reviewed_app_commit": "872547cbc6d69919caa9cbb33ffcd959f5c8f9f3",
       "faint_literal_pixel_review": {
         "documentation": "docs/faint-beam-pixel-evidence.md",
         "reviewed_app_base_commit": "48c8c6157fe509d2d5bd3d32f275b1862ff5e921",
@@ -4252,6 +4274,14 @@
         "parent_fresh_public_packet_tests_pass": true,
         "rollout": "Cumulative matched rollout deferred during active goal; installed recognition116 predates this repair.",
         "reviewed_app_commit": "27692f06919ddb1f22c45c050a65c3b3e7d11a96"
+      },
+      "standalone_normalized_sha256": "bb7cf74ac96171d423a65a0b33af2a771aa6f27830c5e7a41da63b54e851de36",
+      "baseline_source_reconciliation": {
+        "public_commit": "96cdc043633ad40293379bb8692ee18691195b36",
+        "public_blob": "9502ae710156283c3f11fa7967efb58439293e85",
+        "prior_reviewed_app_commit": "28889c6160420f03f1ce778e652db95fef25b034",
+        "prior_source_normalized_sha256": "2d7fc0b4b3f04e652fc1edb410ad604122f66184f9603472028096db77997d89",
+        "basis": "Exact source match after normalizing line endings and the leading Java package declaration."
       }
     },
     "FiniteShaftFoot.java": {
@@ -6542,17 +6572,25 @@
     },
     "PairedGraceBeamInk.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/PairedGraceBeamInk.java",
-      "source_sha256": "359125baf9c3681b4a5c945f3ede14da3fbbe881f32fc24030f6d14e44acfedb",
-      "reviewed_app_commit": "bda749b92001949ea1b2ca07cf3114afe3ada5a8",
-      "source_normalized_sha256": "55f16f69151502b332f81e483a5219a926eb91162ee093cf6df4c09e1ee966f2",
+      "source_sha256": "f71636964e2fb2a626173c8dc52073542ec26e1b7f05b71af6f949bd0a9c6af3",
+      "reviewed_app_commit": "872547cbc6d69919caa9cbb33ffcd959f5c8f9f3",
+      "source_normalized_sha256": "f71636964e2fb2a626173c8dc52073542ec26e1b7f05b71af6f949bd0a9c6af3",
       "review_note": "Reject numeral five without actual returning lower bowl; establish single printed rail between two independent raw shafts; recover triple rails at blurred full-size junction using five inward witnesses. Sixteen original synthetic regression cases,130focusedchecks and exact native283head comparison with12qualified duration corrections. No private score pixels, model, dependency or record-format changes.",
       "reviewed_app_state": "Reviewed frozen uncommitted app1.18.381/code854 source based on recorded app commit",
       "reviewed_source_state": "working-tree",
       "scoped_reviewed_app_commit": "0a805317ca2c737cba57a2596680cadfabc0627f",
-      "standalone_sha256": "39dd09e33a96f1c4498c41deab4547c66245ac8e44e27d63b8131484ae8a5200",
+      "standalone_sha256": "cd31bd7603cb975f50ef48a1ed38976bf6fc5f37f48a50b54b3e8bba80c50423",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/PairedGraceBeamInk.java",
       "license": "Apache-2.0",
-      "recognition131_review": "Complete ordinary beam groups require at least three distinct independently owned shafts, original two-band core observations and separate inclusive raw-ink paths. Existing standalone adaptations retained; only new shared functional blocks are namespace-adapted. Original fixtures and readable semantic assertions plus canonical synthetic snapshots; no score material or new dependencies."
+      "recognition131_review": "Complete ordinary beam groups require at least three distinct independently owned shafts, original two-band core observations and separate inclusive raw-ink paths. Existing standalone adaptations retained; only new shared functional blocks are namespace-adapted. Original fixtures and readable semantic assertions plus canonical synthetic snapshots; no score material or new dependencies.",
+      "standalone_normalized_sha256": "cd31bd7603cb975f50ef48a1ed38976bf6fc5f37f48a50b54b3e8bba80c50423",
+      "baseline_source_reconciliation": {
+        "public_commit": "96cdc043633ad40293379bb8692ee18691195b36",
+        "public_blob": "2ba1c85062e66cc93444c498c7e013b67266c726",
+        "prior_reviewed_app_commit": "bda749b92001949ea1b2ca07cf3114afe3ada5a8",
+        "prior_source_normalized_sha256": "55f16f69151502b332f81e483a5219a926eb91162ee093cf6df4c09e1ee966f2",
+        "basis": "Exact source match after normalizing line endings and the leading Java package declaration."
+      }
     },
     "PairedTremoloInk.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/PairedTremoloInk.java",
@@ -8645,17 +8683,29 @@
     },
     "RestStaffRuleEdge.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/RestStaffRuleEdge.java",
-      "source_sha256": "c93f075f382a2e724ea0708c2afd2ddd47e42803ba76279a4a1be2d40db4b69d",
-      "reviewed_app_commit": "650d1b3a312dcd7eb58f83945a6a3be321c9b4dd",
-      "source_normalized_sha256": "c93f075f382a2e724ea0708c2afd2ddd47e42803ba76279a4a1be2d40db4b69d",
-      "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/RestStaffRuleEdge.java"
+      "source_sha256": "6c5d9481f40f8fb6be8061a582b76021074dbbee003533432e5d59f1be9ed1c0",
+      "reviewed_app_commit": "872547cbc6d69919caa9cbb33ffcd959f5c8f9f3",
+      "source_normalized_sha256": "6c5d9481f40f8fb6be8061a582b76021074dbbee003533432e5d59f1be9ed1c0",
+      "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/RestStaffRuleEdge.java",
+      "standalone_normalized_sha256": "81f2007aaf257ea12273a0a9be5256aea6bb071e0e7452187c265ea840aeca53",
+      "baseline_source_reconciliation": {
+        "public_commit": "96cdc043633ad40293379bb8692ee18691195b36",
+        "public_blob": "aafed0cc9460529fdfc6c6008b1f8a87d5e7118f",
+        "prior_reviewed_app_commit": "650d1b3a312dcd7eb58f83945a6a3be321c9b4dd",
+        "prior_source_normalized_sha256": "c93f075f382a2e724ea0708c2afd2ddd47e42803ba76279a4a1be2d40db4b69d",
+        "basis": "Java tokens match after package, formatting and comment normalization. Compiled class files matched using the same package and staged decoder classpath, with debug metadata disabled.",
+        "matching_class_sha256": {
+          "com/musicsheets/app/pdf/RestStaffRuleEdge$OrdinaryRuns.class": "5ee1687b78b588bdddd0dbfd1df88a30b74918596a9334852aea1df2361eb434",
+          "com/musicsheets/app/pdf/RestStaffRuleEdge.class": "871088d770ea8cfc3c25dc07ca60feb36e5f58e6fbf2eb0937606373b75354e1"
+        }
+      }
     },
     "RestVerticalWave.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/RestVerticalWave.java",
-      "source_sha256": "82e4c409dc0871badbad05638efd6ccac02c03eafe46ced183ec50480cd26a9c",
-      "reviewed_app_commit": "b9357cea9498a072237e541be9db117594979a44",
-      "source_normalized_sha256": "b2c960c1a1efa809098b8e547d75cd266890db78d8b5f01e744d03e5afbf07e4",
-      "standalone_sha256": "632a9de790cfe159c9d9f38bfa761ef220d0472aac7970adb877ff08ea1f346d",
+      "source_sha256": "5583bf8fe093235bef8cc16adb1692e4deea119e314ca3584bba377baee97744",
+      "reviewed_app_commit": "872547cbc6d69919caa9cbb33ffcd959f5c8f9f3",
+      "source_normalized_sha256": "5583bf8fe093235bef8cc16adb1692e4deea119e314ca3584bba377baee97744",
+      "standalone_sha256": "d6164dc4ba9fcadb4e07af747cc4fd9ee187c82a0784325f5f5bb2d1850caffe",
       "reviewed_source_state": "Committed paired rounded raster bounds repair; recognition59/audio92, guide287 unchanged. Original synthetic controls and full source suite passed; packaged deployment pending.",
       "review_note": "Original synthetic edge tests reproduce the prior bounds exception; preserve float-domain guards and validate rounded columns before pixel reads. No private source material or model changes.",
       "scoped_reviewed_app_commit": "b9357cea9498a072237e541be9db117594979a44",
@@ -8668,6 +8718,14 @@
         "scope": "Complete literal late eighth proof in genuine retained view/full mapped-source context; actual original64M/64M invocation pool, completed-prior atomic fallback, exact final secondary bounds, same source/frame/raw/meter, all rival/old-priority controls. Parent hook preserved. No native/assembled-clock authority.",
         "rollout": "Source only; matching cumulative packaging deferred during active goal.",
         "app_commit": "b55d17a49272925c65fddbf5c41c14a49b75535a"
+      },
+      "standalone_normalized_sha256": "d6164dc4ba9fcadb4e07af747cc4fd9ee187c82a0784325f5f5bb2d1850caffe",
+      "baseline_source_reconciliation": {
+        "public_commit": "96cdc043633ad40293379bb8692ee18691195b36",
+        "public_blob": "b73f68b5e49aaefa18c2d03fe162c41182d42359",
+        "prior_reviewed_app_commit": "b9357cea9498a072237e541be9db117594979a44",
+        "prior_source_normalized_sha256": "b2c960c1a1efa809098b8e547d75cd266890db78d8b5f01e744d03e5afbf07e4",
+        "basis": "Exact source match after normalizing line endings and the leading Java package declaration."
       }
     },
     "ReturningPitchPhraseTest.java": {
@@ -9863,9 +9921,9 @@
     },
     "SeparateBeamGroups.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/SeparateBeamGroups.java",
-      "source_sha256": "79a3784ff728213c69fa9afaf711f1dc4a5847e1b02eb84b21b49e5a1eb6f0aa",
-      "reviewed_app_commit": "830bc4fc56948b131ec0b46957f1c8c065ac496b",
-      "source_normalized_sha256": "79a3784ff728213c69fa9afaf711f1dc4a5847e1b02eb84b21b49e5a1eb6f0aa",
+      "source_sha256": "87df4dcce64567a85573533d420cc6f8364e216b53ec040620a2ab2440689d9b",
+      "reviewed_app_commit": "872547cbc6d69919caa9cbb33ffcd959f5c8f9f3",
+      "source_normalized_sha256": "87df4dcce64567a85573533d420cc6f8364e216b53ec040620a2ab2440689d9b",
       "reviewed_app_state": "Reviewed uncommitted app902 source on released app901; origin app commit retained.",
       "reviewed_source_state": "Reviewed output-preserving fixed-work reuse batch902 on public751e894.",
       "review_note": "Private held output-preserving SeparateBeam work reuse candidate. Paired app/standalone source and rollback pins retained; the exact standalone candidate passed the reused model-free focused functional gate. No Android elapsed, NN, full Score/guide, production or release claim; fresh final correctness-lane source/commit and normal public/app/pair gates are required before integration/publication. Batch902 reuses invariant geometry, ordered visits, regular-expression patterns and call-local query masks; original generic regression fixtures verify output preservation. Weights, thresholds, record layouts and dependencies unchanged.",
@@ -9873,6 +9931,14 @@
       "november_24_flesch_app_review": {
         "app_commit": "d0622b051dfaa40ad1ac76a2cd1ed7072186bb90",
         "scope": "Reviewed app beam-fragment closure integration. Standalone retains its independently projected written timing."
+      },
+      "standalone_normalized_sha256": "52b232421df2ea11add20f7973e524e80688ee7272313d13f31735fe7a2f5ea0",
+      "baseline_source_reconciliation": {
+        "public_commit": "96cdc043633ad40293379bb8692ee18691195b36",
+        "public_blob": "9115f74f35a592b82ec495969a3bb59c3b37eb0f",
+        "prior_reviewed_app_commit": "830bc4fc56948b131ec0b46957f1c8c065ac496b",
+        "prior_source_normalized_sha256": "79a3784ff728213c69fa9afaf711f1dc4a5847e1b02eb84b21b49e5a1eb6f0aa",
+        "basis": "Exact source match after normalizing line endings and the leading Java package declaration."
       }
     },
     "SeparatedRestInk.java": {
@@ -11428,13 +11494,24 @@
     },
     "VerifiedStaffTieRidge.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/VerifiedStaffTieRidge.java",
-      "reviewed_app_commit": "0a805317ca2c737cba57a2596680cadfabc0627f",
+      "reviewed_app_commit": "872547cbc6d69919caa9cbb33ffcd959f5c8f9f3",
       "review_note": "Original-pixel returning contours use independently verified physical frames and actual endpoints; connected opposite closed bodies veto false ties, including controlled complementary system bows. Original Apache-2.0 procedural positive/rejection controls; exact package/diagnostics-adapter token parity and existing JDK/interpreter dependencies only. No private source fixtures, model weights or record layouts are added.",
-      "source_sha256": "45991560944299b7ec2c24190a61a1ce091f71358461b230ccef2925a4a9c871",
-      "source_normalized_sha256": "07b3f30e925ff2f771bc8de469fbaf77bb13c1f85541674dd32e1752a6b0bd39",
+      "source_sha256": "1d39adb5ee78cbb2dd8495cd4265c02ece1f5d31a83a355e91fa7e9a3496ec63",
+      "source_normalized_sha256": "1d39adb5ee78cbb2dd8495cd4265c02ece1f5d31a83a355e91fa7e9a3496ec63",
       "scoped_reviewed_app_commit": "0a805317ca2c737cba57a2596680cadfabc0627f",
       "reviewed_source_state": "Frozen recognition20 app source; reviewed standalone adaptation and original procedural controls.",
-      "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/VerifiedStaffTieRidge.java"
+      "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/VerifiedStaffTieRidge.java",
+      "standalone_normalized_sha256": "697bbd2d05ae505dd593f20dda9a7ab9300a56174de32c6f7555c8541b113659",
+      "baseline_source_reconciliation": {
+        "public_commit": "96cdc043633ad40293379bb8692ee18691195b36",
+        "public_blob": "6316eb111de3ef02b8529d6cde8481a511fea7e8",
+        "prior_reviewed_app_commit": "0a805317ca2c737cba57a2596680cadfabc0627f",
+        "prior_source_normalized_sha256": "07b3f30e925ff2f771bc8de469fbaf77bb13c1f85541674dd32e1752a6b0bd39",
+        "basis": "Java tokens match after package, formatting and comment normalization. Compiled class files matched using the same package and staged decoder classpath, with debug metadata disabled.",
+        "matching_class_sha256": {
+          "com/musicsheets/app/pdf/VerifiedStaffTieRidge.class": "c01c76e059b2640ad956c7f3e859e14a2532dd58a7afcba97e2010ade81fb2ec"
+        }
+      }
     },
     "WaveGlissDetector.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/WaveGlissDetector.java",
