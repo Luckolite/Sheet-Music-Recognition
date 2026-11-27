@@ -47,6 +47,33 @@ public class FadedFlatRecoveryTest {
         throw new AssertionError("Missing recovery method");
     }
 
+
+    @Test
+    public void localFlatSeedsKeepTheirOrderAndExcludeCompleteSharps() throws Exception {
+        byte[] labels = new byte[W * H];
+        for (int y = 25; y <= 70; y++)
+            for (int x : new int[] {40, 41, 49, 50}) labels[y * W + x] = 3;
+        for (int center : new int[] {38, 54})
+            for (int y = center - 1; y <= center + 1; y++)
+                Arrays.fill(labels, y * W + 37, y * W + 54, (byte) 3);
+        int area = 0;
+        for (byte pixel : labels) if (pixel != 0) area++;
+        Object sharp = make("AccidentalCandidate",
+                make("Component", area, 37, 53, 25, 70, 45f, 47f), (byte) 3);
+        Object first = make("AccidentalCandidate",
+                make("Component", 33, 48, 51, 43, 51, 50f, 47f), (byte) 3);
+        Object second = make("AccidentalCandidate",
+                make("Component", 65, 51, 58, 43, 51, 55f, 47f), (byte) 0);
+        Object distant = make("AccidentalCandidate",
+                make("Component", 65, 3, 10, 43, 51, 7f, 47f), (byte) 3);
+        Object head = make("Component", 120, 60, 75, 42, 52, 68f, 47f);
+        var filter = OmrScoreInterpreter.class.getDeclaredMethod("rawFlatCandidates",
+                byte[].class, int.class, int.class, List.class, head.getClass(), float.class);
+        filter.setAccessible(true);
+        assertEquals(List.of(first, second), filter.invoke(null, labels, W, H,
+                List.of(distant, first, sharp, second), head, 16f));
+    }
+
     @Test
     public void paleSpineWithDarkBowlRecovers() throws Exception {
         flat(230);

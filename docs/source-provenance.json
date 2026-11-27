@@ -6202,6 +6202,13 @@
       "spare_manuscript_staff_review_note": "Ports the staff geometry predicate and synthetic controls. A trailing unbarred staff following a system with note evidence needs musical ink to add time. Ledger notes and raw rest or stem ink preserve that staff. Real empty printed systems retain their established behavior. No new dependency, cache format, or model."
     },
     "OmrScoreInterpreter.java": {
+      "raw_flat_geometry_review": {
+        "reviewed_app_commit": "6afb6df647f61e143d8a689d115283e9f8115d34",
+        "scope": "Check the same raw flat bowl ownership bounds before sharp classification. Source order and sharp exclusions are preserved. Prior full-file app drift remains open.",
+        "matched_filter_methods_lf_sha256": "d20486cbb138c8ac2dc28b40ff02ffca1ba315883d2918a59bfc37c0d4b303c0",
+        "matched_regression_method_lf_sha256": "39c78fc69130b3781afe40f04fd1305f77e7bd22267da47b037d5abee61a3e59",
+        "tests": "FadedFlatRecoveryTest.localFlatSeedsKeepTheirOrderAndExcludeCompleteSharps, app and standalone Java."
+      },
       "decode_preview_review": {
         "reviewed_app_commit": "ce4e7e2237810a8ba3d8d02e2bd356bf37577a63",
         "app_lf_sha256": "afac3c52a69b77bb826d97bc75e887d955e1f582421bbbf3abe4b4829b491dc1",

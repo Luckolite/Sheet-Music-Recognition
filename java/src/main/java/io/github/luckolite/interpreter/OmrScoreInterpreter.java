@@ -2896,8 +2896,8 @@ final class OmrScoreInterpreter {
                                 gray,
                                 width,
                                 height,
-                                withoutRecognizedSharps(
-                                        labels, width, height, localAccidentals, accidentalGap),
+                                rawFlatCandidates(
+                                        labels, width, height, localAccidentals, head, accidentalGap),
                                 head,
                                 accidentalGap)) writtenAccidental = ScoreNoteEvent.ACCIDENTAL_FLAT;
                 if (writtenAccidental == ScoreNoteEvent.ACCIDENTAL_FROM_KEY
@@ -25217,12 +25217,27 @@ final class OmrScoreInterpreter {
      * A complete sharp already has stronger shape evidence than a cropped raw bowl. Do not
      * reinterpret it as a flat after pitch alignment rejected it.
      */
-    private static List<AccidentalCandidate> withoutRecognizedSharps(
-            byte[] labels, int width, int height, List<AccidentalCandidate> candidates, float gap) {
-        List<AccidentalCandidate> result = new ArrayList<>();
-        for (AccidentalCandidate candidate : candidates)
-            if (!isSharpGlyph(labels, width, height, candidate, gap)) result.add(candidate);
-        return result;
+    private static List<AccidentalCandidate> rawFlatCandidates(
+            byte[] labels, int width, int height, List<AccidentalCandidate> candidates,
+            Component head, float gap) {
+        List<AccidentalCandidate> result = null;
+        for (AccidentalCandidate candidate : candidates) {
+            if (!nearFlatBowl(candidate, head, gap)
+                    || isSharpGlyph(labels, width, height, candidate, gap)) continue;
+            if (result == null) result = new ArrayList<>();
+            result.add(candidate);
+        }
+        return result == null ? List.of() : result;
+    }
+
+    private static boolean nearFlatBowl(AccidentalCandidate seed, Component head, float gap) {
+        if (seed.label != OmrMeasurePostProcessor.CLEF_OR_KEY && seed.label != 0) return false;
+        Component c = seed.component;
+        return !(c.maxX >= head.minX
+                || head.minX - c.maxX > gap * 1.35f
+                || c.maxX - c.minX + 1 < gap * .24f
+                || c.maxX - c.minX + 1 > gap * 1.25f
+                || Math.abs(c.centerY - head.centerY) > gap * .8f);
     }
 
     /** A flat's bowl can keep its accidental label while its tall spine is labelled as a stem. */
@@ -25316,13 +25331,8 @@ final class OmrScoreInterpreter {
             int threshold) {
         if (gray == null || gray.length != width * height) return false;
         for (AccidentalCandidate seed : candidates) {
-            if (seed.label != OmrMeasurePostProcessor.CLEF_OR_KEY && seed.label != 0) continue;
+            if (!nearFlatBowl(seed, head, gap)) continue;
             Component c = seed.component;
-            if (c.maxX >= head.minX
-                    || head.minX - c.maxX > gap * 1.35f
-                    || c.maxX - c.minX + 1 < gap * .24f
-                    || c.maxX - c.minX + 1 > gap * 1.25f
-                    || Math.abs(c.centerY - head.centerY) > gap * .8f) continue;
             int margin = Math.max(1, Math.round(gap * .16f));
             int left = Math.max(0, c.minX - margin),
                     right = Math.min(width - 1, Math.min(c.maxX + margin, head.minX - 2));
