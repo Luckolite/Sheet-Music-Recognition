@@ -61,17 +61,11 @@ final class CourtesyFigureEightRim {
                 y1 = Math.max(y1, y);
                 sx += left + x;
                 sy += top + y;
-                for (int d : new int[] {-1, 1, -w, w}) {
-                    int n = at + d;
-                    if (n < 0
-                            || n >= seen.length
-                            || seen[n]
-                            || Math.abs(n % w - x) + Math.abs(n / w - y) != 1) continue;
-                    if ((gray[(top + n / w) * width + left + n % w] & 255) >= 200) {
-                        seen[n] = true;
-                        queue[end++] = n;
-                    }
-                }
+                int pixel = (top + y) * width + left + x;
+                if (x > 0) end = appendPaper(at - 1, pixel - 1, gray, seen, queue, end);
+                if (x + 1 < w) end = appendPaper(at + 1, pixel + 1, gray, seen, queue, end);
+                if (y > 0) end = appendPaper(at - w, pixel - width, gray, seen, queue, end);
+                if (y + 1 < h) end = appendPaper(at + w, pixel + width, gray, seen, queue, end);
             }
             if (x0 == 0
                     || x1 == w - 1
@@ -189,12 +183,20 @@ final class CourtesyFigureEightRim {
                     || fringe > Math.max(2, gap * gap * .04f)) continue;
             for (int y = y0; y <= y1; y++)
                 for (int x = x0; x <= x1; x++)
-                    if (labels[y * width + x] == 2
-                            && (nearRimInk(gray, width, height, x, y)
-                                    || seen[(y - top) * w + x - left]))
+                    // Outside the closed counters, the validation scan already proved rim ink.
+                    if (labels[y * width + x] == 2)
                         owned[(y - top) * w + x - left] = true;
         }
         return new Proof(left, top, w, h, owned);
+    }
+
+    private static int appendPaper(
+            int at, int pixel, byte[] gray, boolean[] seen, int[] queue, int end) {
+        if (!seen[at] && (gray[pixel] & 255) >= 200) {
+            seen[at] = true;
+            queue[end++] = at;
+        }
+        return end;
     }
 
     /** A model halo can extend one pixel into antialiased paper beside the proved raw rim. */

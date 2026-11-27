@@ -12992,16 +12992,21 @@
     },
     "CourtesyFigureEightRim.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/CourtesyFigureEightRim.java",
-      "source_sha256": "d2ba3482c5464f5b1d6141f2c37b2af0833fa05ba84fbc205ad6973ec2bd6706",
-      "source_normalized_sha256": "d2ba3482c5464f5b1d6141f2c37b2af0833fa05ba84fbc205ad6973ec2bd6706",
+      "source_sha256": "05a12127edff7fdc6418961629cee612e4b8da26170371c1bc402107f961f60a",
+      "source_normalized_sha256": "05a12127edff7fdc6418961629cee612e4b8da26170371c1bc402107f961f60a",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/CourtesyFigureEightRim.java",
-      "standalone_sha256": "eaacbc17476258217d31043529d9b8a88cd9c2c0714d17d5bd2df3c0905cbb5f",
-      "standalone_normalized_sha256": "eaacbc17476258217d31043529d9b8a88cd9c2c0714d17d5bd2df3c0905cbb5f",
+      "standalone_sha256": "7b2b598d620b1b20ce292df01f7d40334b6c3020fecb994b257aadf7560daf57",
+      "standalone_normalized_sha256": "7b2b598d620b1b20ce292df01f7d40334b6c3020fecb994b257aadf7560daf57",
       "license": "Apache-2.0",
-      "reviewed_app_commit": "a89978327a4ca34b5351dda095c105c730a802fd",
+      "reviewed_app_commit": "46ff5eb9f113fdf7fa8a7295c87dea2e3fbc68b1",
       "current_source_review": "Complete thin staff-rule crossing continuity preserves a truly attached ledger stem; finite complete figure-eight rim ownership exempts only its sparse model head fragments in a cautionary meter tail. Existing raw, bar, counter, rest and head guards retained. Twenty-one original controls;156 focused tests; separate private full-page proof.",
       "closed_counter_paper_review": "Sparse semantic head fragments in the exact already-closed counters of a proved courtesy eight belong to the numeral. Counter boxes never supply ownership; existing figure, paper, size, fringe and played-head guards remain. Original procedural tests only.",
-      "voila_counter_rim_review": "Closed denominator counter paper has its own coverage bound and does not consume the existing printed rim limit."
+      "voila_counter_rim_review": "Closed denominator counter paper has its own coverage bound and does not consume the existing printed rim limit.",
+      "courtesy_counter_performance_review": {
+        "prior_reviewed_app_commit": "a89978327a4ca34b5351dda095c105c730a802fd",
+        "basis": "The same four neighbors are visited in order using explicit local bounds. Validated model-head pixels reuse the established rim or counter proof.",
+        "verification": "18 focused tests and identical ownership masks on 256 deterministic original fixture variants. Paired warmed Java measurements showed lower median thread CPU and elapsed time than the previous app detector."
+      }
     },
     "CourtesyFigureEightRimBoundsTest.java": {
       "source_path": "app/src/test/java/com/musicsheets/app/pdf/CourtesyFigureEightRimBoundsTest.java",
