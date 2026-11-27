@@ -27,8 +27,66 @@ final class WholeHeadPocketEvidence {
                 || bottom < top) return false;
         int w = right - left + 1, h = bottom - top + 1;
         if (w < gap * 1.35f || w > gap * 2.4f || h < gap * .65f || h > gap * 1.4f) return false;
-        return pocket(gray, width, left, top, w, h, gap, 170)
-                && pocket(gray, width, left, top, w, h, gap, 205);
+        return pocket(gray, width, left, top, w, h, gap, 170, false)
+                && pocket(gray, width, left, top, w, h, gap, 205, false);
+    }
+
+    /** A short ledger can split the opening of a whole oval into two small pockets. */
+    static boolean shortLedgerPocket(
+            byte[] gray, int width, int height, int left, int top, int right, int bottom,
+            float centerX, float centerY, float gap) {
+        int w = right - left + 1, h = bottom - top + 1;
+        if (gray == null || gray.length != (long) width * height || gap < 8
+                || w < gap * 1.35f || w > gap * 2.20f
+                || h < gap * .70f || h > gap * 1.50f
+                || top < 1 || bottom >= height - 1) return false;
+        int reach = Math.max(2, Math.round(gap * .22f));
+        int blank = Math.round(gap * .80f);
+        if (left < blank || right + blank >= width) return false;
+        int first = -1, last = -1;
+        int center = Math.round(centerY);
+        for (int y = Math.max(top + 1, center - Math.round(gap * .30f));
+                y <= Math.min(bottom - 1, center + Math.round(gap * .30f)); y++) {
+            int at = y * width;
+            if ((gray[at + left - blank] & 255) < 185
+                    || (gray[at + right + blank] & 255) < 185) continue;
+            int crossing = 0;
+            for (int x = left - reach; x <= right + reach; x++)
+                if ((gray[at + x] & 255) < 170) crossing++;
+            if (crossing < (w + 2 * reach) * .90f) continue;
+            if (first < 0) first = y;
+            last = y;
+        }
+        if (first < 0 || last - first + 1 > gap * .36f
+                || first < top + h * .24f || last > bottom - h * .24f) return false;
+
+        // Both sides of the crossing need aperture ink contrast between the
+        // oval walls. At least one aperture must still have a paper-bright row.
+        int x0 = Math.max(left + reach, Math.round(centerX - gap * .32f));
+        int x1 = Math.min(right - reach, Math.round(centerX + gap * .32f));
+        int upper = 0, lower = 0, bright = 0;
+        for (int y = top + 2; y <= bottom - 2; y++) {
+            if (y >= first && y <= last) continue;
+            int at = y * width;
+            if ((gray[at + left - reach] & 255) < 185
+                    || (gray[at + right + reach] & 255) < 185) continue;
+            int run = 0, longest = 0, paper = 0;
+            for (int x = x0; x <= x1; x++) {
+                if ((gray[at + x] & 255) >= 178) {
+                    longest = Math.max(longest, ++run);
+                    if ((gray[at + x] & 255) >= 205) paper++;
+                } else run = 0;
+            }
+            if (longest < Math.max(3, Math.round(gap * .24f))) continue;
+            boolean leftWall = false, rightWall = false;
+            for (int x = left; x < x0; x++) leftWall |= (gray[at + x] & 255) < 115;
+            for (int x = x1 + 1; x <= right; x++) rightWall |= (gray[at + x] & 255) < 115;
+            if (!leftWall || !rightWall) continue;
+            if (y < first) upper++; else lower++;
+            if (paper >= Math.max(2, Math.round(gap * .18f))) bright++;
+        }
+        return upper >= 1 && lower >= 1 && upper + lower >= 3 && bright >= 1
+                && hasEnclosedOpening(gray, width, height, left, top, right, bottom, centerX, centerY, gap);
     }
 
     /**
@@ -86,8 +144,20 @@ final class WholeHeadPocketEvidence {
         }
         return false;
     }
+    static boolean slantedHalf(
+            byte[] gray, int width, int height, int left, int top, int right, int bottom, float gap) {
+        int w = right - left + 1, h = bottom - top + 1;
+        if (gray == null || gray.length != (long) width * height
+                || !Float.isFinite(gap) || gap < 6 || gap > 40
+                || left < 0 || top < 0 || right >= width || bottom >= height
+                || w < gap * .95f || w > gap * 1.4f || h < gap * .65f || h > gap * 1.35f)
+            return false;
+        return pocket(gray, width, left, top, w, h, gap, 170, true)
+                && pocket(gray, width, left, top, w, h, gap, 205, true);
+    }
+
     private static boolean pocket(
-            byte[] gray, int stride, int left, int top, int w, int h, float gap, int threshold) {
+            byte[] gray, int stride, int left, int top, int w, int h, float gap, int threshold, boolean slantedHalf) {
         boolean[] seen = new boolean[w * h];
         int[] queue = new int[w * h];
         double sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0;
@@ -138,8 +208,9 @@ final class WholeHeadPocketEvidence {
                 && my > h * .2
                 && my < h * .8
                 && vx > 0
-                && vy >= vx * .7
-                && cov > Math.sqrt(vx * vy) * .12;
+                && (slantedHalf
+                        ? vy >= vx * .32 && vy <= vx * 1.25 && cov <= -Math.sqrt(vx * vy) * .45
+                        : vy >= vx * .7 && cov > Math.sqrt(vx * vy) * .12);
     }
 }
 

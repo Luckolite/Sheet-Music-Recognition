@@ -20,6 +20,10 @@ def retained(page, index):
         if isolated and not 1 <= beams <= 4:
             return 0
         raise ValueError('Unpitched source ornaments need explicit instrument semantics')
+    beam_depth = page['score']['notes'][index].get('beamCount', 0)
+    if type(beam_depth) is int and 0 < beam_depth < beams <= 4:
+        # Source flags encode the performed subdivision, including rhythmic beams.
+        flags -= beam_depth << 16
     return flags
 
 

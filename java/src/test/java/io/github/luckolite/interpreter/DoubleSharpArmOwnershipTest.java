@@ -71,6 +71,15 @@ public final class DoubleSharpArmOwnershipTest {
     }
 
     @Test
+    public void lowerRightArmCannotSupplyAnExtraAttack() {
+        var plate = new Plate(true);
+        var notes = plate.notes(plate.gray);
+        assertFalse(plate.hasArmAttack(notes));
+        assertEquals(1, notes.size());
+        assertEquals(ScoreNoteEvent.ACCIDENTAL_DOUBLE_SHARP, notes.get(0).writtenAccidental());
+    }
+
+    @Test
     public void missingInkInOnePlaneRetainsIndependentHeadEvidence() {
         var plate = new Plate();
         byte[] incomplete = plate.gray.clone();
@@ -231,12 +240,17 @@ public final class DoubleSharpArmOwnershipTest {
         final byte[] labels = new byte[WIDTH * HEIGHT];
 
         Plate() {
+            this(false);
+        }
+
+        Plate(boolean lowerArm) {
             Arrays.fill(gray, (byte) 255);
             for (int y = 80; y <= 144; y += 16) for (int x = 16; x < WIDTH - 15; x++) dot(x, y, 4);
             for (int y = 0; y < 18; y++)
                 for (int x = 0; x < 18; x++)
                     if (Math.abs(x - y) <= 4 || Math.abs(x + y - 17) <= 4) {
-                        int label = x >= 9 && y < 8 ? NOTEHEAD : y < 10 ? SYMBOL : CLEF_OR_KEY;
+                        boolean markedArm = x >= 9 && (lowerArm ? y >= 10 : y < 8);
+                        int label = markedArm ? NOTEHEAD : y < 10 ? SYMBOL : CLEF_OR_KEY;
                         dot(CROSS_X + x, CROSS_Y + y, label);
                     }
             for (int y = HEAD_Y - 8; y <= HEAD_Y + 8; y++)

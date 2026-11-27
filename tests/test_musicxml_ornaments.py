@@ -63,6 +63,20 @@ class MusicXmlOrnamentTests(unittest.TestCase):
             self.assertEqual(str(beams),tremolo.text)
             self.assertEqual(1,len(root.findall('.//note[pitch]')))
 
+    def test_single_tremolo_excludes_written_beam_depth(self):
+        for beam_depth, subdivision, slashes in ((0, 3, 3), (1, 3, 2), (2, 3, 1), (3, 4, 1)):
+            with self.subTest(beam_depth=beam_depth, subdivision=subdivision):
+                doc = document([subdivision << 16], duration=1 / (1 << beam_depth))
+                doc['pages'][0]['score']['notes'][0]['beamCount'] = beam_depth
+                tremolo = self.export(doc).find('.//tremolo')
+                self.assertEqual('single', tremolo.get('type'))
+                self.assertEqual(str(slashes), tremolo.text)
+
+    def test_inconsistent_legacy_beam_depth_retains_existing_mark(self):
+        doc = document([2 << 16], duration=.125)
+        doc['pages'][0]['score']['notes'][0]['beamCount'] = 3
+        self.assertEqual('2', self.export(doc).findtext('.//tremolo'))
+
     def test_unsupported_beam_values_do_not_create_glyph(self):
         for beams in (5,6,7):
             self.assertEqual([],self.export(document([beams<<16])).findall('.//ornaments'))

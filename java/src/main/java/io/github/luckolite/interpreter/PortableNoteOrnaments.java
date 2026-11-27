@@ -159,7 +159,10 @@ final class PortableNoteOrnaments {
                     && notes.get(gliss.targetIndex()).kind() == ScoreNoteEvent.Kind.PITCHED
                     && marks[gliss.sourceIndex()] == 0
                     && NoteOrnament.type(notes.get(gliss.sourceIndex()).articulations()) == 0)
-                marks[gliss.sourceIndex()] = NoteOrnament.GLISSANDO;
+                marks[gliss.sourceIndex()] = NoteOrnament.GLISSANDO
+                        | (notes.get(gliss.targetIndex()).measureIndex()
+                                        > notes.get(gliss.sourceIndex()).measureIndex()
+                                ? NoteOrnament.GLISSANDO_NEXT_BAR : 0);
         for (var slide :
                 sharedClean == null
                         ? NoteSlideDetector.detect(gray, w, h, slideStaffs, slideHeads)
@@ -170,7 +173,34 @@ final class PortableNoteOrnaments {
                             || pitchedPreviousAnchor(anchors, notes, slide.noteIndex()))
                     && marks[slide.noteIndex()] == 0) marks[slide.noteIndex()] = slideMarks(slide);
         boolean[] textHeads = new boolean[notes.size()];
-        for (var word : trills)
+        applySameStaffPortamentoWords(trills, gray, w, h, anchors, notes, marks, textHeads);
+        for (var found : CrossRowPortamento.find(gray, w, h, staffs, measures, notes, trills)) {
+            int target = found.targetIndex();
+            if (marks[target] == 0
+                    && NoteOrnament.type(notes.get(target).articulations()) == NoteOrnament.NONE)
+                marks[target] =
+                        NoteOrnament.SLIDE
+                                | NoteOrnament.FROM_PREVIOUS
+                                | (found.fromAbove() ? NoteOrnament.FROM_ABOVE : 0);
+        }
+        List<ScoreNoteEvent> result = new ArrayList<>(notes.size());
+        for (int i = 0; i < notes.size(); i++) {
+            if (textHeads[i]) continue;
+            var note = notes.get(i);
+            int retained = note.articulations();
+            // The raw detector already proved this isolated curve and its destination.
+            int retainedShape = retained & (NoteOrnament.TYPE_MASK | NoteOrnament.STRAIGHT_APPROACH
+                    | NoteOrnament.FROM_ABOVE | NoteOrnament.FROM_PREVIOUS);
+            int added = retainedShape == NoteOrnament.SLIDE ? marks[i] & ~NoteOrnament.ALL : marks[i];
+            result.add(note.withArticulations(retained | added));
+        }
+        return List.copyOf(result);
+    }
+
+    static void applySameStaffPortamentoWords(
+            List<PlayingTechniqueDetector.Word> words, byte[] gray, int w, int h,
+            List<Anchor> anchors, List<ScoreNoteEvent> notes, int[] marks, boolean[] textHeads) {
+        for (var word : words)
             if (word.text().equals("port") && ScoreDynamicsDetector.containsInk(word, gray, w, h)) {
                 float left = word.left() * w,
                         right = word.right() * w,
@@ -198,49 +228,34 @@ final class PortableNoteOrnaments {
                             && a.x < left + n.gap * .3f
                             && a.x < n.x - n.gap
                             && (prior == null || a.x > prior.x)) prior = a;
-                if (prior != null
-                        && notes.get(anchors.indexOf(prior)).kind() == ScoreNoteEvent.Kind.PITCHED
-                        && Math.abs(prior.y - n.y) > n.gap * .25f
-                        && marks[owner] == 0
-                        && NoteSlideDetector.connection(
-                                gray,
-                                w,
-                                h,
+                if (prior == null
+                        || notes.get(anchors.indexOf(prior)).kind() != ScoreNoteEvent.Kind.PITCHED
+                        || Math.abs(prior.y - n.y) <= n.gap * .25f) continue;
+                int portamento = NoteOrnament.SLIDE | NoteOrnament.FROM_PREVIOUS
+                        | (prior.y < n.y ? NoteOrnament.FROM_ABOVE : 0);
+                int existing = marks[owner];
+                if (existing != 0 && existing != portamento
+                        || !NoteSlideDetector.connection(
+                                gray, w, h,
                                 new NoteSlideDetector.Head(
                                         prior.x, prior.y, prior.gap, prior.staff, prior.measure),
-                                new NoteSlideDetector.Head(n.x, n.y, n.gap, n.staff, n.measure))) {
-                    marks[owner] =
-                            NoteOrnament.SLIDE
-                                    | NoteOrnament.FROM_PREVIOUS
-                                    | (prior.y < n.y ? NoteOrnament.FROM_ABOVE : 0);
-                    // The closed italic o can itself look like an open notehead to the model.
-                    // Remove only heads inside this confirmed, note-owned instruction word.
-                    for (int i = 0; i < anchors.size(); i++) {
-                        var a = anchors.get(i);
-                        if (notes.get(i).kind() == ScoreNoteEvent.Kind.PITCHED
-                                && i != owner
-                                && a.staff == n.staff
-                                && a.x > left
-                                && a.x < right
-                                && a.y > word.top() * h
-                                && a.y < word.bottom() * h) textHeads[i] = true;
-                    }
+                                new NoteSlideDetector.Head(n.x, n.y, n.gap, n.staff, n.measure)))
+                    continue;
+                marks[owner] = portamento;
+                // The line and the printed word can independently prove the same slide.
+                // A prior slide mark still allows the word to own its stemless letter alias.
+                for (int i = 0; i < anchors.size(); i++) {
+                    var a = anchors.get(i);
+                    var note = notes.get(i);
+                    if (note.kind() != ScoreNoteEvent.Kind.PITCHED || i == owner
+                            || a.staff != n.staff || a.measure != n.measure
+                            || a.x <= left || a.x >= right
+                            || a.y <= word.top() * h || a.y >= word.bottom() * h) continue;
+                    if (note.stemDirection() == 0 && note.beamCount() == 0
+                            && note.unbeamedDurationBeats() == 4 && !note.tiedFromPrevious()
+                            && !note.crossStaffBeam()) textHeads[i] = true;
                 }
             }
-        for (var found : CrossRowPortamento.find(gray, w, h, staffs, measures, notes, trills)) {
-            int target = found.targetIndex();
-            if (marks[target] == 0
-                    && NoteOrnament.type(notes.get(target).articulations()) == NoteOrnament.NONE)
-                marks[target] =
-                        NoteOrnament.SLIDE
-                                | NoteOrnament.FROM_PREVIOUS
-                                | (found.fromAbove() ? NoteOrnament.FROM_ABOVE : 0);
-        }
-        List<ScoreNoteEvent> result = new ArrayList<>(notes.size());
-        for (int i = 0; i < notes.size(); i++)
-            if (!textHeads[i])
-                result.add(notes.get(i).withArticulations(notes.get(i).articulations() | marks[i]));
-        return List.copyOf(result);
     }
 
     /** Preserve the detector's proved shape; isolated and connected are ownership roles. */

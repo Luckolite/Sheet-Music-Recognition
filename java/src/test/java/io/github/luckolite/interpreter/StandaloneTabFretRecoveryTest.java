@@ -67,4 +67,44 @@ public class StandaloneTabFretRecoveryTest {
         assertEquals(List.of(0, 1, 22),
                 recover(gray, staff(-1), List.of(word("01", 97, 141), word("22", 210, 238))));
     }
+
+    private static void angledDigit(byte[] gray, int x, int y, boolean lowerRail) {
+        for (int row = -8; row <= 8; row++) {
+            int stroke = x + (lowerRail ? (8 - row) / 2 : (8 + row) / 2);
+            Arrays.fill(gray, (y + row) * WIDTH + stroke, (y + row) * WIDTH + stroke + 4, (byte) 0);
+        }
+        for (int row : new int[] {-8, -7})
+            Arrays.fill(gray, (y + row) * WIDTH + x, (y + row) * WIDTH + x + 12, (byte) 0);
+        if (lowerRail)
+            for (int row : new int[] {7, 8})
+                Arrays.fill(gray, (y + row) * WIDTH + x, (y + row) * WIDTH + x + 12, (byte) 0);
+    }
+
+    @Test public void railJoinedOcrRequiresOneCropPerFretInStringOrder() throws Exception {
+        byte[] gray = page();
+        angledDigit(gray, 100, STRING_Y, true);
+        angledDigit(gray, 140, STRING_Y, true);
+        angledDigit(gray, 180, STRING_Y, false);
+        assertEquals(List.of(5, 2, 7),
+                recover(gray, staff(-1), List.of(word("-5-2-7", 98, 194))));
+        assertEquals(List.of(),
+                recover(gray, staff(-1), List.of(word("-5-2", 98, 194))));
+    }
+
+    @Test public void mergedStackNeedsMatchingInkInBothStrings() throws Exception {
+        assertEquals(List.of(2, 2), recoverStack(true));
+        assertEquals(List.of(2), recoverStack(false));
+    }
+
+    private static List<Integer> recoverStack(boolean matching) throws Exception {
+        byte[] gray = page();
+        angledDigit(gray, 100, STRING_Y, matching);
+        angledDigit(gray, 100, STRING_Y + GAP, true);
+        var lower = new TablatureDecoder.Fret(105, STRING_Y + GAP, 2, 2, 0, 0, 0, 0);
+        var marked = staff(-1).withFrets(List.of(lower));
+        var joined = new TablatureDecoder.Word("22", 97f / WIDTH, (STRING_Y - 11f) / HEIGHT,
+                114f / WIDTH, (STRING_Y + GAP + 11f) / HEIGHT);
+        return TabFretRaster.supplement(gray, WIDTH, HEIGHT, List.of(marked), List.of(joined), null)
+                .get(0).frets().stream().map(TablatureDecoder.Fret::fret).toList();
+    }
 }

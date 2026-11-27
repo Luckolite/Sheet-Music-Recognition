@@ -31,6 +31,8 @@ final class PrintedRepeatGlyphs {
     private static final long HIGH_BITS = 0x8080808080808080L;
     private static final long DOT_BIAS = 0x0101010101010101L * (140 - 128);
 
+    private static final int[] JOINED_DOT_CORE_THRESHOLDS = {110, 35};
+
     private PrintedRepeatGlyphs() {}
 
     /** Raw repeat proof used before semantic notehead fragments can veto its rails. */
@@ -47,7 +49,7 @@ final class PrintedRepeatGlyphs {
         int top = Math.max(0, Math.round(staffTop - gap)),
                 bottom = Math.min(height - 1, Math.round(staffBottom + gap));
         if (bottom <= top) return result;
-        var found = dots(gray, width, top, bottom, gap, new DotScratch());
+        var found = dotsWithDarkCores(gray, width, top, bottom, gap, new DotScratch());
         var neighbors = new DotNeighbors(found, gap);
         for (var a : found)
             for (int index = neighbors.first(a); index >= 0; index = neighbors.next()) {
@@ -71,6 +73,66 @@ final class PrintedRepeatGlyphs {
         return result;
     }
 
+    private record DotPair(float x, float y, float spacing) {}
+
+    /** Four independently printed dots distinguish a shared heavy/heavy repeat from a double bar. */
+    static List<Float> sharedRepeatCenters(byte[] gray, int width, int height,
+            float staffTop, float staffBottom, float gap) {
+        if (gray == null || width <= 0 || height <= 0 || gray.length != (long) width * height
+                || !Float.isFinite(gap) || gap < 6 || gap > Math.min(width, height) / 8f)
+            return List.of();
+        int top = Math.max(0, Math.round(staffTop - gap));
+        int bottom = Math.min(height - 1, Math.round(staffBottom + gap));
+        if (top >= bottom) return List.of();
+        return sharedRepeatCenters(gray, width, height, (staffTop + staffBottom) * .5f, gap,
+                dotsWithDarkCores(gray, width, top, bottom, gap, new DotScratch()));
+    }
+
+    private static List<Float> sharedRepeatCenters(byte[] gray, int width, int height,
+            float middle, float gap, List<Dot> dots) {
+        var pairs = new ArrayList<DotPair>();
+        for (var a : dots) {
+            if (Math.abs(a.y - middle) > gap * 1.4f) continue;
+            for (var b : dots) {
+                if (!alignedDots(a, b, 1, gap)) continue;
+                float y = (a.y + b.y) * .5f;
+                if (Math.abs(y - middle) <= gap * .6f)
+                    pairs.add(new DotPair((a.x + b.x) * .5f, y, b.y - a.y));
+            }
+        }
+        var centers = new ArrayList<Float>();
+        for (var left : pairs) {
+            for (var right : pairs) {
+                float spread = right.x - left.x;
+                if (spread < gap * 1.8f || spread > gap * 3.4f
+                        || Math.abs(right.y - left.y) > gap * .22f
+                        || Math.abs(right.spacing - left.spacing) > gap * .22f) continue;
+                var leftRails = bars(gray, width, height, left.x, left.y, left.spacing, gap, 1);
+                var rightRails = bars(gray, width, height, right.x, right.y, right.spacing, gap, -1);
+                if (leftRails.size() != 2 || rightRails.size() != 2) continue;
+                var a = leftRails.get(0);
+                var b = leftRails.get(1);
+                if (Math.abs(a.center() - rightRails.get(0).center()) > gap * .2f
+                        || Math.abs(b.center() - rightRails.get(1).center()) > gap * .2f
+                        || a.width() < gap * .43f || b.width() < gap * .43f
+                        || a.width() > gap * .88f || b.width() > gap * .88f
+                        || Math.abs(a.width() - b.width()) > gap * .22f
+                        || b.left - a.right - 1 < 1 || b.left - a.right - 1 > gap * .35f
+                        || a.left - left.x < gap * .30f || right.x - b.right < gap * .30f)
+                    continue;
+                if ((!staffRails(gray, width, height, left.x, left.y, left.spacing, 1)
+                                && !staffRails(gray, width, height, left.x, left.y, left.spacing, -1))
+                        || (!staffRails(gray, width, height, right.x, right.y, right.spacing, -1)
+                                && !staffRails(gray, width, height, right.x, right.y, right.spacing, 1)))
+                    continue;
+                float x = (a.right + b.left) * .5f;
+                if (centers.stream().noneMatch(old -> Math.abs(old - x) < gap * .4f))
+                    centers.add(x);
+            }
+        }
+        return centers;
+    }
+
     static List<Mark> detect(
             byte[] gray,
             int width,
@@ -91,7 +153,18 @@ final class PrintedRepeatGlyphs {
             int top = Math.max(0, Math.round(staff.top() - gap));
             int bottom = Math.min(height - 1, Math.round(staff.bottom() + gap));
             if (bottom <= top) continue;
-            var dots = dots(gray, width, top, bottom, gap, scratch);
+            StaffPitchTrack track = null;
+            boolean checkedTrack = false;
+            var dots = dotsWithDarkCores(gray, width, top, bottom, gap, scratch);
+            for (float x : sharedRepeatCenters(gray, width, height,
+                    (staff.top() + staff.bottom()) * .5f, gap, dots)) {
+                int outgoing = boundary(measures, staff, x, true, width, height);
+                int incoming = boundary(measures, staff, x, false, width, height);
+                if (outgoing == incoming && outgoing > 0 && outgoing < measures.size()) {
+                    result.add(new Mark(outgoing, true, x / width, staff.index(), staff.count()));
+                    result.add(new Mark(outgoing, false, x / width, staff.index(), staff.count()));
+                }
+            }
             var neighbors = new DotNeighbors(dots, gap);
             for (var a : dots)
                 for (int index = neighbors.first(a); index >= 0; index = neighbors.next()) {
@@ -100,7 +173,8 @@ final class PrintedRepeatGlyphs {
                             || b.y - a.y < gap * .7f
                             || b.y - a.y > gap * 1.3f) continue;
                     float cx = (a.x + b.x) * .5f, cy = (a.y + b.y) * .5f, measuredGap = b.y - a.y;
-                    if (Math.abs(cy - (staff.top() + staff.bottom()) * .5f) > gap) continue;
+                    float midpointDistance = Math.abs(cy - (staff.top() + staff.bottom()) * .5f);
+                    if (midpointDistance > gap * 2.3f) continue;
                     // Either flank can prove the staff rules for both bar sides.
                     if (!staffRails(gray, width, height, cx, cy, measuredGap, -1)
                             && !staffRails(gray, width, height, cx, cy, measuredGap, 1)) continue;
@@ -118,7 +192,21 @@ final class PrintedRepeatGlyphs {
                         mark = new Mark(boundary, side > 0, inner.center() / width,
                                 staff.index(), staff.count());
                     }
-                    if (mark != null && !result.contains(mark)) result.add(mark);
+                    if (mark == null || result.contains(mark)) continue;
+                    // A long slanted staff can place the repeat dots beyond the flat seed.
+                    // Reassign only after the glyph and a local five-rule track agree.
+                    if (midpointDistance > gap) {
+                        if (!checkedTrack) {
+                            track = StaffPitchTrack.detectForMeasures(
+                                    gray, width, height, staff.top(), staff.bottom(), gap);
+                            checkedTrack = true;
+                        }
+                        if (track == null || !track.activeAt(cx)) continue;
+                        var local = track.at(cx);
+                        if (Math.abs(cy - (local[0] - 2 * local[1])) > local[1] * .4f
+                                || Math.abs(measuredGap - local[1]) > local[1] * .28f) continue;
+                    }
+                    result.add(mark);
                 }
         }
         result.sort(Comparator.comparingInt(Mark::boundary).thenComparing(Mark::outgoing));
@@ -198,8 +286,38 @@ final class PrintedRepeatGlyphs {
 
     private static boolean staffRails(
             byte[] gray, int width, int height, float cx, float cy, float gap, int barSide) {
+        if (staffRails(gray, width, height, cx, cy, gap, barSide,
+                Math.round(gap * 2), Math.round(gap * 6))) return true;
+
+        // At a system edge, a slur or note can cover the distant rail samples.
+        // Restrict the near-flank proof to a complete pair with blank exterior.
+        var terminalBars = bars(gray, width, height, cx, cy, gap, gap, barSide);
+        Bar inner = repeatInner(terminalBars, cx, gap);
+        if (inner == null) return false;
+        Bar outer = terminalBars.get(barSide > 0 ? 1 : 0);
+
+        int edge = barSide > 0 ? outer.right() : outer.left();
+        int begin = Math.round(gap * .65f), end = Math.round(gap * 1.65f);
+        if (edge + barSide * end < 0 || edge + barSide * end >= width
+                || cy - 2 * gap - 3 < 0 || cy + 2 * gap + 3 >= height) return false;
+        for (int line = -2; line <= 2; line++) {
+            int y = Math.round(cy + line * gap);
+            int ink = 0;
+            for (int offset = begin; offset <= end; offset++) {
+                int x = edge + barSide * offset;
+                for (int py = y - 2; py <= y + 2; py++)
+                    if ((gray[py * width + x] & 255) < 180) ink++;
+            }
+            if (ink > (end - begin + 1) * .3f) return false;
+        }
+        return staffRails(gray, width, height, cx, cy, gap, barSide,
+                Math.round(gap * .70f), Math.round(gap * 2.5f));
+    }
+
+    private static boolean staffRails(
+            byte[] gray, int width, int height, float cx, float cy, float gap, int barSide,
+            int firstStep, int lastStep) {
         int flank = Math.max(2, Math.round(gap * .3f)), band = Math.max(1, Math.round(gap * .2f));
-        int firstStep = Math.round(gap * 2), lastStep = Math.round(gap * 6);
         int samples = lastStep - firstStep + 1;
         if (samples < 8) return false;
         int xStart = Math.round(cx - barSide * firstStep);
@@ -317,8 +435,51 @@ final class PrintedRepeatGlyphs {
         bars.remove(outer + 1);
     }
 
-    private static List<Dot> dots(
+    private static List<Dot> dotsWithDarkCores(
             byte[] gray, int width, int top, int bottom, float gap, DotScratch scratch) {
+        var visible = dots(gray, width, top, bottom, gap, scratch, 140);
+        if (visible.isEmpty()) return visible;
+        var result = new ArrayList<>(visible);
+        // A shaded staff rule can join one dot to the bar in the ordinary mask. Recover
+        // only a compact dark core beside an independently visible dot in the pair.
+        float staffMiddle = (top + bottom) * .5f;
+        int radius = Math.round(gap * .65f);
+        int size = radius * 2 + 1;
+        byte[] patch = new byte[size * size];
+        var coreScratch = new DotScratch();
+        for (var dot : visible) {
+            if (Math.abs(dot.y - staffMiddle) > gap * 1.65f) continue;
+            int left = Math.round(dot.x) - radius;
+            if (left < 0 || left + size > width) continue;
+            for (int direction = -1; direction <= 1; direction += 2) {
+                int side = direction;
+                if (result.stream().anyMatch(other -> alignedDots(dot, other, side, gap))) continue;
+                int first = Math.round(dot.y + direction * gap) - radius;
+                if (first < top || first + size - 1 > bottom) continue;
+                for (int y = 0; y < size; y++)
+                    System.arraycopy(gray, (first + y) * width + left, patch, y * size, size);
+                for (int threshold : JOINED_DOT_CORE_THRESHOLDS) {
+                    int before = result.size();
+                    for (var core : dots(patch, size, 0, size - 1, gap, coreScratch, threshold)) {
+                        if (Math.abs(core.x - radius) > gap * .3f) continue;
+                        float x = left + core.x, y = first + core.y;
+                        var mate = new Dot(x, y);
+                        if (alignedDots(dot, mate, direction, gap)) result.add(mate);
+                    }
+                    if (result.size() != before) break;
+                }
+            }
+        }
+        return result;
+    }
+
+    private static boolean alignedDots(Dot dot, Dot other, int direction, float gap) {
+        float space = (other.y - dot.y) * direction;
+        return Math.abs(dot.x - other.x) <= gap * .2f && space >= gap * .7f && space <= gap * 1.3f;
+    }
+
+    private static List<Dot> dots(
+            byte[] gray, int width, int top, int bottom, float gap, DotScratch scratch, int threshold) {
         int rows = bottom - top + 1, offset = top * width;
         int bandSize = width * rows;
         if (scratch.seen == null || scratch.seen.length < bandSize)
@@ -329,8 +490,8 @@ final class PrintedRepeatGlyphs {
         int[] queue = scratch.queue;
         var result = new ArrayList<Dot>();
         for (int seed = 0; seed < bandSize; seed++) {
-            if ((gray[offset + seed] & 255) >= 140) {
-                if (seed <= bandSize - Long.BYTES) {
+            if ((gray[offset + seed] & 255) >= threshold) {
+                if (threshold == 140 && seed <= bandSize - Long.BYTES) {
                     long tones = (long) PIXEL_WORDS.get(gray, offset + seed);
                     if ((((tones | HIGH_BITS) - DOT_BIAS) & tones & HIGH_BITS) == HIGH_BITS)
                         seed += Long.BYTES - 1;
@@ -347,9 +508,9 @@ final class PrintedRepeatGlyphs {
                 int at = queue[take++], y = at / width, row = y * width;
                 int runLeft = at - row, runRight = runLeft;
                 while (runLeft > 0 && !seen[row + runLeft - 1]
-                        && (gray[offset + row + runLeft - 1] & 255) < 140) runLeft--;
+                        && (gray[offset + row + runLeft - 1] & 255) < threshold) runLeft--;
                 while (runRight + 1 < width && !seen[row + runRight + 1]
-                        && (gray[offset + row + runRight + 1] & 255) < 140) runRight++;
+                        && (gray[offset + row + runRight + 1] & 255) < threshold) runRight++;
                 Arrays.fill(seen, row + runLeft, row + runRight + 1, true);
                 int count = runRight - runLeft + 1;
                 size += count;
@@ -365,14 +526,14 @@ final class PrintedRepeatGlyphs {
                     int neighbor = row + step * width;
                     int end = neighbor + lastNeighbor;
                     for (int next = neighbor + firstNeighbor; next <= end; next++) {
-                        if (seen[next] || (gray[offset + next] & 255) >= 140) continue;
+                        if (seen[next] || (gray[offset + next] & 255) >= threshold) continue;
                         seen[next] = true;
                         if (queued == queue.length)
                             scratch.queue = queue =
                                     Arrays.copyOf(queue, queued + Math.min(queued, bandSize - queued));
                         queue[queued++] = next;
                         while (next < end && !seen[next + 1]
-                                && (gray[offset + next + 1] & 255) < 140) next++;
+                                && (gray[offset + next + 1] & 255) < threshold) next++;
                     }
                 }
             }

@@ -851,12 +851,17 @@ public final class Main {
                             + new int[] {0, 2, 4, 5, 7, 9, 11}[letter]
                             + ScoreNoteEvent.accidentalSemitones(accidental);
             if (note.harmonicSemitones() == 24 && note.octaveShift() == 0) {
-                int touch = ScoreTiePitchGuard.writtenMidi(
+                // A stemless whole-note fourth is assigned only after proving the
+                // actual touch interval, which may include a written accidental.
+                boolean wholeFourth = note.unbeamedDurationBeats() == ScoreNoteEvent.DURATION_WHOLE
+                        && note.beamCount() == 0 && note.stemDirection() == 0;
+                int touch = wholeFourth ? midi + 5 : ScoreTiePitchGuard.writtenMidi(
                         diatonic + 3, ScoreNoteEvent.ACCIDENTAL_FROM_KEY, key);
                 if (touch - midi == 5 && midi + 24 <= 127) {
                     identity.put("writtenMidi", midi);
                     identity.put("harmonicTouchMidi", touch);
                     identity.put("artificialHarmonicFourth", true);
+                    if (wholeFourth) identity.put("stemlessWholeArtificialHarmonicFourth", true);
                     if (note.beamCount() == 2 && note.unbeamedDurationBeats() == 0
                             && note.augmentationDots() == 0 && note.tupletDivisor() == 1
                             && note.stemDirection() != 0)

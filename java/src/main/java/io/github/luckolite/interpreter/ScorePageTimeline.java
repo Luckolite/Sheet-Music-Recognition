@@ -27,6 +27,73 @@ public final class ScorePageTimeline {
         };
     }
 
+
+    /**
+     * A new title page can restart an unnumbered score. Require a printed main
+     * title, an independent part caption and the opening system's own meter.
+     */
+    static int firstMeasureAfterTitledOpening(
+            int recognizedStart, java.util.List<PlayingTechniqueDetector.Word> words,
+            byte[] gray, int width, int height, java.util.List<MeasureRegion> measures,
+            java.util.List<ScoreMeterChange> meters) {
+        if (recognizedStart != 0 || meters.stream().noneMatch(meter -> meter.measureIndex() == 0))
+            return recognizedStart;
+        return hasTitledOpening(words, gray, width, height, measures) ? 1 : recognizedStart;
+    }
+
+    static boolean hasTitledOpening(java.util.List<PlayingTechniqueDetector.Word> words,
+            byte[] gray, int width, int height, java.util.List<MeasureRegion> measures) {
+        if (words == null || words.size() > 10000 || width < 3 || height < 3
+                || gray == null || gray.length != (long) width * height
+                || measures.size() < 2 || OpeningPartTempo.firstMeasure(measures) != 0) return false;
+        float top = measures.get(0).top();
+        if (top < .09f || top > .37f) return false;
+        var captions = words.stream().filter(word -> OpeningPartTempo.valid(word)
+                && word.bottom() < top + .006f && (partCaption(word.text()) || arrangementCredit(word.text()))
+                && OpeningPartTempo.printedWord(word, gray, width, height)).toList();
+        if (captions.isEmpty() || captions.size() > 48) return false;
+        float left = measures.get(0).left(), right = measures.get(0).right();
+        for (var measure : measures)
+            if (Math.abs(measure.top() - top) < .008f) right = Math.max(right, measure.right());
+        float center = (left + right) * .5f, span = right - left;
+        for (var title : words) {
+            if (!OpeningPartTempo.valid(title) || title.bottom() + .035f > top
+                    || title.bottom() - title.top() < .015f
+                    || title.right() - title.left() < span * .16f
+                    || Math.abs((title.left() + title.right()) * .5f - center) > span * .17f
+                    || partCaption(title.text()) || !title.text().strip().matches(
+                            "[\\p{L}][\\p{L}\\p{M} .’'-]{5,90}")
+                    || title.text().strip().chars().noneMatch(Character::isWhitespace)
+                    || !OpeningPartTempo.printedWord(title, gray, width, height)) continue;
+            var related = captions.stream().filter(caption ->
+                    (caption.top() > title.top() - .025f
+                            && (caption.bottom() <= title.top() || caption.top() >= title.bottom() - .004f))
+                    || (partCaption(caption.text()) && caption.bottom() <= title.top()
+                            && title.top() - caption.bottom() <= .026f
+                            && Math.abs(caption.left() + caption.right() - title.left() - title.right())
+                                    <= span * .24f)).toList();
+            if (related.stream().anyMatch(caption -> partCaption(caption.text()))) return true;
+            var credits = related.stream().filter(caption -> arrangementCredit(caption.text())).toList();
+            for (var first : credits)
+                for (var second : credits)
+                    if (first.bottom() <= second.top() + .002f
+                            && second.top() - first.top() >= .008f
+                            && Math.min(first.right(), second.right())
+                                    > Math.max(first.left(), second.left()) + .08f) return true;
+        }
+        return false;
+    }
+
+    private static boolean partCaption(String text) {
+        return OpeningPartTempo.part(text) || text.strip().matches(
+                "(?iu)(?:piano|violin|viola|cello|flute|guitar)\\h+(?:solo\\h+)?accompaniment");
+    }
+
+    private static boolean arrangementCredit(String text) {
+        return text.strip().matches(
+                "(?iu)(?:[\\p{L}]+\\h+)?(?:arr\\.|arranged(?:\\h+by)?)\\h+\\p{L}.{5,100}");
+    }
+
     /** Physical trailing pages can be excluded without changing the arrangement's final bar. */
     public static int lastEnabledPage(int[] counts, PageRange range) {
         if (counts == null || range == null) return -1;

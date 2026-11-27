@@ -29,6 +29,10 @@ final class OmrMeasurePostProcessor {
     /** A printed bracket/shared barline is stronger evidence than whitespace. Duet and orchestral
      * layouts can leave a wider gap between connected staves than a compact grand staff does. */
     private static final float MAX_CONNECTED_STAFF_SEPARATION_GAPS = 16f;
+    // An ensemble voice can be isolated by a lyric line while sharing its interior bar columns.
+    private static final float MAX_ALIGNED_CONNECTED_STAFF_SEPARATION_GAPS = 18f;
+    private static final float MAX_MULTIPLE_RULE_STAFF_SEPARATION_GAPS = 80f;
+
 
     private OmrMeasurePostProcessor() {}
 
@@ -72,8 +76,88 @@ final class OmrMeasurePostProcessor {
             staffs.removeIf(staff -> unsupportedFullWidthStaff(raster, width, height, staff));
         }
         List<SystemRun> systems = mergeAlignedStaffs(staffs, labels, gray, width, height);
+        if (gray != null) recoverLeadingInsetStack(systems, gray, width, height);
         recoverIndependentGrandStaffBars(systems, labels, gray, width, height);
+        if (gray != null)
+            for (int i = systems.size() - 2; i >= 0; i--)
+                if (isUpperOssia(systems.get(i), systems.get(i + 1), labels, width, height))
+                    systems.remove(i);
         return new StaffSystems(systems, gray, width, height);
+    }
+
+    /** Several reduced lanes can begin together over the same printed, left-margin bracket. */
+    private static void recoverLeadingInsetStack(List<SystemRun> systems, byte[] gray, int width, int height) {
+        for (int i = systems.size() - 1; i >= 2; i--) {
+            var joined = systems.get(i);
+            var middle = systems.get(i - 1);
+            var upper = systems.get(i - 2);
+            if (joined.members.size() != 2 || middle.members.size() != 1 || upper.members.size() != 1)
+                continue;
+            var principal = joined.lastStaff;
+            var first = upper.firstStaff;
+            var next = middle.firstStaff;
+            var lower = joined.firstStaff;
+            float gap = principal.gap;
+            if (lower.gap > gap * .8f || Math.abs(first.gap - next.gap) > next.gap * .15f
+                    || Math.abs(next.gap - lower.gap) > lower.gap * .15f
+                    || next.top - first.bottom > gap * 12 || lower.top - next.bottom > gap * 12
+                    || Math.abs(next.left - first.left) > gap * 1.6f
+                    || Math.abs(next.right - first.right) > gap * 1.6f
+                    || first.boundaries.size() != next.boundaries.size()) continue;
+            boolean aligned = true;
+            for (int boundary = 0; boundary < first.boundaries.size(); boundary++) {
+                float tolerance = boundary == 0 || boundary == first.boundaries.size() - 1
+                        ? gap * 1.6f : gap * .65f;
+                if (Math.abs(first.boundaries.get(boundary) - next.boundaries.get(boundary)) > tolerance)
+                    aligned = false;
+            }
+            if (!aligned) continue;
+            boolean bracket = false;
+            int radius = Math.round(gap * 1.7f);
+            for (int x = Math.max(0, principal.left - radius);
+                    x <= Math.min(width - 1, principal.left + radius) && !bracket; x++)
+                bracket = staggeredCueBracket(gray, width, height, x, first, principal, gap)
+                        && horizontalStaffBeside(gray, width, height, x,
+                                principal.top, principal.gap, principal.slope, principal.track);
+            if (!bracket) continue;
+            var combined = new SystemRun(first);
+            combined.members.add(next);
+            combined.members.addAll(joined.members);
+            combined.lastStaff = principal;
+            combined.bottom = joined.bottom;
+            combined.gap = joined.gap;
+            combined.boundaries = joined.boundaries;
+            systems.set(i - 2, combined);
+            systems.remove(i);
+            systems.remove(i - 1);
+            i -= 2;
+        }
+    }
+
+    /** An inset ossia shares the principal staff's time and does not start a system of its own. */
+    private static boolean isUpperOssia(
+            SystemRun candidate, SystemRun principal, byte[] labels, int width, int height) {
+        if (candidate.members.size() != 1 || principal.members.size() != 1) return false;
+        var above = candidate.firstStaff;
+        var below = principal.firstStaff;
+        float gap = below.gap;
+        int span = below.right - below.left, inset = above.left - below.left;
+        int distance = below.top - above.bottom;
+        if (gap < 7 || above.gap < gap * .50f || above.gap > gap * .84f
+                || span < width * .65f || inset < span * .42f
+                || above.right - above.left > span * .55f
+                || distance < gap * 4 || distance > gap * 12
+                || Math.abs(above.slope - below.slope) > .025f) return false;
+        var smallBars = candidate.boundaries;
+        var fullBars = principal.boundaries;
+        int first = fullBars.size() - smallBars.size();
+        if (smallBars.size() < 3 || first < 2) return false;
+        for (int i = 0; i < smallBars.size(); i++)
+            if (Math.abs(smallBars.get(i) - fullBars.get(first + i)) > gap) return false;
+        int clefInk = countLabel(labels, width, height, CLEF_OR_KEY,
+                Math.round(above.left - above.gap), Math.round(above.left + 3 * above.gap),
+                Math.round(above.top - above.gap), Math.round(above.bottom + above.gap));
+        return clefInk < above.gap * .45f;
     }
 
     /** Edge-to-edge regions need repeated physical rails to qualify as a system. */
@@ -140,6 +224,7 @@ final class OmrMeasurePostProcessor {
                         result,
                         headTop,
                         headBottom,
+                        i + 1 == systems.size(),
                         origins,
                         onProvisionalMeasure);
             }
@@ -884,7 +969,8 @@ final class OmrMeasurePostProcessor {
                 || cue.gap < full.gap * .6f
                 || cue.gap > full.gap * .9f
                 || full.top <= cue.bottom
-                || full.top - cue.bottom > full.gap * 9
+                || full.top - cue.bottom > full.gap * 11
+                || (full.top - cue.bottom > full.gap * 9 && cue.boundaries.size() < 3)
                 || full.right - full.left < width * .4f
                 || cue.right - cue.left > (full.right - full.left) * .85f
                 || cue.right - cue.left < cue.gap * 9
@@ -900,7 +986,9 @@ final class OmrMeasurePostProcessor {
             if (!shared) return false;
         }
         for (int boundary : full.boundaries) {
-            if (boundary <= cue.left + full.gap || boundary >= cue.right - full.gap) continue;
+            if (boundary <= cue.left + full.gap
+                    || Math.abs(boundary - cue.boundaries.get(0)) <= full.gap * 1.5f
+                    || boundary >= cue.right - full.gap) continue;
             boolean shared = false;
             for (int other : cue.boundaries)
                 if (Math.abs(boundary - other) <= full.gap * .65f) shared = true;
@@ -949,6 +1037,8 @@ final class OmrMeasurePostProcessor {
         // Deskew detection only; boundaries and note coordinates stay on the original page.
         List<RawStaffLineDetector.StaffLines> rawStaffs =
                 RawStaffLineDetector.detect(detectionGray, width, height);
+        var rawGaps = rawStaffs.stream().map(RawStaffLineDetector.StaffLines::gap).sorted().toList();
+        float usualGap = rawGaps.isEmpty() ? Float.POSITIVE_INFINITY : rawGaps.get(rawGaps.size() / 2);
         for (RawStaffLineDetector.StaffLines raw : rawStaffs) {
             // A curved physical row can make two page-wide projection peaks.
             // The established five-rule track owns every overlapping phase.
@@ -1025,6 +1115,16 @@ final class OmrMeasurePostProcessor {
             int total = Arrays.stream(columns).sum();
             int left = percentileColumn(columns, total, .012f);
             int right = percentileColumn(columns, total, .988f);
+            boolean independentScale = representedIndex < 0
+                    && RawStaffLineDetector.corroboratedLargerStaff(
+                            raw, rawStaffs, usualGap, detectionGray, width);
+            if (independentScale) {
+                // The percentile trims genuine printed ends on a fully corroborated wider staff.
+                int trim = Math.round(raw.gap() * 3);
+                int first = Math.max(0, left - trim), last = Math.min(width - 1, right + trim);
+                while (left > first && columns[left - 1] >= 4) left--;
+                while (right < last && columns[right + 1] >= 4) right++;
+            }
             int continuedRight = continuousPrintedRight(columns, right, raw.gap());
             if (clippedClosingHead(
                     labels, width, height, right, continuedRight, raw.rows(), raw.gap(), slope))
@@ -1181,18 +1281,15 @@ final class OmrMeasurePostProcessor {
             } else if (boundaries.size() >= 2
                     && (!betweenAdjacentSemanticSystems(
                                     raw.center(), semanticCenters, semanticSystemStep)
+                            || independentScale
                             || RawStaffLineDetector.connectedToStaff(
-                                    raw, rawStaffs, detectionGray, width, height)))
-                result.add(
-                        new StaffRun(
-                                raw.top(),
-                                raw.bottom(),
-                                raw.gap(),
-                                left,
-                                right,
-                                boundaries,
-                                slope,
-                                rawTrack));
+                                    raw, rawStaffs, detectionGray, width, height))) {
+                var recovered = new StaffRun(raw.top(), raw.bottom(), raw.gap(),
+                        left, right, boundaries, slope, rawTrack);
+                result.add(recovered);
+                if (origins != null && independentScale)
+                    origins.born(recovered, raw.rows(), raw.gap(), left, right, slope, rawTrack);
+            }
         }
     }
 
@@ -1750,6 +1847,16 @@ final class OmrMeasurePostProcessor {
                                 slope,
                                 220,
                                 track == null ? 12 : 32, paperWindow);
+            if (rawColumn == Integer.MIN_VALUE && touchesTop && touchesBottom && covered >= span * .8f
+                    && provesFiniteBarline(labels, gray, width, height, x, rows, gap, shift)) {
+                var local = connectionStaffRows(gray, width, height, x, rows, gap, shift);
+                float localGap = (local[4] - local[0]) * .25f;
+                if (MeterComponentSeeds.hasStackAfterRule(
+                        labels, gray, width, height, x, Math.round(local[0]), localGap)) {
+                    columns.set(x - left - 1);
+                    continue;
+                }
+            }
             boolean rawSpansStaff = rawColumn != Integer.MIN_VALUE;
             boolean semanticBar = semanticCandidate && (gray == null || rawSpansStaff);
             // Note ownership can only veto a proven bar; it cannot create one. Avoid scanning
@@ -1801,12 +1908,20 @@ final class OmrMeasurePostProcessor {
                     attachedHead =
                             symbolHeadTouchesColumn(labels, width, height, x, top, bottom, gap);
             }
-            // Validate stem ownership at the same printed column that proved the rule.
-            // A semantic halo can lie a pixel beyond the long stem's labelled edge.
-            if (semanticBar && !attachedHead && rawSpansStaff && rawColumn != x)
+            // A semantic halo may look isolated even when the source column is owned by a head.
+            // Recheck attachment at the same printed column that proved the vertical rule.
+            if (semanticBar && !attachedHead && rawSpansStaff && rawColumn != x) {
+                int headTop = Math.round(top - gap * 1.5f), headBottom = Math.round(bottom + gap * 1.5f);
                 attachedHead =
                         distantHeadOnSameStem(
-                                labels, gray, width, height, rawColumn, top, bottom, gap);
+                                labels, gray, width, height, rawColumn, top, bottom, gap)
+                                || countLabel(labels, width, height, NOTEHEAD,
+                                        Math.round(rawColumn - gap * .88f),
+                                        Math.round(rawColumn + gap * .88f), headTop, headBottom)
+                                        >= Math.max(3, Math.round(gap * .65f))
+                                && headTouchesColumn(labels, gray, width, height, rawColumn,
+                                        headTop, headBottom, rows, gap, shift);
+            }
             if (semanticBar
                     && !attachedHead
                     && rawSpansStaff
@@ -1851,6 +1966,11 @@ final class OmrMeasurePostProcessor {
                 if (!repeatColumns.get(rawColumn)) continue;
             }
             columns.set(x - left - 1);
+        }
+        for (float repeat : PrintedRepeatGlyphs.sharedRepeatCenters(
+                gray, width, height, seedRows[0], seedRows[4], gap)) {
+            int x = Math.round(repeat);
+            if (x > left && x < right) columns.set(x - left - 1);
         }
         return columns;
     }
@@ -2129,6 +2249,7 @@ final class OmrMeasurePostProcessor {
             printedRows = new float[5];
             for (int line = 0; line < 5; line++) printedRows[line] = rows[line] + shift;
         }
+        Boolean isolatedRule = null;
         for (int y = Math.max(0, top); y <= Math.min(height - 1, bottom); y++) {
             float nearestRule = Float.POSITIVE_INFINITY;
             for (float row : printedRows) nearestRule = Math.min(nearestRule, Math.abs(y - row));
@@ -2148,6 +2269,14 @@ final class OmrMeasurePostProcessor {
                                 || (gray[y * width + xx] & 255) > RAW_BARLINE_DARK) break;
                         if (labels[y * width + xx] == NOTEHEAD
                                 && (!fringe || Math.abs(xx - x) <= Math.max(2, gap * .2f))) {
+                            // A ledger note may touch its own rule near the bar's column.
+                            // Its row cannot claim a separately printed staff-height shaft.
+                            if (y < printedRows[0] || y > printedRows[4]) {
+                                if (isolatedRule == null)
+                                    isolatedRule = isolatedFullHeightRule(
+                                            gray, width, height, x, rows, gap, shift);
+                                if (isolatedRule) continue;
+                            }
                             boolean roundedRule = false;
                             if (roundedRows != null)
                                 for (float row : roundedRows)
@@ -2508,7 +2637,23 @@ final class OmrMeasurePostProcessor {
                     && h <= gap * 1.5f
                     && area >= gap * gap * .32f
                     && (minY + maxY) * .5f >= top - gap * (downStem ? 1.7f : .5f)
-                    && (minY + maxY) * .5f <= bottom + gap * (downStem ? .5f : 1.5f)) return true;
+                    && (minY + maxY) * .5f <= bottom + gap * (downStem ? .5f : 1.5f)
+                    && hasCompactHeadBody(queue, write, localWidth, h)) return true;
+        }
+        return false;
+    }
+
+    /** Half of a crossing tie can match the bounds of a head. Its height is spread
+     * across the curve, while a head has a tall cross-section inside its own width. */
+    private static boolean hasCompactHeadBody(int[] component, int count, int width, int height) {
+        int[] firstRow = new int[width];
+        int[] lastRow = new int[width];
+        Arrays.fill(firstRow, Integer.MAX_VALUE);
+        for (int i = 0; i < count; i++) {
+            int x = component[i] % width, y = component[i] / width;
+            firstRow[x] = Math.min(firstRow[x], y);
+            lastRow[x] = Math.max(lastRow[x], y);
+            if (lastRow[x] - firstRow[x] + 1 >= height * .75f) return true;
         }
         return false;
     }
@@ -3685,9 +3830,23 @@ final class OmrMeasurePostProcessor {
                                 && aligned(previous.boundaries, staff.boundaries, width, gap);
                 boolean visiblyConnected =
                         gray != null
-                                && verticalGap <= gap * MAX_CONNECTED_STAFF_SEPARATION_GAPS
+                                && (verticalGap <= gap * MAX_CONNECTED_STAFF_SEPARATION_GAPS
+                                        || (verticalGap <= gap * MAX_ALIGNED_CONNECTED_STAFF_SEPARATION_GAPS
+                                                && sharedInteriorBarlines(previous.lastStaff, staff, gap)))
                                 && connectedByVerticalRule(
-                                        gray, width, height, previous, staff, gap);
+                                        gray, width, height, previous, staff, gap, false);
+                boolean wideEngraving =
+                        gray != null
+                                && verticalGap > gap * MAX_ALIGNED_CONNECTED_STAFF_SEPARATION_GAPS
+                                && verticalGap <= gap * MAX_MULTIPLE_RULE_STAFF_SEPARATION_GAPS
+                                && previous.members.size() == 1
+                                && Math.abs(previous.lastStaff.gap - staff.gap) <= gap * .12f
+                                && sharedInteriorBarlines(previous.lastStaff, staff, gap)
+                                && connectedByVerticalRule(
+                                        gray, width, height, previous, staff, gap, true);
+                boolean paleLeftConnector = gray != null && !visiblyConnected && !wideEngraving
+                        && previous.members.size() == 1
+                        && insetPrintedLeftConnector(gray, width, height, previous.lastStaff, staff, gap);
                 StaffRun cue = previous.lastStaff;
                 boolean insetCue =
                         labels != null
@@ -3704,6 +3863,8 @@ final class OmrMeasurePostProcessor {
                                         >= cue.gap * cue.gap * .4f;
                 if ((compactAligned && (gray == null || verticalGap < 0))
                         || visiblyConnected
+                        || wideEngraving
+                        || paleLeftConnector
                         || insetCue) {
                     List<Integer> upperBoundaries = previous.boundaries,
                             lowerBoundaries = staff.boundaries;
@@ -3729,12 +3890,16 @@ final class OmrMeasurePostProcessor {
                                         Math.round(previous.lastStaff.bottom),
                                         previous.lastStaff.gap);
                     }
+                    StaffRun upper = previous.lastStaff;
                     previous.bottom = staff.bottom;
                     previous.lastStaff = staff;
                     previous.members.add(staff);
                     previous.gap = (previous.gap + staff.gap) / 2f;
                     previous.boundaries =
                             mergeBoundaries(upperBoundaries, lowerBoundaries, width, previous.gap);
+                    if (paleLeftConnector)
+                        previous.boundaries = recoverPalePairedBars(
+                                previous.boundaries, gray, width, height, upper, staff, previous.gap);
                     continue;
                 }
             }
@@ -3750,15 +3915,29 @@ final class OmrMeasurePostProcessor {
      * labels the upper and lower pieces of one shared barline independently.
      */
     private static boolean connectedByVerticalRule(
-            byte[] gray, int width, int height, SystemRun upper, StaffRun lower, float gap) {
+            byte[] gray, int width, int height, SystemRun upper, StaffRun lower,
+            float gap, boolean requireMultipleInteriorRules) {
         int top = Math.max(0, Math.round(upper.bottom + gap * .12f));
         int bottom = Math.min(height - 1, Math.round(lower.top - gap * .12f));
         if (bottom - top < Math.max(3, Math.round(gap * .45f))) return false;
         List<Integer> candidates =
                 new ArrayList<>(upper.boundaries.size() + lower.boundaries.size());
-        candidates.addAll(upper.boundaries);
-        candidates.addAll(lower.boundaries);
-        int horizontalTolerance = Math.max(2, Math.round(gap * 1.65f));
+        if (requireMultipleInteriorRules) {
+            List<Integer> boundaries = upper.lastStaff.boundaries;
+            candidates.addAll(boundaries.subList(1, boundaries.size() - 1));
+        } else {
+            candidates.addAll(upper.boundaries);
+            candidates.addAll(lower.boundaries);
+            // Header recognition can inset the reported left edge past a real system bar.
+            // Extend that search only when the physical staves agree on the ordered interior bars.
+            if (sharedInteriorBarlines(upper.lastStaff, lower, gap)) {
+                int left = Math.min(upper.lastStaff.left, lower.left);
+                candidates.add(left - Math.round(gap * .85f));
+            }
+        }
+        int horizontalTolerance = Math.max(2, Math.round(gap
+                * (requireMultipleInteriorRules ? .85f : 1.65f)));
+        int firstRule = -1;
         boolean[] checked = new boolean[width];
         for (int candidate : candidates) {
             int left = Math.max(0, candidate - horizontalTolerance);
@@ -3766,6 +3945,8 @@ final class OmrMeasurePostProcessor {
             for (int x = left; x <= right; x++) {
                 if (checked[x]) continue;
                 checked[x] = true;
+                if (bottom - top > gap * 10
+                        && !tallConnectorOwned(x, upper.lastStaff, lower, gap)) continue;
                 if (verticalRuleAt(gray, width, x, top, bottom, gap)
                         && (horizontalStaffBeside(
                                         gray,
@@ -3786,10 +3967,171 @@ final class OmrMeasurePostProcessor {
                                 lower.top,
                                 lower.gap,
                                 lower.slope,
-                                lower.track)) return true;
+                                lower.track)) {
+                    if (!requireMultipleInteriorRules
+                            || (firstRule >= 0 && x - firstRule > gap * 4)) return true;
+                    if (firstRule < 0) firstRule = x;
+                    break;
+                }
             }
         }
         return false;
+    }
+
+    /** A long interior stroke joins two staves only at a bar independently found in both. */
+    private static boolean tallConnectorOwned(int x, StaffRun upper, StaffRun lower, float gap) {
+        // The existing opening search may begin outside an inset clef/header.
+        if (x <= Math.min(upper.left, lower.left) + gap * 1.7f) return true;
+        return upper.boundaries.stream().anyMatch(bar -> Math.abs(bar - x) <= gap * .85f)
+                && lower.boundaries.stream().anyMatch(bar -> Math.abs(bar - x) <= gap * .85f);
+    }
+
+    private static boolean sharedInteriorBarlines(StaffRun upper, StaffRun lower, float gap) {
+        List<Integer> a = upper.boundaries, b = lower.boundaries;
+        if (a.size() < 4 || a.size() != b.size()
+                || Math.abs(upper.left - lower.left) > gap * 2.5f
+                || Math.abs(upper.right - lower.right) > gap * 2.5f) return false;
+        for (int i = 1; i < a.size() - 1; i++)
+            if (Math.abs(a.get(i) - b.get(i)) > gap * .85f) return false;
+        return true;
+    }
+
+    /** The measured rail start may be inset by a clef even though a pale staff joins its bracket. */
+    private static boolean insetPrintedLeftConnector(
+            byte[] gray, int width, int height, StaffRun upper, StaffRun lower,
+            float gap) {
+        int top = upper.bottom + Math.round(gap * .12f);
+        int bottom = lower.top - Math.round(gap * .12f);
+        if (bottom - top < gap * 2 || Math.abs(upper.gap - lower.gap) > gap * .12f
+                || Math.abs(upper.left - lower.left) > gap * 4.25f
+                || Math.abs(upper.right - lower.right) > gap * 2
+                || bottom - top > gap * 9 || matchingInteriorBars(upper, lower, gap) < 3)
+            return false;
+        int first = Math.max(0, Math.max(upper.left, lower.left) - Math.round(gap * 4.5f));
+        int last = Math.min(upper.left, lower.left) + Math.round(gap * 1.2f);
+        int start = upper.top - Math.round(gap * .8f);
+        int finish = lower.bottom + Math.round(gap * .8f);
+        if (start < 0 || finish >= height) return false;
+        int radius = Math.max(1, Math.round(gap * .16f));
+        for (int x = first; x <= last; x++) {
+            if (!verticalRuleAt(gray, width, x, top, bottom, gap)) continue;
+            boolean clear = true;
+            for (int row : new int[] {start, finish})
+                for (int c = Math.max(0, x - radius);
+                        c < Math.min(width, x + radius + 1); c++)
+                    if ((gray[row * width + c] & 255) < RAW_BARLINE_DARK) clear = false;
+            if (clear && paleRightRules(gray, width, height, x, upper)
+                    && paleRightRules(gray, width, height, x, lower)) return true;
+        }
+        return false;
+    }
+
+    private static int matchingInteriorBars(StaffRun upper, StaffRun lower, float gap) {
+        int matched = 0;
+        int first = 1;
+        for (int i = 1; i + 1 < upper.boundaries.size(); i++) {
+            int column = upper.boundaries.get(i);
+            while (first + 1 < lower.boundaries.size()
+                    && lower.boundaries.get(first) < column - gap * .6f) first++;
+            if (first + 1 < lower.boundaries.size()
+                    && Math.abs(column - lower.boundaries.get(first)) <= gap * .6f) {
+                matched++;
+                first++;
+            }
+        }
+        return matched;
+    }
+
+    private static boolean paleRightRules(
+            byte[] gray, int width, int height, int x, StaffRun staff) {
+        float gap = staff.gap;
+        int start = x + Math.round(gap * .9f);
+        int end = Math.min(width, x + Math.round(gap * 4.75f));
+        if (end - start < gap * 3) return false;
+        int radius = Math.max(2, Math.round(gap * .25f));
+        int flank = Math.max(2, Math.round(gap * .33f));
+        for (int line = 0; line < 5; line++) {
+            int hits = 0;
+            for (int column = start; column < end; column++) {
+                int predicted = Math.round(staff.top + line * gap
+                        + staff.slope * (column - width * .5f));
+                for (int y = Math.max(flank, predicted - radius);
+                        y <= Math.min(height - 1 - flank, predicted + radius); y++) {
+                    int ink = gray[y * width + column] & 255;
+                    if (ink <= 225 && (gray[(y - flank) * width + column] & 255) >= ink + 12
+                            && (gray[(y + flank) * width + column] & 255) >= ink + 12) {
+                        hits++;
+                        break;
+                    }
+                }
+            }
+            if (hits * 2 < end - start) return false;
+        }
+        return true;
+    }
+
+    /** Restore one boundary only when the two physical rulers end their own full ink columns. */
+    private static List<Integer> recoverPalePairedBars(
+            List<Integer> boundaries, byte[] gray, int width, int height,
+            StaffRun upper, StaffRun lower, float gap) {
+        var recovered = new ArrayList<Integer>();
+        int margin = Math.round(gap * 6);
+        for (int i = 1; i + 1 < boundaries.size(); i++) {
+            int left = boundaries.get(i), right = boundaries.get(i + 1);
+            if (right - left < gap * 25) continue;
+            int start = -1, end = -1;
+            boolean ambiguous = false;
+            for (int x = left + margin; x <= right - margin; x++) {
+                if (!isolatedPaleRule(gray, width, height, x, upper)
+                        || !isolatedPaleRule(gray, width, height, x, lower)) continue;
+                if (start < 0) start = x;
+                else if (x > end + 1 || x - start > gap * .75f) {
+                    ambiguous = true;
+                    break;
+                }
+                end = x;
+            }
+            if (start < 0 || ambiguous) continue;
+            int cut = Math.round((start + end) * .5f);
+            if (!ClosedHeadBarlineGuard.attached(gray, width, height, cut, upper.top, upper.bottom, upper.gap)
+                    && !ClosedHeadBarlineGuard.attached(gray, width, height, cut, lower.top, lower.bottom, lower.gap))
+                recovered.add(cut);
+        }
+        if (recovered.isEmpty() || boundaries.size() + recovered.size() > 32) return boundaries;
+        recovered.addAll(boundaries);
+        recovered.sort(Integer::compare);
+        return List.copyOf(recovered);
+    }
+
+    private static boolean isolatedPaleRule(byte[] gray, int width, int height, int x, StaffRun staff) {
+        int radius = Math.max(1, Math.round(staff.gap * .13f));
+        int flank = Math.max(radius + 1, Math.round(staff.gap * .85f));
+        float delta = staff.slope * (x - width * .5f);
+        int top = Math.round(staff.top + delta), bottom = Math.round(staff.bottom + delta);
+        int clearance = Math.round(staff.gap * .65f);
+        if (x < flank || x + flank >= width || top - clearance < 0 || bottom + clearance >= height)
+            return false;
+        for (int y : new int[] {top - clearance, bottom + clearance})
+            for (int c = x - radius; c <= x + radius; c++)
+                if ((gray[y * width + c] & 255) < 218) return false;
+        int misses = 0, maxMisses = (bottom - top + 1) / 16;
+        for (int y = top; y <= bottom; y++) {
+            int offset = y * width + x;
+            int ink = 255;
+            for (int dx = -radius; dx <= radius; dx++)
+                ink = Math.min(ink, gray[offset + dx] & 255);
+            boolean narrow = false;
+            if (ink <= 194) {
+                int left = 0, right = 0;
+                for (int dx = radius + 1; dx <= flank; dx++) {
+                    left = Math.max(left, gray[offset - dx] & 255);
+                    right = Math.max(right, gray[offset + dx] & 255);
+                }
+                narrow = Math.min(left, right) - ink >= 24;
+            }
+            if (!narrow && ++misses > maxMisses) return false;
+        }
+        return true;
     }
 
     /** A reduced staff can enter after the first bar of its full-sized partner.
@@ -4042,6 +4384,7 @@ final class OmrMeasurePostProcessor {
             List<MeasureRegion> output,
             float headTop,
             float headBottom,
+            boolean lastSystem,
             SelectedMeasureOrigins origins,
             Consumer<MeasureRegion> onProvisionalMeasure) {
         List<Integer> boundaries = system.boundaries;
@@ -4111,6 +4454,16 @@ final class OmrMeasurePostProcessor {
                                 Math.round(headTop),
                                 Math.round(headBottom),
                                 system.gap);
+                if (firstHead < 0 && gray != null && lastSystem && system.members.size() == 1
+                        && boundaries.size() <= 3 && rawRight - rawLeft <= system.gap * 22f) {
+                    // On a short terminal staff, distant background labels are not clef ink.
+                    // Stay beyond the initial clef and key positions and within the printed frame.
+                    int staffTop = Math.round(system.top - system.gap * 1.5f);
+                    int staffBottom = Math.round(system.bottom + system.gap * 1.1f);
+                    firstHead = firstHeaderHead(
+                            labels, width, height, rawLeft + Math.round(system.gap * 4.25f),
+                            headerLimit, staffTop, staffBottom, system.gap);
+                }
                 if (firstHead >= 0)
                     playableLeft =
                             Math.min(

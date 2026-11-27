@@ -54,6 +54,18 @@ final class RecognizedMultiRestProjection {
                     || !origins.expansion(parent, run.first, run.end)
                     || repeated.containsKey(parent)
                     || run.end - run.first != a.token().value()) continue;
+            if (a.pairedLanes().size() == 2) {
+                boolean clear = true;
+                for (int i = run.first; i < run.end; i++)
+                    if (notes[i] || rests[i] != 0) clear = false;
+                if (clear)
+                    for (int i = run.first; i < run.end; i++)
+                        for (int staff = 0; staff < 2; staff++) {
+                            var lane = a.pairedLanes().get(staff);
+                            added.add(ScoreRestEvent.fullMeasure(i, .5f, lane.y(), lane.gap(), staff, 2));
+                        }
+                continue;
+            }
             var physical = origins.physical(parent);
             if (physical == null || physical.members.size() != 1) continue;
             var member = physical.members.get(0);

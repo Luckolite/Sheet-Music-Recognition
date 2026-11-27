@@ -56,6 +56,19 @@ public final class MeterComponentSeedsTest {
     }
 
     @Test
+    public void onlyACompleteStackOnTheRightCorroboratesTheRule() {
+        var p = new Page();
+        assertTrue(MeterComponentSeeds.hasStackAfterRule(
+                p.labels, p.gray, W, H, 222, FIRST, GAP));
+        assertFalse(MeterComponentSeeds.hasStackAfterRule(
+                p.labels, p.gray, W, H, 260, FIRST, GAP));
+        for (int y = 138; y < 168; y++)
+            for (int x = 232; x < 260; x++) p.labels[y * W + x] = 0;
+        assertFalse(MeterComponentSeeds.hasStackAfterRule(
+                p.labels, p.gray, W, H, 222, FIRST, GAP));
+    }
+
+    @Test
     public void completeStackedFourSeedRecoversIndependentLocalPhase() {
         var p = new Page();
         var crops = p.seeds();

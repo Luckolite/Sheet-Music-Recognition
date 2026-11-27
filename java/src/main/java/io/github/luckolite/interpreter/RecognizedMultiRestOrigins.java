@@ -11,7 +11,10 @@ final class RecognizedMultiRestOrigins {
             MeasureNumberReconciler.NumberToken token,
             MultiMeasureRestDetector.RestBarCandidate candidate,
             MeasureRegion parent,
-            int rawIndex) {}
+            int rawIndex,
+            List<RestLane> pairedLanes) {}
+
+    record RestLane(float y, float gap) {}
 
     private final SelectedMeasureOrigins physical;
     private final IdentityHashMap<MeasureRegion, Admission> entries = new IdentityHashMap<>();
@@ -62,7 +65,8 @@ final class RecognizedMultiRestOrigins {
     void admitted(
             MeasureNumberReconciler.NumberToken token,
             MultiMeasureRestDetector.RestBarCandidate candidate,
-            int index) {
+            int index,
+            List<MeasureNumberReconciler.NumberToken> readings) {
         if (incomplete) return;
         if (token == null
                 || candidate == null
@@ -80,7 +84,42 @@ final class RecognizedMultiRestOrigins {
             incomplete = true;
             return;
         }
-        entries.put(parent, new Admission(invocation, token, candidate, parent, index));
+        entries.put(parent, new Admission(invocation, token, candidate, parent, index,
+                pairedLanes(parent, token, readings)));
+    }
+
+    /** Both physical staves must have their own count above their own printed rest. */
+    private List<RestLane> pairedLanes(
+            MeasureRegion parent, MeasureNumberReconciler.NumberToken count,
+            List<MeasureNumberReconciler.NumberToken> readings) {
+        var source = physical(parent);
+        if (source == null || source.members.size() != 2) return List.of();
+        float countX = (count.left() + count.right()) * .5f * w;
+        var lanes = new ArrayList<RestLane>(2);
+        for (var staff : source.members) {
+            float gap = staff.gap;
+            int span = staff.right - staff.left;
+            if (staff.track != null || staff.slope != 0 || staff.rows == null
+                    || gap < 5 || span < 9 * gap || span > 32 * gap) return List.of();
+            int center = ShortFinalStaff.countedRestCenter(gray, w, h, staff.rows[0], staff.rows[2],
+                    gap, staff.left, staff.right);
+            if (center < parent.left() * w || center > parent.right() * w
+                    || Math.abs(center - countX) > gap * .55f) return List.of();
+            boolean matched = false;
+            for (var reading : readings) {
+                float x = (reading.left() + reading.right()) * .5f * w;
+                float bottom = reading.bottom() * h;
+                if (Math.abs(x - center) > gap * .55f || bottom > staff.rows[0] + gap * .12f
+                        || bottom < staff.rows[0] - gap
+                        || reading.top() * h < staff.rows[0] - gap * 3.15f) continue;
+                if (reading.value() != count.value()) return List.of();
+                matched = true;
+            }
+            if (!matched) return List.of();
+            lanes.add(new RestLane(staff.rows[2] / (float) h, gap / h));
+        }
+        lanes.sort(Comparator.comparingDouble(RestLane::y));
+        return List.copyOf(lanes);
     }
 
     void expanded(List<MeasureRegion> input, List<MeasureRegion> logical) {

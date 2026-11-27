@@ -13,6 +13,18 @@ final class CourtesyKeyTailInk {
             int right,
             int top,
             float gap) {
+        return matches(labels, gray, width, height, left, right, top, gap, width);
+    }
+
+    static boolean matchesBeforeRepeat(
+            byte[] labels, byte[] gray, int width, int height,
+            int left, int right, int top, float gap) {
+        return matches(labels, gray, width, height, left, right, top, gap, right + 1);
+    }
+
+    private static boolean matches(
+            byte[] labels, byte[] gray, int width, int height,
+            int left, int right, int top, float gap, int limit) {
         if (labels == null
                 || gray == null
                 || labels.length != (long) width * height
@@ -47,7 +59,7 @@ final class CourtesyKeyTailInk {
         int key = 0, symbol = 0, unowned = 0;
         int start = Math.max(left, Math.round(lastEnd + gap * .25f));
         for (int y = hi; y <= lo; y++)
-            for (int x = start; x < width; x++) {
+            for (int x = start; x < limit; x++) {
                 byte label = labels[y * width + x];
                 if (label == 2) return false;
                 if (label == 3) key++;
@@ -66,13 +78,13 @@ final class CourtesyKeyTailInk {
             }
         return key >= gap * gap * .5f
                 && symbol < gap * gap
-                && accidentalComponents(labels, gray, width, start, hi, lo, top, gap);
+                && accidentalComponents(labels, gray, width, start, limit, hi, lo, top, gap);
     }
 
     /** Once staff lines are masked, each substantial ink fragment needs accidental ownership. */
     private static boolean accidentalComponents(
-            byte[] labels, byte[] gray, int width, int left, int hi, int lo, int top, float gap) {
-        int columns = width - left, rows = lo - hi + 1;
+            byte[] labels, byte[] gray, int width, int left, int limit, int hi, int lo, int top, float gap) {
+        int columns = limit - left, rows = lo - hi + 1;
         boolean[] ink = new boolean[columns * rows], seen = new boolean[columns * rows];
         int[] queue = new int[ink.length];
         for (int y = hi; y <= lo; y++) {
@@ -81,7 +93,7 @@ final class CourtesyKeyTailInk {
                 if (Math.abs(y - (top + i * gap)) <= Math.max(1, Math.round(gap * .14f)))
                     line = true;
             if (line) continue;
-            for (int x = left; x < width; x++)
+            for (int x = left; x < limit; x++)
                 ink[(y - hi) * columns + x - left] = (gray[y * width + x] & 255) < 180;
         }
         for (int seed = 0; seed < ink.length; seed++) {

@@ -89,7 +89,7 @@ final class MultiMeasureRestDetector {
                 continue;
             claimedMeasures[measureIndex] = true;
             result.add(token);
-            if (origins != null) origins.admitted(token, matched[0], measureIndex);
+            if (origins != null) origins.admitted(token, matched[0], measureIndex, readings);
         }
         return List.copyOf(result);
     }
@@ -194,10 +194,15 @@ final class MultiMeasureRestDetector {
                 if (rawStaffs == null) rawStaffs = RawStaffLineDetector.detect(gray, width, height);
                 boolean blockRest = blockCount && printedBlockRest(labels, gray, width, height, parent,
                         noteRegions.get(index), noteheadPixels[index], noteFreeLimit, count, rawStaffs);
-                boolean wideRest = !blockRest && wideRestRegion
-                        && noteheadPixels[index] - countGlyphHeads(count, labels, width, height,
-                                noteRegions.get(index)) <= noteFreeLimit
-                        && wideCappedRest(labels, gray, width, height, parent, count, rawStaffs);
+                int barHeads = !blockRest && wideRestRegion
+                        ? wideCappedRestHeads(labels, gray, width, height, parent, count, rawStaffs)
+                        : -1;
+                // This block may dominate the page's ordinary-label estimate. Do not
+                // let its own mislabeled ink raise the noise allowance outside the rest.
+                boolean wideRest = barHeads >= 0
+                        && noteheadPixels[index] - barHeads
+                                - countGlyphHeads(count, labels, width, height, noteRegions.get(index))
+                                <= (barHeads > 0 ? 6 : noteFreeLimit);
                 if (blockRest || wideRest) {
                     result.add(new RestBarCandidate(index, parent));
                     continue measuresLoop;
@@ -309,13 +314,13 @@ final class MultiMeasureRestDetector {
     }
 
     /** The bar follows the middle rule and has a thin, bilateral cap at each end. */
-    private static boolean wideCappedRest(
+    private static int wideCappedRestHeads(
             byte[] labels, byte[] gray, int width, int height, MeasureRegion parent,
             MeasureNumberReconciler.NumberToken count, List<RawStaffLineDetector.StaffLines> staffs) {
         float gap = (parent.bottom() - parent.top()) * height / 8.2f;
         int left = Math.round(parent.left() * width);
         int right = Math.min(width - 1, Math.round(parent.right() * width));
-        if (gap < 7 || gap > 36 || right - left < 12 * gap) return false;
+        if (gap < 7 || gap > 36 || right - left < 12 * gap) return -1;
         int x = Math.round((count.left() + count.right()) * .5f * width);
         float hint = parent.bottom() * height - 2.1f * gap;
         var rails = PrintedDirectionStaff.printedRules(gray, width, height, x, hint, gap);
@@ -329,23 +334,74 @@ final class MultiMeasureRestDetector {
                 if (staff.top() < parent.top() * height || staff.bottom() > parent.bottom() * height
                         || Math.abs(staff.bottom() - hint) > .65f * gap
                         || Math.abs(staff.gap() - gap) > .2f * gap) continue;
-                if (match != null) return false;
+                if (match != null) return -1;
                 match = staff;
             }
-            if (match == null) return false;
-            bottom = match.bottom();
-            gap = match.gap();
+            if (match != null) {
+                bottom = match.bottom();
+                gap = match.gap();
+            } else {
+                // The thick central rule can prevent a normal five-rule fit.
+                rails = outerRestRails(gray, width, height, x, hint, gap);
+                if (rails == null) return -1;
+                bottom = rails[0];
+                gap = rails[1];
+            }
         }
         int top = Math.round(bottom - 4 * gap);
         if (count.bottom() * height > top + gap * .12f || top - count.bottom() * height > gap
-                || !countAboveRule(count, labels, gray, width, height, top)) return false;
+                || !countAboveRule(count, labels, gray, width, height, top)) return -1;
         int middle = Math.round(bottom - 2 * gap);
         var ink = inkBand(gray, width, height, x, middle);
-        if (ink == null || ink.thickness() < gap * .35f || ink.thickness() > gap * .9f) return false;
-        int a = walkRestBar(gray, width, height, x, ink.center(), left, -1, gap);
-        int b = walkRestBar(gray, width, height, x, ink.center(), right, 1, gap);
-        return a >= 0 && b >= 0 && b - a >= 9 * gap
-                && Math.abs((a + b) * .5f - x) <= gap;
+        if (ink == null || ink.thickness() < gap * .35f || ink.thickness() > gap * 1.05f)
+            return -1;
+        // Geometry may place the first playable column just inside the left cap.
+        // The returned caps must stay within one staff gap of the measure.
+        int margin = Math.round(gap);
+        int a = walkRestBar(gray, width, height, x, ink.center(), Math.max(0, left - margin), -1, gap);
+        int b = walkRestBar(gray, width, height, x, ink.center(),
+                Math.min(width - 1, right + margin), 1, gap);
+        if (a < 0 || b < 0 || b - a < 9 * gap || Math.abs((a + b) * .5f - x) > gap)
+            return -1;
+        // Count the semantic NOTEHEAD pixels actually covered by the rest ink.
+        int heads = 0;
+        for (int px = Math.max(a, left); px <= Math.min(b, right); px++) {
+            var column = inkBand(gray, width, height, px, middle);
+            if (column == null) continue;
+            for (int py = column.top(); py <= column.bottom(); py++)
+                if (labels[py * width + px] == OmrMeasurePostProcessor.NOTEHEAD) heads++;
+        }
+        return heads;
+    }
+
+    private static float[] outerRestRails(
+            byte[] gray, int width, int height, int x, float bottomHint, float gap) {
+        int radius = Math.round(gap * 2);
+        int tolerance = Math.max(2, Math.round(gap * .23f));
+        if (x - radius < 0 || x + radius >= width) return null;
+        int[] rows = new int[4];
+        int slot = 0;
+        for (int line : new int[] {0, 1, 3, 4}) {
+            int center = Math.round(bottomHint - line * gap);
+            if (center - tolerance < 0 || center + tolerance >= height) return null;
+            int first = -1, last = -1;
+            for (int y = center - tolerance; y <= center + tolerance; y++) {
+                int hits = 0;
+                for (int px = x - radius; px <= x + radius; px++)
+                    if ((gray[y * width + px] & 255) <= 150) hits++;
+                if (hits < (2 * radius + 1) * .85f) continue;
+                if (first < 0) first = y;
+                if (last >= 0 && y != last + 1) return null;
+                last = y;
+            }
+            if (first < 0 || last - first + 1 > gap * .27f) return null;
+            rows[slot++] = (first + last) / 2;
+        }
+        float spacing = (rows[0] - rows[3]) / 4f;
+        if (Math.abs(spacing - gap) > gap * .12f
+                || Math.abs(rows[0] - rows[1] - spacing) > 1.5f
+                || Math.abs(rows[2] - rows[3] - spacing) > 1.5f) return null;
+        return new float[] {rows[0], spacing};
     }
 
     /** A complete staff rule immediately after a long printed H-rest ends the rest's bar. */
@@ -1491,14 +1547,24 @@ final class MultiMeasureRestDetector {
     }
 
     /** Staff lines are long but thin. A multi-rest's centered bar stays dark for several rows. */
+    static boolean hasFullWidthRestBar(byte[] gray, int width, int height, MeasureRegion region) {
+        return gray != null && gray.length == (long) width * height
+                && hasThickHorizontalBar(gray, width, height, region, .80f, false);
+    }
+
     static boolean hasThickHorizontalBar(byte[] gray, int width, int height, MeasureRegion region) {
+        return hasThickHorizontalBar(gray, width, height, region, .34f, true);
+    }
+
+    private static boolean hasThickHorizontalBar(
+            byte[] gray, int width, int height, MeasureRegion region, float coverage, boolean allowShortCappedRest) {
         int left = clamp(Math.round(region.left() * width), 0, width - 1);
         int right = clamp(Math.round(region.right() * width), left, width - 1);
         int top = clamp(Math.round(region.top() * height), 0, height - 1);
         int bottom = clamp(Math.round(region.bottom() * height), top, height - 1);
         int regionWidth = right - left + 1, regionHeight = bottom - top + 1;
         if (regionWidth < 12 || regionHeight < 8) return false;
-        int requiredRun = Math.max(8, Math.round(regionWidth * .34f));
+        int requiredRun = Math.max(8, Math.round(regionWidth * coverage));
         int requiredThickness = Math.max(3, Math.min(7, Math.round(regionHeight * .035f)));
         int searchTop = top + Math.round(regionHeight * .18f);
         int searchBottom = bottom - Math.round(regionHeight * .12f);
@@ -1526,7 +1592,7 @@ final class MultiMeasureRestDetector {
             if (consecutive >= requiredThickness) return true;
             if (consecutive + searchBottom - y < requiredThickness) break;
         }
-        return cappedRestWindow(gray, width, height, region) != null;
+        return allowShortCappedRest && cappedRestWindow(gray, width, height, region) != null;
     }
 
     /** A short H-rest can be much narrower than the surrounding empty engraved measure. */

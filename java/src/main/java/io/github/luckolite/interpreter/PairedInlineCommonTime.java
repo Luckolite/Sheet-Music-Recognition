@@ -84,8 +84,168 @@ final class PairedInlineCommonTime {
                 if (result.stream().noneMatch(old -> old.measureIndex() == measure))
                     result.add(proof);
             }
+            restoreAnchoredCopies(result, labels, gray, width, height, measures, upper, lower, columns);
         }
         return List.copyOf(result);
+    }
+
+    /** Two complete common-time copies may follow a single rule or a system header. */
+    private static void restoreAnchoredCopies(
+            List<Proof> result, byte[] labels, byte[] gray, int width, int height,
+            List<MeasureRegion> measures, StaffFrame upper, StaffFrame lower, List<Column> bars) {
+        boolean atSystemStart = true;
+        float gap = upper.gap();
+        for (int i = 0; i < measures.size(); i++) {
+            var measure = measures.get(i);
+            if (upper.center() < measure.top() * height || lower.center() > measure.bottom() * height)
+                continue;
+            int x = Math.round(measure.left() * width);
+            boolean anchored = atSystemStart
+                    ? printedHeader(labels, gray, width, height, x, upper)
+                            && printedHeader(labels, gray, width, height, x, lower)
+                    : bars.stream().filter(c -> Math.abs(c.right() - x) <= gap * 1.4f).count() == 1
+                            && bars.stream().anyMatch(c -> Math.abs(c.right() - x) <= gap * .62f);
+            atSystemStart = false;
+            if (!anchored) continue;
+            int measureIndex = i;
+            if (result.stream().anyMatch(p -> p.measureIndex() == measureIndex)) continue;
+            var a = localCommonTime(gray, width, height, x, upper);
+            var b = localCommonTime(gray, width, height, x, lower);
+            if (a == null || b == null || Math.abs(a.left() - b.left()) > gap * .38f
+                    || Math.abs(a.right() - b.right()) > gap * .38f
+                    || MeterChangeDetector.followingMeasure(a, width, height, measures) != i
+                    || MeterChangeDetector.followingMeasure(b, width, height, measures) != i)
+                continue;
+            result.add(new Proof(i, List.of(a, b)));
+        }
+    }
+
+    private static boolean printedHeader(byte[] labels, byte[] gray, int width, int height,
+            int x, StaffFrame staff) {
+        float gap = staff.gap();
+        int left = Math.max(0, Math.round(x - gap * 7.2f));
+        int right = Math.min(width - 1, Math.round(x - gap * 1.6f));
+        int count = 0;
+        for (int y = Math.max(0, staff.top() - Math.round(gap));
+                y <= Math.min(height - 1, staff.bottom() + Math.round(gap)); y++)
+            for (int col = left; col <= right; col++) {
+                int at = y * width + col;
+                if (labels[at] == OmrMeasurePostProcessor.CLEF_OR_KEY && (gray[at] & 255) < 165)
+                    count++;
+            }
+        return count >= gap * gap;
+    }
+
+    private static MeterChangeDetector.Crop localCommonTime(
+            byte[] gray, int width, int height, int x, StaffFrame staff) {
+        float gap = staff.gap();
+        int first = Math.max(0, Math.round(x - gap * .18f));
+        int last = Math.min(width - 1, Math.round(x + gap * 3.10f));
+        int minSpan = Math.round(gap * 1.00f), maxSpan = Math.round(gap * 2.15f);
+        int top = Math.max(0, Math.round(staff.center() - gap * 1.5f));
+        int bottom = Math.min(height, Math.round(staff.center() + gap * 1.5f) + 1);
+        MeterChangeDetector.Crop result = null;
+        int firstProvedLeft = last;
+        for (int left = first; left <= Math.min(last, x + gap * 1.5f); left++) {
+            if (result != null && left - firstProvedLeft > gap * .4f) break;
+            boolean beginsInk = false;
+            for (int y = top; y < bottom; y++)
+                if (!rule(y, staff) && ink(gray, width, left, y)) {
+                    beginsInk = true;
+                    break;
+                }
+            if (!beginsInk) continue;
+            for (int right = left + minSpan; right <= Math.min(last, left + maxSpan); right++) {
+                if (CommonTimeMeter.read(gray, width, height, left, right, staff.top(), gap, 0) != 4
+                        || !completeLeftArc(gray, width, height, left, right, staff)
+                        || !openRightChannel(gray, width, height, left, right, staff)
+                        || !connected(gray, width, left, right, top, bottom - 1, staff))
+                    continue;
+                if (result == null) firstProvedLeft = left;
+                if (result == null || right - left + 1 > result.right() - result.left())
+                    result = new MeterChangeDetector.Crop(
+                            left, top, right + 1, bottom, staff.top(), gap);
+            }
+        }
+        return result;
+    }
+
+    /** A sliced numeric meter and parallel rule ink have no isolated left arc. */
+    private static boolean completeLeftArc(
+            byte[] gray, int width, int height, int left, int right, StaffFrame staff) {
+        float gap = staff.gap(), mid = staff.center();
+        int top = Math.max(0, Math.round(mid - gap * .8f));
+        int bottom = Math.min(height - 1, Math.round(mid + gap * .8f));
+        int from = Math.max(0, Math.round(left - gap * .50f));
+        int arcRight = Math.round(left + (right - left) * .46f);
+        int crossed = 0, upper = 0, lower = 0;
+        for (int y = top; y <= bottom; y++) {
+            if (rule(y, staff)
+                    || longRule(gray, width, y, left - 3.5f * gap, left - 2 * gap)
+                    || longRule(gray, width, y, right + 1.2f * gap, right + 3 * gap)) continue;
+            for (int x = from; x < left; x++)
+                if ((gray[y * width + x] & 255) < 150 && ++crossed > gap * .38f) return false;
+            int pixels = 0;
+            for (int x = left; x <= arcRight; x++)
+                if ((gray[y * width + x] & 255) < 150) pixels++;
+            if (pixels < gap * .20f) continue;
+            if (y < mid) upper++;
+            else lower++;
+        }
+        return upper >= gap * .28f && lower >= gap * .28f;
+    }
+
+    /** Require paper through the mouth and beyond the crop, including the sign's real right tip. */
+    private static boolean openRightChannel(
+            byte[] gray, int width, int height, int left, int right, StaffFrame staff) {
+        float gap = staff.gap(), mid = staff.center();
+        int first = Math.max(0, Math.round(mid - gap * .57f));
+        int last = Math.min(height - 1, Math.round(mid + gap * .57f));
+        int leftHalf = Math.round(left + (right - left) * .55f);
+        int end = Math.min(width - 1, Math.round(right + gap * .42f));
+        int open = 0;
+        int upperRows = 0, upperLeft = 0, upperInk = 0;
+        int lowerRows = 0, lowerLeft = 0, lowerInk = 0;
+        for (int y = first; y <= last; y++) {
+            if (rule(y, staff)
+                    || longRule(gray, width, y, left - 3.5f * gap, left - 2 * gap)
+                    || longRule(gray, width, y, right + 1.2f * gap, right + 3 * gap)) continue;
+            int edge = -1;
+            for (int x = left; x <= leftHalf; x++)
+                if ((gray[y * width + x] & 255) < 150) edge = x;
+            if (edge < 0) continue;
+            int tip = -1, tipInk = 0;
+            for (int x = edge + 1; x <= end; x++) {
+                if ((gray[y * width + x] & 255) >= 150) continue;
+                if (tip < 0) tip = x;
+                tipInk++;
+            }
+            open = tipInk == 0 ? open + 1 : 0;
+            if (open >= Math.max(2, Math.round(gap * .18f))) return true;
+            if (tipInk < 2 || tip - edge < gap * .30f) continue;
+            if (y < mid) {
+                upperRows++;
+                upperLeft += tip;
+                upperInk += tipInk;
+            } else {
+                lowerRows++;
+                lowerLeft += tip;
+                lowerInk += tipInk;
+            }
+        }
+        // Older type curls the upper tip inward. A staff rule can run through the paper
+        // opening, but the much narrower lower tip must sit farther right on clean rows.
+        return upperRows >= 2 && lowerRows >= 2
+                && lowerLeft / (float) lowerRows - upperLeft / (float) upperRows >= gap * .30f
+                && upperInk / (float) upperRows - lowerInk / (float) lowerRows >= gap * .16f;
+    }
+
+    private static boolean longRule(byte[] gray, int width, int y, float from, float to) {
+        int l = Math.round(from), r = Math.round(to);
+        if (l < 0 || r >= width || r <= l) return false;
+        int count = 0;
+        for (int x = l; x <= r; x++) if ((gray[y * width + x] & 255) < 150) count++;
+        return count >= (r - l + 1) * .75f;
     }
 
     /** Remove only head labels owned by those exact printed C crops; retain the original frame. */

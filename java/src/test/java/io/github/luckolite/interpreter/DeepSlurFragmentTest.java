@@ -176,4 +176,28 @@ public final class DeepSlurFragmentTest {
         for (int x = 121; x < 180; x++) d.ink(x, 100);
         assertFalse(d.rejected(true));
     }
+
+    @Test public void staffRuleThroughTwoCurvesCannotCloseAHead() throws Exception {
+        var drawing = new Drawing();
+        for (int x = 65; x <= 130; x++) {
+            double t = (x - 65) / 65d;
+            int rise = (int) Math.round(6 * 4 * t * (1 - t));
+            for (int offset = -1; offset <= 1; offset++) {
+                drawing.ink(x, 141 + rise + offset);
+                drawing.ink(x, 149 + rise + offset);
+            }
+        }
+        for (int x = 0; x < W; x++) drawing.ink(x, 139);
+        Class<?> headType = Class.forName(OmrScoreInterpreter.class.getName() + "$Component");
+        var constructor = headType.getDeclaredConstructor(
+                int.class, int.class, int.class, int.class, int.class, float.class, float.class);
+        constructor.setAccessible(true);
+        Object head = constructor.newInstance(95, 104, 124, 139, 156, 114f, 148f);
+        var prove = OmrScoreInterpreter.class.getDeclaredMethod("rawNestedCurves",
+                byte[].class, int.class, int.class, headType, float.class, boolean.class);
+        prove.setAccessible(true);
+        assertTrue((boolean) prove.invoke(null, drawing.gray, W, H, head, GAP, true));
+        Arrays.fill(drawing.gray, 139 * W, 140 * W, (byte) 255);
+        assertFalse((boolean) prove.invoke(null, drawing.gray, W, H, head, GAP, true));
+    }
 }

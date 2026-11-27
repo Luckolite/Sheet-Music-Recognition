@@ -101,7 +101,9 @@ final class PrintedSlurRecognition {
                             captured,
                             Set.of(),
                             true);
-            captured = supplemented.captured();
+            captured = CompactClosingSlur.append(physicalPage, score, gray, width, height,
+                    staffs, heads, supplemented.unboundOwners(), supplemented.captured(),
+                    Set.of(), true);
             var result =
                     captured.limitReached() || captured.source().candidates().isEmpty() && captured.pageEdges().isEmpty()
                             ? score
@@ -212,7 +214,8 @@ final class PrintedSlurRecognition {
                         captured,
                         ties,
                         false);
-        captured = supplemented.captured();
+        captured = CompactClosingSlur.append(physicalPage, score, gray, width, height,
+                staffs, heads, supplemented.unboundOwners(), supplemented.captured(), ties, false);
         var result = recoverDynamicContact(score, captured.source(), physicalPage, gray,
                 width, height, prepared.frames());
         return new Result(

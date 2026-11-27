@@ -15,12 +15,17 @@ final class PrintedDashChains {
     }
 
     static List<Run> detect(byte[] gray, int width, int height, float gap) {
+        return detect(gray, width, height, gap, false);
+    }
+
+    static List<Run> detect(byte[] gray, int width, int height, float gap, boolean roundThickness) {
         if (gray == null
                 || width < 1
                 || height < 1
                 || (long) width * height != gray.length
                 || !Float.isFinite(gap)
                 || gap < 4) return List.of();
+        double thickness = roundThickness ? Math.ceil(gap * .2f) : gap * .2f;
         var marks = new ArrayList<Mark>();
         boolean[] seen = new boolean[gray.length];
         int[] queue = new int[gray.length];
@@ -50,7 +55,7 @@ final class PrintedDashChains {
             int w = right - left + 1, h = bottom - top + 1;
             if (w >= 2
                     && w <= gap * 1.4f
-                    && h <= Math.max(3, gap * .2f)
+                    && h <= Math.max(3, thickness)
                     && w >= 2 * h
                     && count >= w * .65f) marks.add(new Mark(left, right, top, bottom));
         }

@@ -90,4 +90,52 @@ public class WaveGlissDetectorTest {
                         gray, W, H, List.of(new NoteSlideDetector.Staff(98, 162, 16)), HEADS));
         assertArrayEquals(original, gray);
     }
+
+    @Test public void ribbonInteriorOwnsAnAliasedHeadOnlyWhileItsOscillationSurvives() {
+        assertTrue(interiorHead(false, false));
+        assertFalse(interiorHead(true, false));
+        assertFalse(interiorHead(false, true));
+    }
+
+    private static boolean interiorHead(boolean straight, boolean independentOval) {
+        byte[] labels = new byte[W * H], gray = new byte[W * H];
+        Arrays.fill(gray, (byte) 255);
+        for (int x = 79; x <= 245; x++) {
+            double wave = straight ? 0 : 2.4 * Math.sin((x - 79) * Math.PI / 6);
+            int center = (int) Math.round(128 - (x - 79) * .09 + wave);
+            for (int y = center - 1; y <= center + 1; y++) {
+                gray[y * W + x] = 0;
+                labels[y * W + x] = x >= 153 && x <= 173
+                        ? OmrMeasurePostProcessor.NOTEHEAD : OmrMeasurePostProcessor.SYMBOL;
+            }
+        }
+        if (independentOval) {
+            for (int y = 109; y <= 131; y++)
+                for (int x = 153; x <= 173; x++)
+                    if (Math.hypot((x - 163) / 9d, (y - 121) / 8d) <= 1) {
+                        gray[y * W + x] = 0;
+                        labels[y * W + x] = OmrMeasurePostProcessor.NOTEHEAD;
+                    }
+        }
+        int area = 0;
+        for (int y = 109; y <= 132; y++)
+            for (int x = 153; x <= 173; x++)
+                if (labels[y * W + x] == OmrMeasurePostProcessor.NOTEHEAD) area++;
+        return WaveGlissDetector.ownsInterior(labels, gray, W, H, 153, 109, 173, 132, area, 16);
+    }
+
+    @Test public void aProvedWaveCanJoinOnlyAdjacentBarsOnTheSameStaff() {
+        var source = HEADS.get(0);
+        var target = new NoteSlideDetector.Head(220, 190, 16, 0, 1);
+        var intervening = new NoteSlideDetector.Head(185, 166, 16, 0, 1);
+        var anotherBar = new NoteSlideDetector.Head(220, 190, 16, 0, 2);
+        assertEquals(List.of(new WaveGlissDetector.Link(0, 1)),
+                WaveGlissDetector.detect(ribbon(0), W, H, List.of(), List.of(source, target)));
+        assertTrue(WaveGlissDetector.detect(ribbon(0), W, H, List.of(),
+                List.of(source, target, intervening)).isEmpty());
+        assertTrue(WaveGlissDetector.detect(ribbon(0), W, H, List.of(),
+                List.of(source, anotherBar)).isEmpty());
+        assertTrue(WaveGlissDetector.detect(ribbon(1), W, H, List.of(),
+                List.of(source, target)).isEmpty());
+    }
 }

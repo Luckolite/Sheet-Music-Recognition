@@ -32,7 +32,7 @@ final class PrintedDashSpan {
             WordBox word,
             float gapX,
             float gapY) {
-        return follow(runs, systems, word, gapX, gapY, run -> owner(run, systems, gapY), -1);
+        return follow(runs, systems, word, gapX, gapY, run -> owner(run, systems, gapY), -1, 1);
     }
 
     /** A word's independently anchored row can prove its side of complete printed staffs. */
@@ -58,7 +58,24 @@ final class PrintedDashSpan {
                 gapX,
                 gapY,
                 run -> ownerOnSide(run, systems, printed, gapY, side),
-                firstRow);
+                firstRow, 1);
+    }
+
+    static Optional<Span> followAboveGrandStaff(
+            List<PrintedDashChains.Run> runs, List<SystemBand> systems, WordBox word,
+            float gapX, float gapY, List<Float> upperStaffTops, int firstRow) {
+        if (firstRow < 0 || firstRow >= upperStaffTops.size()
+                || word.bottom() >= upperStaffTops.get(firstRow)) return Optional.empty();
+        return follow(runs, systems, word, gapX, gapY, run -> {
+            int owner = -1;
+            for (int row = 0; row < upperStaffTops.size(); row++) {
+                float top = upperStaffTops.get(row);
+                if (run.y() >= top || run.y() < top - gapY * 4.25f) continue;
+                if (owner >= 0) return -1;
+                owner = row;
+            }
+            return owner;
+        }, firstRow, 1.4f).filter(span -> span.end() == End.CLOSED);
     }
 
     private static Optional<Span> follow(
@@ -68,7 +85,7 @@ final class PrintedDashSpan {
             float gapX,
             float gapY,
             java.util.function.ToIntFunction<PrintedDashChains.Run> resolveOwner,
-            int expectedFirst) {
+            int expectedFirst, float trailingGaps) {
         if (word == null
                 || !Float.isFinite(gapX)
                 || !Float.isFinite(gapY)
@@ -103,7 +120,7 @@ final class PrintedDashSpan {
                     system.lastColumn() >= system.left() && system.lastColumn() <= system.right()
                             ? system.lastColumn()
                             : system.right();
-            if (last.right() < edge - gapX)
+            if (last.right() < edge - gapX * trailingGaps)
                 return Optional.of(new Span(firstSystem, row, path, End.CLOSED));
             if (row + 1 == systems.size())
                 return Optional.of(new Span(firstSystem, row, path, End.PAGE_EDGE));

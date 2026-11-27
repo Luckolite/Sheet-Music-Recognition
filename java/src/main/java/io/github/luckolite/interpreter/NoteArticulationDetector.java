@@ -149,6 +149,18 @@ final class NoteArticulationDetector {
             List<Anchor> notes,
             List<ScoreNoteEvent> events,
             List<PlayingTechniqueDetector.Staff> staffs) {
+        return bowMarks(labels,gray,width,height,notes,events,staffs,List.of());
+    }
+
+    static List<BowMark> bowMarks(
+            byte[] labels,
+            byte[] gray,
+            int width,
+            int height,
+            List<Anchor> notes,
+            List<ScoreNoteEvent> events,
+            List<PlayingTechniqueDetector.Staff> staffs,
+            List<PlayingTechniqueDetector.Word> words) {
         long area = (long) width * height;
         if (width <= 0
                 || height <= 0
@@ -216,8 +228,10 @@ final class NoteArticulationDetector {
                 lowerAnchors.add(i);
         }
         var lowerDyads = lowerBowDyads(notes, events, staffs);
+        var prose = words.stream().filter(NoteArticulationDetector::isProseLine).toList();
         List<BowMark> result = new ArrayList<>();
         for (Glyph g : glyphs) {
+            if (insideProse(g,prose,width,height)) continue;
             int owner = -1, geometryCount = 0;
             boolean ambiguous = false;
             boolean strokeMeasured = false;
@@ -563,6 +577,31 @@ final class NoteArticulationDetector {
     }
 
     /** An inverted square bow beneath an isolated low attack opens away from the staff. */
+    private static boolean isProseLine(PlayingTechniqueDetector.Word word) {
+        if (word.text() == null || word.text().length() < 13) return false;
+        var pieces = PROSE_WORD.matcher(word.text());
+        int words = 0, longWords = 0;
+        while (pieces.find()) {
+            words++;
+            if (pieces.group().length() >= 3) longWords++;
+        }
+        return words >= 3 && longWords >= 3;
+    }
+
+    private static boolean insideProse(Glyph glyph,List<PlayingTechniqueDetector.Word> prose,int width,int height) {
+        for (var word : prose) {
+            float top = word.top()*height, bottom = word.bottom()*height;
+            float lineHeight = bottom-top;
+            if (lineHeight < 8 || lineHeight > 90 || glyph.bottom-glyph.top > lineHeight*.91f) continue;
+            if (glyph.left >= word.left()*width+1 && glyph.right <= word.right()*width-1
+                    && glyph.top >= top+1 && glyph.bottom <= bottom-1) return true;
+        }
+        return false;
+    }
+
+    private static final java.util.regex.Pattern PROSE_WORD =
+            java.util.regex.Pattern.compile("[\\p{L}][\\p{L}'’]+");
+
     private static int invertedLowerBowOwner(Glyph glyph, int width, List<Anchor> notes,
             List<ScoreNoteEvent> events, List<Integer> lowerAnchors) {
         int found = -1;
@@ -2527,11 +2566,13 @@ final class NoteArticulationDetector {
                     if (pass == 0 && acceptedCaretBodies != null) acceptedCaretBodies.add(glyph);
                     compoundClaims.claim(glyph, best, mark);
                     Anchor owner = notes.get(best);
-                    // One mark on a chord affects that chord, never another staff or another onset.
                     for (int n = 0; n < notes.size(); n++) {
                         Anchor note = notes.get(n);
                         if (note.staff == owner.staff
-                                && Math.abs(note.x - owner.x) < owner.gap * .45f) {
+                                && Math.abs(note.x - owner.x) < owner.gap * .45f
+                                && (mark != NoteArticulation.STACCATO
+                                        || !outwardDotOnIndependentVoice(owner, note, glyph.y(),
+                                                annotationGray == null ? gray : annotationGray, width, height))) {
                             result[n] |= mark;
                             compoundClaims.assignment(n, mark);
                         }
@@ -2599,6 +2640,18 @@ final class NoteArticulationDetector {
             return legacyResult;
         }
         return result;
+    }
+
+    /** An outside dot belongs to its own stem when the other head has an opposing shaft. */
+    private static boolean outwardDotOnIndependentVoice(
+            Anchor owner, Anchor neighbor, float dotY, byte[] gray, int width, int height) {
+        float separation = neighbor.y - owner.y;
+        if (Math.abs(separation) < owner.gap * .65f || (dotY - owner.y) * separation >= 0)
+            return false;
+        int awayFromNeighbor = separation > 0 ? 1 : -1;
+        return PrintedStemDirection.detect(gray, width, height, owner.x, owner.y, owner.gap) == awayFromNeighbor
+                && PrintedStemDirection.detect(gray, width, height, neighbor.x, neighbor.y, neighbor.gap)
+                        == -awayFromNeighbor;
     }
 
     /** Optional bookkeeping records actual accepted bodies without changing any legacy claims. */

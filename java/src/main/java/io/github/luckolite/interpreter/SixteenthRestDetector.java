@@ -170,6 +170,7 @@ final class SixteenthRestDetector {
                         counter);
         Detection complete =
                 RawBeamedTwoBulbRests.add(current, gray, width, height, measures, staffs, notes);
+        complete = RawBeamedTwoBulbRests.addDottedNoteRests(complete, gray, width, height, measures, staffs, notes);
         Detection legacy =
                 recovery == null
                         ? complete
@@ -3498,7 +3499,7 @@ final class SixteenthRestDetector {
                 && ForteRestGuard.owns(gray, width, height, left, right, minY, maxY, gap)) return;
         if (eighth
                 && deepLowered
-                && eighthRestLetterRow(gray, width, height, left, right, minY, maxY, gap)) return;
+                && eighthRestLetterRow(gray, width, height, left, right, minY, maxY, gap, false)) return;
         float centerX = (left + right) * .5f / width;
         float centerY = (minY + maxY) * .5f / height;
         {
@@ -3705,6 +3706,19 @@ final class SixteenthRestDetector {
                                 // rejecting note fragments unless the whole rest is clear of its
                                 // head.
                                 float noteY = note.pageY() * height;
+                                float restColumnOffset = noteX - (left + right) * .5f;
+                                if (farRaised && eighth && !sixteenth && !thirtySecond && !quarter && !half && !whole
+                                        && note.kind() == ScoreNoteEvent.Kind.PITCHED
+                                        && note.visualSize() == ScoreNoteEvent.VisualSize.FULL
+                                        && note.unbeamedDurationBeats() == 2 && note.beamCount() == 0
+                                        && noteY - maxY > gap * 2.5f
+                                        && (Math.abs(restColumnOffset) <= gap * .25f
+                                            && DetachedAnnotationInk.downBowRest(
+                                                    gray, width, height, left, minY, right, maxY, gap)
+                                            || restColumnOffset > gap * .25f
+                                                    && restColumnOffset <= gap * 1.1f
+                                                    && raisedEighthRestInitial(
+                                                            gray, width, height, left, right, minY, maxY, gap))) return;
                                 boolean independentMovingVoice =
                                         !ordinary
                                                         && (lowered
@@ -3837,18 +3851,32 @@ final class SixteenthRestDetector {
                                         staff.count(),
                                         duration)
                                 : null);
-                if (edgeFallback
-                        && result.stream()
-                                .anyMatch(
-                                        r ->
-                                                r.measureIndex() == rest.measureIndex()
-                                                        && r.staffIndex() == rest.staffIndex()
-                                                        && r.staffCount() == rest.staffCount()
-                                                        && Math.abs(
-                                                                        r.positionInMeasure()
-                                                                                - rest
-                                                                                        .positionInMeasure())
-                                                                < .018f)) return;
+                ScoreRestEvent previousEdgeRest = null;
+                if (edgeFallback) {
+                    for (var candidate : result) {
+                        if (candidate.measureIndex() != rest.measureIndex()
+                                || candidate.staffIndex() != rest.staffIndex()
+                                || candidate.staffCount() != rest.staffCount()
+                                || Math.abs(candidate.positionInMeasure() - rest.positionInMeasure()) >= .018f)
+                            continue;
+                        if (previousEdgeRest != null) return;
+                        previousEdgeRest = candidate;
+                    }
+                    if (previousEdgeRest != null) {
+                        if (quarterBudget != null || !ordinary) return;
+                        if (finiteProposal == null)
+                            finiteProposal = new RestFigureOrigins.ProposalOrigin(
+                                    gray, ownershipGray, width, height, top, bottom,
+                                    line, left, right, firstInk, fullBottom);
+                        if (!finiteProposal.direct
+                                || !quarterOwnsRuleEdgeCrop(rest, previousEdgeRest, height,
+                                        (region.right() - region.left()) * width, gap,
+                                        staff.bottom(), top, line)) return;
+                        result.remove(previousEdgeRest);
+                        ScoreRestEvent removed = previousEdgeRest;
+                        restDots.removeIf(dot -> dot.rest().equals(removed));
+                    }
+                }
                 if (counter != null) {
                     if (finiteProposal == null) {
                         finiteProposal = new RestFigureOrigins.ProposalOrigin(
@@ -3904,6 +3932,26 @@ final class SixteenthRestDetector {
                 return;
             }
         }
+    }
+
+    /** A complete quarter may disown an overlapping crop that stops on the lower staff rule. */
+    static boolean quarterOwnsRuleEdgeCrop(ScoreRestEvent quarter, ScoreRestEvent crop,
+            int height, float barWidth, float gap, float staffBottom, int top, boolean[] rules) {
+        if (quarter.durationBeats() != 1 || crop.durationBeats() != .25
+                || Math.abs(quarter.positionInMeasure() - crop.positionInMeasure()) * barWidth > gap * .18f)
+            return false;
+        float quarterTop = (quarter.pageY() - quarter.pageHeight() * .5f) * height;
+        float quarterBottom = (quarter.pageY() + quarter.pageHeight() * .5f) * height;
+        float cropTop = (crop.pageY() - crop.pageHeight() * .5f) * height;
+        float cropBottom = (crop.pageY() + crop.pageHeight() * .5f) * height;
+        float raised = cropTop - quarterTop, dropped = cropBottom - quarterBottom;
+        if (quarterBottom - cropTop < gap * 2.1f || raised < gap * .30f || raised > gap * .78f
+                || dropped < gap * .35f || dropped > gap * .85f
+                || Math.abs(cropBottom - staffBottom) > gap * .19f) return false;
+        int near = Math.round(cropBottom - .5f) - top;
+        for (int row = Math.max(0, near - 2); row <= Math.min(rules.length - 1, near + 1); row++)
+            if (rules[row]) return true;
+        return false;
     }
 
     /** Both accidental shafts must coexist on the same independently visible rows. */
@@ -4330,6 +4378,45 @@ final class SixteenthRestDetector {
      * An italic descender can resemble a lowered eighth rest. Three separately bounded outline
      * letters with a shared baseline establish the text row.
      */
+    /** A looped text initial leads at least three closely spaced lowercase letter bodies. */
+    static boolean raisedEighthRestInitial(byte[] gray, int width, int height,
+            int left, int right, int minY, int maxY, float gap) {
+        int glyphWidth = right - left + 1, glyphHeight = maxY - minY + 1;
+        if (glyphWidth < .8f * gap || glyphWidth > 1.4f * gap
+                || glyphHeight < 1.1f * gap || glyphHeight > 1.65f * gap) return false;
+        // The same upper-bowl pocket must be bounded both ways across several rows.
+        int threshold = 155, middleX = left + glyphWidth * 5 / 8;
+        int lastY = minY + glyphHeight / 2;
+        int pocketRows = 0, upperInk = 0, lowerInk = 0;
+        for (int y = minY; y <= lastY; y++) {
+            boolean ink = (gray[y * width + middleX] & 255) < threshold;
+            if (ink && pocketRows == 0) upperInk++;
+            else if (ink) lowerInk++;
+            else if (upperInk >= 2 && lowerInk == 0) {
+                int l = middleX, r = middleX;
+                while (l > left && (gray[y * width + l - 1] & 255) >= threshold) l--;
+                while (r < right && (gray[y * width + r + 1] & 255) >= threshold) r++;
+                if (l <= left || r >= right || r - l + 1 < gap * .16f) continue;
+                pocketRows++;
+            }
+        }
+        if (pocketRows < gap * .18f || lowerInk < 2) return false;
+        // An ordinary rest's diagonal occupies this lower-right corridor; a P-like
+        // initial leaves it clear and visibly continues to the left-hand baseline.
+        int footRows = 0, interiorRight = right - Math.max(1, Math.round(gap * .14f));
+        for (int y = minY + glyphHeight * 2 / 3; y <= maxY; y++) {
+            boolean stem = false;
+            for (int x = left; x <= interiorRight; x++) {
+                if ((gray[y * width + x] & 255) >= threshold) continue;
+                if (x >= middleX) return false;
+                stem = true;
+            }
+            if (stem) footRows++;
+        }
+        return footRows >= gap * .3f
+                && eighthRestLetterRow(gray, width, height, left, right, minY, maxY, gap, true);
+    }
+
     private static boolean eighthRestLetterRow(
             byte[] gray,
             int width,
@@ -4338,17 +4425,19 @@ final class SixteenthRestDetector {
             int right,
             int minY,
             int maxY,
-            float gap) {
+            float gap,
+            boolean raisedWord) {
         int x0 = Math.max(0, Math.round(left - gap * 5)),
                 x1 = Math.min(width - 1, Math.round(right + gap * 5));
         int y0 = Math.max(0, Math.round(minY - gap * .55f)),
-                y1 = Math.min(height - 1, Math.round(maxY + gap * .15f));
+                y1 = Math.min(height - 1, Math.round(maxY + gap * (raisedWord ? .62f : .15f)));
         int w = x1 - x0 + 1, h = y1 - y0 + 1;
+        int threshold = raisedWord ? 155 : 170;
         boolean[] seen = new boolean[w * h];
         int[] queue = new int[w * h];
         List<int[]> letters = new ArrayList<>();
         for (int origin = 0; origin < seen.length; origin++) {
-            if (seen[origin] || (gray[(y0 + origin / w) * width + x0 + origin % w] & 255) >= 170)
+            if (seen[origin] || (gray[(y0 + origin / w) * width + x0 + origin % w] & 255) >= threshold)
                 continue;
             int take = 0, size = 1, area = 0, a = x1, b = x0, c = y1, d = y0;
             queue[0] = origin;
@@ -4365,7 +4454,7 @@ final class SixteenthRestDetector {
                         int xx = x + dx, yy = y + dy;
                         if (xx < x0 || xx > x1 || yy < y0 || yy > y1) continue;
                         int next = (yy - y0) * w + xx - x0;
-                        if (!seen[next] && (gray[yy * width + xx] & 255) < 170) {
+                        if (!seen[next] && (gray[yy * width + xx] & 255) < threshold) {
                             seen[next] = true;
                             queue[size++] = next;
                         }
@@ -4376,16 +4465,31 @@ final class SixteenthRestDetector {
                     || b == x1
                     || c == y0
                     || d == y1
-                    || a <= right && b >= left
+                    || (raisedWord ? a < right : a <= right && b >= left)
                     || glyphWidth < gap * .35f
                     || glyphWidth > gap * 1.4f
                     || glyphHeight < gap * .65f
                     || glyphHeight > gap * 1.65f
-                    || Math.abs(c - minY) > gap * .4f
-                    || d > maxY - gap * .25f
+                    || (raisedWord
+                            ? Math.abs(c - minY) > gap * .6f
+                                    || d < maxY - gap * .12f || d > maxY + gap * .52f
+                            : Math.abs(c - minY) > gap * .4f || d > maxY - gap * .25f)
                     || area < gap * gap * .10f
                     || area > glyphWidth * glyphHeight * .72f) continue;
             letters.add(new int[] {a, b, d});
+        }
+        if (raisedWord) {
+            letters.sort(java.util.Comparator.comparingInt(glyph -> glyph[0]));
+            int count = 0, cursor = right;
+            for (int[] glyph : letters) {
+                if (glyph[0] > cursor + gap * .42f) break;
+                if (glyph[0] < cursor - gap * .18f) continue;
+                if (count < 2 && Math.abs(glyph[2] - maxY) > gap * .12f) continue;
+                cursor = glyph[1];
+                count++;
+                if (count >= 3 && cursor - left >= 3 * gap) return true;
+            }
+            return false;
         }
         for (int[] seed : letters) {
             int count = 0, first = right, last = left;

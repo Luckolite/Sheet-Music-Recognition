@@ -175,6 +175,9 @@ public final class TablatureDecoder {
                                         old.tuning));
                     }
                 }
+        if (found.isEmpty()) return List.of();
+        var notationStaves = RawStaffLineDetector.detect(gray, w, h);
+        found.removeIf(candidate -> isNotationRailAlias(candidate, notationStaves));
         found.sort(Comparator.comparingDouble(Staff::top));
         var result = new ArrayList<Staff>();
         for (var staff : found) {
@@ -197,6 +200,23 @@ public final class TablatureDecoder {
                             staff.tuning));
         }
         return List.copyOf(result);
+    }
+
+    /** A half-spaced proposal inside five wider rules cannot replace the printed note staff. */
+    private static boolean isNotationRailAlias(
+            Staff proposal, List<RawStaffLineDetector.StaffLines> notation) {
+        float tolerance = proposal.gap() * .3f;
+        for (var staff : notation) {
+            if (Math.abs(staff.gap() - 2 * proposal.gap()) > tolerance
+                    || proposal.top() < staff.top() - tolerance
+                    || proposal.bottom() > staff.bottom() + tolerance) continue;
+            int outerRules = 0;
+            for (int row : staff.rows())
+                if (row < proposal.top() - tolerance || row > proposal.bottom() + tolerance)
+                    outerRules++;
+            if (outerRules >= 2) return true;
+        }
+        return false;
     }
 
     private static int[][] countRowProjections(byte[] gray, int w, int h) {
@@ -368,6 +388,37 @@ public final class TablatureDecoder {
             minRight = Math.min(minRight, right);
             maxRight = Math.max(maxRight, right);
         }
+        return maxLeft - minLeft <= gap * .7f && maxRight - minRight <= gap * .7f
+                || sameRailExtents(gray, w, threshold, lines, first, strings, gap);
+    }
+
+    private static boolean sameRailExtents(byte[] gray, int width, int threshold,
+            List<Integer> lines, int first, int count, float gap) {
+        int minLeft = width, maxLeft = 0, minRight = width, maxRight = 0;
+        int bridge = Math.round(gap * 1.8f);
+        for (int n = 0; n < count; n++) {
+            int row = lines.get(first + n) * width;
+            int left = -1, previous = -1, support = 0;
+            int bestLeft = -1, bestRight = -1, bestSupport = 0;
+            for (int x = 0; x < width; x++) {
+                if ((gray[row + x] & 255) >= threshold) continue;
+                if (previous < 0 || x - previous > bridge) {
+                    left = x;
+                    support = 0;
+                }
+                previous = x;
+                if (++support > bestSupport) {
+                    bestLeft = left;
+                    bestRight = x;
+                    bestSupport = support;
+                }
+            }
+            if (bestSupport < gap * 8) return false;
+            minLeft = Math.min(minLeft, bestLeft);
+            maxLeft = Math.max(maxLeft, bestLeft);
+            minRight = Math.min(minRight, bestRight);
+            maxRight = Math.max(maxRight, bestRight);
+        }
         return maxLeft - minLeft <= gap * .7f && maxRight - minRight <= gap * .7f;
     }
 
@@ -388,8 +439,23 @@ public final class TablatureDecoder {
     }
 
     /** OCR boxes are normalized page coordinates. Unknown glyphs never become open strings. */
+    /** Page OCR can collapse a long run of dashes and frets to one numeral. */
+    private static boolean collapsedFretWord(Staff staff, Word word, int width, int height) {
+        float y = (word.top + word.bottom) * .5f * height;
+        return staff.standardTop < 0
+                && staff.bars.isEmpty()
+                && y >= staff.top - staff.gap * .47f
+                && y <= staff.bottom() + staff.gap * .47f
+                && (word.right - word.left) * width > staff.gap * 2.25f
+                && word.text.strip().matches("[0-9]{1,2}|[xX]");
+    }
+
     public static List<Staff> withWords(List<Staff> staffs, List<Word> words, int w, int h) {
         if (staffs.isEmpty()) return List.of();
+        // Remove a collapsed row read before overlapping words are deduplicated.
+        words = words.stream()
+                .filter(word -> staffs.stream().noneMatch(staff -> collapsedFretWord(staff, word, w, h)))
+                .toList();
         words = TabTextSource.joinDigits(staffs, words, w, h);
         var result = new ArrayList<Staff>();
         for (Staff staff : staffs) {
@@ -411,6 +477,10 @@ public final class TablatureDecoder {
                         || string >= staff.stringCount
                         || Math.abs(y - staff.top - string * staff.gap) > staff.gap * .47f)
                     continue;
+                // Digits printed above the first rule can label measures even when OCR touches the rail.
+                if (string == 0 && y < staff.top - staff.gap * .33f
+                        && word.bottom * h <= staff.top + staff.gap * .08f
+                        && word.text.matches("[0-9]{1,2}")) continue;
                 for (var f :
                         TabNotation.parse(
                                 word.text,
@@ -788,9 +858,15 @@ public final class TablatureDecoder {
                                     || Math.abs(n.positionInMeasure() - position) >= tolerance)
                                 continue;
 
+                            var mute = n;
+                            if ((fret.marks & TabFretRaster.VERIFIED_PAIRED_MUTE) != 0) {
+                                // A recovered mute can't inherit a pitch-only octave shift.
+                                mute = mute.withOctaveShift(0);
+                                if (fret.beams == 1) mute = mute.withBeamAndStem(1, n.stemDirection());
+                            }
                             notes.set(
                                     i,
-                                    n.withKind(ScoreNoteEvent.Kind.UNPITCHED)
+                                    mute.withKind(ScoreNoteEvent.Kind.UNPITCHED)
                                             .withArticulations(
                                                     (n.articulations() & ~TabEffect.ALL)
                                                             | TabEffect.encode(TabEffect.DEAD, 0)));
@@ -878,7 +954,7 @@ public final class TablatureDecoder {
         return false;
     }
 
-    private static int[] tabTuning(Staff staff, int[] supplied) {
+    static int[] tabTuning(Staff staff, int[] supplied) {
         if (supplied != null) {
             if (supplied.length != staff.stringCount)
                 throw new IllegalArgumentException("Tuning/string count mismatch");
@@ -926,7 +1002,7 @@ public final class TablatureDecoder {
                 .withVisualSize(n.visualSize());
     }
 
-    private static int printedMidi(ScoreNoteEvent n, ScorePageInterpretation score) {
+    static int printedMidi(ScoreNoteEvent n, ScorePageInterpretation score) {
 
         if (n.kind() != ScoreNoteEvent.Kind.PITCHED)
             throw new IllegalStateException("Unpitched note has no MIDI pitch");

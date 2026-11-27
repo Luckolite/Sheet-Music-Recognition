@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 import xml.etree.ElementTree as E
+from sheet_music_recognition.midi import performance_events
 from sheet_music_recognition.musicxml import write_musicxml
 from sheet_music_recognition import cue_caption
 
@@ -78,5 +79,36 @@ class VisualSizeExportTests(unittest.TestCase):
     def test_generic_word_evidence_is_not_typed_cue_evidence(self):
         d=document();e=caption(d,0,'Guitar');self.assertTrue(cue_caption.owns(e))
         e['evidence'][0]['sourceId']='printed-expression-word';self.assertFalse(cue_caption.owns(e))
+
+
+    def test_proved_opening_cue_is_silent_while_entry_keeps_its_beat(self):
+        owner = dict(staffIndex=0, staffCount=1)
+        score_notes = [dict(owner, measureIndex=m, visualSize='CUE' if m < 2 else 'FULL',
+                            articulations=0) for m in range(3)]
+        events = [dict(owner, measureIndex=m, sourceNoteIndex=m, midi=p, startBeat=beat,
+                       durationBeats=duration, tiedFromPrevious=tied)
+                  for m, p, beat, duration, tied in ((0,60,0,4,False),(1,60,4,4,True),(2,64,9,1,False))]
+        source = cue_caption.OPENING_RANGE
+        mark = dict(eventId=source+':0:2', kind='UNRESOLVED_DIRECTION', scope='UNRESOLVED',
+                    staffIndex=0, staffCount=1, start=dict(measureIndex=0, quarterBeatOffset=0),
+                    end=dict(measureIndex=2, quarterBeatOffset=0), strength='UNSPECIFIED',
+                    evidence=[dict(owner, sourceId=source, pageIndex=0, visualX=x, printedText=text)
+                              for x, text in ((.15,'Guitar'),(.85,'Play'))])
+        score = dict(notes=score_notes, tempoChanges=[], expressiveEvents=[mark])
+        doc = dict(pages=[dict(events=events, measureBeats=[4.,4.,4.], totalBeats=12., score=score)])
+        saved = copy.deepcopy(doc)
+
+        def onsets():
+            _, messages, end = performance_events(doc)
+            self.assertEqual(5760, end)
+            return [(tick, msg[1]) for tick, _, msg in messages if msg[0] & 0xf0 == 0x90 and msg[2]]
+
+        self.assertEqual([(4320,64)], onsets())
+        self.assertEqual(saved, doc)
+        score_notes[1]['visualSize'] = 'FULL'
+        self.assertEqual([(0,60),(4320,64)], onsets())
+        score_notes[1]['visualSize'] = 'CUE'
+        score['expressiveEvents'] = []
+        self.assertEqual([(0,60),(4320,64)], onsets())
 
 if __name__=='__main__':unittest.main()

@@ -52,4 +52,67 @@ public final class OpeningConnectorMeasureTest {
         }
         return OmrMeasurePostProcessor.process(labels, gray, WIDTH, HEIGHT).size();
     }
+
+    @Test
+    public void openingConnectorOutsideInsetHeadersNeedsMatchingBarsAndPrintedContact() throws Exception {
+        assertEquals(true, joinedAcrossInset(true, true, true));
+        assertEquals(false, joinedAcrossInset(true, false, true));
+        assertEquals(false, joinedAcrossInset(true, true, false));
+        assertEquals(false, joinedAcrossInset(false, true, true));
+    }
+
+    @Test
+    public void aLongActualConnectorCanBridgeAlignedEnsembleStaves() throws Exception {
+        assertEquals(true, joinedAcrossInset(true, true, true, true));
+        assertEquals(false, joinedAcrossInset(false, true, true, true));
+        assertEquals(false, joinedAcrossInset(true, false, true, true));
+    }
+
+    private static boolean joinedAcrossInset(boolean connector, boolean sharesBars, boolean contact)
+            throws Exception {
+        return joinedAcrossInset(connector, sharesBars, contact, false);
+    }
+
+    private static boolean joinedAcrossInset(
+            boolean connector, boolean sharesBars, boolean contact, boolean wide)
+            throws Exception {
+        int width = 600, height = wide ? 490 : 390, gap = 16;
+        int top = 64, lowerTop = wide ? 400 : 224, reportedLeft = 85, opening = 48, end = 537;
+        byte[] gray = new byte[width * height];
+        Arrays.fill(gray, (byte) 255);
+        for (int y0 : new int[] {top, lowerTop}) {
+            for (int line = 0; line < 5; line++) {
+                int row = (y0 + line * gap) * width;
+                Arrays.fill(gray, row + (contact ? opening : reportedLeft), row + end + 1, (byte) 0);
+            }
+            for (int x : new int[] {reportedLeft, 201, 311, 423, end})
+                for (int y = y0; y <= y0 + 4 * gap; y++) gray[y * width + x] = 0;
+        }
+        if (connector)
+            for (int y = top; y <= lowerTop + 4 * gap; y++) gray[y * width + opening] = 0;
+        Class<?> processor = OmrMeasurePostProcessor.class;
+        Class<?> staff = Class.forName(processor.getName() + "$StaffRun");
+        Class<?> system = Class.forName(processor.getName() + "$SystemRun");
+        var staffCtor = staff.getDeclaredConstructor(
+                int.class, int.class, float.class, int.class, int.class, java.util.List.class, float.class);
+        staffCtor.setAccessible(true);
+        var upper = staffCtor.newInstance(top, top + 4 * gap, (float) gap, reportedLeft, end,
+                java.util.List.of(reportedLeft, 201, 311, 423, end), 0f);
+        var lower = staffCtor.newInstance(lowerTop, lowerTop + 4 * gap, (float) gap, reportedLeft, end,
+                java.util.List.of(reportedLeft, sharesBars ? 201 : 240, 311, 423, end), 0f);
+        if (wide) {
+            var merge = processor.getDeclaredMethod("mergeAlignedStaffs",
+                    java.util.List.class, byte[].class, byte[].class, int.class, int.class);
+            merge.setAccessible(true);
+            return ((java.util.List<?>) merge.invoke(
+                    null, java.util.List.of(upper, lower), null, gray, width, height)).size() == 1;
+        }
+        var systemCtor = system.getDeclaredConstructor(staff);
+        systemCtor.setAccessible(true);
+        var check = processor.getDeclaredMethod("connectedByVerticalRule",
+                byte[].class, int.class, int.class, system, staff, float.class, boolean.class);
+        check.setAccessible(true);
+        return (boolean) check.invoke(null, gray, width, height,
+                systemCtor.newInstance(upper), lower, (float) gap, false);
+    }
 }

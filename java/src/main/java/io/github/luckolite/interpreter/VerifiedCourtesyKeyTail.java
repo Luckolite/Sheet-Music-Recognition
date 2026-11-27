@@ -26,9 +26,17 @@ final class VerifiedCourtesyKeyTail {
             var r = s.measures().get(cut);
             var prev = s.measures().get(cut - 1);
             var next = s.measures().get(cut + 1);
-            if (Math.abs(r.top() - prev.top()) > (r.bottom() - r.top()) * .25f
-                    || next.top() <= r.bottom()
-                    || r.left() <= prev.left()) continue;
+            float rowTolerance = (r.bottom() - r.top()) * .25f;
+            if (Math.abs(r.top() - prev.top()) > rowTolerance || r.left() <= prev.left())
+                continue;
+            boolean beforeRepeat =
+                    Math.abs(r.top() - next.top()) <= rowTolerance
+                            && r.cadenceQuarterBeats() == 0
+                            && prev.right() <= r.left()
+                            && next.left() >= r.right()
+                            && next.left() - r.right() <= r.right() - r.left()
+                            && printedRepeatOpening(s, cut + 1);
+            if (!beforeRepeat && next.top() <= r.bottom()) continue;
             // A conflicting signature at the receiving bar is not proven to be this courtesy.
             var keys = s.keyChanges();
             boolean conflict = false;
@@ -43,19 +51,33 @@ final class VerifiedCourtesyKeyTail {
                 float cy = (staff.top() + staff.bottom()) * .5f / height;
                 if (cy < r.top() || cy > r.bottom()) continue;
                 owners++;
-                if (CourtesyKeyTailInk.matches(
-                        labels,
-                        gray,
-                        width,
-                        height,
-                        Math.round(r.left() * width),
-                        Math.round(r.right() * width),
-                        Math.round(staff.top()),
-                        staff.gap())) verified++;
+                int left = Math.round(r.left() * width), right = Math.round(r.right() * width);
+                int top = Math.round(staff.top());
+                if (beforeRepeat
+                        ? CourtesyKeyTailInk.matchesBeforeRepeat(
+                                labels, gray, width, height, left, right, top, staff.gap())
+                        : CourtesyKeyTailInk.matches(
+                                labels, gray, width, height, left, right, top, staff.gap()))
+                    verified++;
             }
             if (owners > 0 && verified == owners) s = CourtesyMeasureRemap.remove(s, cut);
         }
         return s;
+    }
+
+    private static boolean printedRepeatOpening(ScorePageInterpretation score, int boundary) {
+        return score.playbackDirections().stream().anyMatch(d ->
+                        d.measureBoundary() == boundary
+                                && d.kind() == ScorePlaybackDirection.Kind.REPEAT_START
+                                && d.details().quarterBeatOffset() == 0
+                                && d.details().eventId().startsWith("printed-repeat:")
+                                && !d.details().evidence().isEmpty())
+                || score.expressiveEvents().stream().anyMatch(e ->
+                        e.kind() == ScoreExpressiveEvent.Kind.UNRESOLVED_DIRECTION
+                                && e.start().filter(a -> a.measureIndex() == boundary
+                                        && a.quarterBeatOffset() == 0).isPresent()
+                                && e.evidence().stream().anyMatch(p ->
+                                        p.sourceId().startsWith("printed-repeat-start:v1:")));
     }
 
     private static ScorePageInterpretation trimMeterTails(

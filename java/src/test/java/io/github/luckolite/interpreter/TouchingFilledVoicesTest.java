@@ -124,4 +124,56 @@ public class TouchingFilledVoicesTest {
                 "Keep the earliest original chord anchor",
                 notes.stream().allMatch(n -> n.positionInMeasure() <= .435f));
     }
+
+    @Test public void parallelEighthVoicesShareTheDisplacedSecondsAttack() {
+        var notes = parallelEighthVoices(true).notes();
+        assertEquals(4, notes.size());
+        assertEquals(1, notes.get(0).beamCount());
+        assertEquals(1, notes.get(1).beamCount());
+        assertEquals(notes.get(0).positionInMeasure(), notes.get(1).positionInMeasure(), .001f);
+        assertEquals(notes.get(2).positionInMeasure(), notes.get(3).positionInMeasure(), .001f);
+        assertTrue(notes.get(2).positionInMeasure() > notes.get(1).positionInMeasure());
+    }
+
+    @Test public void aDisconnectedVoiceRailDoesNotMoveTheOffColumnAttack() {
+        var notes = parallelEighthVoices(false).notes();
+        assertEquals(4, notes.size());
+        assertEquals(1, notes.get(0).beamCount());
+        assertEquals(1, notes.get(1).beamCount());
+        assertTrue(notes.get(1).positionInMeasure() - notes.get(0).positionInMeasure() > .04f);
+    }
+
+    private static Page parallelEighthVoices(boolean connected) {
+        Page page = new Page();
+        page.rect(159, 74, 2, 55, (byte) 1);
+        page.rect(254, 74, 2, 47, (byte) 1);
+        page.rect(159, 74, 97, 5, (byte) 5);
+        page.rect(165, 136, 2, 61, (byte) 1);
+        page.rect(234, 152, 2, 45, (byte) 1);
+        page.rect(165, 192, connected ? 71 : 29, 5, (byte) 5);
+        if (!connected) page.rect(201, 192, 35, 5, (byte) 5);
+        page.head(149, 128);
+        page.head(175, 136);
+        page.head(244, 120);
+        page.head(244, 152);
+        return page;
+    }
+
+    @Test public void wideSingleBeamKeepsItsDarkBodyThroughAStaffRule() {
+        Page page = new Page();
+        int[] left = {52, 120, 1};
+        int[] right = {160, 109, 1};
+        for (int x = left[0]; x <= right[0]; x++) {
+            int y = Math.round(118 - 11f * (x - left[0]) / (right[0] - left[0]));
+            page.rect(x, y - 2, 1, 5, (byte) 5);
+        }
+        assertTrue(OmrScoreInterpreter.fullSingleBeamSymbolBand(
+                page.labels, page.gray, page.w, page.h, left, right, 16));
+        // A staff crossing can still touch the beam on either side of the gap.
+        // The remaining staff pixels may not replace the missing printed beam.
+        for (int y = 105; y <= 118; y++)
+            page.rect(108, y, 7, 1, y == 112 ? (byte) 4 : 0);
+        assertFalse(OmrScoreInterpreter.fullSingleBeamSymbolBand(
+                page.labels, page.gray, page.w, page.h, left, right, 16));
+    }
 }

@@ -22,6 +22,8 @@ final class ScoreNavigationDetector {
         }
     }
 
+    private record PairedCoda(Glyph glyph, int boundary) {}
+
     private ScoreNavigationDetector() {}
 
     static ScorePlaybackDirection.Kind kind(String text) {
@@ -82,6 +84,63 @@ final class ScoreNavigationDetector {
         return vertical <= lineHeight * .6f
                 && following >= -lineHeight * .5f
                 && following <= lineHeight * 1.3f;
+    }
+
+    /** Tall passages and section headings can raise a Coda phrase over its terminal bar. */
+    private static boolean rightAlignedSystemCodaPhrase(
+            Phrase phrase, PlayingTechniqueDetector.Staff staff, List<MeasureRegion> measures,
+            int width, int height) {
+        if (phrase == null || staff.index() != 0) return false;
+        float center = (staff.top() + staff.bottom()) * .5f / height;
+        float slack = staff.gap() / height;
+        MeasureRegion last = null;
+        for (var bar : measures)
+            if (center >= bar.top() - slack && center <= bar.bottom() + slack
+                    && (last == null || bar.right() > last.right())) last = bar;
+        if (last == null) return false;
+        float x = (phrase.left() + phrase.right()) * .5f;
+        return x >= last.left() && x <= last.right()
+                && Math.abs(phrase.right() - last.right()) * width <= 2 * staff.gap();
+    }
+
+    /** An elevated sign above a complete jump can own the immediately following bar. */
+    private static PairedCoda pairedRaisedCoda(
+            Phrase phrase, List<Glyph> marks, List<PlayingTechniqueDetector.Staff> staffs,
+            List<MeasureRegion> measures, int width, int height) {
+        if (phrase.kind() != ScorePlaybackDirection.Kind.DAL_SEGNO_AL_CODA
+                && phrase.kind() != ScorePlaybackDirection.Kind.DA_CAPO_AL_CODA) return null;
+        PairedCoda result = null;
+        for (var staff : staffs) {
+            if (staff.index() != 0 || staff.gap() <= 0) continue;
+            float gap = staff.gap();
+            float commandDistance = (staff.top() - phrase.bottom() * height) / gap;
+            if (commandDistance <= 6 || commandDistance > 8) continue;
+            float center = (staff.top() + staff.bottom()) * .5f / height;
+            for (var glyph : marks) {
+                if (glyph.kind() != ScorePlaybackDirection.Kind.CODA) continue;
+                float signDistance = (staff.top() - glyph.bottom() * height) / gap;
+                float separation = (phrase.top() - glyph.bottom()) * height / gap;
+                if (signDistance > NavigationCodaGlyphs.MAX_PAIRED_STAFF_DISTANCE
+                        || separation < -.25f || separation > 1
+                        || Math.abs(glyph.centerX() - phrase.right()) * width > gap * .75f)
+                    continue;
+                for (int boundary = 1; boundary < measures.size(); boundary++) {
+                    var before = measures.get(boundary - 1);
+                    var after = measures.get(boundary);
+                    float boundaryWidth = (after.left() - before.right()) * width;
+                    if (center < Math.max(before.top(), after.top())
+                            || center > Math.min(before.bottom(), after.bottom())
+                            || boundaryWidth < 0 || boundaryWidth > 2 * gap
+                            || phrase.left() < before.left() || phrase.left() >= before.right()
+                            || glyph.centerX() < before.right() - gap * .25f / width
+                            || glyph.centerX() > after.left() + gap * .25f / width)
+                        continue;
+                    if (result != null) return null;
+                    result = new PairedCoda(glyph, boundary);
+                }
+            }
+        }
+        return result;
     }
 
     private static boolean codaGlyphBefore(Glyph mark, Phrase phrase, int width, int height) {
@@ -192,6 +251,17 @@ final class ScoreNavigationDetector {
                                 && Math.abs(other.bottom() - phrase.bottom()) <= .5f * Math.max(
                                         other.bottom() - other.top(), phrase.bottom() - phrase.top())))
                 .toList();
+        var result = new ArrayList<ScorePlaybackDirection>();
+        var pairedPhrases = new java.util.HashSet<Phrase>();
+        var pairedGlyphs = new java.util.HashSet<Glyph>();
+        for (var phrase : completePhrases) {
+            var pair = pairedRaisedCoda(phrase, marks, staffs, measures, width, height);
+            if (pair == null || !pairedGlyphs.add(pair.glyph())) continue;
+            pairedPhrases.add(phrase);
+            result.add(new ScorePlaybackDirection(pair.boundary(), phrase.kind()));
+            result.add(new ScorePlaybackDirection(pair.boundary(), ScorePlaybackDirection.Kind.CODA));
+        }
+        marks.removeAll(pairedGlyphs);
         var codaGlyphsByPhrase = new java.util.HashMap<Phrase, Glyph>();
         for (var phrase : completePhrases) {
             if (phrase.kind() != ScorePlaybackDirection.Kind.TO_CODA
@@ -203,18 +273,23 @@ final class ScoreNavigationDetector {
                 && (codaGlyphsByPhrase.containsValue(mark) || completePhrases.stream().anyMatch(phrase ->
                         attachedCodaSymbol(mark, phrase, measures, width, height))));
         var leadingTriggers = new java.util.HashSet<Glyph>();
+        var raisedCodaPhrases = new java.util.HashMap<Glyph, Phrase>();
         var labelledDestinations = new java.util.HashSet<Glyph>();
         for (var phrase : completePhrases) {
+            if (pairedPhrases.contains(phrase)) continue;
             var symbol = codaGlyphsByPhrase.get(phrase);
             boolean leadingTrigger = symbol != null && phrase.kind() == ScorePlaybackDirection.Kind.TO_CODA;
             var mark = leadingTrigger
                     ? new Glyph(phrase.kind(), symbol.centerX(), phrase.top(), phrase.bottom())
                     : phrase.glyph();
             marks.add(mark);
+            if (phrase.kind() == ScorePlaybackDirection.Kind.DAL_SEGNO_AL_CODA
+                    || phrase.kind() == ScorePlaybackDirection.Kind.DA_CAPO_AL_CODA
+                    || phrase.kind() == ScorePlaybackDirection.Kind.TO_CODA)
+                raisedCodaPhrases.put(mark, phrase);
             if (leadingTrigger) leadingTriggers.add(mark);
             else if (symbol != null) labelledDestinations.add(mark);
         }
-        var result = new ArrayList<ScorePlaybackDirection>();
         for (var mark : marks) {
             PlayingTechniqueDetector.Staff owner = null;
             float best = Float.MAX_VALUE;
@@ -226,7 +301,10 @@ final class ScoreNavigationDetector {
                                 ? NavigationSegnoGlyphs.MAX_STAFF_DISTANCE
                                 : labelledDestination ? NavigationCodaGlyphs.MAX_LABELLED_STAFF_DISTANCE : 6f;
                 // Glyph boxes and staff rules round independently on the raster.
-                if (distance < -1.2f || distance > limit + 1f / staff.gap()) continue;
+                if (distance < -1.2f) continue;
+                if (distance > limit + 1f / staff.gap()
+                        && (distance > 8 || !rightAlignedSystemCodaPhrase(
+                                raisedCodaPhrases.get(mark), staff, measures, width, height))) continue;
                 if (Math.abs(distance) < best) {
                     best = Math.abs(distance);
                     owner = staff;

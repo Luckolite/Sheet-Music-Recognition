@@ -14,10 +14,12 @@ public final class NoteOrnament {
 
     /**
      * Type-specific qualifier: a proved straight isolated SLIDE approach. The same wire bit means
-     * DELAYED only for TURN / INVERTED_TURN. Connected slides and other ornament types must not
-     * interpret this alias.
+     * DELAYED only for TURN / INVERTED_TURN. Connected slides must not interpret this alias.
      */
     public static final int STRAIGHT_APPROACH = 1 << 8;
+
+    /** Type-specific GLISSANDO qualifier for a proved connector across a printed barline. */
+    public static final int GLISSANDO_NEXT_BAR = 1 << 8;
 
     /** Small printed grace heads borrow playback time from their principal note. */
     public static final int GRACE = 1 << 15;

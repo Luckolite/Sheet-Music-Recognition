@@ -25,16 +25,18 @@ final class PrintedMultiRestGroups {
                 || !origins.matches(labels, gray, w, h)) return List.of();
         int n = measures.size();
         boolean[] conflict = new boolean[n];
-        int[] full = new int[n];
+        int[] full = new int[n], upper = new int[n], lower = new int[n];
         for (var note : score.notes())
             if (note.measureIndex() >= 0 && note.measureIndex() < n)
                 conflict[note.measureIndex()] = true;
         for (var rest : score.rests()) {
             int i = rest.measureIndex();
             if (i < 0 || i >= n) continue;
-            if (!rest.isFullMeasure() || rest.staffIndex() != 0 || rest.staffCount() != 1)
-                conflict[i] = true;
-            else full[i]++;
+            if (!rest.isFullMeasure()) conflict[i] = true;
+            else if (rest.staffCount() == 1 && rest.staffIndex() == 0) full[i]++;
+            else if (rest.staffCount() == 2 && rest.staffIndex() == 0) upper[i]++;
+            else if (rest.staffCount() == 2 && rest.staffIndex() == 1) lower[i]++;
+            else conflict[i] = true;
         }
         var occurrences = new IdentityHashMap<MeasureRegion, Integer>();
         for (var region : measures) occurrences.merge(region, 1, Integer::sum);
@@ -45,17 +47,24 @@ final class PrintedMultiRestGroups {
             while (end < n && measures.get(end) == parent) end++;
             var admission = origins.admission(parent);
             var physical = origins.physical(parent);
+            boolean paired = admission != null && admission.pairedLanes().size() == 2;
             boolean proved =
                     admission != null
                             && physical != null
-                            && physical.members.size() == 1
+                            && physical.members.size() == (paired ? 2 : 1)
                             && origins.expansion(parent, first, end)
                             && end - first == admission.token().value()
                             && occurrences.get(parent) == end - first;
             if (proved) {
-                for (int i = first; i < end; i++) if (conflict[i] || full[i] != 1) proved = false;
+                for (int i = first; i < end; i++)
+                    if (conflict[i] || full[i] != (paired ? 0 : 1)
+                            || upper[i] != (paired ? 1 : 0) || lower[i] != (paired ? 1 : 0))
+                        proved = false;
             }
-            if (proved) {
+            if (proved && paired) {
+                groups.add(new ScoreMultiRestGroup(first, end - first, 0, 2));
+                groups.add(new ScoreMultiRestGroup(first, end - first, 1, 2));
+            } else if (proved) {
                 var window = admission.candidate().region();
                 int x = Math.round((window.left() + window.right()) * .5f * w);
                 if (physical.members.get(0).physicalRows(x, w) != null)

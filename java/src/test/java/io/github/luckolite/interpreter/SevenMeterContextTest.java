@@ -99,4 +99,39 @@ public class SevenMeterContextTest {
         var n = run(notes(1));
         assertEquals(n, run(n));
     }
+
+    private static List<ScoreNoteEvent> sevenThirtySeconds(float secondRest) {
+        var result = new ArrayList<ScoreNoteEvent>();
+        for (int i = 0; i < 7; i++)
+            result.add(new ScoreNoteEvent(0, .03f + i * .05f, i, 0, 1, .4f, false, 0, 3, 2, 0, 1)
+                    .withTupletRatio(7, 4));
+        result.add(new ScoreNoteEvent(0, .41f, 7, 0, 1, .4f, false, 0, 1, 2, 0, 1, .5f));
+        result.add(new ScoreNoteEvent(0, .61f, 8, 0, 1, .4f, false, 0, 1, 2, 0, 1, secondRest));
+        result.add(new ScoreNoteEvent(0, .81f, 9, 0, 1, .4f, false, 0, 1, 2, 0, 1));
+        result.add(new ScoreNoteEvent(0, .91f, 10, 0, 1, .4f, false, 0, 1, 2, 0, 1));
+        return result;
+    }
+
+    @Test
+    public void threeBeamSevenFillsProvedQuarterBeat() {
+        var source = sevenThirtySeconds(.5f);
+        var resolved = TripletRhythmDetector.contextualSevens(
+                source, List.of(new ScoreMeterChange(0, 4, 4)), false);
+        for (int i = 0; i < 7; i++) {
+            var n = resolved.get(i);
+            assertEquals(source.get(i).withTupletRatio(7, 8), n);
+            assertEquals(1.0 / 7, ScoreNoteTiming.writtenDurationBeats(n), 1e-8);
+            assertEquals(i / 7.0, ScoreNoteTiming.beatInMeasure(n, resolved, 4), 1e-8);
+        }
+        assertEquals(source.subList(7, 11), resolved.subList(7, 11));
+        assertEquals(1, ScoreNoteTiming.beatInMeasure(resolved.get(7), resolved, 4), 1e-8);
+        assertEquals(3.5, ScoreNoteTiming.beatInMeasure(resolved.get(10), resolved, 4), 1e-8);
+    }
+
+    @Test
+    public void threeBeamSevenInFourStaysWhenItsClockAlreadyFillsTheBar() {
+        var source = sevenThirtySeconds(1);
+        assertEquals(source, TripletRhythmDetector.contextualSevens(
+                source, List.of(new ScoreMeterChange(0, 4, 4)), false));
+    }
 }

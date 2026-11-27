@@ -722,11 +722,9 @@ final class RawStaffLineDetector {
     }
 
     /**
-     * A page is engraved at one staff scale even when its measure widths and note density vary.
-     * Four stacked arpeggio beams can also make five long, regularly spaced projection peaks,
-     * but their gap is much smaller than every real staff on the page. Keep the page's dominant
-     * scale so those beam bands cannot become extra systems while still allowing raw recovery of
-     * a staff that the model omitted completely.
+     * A page usually repeats a staff scale even when its measure widths and note density vary.
+     * Four stacked arpeggio beams can also make five long, regularly spaced projection peaks.
+     * Keep the dominant range except for independently printed cue or principal staves.
      */
     private static void retainDominantStaffScale(
             List<StaffLines> staffs, byte[] gray, int width, int height) {
@@ -786,11 +784,38 @@ final class RawStaffLineDetector {
                         ? staff ->
                                 (staff.gap() < median * .68f || staff.gap() > median * 1.47f)
                                         && !(gray != null
-                                                && staff.gap() >= median * .55f
-                                                && staff.gap() < median * .68f
-                                                && connectedToStaff(
-                                                        staff, candidates, gray, width, height))
+                                                && ((staff.gap() >= median * .55f
+                                                        && staff.gap() < median * .68f
+                                                        && connectedToStaff(
+                                                                staff, candidates, gray, width, height))
+                                                    || (staff.gap() > median * 1.47f
+                                                        && corroboratedLargerStaff(
+                                                                staff, candidates, median, gray, width))))
                         : null));
+    }
+
+    static boolean corroboratedLargerStaff(
+            StaffLines staff, List<StaffLines> candidates, float median, byte[] gray, int width) {
+        if (staff.gap() <= median * 1.47f || !widePrintedStaff(staff, gray, width)) return false;
+        for (StaffLines peer : candidates) {
+            if (peer == staff || peer.gap() <= median * 1.47f
+                    || Math.abs(peer.gap() - staff.gap()) > staff.gap() * .10f) continue;
+            float separation = Math.max(peer.top() - staff.bottom(), staff.top() - peer.bottom());
+            if (separation > staff.gap() * 4 && widePrintedStaff(peer, gray, width)) return true;
+        }
+        return false;
+    }
+
+    private static boolean widePrintedStaff(StaffLines staff, byte[] gray, int width) {
+        int scanWidth = width / 4;
+        int minimum = Math.round(scanWidth * .80f);
+        for (int row : staff.rows()) {
+            int left = row * width + width / 8;
+            int right = row * width + width * 5 / 8;
+            if (countDarkRow(gray, left, scanWidth) < minimum
+                    || countDarkRow(gray, right, scanWidth) < minimum) return false;
+        }
+        return true;
     }
 
     /** A cue-sized part is real when a printed system rule joins it to another five-line staff. */

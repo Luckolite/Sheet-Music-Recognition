@@ -200,4 +200,34 @@ public class RawStaffLineDetectorTest {
             assertArrayEquals(new int[] {160, 170, 180, 190, 200}, malformedLower.rows());
         }
     }
+
+    @Test
+    public void repeatedFullWidthPrincipalStavesSurviveDominantOssiaScale() {
+        int width = 600, height = 1000;
+        byte[] gray = new byte[width * height];
+        Arrays.fill(gray, (byte) 255);
+        for (int top : new int[] {45, 135, 225, 315})
+            for (int line = 0; line < 5; line++)
+                Arrays.fill(gray, (top + line * 10) * width + 50,
+                        (top + line * 10) * width + 550, (byte) 0);
+
+        for (int line = 0; line < 5; line++) {
+            int row = (510 + line * 16) * width;
+            Arrays.fill(gray, row + 50, row + 550, (byte) 0);
+        }
+        for (int line = 0; line < 5; line++) {
+            int row = (780 + line * 16) * width;
+            Arrays.fill(gray, row + 50, row + 300, (byte) 0);
+        }
+        assertEquals(List.of(45, 135, 225, 315), RawStaffLineDetector.detect(gray, width, height)
+                .stream().map(RawStaffLineDetector.StaffLines::top).toList());
+
+        for (int line = 0; line < 5; line++) {
+            int row = (780 + line * 16) * width;
+            Arrays.fill(gray, row + 300, row + 550, (byte) 0);
+        }
+        assertEquals(List.of(45, 135, 225, 315, 510, 780), RawStaffLineDetector.detect(gray, width, height)
+                .stream().map(RawStaffLineDetector.StaffLines::top).toList());
+    }
+
 }

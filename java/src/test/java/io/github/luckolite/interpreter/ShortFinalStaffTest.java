@@ -54,6 +54,32 @@ public class ShortFinalStaffTest {
         for (int y = 139; y <= 146; y++)
             for (int x = 186; x <= 194; x++) gray[y * W + x] = 0;
         assertTrue(ShortFinalStaff.proved(labels, gray, W, H, ROWS, 16, LEFT, RIGHT, 0));
+        offsetTail(gray, ROWS[0], 1);
+        assertFalse(ShortFinalStaff.proved(labels, gray, W, H, ROWS, 16, LEFT, RIGHT, 0));
+    }
+
+    private static void offsetTail(byte[] gray, int row, int shift) {
+        for (int x = 225; x < RIGHT - 16; x++) {
+            gray[row * W + x] = (byte) 255;
+            gray[(row + shift) * W + x] = 0;
+        }
+    }
+
+    @Test public void oneRoundedRailKeepsThePrintedDoubleClose() {
+        byte[] gray = page(true);
+        offsetTail(gray, ROWS[0], 1);
+        assertTrue(proved(gray));
+    }
+
+    @Test public void multipleRoundedRailsOrTwoPixelsStillFail() {
+        byte[] gray = page(true);
+        offsetTail(gray, ROWS[0], 1);
+        offsetTail(gray, ROWS[1], 1);
+        assertFalse(proved(gray));
+
+        gray = page(true);
+        offsetTail(gray, ROWS[0], 2);
+        assertFalse(proved(gray));
     }
 
     @Test public void labelsAloneCannotInventPrintedRules() {
@@ -76,5 +102,56 @@ public class ShortFinalStaffTest {
         for (int row : ROWS)
             for (int x = LEFT; x < RIGHT; x++) if (x % 12 < 6) gray[row * W + x] = (byte) 255;
         assertFalse(proved(gray));
+    }
+
+    private byte[] countedRest(boolean doubleBar, boolean count, boolean central) {
+        byte[] gray = page(doubleBar);
+        int left = 178, right = 235, middle = ROWS[2] + (central ? 0 : 16);
+        for (int y = middle - 6; y <= middle + 6; y++)
+            Arrays.fill(gray, y * W + left, y * W + right + 1, (byte) 0);
+        if (count) {
+            int x = (left + right) / 2;
+            for (int y = 65; y <= 69; y++)
+                Arrays.fill(gray, y * W + x - 8, y * W + x + 9, (byte) 0);
+            for (int y = 70; y <= 86; y++) {
+                int d = y - 70;
+                Arrays.fill(gray, y * W + x + 7 - d, y * W + x + 12 - d, (byte) 0);
+            }
+            for (int y = 86; y <= 89; y++)
+                Arrays.fill(gray, y * W + x - 9, y * W + x + 10, (byte) 0);
+        }
+        return gray;
+    }
+
+    @Test public void countedRestMayObscureTheMiddleRuleOfAShortSystem() {
+        assertTrue(proved(countedRest(true, true, true)));
+        assertFalse(proved(countedRest(true, false, true)));
+        assertFalse(proved(countedRest(false, true, true)));
+        assertFalse(proved(countedRest(true, true, false)));
+    }
+
+    @Test public void aCountedRestDoesNotExcuseMissingOutsideRules() {
+        byte[] gray = countedRest(true, true, true);
+        Arrays.fill(gray, ROWS[0] * W + LEFT, ROWS[0] * W + RIGHT, (byte) 255);
+        assertFalse(proved(gray));
+    }
+    @Test public void backgroundInkLabelsDoNotCropThePrintedTerminalAttack() {
+        byte[] gray = page(true), labels = new byte[gray.length];
+        for (int row : ROWS)
+            Arrays.fill(labels, row * W + LEFT, row * W + RIGHT,
+                    OmrMeasurePostProcessor.STAFF);
+        // Artwork below the staff falls into the wide header ledger search.
+        for (int y = 186; y <= 272; y++)
+            Arrays.fill(labels, y * W + 151, y * W + 210,
+                    OmrMeasurePostProcessor.CLEF_OR_KEY);
+        for (int y = 168; y <= 181; y++)
+            for (int x = 156; x <= 183; x++)
+                if ((x - 169) * (x - 169) / 196f + (y - 174) * (y - 174) / 49f <= 1) {
+                    labels[y * W + x] = OmrMeasurePostProcessor.NOTEHEAD;
+                    if (Math.abs(x - 169) > 5 || Math.abs(y - 174) > 3) gray[y * W + x] = 0;
+                }
+        var measures = OmrMeasurePostProcessor.process(labels, gray, W, H);
+        assertEquals(1, measures.size());
+        assertTrue(measures.toString(), measures.get(0).left() * W < 158);
     }
 }

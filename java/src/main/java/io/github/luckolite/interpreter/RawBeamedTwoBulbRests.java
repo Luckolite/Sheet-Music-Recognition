@@ -61,6 +61,7 @@ final class RawBeamedTwoBulbRests {
                 || staffs == null
                 || notes == null) return current;
         Budget budget = new Budget(allowance);
+        Budget eighthBudget = new Budget(Math.min(allowance, 1_000_000));
         var result = new ArrayList<>(current.rests());
         for (var before : notes) {
             if (before == null
@@ -180,6 +181,30 @@ final class RawBeamedTwoBulbRests {
                 if (duplicate < 0) result.add(rest);
                 else result.set(duplicate, rest);
             }
+            if (!eighthBudget.refused && before.beamCount() == 1 && after.beamCount() == 1
+                    && before.stemDirection() <= 0 && after.stemDirection() <= 0
+                    && bx - ax >= 4 * gap && bx - ax <= 9 * gap
+                    && Math.abs(before.pageY() - after.pageY()) * h <= .6f * gap
+                    && result.stream().noneMatch(rest ->
+                            rest.measureIndex() == before.measureIndex()
+                                    && rest.staffIndex() == before.staffIndex()
+                                    && rest.staffCount() == before.staffCount()
+                                    && rest.positionInMeasure() > before.positionInMeasure()
+                                    && rest.positionInMeasure() < next.positionInMeasure())) {
+                Glyph eighth = attachedEighth(g, w, h, (ax + bx) * .5f, middle, gap, eighthBudget);
+                if (eighth != null
+                        && PrintedStemDirection.detect(g, w, h, ax, before.pageY() * h, gap) == -1
+                        && !dot(g, w, h, eighth, gap, eighthBudget)) {
+                    float cx = (eighth.left + eighth.right) * .5f;
+                    var rest = new ScoreRestEvent(before.measureIndex(),
+                            (cx - bar.left() * w) / span,
+                            (eighth.top + eighth.bottom) * .5f / h,
+                            (eighth.bottom - eighth.top + 1f) / h,
+                            before.staffIndex(), before.staffCount(), .5);
+                    if (BeamedRestVoice.owns(rest, before, notes, bar, g, w, h, gap))
+                        result.add(rest);
+                }
+            }
             if (budget.refused) return current;
         }
         if (budget.refused || result.equals(current.rests())) return current;
@@ -190,6 +215,155 @@ final class RawBeamedTwoBulbRests {
                 List.copyOf(result),
                 current.dots().stream().filter(d -> result.contains(d.rest())).toList());
     }
+
+    /** Preserve two printed sixteenth rests around a pair of dotted eighths. */
+    static SixteenthRestDetector.Detection addDottedNoteRests(
+            SixteenthRestDetector.Detection current, byte[] ink, int width, int height,
+            List<MeasureRegion> bars, List<SixteenthRestDetector.Staff> staffs, List<ScoreNoteEvent> notes) {
+        if (ink == null || ink.length != (long) width * height) return current;
+        var byBar = new HashMap<Integer, List<ScoreNoteEvent>>();
+        for (var note : notes)
+            if (note.staffCount() == 1)
+                byBar.computeIfAbsent(note.measureIndex(), ignored -> new ArrayList<>(6)).add(note);
+        var result = new ArrayList<>(current.rests());
+        var budget = new Budget(500_000);
+        for (var entry : byBar.entrySet()) {
+            var row = entry.getValue();
+            if (row.size() != 6 || entry.getKey() < 0 || entry.getKey() >= bars.size()) continue;
+            row.sort(Comparator.comparingDouble(ScoreNoteEvent::positionInMeasure));
+            var first = row.get(0);
+            boolean literal = true;
+            for (int i = 0; i < row.size(); i++) {
+                var note = row.get(i);
+                literal &= note.kind() == ScoreNoteEvent.Kind.PITCHED && note.staffIndex() == first.staffIndex()
+                        && note.beamCount() == 1
+                        && note.augmentationDots() == (i < 2 ? 1 : 0)
+                        && note.tupletDivisor() == 1 && !note.crossStaffBeam()
+                        && (note.articulations() & NoteOrnament.GRACE) == 0;
+            }
+            if (!literal) continue;
+            var bar = bars.get(entry.getKey());
+            float span = (bar.right() - bar.left()) * width;
+            var staff = staffs.stream().filter(s -> s.index() == first.staffIndex() && s.count() == 1
+                    && (s.top() + s.bottom()) * .5f >= bar.top() * height
+                    && (s.top() + s.bottom()) * .5f <= bar.bottom() * height).findFirst().orElse(null);
+            if (staff == null || staff.gap() < 10 || staff.gap() > 24) continue;
+            float gap = staff.gap();
+            float ax = bar.left() * width + first.positionInMeasure() * span;
+            float bx = bar.left() * width + row.get(1).positionInMeasure() * span;
+            float cx = bar.left() * width + row.get(2).positionInMeasure() * span;
+            if (bx - ax < gap * 5 || bx - ax > gap * 12 || cx - bx < gap * 5 || cx - bx > gap * 12)
+                continue;
+            if (!separatePrintedBeamGroups(ink, width, height, bar, row, gap)) continue;
+            var a = detachedDottedRest(ink, width, height, staff, ax, bx, budget);
+            var b = detachedDottedRest(ink, width, height, staff, bx, cx, budget);
+            if (a == null || b == null || budget.refused) continue;
+            var rests = new ArrayList<ScoreRestEvent>(2);
+            for (var glyph : List.of(a, b)) {
+                float x = (glyph.upper.x + glyph.lower.x) * .5f;
+                float position = (x - bar.left() * width) / span;
+                var existing = result.stream().filter(rest -> rest.measureIndex() == first.measureIndex()
+                        && rest.staffIndex() == first.staffIndex()
+                        && Math.abs(rest.positionInMeasure() - position) * span <= gap).toList();
+                if (existing.stream().anyMatch(rest -> rest.durationBeats() != .25)) {
+                    rests.clear();
+                    break;
+                }
+                if (existing.isEmpty())
+                    rests.add(new ScoreRestEvent(first.measureIndex(), position,
+                            (glyph.top + glyph.bottom) * .5f / height,
+                            (glyph.bottom - glyph.top + 1f) / height,
+                            first.staffIndex(), first.staffCount(), .25));
+            }
+            result.addAll(rests);
+        }
+        if (result.size() == current.rests().size()) return current;
+        result.sort(Comparator.comparingInt(ScoreRestEvent::measureIndex)
+                .thenComparingDouble(ScoreRestEvent::positionInMeasure));
+        return new SixteenthRestDetector.Detection(List.copyOf(result), current.dots());
+    }
+
+    private static boolean separatePrintedBeamGroups(byte[] ink, int width, int height,
+            MeasureRegion bar, List<ScoreNoteEvent> row, float gap) {
+        float left = bar.left() * width, span = (bar.right() - bar.left()) * width;
+        int direction = PrintedStemDirection.detect(ink, width, height,
+                left + span * row.get(0).positionInMeasure(), row.get(0).pageY() * height, gap);
+        if (direction == 0) return false;
+        for (int i = 1; i < row.size(); i++) {
+            var a = row.get(i - 1);
+            var b = row.get(i);
+            boolean joined = PrintedTupletBeamOwner.connectedHeads(ink, width, height,
+                    left + span * a.positionInMeasure(), a.pageY() * height,
+                    left + span * b.positionInMeasure(), b.pageY() * height, gap, direction);
+            if (joined != (i != 2)) return false;
+        }
+        return true;
+    }
+
+    private static Glyph detachedDottedRest(byte[] ink, int width, int height,
+            SixteenthRestDetector.Staff staff, float before, float after, Budget budget) {
+        float gap = staff.gap(), center = (before + after) * .5f;
+        float bottom = staff.pitchTrack() == null ? staff.bottom() : staff.pitchTrack().at(center)[0];
+        int left = Math.round(before + (after - before) * .31f);
+        int right = Math.round(before + (after - before) * .72f);
+        int top = Math.round(bottom - gap * 3.8f), limit = Math.round(bottom + gap * 1.7f);
+        if (left < 0 || right >= width || top < 0 || limit >= height
+                || !budget.take((long) (right - left + 1) * (limit - top + 1))) return null;
+
+        // Light paper correction keeps two compact bulbs even when the original staff rules
+        // connect to their cap. At this scale the bulbs have a two-pixel dark core.
+        var cores = compactCores(ink, width, left, top, right, limit, gap * .76f, budget);
+        Glyph found = null;
+        for (var upper : cores) {
+            for (var lower : cores) {
+                float dy = lower.y - upper.y, dx = upper.x - lower.x;
+                if (dy < gap * .79f || dy > gap * 1.19f || dx < gap * .24f || dx > gap * .51f)
+                    continue;
+                int end = detachedTailEnd(ink, width, height, upper, lower, gap, budget);
+                if (end < 0) continue;
+                if (found != null && Math.abs(found.upper.x - upper.x) > gap * .25f) return null;
+                found = new Glyph(left, Math.round(upper.y - gap * .35f), right, end, upper, lower);
+            }
+        }
+        return found;
+    }
+
+    private static int detachedTailEnd(byte[] ink, int width, int height, Core upper, Core lower,
+            float gap, Budget budget) {
+        int first = Math.round(upper.y + gap * .26f);
+        int minEnd = Math.round(lower.y + gap * 1.14f), maxEnd = Math.round(lower.y + gap * 1.75f);
+        if (maxEnd + 4 >= height || upper.x < gap * 2 || upper.x + gap * 2 >= width) return -1;
+        int best = -1, bestSupport = 0;
+        for (int start = Math.round(upper.x + gap * .53f); start <= upper.x + gap * .95f; start++) {
+            for (int lean = 23; lean <= 47; lean += 4) {
+                if (!budget.take((long) (maxEnd - first + 5) * 6)) return -1;
+                int end = first - 1, support = 0, missing = 0;
+                for (int y = first; y <= maxEnd + 4; y++) {
+                    int x = Math.round(start - lean * .01f * (y - upper.y));
+                    if ((ink[y * width + x - 1] & 255) < 145
+                            || (ink[y * width + x] & 255) < 145
+                            || (ink[y * width + x + 1] & 255) < 145) {
+                        if (missing >= 3) break;
+                        support++;
+                        end = y;
+                        missing = 0;
+                    } else if (++missing >= 3) {
+                        break;
+                    }
+                }
+                if (end < minEnd || end > maxEnd || missing < 3 || support < (end - first + 1) * .9f)
+                    continue;
+                float xEnd = start - lean * .01f * (end - upper.y);
+                if (xEnd < lower.x - gap * .3f || xEnd > lower.x + gap * .35f) continue;
+                if (support > bestSupport) {
+                    bestSupport = support;
+                    best = end;
+                }
+            }
+        }
+        return best;
+    }
+
 
     static List<Glyph> find(byte[] g, int w, int h, int l, int t, int r, int b, float gap) {
         return find(g, w, h, l, t, r, b, gap, new Budget(8_000_000));
@@ -212,6 +386,31 @@ final class RawBeamedTwoBulbRests {
                 || b < t
                 || r - l > gap * 18
                 || b - t > gap * 16) return List.of();
+        var centers = compactCores(g, w, l, t, r, b, gap, budget);
+        if (budget.refused) return List.of();
+        centers.sort(Comparator.comparingDouble(Core::y));
+        var result = new ArrayList<Glyph>();
+        for (int i = 0; i < centers.size(); i++)
+            for (int j = i + 1; j < centers.size(); j++) {
+                Core a = centers.get(i), c = centers.get(j);
+                float dy = c.y - a.y, dx = c.x - a.x;
+                if (dy < gap * .7f || dy > gap * 1.3f || dx > gap * .12f || dx < -gap * .45f)
+                    continue;
+                if (!budget.take((long) Math.ceil(gap * gap * (64 + gap * 8)))) return List.of();
+                Glyph glyph = prove(g, w, h, a, c, gap);
+                if (glyph != null
+                        && result.stream()
+                                .noneMatch(
+                                        old ->
+                                                Math.abs(old.upper.x - a.x) < gap * .3f
+                                                        && Math.abs(old.upper.y - a.y) < gap * .3f))
+                    result.add(glyph);
+            }
+        return result;
+    }
+
+    private static List<Core> compactCores(byte[] g, int w, int l, int t, int r, int b,
+            float gap, Budget budget) {
         int radius = Math.max(2, Math.round(gap * .22f)), sw = r - l + 1, sh = b - t + 1;
         boolean[] core = new boolean[sw * sh];
         for (int y = t + radius; y <= b - radius; y++)
@@ -264,25 +463,75 @@ final class RawBeamedTwoBulbRests {
                     return List.of();
                 }
             }
-        centers.sort(Comparator.comparingDouble(Core::y));
-        var result = new ArrayList<Glyph>();
-        for (int i = 0; i < centers.size(); i++)
-            for (int j = i + 1; j < centers.size(); j++) {
-                Core a = centers.get(i), c = centers.get(j);
-                float dy = c.y - a.y, dx = c.x - a.x;
-                if (dy < gap * .7f || dy > gap * 1.3f || dx > gap * .12f || dx < -gap * .45f)
-                    continue;
-                if (!budget.take((long) Math.ceil(gap * gap * (64 + gap * 8)))) return List.of();
-                Glyph glyph = prove(g, w, h, a, c, gap);
-                if (glyph != null
-                        && result.stream()
-                                .noneMatch(
-                                        old ->
-                                                Math.abs(old.upper.x - a.x) < gap * .3f
-                                                        && Math.abs(old.upper.y - a.y) < gap * .3f))
-                    result.add(glyph);
+        return centers;
+    }
+
+    /** A hanging eighth rest can join the upper edge of the beam that connects its notes. */
+    private static Glyph attachedEighth(byte[] g, int w, int h, float x, float noteY,
+            float gap, Budget budget) {
+        if (gap < 10 || gap > 28) return null;
+        int xc = Math.round(x), reach = Math.round(gap * 1.2f);
+        int first = Math.round(noteY + gap * 2.1f), last = Math.round(noteY + gap * 4.2f);
+        if (xc - 3 * reach < 0 || xc + 3 * reach >= w || first < 1 || last >= h - 1
+                || !budget.take((long) Math.ceil(gap * gap * 32))) return null;
+        int beamTop = -1, runStart = -1;
+        for (int y = first; y <= last; y++) {
+            int ink = 0;
+            for (int xx = xc - reach; xx <= xc + reach; xx++)
+                if ((g[y * w + xx] & 255) < 170) ink++;
+            if (ink >= (2 * reach + 1) * .9f && y < last) {
+                if (runStart < 0) runStart = y;
+            } else if (runStart >= 0) {
+                if (y - runStart >= Math.max(3, Math.round(gap * .25f))) {
+                    if (beamTop >= 0 || y - runStart > gap * .75f) return null;
+                    beamTop = runStart;
+                }
+                runStart = -1;
             }
+        }
+        if (beamTop < 0) return null;
+        int t = Math.round(beamTop - gap * 2.15f), b = Math.round(beamTop - gap * .6f);
+        if (t < 1 || b >= h - 1) return null;
+        Glyph result = null;
+        for (Core core : compactCores(g, w, xc - reach, t, xc + reach, b, gap, budget)) {
+            if (Math.abs(core.x - x) > gap * .65f
+                    || beamTop - core.y < gap * 1.05f || beamTop - core.y > gap * 1.85f)
+                continue;
+            if (!hangingDiagonal(g, w, h, core, beamTop, gap)) continue;
+            if (result != null) return null;
+            result = new Glyph(Math.round(core.x - gap * .4f), Math.round(core.y - gap * .4f),
+                    Math.round(core.x + gap * .8f), beamTop - 1, core, core);
+        }
         return result;
+    }
+
+    private static boolean hangingDiagonal(byte[] g, int w, int h, Core core, int beamTop,
+            float gap) {
+        int cx = Math.round(core.x), from = Math.round(core.y + gap * .52f);
+        int firstX = Math.round(core.x - gap * .2f), lastX = Math.round(core.x + gap);
+        float start = Float.NaN, trailing = Float.NaN;
+        int samples = 0;
+        for (int y = from; y < beamTop; y++) {
+            if (rule(g, w, h, y, cx, gap)) continue;
+            int min = lastX + 1, max = firstX - 1;
+            for (int x = firstX; x <= lastX; x++) {
+                if ((g[y * w + x] & 255) >= 170) continue;
+                min = Math.min(min, x);
+                max = Math.max(max, x);
+            }
+            if (min > max || max - min + 1 > gap * .32f) return false;
+            float middle = (min + max) * .5f;
+            if (Float.isNaN(start)) start = middle;
+            if (Float.isFinite(trailing) && (middle > trailing + 1 || trailing - middle > gap * .16f))
+                return false;
+            trailing = middle;
+            samples++;
+        }
+        return samples >= Math.max(5, gap * .45f)
+                && start - core.x >= gap * .3f && start - core.x <= gap * .95f
+                && trailing - core.x >= 0 && trailing - core.x <= gap * .5f
+                && start - trailing >= gap * .18f
+                && (g[(beamTop - 1) * w + Math.round(trailing)] & 255) < 170;
     }
 
     private static Glyph prove(byte[] g, int w, int h, Core a, Core b, float gap) {

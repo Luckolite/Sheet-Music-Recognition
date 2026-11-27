@@ -16,6 +16,8 @@ public final class PrintedPassOmission {
             int physicalPage) {
         if (physicalPage < 0 || gray == null || gray.length != (long) width * height)
             return score;
+        score = ParenthesizedSecondPass.captureBottomNotes(score, words, staffs, width, height, physicalPage);
+        score = PrintedStaffSecondPass.capture(score, words, staffs, gray, width, height, physicalPage);
         var events = new ArrayList<>(score.expressiveEvents());
         for (var word : words) {
             String text = normalize(word.text()).replaceFirst("[-–—]+$", "").stripTrailing();

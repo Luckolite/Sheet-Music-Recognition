@@ -4,6 +4,7 @@ package io.github.luckolite.interpreter;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 
 /** Bounded crops of stacked signature glyphs, including signatures inside a system. */
 public final class MeterChangeDetector {
@@ -69,14 +70,16 @@ public final class MeterChangeDetector {
         return rasterCandidates(labels, gray, width, height, measures, notes, true, null);
     }
 
-    record PageCandidates(List<ScoreMeterChange> readings, List<Crop> crops) {}
+    record PageCandidates(List<ScoreMeterChange> readings, List<Crop> crops, Set<Crop> boundarySeeds) {}
+    private record RetainedCrops(List<Crop> candidates, Set<Crop> boundarySeeds) {}
 
     static PageCandidates pageCandidates(
             byte[] labels, byte[] gray, int width, int height,
             List<MeasureRegion> measures, List<ScoreNoteEvent> notes) {
-        var retained = new ArrayList<Crop>();
+        var retained = new RetainedCrops(new ArrayList<>(), new java.util.HashSet<>());
         var readings = rasterCandidates(labels, gray, width, height, measures, notes, true, retained);
-        return new PageCandidates(readings, List.copyOf(retained));
+        return new PageCandidates(
+                readings, List.copyOf(retained.candidates()), Set.copyOf(retained.boundarySeeds()));
     }
 
     private static List<ScoreMeterChange> uniqueRasterReadings(List<ScoreMeterChange> candidates) {
@@ -94,7 +97,7 @@ public final class MeterChangeDetector {
             int height,
             List<MeasureRegion> measures,
             List<ScoreNoteEvent> notes,
-            boolean numeric, List<Crop> retained) {
+            boolean numeric, RetainedCrops retained) {
         if (labels == null
                 || gray == null
                 || labels.length != width * height
@@ -130,8 +133,9 @@ public final class MeterChangeDetector {
                         .add(new ScoreMeterChange(proof.measureIndex(), 4, 4));
         }
         if (numeric) {
-            var crops = eligibleCrops(labels, gray, width, height, measures, notes, staffs);
-            if (retained != null) retained.addAll(crops);
+            var crops = eligibleCrops(labels, gray, width, height, measures, notes, staffs,
+                    retained == null ? null : retained.boundarySeeds());
+            if (retained != null) retained.candidates().addAll(crops);
             for (var crop : crops) {
                 int measure = followingMeasure(crop, width, height, measures);
                 if (measure < 0) continue;
@@ -290,6 +294,11 @@ public final class MeterChangeDetector {
         return totals;
     }
 
+    static boolean supportsWrittenBar(ScoreMeterChange meter, List<ScoreNoteEvent> notes) {
+        return reliableLaneTotals(notes, meter.measureIndex()).stream()
+                .anyMatch(total -> closeDuration(total, meter.quarterBeats()));
+    }
+
     private static boolean closeDuration(double left, double right) {
         return Math.abs(left - right) < .04;
     }
@@ -363,7 +372,7 @@ public final class MeterChangeDetector {
     }
 
     public static List<Crop> candidates(byte[] labels, byte[] gray, int width, int height) {
-        return candidates(labels, gray, width, height, crop -> true, null, List.of());
+        return candidates(labels, gray, width, height, crop -> true, null, List.of(), null);
     }
 
     /** Apply note ownership before the bounded OCR budget, so body ink cannot starve later headers. */
@@ -374,19 +383,19 @@ public final class MeterChangeDetector {
             int height,
             List<MeasureRegion> measures,
             List<ScoreNoteEvent> notes) {
-        return eligibleCrops(labels, gray, width, height, measures, notes, null);
+        return eligibleCrops(labels, gray, width, height, measures, notes, null, null);
     }
 
     private static List<Crop> eligibleCrops(
             byte[] labels, byte[] gray, int width, int height,
             List<MeasureRegion> measures, List<ScoreNoteEvent> notes,
-            List<SignatureStaff> staffs) {
+            List<SignatureStaff> staffs, Set<Crop> boundarySeeds) {
         java.util.function.Predicate<Crop> eligible = crop -> {
             int measure = followingMeasure(crop, width, height, measures);
             return measure >= 0
                     && precedesNotes(crop, labels, gray, width, height, measure, measures, notes);
         };
-        var candidates = candidates(labels, gray, width, height, eligible, staffs, measures);
+        var candidates = candidates(labels, gray, width, height, eligible, staffs, measures, boundarySeeds);
         if (candidates.size() >= 48 || labels == null || gray == null
                 || labels.length != (long) width * height || gray.length != labels.length) return candidates;
         var result = new ArrayList<>(candidates);
@@ -478,7 +487,7 @@ public final class MeterChangeDetector {
             int width,
             int height,
             java.util.function.Predicate<Crop> eligible, List<SignatureStaff> staffs,
-            List<MeasureRegion> measures) {
+            List<MeasureRegion> measures, Set<Crop> boundarySeeds) {
         List<Crop> result = new ArrayList<>();
         if (labels == null
                 || gray == null
@@ -735,7 +744,11 @@ public final class MeterChangeDetector {
             if (result.size() >= 48) return List.copyOf(result.subList(0, 48));
         }
         for (var crop : MeterComponentSeeds.boundaryCrops(labels, gray, width, height, hints, measures)) {
-            if (!result.contains(crop) && eligible.test(crop)) result.add(crop);
+            boolean seen = result.contains(crop);
+            if (seen || eligible.test(crop)) {
+                if (!seen) result.add(crop);
+                if (boundarySeeds != null) boundarySeeds.add(crop);
+            }
             if (result.size() >= 48) return List.copyOf(result.subList(0, 48));
         }
         return List.copyOf(result);

@@ -7,7 +7,7 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 
-/** Records an explicitly bracketed mixed-value pair before document meter is known. */
+/** Carries engraved duplet ownership into compound-meter timing. */
 final class BracketedDuplets {
     private BracketedDuplets() {}
 
@@ -61,39 +61,40 @@ final class BracketedDuplets {
             var meter = activeMeter(meters,measure);
             if (meter == null || meter.denominator() != 8 || meter.numerator() < 6
                     || meter.numerator() % 3 != 0) continue;
-            int preceding = -1, first = -1, second = -1;
+            var pairs = new ArrayList<Integer>();
             float prior = -1;
-            double written = 0;
+            double written = 0, gain = 0;
             boolean complete = true;
-            for (int i : lane) {
-                var n = notes.get(i);
+            for (int at = 0; at < lane.size(); at++) {
+                var n = notes.get(lane.get(at));
+                double duration = ScoreNoteTiming.writtenDurationBeats(n);
                 if (n.positionInMeasure() - prior < .012f || n.kind() != ScoreNoteEvent.Kind.PITCHED
                         || n.crossStaffBeam() || (n.articulations() & NoteOrnament.GRACE) != 0
-                        || ScoreNoteTiming.writtenDurationBeats(n) <= 0
-                        || !Double.isFinite(ScoreNoteTiming.writtenDurationBeats(n))) {
+                        || duration <= 0 || !Double.isFinite(duration)) {
                     complete = false;
                     break;
                 }
-                written += ScoreNoteTiming.writtenDurationBeats(n) + n.leadingRestBeats() + n.followingRestBeats();
+                written += duration + n.leadingRestBeats() + n.followingRestBeats();
                 prior = n.positionInMeasure();
-                if (n.tupletDivisor() == 2 && n.tupletNormalNotes() == 2) {
-                    if (first < 0) first = i;
-                    else if (second < 0 && preceding == first) second = i;
-                    else {
+                if (!unresolved(n)) continue;
+                if ((pairs.size() & 1) == 0) {
+                    if (at + 1 >= lane.size()) {
                         complete = false;
                         break;
                     }
+                    var b = notes.get(lane.get(at + 1));
+                    if (!unresolved(b) || !mixedPair(n,b) && !equalPair(n,b)) {
+                        complete = false;
+                        break;
+                    }
+                    gain += (duration + ScoreNoteTiming.writtenDurationBeats(b)) * .5;
                 }
-                preceding = i;
+                pairs.add(lane.get(at));
             }
-            if (!complete || first < 0 || second < 0) continue;
-            var a = notes.get(first);
-            var b = notes.get(second);
-            double gain = (ScoreNoteTiming.writtenDurationBeats(a) + ScoreNoteTiming.writtenDurationBeats(b)) * .5;
-            if (!mixedPair(a,b) || Math.abs(written + gain - meter.quarterBeats()) > .001) continue;
+            if (!complete || pairs.isEmpty() || (pairs.size() & 1) != 0
+                    || Math.abs(written + gain - meter.quarterBeats()) > .001) continue;
             if (changed == null) changed = new ArrayList<>(notes);
-            changed.set(first, a.withTupletRatio(2,3));
-            changed.set(second, b.withTupletRatio(2,3));
+            for (int at : pairs) changed.set(at, notes.get(at).withTupletRatio(2,3));
         }
         return changed == null ? notes : List.copyOf(changed);
     }
@@ -119,6 +120,17 @@ final class BracketedDuplets {
             for (var meter : meters)
                 if (meter.measureIndex() == latest.measureIndex() && !meter.equals(latest)) return null;
         return latest;
+    }
+
+    private static boolean unresolved(ScoreNoteEvent note) {
+        return note.tupletDivisor() == 2 && note.tupletNormalNotes() == 2;
+    }
+
+    private static boolean equalPair(ScoreNoteEvent a, ScoreNoteEvent b) {
+        return a.beamCount() == 1 && b.beamCount() == 1
+                && a.augmentationDots() == 0 && b.augmentationDots() == 0
+                && a.stemDirection() != 0 && a.stemDirection() == b.stemDirection()
+                && a.followingRestBeats() == 0 && b.leadingRestBeats() == 0;
     }
 
     private static boolean mixedPair(ScoreNoteEvent a, ScoreNoteEvent b) {

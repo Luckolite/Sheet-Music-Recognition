@@ -368,6 +368,7 @@ public final class TabNotation {
                 int beams = -1;
                 float stemDuration = 1;
                 float bestDistance = Float.MAX_VALUE;
+                boolean dot = false;
                 for (int direction : new int[] {1, -1}) {
                     float edge = t.top() + (direction == 1 ? (t.stringCount() - 1) * t.gap() : 0);
                     for (int x = Math.max(0, Math.round(f.x() - t.gap() * .3f));
@@ -415,16 +416,26 @@ public final class TabNotation {
                             beams = count;
                             stemDuration = ink < t.gap() * 1.45f ? 2 : 1;
                             bestDistance = Math.abs(x - f.x());
+                            dot = direction > 0 && (printedDot(gray, w, h, t.gap(), x, end)
+                                    || printedDot(gray, w, h, t.gap(), x, Math.round(t.bottom() + t.gap() * 2.57f)));
                         }
                     }
                     if (beams >= 0) break;
                 }
+                if (beams >= 0) {
+                    beams = Math.max(beams, TabDetachedRhythm.beamLevels(t, gray, w, h, f.x()));
+                }
+                if (beams < 0 && shortDetachedHalf(gray, w, h, t, f.x())) {
+                    beams = 0;
+                    stemDuration = 2;
+                }
                 frets.add(
                         beams < 0
                                 ? f
-                                : withRhythm(f, beams == 0 ? stemDuration : 0, beams, f.dots()));
+                                : withRhythm(f, beams == 0 ? stemDuration : 0, beams,
+                                        dot ? Math.max(1, f.dots()) : f.dots()));
             }
-            result.add(t.withFrets(frets));
+            result.add(TabDetachedRhythm.triplets(t.withFrets(frets), gray, w, h));
         }
         // A lone unstemmed chord is a whole note only within otherwise explicitly rhythmic tab.
         boolean rhythmic =
@@ -458,4 +469,51 @@ public final class TabNotation {
             }
         return List.copyOf(result);
     }
+
+    private static boolean printedDot(byte[] gray, int w, int h, float gap, int stem, int end) {
+        int left = Math.max(0, stem + Math.round(gap * .20f));
+        int right = Math.min(w - 1, stem + Math.round(gap * .72f));
+        int top = Math.max(0, end - Math.round(gap * .93f));
+        int bottom = Math.min(h - 1, end - Math.round(gap * .27f));
+        int minX = right + 1, maxX = -1, minY = bottom + 1, maxY = -1, ink = 0;
+        for (int y = top; y <= bottom; y++)
+            for (int x = left; x <= right; x++) {
+                if ((gray[y * w + x] & 255) >= 160) continue;
+                minX = Math.min(minX, x);
+                maxX = Math.max(maxX, x);
+                minY = Math.min(minY, y);
+                maxY = Math.max(maxY, y);
+                ink++;
+            }
+        int dotWidth = maxX - minX + 1, dotHeight = maxY - minY + 1;
+        return minX > left && maxX < right && minY > top && maxY < bottom
+                && dotWidth >= gap * .08f && dotHeight >= gap * .085f
+                && dotWidth <= gap * .27f && dotHeight <= gap * .27f
+                && ink >= dotWidth * dotHeight * .7f;
+    }
+
+    private static boolean shortDetachedHalf(byte[] gray, int w, int h,
+            TablatureDecoder.Staff tab, float fretX) {
+        float gap = tab.gap();
+        int top = Math.max(0, Math.round(tab.bottom() + gap * .6f));
+        int bottom = Math.min(h - 1, Math.round(tab.bottom() + gap * 2.75f));
+        int first = Math.round(tab.bottom() + gap * 1.45f);
+        int left = Math.max(0, Math.round(fretX - gap * .21f));
+        int right = Math.min(w - 1, Math.round(fretX + gap * .21f));
+        int minX = right + 1, maxX = -1, minY = bottom + 1, maxY = -1, ink = 0;
+        for (int y = top; y <= bottom; y++)
+            for (int x = left; x <= right; x++) {
+                if ((gray[y * w + x] & 255) >= 220) continue;
+                minX = Math.min(minX, x);
+                maxX = Math.max(maxX, x);
+                minY = Math.min(minY, y);
+                maxY = Math.max(maxY, y);
+                ink++;
+            }
+        int strokeWidth = maxX - minX + 1, strokeHeight = maxY - minY + 1;
+        return minY >= first && maxY < bottom && minX > left && maxX < right
+                && strokeWidth <= gap * .21f && strokeHeight >= gap * .55f
+                && strokeHeight <= gap * .94f && ink >= strokeWidth * strokeHeight * .60f;
+    }
+
 }

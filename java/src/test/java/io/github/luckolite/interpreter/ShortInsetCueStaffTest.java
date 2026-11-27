@@ -127,6 +127,39 @@ public final class ShortInsetCueStaffTest {
         assertTrue(m.get(3).top() < 100f / H);
     }
 
+    private static Page wideInset(boolean missingInterior, boolean misaligned) {
+        byte[] labels = new byte[W * H], gray = new byte[labels.length];
+        Arrays.fill(gray, (byte) 255);
+        staff(labels, gray, 100, 9, 514, 940,
+                missingInterior ? new int[] {514, 940} : new int[] {514, misaligned ? 743 : 715, 940}, 5);
+        staff(labels, gray, 263, 12, 60, 940, new int[] {60, 215, 365, 530, 715, 940}, 5);
+        for (int cx : new int[] {593, 825})
+            for (int y = 117; y <= 125; y++)
+                for (int x = cx - 6; x <= cx + 6; x++)
+                    if ((x - cx) * (x - cx) / 36f + (y - 121) * (y - 121) / 16f <= 1)
+                        labels[y * W + x] = OmrMeasurePostProcessor.NOTEHEAD;
+        for (int i = 0; i < labels.length; i++)
+            if (labels[i] == OmrMeasurePostProcessor.NOTEHEAD) gray[i] = 0;
+        return new Page(labels, gray);
+    }
+
+    @Test
+    public void twoAlignedInsetBarsCanShareAFullStaffAcrossWideWhitespace() {
+        Page p = wideInset(false, false);
+        var measures = OmrMeasurePostProcessor.process(p.labels, p.gray, W, H);
+        assertEquals(5, measures.size());
+        assertTrue(measures.get(3).top() < 100f / H);
+        assertTrue(measures.get(3).bottom() > 311f / H);
+    }
+
+    @Test
+    public void aWideInsetNeedsItsInteriorBarToMatchThePrincipalStaff() {
+        Page missing = wideInset(true, false);
+        assertEquals(6, OmrMeasurePostProcessor.process(missing.labels, missing.gray, W, H).size());
+        Page misaligned = wideInset(false, true);
+        assertEquals(7, OmrMeasurePostProcessor.process(misaligned.labels, misaligned.gray, W, H).size());
+    }
+
     @Test
     public void rulesWithoutNotesCannotInventCuePart() {
         Page p = page(false, false, true, false);

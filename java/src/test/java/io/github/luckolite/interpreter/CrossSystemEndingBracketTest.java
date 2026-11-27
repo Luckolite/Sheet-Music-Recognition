@@ -99,6 +99,24 @@ public final class CrossSystemEndingBracketTest {
     }
 
     @Test
+    public void separatelyRecognizedChordDoesNotHideThePrintedEndingNumber() {
+        byte[] gray = paper();
+        rect(gray, 296, 90, 257, 4);
+        rect(gray, 296, 90, 2, 54);
+        int x = 307, y = 104;
+        rect(gray, x + 2, y, 3, 21);
+        rect(gray, x, y + 2, 3, 2);
+        rect(gray, x, y + 20, 6, 2);
+        rect(gray, 319, y + 18, 7, 4);
+        rect(gray, 330, y + 5, 3, 18);
+        var endings = PrintedEndingBrackets.detect(gray, W, H, STAFFS, BARS,
+                List.of(word("D", 329, 107, 342, 131)));
+        assertEquals(1, endings.size());
+        assertEquals(List.of(1), endings.get(0).passes());
+        assertTrue(PrintedEndingBrackets.detect(gray, W, H, STAFFS, BARS, List.of()).isEmpty());
+    }
+
+    @Test
     public void followsTheClosingHookToAnAdjacentSecondEndingMidSystem() {
         var endings = detectMidSystem(378);
         assertEquals(2, endings.size());

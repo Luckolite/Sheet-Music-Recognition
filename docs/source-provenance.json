@@ -1866,12 +1866,12 @@
     "ClosedMonophonicSixteenths.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/ClosedMonophonicSixteenths.java",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/ClosedMonophonicSixteenths.java",
-      "source_sha256": "cb21f3f330f4047094abbee57b9af5b0101a6e74276686254b9929bd6197f7fa",
-      "source_normalized_sha256": "cb21f3f330f4047094abbee57b9af5b0101a6e74276686254b9929bd6197f7fa",
-      "standalone_normalized_sha256": "3ad59e7337bd968c2d82e04792d9c3c4f94b4846bae1e4fc9a90ea83bc92aa85",
+      "source_sha256": "d30855df1c751e3dd03771b5d7c864767f0530405cc8b76b5e7576f192580b40",
+      "source_normalized_sha256": "d30855df1c751e3dd03771b5d7c864767f0530405cc8b76b5e7576f192580b40",
+      "standalone_normalized_sha256": "9c9bde5fac84dc83b36fa5ffd22f56f158bd98867809b6f055c0cb815fb3de17",
       "license": "Apache-2.0",
-      "reviewed_app_commit": "3707075d6567e9c60852d17ca16c6f72b208fcee",
-      "reviewed_app_state": "Shared common-time clock and rail ownership proof covers inherited and unmarked full bars without changing the prior meter-specific repairs.",
+      "reviewed_app_commit": "feda5bfc9ae6f5e2a4c0d58080ace263a1e4dbbe",
+      "reviewed_app_state": "The independently reviewed common-time and three-beat clock repairs retain their controls. Both surfaces also reconcile mixed inferred beam depths only on an owned monophonic quartet when the original and prepared raster prove two rails across every adjacent shaft.",
       "detached_upper_one_review": {
         "app_commit": "a0d0906247c1ee1f26dc89013e51fb2a89768d7d",
         "scope": "Expose the same existing full-head eligibility for both one-beam and two-beam notes.",
@@ -1898,6 +1898,12 @@
           "java/src/main/java/io/github/luckolite/interpreter/FingeringAnnotationFilter.java": "6cd8db6d3f6ef0bdca648fdbb63c25dbc718f1bbd58d7c0c97e98e06724b2d36",
           "java/src/main/java/io/github/luckolite/interpreter/SheetInterpreter.java": "88c29cce8d794451210975475df380216db80f5bf5568d536b8d21576a8f1149"
         }
+      },
+      "scale_book_source_review": {
+        "source_sha256": "cb21f3f330f4047094abbee57b9af5b0101a6e74276686254b9929bd6197f7fa",
+        "source_normalized_sha256": "cb21f3f330f4047094abbee57b9af5b0101a6e74276686254b9929bd6197f7fa",
+        "standalone_normalized_sha256": "3ad59e7337bd968c2d82e04792d9c3c4f94b4846bae1e4fc9a90ea83bc92aa85",
+        "standalone_sha256": "3ad59e7337bd968c2d82e04792d9c3c4f94b4846bae1e4fc9a90ea83bc92aa85"
       }
     },
     "ClosedOctaveRailRun.java": {
@@ -2537,11 +2543,13 @@
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/BilateralLedgerContrast.java",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/BilateralLedgerContrast.java",
       "license": "Apache-2.0",
-      "source_sha256": "d8eb2235a1c3a48e6735e5d05296da9d55f34ad74695dbf59131aa7df53bd494",
-      "source_normalized_sha256": "1169e062c751aaf9dd74b0ca557a19aca680e7e57885df7b3d85fdcbf6e17be8",
-      "standalone_sha256": "224d7904e8cd1fae143f432664af65b59943fa9ae93867ceb7d98127c24bcbdf",
-      "reviewed_source_state": "working-tree",
-      "review_note": "Prove a separately faded inner ledger using bilateral thin protrusions and a connected raw rule at its predicted phase, retaining outer-ledger proof and bounded central shaft crossings. Fallback only for one required inner rule near the second ledger and non-reduced heads. Nine original upper/lower, missing, broken, broad, wrong-phase and immutable-input controls; existing2545controls pass. No private pixels, models, dependencies or formats."
+      "source_sha256": "b73e69da60558475d6ba5e95966e8fd85e00e84bc3522257138ac86d8112c1a3",
+      "source_normalized_sha256": "b73e69da60558475d6ba5e95966e8fd85e00e84bc3522257138ac86d8112c1a3",
+      "standalone_sha256": "6a80ad9a96635d07044f3cd3bc307fa8197d0b2c315f6c31586a3654d0373935",
+      "reviewed_source_state": "paired local commits",
+      "review_note": "Retain a thin, connected inner ledger when a proved downstem shadows its narrow shoulder. Require the other bilateral ink and correct staff phase and preserve the existing strict proof for other heads.",
+      "standalone_normalized_sha256": "6a80ad9a96635d07044f3cd3bc307fa8197d0b2c315f6c31586a3654d0373935",
+      "reviewed_app_commit": "5aa151b2873ccf024698dadc743cfd5ac9ebb2b7"
     },
     "BoldReturningSlurOriginalTest.java": {
       "source_path": "app/src/test/java/com/musicsheets/app/pdf/BoldReturningSlurOriginalTest.java",
@@ -3244,12 +3252,12 @@
     },
     "CourtesyKeyTailInk.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/CourtesyKeyTailInk.java",
-      "source_sha256": "e9d13dba094ba2ca18a63b234d7f2bfaf4a3d4e7c472000f2e54587c66d3279e",
-      "source_normalized_sha256": "69feae7cf2aa22acafc6125b8e5d51be3720b4f64d1abcf1cb880d628d420de7",
-      "standalone_sha256": "f03b6df7f28269c2e82c5866262628352eeba201af255dafe5134d6e40054d22",
+      "source_sha256": "610e2c7f6018f8e2688c8608e59e0c23593c6c5d9bcf661cc49aa48e19a6228f",
+      "source_normalized_sha256": "73d004dd6fecbd4ac9ee1e53850f973f27a51b1c745e82063b061aa0b1cec85a",
+      "standalone_sha256": "7a3a8ed888d769b0e66fbf6321a91bee37b4659ed16131308c6cf7ad22fa5c9b",
       "reviewed_source_state": "Committed combined source snapshot; paired package deployment and whole-library accuracy acceptance pending.",
-      "review_note": "Global recognition/performance repairs; namespace-equivalent portable helpers and separately reviewed caller adapters. Original synthetic regressions; no private score assets.",
-      "reviewed_app_commit": "c0374eebf5c075b83813a66051faa22bcb431360",
+      "review_note": "Review of an empty, bounded inline key signature between a double bar and the next proved repeat opening. Both readers preserve the existing system-tail path and reuse structural clock remapping.",
+      "reviewed_app_commit": "ca632170bbbaa9d57597558eff9a627b850b9c66",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/CourtesyKeyTailInk.java"
     },
     "CourtesyMeasureRemap.java": {
@@ -6404,7 +6412,13 @@
         "shared_source_sha256": "08c02b4a3a4baa5e32ef710dd48f4ddde19a47ae03ef78ae5581d9be6a2fcb09"
       },
       "optical_grace_reviewed_app_commit": "fe3840f1cc5e468dc24734dd1959d7bc85054c86",
-      "optical_grace_port_scope": "Ports the call at final optical note assembly before source context capture. Existing broader app and standalone file differences are outside this scoped review."
+      "optical_grace_port_scope": "Ports the call at final optical note assembly before source context capture. Existing broader app and standalone file differences are outside this scoped review.",
+      "partial_staff_rule_detached_flag_review": {
+        "reviewed_app_commit": "ad0d14a1f50a6c6586f26cbf202214a871e01a35",
+        "app_lf_sha256": "86256536304d79439d773eb42fccea8812168cc588490cf0af096e3394d8c0c9",
+        "standalone_lf_sha256": "4219e6b3655c98f0cec1f5c9125d266e5dbee183ac17e04826a7cab6334e449e",
+        "scope": "Matching bilateral staff-rule proof before counting partially sampled rows in detached-flag recovery. Existing fixture covers retained true detached flags; original synthetic regression demonstrates a staff rule cannot supply one. Prior whole-file drift remains recorded."
+      }
     },
     "OnnxOcrInference.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/OnnxOcrInference.java",
@@ -6875,18 +6889,18 @@
     },
     "PortableNoteOrnaments.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/PortableNoteOrnaments.java",
-      "source_sha256": "77a22ca4c595ead676504084ad2fe90c9774dffd3fb60278b1f75933dcf5938d",
-      "reviewed_app_commit": "dbf64cc20818bbed28f0fa3a81188490b0965348",
-      "source_normalized_sha256": "77a22ca4c595ead676504084ad2fe90c9774dffd3fb60278b1f75933dcf5938d",
-      "review_note": "Complete upper auxiliary accidentals use the existing2.8staffgap componentinventory limit instead of inconsistent2.2; fullglyph classifier, distance/side ownership and fallbackcrop unchanged. Paired original tallnatural/control/foreign/overheight/lower controls and exact one-note private actual outcome.",
-      "reviewed_app_state": "Compatible recognition88 source batch committed; cumulative paired rollout deferred during active goal.",
-      "scoped_reviewed_app_commit": "0a805317ca2c737cba57a2596680cadfabc0627f",
+      "source_sha256": "d9b3fd7760b42ff6b1f2360f30af3ecb218b33e9644e48b718d200ebfe0a1eb9",
+      "reviewed_app_commit": "b86ee5c9b5e744aeb5cff492afb1641c6cc8881d",
+      "source_normalized_sha256": "d9b3fd7760b42ff6b1f2360f30af3ecb218b33e9644e48b718d200ebfe0a1eb9",
+      "review_note": "Retain proved scoop ownership. During printed portamento cleanup, allow an already-identified slide only when it matches the same printed word and the same two independently proved notes.",
+      "reviewed_app_state": "Standalone and app exact saved-source replay passed after local integration.",
+      "scoped_reviewed_app_commit": "b86ee5c9b5e744aeb5cff492afb1641c6cc8881d",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/PortableNoteOrnaments.java",
-      "standalone_sha256": "a8de5bf3a00c3625908c19d976ddad44fcc0a768e9b9ee8b7715518bad9ea41d",
+      "standalone_sha256": "21641f46c394eff9ba9a4edbc0585c05a89771ce5b4b623262d18aef1d2bebc8",
       "license": "Apache-2.0",
       "recognition88_review_note": "Reviewed exact contextual global changes and namespace twins with original synthetic regressions. New helpers are selected explicitly by desktop decoder manifest; no models, private fixtures, schema, wire or audio changes.",
-      "standalone_normalized_sha256": "a8de5bf3a00c3625908c19d976ddad44fcc0a768e9b9ee8b7715518bad9ea41d",
-      "current_source_review": "Reviewed current source and standalone counterpart for the cumulative source-bound beam, notation, key, articulation and bounded context batch. Original procedural regressions only; physical source observations and model facts do not establish complete musical authority.",
+      "standalone_normalized_sha256": "21641f46c394eff9ba9a4edbc0585c05a89771ce5b4b623262d18aef1d2bebc8",
+      "current_source_review": "Exact paired ornament delta and original synthetic controls, with private saved input and playback verified outside Git.",
       "app_optimization_port_review": "Reuses connected ink components while retaining platform-owned candidate and timing handling."
     },
     "PortableOcr.java": {
@@ -7481,12 +7495,12 @@
     },
     "PrintedEndingBrackets.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/PrintedEndingBrackets.java",
-      "source_sha256": "c5853e60f2f0460855aac818d1961ab900bfb2d711d74986dfabd2f841666668",
-      "source_normalized_sha256": "d747e38e1da20718ff10788322cf2a4a995221e68fc69dba930f3eb3f91ab46c",
-      "standalone_sha256": "dc3c6fb9c72283340fefd9aaf1059d5d23cda1c0acedad11f6e3cbbe5d94dcdf",
-      "review_note": "Global recognition/performance repairs; namespace-equivalent portable helpers and separately reviewed caller adapters. Original synthetic regressions; no private score assets.",
+      "source_sha256": "75b0db91b72c389e61e281217fd8f632aea9d976e7294c0616479dc7dc254aa5",
+      "source_normalized_sha256": "fb8071311fc862fccfcabd5ba354beb0c02505b4898a69a145d45a51fee2499a",
+      "standalone_sha256": "5d9e26acdb8f70d28f7279b07dff0dbe2ee39acf60e94d90b5c7de5f8cc59989",
+      "review_note": "Retains multi-pass bracket OCR only beside the proved hook or within a proved roof, and admits disjoint interior and terminal alternatives with complete pass coverage. Portable detection preserves its independently reviewed selector prefilter.",
       "reviewed_source_state": "Committed combined source snapshot; paired package deployment and whole-library accuracy acceptance pending.",
-      "reviewed_app_commit": "c0374eebf5c075b83813a66051faa22bcb431360",
+      "reviewed_app_commit": "649d26d6c1cc837a95a06ed34097ae4c11ee61ab",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/PrintedEndingBrackets.java",
       "plain_paired_ending_selector_review": {
         "reviewed_app_commit": "d162c3cd289a3152620fa0214e99786f349aff4c",
@@ -7599,6 +7613,12 @@
       "reviewed_app_commit": "28889c6160420f03f1ce778e652db95fef25b034"
     },
     "PrintedMeasureRhythmGuard.java": {
+      "complete_sequential_measure_review": {
+        "reviewed_app_commit": "8604d2e574fb9400a401ea26c09ee145db90f421",
+        "app_lf_sha256": "269b51082b7dead367c9c7e288d9792c800974efd5ea819f1c431206adbc3cca",
+        "standalone_lf_sha256": "90cbbfd966a8736ec445b6ba135727b444a65b4e90416baf8bc797c283ffc8fb",
+        "scope": "Matching literal capacity arbitration for stemless whole notes, sequential mixed stems and neutral full rests. A fit through a printed head may override only the coarse vertical-stroke check after the strict separator proof has failed. Includes original fixtures preserving true and ambiguous boundaries. Prior whole-file drift remains recorded."
+      },
       "unanchored_split_review": {
         "reviewed_app_commit": "5bebe8ff6a799eaaeb6919f937f64741bb71d6e2",
         "app_blob_sha256": {
@@ -7697,10 +7717,12 @@
     },
     "PrintedPageEvidence.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/PrintedPageEvidence.java",
-      "source_sha256": "99291b3bbee48c8cb95c9c54e868a91ca0f24cdbccd66e3577b897f19abe9cbc",
-      "reviewed_app_commit": "650d1b3a312dcd7eb58f83945a6a3be321c9b4dd",
-      "source_normalized_sha256": "99291b3bbee48c8cb95c9c54e868a91ca0f24cdbccd66e3577b897f19abe9cbc",
-      "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/PrintedPageEvidence.java"
+      "source_sha256": "293436b8b54f64dd0c4fedf58a0eb100a24539f8ad76ad32e2c66927854f494f",
+      "reviewed_app_commit": "8defa9be99df9ee8ba7c2ac2c8b064c093ea3b21",
+      "source_normalized_sha256": "293436b8b54f64dd0c4fedf58a0eb100a24539f8ad76ad32e2c66927854f494f",
+      "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/PrintedPageEvidence.java",
+      "standalone_sha256": "20c163059c73bc0d0f030644dd5d0c28cd6624fd6c2848ae2a028a17b4addf74",
+      "review_note": "Namespace-equivalent admission on original grayscale margins, continuous tones, and the existing five-line staff proof. Uses original synthetic fixtures."
     },
     "PrintedParenthesisDetector.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/PrintedParenthesisDetector.java",
@@ -7796,12 +7818,12 @@
     },
     "PrintedRepeatNavigation.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/PrintedRepeatNavigation.java",
-      "source_sha256": "0b81d08fc6c08299fb828c500a25bf62ef173735f47e3381be4c99eec22e28eb",
-      "source_normalized_sha256": "53a7748ee53572febcccb53e1cbd5e4aa3936e4d9fe7158100acbb766d0147b4",
-      "standalone_sha256": "f4ea346e2c25d32c9e6bb50be30790cb41ac48d3d14b91dbc222197d34e429ce",
-      "review_note": "Global recognition/performance repairs; namespace-equivalent portable helpers and separately reviewed caller adapters. Original synthetic regressions; no private score assets.",
+      "source_sha256": "a98323353a4e72c667bb0fca7de1b2fffe554e5b05ce6cf462a9120c82b4782b",
+      "source_normalized_sha256": "0bf9c44e5efee31ef0df16fb84ba50aa72166fba443f896da7bffda9e84ab508",
+      "standalone_sha256": "8e3d3500e6079deafbb3b2ce6b18014140f1ab3ed6eafec33e750e4e8cfcc4d5",
+      "review_note": "Retains multi-pass bracket OCR only beside the proved hook or within a proved roof, and admits disjoint interior and terminal alternatives with complete pass coverage. Portable detection preserves its independently reviewed selector prefilter.",
       "reviewed_source_state": "Committed combined source snapshot; paired package deployment and whole-library accuracy acceptance pending.",
-      "reviewed_app_commit": "c0374eebf5c075b83813a66051faa22bcb431360",
+      "reviewed_app_commit": "649d26d6c1cc837a95a06ed34097ae4c11ee61ab",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/PrintedRepeatNavigation.java"
     },
     "PrintedRestBarHeads.java": {
@@ -9115,8 +9137,7 @@
       "standalone_sha256": "a91938aa414025c765a84019eb56f1c9a951563e1b70ca7446a22fe12647c5a8",
       "reviewed_app_commit": "2382375975d63a6179a0e266c39f03e49c6b5392",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/ScoreExpressivePerformance.java",
-      "license": "Apache-2.0"
-,
+      "license": "Apache-2.0",
       "metronome_direction_review": "Use a simultaneous explicit metronome equation as the target of a numerically qualified ritenuto direction.",
       "tempo_restore_review": "Apply a proved faster return relative to the steady clock, and preserve any simultaneous explicit numeric target.",
       "sectional_slowdown_review": "Recognize whole printed Slower directions at a verified owner and the printed spelling rallantando. Use the existing qualitative clock policy and preserve a coincident numeric tempo.",
@@ -10497,6 +10518,15 @@
           "java/src/main/java/io/github/luckolite/interpreter/ParentheticalFingerings.java": "7f94db62fdd58ba9dc919f53de944ddb8f806f36d453c564973f71b8601ed431",
           "java/src/main/java/io/github/luckolite/interpreter/SheetInterpreter.java": "e04658e87a1728bbf910462a787b1ecf514a4515d4a599457112a0d02eeda1cf"
         }
+      },
+      "cover_raster_admission_review": {
+        "reviewed_app_commit": "8defa9be99df9ee8ba7c2ac2c8b064c093ea3b21",
+        "scope": "All three score ingress paths supply source grayscale for photographic cover admission and retain the decoder raster for the existing silent-page check. Earlier whole-wrapper drift remains recorded.",
+        "app_lf_sha256": {
+          "app/src/main/java/com/musicsheets/app/pdf/OmrMeasureAnalyzer.java": "bb64e4a00519881f2c4a8ed7d9e28180d044b702a7adea41ecb8bb79643fdba7",
+          "tools/native-worker/NativePageGuide.java": "3a35635767abe3ae4ce21ff5b24c4dd2cb7a1d1f89fdae3c88aedbb83a85a809"
+        },
+        "standalone_lf_sha256": "e4cc64b0038cced8c0da1df6463fb500726678e3a3ce1064c476f51a5b86b9a5"
       }
     },
     "SheetWrittenTieLinks.java": {
@@ -10512,13 +10542,15 @@
     },
     "ShortFinalStaff.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/ShortFinalStaff.java",
-      "source_sha256": "4f394fb13d494762d3ba9d05765cdd21e26e0911cec90d715223e5036c5aa291",
-      "reviewed_app_commit": "2337b2246d60df5c93552ccc9dc6d1a14f621844",
+      "source_sha256": "dcd146a65ed57d2a49e83cbebdac6a693d3a978c5bf584c5e3b31db7c4d1db8c",
+      "reviewed_app_commit": "d4a1aa59136f3e7073450a3f8b35be35c53d94f0",
       "review_note": "Package-only port of bounded five-rule and terminal-double-bar proof for short final staves, with original synthetic positive and negative regressions. No private score pixels, new dependencies or model changes.",
-      "source_normalized_sha256": "4f394fb13d494762d3ba9d05765cdd21e26e0911cec90d715223e5036c5aa291",
+      "source_normalized_sha256": "dcd146a65ed57d2a49e83cbebdac6a693d3a978c5bf584c5e3b31db7c4d1db8c",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/ShortFinalStaff.java",
-      "standalone_sha256": "ee0908185ee1e2263d9ee7c8b02857e688b2d4c2e29c9765711ceb291f38d34b",
-      "reviewed_app_state": "Reviewed and committed recognition 147 sources. Original synthetic controls cover tempo dots, paired equation strokes, and a compact staff with real musical ink."
+      "standalone_sha256": "4560facb17fbd4aba75c0db63fc008268556cf18edfa7a9b63ad499e0576a7c9",
+      "reviewed_app_state": "Reviewed and committed recognition 147 sources. Original synthetic controls cover tempo dots, paired equation strokes, and a compact staff with real musical ink.",
+      "standalone_normalized_sha256": "4560facb17fbd4aba75c0db63fc008268556cf18edfa7a9b63ad499e0576a7c9",
+      "current_source_review": "Compared the complete app and standalone implementations and authored controls. The Java namespace accounts for the full source difference."
     },
     "SingleHeadApproachOriginalsTest.java": {
       "source_path": "app/src/test/java/com/musicsheets/app/pdf/SingleHeadApproachOriginalsTest.java",
@@ -11136,8 +11168,7 @@
       "standalone_normalized_sha256": "82cb985f56fcc08ad5fc4b48ee7ef0b5a8ec96f36d1706045810dfdb99440013",
       "license": "Apache-2.0",
       "current_source_review": "Small hollow metronome pulse and elevated system ownership match after namespace and formatting. Standalone keeps its existing fast return when either input of both subsequent contextual loops is empty, so the same ordinary result is returned.",
-      "reviewed_app_state": "Reviewed and committed recognition 147 sources. Original synthetic controls cover tempo dots, paired equation strokes, and a compact staff with real musical ink."
-,
+      "reviewed_app_state": "Reviewed and committed recognition 147 sources. Original synthetic controls cover tempo dots, paired equation strokes, and a compact staff with real musical ink.",
       "metronome_direction_review": "Prefer the beat note closest to the equals sign; use darker disconnected ink to resolve a displaced competing stem and require a flag to start near the note stem tip.",
       "partial_numeral_review": "Overlapping smaller numerals attached to the same proved equals sign are discarded. Distinct printed equations and their beat positions remain independent.",
       "crossed_flag_opening_review": "Recover an opening metronome equation from paired equals-stroke tips and a shared stable flagged eighth glyph. Standalone retains its cached direction geometry.",
@@ -11497,12 +11528,12 @@
     },
     "VerifiedCourtesyKeyTail.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/VerifiedCourtesyKeyTail.java",
-      "source_sha256": "b1a47b9838f7a7e6c3771d27c96df1742404972728a71604e4f70066e07ed944",
-      "source_normalized_sha256": "81b975f5322b2e086c76ea0f1d00e2ea1b07e488cc91bb474e02dfc80ff9949e",
-      "standalone_sha256": "7ac399d13bb627c23f0cdbcdeaba86c38b688f38cf1a2115bd06dc5f1f39b0f5",
+      "source_sha256": "1f6ec673654678237d1a99db905af3f87b2dd7b406cc45f1a51204354aa933f9",
+      "source_normalized_sha256": "593ec688afa303dfb1a035e492058a2c68ca4c4d26c8c095a2159eb6c2ecafa6",
+      "standalone_sha256": "7a8ac7208d0994a70f8e642186a634989311ae5e773c07f4bf4564448a5b7d6f",
       "reviewed_source_state": "Committed combined source snapshot; paired package deployment and whole-library accuracy acceptance pending.",
-      "review_note": "Global recognition/performance repairs; namespace-equivalent portable helpers and separately reviewed caller adapters. Original synthetic regressions; no private score assets.",
-      "reviewed_app_commit": "c0374eebf5c075b83813a66051faa22bcb431360",
+      "review_note": "Review of an empty, bounded inline key signature between a double bar and the next proved repeat opening. Both readers preserve the existing system-tail path and reuse structural clock remapping.",
+      "reviewed_app_commit": "ca632170bbbaa9d57597558eff9a627b850b9c66",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/VerifiedCourtesyKeyTail.java"
     },
     "VerifiedStaffTieRidge.java": {
@@ -13790,6 +13821,17 @@
       "standalone_sha256": "bcded66083c71ee53d12e350d11f2216c9ad1d5803def6bb69ef960f77117399",
       "license": "Apache-2.0",
       "recognition140_review_note": "Reviewed decoder-only illumination correction and namespace twins; original segmentation/OCR/annotation authority retained. Recognition140 cache invalidation, guide299/audio102 record layouts unchanged. Original synthetic regressions and model lineage only."
+    },
+    "CompactClosingSlur.java": {
+      "reviewed_app_commit": "1563aecce9da2ab409d06207ab2f62f5f729553c",
+      "license": "Apache-2.0",
+      "source_path": "app/src/main/java/com/musicsheets/app/pdf/CompactClosingSlur.java",
+      "source_sha256": "517e0604de8841ec44687f0b85927bfadf96aed266476e07a7a4425b8bea96df",
+      "source_normalized_sha256": "517e0604de8841ec44687f0b85927bfadf96aed266476e07a7a4425b8bea96df",
+      "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/CompactClosingSlur.java",
+      "standalone_sha256": "78301e2fbe51c0c15001d09e87d6cfd097eddfa6ea6abf5bad9ae21e2be25f81",
+      "standalone_normalized_sha256": "78301e2fbe51c0c15001d09e87d6cfd097eddfa6ea6abf5bad9ae21e2be25f81",
+      "current_source_review": "Verified entire production implementation after Java namespace adaptation."
     }
   },
   "finite_curved_approach_review": {
@@ -19206,5 +19248,503 @@
     "lineage": "models/paper-field-lineage.json",
     "wrapper_review": "Android OmrMeasureAnalyzer and native NativePageGuide correct only after original segmentation and tab-label preparation. Native OCR/annotations and tab source raster retain original bytes. Python reader segments and acquires annotations before correction. New model hash and raster policy checked by Hub/worker.",
     "boundaries": "No private scores, logs, app signing material or library data included."
+  },
+  "wide_interior_single_beam_review": {
+    "app_commit": "cd32c521cac8f84306c90b7fbb9d4dd274d0ad33",
+    "scope": "Recover the single beam on a missed interior filled head only when its attached shaft joins continuous dark symbol bands to independently recognized single-beam neighbors on both sides of the same bar.",
+    "validation": "Original staff-crossing and broken-beam controls in both Java surfaces. Private exact-page desktop and standalone replay changes one duration and preserves the surrounding pitches, onsets and double-stops.",
+    "boundary": "Shared recognizer and original drawing only. Private scores and playback artifacts stay outside Git."
+  },
+  "sloped_repeat_endings_review": {
+    "app_commit": "39bce34d6cca2e13d1b6379165c19b9867550f7f",
+    "scope": "Require a measured local staff phase and a complete glyph for repeat dots displaced from a flat staff seed. Preserve wider printed selector periods, rounded hook columns, and separate recognized chord text. Recover compact dark dot cores without weakening rail proof.",
+    "validation": "Original synthetic tilt, stray rails, joined dots, scoped chords and retained cross-system ending controls. Private saved-page receipts verify all three repeat groups and the shared desktop/standalone route.",
+    "boundary": "Public shared sources and original synthetic controls only. Private notation and raster inputs kept outside Git."
+  },
+  "joined_repeat_dot_core_review": {
+    "app_commit": "942f8fd06363f1171d93b680ec2869682d2a59b3",
+    "scope": "Read a compact dark dot core joined to a staff rule by lighter ink. Require an aligned independently visible companion dot, plus the retained staff and unequal rail proof.",
+    "validation": "Original positive and refusal controls and retained repeat and cut-time fixtures. Private exact replay verified the repeat in the desktop and standalone playback routes.",
+    "boundary": "Shared optical rule with standalone scan optimizations retained. No guide layout, models, or private artifacts are part of this patch."
+  },
+  "november_26_short_final_rounded_rail": {
+    "reviewed_app_commit": "d4a1aa59136f3e7073450a3f8b35be35c53d94f0",
+    "scope": "Retain the same continuous short staff when a single rail narrowly misses the centered pixel threshold and the adjacent pixel supplies the missing contrast. Require four independently accepted rails and a physical double close.",
+    "evidence": "Original synthetic offset rail, second shifted rule, more than one pixel, and single closing bar controls. Shared production code and controls were compared after normalizing the Java namespace. No private raster included."
+  },
+  "november_26_oversized_opening_four_ownership": {
+    "reviewed_app_commit": "e80b8b57170ba62547129880682ca976f202f338",
+    "scope": "Reject two false corner heads when oversized aligned opening fours prove the same descending arm, crossbar and shaft in both halves of the meter.",
+    "evidence": "Independently generated oversized meter digits, individual numeral, genuine octave and nonopening controls. No score image or model output included."
+  },
+  "november_26_ossia_measure_ownership": {
+    "reviewed_app_commit": "bf67b9cf6ca6df5a69e86702f9e9131b0c635e1f",
+    "scope": "A smaller right-inset alternate staff shares the principal timing when its independent bar positions align with the final consecutive principal bars.",
+    "evidence": "Original synthetic decision controls, with retained narrow, curved and connected staff geometry controls."
+  },
+  "november_26_opening_quarter_rests": {
+    "reviewed_app_commit": "f3a0a8ff918c7a7520898c001b23073ca5b2c5b8",
+    "scope": "Exclude independently supported neighboring barlines from terminal flag evidence and recover a second opening quarter rest through matching original raster contours before a closing quarter note.",
+    "evidence": "Original procedural rest geometry, incomplete-body and flagged-note controls under Apache-2.0."
+  },
+  "november_26_detached_dotted_sixteenth_rests": {
+    "reviewed_app_commit": "ec9baaf0d09faa2ceef355e8d54efc134447d5c0",
+    "scope": "Read two literal sixteenth rests around two dotted eighths and before a separate four-eighth beam. Require two compact bulbs and a terminating narrow diagonal in both local spacing windows plus the independent printed beam topology.",
+    "evidence": "Original synthetic positive, missing-glyph, continuous-beam and existing-rest controls. No source score data included."
+  },
+  "november_26_prose_bow_and_elevated_cantabile": {
+    "reviewed_app_commit": "33986c51f6e7179cb40875920a7b90006a5964e7",
+    "scope": "Suppress bow glyph candidates within identified OCR prose lines. Recover a literal elevated cantabile when an isolated high opening attack owns the text.",
+    "evidence": "Original procedural Apache-2.0 fixtures. No new font, score, model weight, or wire format."
+  },
+  "semantic_barline_raw_stem_review": {
+    "reviewed_app_commit": "de2bd525d0a0c51a930eb00ffb0948b4327b6d8c",
+    "app_lf_sha256": "5370b87a57b047d9db62e270d9c2e3c29ae2c7ac4e1be6b2f3763cd12dee4807",
+    "standalone_lf_sha256": "b01bdf1ddf595ea196aa0d2ad113dbd3920c33693a31d48c7247c1117663f831",
+    "scope": "A semantic candidate with no head attachment at its halo column checks a substantial connected head again at the exact raw column that proved the vertical rule. Existing finite, independent barline, repeat and note-contour evidence remains active.",
+    "original_regression": "SemanticBarlineHaloTest.java fails on the prior source and covers an independent printed rule on both Java surfaces. The existing barline and separate-head controls pass.",
+    "boundary": "Shared Apache-2.0 recognition and original generated ink only. Scoped parity review preserves the historical whole-file provenance. Private exact-location and playback evidence remain outside Git."
+  },
+  "november_26_closed_staff_clock_three_beam_septuplet": {
+    "app_commit": "2df7e4f4a468b6600c5e20d6bd422143b55b508a",
+    "source": "Music Sheets TripletRhythmDetector",
+    "scope": "Source-reviewed contextual three-beam seven-in-eight ratio when the complete staff clock closes. Synthetic controls only."
+  },
+  "november_26_shared_heavy_repeat": {
+    "reviewed_app_commit": "53ae3ac4d46d774ea0387ae727bc8cefe300f5ff",
+    "scope": "Read independently confirmed heavy/heavy repeat rails, map both directions to one common separator, and recover the preceding implicit first repeat across an adjacent opening source page. The standalone NAV3 adapter reuses serialized directions and adjacency without a wire change.",
+    "evidence": "Original synthetic paired-dot, missing-dot, unproved shared start, separate later unresolved repeat, and non-opening page controls. No score imagery included."
+  },
+  "november_26_sixteenth_triplet_rest_alias": {
+    "reviewed_app_commit": "c2b4925b111395ce586b883434df56c5f1a223ef",
+    "scope": "Reject a quarter-rest box above the staff when it surrounds the independently owned numeral over three connected sixteenths. Remove the corresponding rhythmic carry from the optimized standalone rest adjustment.",
+    "evidence": "Original generated ink and negative controls in InStaffSecondaryBeamTripletTest. Existing standalone rest and triplet timing controls retained."
+  },
+  "november_26_scoped_printed_tablature_capo": {
+    "reviewed_app_commit": "0f6f2ccf8757660e257886e547501f086c373bb3",
+    "scope": "Recognize a literal capo cue on paired tablature and carry it through consecutive printed and physical pages. Proved staff and fret intervals govern sounding MIDI while the source notes retain their written fields.",
+    "standalone": "Share the page evidence and resolve it over decoded events before MIDI and audio tie realization.",
+    "provenance": "Original procedural Apache-2.0 tests. Existing record layouts and model weights are unchanged."
+  },
+  "november_26_same_staff_portamento_word": {
+    "reviewed_app_commit": "7dbdf6e876df4d3d533db62f54f2bc119921109e",
+    "scope": "An independently marked same-staff portamento and its printed word may agree on one proved note pair. The word owns an enclosed stemless whole-head hypothesis, with no changes to the pitched endpoints or their ornament.",
+    "evidence": "Original authored same-staff caption and line geometry, retained stemmed-attack, absent-line and conflicting ornament controls. No private source score or raster is included."
+  },
+  "whole_note_column_end_review": {
+    "app_commit": "343443c0774227758490e9529bbdab8164014f7e",
+    "scope": "Recover a wholly symbol-labelled end of an aligned in-staff whole-note column when the other two noteheads have independent model support and all three hollow bodies are proved in the original and decoder image.",
+    "validation": "Original success and refusal fixtures plus current normal native, exact standalone, and retained desktop clock checks. The narrower new port is reviewed without changing historical full-file provenance.",
+    "boundary": "Shared Java logic and original synthetic fixtures only. No private scores, raster evidence, guide changes or models."
+  },
+  "november_26_stemless_opening_half_heads": {
+    "reviewed_app_commit": "6c64d91ff4743e9718d8567faae466ed1fcf7e7e",
+    "scope": "Recognize narrow stemless half-note openings by enclosed slanted pockets and independently stemmed half attacks in two columns.",
+    "evidence": "Original synthetic tilted and whole-note pockets plus existing ruled and crossed hollow-head controls."
+  },
+  "november_26_adjacent_bar_wavy_glissando": {
+    "app_commit": "42ade9e9bd6b03638cafbbd36b7219360ebd90ea",
+    "source": "Music Sheets WaveGlissDetector, PortableNoteOrnaments, GlissPitchTarget and NoteOrnament",
+    "scope": "Source-reviewed adjacent-bar wave ownership, typed existing ornament field qualifier and unique target. Test rasters are procedural."
+  },
+  "november_26_verified_opening_cue_playback": {
+    "reviewed_app_commit": "101210003423ac7025ff2eac51700a2afd225e7e",
+    "scope": "Retain independent instrument and Play scope evidence. Mute only proved opening cue lanes after the performance clock and tie ownership exist. Preserve compact cue playback and written source.",
+    "evidence": "Synthetic extended, compact, conflicting lane and MIDI playback controls. No private score or guide data included."
+  },
+  "november_26_wide_meter_empty_key": {
+    "reviewed_app_commit": "96e4155d4714b76b6d163e248307a176274ec6d4",
+    "scope": "Retain explicit zero fifths when two complete opening clefs and wide stacked numeral headers bound a visibly empty printed signature slot.",
+    "evidence": "Original procedural header glyphs with occupied key, missing counter and missing symbol controls."
+  },
+  "november_26_detached_down_bow_rest_ownership": {
+    "app_commit": "a4ef2f4c976628fc5a601eb8633c36eac48ace39",
+    "source": "Music Sheets DetachedAnnotationInk and SixteenthRestDetector",
+    "scope": "Source-reviewed detached down-bow ownership for raised eighth-rest proposals. Synthetic controls only; no private scores or audit inputs."
+  },
+  "november_26_paired_compact_printed_rests": {
+    "reviewed_app_commit": "3aea7605622a6fbde9b857cfaa54efb96fcb8c7e",
+    "scope": "Retain two printed rest groups only when a compact two-staff measure expands from an admitted count and each physical staff independently owns its matching count and rest ink.",
+    "evidence": "Synthetic isolated rest-lane bindings and missing, conflicting and partial-rest controls. No private score or raster data included."
+  },
+  "wide_counted_rest_review": {
+    "app_commit": "64b72a103c1aa01696866f5741e07d06d30a2735",
+    "scope": "Recover wide counted-rest bodies with independent printed caps and owned count. Ignore notehead labels confined to the proved rest body. Keep outside head evidence and unique source ownership.",
+    "validation": "Synthetic wide-rest and refusal controls plus the exact private saved sources in both runtimes. Verified the complete desktop first entrance and preserved accompaniment.",
+    "boundary": "Shared source and original synthetic regression only. No private input, models or guide layout changes."
+  },
+  "opposed_voice_staccato_review": {
+    "reviewed_app_commit": "705ace77bcc793f3cd8af4cc44c06c98e3550961",
+    "app_lf_sha256": "6da725c18a0e50f104cff440fd8b76f44961403d8b9d7a1c72f464df54a500af",
+    "standalone_lf_sha256": {
+      "NoteArticulationDetector.java": "05e822965fb56c07cacf51ef1afdf9bdfd887a86c4f498390c6411efa2268b10"
+    },
+    "scope": "An outward staccato dot belongs to the accepted head’s own voice when the other head has an independently printed opposing shaft. Chord-wide propagation remains available for compatible or unproved shaft ownership.",
+    "validation": "Original opposed-voice and shared-shaft rasters plus retained articulation Java controls. Private exact score pages from both Java surfaces and desktop scheduled tone releases corroborate the scoped behavior.",
+    "boundary": "Shared detection logic and generated regression ink. No private scores, page captures or render evidence."
+  },
+  "repeated_inline_key_sharp_review": {
+    "reviewed_app_commit": "75b1817a84612a24540cf2c49c61cb2109c58241",
+    "app_lf_sha256": "e07cf20c5a72b3c9b27614d184548eea4374c707c9146fed60ccb1f7f6edefe1",
+    "standalone_lf_sha256": "3a3778b183ddac1bb63827f76e1eeccae0ddde93e71598949b2327f60adab10e",
+    "scope": "Recover an earlier paired inline one-sharp signature from a matching printed next-system copy when both staves prove the double boundary and subsequent independent attacks.",
+    "validation": "Generated positive, single-staff, no double bar, no later attack and premature note controls. Adjacent key and accidental tests plus exact score pitch and clock differential.",
+    "boundary": "Paired shared Java and generated regression. Retains the existing guide wire and original provenance entries."
+  },
+  "november_26_whole_silence_and_arco_proof": {
+    "reviewed_app_commit": "7f656dd9be3a636395db63ad49719cd737708af5",
+    "scope": "Retain an explicit centered hanging whole-rest plate with agreement from the raw and processed rasters. Recover dropped letters in short arco OCR readings using four aligned glyphs and an open c followed by a closed o.",
+    "evidence": "Original procedural Apache-2.0 fixtures. Existing record layouts and model weights."
+  },
+  "november_26_wide_quarter_triplet_and_grace_barline_port": {
+    "reviewed_app_commit": "b9633cdb6a70a54c04a6e874ffc61ec93866b26f",
+    "scope": "Recover barlines joined to grace flags below printed triplet brackets and require two interrupted arms, both hooks and a centered literal number for a wide complete quarter-note triplet bar.",
+    "helpers": [
+      "BracketedGraceBarlines.java",
+      "PrintedQuarterTriplets.java"
+    ],
+    "parity": "Shared detector code differs only in package. Android and desktop call both passes; standalone uses its existing OCR and decoder adapters.",
+    "proof": "Original procedural Apache-2.0 tests. No private score material or model changes. Existing record layouts continue to carry the tuplet ratio."
+  },
+  "downstem_inner_ledger_review": {
+    "app_commit": "5aa151b2873ccf024698dadc743cfd5ac9ebb2b7",
+    "scope": "Recover an ordinary second-ledger note with a complete filled oval, printed outer ledger and independently attached downstem when the thin inner ledger remains connected around the shaft.",
+    "validation": "Original positive, broken-rail and missing-flank cases, retained ledger suites, exact native and standalone source replay, and actual desktop sustained tie.",
+    "boundary": "Shared Java recognition and original synthetic controls only. Private page and playback evidence stay outside Git."
+  },
+  "paired_tab_mute_column_review": {
+    "app_commit": "fefd4b08d5635ef02b13afcfe107ad86a0a1eeb0",
+    "scope": "Recover a merged muted tablature column only when multiple string lanes independently contain crossed ink. Reclassify the aligned standard heads and correct beam depth only when a single bilateral rail and attached shaft prove the written eighth.",
+    "validation": "Original positive and refusal controls, retained typed TAB cases, and private saved-page playback schedules. The paired carrier is consumed before score serialization.",
+    "boundary": "Shared Java change and original synthetic tests only. Private captures, scores and audio stay outside the repository."
+  },
+  "november_26_detached_tablature_rhythm_port": {
+    "reviewed_app_commit": "c973605e8e51f3460bb78645cfe44efeec072967",
+    "scope": "Read detached tablature augmentation dots, half-note stems, secondary beam strokes, blank tied continuations and numbered triplet brackets. Keep meter ink outside fret crops.",
+    "standalone": "When an isolated OCR recognizer is absent, compare unread fret ink with independently identified digits on the same page. Preserve existing guide and audio formats.",
+    "evidence": "Original procedural Apache-2.0 fixtures and existing model weights."
+  },
+  "pale_ensemble_connector_review": {
+    "reviewed_app_commit": "d7c82fff487612fd49141f99133e5329734e53a1",
+    "app_lf_sha256": "564f313768092e095cb88532d5e1b333f16b31b3735a743834f2381416f7e674",
+    "standalone_lf_sha256": "1c2a97d46bcbad74a479243475bd0f18572de1313d4871ac4ce12687a2cb1db5",
+    "scope": "Join neighboring equal-scale staves when a finite left connector contacts all five raw rules and independently detected interiors align. Recover a missing pale barline only when both staves prove the same finite rule.",
+    "validation": "Generated bracket, page crease, unmatched divider controls and retained connector, artwork, cue staff, independent barline tests. Exact private source replay restores five paired systems and 36 measures.",
+    "boundary": "Scoped matching Java and generated test graphics. Existing guide wire and full-file provenance retained."
+  },
+  "november_26_grand_staff_tempo_dashes": {
+    "reviewed_app_commit": "51b3f2fc6c9864c4830c983d8ee3b5e3501eef36",
+    "scope": "Connect top-staff gradual tempo words across complete grand staff systems to an independently read numeric bar anchor. Admit one pixel of thickness rounding and a localized right-edge margin only for grand staff extensions.",
+    "evidence": "Original procedural paired staves with thin and thick continuation dashes, disconnected ink, lower-staff words and missing numeric destination controls."
+  },
+  "november_26_glissando_ribbon_ownership": {
+    "reviewed_app_commit": "9c0ede51c35ea6a2fe01503116007c2955ac63fa",
+    "scope": "Reject a stemless opaque quarter proposal only when its interior is covered by a long thin ribbon with repeated changes in direction. Retain ordinary glissando endpoint detection.",
+    "evidence": "Original procedural traces and oval controls under Apache-2.0."
+  },
+  "november_26_direct_opening_cue": {
+    "reviewed_app_commit": "fc833d302f65871d1e1b38ed9ea67c03006dbf97",
+    "scope": "Prove a direct principal entry from independently bound instrument and Play captions, a double bar, and comparable filled heads across an opening prefix. Disown an enclosed caption masquerading as a literal eighth rest only after the complete cue range is proved.",
+    "evidence": "Original generated staff and cue geometry with ordinary-sized heads, missing entrance evidence, obscured caption, false caption rest, and genuine rest controls. No private inputs included."
+  },
+  "raised_terminal_coda_jump_review": {
+    "app_commit": "e91950ce62732bbcc17a1b0c45d6d3f9a6c4d20e",
+    "scope": "Bind a raised complete D.S. or D.C. al Coda command only when its right edge aligns with the upper staff terminal bar.",
+    "validation": "Original positive and refusal navigation tests, retained Segno and Coda controls, and private saved page detector and desktop route evidence.",
+    "boundary": "Shared Java navigation recognition and original synthetic tests only. No private score content, models, guide format, or playback behavior changes are included."
+  },
+  "november_26_tab_screenshot_labels_and_rail_extents": {
+    "reviewed_app_commit": "e5ed929d78fb0d6f279db76c415bb20d3b049c44",
+    "scope": "Reject numeric OCR boxes printed above the top TAB rail and align the rail extents without counting detached instrument labels.",
+    "evidence": "Original procedural controls and existing model weights."
+  },
+  "november_26_following_portato_dot_ownership": {
+    "reviewed_app_commit": "cde24f4fa797fccf9e2f5cf7ed35c85c009d1454",
+    "scope": "Exclude a next-attack dot from augmentation only when paired dot-and-dash ink and a shared double beam confirm both articulated owners.",
+    "evidence": "Original synthetic paired-mark, absent-dash, single-beam and genuine augmentation controls."
+  },
+  "november_26_short_ledger_whole_head": {
+    "reviewed_app_commit": "7cc1b98bfe62640e2236c7ab825ed91493789356",
+    "scope": "Keep a whole head when a short source ledger partly obscures both apertures. Require independent left and right rule extensions, a bright inner pocket, bounded walls and no owned stem.",
+    "evidence": "Synthetic combined whole oval and ledger with filled, one-pocket and long-rule controls. No collection score image or model output included."
+  },
+  "november_26_single_beam_above_top_rule": {
+    "reviewed_app_commit": "c4b1e16e",
+    "scope": "The app and standalone apply the same attached-shaft, linked terminal beam, and complete top-rule proof before reducing a two-beam proposal. Existing unrelated mappings and hashes are preserved.",
+    "evidence": "Original painted staff rules and shaft geometry exercise the release of a false second band and preservation of a genuine second rail and unconnected shafts. No private score data included."
+  },
+  "bound_adjacent_repeat_continuity_review": {
+    "reviewed_app_commit": "3eafdda7dac26deb2bb6190cea0fe06c66a1169a",
+    "app_lf_sha256": "27354cfc0d26be9ba16a356efb008035c0d8632434d5360dc5539d7581a53e6e",
+    "standalone_lf_sha256": {
+      "PrintedRepeatDocument.java": "be299c3a326550d5780283f518713f1972ed2795ee00b4d4a159d0609dcabe96",
+      "NavigationBridge.java": "3c2ebf5f1d3c15277eb46b22a61bdf0251d5b709dc7affacdf56ec1c006e3d91"
+    },
+    "scope": "Resolve independent printed repeat evidence across physically consecutive pages from the same bound source when forward printed numbering differs from decoded bar count by at most two. Standalone NAV4 carries the existing document proof into the shared assembler; NAV3 and NAR4 remain readable.",
+    "validation": "Original same-source success, source-gap, reset, unbound and other-document controls. Production native schedule, standalone NAV4 and MIDI route assertions on private exact endpoint pages and retained source extent.",
+    "boundary": "Shared repeat continuity and standalone route bridge only. No guide layouts, models, private raster inputs or playback data in Git."
+  },
+  "november_26_compact_counted_rest_staff": {
+    "reviewed_app_commit": "10dbc787cb62984d046b305e3ffe04ffb85bc4ec",
+    "scope": "Retain a compact staff when an isolated printed count and thick center rest obscure the middle rail, the outside rails remain continuous, and the closing double bar is visible.",
+    "evidence": "Synthetic rail and rest drawing with no-count, single-bar, off-center and missing-outer-rail controls. No collection score images included."
+  },
+  "november_26_second_pass_only_bottom_note": {
+    "reviewed_app_commit": "19cf5797f369c72ef7f408fa3431d3a9d34815fc",
+    "scope": "Recognize an explicit second-traversal lower-note instruction at an opening run of repeated dyads and bind lower heads by position and staff step. Match desktop playback in portable MIDI routing while preserving written notes and existing pass markers.",
+    "evidence": "Synthetic two-pass same-column controls cover note ownership, other staffs, single visits, and emitted MIDI. No private score data included."
+  },
+  "curved_symbol_barline_ownership_review": {
+    "app_commit": "f64bd8fff8ead7ebdde48fb377b00dce53e01cf6",
+    "scope": "Require a compact vertical section before a generic symbol component may claim a proved shaft as belonging to a notehead. A curved tie fragment can have similar outer dimensions without a compact head body.",
+    "validation": "Original crossing-tie refusal and filled and hollow diamond controls, retained finite and shared barline suites, and exact private native, desktop clock and standalone CLI comparisons.",
+    "boundary": "Only shared Java recognition and original synthetic tests. The private page, capture and playback evidence stay outside Git."
+  },
+  "november_27_stacked_voice_rest_barline_ownership": {
+    "app_commit": "8598b094150bae009c98f5c3c1aa0dbe052a5c88",
+    "source": "Music Sheets PrintedQuarterRestBoundary",
+    "scope": "Source-reviewed stacked independent quarter-rest ownership of an apparent barline, with a continuous rule veto. Test glyphs are procedural."
+  },
+  "november_27_matched_common_time_measure_entries": {
+    "reviewed_app_commit": "76d15ee8fc1fe3086f29f9f8747da07161de07fe",
+    "scope": "Read matching common-time signs after two printed staff headers or after one independently visible aligned barline. Require a complete separated left arc and right opening or curled terminal shape in both copies.",
+    "evidence": "Original synthetic opening, ordinary single barline, closed-counter, disconnected-arc, extra-ink and conflicting meter controls. No score imagery included."
+  },
+  "beam_joined_eighth_rest_review": {
+    "app_commit": "04236697d1de28698160727cef7fdc0eb546469b",
+    "scope": "Admit a single compact bulb with a narrow sloping tail that ends on the independently owned lower beam of two eighth notes. The staff and beam remain unchanged; the recovery has a separate bounded work allowance.",
+    "validation": "Original connected, interrupted, detached and duplicate guards plus exact native and portable saved-source replay. Production playback and MusicXML preserve the existing 6/8 clock.",
+    "boundary": "Shared Java and original synthetic fixtures only. Private scores, saved input and export evidence stay outside Git."
+  },
+  "november_26_staff_adjacent_scoop": {
+    "reviewed_app_commit": "200d969e93d7d2d50fc867dde87d38b843abfc73",
+    "scope": "When a left-side rising approach has uniquely thin continuous contours and an independently stemmed destination, tolerate one lower terminal pixel adjacent to a removed staff rule. Remove the false head and preserve the curved approach on its destination.",
+    "evidence": "Original synthetic terminal rail fringe and extra branch controls. Retained separate head, oversize ink, missing destination, source immutability, and connected-approach controls. No private raster data included."
+  },
+  "november_27_wide_aligned_ensemble_connector": {
+    "reviewed_app_commit": "9f8de912",
+    "scope": "Allow a wider interstaff separation when both printed staves share every interior bar and the existing raw connector verifies contact. Retain the prior threshold for unaligned staves.",
+    "evidence": "Original synthetic long connector reproduces the false split. Missing connector, mismatched interior columns, and previously supported narrow connectors retain their outcomes."
+  },
+  "paired_inline_sharp_and_beam_cap_head_review": {
+    "reviewed_app_commit": "76d424e995f764d19431b3c8b3e96ed1a20acae2",
+    "app_lf_sha256": "c94d58922646125ce681d65ca0ba2d9674fea3c03752edda2e8a4688120b22da",
+    "standalone_lf_sha256": "866fbcda7c1272a54aca98008504dd25719076a303ee6409f6f1d409a106a1e7",
+    "scope": "Keep small masks inside a verified paired inline sharp or a source-proven rising beam with independent noteheads from being emitted as notes.",
+    "validation": "Generated beam continuity and glyph ownership controls with 45 checks on each interpreter. Exact private-source desktop and portable playbacks preserve the remaining written heads and repair the affected upper voice rhythms.",
+    "boundary": "Paired shared Java and generated regression. Retains the existing guide wire and original provenance entries."
+  },
+  "terminal_paired_bar_count_review": {
+    "reviewed_app_commit": "1b91408d2336d4af2a392c6a3eff4ac0052bb22c",
+    "app_lf_sha256": {
+      "MeasureNumberReconciler.java": "959713c8058966f0c0e49f171295924b360c895777f062ea10f997a418372a1b",
+      "PrintedMeasureRhythmGuard.java": "ec4e4618b5b27989dbb98d51b5b67c32b3c4d1d37afa60b0704560540a2f879d"
+    },
+    "standalone_lf_sha256": {
+      "MeasureNumberReconciler.java": "15b4b0d4dce1fa127c54cad9a4e3e19e9821202a53369964e5c97c58c6038eec",
+      "PrintedMeasureRhythmGuard.java": "06133ad8c43c4d5043c981bbe5da76ff7266b1bda342f034b3b8e5a376453ecb"
+    },
+    "scope": "Retain the detected full-width final grand-staff bar when two aligned staves supply eight literal eighth columns, the printed closing rule is present, neither guessed cut has a rule, and only the earlier-row median proposed the three regions.",
+    "validation": "Original positive, real interior separator, and incomplete voice controls. Private exact source replay checks notes, rests, cross-page repeat route and selected-page MIDI.",
+    "boundary": "Shared scoped logic and original regression only. Existing full-file provenance and guide layouts retained."
+  },
+  "november_26_hanging_rest_staff_edge": {
+    "reviewed_app_commit": "0b915a0c15329243b6d805d30259f08c71bf2fc8",
+    "scope": "Recognize the complete hanging rest when a continuous antialiased staff-rule edge enters its body band. Preserve independent stem and oval evidence.",
+    "evidence": "Original procedural staff, rest plate, and oval fixtures under Apache-2.0."
+  },
+  "november_26_beam_owned_eighth_duplets": {
+    "reviewed_app_commit": "fa41d1e3ef9e36b648e5864395bf12fa6e1e1f2e",
+    "scope": "Retain beam-owned engravings for equal eighth-note duplets through page-local recognition. Resolve consecutive pairs only when their active compound meter and staff clock agree.",
+    "evidence": "Original procedural Apache-2.0 tests. Existing ownership record layout and model weights."
+  },
+  "printed_auxiliary_second_pass_review": {
+    "reviewed_app_commit": "7274b56ecd9e81e2a43d0c3dc5c6246909300ec8",
+    "sources": [
+      {
+        "app": "app/src/main/java/com/musicsheets/app/pdf/OmrMeasurePostProcessor.java",
+        "standalone": "java/src/main/java/io/github/luckolite/interpreter/OmrMeasurePostProcessor.java",
+        "app_lf_sha256": "28043952e94ade7c5f592cc74368f6260ed0e670c1da84ceb6afe1970ae60e23",
+        "standalone_lf_sha256": "9453aded8f369e6f297e49f4fe1cbe67e8b751f6f79cb2113df4821a4d67eebb"
+      },
+      {
+        "app": "app/src/main/java/com/musicsheets/app/pdf/PrintedPassOmission.java",
+        "standalone": "java/src/main/java/io/github/luckolite/interpreter/PrintedPassOmission.java",
+        "app_lf_sha256": "dad5ad9302b1179c76e529f0050f680c3a2e2ffefa9e8358f33887536a17d6a3",
+        "standalone_lf_sha256": "ce9ad55a10f8d522258de200db50d55c1e7b3ddf756d0ee847f4f81404febef9"
+      },
+      {
+        "app": "app/src/main/java/com/musicsheets/app/pdf/PrintedStaffSecondPass.java",
+        "standalone": "java/src/main/java/io/github/luckolite/interpreter/PrintedStaffSecondPass.java",
+        "app_lf_sha256": "2c7b594d8697c0e79e8c3caa82ec5834ea664e26fbda472b5c4e86d2eed9e40c",
+        "standalone_lf_sha256": "974c4ce4e51dd0eefcaef472c87a43a4dbbc957d29c634d44df53158d090b49b"
+      }
+    ],
+    "scope": "Recognize the left-margin bracket joining a short inset staff stack and apply literal auxiliary second-pass labels only to their printed staff spans. Carry the complete marked staff cohort only across a bound consecutive source page with matching printed numbering and opening staff evidence.",
+    "validation": "Generated printed-rail ownership and bound, unbound and incomplete cohort controls. Private saved-source native and standalone capture and production playback agree on both visits and retain the original lead voice.",
+    "boundary": "Shared Java recognition and Python playback adapter with original tests. Existing guide wire and private capture boundaries preserved."
+  },
+  "november_26_staggered_whole_note_ownership": {
+    "reviewed_app_commit": "17b505a7b67b1523ac527b791f054857c8fc7bb2",
+    "scope": "Separate an offset whole-note oval from two vertically stacked whole notes only when the three independently open shapes, adjacent staff positions, and absence of attached shafts agree.",
+    "evidence": "Original procedural broad, mirrored staggered and solid-leaf controls under Apache-2.0."
+  },
+  "november_26_framed_ending_brackets": {
+    "reviewed_app_commit": "d8d3551bd6b94ab5016325ec1cbe6925115192ac",
+    "scope": "Keep narrow, page-height edge ink out of ending-bracket component extraction. Preserve the optimized run-based traversal and existing roof, hook and selector gates.",
+    "evidence": "Original synthetic bracket and crop-frame geometry with a partial-height stroke control. No private score, diagnostic or wire data included."
+  },
+  "november_26_parenthesized_second_pass_port": {
+    "reviewed_app_commit": "116cdc97c683f4b281fa08a2eed73a6a2d3baa2b",
+    "scope": "Accept a close-position terminal repeat with ordered thin and thick bars and blank exterior. Join a text-qualified and shape-qualified parenthesized passage inside a written bar and retain its exact attack identities for second-pass-only playback.",
+    "standalone": "Preserve packed optical scanners and assemble numbered, physically consecutive document witnesses with the existing Java engine. The optional NAV3 subprocess request carries page-local witnesses to ordinary and expressive MIDI realization.",
+    "provenance": "Original procedural Apache-2.0 regressions. Existing Guide and audio layouts and model weights are unchanged."
+  },
+  "half_spaced_tablature_staff_alias_review": {
+    "reviewed_app_commit": "e1e28fe98f3410d7e04c578fcbd811894eac8d00",
+    "app_lf_sha256": "892cce7b236f238a5d35a73760f1f3c8caef577c52f8d416f7f11004c2132998",
+    "standalone_lf_sha256": "24f8fbad53494b9b67399186b267bd870d161a57a19c8e9ce06741aeb4fa6ece",
+    "scope": "Reject a half-spaced tablature rail proposal inside independently supported five-line notation before OCR and notation suppression.",
+    "validation": "Generated mixed real tablature and five-rule notation fixture, retained tablature erasure, guitar staff, and six/seven-string controls, plus private two-page source replay with 25 restored written notes and identical clock and prior scheduled attacks.",
+    "boundary": "Scoped Java parity and generated test raster. Existing guide wire and full-file provenance retained."
+  },
+  "november_26_staff_crossing_curves_and_triplet_ownership": {
+    "reviewed_app_commit": "acda6810ca00d196ecf9d552be34b997a5d5ed5a",
+    "scope": "Distinguish two nested curves crossing an outer staff rule from a closed notehead. Assign a measured three to the continuous beam that owns its triplet attacks before authorizing fingering.",
+    "evidence": "Original procedural Apache-2.0 controls. Existing guide fields and model weights."
+  },
+  "november_26_word_only_repeat_captions": {
+    "reviewed_app_commit": "a9d524bcca067b845bbc133980ed4fadcbc814a9",
+    "scope": "Retain word-only print anchors, then use a uniquely matching engraved pitch passage in a separate arrangement of the document to corroborate explicitly numbered repeat passes. Reuse the shared traversal and validate native and portable callers.",
+    "evidence": "Original synthetic caption geometry, changed-note and missing-caption controls, cross-page traversal controls, and serialized bridge regression in test_navigation_midi.py."
+  },
+  "november_26_quarter_rest_over_lower_rule_crop": {
+    "reviewed_app_commit": "3af9a405132be822829f14ac4cc10f315692b454",
+    "scope": "A direct ordinary quarter-rest contour supersedes a competing same-column sixteenth crop only when the crop is vertically shifted and its lower extent ends on an independently marked staff rule.",
+    "evidence": "Original shifted-pixel rest hypotheses with missing rule, separate column, centered contour and true eighth-rest controls. No private score data included."
+  },
+  "november_26_inset_staff_connector": {
+    "reviewed_app_commit": "f97e87cceb62a5c14eb6fe326ae39ab0de3ac99d",
+    "scope": "Search outward for a physical opening staff connector when adjacent staves share the ordered interior barlines. The original vertical continuity and printed staff-contact proofs still qualify the join.",
+    "evidence": "Original procedural matched, mismatched, detached and absent connector controls under Apache-2.0."
+  },
+  "november_26_floating_hollow_tremolos": {
+    "reviewed_app_commit": "f4a5d6a8e418dede12fefadb7feb9da2c32faacb",
+    "scope": "Read three finite slanted tremolo strokes between verified long-value hollow endpoints and retain shared-duration chord ownership, including narrowly qualified ledger notes.",
+    "evidence": "Original synthetic geometry and retained paired-tremolo ownership controls. No private scores, diagnostics, model assets or wire layout changes."
+  },
+  "parallel_eighth_displaced_second_review": {
+    "app_commit": "1223e1204a16590079bf4ed17cc000943e471220",
+    "scope": "Anchor narrowly displaced adjacent pitches together when their opposing shafts own separate continuous single-beam rails to another aligned attack in the same staff and bar.",
+    "validation": "Original continuous and disconnected rail fixtures on both Java surfaces. Private saved-page and playback checks verified both full eighth-note pairs and preserved the surrounding written and played events.",
+    "boundary": "Shared Java recognition and original drawing tests. The private page, captures and performance comparisons stay outside Git."
+  },
+  "november_26_displaced_ruled_whole_head_stack": {
+    "reviewed_app_commit": "44eb12ab688679b202f63cc6ed430fd0669abd05",
+    "scope": "Decompose one merged head component when three optically enclosed stacked whole heads and the two halves of one separate ruled head independently prove the written owners. Use ordinary timing and tie detection.",
+    "evidence": "Original procedural whole-head outlines with missing-aperture and missing-rule controls. No source score raster included."
+  },
+  "extended_ledger_eighth_flag_review": {
+    "app_commit": "db0aa53986e3bc666a8ac8b4ca822a7a0594b315",
+    "scope": "Recover the curved eighth flag of a long upper-ledger downstem entering its own staff. Require independently attached shafts and the returning flag in the prepared and original ink.",
+    "validation": "Original flagged, unflagged and one-plane drawing controls. Private exact-page desktop and standalone comparisons retain the pitches, tied continuation and three-beat meter, while preserving the earlier unflagged high quarter.",
+    "boundary": "Shared recognition source and original synthetic tests only. Private score inputs and playback evidence remain outside the repository."
+  },
+  "november_26_extended_printed_cue_scope": {
+    "reviewed_app_commit": "bb1c4a3479deab2a469a35fe5a0bf163dbb9f21d",
+    "scope": "Recognize an extended cue only at the opening, with paired instruction ownership, smaller noteheads, a double bar and entrance rest. Keep the compact cue path and written note data.",
+    "evidence": "Independent cue-size fixture with missing-stroke, absent-rest and ordinary-size controls. No library score data included."
+  },
+  "november_26_raised_eighth_rest_text_initial": {
+    "app_commit": "22184b0f4b67ad56db337346a35478f2e3917d81",
+    "source": "Music Sheets SixteenthRestDetector",
+    "scope": "Source-reviewed optical proof for a looped raised text initial with a complete following letter row. New controls use synthetic glyphs only."
+  },
+  "single_tremolo_musicxml_review": {
+    "app_commit": "0ae65d874abd20a1dced6509cd29e748dd1f62c5",
+    "scope": "Both exporters derive the written single-note slash count from source beam depth and the stored performance subdivision. Retained marks without compatible source beam depth keep their previous export.",
+    "validation": "Original fixtures exercise separate tremolo slashes and rhythmic beams, retained ornaments and legacy marks. Private before and after exports verify the MusicXML correction and identical MIDI bytes.",
+    "boundary": "Export-only change. No source recognition, playback clocks or guide layout change. Android refreshes derived conversions from retained source."
+  },
+  "november_26_compact_closing_slur": {
+    "reviewed_app_commit": "1563aecce9da2ab409d06207ab2f62f5f729553c",
+    "scope": "Capture a real bow divided by the physically printed internal barline of two compact closing bars. Verify both rail frames and a double close, measure the same thin contour twice, and retain the exact existing note owners for candidate or timed slur classification.",
+    "evidence": "Original synthetic local frame, verified divider, no double close, unsupported break, ambiguous chord and timed-vs-geometric controls. No private score data included."
+  },
+  "detached_ledger_neighbor_barline_review": {
+    "app_commit": "474ad592e7f4d0228cb9d09ce33541b7917d7256",
+    "scope": "Keep an independently proved staff-height barline when an upper or lower ledger neighbor lies in the broad ownership search but remains separated from the shaft.",
+    "validation": "Original positive and attached-stem refusal cases. Exact private native and standalone page replays, desktop clock qualification and retained accompaniment.",
+    "boundary": "Shared decoder and original synthetic regression only; no model, guide layout or private score data changes."
+  },
+  "november_26_shared_half_chord_harmonic": {
+    "reviewed_app_commit": "eab8c2c355dcd436361eb5fc3c3533b1263446ff",
+    "scope": "Preserve four aligned same-stem half-note heads on one staff when raw ink proves a hollow stopped head. The ambiguous fourth contour cannot consume one of the chord heads or displace the stopped pitch.",
+    "evidence": "Original synthetic shared half-note column reproduces the note deletion and octave displacement before the port. Genuine harmonic, stopped head, staff and accidental controls pass. No score imagery included."
+  },
+  "single_stroke_tremolo_beam_review": {
+    "app_commit": "32c8915ef459a67acd36754371e02d908ec495df",
+    "scope": "Separate a proven bilateral single tremolo stroke from an otherwise unsupported third rhythmic beam. Preserve full third beams and short hooks before the slash.",
+    "validation": "Original synthetic beam and hook controls and retained tremolo tests. Private saved-page verification covered standalone MIDI and MusicXML and the desktop performance schedule.",
+    "boundary": "Shared Java change and original synthetic regression only. Private score inputs and playback receipts remain outside the public repository."
+  },
+  "original_raster_attached_tremolo_review": {
+    "app_commit": "85383884e31f62a54f4e466f2f0cc93ce8ec2739",
+    "scope": "Recover three bounded diagonal strokes from the aligned original raster when normalization obscures them and the prepared raster already proves an attached stem on a hollow source head.",
+    "validation": "Original source and prepared raster controls plus genuine hollow chord, beam, and detached stroke tests. Private page replay confirmed false-head removal and preserved written pitch and clock in desktop playback and standalone MIDI.",
+    "boundary": "Shared recognition and original synthetic controls only. Private scores, model weights and guide format stay outside the patch."
+  },
+  "november_27_unshifted_staff_region_alias": {
+    "reviewed_app_commit": "6a0db29a",
+    "scope": "A nearby established printed frame remains available to the existing independent five-rule regional alias guard when its pitch calibration needed no correction. This keeps the proof on shared raw ink.",
+    "evidence": "Retained source-free staff conflict, independent staff, faded scale, and overlapping staff controls. No private score data included."
+  },
+  "same_document_segno_review": {
+    "reviewed_app_commit": "68b221e14dae6e84be512cbe1a0e5e935ea1ec23",
+    "sources": [
+      {
+        "app": "app/src/main/java/com/musicsheets/app/pdf/SameDocumentSegno.java",
+        "standalone": "java/src/main/java/io/github/luckolite/interpreter/SameDocumentSegno.java",
+        "app_lf_sha256": "cf9d82aac4c685ff968c1a93f5a793ca781c10821c1daff0c4cf6eb364eb512a",
+        "standalone_lf_sha256": "7011a36c176db80135f98120b6f6271c583f4d1566b3e7ba9e8b33178d50608c"
+      }
+    ],
+    "scope": "Complete an unresolved D.S. al Coda route from a printed Segno in the same source document, requiring exact independent pitch and rhythm signatures and a unique matching measure.",
+    "validation": "Original synthetic same-document, missing/cross-document, wrong cues, and ambiguous-anchor controls. Desktop and portable route qualification matches both printed jumps and retains the source edition.",
+    "boundary": "Scoped Java parity and generated fixtures. Standalone navigation adds a versioned decoded-data bridge. Existing guide wire, user scores, and full-file provenance retained."
+  },
+  "raised_barline_coda_pair_review": {
+    "app_commit": "e54ba37922922ab8393cb4c7c3f8776dadd69af6",
+    "scope": "Prove the ownership of a raised, right-aligned To Coda phrase or of a jump and separate elevated crossed-ring destination at an interior barline.",
+    "validation": "Original positive and refusal controls, existing navigation tests, and private saved-page detector and desktop audio route verification.",
+    "boundary": "Shared Java navigation recognition and original tests only. No private source, guide layout, models, or playback changes."
+  },
+  "lower_right_double_sharp_arm_review": {
+    "reviewed_app_commit": "1e3703b061a9cf65d3db515da9f2f30d56a0b2b4",
+    "app_lf_sha256": "384ba69e5957f51848969c2dc4b65989a818b13b8ce6b0ea0d43904b74a7dbb8",
+    "standalone_lf_sha256": "ebd89e0689e15aac552f60e3d8d86d5c8ffd052f1619f20922358e9b4951d597",
+    "scope": "Recognize either right arm of an independently owned double sharp as an accidental fragment instead of a notehead. Existing complete two-plane cross evidence and independent stem controls remain active.",
+    "validation": "Original mirrored arm regression plus retained sharp, chord, stem, and literal accidental controls. Private exact source replay verifies a single phantom attack removed without timing or pitch changes in other events.",
+    "boundary": "Scoped shared Java and generated test ink only. Existing guide wire and full-file provenance retained."
+  },
+  "tall_numbered_system_stem_divider_review": {
+    "reviewed_app_commit": "8d5f4ec34a3f3d7740795b6eec542b705d601851",
+    "sources": [
+      {
+        "app": "app/src/main/java/com/musicsheets/app/pdf/MeasureNumberReconciler.java",
+        "standalone": "java/src/main/java/io/github/luckolite/interpreter/MeasureNumberReconciler.java",
+        "app_lf_sha256": "87d4babf30dafe0a2de8a9ade7a3c3e1c1e93d0837f41ce925e26e972abe3d10",
+        "standalone_lf_sha256": "1089e02a5b72233e0921dfecd92404bebbc807eb29fecc1adbe405a7c0419d5b"
+      },
+      {
+        "app": "app/src/main/java/com/musicsheets/app/pdf/PrintedMeasureRhythmGuard.java",
+        "standalone": "java/src/main/java/io/github/luckolite/interpreter/PrintedMeasureRhythmGuard.java",
+        "app_lf_sha256": "694bd52a12d22fe61ce4b8a1f9f9648840122ec2a1c2877edc20d9be963335ff",
+        "standalone_lf_sha256": "6b58bd7544b02b3158f9a539c3d2a1c6b8cfa431b325b16b3497a336a9f8a28c"
+      }
+    ],
+    "scope": "Reject one unsupported candidate divider in a tall system when adjacent printed headers and all other raw separators agree.",
+    "validation": "Original generated divider and retained true-ink tests. Exact saved-source native and standalone stage replay retains all 449 written pitches and values.",
+    "boundary": "Scoped Java parity and generated fixtures. Standalone navigation adds a versioned decoded-data bridge. Existing guide wire, user scores, and full-file provenance retained."
   }
 }

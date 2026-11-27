@@ -130,8 +130,8 @@ public final class PartProducerSourceOriginalTest {
     @Test
     public void actualSingleAnchorFallbackWitnessIsPreservedRatherThanCalledARival() {
         var regions = new ArrayList<MeasureRegion>();
-        int[] counts = {5, 5, 6, 6};
-        for (int row = 0; row < 4; row++)
+        int[] counts = {5, 5, 6, 4, 6};
+        for (int row = 0; row < counts.length; row++)
             for (int i = 0; i < counts[row]; i++)
                 regions.add(
                         new MeasureRegion(
@@ -142,7 +142,8 @@ public final class PartProducerSourceOriginalTest {
         var tokens =
                 List.of(
                         new MeasureNumberReconciler.NumberToken(6, .18f, .28f, .21f, .30f),
-                        new MeasureNumberReconciler.NumberToken(17, .18f, .68f, .21f, .70f));
+                        // Two unread headers exceed the bridge for one unread header.
+                        new MeasureNumberReconciler.NumberToken(21, .18f, .88f, .21f, .90f));
         assertEquals(1, MeasureNumberReconciler.firstMeasureNumber(regions, tokens));
         var routes = MeasureNumberReconciler.producerNumberRoutes(regions, tokens);
         assertEquals("ACTUAL_SINGLE_LATER_ANCHOR_MEASURE_ONE_RETURN", routes.get(0).disposition());

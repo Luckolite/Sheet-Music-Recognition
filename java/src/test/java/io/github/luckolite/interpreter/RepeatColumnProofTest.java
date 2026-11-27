@@ -40,6 +40,32 @@ public class RepeatColumnProofTest {
     }
 
     @Test
+    public void darkerRepeatDotCoreSurvivesAConnectionToTheStaffRule() {
+        var gray = page(true, true, false);
+        rect(gray, 312, 153, 1, 3, 124);
+        var rails = PrintedRepeatGlyphs.provedColumns(gray, W, H, 120, 168, 12);
+        assertTrue(rails.get(292));
+        assertTrue(rails.get(300));
+    }
+
+    @Test
+    public void darkerStrokeConnectionStillLeavesAnIndependentCompactDotCore() {
+        var gray = page(true, true, false);
+        rect(gray, 312, 153, 1, 3, 75);
+        var rails = PrintedRepeatGlyphs.provedColumns(gray, W, H, 120, 168, 12);
+        assertTrue(rails.get(292));
+        assertTrue(rails.get(300));
+    }
+
+    @Test
+    public void aPaleConnectionWithoutAnIndependentDotCoreCannotProveRepeat() {
+        var gray = page(true, true, false);
+        rect(gray, 310, 148, 5, 6, 255);
+        rect(gray, 312, 151, 1, 5, 124);
+        assertTrue(PrintedRepeatGlyphs.provedColumns(gray, W, H, 120, 168, 12).isEmpty());
+    }
+
+    @Test
     public void missingDotsCannotOverrideHeadGuard() {
         assertTrue(
                 PrintedRepeatGlyphs.provedColumns(page(false, true, false), W, H, 120, 168, 12)

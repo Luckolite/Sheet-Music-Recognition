@@ -1,6 +1,7 @@
 # Copyright 2026 Luckolite
 # SPDX-License-Identifier: Apache-2.0
 import copy
+import struct
 import tempfile
 import unittest
 from pathlib import Path
@@ -69,6 +70,28 @@ class MusicXmlExpressionTests(unittest.TestCase):
         self.assertIsNotNone(note.find('rest'));self.assertIsNotNone(note.find('notations/fermata'))
         self.assertEqual(str(4*DIVISIONS),note.findtext('duration'));self.assertEqual([],root.findall('.//words'))
         self.assertEqual([],self.export(rest_fermata_document(1)).findall('.//fermata'))
+
+    def test_owned_rest_fermata_uses_the_matched_position_for_rest_order(self):
+        position = .6
+        bits = struct.unpack('>i', struct.pack('>f', position))[0]
+        mark = expression('FERMATA', scope='UNRESOLVED',
+                          target=f'printed-rest:0:0:1:{bits}', source='fermata-rest-raw-ink')
+        mark.update(start=None, end=None)
+        doc = document([mark])
+        page = doc['pages'][0]
+        page['events'] = page['events'][:1]
+        page['score']['notes'] = page['score']['notes'][:1]
+        page['score']['rests'] = [
+            dict(measureIndex=0, positionInMeasure=x, staffIndex=0, staffCount=1,
+                 durationBeats=duration) for x, duration in ((.3, .5), (position, 1.5))
+        ]
+        notes = self.export(doc).findall('part/measure/note')
+        self.assertEqual([2 * DIVISIONS, DIVISIONS // 2, 3 * DIVISIONS // 2],
+                         [int(note.findtext('duration')) for note in notes])
+        self.assertIsNotNone(notes[0].find('pitch'))
+        self.assertIsNone(notes[1].find('notations/fermata'))
+        self.assertIsNotNone(notes[2].find('rest'))
+        self.assertIsNotNone(notes[2].find('notations/fermata'))
 
     def test_invalid_internal_pulse_and_unresolved_evidence_cannot_be_printed(self):
         invalid=expression('METRIC_MODULATION');invalid['qualifierText']='metric-pulse-v1:0.73:1'

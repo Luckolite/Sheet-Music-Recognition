@@ -10,6 +10,11 @@ import static org.junit.Assert.*;
 public class WholeMeasureRestHeadTest {
     private int notes(
             boolean rectangle, boolean stem, boolean hollow, boolean grayAvailable, int shift) {
+        return notes(rectangle, stem, hollow, grayAvailable, shift, false);
+    }
+
+    private int notes(boolean rectangle, boolean stem, boolean hollow, boolean grayAvailable,
+            int shift, boolean antialiasedRule) {
         int w = 400, h = 240;
         byte[] labels = new byte[w * h], gray = new byte[w * h];
         Arrays.fill(gray, (byte) 255);
@@ -35,6 +40,9 @@ public class WholeMeasureRestHeadTest {
                     gray[y * w + x] = (byte) (hollow && d < .45 ? 255 : 0);
                 }
             }
+        if (antialiasedRule)
+            for (int x = 20; x < 380; x++)
+                if ((gray[98 * w + x] & 255) == 255) gray[98 * w + x] = (byte) 170;
         if (stem)
             for (int y = cy - 40; y <= cy; y++) {
                 labels[y * w + 215] = 1;
@@ -77,6 +85,12 @@ public class WholeMeasureRestHeadTest {
     @Test
     public void rectangleAwayFromRestLineIsNotRemoved() {
         assertEquals(1, notes(true, false, false, true, -16));
+    }
+
+    @Test
+    public void antialiasedRuleEdgeDoesNotTurnHangingRestIntoANote() {
+        assertEquals(0, notes(true, false, false, true, 0, true));
+        assertEquals(1, notes(false, false, true, true, 0, true));
     }
 
     @Test

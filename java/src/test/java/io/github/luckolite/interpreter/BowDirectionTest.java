@@ -187,4 +187,28 @@ public class BowDirectionTest {
                                 new ScoreTechniqueChange(0, n.positionInMeasure(), 0, 1, 6),
                                 new ScoreTechniqueChange(0, n.positionInMeasure(), 0, 1, 7))));
     }
+
+    @Test
+    public void aShapeInsideARetainedProseLineCannotOwnABow() throws Exception {
+        font('\uE610',80,0);
+        var notes = List.of(note(250,0));
+        var staffs = List.of(new PlayingTechniqueDetector.Staff(160,240,20,0,1));
+        var bars = List.of(new MeasureRegion(0,1,0,1));
+        var inLine = new PlayingTechniqueDetector.Word("Arranged by another player",.28f,.23f,.72f,.40f);
+        var elsewhere = new PlayingTechniqueDetector.Word("Arranged by another player",.28f,.08f,.72f,.18f);
+        assertTrue(BowDirectionDetector.detect(l,g,W,H,staffs,bars,notes,List.of(inLine)).isEmpty());
+        assertEquals(1,BowDirectionDetector.detect(l,g,W,H,staffs,bars,notes,List.of(elsewhere)).size());
+    }
+
+    @Test
+    public void highCantabileNeedsAnOwnedHighOpeningAttack() {
+        var staffs = List.of(new PlayingTechniqueDetector.Staff(190,254,16,0,1));
+        var bars = List.of(new MeasureRegion(.275f,.55f,.44f,.77f));
+        var word = new PlayingTechniqueDetector.Word("cantabile",.272f,79f/H,.438f,110f/H);
+        var high = new ScoreNoteEvent(0,.20f,9,0,1,184f/H,false,0,0,2,1);
+        var lower = new ScoreNoteEvent(0,.20f,3,0,1,205f/H,false,0,0,2,1);
+        var expected = new ScoreTechniqueChange(0,.20f,0,1,ScoreTechniqueChange.CANTABILE);
+        assertEquals(List.of(expected),PlayingTechniqueDetector.detect(List.of(word),staffs,bars,List.of(high),W,H));
+        assertTrue(PlayingTechniqueDetector.detect(List.of(word),staffs,bars,List.of(lower),W,H).isEmpty());
+    }
 }

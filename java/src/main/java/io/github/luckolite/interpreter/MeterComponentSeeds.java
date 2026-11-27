@@ -62,19 +62,19 @@ final class MeterComponentSeeds {
                 int first = hint.firstLine() + Math.round(hint.slope() * (edge - width * .5f));
                 float center = (first + 2 * gap) / height;
                 if (center < measure.top() || center > measure.bottom()) continue;
-                retainBoundaryBody(crops, labels, gray, width, height, edge, first, gap);
+                retainBoundaryBody(crops, labels, gray, width, height, edge, first, gap, true);
                 if (opening) {
                     int local = edge + Math.round(2.2f * gap);
                     int phase = localBoundaryPhase(
                             labels, gray, width, height, local, local, first, gap, 2f);
                     if (phase != first)
-                        retainBoundaryBody(crops, labels, gray, width, height, edge, phase, gap);
+                        retainBoundaryBody(crops, labels, gray, width, height, edge, phase, gap, true);
                     int step = Math.max(1, Math.round(2 * gap));
                     for (int x = edge - 4 * step; x > edge - 21 * gap && x > 3 * gap; x -= step) {
                         int sample = x + Math.round(1.4f * gap);
                         int prefixPhase = localBoundaryPhase(
                                 labels, gray, width, height, sample, sample, first, gap, 2f);
-                        retainBoundaryBody(crops, labels, gray, width, height, x, prefixPhase, gap);
+                        retainBoundaryBody(crops, labels, gray, width, height, x, prefixPhase, gap, true);
                     }
                 }
             }
@@ -82,9 +82,20 @@ final class MeterComponentSeeds {
         return crops;
     }
 
+    static boolean hasStackAfterRule(
+            byte[] labels, byte[] gray, int width, int height, int edge, int first, float gap) {
+        var crops = new ArrayList<MeterChangeDetector.Crop>();
+        retainBoundaryBody(crops, labels, gray, width, height, edge, first, gap, false);
+        for (var crop : crops) {
+            if (crop.left() > edge + gap * .25f && crop.left() < edge + gap * 1.5f
+                    && crop.right() <= edge + gap * 3) return true;
+        }
+        return false;
+    }
+
     private static void retainBoundaryBody(
             List<MeterChangeDetector.Crop> crops, byte[] labels, byte[] gray, int width,
-            int height, int edge, int first, float gap) {
+            int height, int edge, int first, float gap, boolean retryOcr) {
         int left = Math.max(0, Math.round(edge - gap * 1.65f));
         int right = Math.min(width - 1, Math.round(edge + gap * 3.5f));
         int top = Math.max(0, Math.round(first - gap * .7f));
@@ -136,16 +147,26 @@ final class MeterComponentSeeds {
                             && projection[retained - left] <= gap * .36f) retained++;
                     if (retained == firstInk + fringe) cropLeft = retained;
                 }
+                int footer = Math.round(localFirst + 4 * gap) + Math.round(gap * .4f);
+                if (retryOcr) footer = Math.max(footer, bottomInk + 1);
                 var crop = new MeterChangeDetector.Crop(
                         Math.max(0, cropLeft),
                         Math.max(0, localFirst - Math.round(gap * .35f)),
                         Math.min(width, lastInk + pad + 1),
-                        Math.min(height, Math.round(localFirst + 4 * gap) + Math.round(gap * .4f)),
+                        Math.min(height, footer),
                         localFirst, gap);
                 if (topInk >= localFirst - gap * .65f && topInk <= localFirst + gap * .7f
                         && bottomInk >= localFirst + gap * 3.2f
-                        && bottomInk <= localFirst + gap * 4.65f
-                        && !crops.contains(crop)) crops.add(crop);
+                        && bottomInk <= localFirst + gap * (retryOcr ? 4.8f : 4.65f)) {
+                    if (!crops.contains(crop)) crops.add(crop);
+                    // A narrow stack may read more reliably without its light left fringe.
+                    if (retryOcr && span <= gap * 1.2f && firstInk > crop.left()) {
+                        var tight = new MeterChangeDetector.Crop(
+                                firstInk, crop.top(), Math.min(width, crop.right() + 1),
+                                crop.bottom(), localFirst, gap);
+                        if (!crops.contains(tight)) crops.add(tight);
+                    }
+                }
             }
             firstInk = lastInk = -1;
             upper = lower = sumUpper = sumLower = 0;

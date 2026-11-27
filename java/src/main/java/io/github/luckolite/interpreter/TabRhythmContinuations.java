@@ -346,7 +346,16 @@ public final class TabRhythmContinuations {
                 }
             } else run = 0;
         }
-        if (longest >= gap * 1.2f) return true;
+  // A pale seam can split the center column of a complete printed shaft.
+  // Its immediate neighbors are still inside the same narrow stem slot.
+  int radius=Math.max(1,Math.round(gap*.08f));
+  for(int nx=Math.max(0,x-radius);nx<=Math.min(w-1,x+radius);nx++) {
+   int contiguous=0;
+   for(int y=y0;y<=y1;y++) {
+    contiguous=(gray[y*w+nx]&255)<180?contiguous+1:0;
+    if(contiguous>=gap*1.2f)return true;
+   }
+  }
         if (longest < gap * .8f || start < 0) return false;
         int x0 = Math.max(0, Math.round(slot - gap)), x1 = Math.min(w - 1, Math.round(slot + gap));
         int cw = x1 - x0 + 1, ch = y1 - y0 + 1;

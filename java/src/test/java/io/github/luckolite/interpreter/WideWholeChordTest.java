@@ -48,4 +48,46 @@ public class WideWholeChordTest {
     public void solidStackIsNotInventedAsThreeWholeNotes() {
         assertFalse(notes(false).stream().filter(n -> n.unbeamedDurationBeats() == 4).count() == 3);
     }
+
+    @Test public void displacedWholeSecondJoinsTheTwoOvalsInItsColumn() {
+        for (boolean mirrored : new boolean[] {false, true}) {
+            var notes = staggeredNotes(mirrored, false);
+            assertEquals(3, notes.size());
+            assertEquals(List.of(3, 4, 6), notes.stream().map(ScoreNoteEvent::staffStep).sorted().toList());
+            for (var note : notes) assertEquals(4, note.unbeamedDurationBeats(), 0);
+            assertFalse(staggeredNotes(mirrored, true).stream()
+                    .filter(n -> n.unbeamedDurationBeats() == 4).count() == 3);
+        }
+    }
+
+    private static List<ScoreNoteEvent> staggeredNotes(boolean mirrored, boolean solidLeaf) {
+        int w = 400, h = 240;
+        byte[] labels = new byte[w * h], gray = new byte[w * h];
+        Arrays.fill(gray, (byte) 255);
+        for (int y = 96; y <= 160; y += 16)
+            for (int x = 20; x < 380; x++) {
+                labels[y * w + x] = OmrMeasurePostProcessor.STAFF;
+                gray[y * w + x] = 0;
+            }
+        int column = mirrored ? 213 : 185;
+        int leaf = mirrored ? 185 : 213;
+        wholeOval(labels, gray, w, column, 112, false, false);
+        wholeOval(labels, gray, w, column, 128, false, false);
+        wholeOval(labels, gray, w, leaf, 136, true, solidLeaf);
+        return OmrScoreInterpreter.extract(labels, gray, w, h,
+                List.of(new MeasureRegion(.3f, .94f, .15f, .85f)));
+    }
+
+    private static void wholeOval(byte[] labels, byte[] gray, int width, int cx, int cy,
+            boolean displaced, boolean filled) {
+        for (int dy = -8; dy <= 8; dy++)
+            for (int dx = -15; dx <= 15; dx++) {
+                if (dx * dx / 225d + dy * dy / 64d > 1) continue;
+                int at = (cy + dy) * width + cx + dx;
+                labels[at] = OmrMeasurePostProcessor.NOTEHEAD;
+                double insideX = dx - (displaced ? -.42 : .42) * dy;
+                if (filled || insideX * insideX / 25d + dy * dy / 42d >= 1)
+                    gray[at] = 0;
+            }
+    }
 }

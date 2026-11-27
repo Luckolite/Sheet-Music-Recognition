@@ -29,6 +29,30 @@ public class PrintedMeasureRepeatGlyphsTest {
         assertTrue(detect(page(true, false, false), List.of(note)).isEmpty());
     }
 
+    @Test public void repeatOwnsAContainedFalseEighthRestAndPreservesANeighboringFullRest() {
+        var repeatedDot = new ScoreRestEvent(1, .63f, 84f/H, 23f/H, 0, 1, .5);
+        var wholeRest = ScoreRestEvent.fullMeasure(2, .5f, 84f/H, 4f/H, 0, 1);
+        var score = new ScorePageInterpretation(BARS, List.of()).withRests(List.of(repeatedDot, wholeRest));
+        var result = PrintedMeasureRepeatGlyphs.apply(score, page(true, false, false), W, H, 0);
+
+        assertEquals(1, result.playbackDirections().size());
+        assertEquals(1, result.playbackDirections().get(0).measureBoundary());
+        assertEquals(List.of(wholeRest), result.rests());
+    }
+
+    @Test public void separateOrDifferentStaffRestsStillVetoTheRepeat() {
+        var separate = new ScoreRestEvent(1, .89f, 84f/H, 23f/H, 0, 1, .5);
+        var tall = new ScoreRestEvent(1, .63f, 84f/H, 55f/H, 0, 1, .5);
+        var otherStaff = new ScoreRestEvent(1, .63f, 84f/H, 23f/H, 1, 2, .5);
+        var wholeRest = ScoreRestEvent.fullMeasure(1, .63f, 84f/H, 4f/H, 0, 1);
+        for (var printed : List.of(separate, tall, otherStaff, wholeRest)) {
+            var score = new ScorePageInterpretation(BARS, List.of()).withRests(List.of(printed));
+            var result = PrintedMeasureRepeatGlyphs.apply(score, page(true, false, false), W, H, 0);
+            assertTrue(result.playbackDirections().isEmpty());
+            assertEquals(List.of(printed), result.rests());
+        }
+    }
+
     private static List<Integer> detect(byte[] gray, List<ScoreNoteEvent> notes) {
         return PrintedMeasureRepeatGlyphs.detect(gray,W,H,BARS,notes)
                 .stream().map(PrintedMeasureRepeatGlyphs.Glyph::measure).toList();

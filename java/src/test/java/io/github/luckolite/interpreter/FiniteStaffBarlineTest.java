@@ -50,6 +50,31 @@ public class FiniteStaffBarlineTest {
         assertFalse(detect(raster));
     }
 
+    @Test
+    public void nearbyLedgerNoteCannotClaimASeparatedStaffHeightBar() {
+        assertTrue(barWithLedgerHead(false));
+    }
+
+    @Test
+    public void ledgerHeadStillOwnsARuleJoinedToItsStem() {
+        assertFalse(barWithLedgerHead(true));
+    }
+
+    private static boolean barWithLedgerHead(boolean attached) {
+        byte[] raster = staff(), labels = new byte[raster.length];
+        for (int y = attached ? 202 : ROWS[0]; y <= ROWS[4]; y++) ink(raster, X, y);
+        for (int x = X - 15; x <= X + 1; x++) ink(raster, x, 201);
+        for (int y = 196; y <= 206; y++)
+            for (int x = X - 12; x <= X + 1; x++) {
+                double dx = (x - (X - 5)) / 7.0, dy = (y - 201) / 5.0;
+                if (dx * dx + dy * dy > 1) continue;
+                ink(raster, x, y);
+                labels[y * WIDTH + x] = OmrMeasurePostProcessor.NOTEHEAD;
+            }
+        return OmrMeasurePostProcessor.provesFiniteBarline(
+                labels, raster, WIDTH, HEIGHT, X, ROWS, GAP, 0);
+    }
+
     private static boolean detect(byte[] raster) {
         return OmrMeasurePostProcessor.provesFiniteBarline(null, raster, WIDTH, HEIGHT, X, ROWS, GAP, 0);
     }

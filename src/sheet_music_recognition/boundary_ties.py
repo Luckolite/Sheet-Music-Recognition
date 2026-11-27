@@ -69,7 +69,8 @@ def resolve_boundary_ties(document):
                         or abs(previous["startBeat"] + previous["durationBeats"] - before["totalBeats"]) > .04):
                     continue
                 # An unmarked continuation keeps the tied pitch across a bar/key change.
-                if (tab_typed or current.get("boundaryAccidental") != 2) and previous["midi"] != current["midi"]:
+                capo_pitch = current.get("_printedCapoSounding") or previous.get("_printedCapoSounding")
+                if (tab_typed or capo_pitch or current.get("boundaryAccidental") != 2) and previous["midi"] != current["midi"]:
                     continue
                 candidates.setdefault(number, []).append(previous_index)
                 claims[previous_index] += 1
@@ -92,7 +93,7 @@ def resolve_boundary_ties(document):
             note_index = current.get("sourceNoteIndex", -1)
             if 0 <= note_index < len(score_notes):
                 score_notes[note_index] = dict(score_notes[note_index], tiedFromPrevious=True)
-                if not current.get("boundaryTies", 0) & 16:
+                if not current.get("boundaryTies", 0) & 16 and not current.get("_printedCapoSounding"):
                     pitch = previous["boundaryPitch"]
                     natural = (pitch // 7 + 1) * 12 + (0, 2, 4, 5, 7, 9, 11)[pitch % 7]
                     accidental = previous["midi"] - natural

@@ -143,6 +143,7 @@ public final class MeterFontMatcher {
             byte[] labels, byte[] gray, int width, int height,
             List<MeasureRegion> measures, List<ScoreNoteEvent> notes) {
         var choices = new TreeMap<Integer, Set<ScoreMeterChange>>();
+        var serifChoices = new TreeMap<Integer, Set<ScoreMeterChange>>();
         var page = MeterChangeDetector.pageCandidates(labels, gray, width, height, measures, notes);
         for (var reading : page.readings())
             choices.computeIfAbsent(reading.measureIndex(), ignored -> new HashSet<>()).add(reading);
@@ -168,13 +169,64 @@ public final class MeterFontMatcher {
                         && "3/4".equals(supportedMeter(readCrop(gray, width, height, cropped))))
                     supported = "3/4";
             }
-            if (supported.isBlank()) continue;
+            if (supported.isBlank()) {
+                if (page.boundarySeeds().contains(crop)) {
+                    var serif = serifBoundaryMeter(
+                            crop, labels, gray, width, height, measure, measures, notes);
+                    if (serif != null)
+                        serifChoices.computeIfAbsent(measure, ignored -> new HashSet<>()).add(serif);
+                }
+                continue;
+            }
             String[] digits = supported.split("/");
             var reading = new ScoreMeterChange(measure, Integer.parseInt(digits[0]), Integer.parseInt(digits[1]));
             choices.computeIfAbsent(measure, ignored -> new HashSet<>()).add(reading);
         }
+        // The fallback only supplies an unclaimed owner. Standard music-font readings take precedence.
+        serifChoices.forEach(choices::putIfAbsent);
         return choices.values().stream().filter(readings -> readings.size() == 1)
                 .flatMap(Set::stream).toList();
+    }
+
+    private static final class Serif {
+        private static final MeterFontMatcher MATCHER = new MeterFontMatcher(ClefOctaveNumerals::serifMeterGlyph);
+    }
+
+    private static ScoreMeterChange serifBoundaryMeter(
+            MeterChangeDetector.Crop crop, byte[] labels, byte[] gray, int width, int height,
+            int measure, List<MeasureRegion> measures, List<ScoreNoteEvent> notes) {
+        float gap = crop.gap();
+        float ownerEdge = measures.get(measure).left() * width;
+        if (Math.abs(crop.left() - ownerEdge) > gap * 1.35f || crop.right() - crop.left() > gap * 2.3f)
+            return null;
+        int pad = Math.round(gap * .2f);
+        int bottom = Math.min(crop.bottom(), Math.round(crop.firstLine() + 4.25f * gap));
+        var bounded = new MeterChangeDetector.Crop(
+                Math.max(0, crop.left() - pad), crop.top(), Math.min(width, crop.right() + pad),
+                bottom, crop.firstLine(), gap);
+        if (MeterChangeDetector.followingMeasure(bounded, width, height, measures) != measure
+                || !MeterChangeDetector.precedesNotes(bounded, labels, gray, width, height, measure, measures, notes))
+            return null;
+        var reading = readCrop(Serif.MATCHER, gray, width, bounded, bounded.firstLine(), gap);
+        String text = supportedMeter(reading);
+        if (text.isBlank() && Math.min(reading.topScore(), reading.bottomScore()) >= .84f) {
+            var refined = MeterCropStaff.refine(gray, width, height, bounded);
+            if (!refined.equals(bounded)
+                    && MeterChangeDetector.followingMeasure(refined, width, height, measures) == measure
+                    && MeterChangeDetector.precedesNotes(
+                            refined, labels, gray, width, height, measure, measures, notes)) {
+                reading = readCrop(Serif.MATCHER, gray, width, refined, refined.firstLine(), refined.gap());
+                text = supportedMeter(reading);
+            }
+        }
+        if (text.isBlank()) return null;
+        String[] digits = text.split("/");
+        var meter = new ScoreMeterChange(measure, Integer.parseInt(digits[0]), Integer.parseInt(digits[1]));
+        // A strong optical pair can precede a rest or layered voices. A one-beat
+        // or shorter header still needs matching duration evidence.
+        boolean clearDigits = meter.quarterBeats() > 1
+                && Math.min(reading.topScore(), reading.bottomScore()) >= .88f;
+        return clearDigits || MeterChangeDetector.supportsWrittenBar(meter, notes) ? meter : null;
     }
 
     private static String supportedMeter(Reading font) {

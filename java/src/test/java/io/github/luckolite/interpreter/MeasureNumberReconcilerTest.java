@@ -664,6 +664,36 @@ public final class MeasureNumberReconcilerTest {
     }
 
     @Test
+    public void fullSystemRestPreservesItsPrintedCount() {
+        List<MeasureRegion> detected = new ArrayList<>();
+        List<MeasureNumberReconciler.NumberToken> numbers = new ArrayList<>();
+        for (int i = 0; i < 6; i++) {
+            float top = .10f + i * .10f;
+            detected.addAll(row(top, 4));
+            numbers.add(number(1 + i * 4, top));
+        }
+        float finalTop = .70f;
+        MeasureRegion last = region(.10f, .90f, finalTop);
+        detected.add(last);
+        numbers.add(number(25, finalTop));
+        var rest = new MeasureNumberReconciler.NumberToken(17, .48f, .68f, .52f, .695f);
+        int width = 300, height = 1000;
+        byte[] gray = new byte[width * height];
+        java.util.Arrays.fill(gray, (byte) 255);
+        for (int y = 722; y < 731; y++)
+            java.util.Arrays.fill(gray, y * width + 36, y * width + 264, (byte) 25);
+
+        var exact = MeasureNumberReconciler.reconcile(detected, numbers, List.of(rest), null, gray, width, height);
+        var terminal = exact.stream().filter(m -> m.top() == finalTop).toList();
+        assertEquals(java.util.Collections.nCopies(17, last), terminal);
+
+        for (int y = 722; y < 731; y++)
+            java.util.Arrays.fill(gray, y * width + 36, y * width + 150, (byte) 255);
+        var ordinary = MeasureNumberReconciler.reconcile(detected, numbers, List.of(rest), null, gray, width, height);
+        assertEquals(20, ordinary.stream().filter(m -> m.top() == finalTop).count());
+    }
+
+    @Test
     public void finalMultiMeasureRestInOrdinaryLastSlotDoesNotAddAVisualMeasure() {
         List<MeasureRegion> detected = new ArrayList<>();
         List<MeasureNumberReconciler.NumberToken> numbers = new ArrayList<>();
@@ -706,6 +736,50 @@ public final class MeasureNumberReconcilerTest {
         assertEquals(List.of(finalRow.get(0), finalRow.get(1), finalRow.get(1), finalRow.get(2),
                 finalRow.get(3), finalRow.get(4), finalRow.get(5), finalRow.get(5), finalRow.get(5),
                 finalRow.get(6)), tail);
+    }
+
+    @Test
+    public void tallNumberedSystemRejectsOnlyAnUnprintedInteriorDivider() {
+        int width = 1000, height = 1000;
+        byte[] gray = new byte[width * height];
+        java.util.Arrays.fill(gray, (byte) 255);
+        for (int x : new int[] {300, 600, 750})
+            for (int y = 202; y <= 378; y++) gray[y * width + x] = 0;
+
+        var detected = new ArrayList<>(List.of(
+                new MeasureRegion(.10f, .296f, .20f, .38f),
+                new MeasureRegion(.304f, .351f, .20f, .38f),
+                new MeasureRegion(.359f, .596f, .20f, .38f),
+                new MeasureRegion(.604f, .746f, .20f, .38f),
+                new MeasureRegion(.754f, .90f, .20f, .38f)));
+        for (var region : row(.455f, 4))
+            detected.add(new MeasureRegion(region.left(), region.right(), region.top(), .635f));
+        for (int y = 228; y <= 268; y++) gray[y * width + 355] = 0;
+        var anchors = List.of(number(32, .20f), number(36, .455f));
+        var corrected = MeasureNumberReconciler.reconcile(
+                detected, anchors, List.of(), null, gray, width, height);
+        assertEquals(8, corrected.size());
+        assertEquals(new MeasureRegion(.304f, .596f, .20f, .38f), corrected.get(1));
+
+        for (int y = 202; y <= 378; y++) gray[y * width + 355] = 0;
+        assertEquals(detected, MeasureNumberReconciler.reconcile(
+                detected, anchors, List.of(), null, gray, width, height));
+    }
+
+
+
+    @Test
+    public void widePrintedSystemsBridgeOneUnreadHeaderOnlyWithCountedBars() {
+        var detected = new ArrayList<>(row(.073f, 6));
+        detected.addAll(row(.263f, 6));
+        detected.addAll(row(.448f, 6));
+        var numbers = List.of(number(4, .043f), number(85, .066f),
+                number(16, .257f), number(97, .443f));
+        assertEquals(85, MeasureNumberReconciler.firstMeasureNumber(detected, numbers));
+
+        var unmatched = new ArrayList<>(row(.073f, 7));
+        unmatched.addAll(detected.subList(6, detected.size()));
+        assertEquals(4, MeasureNumberReconciler.firstMeasureNumber(unmatched, numbers));
     }
 
     private static List<MeasureRegion> regularPage(int rows, int measuresPerRow) {

@@ -64,18 +64,18 @@ final class PrintedTempoSpans {
             int width,
             int height) {
         var score = countedRestAcceleration(input, words, staffs, height);
-        // Multipart ownership and open page continuations need document-level evidence.
-        if (staffs.isEmpty()
-                || staffs.stream().anyMatch(s -> s.count() != 1)
-                || width <= 0
-                || height <= 0) return score;
+        if (staffs.isEmpty() || width <= 0 || height <= 0) return score;
+        int count = staffs.get(0).count();
+        if ((count != 1 && count != 2) || staffs.stream().anyMatch(s -> s.count() != count))
+            return score;
+        boolean grandStaff = count == 2;
         boolean eligible =
                 score.expressiveEvents().stream()
                         .anyMatch(e -> (gradual(e.kind()) || bareFaster(e)) && e.end().isEmpty());
         if (!eligible) return score;
         var sizes = staffs.stream().map(PlayingTechniqueDetector.Staff::gap).sorted().toList();
         float gap = sizes.get(sizes.size() / 2), gx = gap / width, gy = gap / height;
-        var runs = PrintedDashChains.detect(gray, width, height, gap);
+        var runs = PrintedDashChains.detect(gray, width, height, gap, grandStaff);
         if (runs.isEmpty()) return score;
         var systems = new ArrayList<PrintedDashSpan.SystemBand>();
         int[] row = new int[score.measures().size()];
@@ -112,7 +112,9 @@ final class PrintedTempoSpans {
             systems.set(i, new PrintedDashSpan.SystemBand(system.left(), system.right(),
                     system.top(), system.bottom(), lastColumns[i]));
         }
-        var ownershipSystems = printedOwnershipSystems(systems, staffs, gray, width, height);
+        var upperStaffTops = grandStaff ? grandStaffTops(systems, staffs, height) : List.<Float>of();
+        if (grandStaff && upperStaffTops.isEmpty()) return score;
+        var ownershipSystems = grandStaff ? systems : printedOwnershipSystems(systems, staffs, gray, width, height);
         var spanCache = new HashMap<SpanQuery, Optional<PrintedDashSpan.Span>>();
         java.util.function.Function<SpanQuery, Optional<PrintedDashSpan.Span>> follow =
                 query -> spanCache.computeIfAbsent(query, key ->
@@ -128,7 +130,7 @@ final class PrintedTempoSpans {
                 continue;
             }
             var measure = ScoreExpressionDetector.measureOf(event);
-            if (measure.isEmpty()) {
+            if (measure.isEmpty() || grandStaff && (event.staffIndex() != 0 || event.staffCount() != 2)) {
                 events.add(event);
                 continue;
             }
@@ -143,8 +145,13 @@ final class PrintedTempoSpans {
                 if (evidence.sourceId().equals("printed-expression-word"))
                     sourceTexts.add(evidence.printedText());
             for (var word : words) {
-                if (!sourceTexts.contains(word.text())) continue;
-                var span = follow.apply(query(word, row[measure.getAsInt()]));
+                if (!sourceTexts.contains(word.text()) || grandStaff && event.evidence().stream().noneMatch(e ->
+                        e.sourceId().equals("printed-expression-word") && e.printedText().equals(word.text())
+                                && Math.abs(e.visualX() - word.left()) <= gx * .25f)) continue;
+                var wordQuery = query(word, row[measure.getAsInt()]);
+                var span = grandStaff ? PrintedDashSpan.followAboveGrandStaff(
+                        runs, systems, wordQuery.word(), gx, gy, upperStaffTops, wordQuery.system())
+                        : follow.apply(wordQuery);
                 if (span.isPresent()
                         && ownershipSystems != systems
                         && competingClaim(
@@ -350,6 +357,27 @@ final class PrintedTempoSpans {
                 sourceTexts.add(evidence.printedText());
         if (sourceTexts.isEmpty()) return null;
         return new Claim(row[measure.getAsInt()], sourceTexts);
+    }
+
+    /** Each logical row must have one upper and one lower staff in printed order. */
+    private static List<Float> grandStaffTops(
+            List<PrintedDashSpan.SystemBand> systems, List<PlayingTechniqueDetector.Staff> staffs,
+            int height) {
+        if (staffs.size() != systems.size() * 2) return List.of();
+        var tops = new ArrayList<Float>(systems.size());
+        for (var system : systems) {
+            PlayingTechniqueDetector.Staff upper = null, lower = null;
+            for (var staff : staffs) {
+                float center = (staff.top() + staff.bottom()) * .5f / height;
+                if (center < system.top() || center > system.bottom()) continue;
+                if (staff.index() == 0 && upper == null) upper = staff;
+                else if (staff.index() == 1 && lower == null) lower = staff;
+                else return List.of();
+            }
+            if (upper == null || lower == null || upper.bottom() >= lower.top()) return List.of();
+            tops.add(upper.top() / height);
+        }
+        return List.copyOf(tops);
     }
 
     // Measure rectangles include engraving gutters. Only complete independently

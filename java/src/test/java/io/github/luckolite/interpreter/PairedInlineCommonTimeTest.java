@@ -139,6 +139,45 @@ public final class PairedInlineCommonTimeTest {
     }
 
     @Test
+    public void pairedCompleteCommonTimeAtOneSharedBoundaryIsRead() {
+        var p = new Page(true, false);
+        p.box(355, 90, 2, 225, (byte) 1);
+        assertEquals(List.of(new ScoreMeterChange(1, 4, 4)), p.read());
+    }
+
+    @Test
+    public void aSingleSharedBoundaryDoesNotAdmitClosedOrSeveredArcs() {
+        var closed = new Page(true, false);
+        closed.box(355, 90, 2, 225, (byte) 1);
+        for (int top : new int[] {90, 250}) closed.box(403, top + 25, 4, 15, (byte) 5);
+        assertTrue(closed.read().isEmpty());
+
+        var severed = new Page(true, false);
+        severed.box(355, 90, 2, 225, (byte) 1);
+        for (int top : new int[] {90, 250}) {
+            for (int y = top + 28; y <= top + 36; y++)
+                for (int x = 375; x <= 398; x++) {
+                    severed.gray[y * severed.w + x] = (byte) 255;
+                    severed.labels[y * severed.w + x] = 0;
+                }
+            severed.staff(top);
+        }
+        assertTrue(severed.read().isEmpty());
+    }
+
+    @Test
+    public void pairedCompleteCommonTimeAtSystemEntryWithPrintedHeadersIsRead() {
+        var p = new Page(true, false);
+        p.box(302, 90, 7, 65, (byte) 3);
+        p.box(302, 250, 7, 65, (byte) 3);
+        var measures = List.of(new MeasureRegion(373f / p.w, 755f / p.w, 82f / p.h, 322f / p.h));
+        var proofs = PairedInlineCommonTime.prove(p.labels, p.gray, p.w, p.h, measures);
+        assertEquals(1, proofs.size());
+        assertEquals(0, proofs.get(0).measureIndex());
+        assertEquals(2, proofs.get(0).copies().size());
+    }
+
+    @Test
     public void loneInlineCharacterRemainsUnproved() {
         assertTrue(new Page(false, true).read().isEmpty());
     }

@@ -154,4 +154,64 @@ public final class DetachedAnnotationInkTest {
         assertFalse(bowTip());
         assertArrayEquals(before, gray);
     }
+    @Test
+    public void wholePrintedDownBowOwnsRaisedRestCropAboveTheRule() {
+        rect(160, 177, 60, 65);
+        rect(160, 162, 65, 79);
+        rect(175, 177, 65, 79);
+        rect(110, 220, 87, 89);
+        assertTrue(DetachedAnnotationInk.downBowRest(gray, W, H, 160, 60, 177, 89, G));
+        assertFalse(DetachedAnnotationInk.downBowRest(gray, W, H, 165, 60, 185, 89, G));
+    }
+
+    @Test
+    public void raisedRestBulbAndDiagonalDoNotMakeTwoBowLegs() {
+        rect(160, 167, 62, 68);
+        for (int y = 65; y <= 82; y++) {
+            int x = 175 - (y - 65) / 2;
+            rect(x, x + 2, y, y);
+        }
+        assertFalse(DetachedAnnotationInk.downBowRest(gray, W, H, 160, 60, 177, 87, G));
+    }
+    @Test
+    public void detachedRaisedTextInitialNeedsTheOtherLetterBodies() {
+        rect(153, 169, 60, 62);
+        rect(166, 169, 63, 70);
+        rect(153, 169, 71, 73);
+        rect(153, 156, 63, 79);
+        rect(150, 156, 80, 85);
+        assertFalse(raisedWord());
+        raisedWordNeighbors();
+        assertTrue(raisedWord());
+    }
+
+    @Test
+    public void genuineRestDiagonalIsNotPartOfTheRaisedTextRow() {
+        rect(153, 160, 60, 66);
+        for (int y = 65; y <= 85; y++) {
+            int x = 171 - (y - 65) / 2;
+            rect(x - 2, x, y, y);
+        }
+        raisedWordNeighbors();
+        assertFalse(raisedWord());
+    }
+
+    private boolean raisedWord() {
+        return SixteenthRestDetector.raisedEighthRestInitial(gray, W, H, 150, 171, 60, 85, 18);
+    }
+
+    private void raisedWordNeighbors() {
+        rect(178, 181, 60, 72);
+        rect(175, 178, 72, 83);
+        rect(174, 179, 83, 85);
+        rect(185, 197, 69, 71);
+        rect(185, 187, 72, 83);
+        rect(195, 197, 72, 83);
+        rect(185, 196, 83, 85);
+        rect(202, 204, 68, 79);
+        rect(212, 215, 68, 79);
+        rect(202, 214, 79, 80);
+        rect(209, 212, 80, 88);
+        rect(202, 209, 88, 90);
+    }
 }

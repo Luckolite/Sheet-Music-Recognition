@@ -89,9 +89,9 @@ final class PlayingTechniqueDetector {
             int width,
             int height) {
         List<ScoreTechniqueChange> result =
-                new ArrayList<>(detect(words, staffs, measures, notes, width, height));
+                new ArrayList<>(detect(PrintedArcoWord.recover(words, gray, width, height), staffs, measures, notes, width, height));
         result.addAll(
-                BowDirectionDetector.detect(labels, gray, width, height, staffs, measures, notes));
+                BowDirectionDetector.detect(labels, gray, width, height, staffs, measures, notes, words));
         result.sort(
                 Comparator.comparingInt(ScoreTechniqueChange::measureIndex)
                         .thenComparingDouble(ScoreTechniqueChange::positionInMeasure)
@@ -145,7 +145,13 @@ final class PlayingTechniqueDetector {
             }
             // A below-staff expression must have an unambiguous nearest lane.
             // Keep the established above-staff attachment behavior otherwise.
-            if (owner == null || (ownerBelow && second - best < .6f)) continue;
+            if (owner == null || ownerBelow && second-best < .6f) {
+                if (technique == ScoreTechniqueChange.CANTABILE) {
+                    var raised = elevatedCantabile(word,staffs,localRegions,measures,notes,width,height);
+                    if (raised != null && !result.contains(raised)) result.add(raised);
+                }
+                continue;
+            }
             int measure = -1;
             float closest = Float.MAX_VALUE;
             float horizontalGap = owner.gap / width;
@@ -222,5 +228,40 @@ final class PlayingTechniqueDetector {
             result.add(m);
         }
         return result;
+    }
+
+    private static ScoreTechniqueChange elevatedCantabile(Word word,List<Staff> staffs,
+            List<TechniqueTextRegions.Region> localRegions,List<MeasureRegion> measures,
+            List<ScoreNoteEvent> notes,int width,int height) {
+        if (!word.text().strip().equalsIgnoreCase("cantabile")) return null;
+        float left = word.left() * width;
+        ScoreTechniqueChange accepted = null;
+        for (var staff : staffs) {
+            var frame = TechniqueTextRegions.local(staff,left,localRegions);
+            float gap = staff.gap(), above = (frame.top()-word.bottom()*height)/gap;
+            if (gap < 8 || gap > 28 || above <= 4.2f || above > 6.3f
+                    || (word.right()-word.left())*width < 5*gap
+                    || (word.right()-word.left())*width > 13*gap) continue;
+            float center = (staff.top()+staff.bottom())*.5f/height;
+            for (int m = 0; m < measures.size(); m++) {
+                var bar = measures.get(m);
+                if (center < bar.top() || center > bar.bottom() || Math.abs(bar.left()*width-left) > gap)
+                    continue;
+                ScoreNoteEvent first = null;
+                for (var note : notes)
+                    if (note.measureIndex()==m && note.staffIndex()==staff.index()
+                            && note.staffCount()==staff.count() && note.kind()==ScoreNoteEvent.Kind.PITCHED
+                            && note.visualSize()==ScoreNoteEvent.VisualSize.FULL
+                            && (first==null || note.positionInMeasure()<first.positionInMeasure())) first=note;
+                if (first==null || first.tiedFromPrevious() || first.positionInMeasure()>.35f
+                        || first.pageY()*height > frame.top()+gap*.45f) continue;
+                float head = (bar.left()+first.positionInMeasure()*(bar.right()-bar.left()))*width;
+                if (head < left-gap*.45f || head > left+gap*2.6f) continue;
+                if (accepted != null) return null;
+                accepted = new ScoreTechniqueChange(m,first.positionInMeasure(),staff.index(),
+                        staff.count(),ScoreTechniqueChange.CANTABILE);
+            }
+        }
+        return accepted;
     }
 }

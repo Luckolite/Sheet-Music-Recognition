@@ -42,6 +42,13 @@ final class PrintedQuarterRestBoundary {
                 || gap < 6
                 || gap > Math.min(w, h) / 8f
                 || Math.abs(bottom - top - gap * 4) > gap * .25f) return false;
+        return agreesAcrossCrops(gray, w, h, x, top, bottom, gap)
+                || stackedInk(gray, w, h, x, top, bottom, gap)
+                        && agreesAcrossCrops(gray, w, h, x, top + 2 * gap, bottom + 2 * gap, gap);
+    }
+
+    private static boolean agreesAcrossCrops(
+            byte[] gray, int w, int h, float x, float top, float bottom, float gap) {
         var narrow = read(gray, w, h, x, top, bottom, gap, 4);
         if (narrow == null) return false;
         var wide = read(gray, w, h, x, top, bottom, gap, 5);
@@ -49,6 +56,52 @@ final class PrintedQuarterRestBoundary {
                 && Math.abs(narrow[0] - wide[0]) <= gap * .15f
                 && Math.abs(narrow[1] - wide[1]) <= gap * .15f
                 && Math.abs(narrow[2] - wide[2]) <= gap * .15f;
+    }
+
+    /** Two printed voices can place matching quarter glyphs in one column. The ordinary
+     * single-staff crop excludes their outer tips, so certify the pair on untouched ink. */
+    private static boolean stackedInk(
+            byte[] gray, int w, int h, float x, float top, float bottom, float gap) {
+        int center = Math.round(x), radius = Math.round(gap * .85f);
+        int first = Math.round(top - gap * .65f), rows = Math.round(gap * 3.1f);
+        int shift = Math.round(gap * 3);
+        if (center - radius < 0 || center + radius >= w || first < 0
+                || first + rows + shift > h) return false;
+        // A real thin rule beside or through the rests still has its own continuous axis.
+        for (int col = center - radius; col <= center + radius; col++) {
+            boolean continuous = true;
+            for (int y = Math.round(top); y <= Math.round(bottom); y++)
+                if ((gray[y * w + col] & 255) >= 195) {
+                    continuous = false;
+                    break;
+                }
+            if (continuous) return false;
+        }
+        int upperInk = 0, lowerInk = 0, matched = 0, beforeTop = 0, afterBottom = 0;
+        int ruleRadius = Math.max(1, Math.round(gap * .095f));
+        for (int y = first; y < first + rows; y++) {
+            if (nearPrintedRule(y, top, gap, ruleRadius)
+                    || nearPrintedRule(y + shift, top, gap, ruleRadius)) continue;
+            for (int col = center - radius; col <= center + radius; col++) {
+                boolean upper = (gray[y * w + col] & 255) < 155;
+                boolean lower = (gray[(y + shift) * w + col] & 255) < 155;
+                if (upper) upperInk++;
+                if (lower) lowerInk++;
+                if (upper && lower) {
+                    matched++;
+                    if (y < top - ruleRadius) beforeTop++;
+                    if (y + shift > bottom + ruleRadius) afterBottom++;
+                }
+            }
+        }
+        return matched >= gap * gap * .58f
+                && matched >= (upperInk + lowerInk - matched) * .88f
+                && beforeTop >= gap * .55f && afterBottom >= gap * .55f;
+    }
+
+    private static boolean nearPrintedRule(int y, float top, float gap, int radius) {
+        int rule = Math.round((y - top) / gap);
+        return rule >= 0 && rule <= 4 && Math.abs(y - (top + rule * gap)) <= radius;
     }
 
     private static float[] read(

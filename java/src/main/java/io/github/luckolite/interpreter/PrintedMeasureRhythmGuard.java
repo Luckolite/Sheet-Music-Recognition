@@ -414,10 +414,14 @@ final class PrintedMeasureRhythmGuard {
                 var pieces = fragments(bar, proposed);
                 if (pieces.size() != 1 || !pieces.get(0).equals(bar)) continue;
                 int measure = raw.indexOf(bar);
-                double written =
-                        sameLiteralRests(rests, clockRests, measure)
-                                ? literalWrittenCapacity(clockNotes, clockRests, measure)
-                                : Double.NaN;
+                boolean stableRests = sameLiteralRests(rests, clockRests, measure);
+                double written = stableRests
+                        ? literalWrittenCapacity(clockNotes, clockRests, measure) : Double.NaN;
+                // A full-measure rest supplies no literal beat count. It neither proves
+                // nor contradicts the written capacity established by the other bars.
+                if (!Double.isFinite(written) && stableRests
+                        && unmeasuredFullRest(clockNotes, clockRests, measure))
+                    continue;
                 if (!Double.isFinite(written)
                         || (Double.isFinite(capacity) && !same(capacity, written))) {
                     proved = false;
@@ -435,12 +439,12 @@ final class PrintedMeasureRhythmGuard {
                         || pieces.get(1).left() <= pieces.get(0).right()
                         || pieces.get(1).left() - pieces.get(0).right() > .015f) continue;
                 float cut = (pieces.get(0).right() + pieces.get(1).left()) * .5f;
+                int measure = raw.indexOf(bar);
                 if (printedBarline(bar, cut, gray, width, height, true)
-                        || printedBarline(bar, cut, gray, width, height)
-                        || !sameLiteralRests(rests, clockRests, raw.indexOf(bar))
-                        || !same(
-                                capacity,
-                                literalWrittenCapacity(clockNotes, clockRests, raw.indexOf(bar))))
+                        || (printedBarline(bar, cut, gray, width, height)
+                                && !cutThroughHead(clockNotes, measure, bar, cut, width, height))
+                        || !sameLiteralRests(rests, clockRests, measure)
+                        || !same(capacity, literalWrittenCapacity(clockNotes, clockRests, measure)))
                     continue;
                 int at = result.indexOf(pieces.get(0));
                 result.removeAll(pieces);
@@ -665,6 +669,24 @@ final class PrintedMeasureRhythmGuard {
         return first < 0 || last == first || last - first > gap * .6f ? -1 : (first + last) / 2;
     }
 
+    private static boolean unmeasuredFullRest(
+            List<ScoreNoteEvent> notes, List<ScoreRestEvent> rests, int measure) {
+        var here = rests.stream().filter(r -> r.measureIndex() == measure).toList();
+        return here.size() == 1 && here.get(0).isFullMeasure()
+                && notes.stream().noneMatch(n -> n.measureIndex() == measure);
+    }
+
+    private static boolean cutThroughHead(
+            List<ScoreNoteEvent> notes, int measure, MeasureRegion bar, float cut, int width, int height) {
+        float span = bar.right() - bar.left();
+        float radius = Math.max(1f, (bar.bottom() - bar.top()) * height * (.2f / 8.2f)) / width;
+        return notes.stream().anyMatch(n -> n.measureIndex() == measure
+                && n.kind() == ScoreNoteEvent.Kind.PITCHED
+                && n.visualSize() == ScoreNoteEvent.VisualSize.FULL
+                && (n.articulations() & NoteOrnament.GRACE) == 0
+                && Math.abs(bar.left() + n.positionInMeasure() * span - cut) <= radius);
+    }
+
     private static boolean sameLiteralRests(
             List<ScoreRestEvent> source, List<ScoreRestEvent> clock, int measure) {
         return source.stream()
@@ -683,8 +705,12 @@ final class PrintedMeasureRhythmGuard {
                         .sorted(Comparator.comparingDouble(ScoreNoteEvent::positionInMeasure))
                         .toList();
         if (metrical.isEmpty()) return Double.NaN;
-        int direction = metrical.get(0).stemDirection();
-        if (direction == 0) return Double.NaN;
+        var first = metrical.get(0);
+        int direction = first.stemDirection();
+        boolean whole = metrical.size() == 1 && first.beamCount() == 0
+                && first.unbeamedDurationBeats() == ScoreNoteEvent.DURATION_WHOLE
+                && first.augmentationDots() == 0 && first.visualSize() == ScoreNoteEvent.VisualSize.FULL;
+        boolean mixedDirections = false;
         for (var n : all) {
             if (n.staffCount() != 1
                     || n.staffIndex() != 0
@@ -695,9 +721,12 @@ final class PrintedMeasureRhythmGuard {
                     || !Float.isFinite(n.positionInMeasure())) return Double.NaN;
             if ((n.articulations() & NoteOrnament.GRACE) != 0) {
                 if (n.leadingRestBeats() != 0 || n.followingRestBeats() != 0) return Double.NaN;
-            } else if (n.stemDirection() != direction
-                    || n.beamCount() < 0
-                    || (n.beamCount() == 0 && !(n.unbeamedDurationBeats() > 0))) return Double.NaN;
+            } else {
+                if ((!whole && n.stemDirection() == 0)
+                        || n.beamCount() < 0
+                        || (n.beamCount() == 0 && !(n.unbeamedDurationBeats() > 0))) return Double.NaN;
+                mixedDirections |= n.stemDirection() != direction;
+            }
         }
         var spans = spans(metrical, measure);
         if (spans.size() != 1 || !Double.isFinite(spans.get(0).beats)) return Double.NaN;
@@ -714,6 +743,9 @@ final class PrintedMeasureRhythmGuard {
                     return Double.NaN;
                 end++;
             }
+            // Opposed directions across separate attacks still describe one written line.
+            // Simultaneous opposed voices do not establish a single measure capacity.
+            if (mixedDirections && end - start > 1) return Double.NaN;
             pitched += duration;
             start = end;
         }
@@ -731,9 +763,9 @@ final class PrintedMeasureRhythmGuard {
                 restGroups++;
             }
         var span = spans.get(0);
-        return span.groups + restGroups >= 2 && same(span.beats, pitched + literal)
-                ? span.beats
-                : Double.NaN;
+        if (mixedDirections && restGroups != 0) return Double.NaN;
+        return (span.groups + restGroups >= 2 || (whole && restGroups == 0))
+                && same(span.beats, pitched + literal) ? span.beats : Double.NaN;
     }
 
     /** Count fitting cannot replace a fully proved printed row with unsupported interior cuts. */
@@ -1923,7 +1955,61 @@ final class PrintedMeasureRhythmGuard {
         return result;
     }
 
-    private static boolean printedBarline(
+    static boolean completePairedEighthBar(
+            MeasureRegion region, byte[] labels, byte[] gray, int width, int height) {
+        if (gray == null || labels == null || gray.length != (long) width * height
+                || labels.length != gray.length || region.cadenceQuarterBeats() != 0) return false;
+        float span = region.right() - region.left();
+        if (span < .5f || !printedBarline(region, region.right(), gray, width, height)
+                || printedBarline(region, region.left() + span / 3f, gray, width, height)
+                || printedBarline(region, region.left() + span * 2f / 3f, gray, width, height))
+            return false;
+        var analyzed = OmrScoreInterpreter.analyze(labels, gray, width, height, List.of(region));
+        return synchronizedEighthLanes(analyzed.notes(), analyzed.rests());
+    }
+
+    /** Two source staves must carry the same eight literal attack or rest columns. */
+    private static boolean synchronizedEighthLanes(List<ScoreNoteEvent> notes, List<ScoreRestEvent> rests) {
+        if (notes.stream().anyMatch(n -> n.staffCount() != 2 || n.staffIndex() < 0 || n.staffIndex() > 1
+                || n.kind() != ScoreNoteEvent.Kind.PITCHED || n.visualSize() != ScoreNoteEvent.VisualSize.FULL
+                || n.beamCount() != 1 || n.tupletDivisor() != 1 || n.tupletNormalNotes() != 1
+                || n.stemDirection() == 0 || n.crossStaffBeam() || n.augmentationDots() != 0
+                || (n.articulations() & NoteOrnament.GRACE) != 0)
+                || rests.stream().anyMatch(r -> r.staffCount() != 2 || r.staffIndex() < 0
+                        || r.staffIndex() > 1 || r.isFullMeasure() || r.durationBeats() != .5))
+            return false;
+        var upper = eighthColumns(0, notes, rests);
+        var lower = eighthColumns(1, notes, rests);
+        if (upper.size() != 8 || lower.size() != 8) return false;
+        for (int i = 0; i < 8; i++)
+            if (Math.abs(upper.get(i) - lower.get(i)) > .012f) return false;
+        return true;
+    }
+
+    private static List<Float> eighthColumns(int staff, List<ScoreNoteEvent> notes, List<ScoreRestEvent> rests) {
+        var voice = notes.stream().filter(n -> n.staffIndex() == staff)
+                .sorted(Comparator.comparingDouble(ScoreNoteEvent::positionInMeasure)).toList();
+        if (voice.isEmpty()) return List.of();
+        int stem = voice.get(0).stemDirection();
+        var columns = new ArrayList<Float>();
+        for (var note : voice) {
+            if (note.stemDirection() != stem) return List.of();
+            float x = note.positionInMeasure();
+            if (columns.isEmpty() || x - columns.get(columns.size() - 1) > .012f) columns.add(x);
+        }
+        if (columns.size() < 6) return List.of();
+        for (var rest : rests) {
+            if (rest.staffIndex() != staff) continue;
+            float x = rest.positionInMeasure();
+            if (columns.stream().anyMatch(column -> Math.abs(column - x) <= .012f)) return List.of();
+            columns.add(x);
+        }
+        columns.sort(Float::compare);
+        return columns;
+    }
+
+
+    static boolean printedBarline(
             MeasureRegion region, float cut, byte[] gray, int width, int height) {
         return printedBarline(region, cut, gray, width, height, false);
     }

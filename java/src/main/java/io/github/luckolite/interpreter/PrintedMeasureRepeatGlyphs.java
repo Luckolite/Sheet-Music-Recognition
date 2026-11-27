@@ -13,6 +13,15 @@ final class PrintedMeasureRepeatGlyphs {
         boolean owns(float x, float y) {
             return x >= left && x < right && y >= top && y < bottom;
         }
+
+        boolean ownsEighthRest(ScoreRestEvent rest, MeasureRegion bar, int width, int height) {
+            if (rest.durationBeats() != .5 || rest.staffIndex() != 0 || rest.staffCount() != 1)
+                return false;
+            float x = (bar.left() + rest.positionInMeasure() * (bar.right() - bar.left())) * width;
+            float y = rest.pageY() * height;
+            float halfHeight = rest.pageHeight() * height * .5f;
+            return owns(x, y - halfHeight) && owns(x, y + halfHeight);
+        }
     }
 
     static List<Glyph> detect(
@@ -55,9 +64,10 @@ final class PrintedMeasureRepeatGlyphs {
         var directions = new ArrayList<>(score.playbackDirections());
         for (var glyph : glyphs) {
             float x = (glyph.left() + glyph.right()) * .5f / width;
-            // A separately printed rest means the bar contains notation of its own.
-            if (score.rests().stream().anyMatch(rest -> rest.measureIndex() == glyph.measure()))
-                continue;
+            var bar = score.measures().get(glyph.measure());
+            // The repeat slash and its dot can also match a small eighth-rest candidate.
+            if (score.rests().stream().anyMatch(rest -> rest.measureIndex() == glyph.measure()
+                    && !glyph.ownsEighthRest(rest, bar, width, height))) continue;
             int page = Math.max(0, pageIndex);
             String id = "measure-repeat:" + page + ":" + glyph.measure();
             var evidence = new ScoreExpressiveEvent.Evidence(
@@ -80,6 +90,7 @@ final class PrintedMeasureRepeatGlyphs {
             owners.add(i);
         }
         var recoveredRests = new ArrayList<>(score.rests());
+        recoveredRests.removeIf(rest -> owned.containsKey(rest.measureIndex()));
         for (var glyph : owned.values())
             if (!owned.containsKey(glyph.measure() - 1))
                 completeSourceCue(score, notes, recoveredRests, glyph, gray, width, height);

@@ -6,6 +6,11 @@ package io.github.luckolite.interpreter;
 final class BilateralLedgerContrast {
     static boolean proved(
             byte[] gray, int width, int height, int left, int right, float expectedY, float gap) {
+        return proved(gray, width, height, left, right, expectedY, gap, Integer.MIN_VALUE);
+    }
+
+    static boolean proved(
+            byte[] gray, int width, int height, int left, int right, float expectedY, float gap, int shaft) {
         if (gray == null
                 || width < 1
                 || height < 1
@@ -34,8 +39,12 @@ final class BilateralLedgerContrast {
                 boolean thin =
                         (gray[(y - flank) * width + x] & 255) >= ink + 8
                                 && (gray[(y + flank) * width + x] & 255) >= ink + 8;
-                crossing = thin ? 0 : crossing + 1;
-                if (ink > limit || crossing > maximumCrossing) {
+                // A verified downstem can shade adjacent pixels on its inner side.
+                boolean atShaft = shaft >= 0 && x >= shaft - 2
+                        && x <= shaft + Math.round(gap * .4f) && ink <= 205;
+                boolean taper = shaft >= 0 && (x < left || x > right) && thin && ink <= 225;
+                crossing = thin || atShaft ? 0 : crossing + 1;
+                if ((ink > limit && !atShaft && !taper) || crossing > maximumCrossing) {
                     connected = false;
                     break;
                 }

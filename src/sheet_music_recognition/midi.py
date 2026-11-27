@@ -8,6 +8,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from .boundary_ties import resolve_boundary_ties
+from .printed_tab_capo import apply_capo
 from .navigation import project_navigation
 from .source_tempo_clock import onset as tempo_onset
 from .typed_events import event_kind, validate_unpitched
@@ -82,7 +83,8 @@ def variable_length(value):
 
 def performed_document(document, bpm=120):
     """Resolve the existing source/Java clocks without assigning a backend identity."""
-    document = prepare_slides(bind_performance_gates(document))
+    from .cue_caption import playback_document
+    document = prepare_slides(bind_performance_gates(apply_capo(playback_document(document))))
     unpitched_intervals(document)
     document = resolve_boundary_ties(document)
     document = realize_rhythmic_feel(document)
@@ -186,11 +188,12 @@ def _performance_events_prepared(document, bpm, expressive_document, unpitched_p
             prior = None
         if prior is not None:
             prior[1] = max(prior[1], row['end'])
+            prior[10] = prior[10] and row['note'].get('_printedCueSilent', False)
             owners[index] = prior
         else:
             tone = [row['start'], row['end'], row['lane'][2], row['step'], row['effect'], row['gliss'],
                     row['note'].get('performanceAttack'), row['note']['staffCount'], row['continuous'],
-                    row['note'].get('_articulationGate', 1.)]
+                    row['note'].get('_articulationGate', 1.), row['note'].get('_printedCueSilent', False)]
             tones.append(tone)
             owners[index] = tone
     active = {}
@@ -214,7 +217,9 @@ def _performance_events_prepared(document, bpm, expressive_document, unpitched_p
     performed = []
     gated_written_end = 0
     slide_clock = SlideClock(tuple(events), ppq)
-    for start, end, pitch, step, effect, gliss, attack, part, continuous, gate in tones:
+    for start, end, pitch, step, effect, gliss, attack, part, continuous, gate, silent in tones:
+        if silent:
+            continue
         if continuous is not None:
             end = slide_clock.gated_end(start, end, continuous.get('gate', 1))
         elif gate < 1 and not (step or effect or gliss):

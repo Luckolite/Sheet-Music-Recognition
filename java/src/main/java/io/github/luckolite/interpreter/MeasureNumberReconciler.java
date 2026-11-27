@@ -39,7 +39,7 @@ final class MeasureNumberReconciler {
             byte[] gray,
             int width,
             int height) {
-        var fitted = fitMeasures(detected, tokens, multiMeasureRests, gray, width, height);
+        var fitted = fitMeasures(detected, tokens, multiMeasureRests, labels, gray, width, height);
         var rawRows = rows(detected);
         var fittedRows = rows(fitted);
         if (rawRows.isEmpty()
@@ -81,19 +81,21 @@ final class MeasureNumberReconciler {
             List<MeasureRegion> detected,
             List<NumberToken> tokens,
             List<NumberToken> multiMeasureRests) {
-        return fitMeasures(detected, tokens, multiMeasureRests, null, 0, 0);
+        return fitMeasures(detected, tokens, multiMeasureRests, null, null, 0, 0);
     }
 
     private static List<MeasureRegion> fitMeasures(
             List<MeasureRegion> detected,
             List<NumberToken> tokens,
             List<NumberToken> multiMeasureRests,
+            byte[] labels,
             byte[] gray,
             int width,
             int height) {
         List<MeasureRegion> safeDetected = detected == null ? List.of() : detected;
         if (tokens == null || tokens.isEmpty())
             return stabilizeAndExpandUnanchored(safeDetected, multiMeasureRests, gray, width, height);
+        safeDetected = removeTallSystemStem(safeDetected, tokens, multiMeasureRests, gray, width, height);
         List<Row> anchorLayout = rows(safeDetected);
         for (Row row : anchorLayout) {
             for (NumberToken rest : assignedRestTokens(row, anchorLayout, multiMeasureRests))
@@ -149,6 +151,20 @@ final class MeasureNumberReconciler {
             }
             List<NumberToken> rowRests = assignedRestTokens(row, rows, multiMeasureRests);
             boolean finalRowWithRest = index + 1 == rows.size() && !rowRests.isEmpty();
+            // A complete terminal grand-staff bar overrides the guessed thirds.
+            if (expectedFromTypicalFinalRow && expected == 3 && row.measures.size() == 1
+                    && rowRests.isEmpty() && PrintedMeasureRhythmGuard.completePairedEighthBar(
+                            row.measures.get(0), labels, gray, width, height)) {
+                expected = 1;
+                expectedFromTypicalFinalRow = false;
+            }
+            // A single full-width printed rest determines this final system's count.
+            // The ordinary visual count would add phantom bars alongside the rest.
+            if (expectedFromTypicalFinalRow && row.measures.size() == 1 && rowRests.size() == 1
+                    && wholeSystemRest(gray, width, height, row.measures.get(0), rowRests.get(0))) {
+                expected = 1;
+                expectedFromTypicalFinalRow = false;
+            }
             // Once consecutive printed numbers establish the page's system count, carry it
             // through a full-width trailing numbered/final system. Previously a noisy final
             // row kept 13-14 stem boxes merely because there was no later number anchor.
@@ -245,6 +261,74 @@ final class MeasureNumberReconciler {
         restored.add(new MeasureRegion(left, merged.right(), merged.top(), merged.bottom()));
         opening.measures.remove(0);
         opening.measures.addAll(0, restored);
+    }
+
+    /**
+     * A tall numbered system can exceed the ordinary anchor distance. Its printed count may
+     * resolve one false stem division when all remaining interior boundaries have independent ink.
+     */
+    private static List<MeasureRegion> removeTallSystemStem(
+            List<MeasureRegion> detected, List<NumberToken> tokens, List<NumberToken> rests,
+            byte[] gray, int width, int height) {
+        if (gray == null || gray.length != (long) width * height || detected.isEmpty()) return detected;
+        var layout = rows(detected);
+        var result = new ArrayList<MeasureRegion>(detected.size());
+        for (int i = 0; i < layout.size(); i++) {
+            var row = layout.get(i);
+            int cut = -1;
+            if (i + 1 < layout.size() && row.measures.size() >= 4
+                    && row.bottom - row.top >= .14f && tokensInside(row, rests).isEmpty()) {
+                var next = layout.get(i + 1);
+                var before = uniqueHeader(tokens, layout, i);
+                var after = uniqueHeader(tokens, layout, i + 1);
+                if (before != null && after != null
+                        && after.top() - before.top() > .24f && after.top() - before.top() <= .30f
+                        && after.value() - before.value() == row.measures.size() - 1
+                        && next.bottom - next.top >= .14f)
+                    cut = unprintedBoundary(row, gray, width, height);
+            }
+            if (cut < 0) {
+                result.addAll(row.measures);
+                continue;
+            }
+            var first = row.measures.get(cut);
+            var second = row.measures.get(cut + 1);
+            result.addAll(row.measures.subList(0, cut));
+            result.add(new MeasureRegion(first.left(), second.right(), Math.min(first.top(), second.top()),
+                    Math.max(first.bottom(), second.bottom())));
+            result.addAll(row.measures.subList(cut + 2, row.measures.size()));
+        }
+        return result.size() == detected.size() ? detected : List.copyOf(result);
+    }
+
+    private static NumberToken uniqueHeader(List<NumberToken> tokens, List<Row> layout, int row) {
+        var matches = tokens.stream().filter(token -> token.value() >= 1 && token.value() <= 999
+                && headerRow(token, layout) == row).toList();
+        return matches.size() == 1 ? matches.get(0) : null;
+    }
+
+    private static int unprintedBoundary(Row row, byte[] gray, int width, int height) {
+        int cut = -1;
+        var system = new MeasureRegion(row.left, row.right, row.top, row.bottom);
+        float narrow = (row.right - row.left) / (row.measures.size() - 1) * .45f;
+        for (int i = 0; i + 1 < row.measures.size(); i++) {
+            var a = row.measures.get(i);
+            var b = row.measures.get(i + 1);
+            float center = (a.right() + b.left()) * .5f;
+            if (PrintedMeasureRhythmGuard.printedBarline(system, center, gray, width, height)) continue;
+            if (cut >= 0 || a.cadenceQuarterBeats() != 0 || b.cadenceQuarterBeats() != 0
+                    || Math.min(regionWidth(a), regionWidth(b)) > narrow) return -1;
+            cut = i;
+        }
+        return cut;
+    }
+
+    private static boolean wholeSystemRest(
+            byte[] gray, int width, int height, MeasureRegion region, NumberToken rest) {
+        float center = (rest.left() + rest.right()) * .5f;
+        return Math.abs(center - (region.left() + region.right()) * .5f)
+                        <= (region.right() - region.left()) * .20f
+                && MultiMeasureRestDetector.hasFullWidthRestBar(gray, width, height, region);
     }
 
     private static boolean trailingRestAddsVisualSlot(
@@ -671,7 +755,7 @@ final class MeasureNumberReconciler {
                         || difference > 16
                         || vertical < 0.035f
                         || (vertical > maximumVertical
-                                && !adjacentDetectedRowsAgree(
+                                && !nearbyDetectedRowsAgree(
                                         candidates.get(before),
                                         candidates.get(index),
                                         difference,
@@ -707,12 +791,15 @@ final class MeasureNumberReconciler {
         return List.copyOf(result);
     }
 
-    private static boolean adjacentDetectedRowsAgree(
+    private static boolean nearbyDetectedRowsAgree(
             NumberToken from, NumberToken to, int difference, List<Row> layout) {
-        // Grand-staff systems can be farther apart than a quarter page. Their printed
-        // numbers still anchor consecutive rows when the visible bars confirm the jump.
+        // Tall grand-staff systems can be far apart. Two actual headers can
+        // bridge one unread header when the intervening printed bars agree.
         int first = headerRow(from, layout), next = headerRow(to, layout);
-        return first >= 0 && next == first + 1 && layout.get(first).measures.size() == difference;
+        if (first < 0 || next <= first || next > first + 2) return false;
+        int bars = 0;
+        for (int row = first; row < next; row++) bars += layout.get(row).measures.size();
+        return bars == difference;
     }
 
     private static int headerRow(NumberToken token, List<Row> layout) {

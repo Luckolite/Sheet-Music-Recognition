@@ -66,7 +66,13 @@ final class MeasuredStaffFingerings {
                     var rawGlyph = find(raw, width, height, head, top, bottom, gap,
                         remaining, measuredTipPixels, alternateThresholdPixels, measuredTipWork);
                     if (remaining[0] < 0) return original;
-                    if (norm.same(rawGlyph)) digit = norm.digit();
+                    if (norm.same(rawGlyph)) {
+                        if (norm.digit() == 3 && TripletRhythmDetector.ownsTripletFingeringBox(
+                                raw, width, height, score, head.owner(),
+                                rawGlyph.left(), rawGlyph.top(), rawGlyph.right(), rawGlyph.bottom()))
+                            continue;
+                        digit = norm.digit();
+                    }
                 }
                 if (digit < 0 && overlaidRemaining[0] >= 0)
                     digit = RuleOverlaidFingerings.digit(raw, normalized, width, height,

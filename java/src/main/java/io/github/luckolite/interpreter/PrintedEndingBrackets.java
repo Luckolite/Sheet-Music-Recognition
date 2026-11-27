@@ -36,14 +36,33 @@ final class PrintedEndingBrackets {
     private record EndingSpan(Mark mark, int left, int right, double roof, boolean needsPair) {}
 
     private static final Pattern SELECTOR =
-            Pattern.compile("\\d{1,3}\\.?\\s*(?:,\\s*\\d{1,3}\\.?\\s*)*");
+            Pattern.compile("\\d{1,3}\\.?\\s*(?:[,&]\\s*\\d{1,3}\\.?\\s*)*");
     private static final Pattern INTEGER = Pattern.compile("\\d+");
     private static final Pattern SELECTOR_CHORD = Pattern.compile(
             "([12])\\.\\s*[A-G](?:[#bâ™¯â™­])?(?:(?:m|maj|min|sus|dim|aug)?[0-9]*)?(?:/[A-G](?:[#bâ™¯â™­])?)?");
 
-    private record Selector(PlayingTechniqueDetector.Word word, List<Integer> passes) {}
+    private record Selector(
+            PlayingTechniqueDetector.Word word, List<Integer> passes, String text, boolean includesHook) {}
 
     private PrintedEndingBrackets() {}
+
+    /** The scan frame spans the page well beyond any printed staff or ending hook. */
+    private static int scanFrameInset(
+            byte[] gray, int width, int height, int edge, int direction) {
+        int margin = Math.min(24, width / 90);
+        int top = height / 9, bottom = height - top;
+        if (margin < 3 || bottom - top < 80) return 0;
+        int matched = 0;
+        for (; matched < margin; matched++) {
+            int column = edge + direction * matched;
+            int light = 0;
+            int allowance = (bottom - top) / 50;
+            for (int y = top, pixel = y * width + column; y < bottom; y++, pixel += width)
+                if ((gray[pixel] & 255) >= 170 && ++light > allowance) break;
+            if (light > allowance) break;
+        }
+        return matched >= 2 && matched < margin ? matched : 0;
+    }
 
     static List<Mark> detect(
             byte[] gray,
@@ -61,9 +80,14 @@ final class PrintedEndingBrackets {
                 || words == null) return List.of();
         var selectors = new ArrayList<Selector>();
         for (var word : words) {
-            var parsed = passes(word.text());
-            if (!parsed.isEmpty()) selectors.add(new Selector(word, parsed));
+            String text = word.text().trim();
+            boolean includesHook = text.startsWith("|");
+            if (includesHook) text = text.substring(1).trim();
+            var parsed = passes(text);
+            if (!parsed.isEmpty()) selectors.add(new Selector(word, parsed, text, includesHook));
         }
+        int firstColumn = scanFrameInset(gray, width, height, 0, 1);
+        int lastColumn = width - scanFrameInset(gray, width, height, width - 1, -1);
         var result = new ArrayList<Mark>();
         var continuations = new ArrayList<Continuation>();
         boolean[] seen = new boolean[0];
@@ -78,12 +102,17 @@ final class PrintedEndingBrackets {
             var spans = new ArrayList<EndingSpan>();
             if (seen.length < bandSize) seen = new boolean[bandSize];
             else Arrays.fill(seen, 0, bandSize, false);
+            if (firstColumn != 0 || lastColumn != width)
+                for (int row = 0; row < bandSize; row += width) {
+                    Arrays.fill(seen, row, row + firstColumn, true);
+                    Arrays.fill(seen, row + lastColumn, row + width, true);
+                }
             for (int seed = 0; seed < bandSize; seed++) {
                 if (seen[seed] || (gray[offset + seed] & 255) >= 170) continue;
                 int first = seed / width, last = first, left = width, right = -1;
                 int queued = 2;
-                runs[0] = runStart(gray, offset, seed, first * width);
-                runs[1] = runEnd(gray, offset, seed, (first + 1) * width);
+                runs[0] = runStart(gray, offset, seed, first * width + firstColumn);
+                runs[1] = runEnd(gray, offset, seed, first * width + lastColumn);
                 Arrays.fill(seen, runs[0], runs[1] + 1, true);
                 for (int take = 0; take < queued; take += 2) {
                     int from = runs[take], to = runs[take + 1], y = from / width;
@@ -91,15 +120,15 @@ final class PrintedEndingBrackets {
                     left = Math.min(left, x0);
                     right = Math.max(right, x1);
                     last = Math.max(last, y);
-                    int neighborLeft = Math.max(0, x0 - 1);
-                    int neighborRight = Math.min(width - 1, x1 + 1);
+                    int neighborLeft = Math.max(firstColumn, x0 - 1);
+                    int neighborRight = Math.min(lastColumn - 1, x1 + 1);
                     for (int step = -1; step <= 1; step += 2) {
                         if (y + step < 0 || y + step >= rows) continue;
                         int neighbor = row + step * width;
                         for (int next = neighbor + neighborLeft; next <= neighbor + neighborRight; next++) {
                             if (seen[next] || (gray[offset + next] & 255) >= 170) continue;
-                            int start = runStart(gray, offset, next, neighbor);
-                            int end = runEnd(gray, offset, next, neighbor + width);
+                            int start = runStart(gray, offset, next, neighbor + firstColumn);
+                            int end = runEnd(gray, offset, next, neighbor + lastColumn);
                             Arrays.fill(seen, start, end + 1, true);
                             if (queued == runs.length) runs = Arrays.copyOf(runs, Math.multiplyExact(queued, 2));
                             runs[queued++] = start;
@@ -163,7 +192,7 @@ final class PrintedEndingBrackets {
                         deepest = Math.max(deepest, nextDepth);
                         x++;
                     }
-                    if (x - begin + 1 <= Math.max(2, gap * .4f)) {
+                    if (x - begin + 1 <= Math.max(2, Math.round(gap * .4f))) {
                         hooks.add(begin);
                         depths.add(deepest);
                     }
@@ -188,6 +217,7 @@ final class PrintedEndingBrackets {
                     int hook = depths.get(hookIndex);
                     PlayingTechniqueDetector.Word matched = null;
                     List<Integer> passes = null;
+                    String matchedText = null;
                     boolean ambiguous = false;
                     for (var selector : selectors) {
                         var word = selector.word();
@@ -195,6 +225,8 @@ final class PrintedEndingBrackets {
                                 r = word.right() * width,
                                 t = word.top() * height,
                                 b = word.bottom() * height;
+                        if (selector.includesHook()
+                                && (l > segmentLeft + gap * .15f || r <= segmentLeft)) continue;
                         double roofY = top + first + slope * (l - left) + intercept;
                         if (l < segmentLeft - gap * .3f
                                 || l > segmentLeft + 5 * gap
@@ -204,11 +236,14 @@ final class PrintedEndingBrackets {
                             // OCR boxes can include whitespace and the adjacent bracket stroke.
                             // Retry only nearby selectors, using their ink outside this proved
                             // roof.
-                            if (l < segmentLeft - gap
+                            if (l < segmentLeft - gap * 1.3f
                                     || l > segmentLeft + 5 * gap
                                     || r >= segmentRight
                                     || t < roofY - gap
                                     || b > roofY + Math.min(4 * gap, hook) + gap) continue;
+                            // A wide OCR box can include the adjacent ending's closing hook.
+                            int firstSelectorColumn = Math.max(0, (int) Math.floor(l));
+                            if (l < segmentLeft - gap) firstSelectorColumn = segmentLeft;
                             int inkLeft = width,
                                     inkRight = -1,
                                     inkTop = height,
@@ -217,7 +252,7 @@ final class PrintedEndingBrackets {
                             for (int yy = Math.max(0, (int) Math.floor(t));
                                     yy < Math.min(height, (int) Math.ceil(b));
                                     yy++) {
-                                for (int xx = Math.max(0, (int) Math.floor(l));
+                                for (int xx = firstSelectorColumn;
                                         xx < Math.min(width, (int) Math.ceil(r));
                                         xx++) {
                                     if ((gray[yy * width + xx] & 255) >= 170) continue;
@@ -251,13 +286,14 @@ final class PrintedEndingBrackets {
                         }
                         matched = word;
                         passes = selector.passes();
+                        matchedText = selector.text();
                     }
                     if (ambiguous) continue;
                     double roofY = top + first + slope * origin + intercept;
                     boolean needsPair = false;
                     if (matched == null) {
                         matched = isolatedSelector(gray, width, height, segmentLeft, segmentRight,
-                                roofY, slope, hook, gap,
+                                roofY, slope, hook, gap, words,
                                 joinedChordSelector(words, width, height, segmentLeft, roofY, gap));
                         if (matched == null) {
                             matched = plainSelector(gray, width, height, segmentLeft, segmentRight,
@@ -265,7 +301,8 @@ final class PrintedEndingBrackets {
                             needsPair = true;
                         }
                         if (matched == null) continue;
-                        passes = passes(matched.text());
+                        matchedText = matched.text();
+                        passes = passes(matchedText);
                     }
                     int start =
                             PrintedRepeatGlyphs.boundary(
@@ -281,7 +318,7 @@ final class PrintedEndingBrackets {
                                     start,
                                     end,
                                     passes,
-                                    matched.text(),
+                                    matchedText,
                                     segmentLeft / (float) width,
                                     staff.index(),
                                     staff.count(),
@@ -436,7 +473,8 @@ final class PrintedEndingBrackets {
     /** A missing page OCR token can be recovered from a digit and its independent period. */
     private static PlayingTechniqueDetector.Word isolatedSelector(
             byte[] gray, int width, int height, int left, int right,
-            double roofY, double slope, int hook, float gap, int chordSelector) {
+            double roofY, double slope, int hook, float gap,
+            List<PlayingTechniqueDetector.Word> words, int chordSelector) {
         int cropLeft = left + Math.max(2, Math.round(.16f * gap));
         int cropRight = Math.min(right - 1, left + Math.round(3 * gap));
         int top = Math.max(0, (int) Math.ceil(roofY + Math.max(0, slope * (cropRight - left))) + 1);
@@ -455,14 +493,17 @@ final class PrintedEndingBrackets {
             for (var dot : graph.components()) {
                 float dotGap = dot.left - digit.right;
                 if (dotGap <= 0 || dotGap > .70f * gap || dot.right == cropRight
-                        || dot.right - dot.left + 1 > Math.ceil(.35f * gap)
+                        || dot.right - dot.left + 1 > Math.ceil(.45f * gap)
                         || dot.bottom - dot.top + 1 > Math.ceil(.35f * gap)
                         || Math.abs(dot.bottom - digit.bottom) > .24f * gap) continue;
                 // A separator in a multi-pass selector must never become a terminal period.
-                boolean followingInk = graph.components().stream().anyMatch(other -> other.left > dot.right
+                var followingInk = graph.components().stream().filter(other -> other.left > dot.right
                         && other.left - dot.right <= gap
-                        && other.bottom - other.top + 1 >= .72f * gap);
-                if (followingInk && chordSelector == 0) continue;
+                        && other.bottom - other.top + 1 >= .72f * gap).toList();
+                if (!followingInk.isEmpty() && chordSelector == 0
+                        && words.stream().noneMatch(word ->
+                                ownsFollowingChord(word, followingInk, dot.right, width, height, gap)))
+                    continue;
                 var reading = JoinedDigitTemplates.inspect(gray, width, height, new BitSet(),
                         digit.left, digit.top, digit.right, digit.bottom, () -> {}, true);
                 if (reading == null) continue;
@@ -476,7 +517,7 @@ final class PrintedEndingBrackets {
                 if (!provedOne && (reading.digit() < 1 || reading.best() < .65f
                         || reading.best() - reading.runner() < .12f)) continue;
                 int value = provedOne ? 1 : reading.digit();
-                if (followingInk && value != chordSelector) continue;
+                if (!followingInk.isEmpty() && chordSelector != 0 && value != chordSelector) continue;
                 if (candidate != null) return null;
                 candidate = new PlayingTechniqueDetector.Word(value + ".",
                         digit.left / (float) width, digit.top / (float) height,
@@ -484,6 +525,19 @@ final class PrintedEndingBrackets {
             }
         }
         return candidate;
+    }
+
+    private static boolean ownsFollowingChord(
+            PlayingTechniqueDetector.Word word, List<RawNumeralComponents.Component> ink,
+            int dotRight, int width, int height, float gap) {
+        if (!SELECTOR_CHORD.matcher("1." + word.text().strip()).matches()) return false;
+        float left = word.left() * width, right = word.right() * width;
+        float top = word.top() * height, bottom = word.bottom() * height;
+        if (left < dotRight - gap * .35f || left > dotRight + gap) return false;
+        float tolerance = gap * .25f;
+        return ink.stream().allMatch(component -> left - tolerance <= component.left
+                && component.right < right + tolerance && top - tolerance <= component.top
+                && component.bottom < bottom + tolerance);
     }
 
     private static boolean condensedOne(

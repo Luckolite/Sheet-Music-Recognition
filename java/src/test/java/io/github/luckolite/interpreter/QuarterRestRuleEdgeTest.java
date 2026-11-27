@@ -82,6 +82,35 @@ public class QuarterRestRuleEdgeTest {
         assertArrayEquals(q, r);
     }
 
+    private static ScoreRestEvent placement(float x, int first, int last, double beats) {
+        return new ScoreRestEvent(0, x, (first + last) / 600f, (last - first + 1) / 300f, 0, 1, beats);
+    }
+
+    @Test
+    public void completeQuarterCanReplaceShiftedCropEndingOnAStaffRule() {
+        var full = placement(.2f, 103, 152, 1);
+        var crop = placement(.2f, 113, 161, .25);
+        var rules = new boolean[80];
+        rules[60] = true;
+        assertTrue(SixteenthRestDetector.quarterOwnsRuleEdgeCrop(full, crop, 300, 300,
+                16, 160, 100, rules));
+        assertFalse(SixteenthRestDetector.quarterOwnsRuleEdgeCrop(full, crop, 300, 300,
+                16, 160, 100, new boolean[80]));
+    }
+
+    @Test
+    public void centeredOrSeparateFlaggedRestRemainsDistinct() {
+        var full = placement(.2f, 103, 152, 1);
+        var rules = new boolean[80];
+        rules[60] = true;
+        assertFalse(SixteenthRestDetector.quarterOwnsRuleEdgeCrop(full,
+                placement(.2f, 105, 161, .25), 300, 300, 16, 160, 100, rules));
+        assertFalse(SixteenthRestDetector.quarterOwnsRuleEdgeCrop(full,
+                placement(.216f, 113, 161, .25), 300, 300, 16, 160, 100, rules));
+        assertFalse(SixteenthRestDetector.quarterOwnsRuleEdgeCrop(full,
+                placement(.2f, 113, 161, .5), 300, 300, 16, 160, 100, rules));
+    }
+
     @Test
     public void originalQuarterWithRuleRemnant() {
         var p = new CompactQuarterRestTest.Page(16, true, true, false, false);

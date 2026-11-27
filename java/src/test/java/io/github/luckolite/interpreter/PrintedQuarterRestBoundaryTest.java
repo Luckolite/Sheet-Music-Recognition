@@ -96,4 +96,36 @@ public class PrintedQuarterRestBoundaryTest {
     public void invalidRasterCannotVeto() {
         assertFalse(PrintedQuarterRestBoundary.owns(null, 600, 280, 250, 100, 164, 16));
     }
+
+    private boolean stackedPair(boolean sameShape, boolean realBoundary) {
+        int gap = 16;
+        var upper = new CompactQuarterRestTest.Page(gap, true, true, false, false);
+        var lower = new CompactQuarterRestTest.Page(gap, sameShape, true, false, false);
+        byte[] gray = new byte[600 * 280];
+        Arrays.fill(gray, (byte) 240);
+        for (int y = 100; y <= 164; y += gap)
+            for (int x = 20; x < 580; x++) gray[y * 600 + x] = 0;
+        // Stretch these procedural compact marks into taller stacked voice glyphs.
+        for (int y = 91; y <= 139; y++) {
+            int source = 113 + Math.round((y - 91) / 1.30f);
+            for (int x = 140; x < 180; x++) {
+                if (upper.labels[source * 600 + x] == 5) gray[y * 600 + x] = 0;
+                if (lower.labels[source * 600 + x] == 5) gray[(y + 48) * 600 + x] = 0;
+            }
+        }
+        if (realBoundary)
+            for (int y = 100; y <= 164; y++) gray[y * 600 + 159] = 0;
+        return PrintedQuarterRestBoundary.owns(gray, 600, 280, 157, 100, 164, gap);
+    }
+
+    @Test
+    public void twoMatchingVoiceRestsCanOwnOneFalseBoundary() {
+        assertTrue(stackedPair(true, false));
+        assertFalse(stackedPair(false, false));
+    }
+
+    @Test
+    public void aPrintedRuleThroughMatchingRestsRetainsItsBoundary() {
+        assertFalse(stackedPair(true, true));
+    }
 }

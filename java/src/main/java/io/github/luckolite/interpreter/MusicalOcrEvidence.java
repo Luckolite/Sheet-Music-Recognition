@@ -64,7 +64,8 @@ final class MusicalOcrEvidence {
                         continue;
                     }
                 }
-                if (ScoreNavigationDetector.kind(line.getText()) != null) {
+                if (ScoreNavigationDetector.kind(line.getText()) != null
+                        || PrintedRepeatNavigation.captionKind(line.getText()) != null) {
                     var box = line.getBoundingBox();
                     if (box != null)
                         words.add(

@@ -11,7 +11,9 @@ from bisect import bisect_left
 from collections import defaultdict
 from pathlib import Path
 from .runtime import java_executable
-from .navigation import arrangement_ranges, require_retained_navigation
+from .navigation import (arrangement_ranges, require_retained_navigation, _caption_navigation,
+                         _document_route, _first_full_repeat_visits, _repeat_witnesses,
+                         _second_only_owners, _auxiliary_staff_continuations)
 from .printed_tempo_spans import preserve_end, resolve_pages, has_open
 from .semantic_wire import TEMPO_MARKING_VERSION, encode
 from .typed_events import event_kind, validate_unpitched
@@ -170,7 +172,9 @@ def _rest_column_span(page, m, staff, count, position, tolerance):
         return None
     if any(n['startBeat']-bar_start < end-1e-7 and n['startBeat']+n['durationBeats']-bar_start > start+1e-7 for _, n in columns):
         return None
-    onset = start+sum(r['durationBeats'] for r in slot if r['positionInMeasure'] < position)
+    # The target identity stores binary32 while the rest row uses a decimal position.
+    target_position = target['positionInMeasure']
+    onset = start + sum(r['durationBeats'] for r in slot if r['positionInMeasure'] < target_position)
     return dict(measureIndex=m, quarterBeatOffset=onset), dict(measureIndex=m, quarterBeatOffset=onset+duration)
 
 
@@ -372,6 +376,7 @@ def _perform_one(pages, bpm, slide_group=0):
             raise ValueError('Expressive page extent disagrees with its measures')
         physical = page.get('sourcePage', page_index)
         paired = page_pairs[page_index]
+        second_only = _second_only_owners(page)
         note_ids = [f'note:{physical}:{index}' for index in range(len(page['events']))]
         for index, note in sorted(enumerate(page['events']), key=lambda entry: (entry[1]['startBeat'], entry[0])):
             identifier = note_ids[index]
@@ -407,7 +412,10 @@ def _perform_one(pages, bpm, slide_group=0):
             else:
                 old = len(sounds); sounds.append(dict(id=identifier, start=start, end=end,
                     staff=note['staffIndex'], count=note['staffCount']))
-                payloads.append(dict(note)); aliases[identifier] = old
+                payload = dict(note)
+                if note.get('sourceNoteIndex') in second_only:
+                    payload['_secondOnlyBar'] = len(beats)+note['measureIndex']
+                payloads.append(payload); aliases[identifier] = old
             if index in paired:
                 paired_sounds[old] = dict(paired[index], start=start, end=end)
         for supplied in page.get('score', {}).get('expressiveEvents', []):
@@ -476,6 +484,8 @@ def _perform_one(pages, bpm, slide_group=0):
         data += struct.pack('>i', len(members))
         for member in sorted(members):
             data += _text(sounds[member]['id'])
+    if any(_repeat_witnesses(page) for page in pages):
+        directions += _document_route(beats, directions, pages)['recoveredDirections']
     data += encode(directions, expressions, len(beats), TEMPO_MARKING_VERSION)
     result = _bridge(data)
     require_retained_navigation(pages, result.get('navigationOccurrences'))
@@ -503,8 +513,12 @@ def _perform_one(pages, bpm, slide_group=0):
             slide_visits[occurrence['occurrenceId']] = visit
             previous_source_end, previous_performed_end = source_end, occurrence['performanceEndBeat']
     events = []
+    first_visits = _first_full_repeat_visits(result.get('navigationOccurrences') or ())
     for interval in result['notes']:
         payload = payloads[interval['sourceIndex']]
+        first = first_visits.get(payload.get('_secondOnlyBar'))
+        if first is not None and interval['navigationOccurrences'][:1] == [first]:
+            continue
         identifier = interval['performanceId']; start, end = interval['startBeat'], interval['endBeat']
         sustained_beats = clock.sustained_beats.get(identifier, ())
         subdivision = payload.get('tremoloBeats', 0)
@@ -568,6 +582,7 @@ def perform_expressions(document, bpm):
             or any(mark.get('kind') == 13 and mark.get('details', {}).get('printedText') == '%'
                    for page in pages for mark in page.get('score', {}).get('playbackDirections', []))):
         return None
+    pages = _auxiliary_staff_continuations(_caption_navigation(pages))
     # Use the same arrangement boundaries as ordinary navigation export.
     ranges = arrangement_ranges(pages)
     played, evidence = [], []

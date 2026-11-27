@@ -1121,9 +1121,11 @@ def emit_note(measure, duration, voice, event=None, chord=False, stop=False, sta
     third_hook_fourth = beamed_fourth and _third_hook_fourth(event)
     beamed_open = bool(open_touch and event.get('beamedOpenStringHarmonic') is True)
     closing_half = bool(artificial and event.get('closingHarmonicHalf') is True)
+    whole_fourth = bool(artificial and event.get('stemlessWholeArtificialHarmonicFourth') is True)
     if written_harmonic:
         harmonic_duration = (DIVISIONS // 3 if beamed_triplet else 3 * DIVISIONS // 8 if dotted_fourth
                              else DIVISIONS // 8 if third_hook_fourth
+                             else 4 * DIVISIONS if whole_fourth
                              else 2 * DIVISIONS if closing_half
                              else ticks(event['durationBeats']) if beamed_open
                              else DIVISIONS // 4 if beamed_fourth else DIVISIONS)
@@ -1137,7 +1139,7 @@ def emit_note(measure, duration, voice, event=None, chord=False, stop=False, sta
         _pitch_element(carrier, artificial[2] if artificial else open_touch[1])
         element(carrier, 'duration', duration)
         element(carrier, 'voice', voice)
-        if beamed_triplet or dotted_fourth or third_hook_fourth or beamed_open or closing_half:
+        if beamed_triplet or dotted_fourth or third_hook_fourth or beamed_open or closing_half or whole_fourth:
             note_type(carrier, duration, event)
         else:
             element(carrier, 'type', '16th' if beamed_fourth else 'quarter')
@@ -1317,7 +1319,7 @@ def emit_note(measure, duration, voice, event=None, chord=False, stop=False, sta
         _pitch_element(touched, artificial[1])
         element(touched, 'duration', duration)
         element(touched, 'voice', voice)
-        if beamed_triplet or dotted_fourth or third_hook_fourth or closing_half:
+        if beamed_triplet or dotted_fourth or third_hook_fourth or closing_half or whole_fourth:
             note_type(touched, duration, event)
             touched.find('type').set('size', 'full')
         else:
@@ -1332,7 +1334,7 @@ def emit_note(measure, duration, voice, event=None, chord=False, stop=False, sta
         if mixed or fourth_stem or beamed_fourth or closing_stem:
             element(touched, 'stem', printed_stem)
         element(touched, 'notehead', 'diamond',
-                **({'filled': 'no'} if mixed or fourth_stem or beamed_fourth or closing_stem
+                **({'filled': 'no'} if mixed or fourth_stem or beamed_fourth or closing_stem or whole_fourth
                    else {'filled': 'yes'} if third else {}))
         technical = _harmonic_role(touched, 'artificial', 'touching-pitch')
         if fingers:
@@ -1640,6 +1642,15 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
                         or any(source.get(k) for k in ('augmentationDots','crossStaffBeam','articulations',
                                                       'tiedFromPrevious','boundaryTies'))):
                     raise ValueError('Closing harmonic half requires a shared upstem and a complete half note')
+            if n.get('stemlessWholeArtificialHarmonicFourth') is True:
+                source = source_notes[note_index] if 0 <= note_index < len(source_notes) and owner == note_index else None
+                if (source is None or n.get('artificialHarmonicFourth') is not True or third or beamed_fourth
+                        or n.get('artificialHarmonicFifth') is True or n.get('durationBeats') != 4
+                        or source.get('unbeamedDurationBeats') != 4 or source.get('beamCount') != 0
+                        or source.get('stemDirection') != 0 or source.get('tupletDivisor', 1) != 1
+                        or any(source.get(k) for k in ('augmentationDots','crossStaffBeam',
+                                                      'tiedFromPrevious','boundaryTies'))):
+                    raise ValueError('Stemless harmonic fourth requires one complete written whole note')
             if 'printedHarmonicTouchAccidental' in n and not beamed_fourth:
                 raise ValueError('Printed touching accidental requires an owned beamed fourth')
             if third or n.get('artificialHarmonicFourth') is True or n.get('artificialHarmonicFifth') is True:
@@ -2378,4 +2389,3 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
         _write_open_harmonics(measure, chords)
     ET.indent(root)
     ET.ElementTree(root).write(Path(path), encoding='utf-8', xml_declaration=True)
-

@@ -114,4 +114,32 @@ public class DetachedFlagStemEvidenceTest {
         method.setAccessible(true);
         assertEquals(2, (int) method.invoke(null, gray, labels, W, H, component, 14f));
     }
+    @Test
+    public void partiallySampledStaffRuleDoesNotBecomeADetachedFlag() throws Exception {
+        int width = 180, height = 140, shaft = 80, tip = 91;
+        byte[] gray = new byte[width * height], labels = new byte[gray.length];
+        Arrays.fill(gray, (byte) 255);
+        for (int y = 37; y <= 45; y++)
+            Arrays.fill(gray, y * width + 80, y * width + 93, (byte) 0);
+        for (int y = 41; y <= tip; y++) {
+            gray[y * width + shaft] = 0;
+            gray[y * width + shaft - 1] = 0;
+            if (y >= 48 && y <= 59) labels[y * width + shaft] = 1;
+        }
+        // Near-shaft antialiasing spills above a long rule whose outer strips have a different phase.
+        for (int x = 4; x < width - 4; x++) {
+            gray[89 * width + x] = 0;
+            if (Math.abs(x - shaft) > 27) gray[88 * width + x] = 0;
+        }
+        for (int y = 87; y <= 88; y++)
+            Arrays.fill(gray, y * width + 83, y * width + 91, (byte) 0);
+        Class<?> head = Class.forName(OmrScoreInterpreter.class.getName() + "$Component");
+        var constructor = head.getDeclaredConstructors()[0];
+        constructor.setAccessible(true);
+        Object component = constructor.newInstance(110, 80, 92, 37, 45, 86f, 41f);
+        var method = OmrScoreInterpreter.class.getDeclaredMethod(
+                "rawDetachedFlags", byte[].class, byte[].class, int.class, int.class, head, float.class);
+        method.setAccessible(true);
+        assertEquals(0, (int) method.invoke(null, gray, labels, width, height, component, 14f));
+    }
 }

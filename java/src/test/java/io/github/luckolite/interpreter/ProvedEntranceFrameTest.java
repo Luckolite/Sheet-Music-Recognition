@@ -38,7 +38,8 @@ public class ProvedEntranceFrameTest {
                         int.class,
                         int.class,
                         List.class,
-                        List.class);
+                        List.class,
+                        Set.class);
         method.setAccessible(true);
         return !((List<?>)
                         method.invoke(
@@ -47,7 +48,8 @@ public class ProvedEntranceFrameTest {
                                 CurvedEntranceStrokeTest.W,
                                 CurvedEntranceStrokeTest.H,
                                 heads,
-                                List.of(staff)))
+                                List.of(staff),
+                                new HashSet<>()))
                 .isEmpty();
     }
 

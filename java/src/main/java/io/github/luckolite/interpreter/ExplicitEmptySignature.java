@@ -59,6 +59,66 @@ final class ExplicitEmptySignature {
         return false;
     }
 
+    /** Two aligned numeral slots can leave a visibly blank key corridor after the clef. */
+    static boolean matchesWideMeter(byte[] labels, byte[] gray, int width, int height,
+            float clefRight, float firstHead, float staffBottom, float gap) {
+        if (gray == null || labels == null || labels.length != gray.length
+                || gray.length != (long) width * height || gap < 7 || gap > 32
+                || !Float.isFinite(firstHead) || firstHead - clefRight < gap * 4) return false;
+        int left = Math.round(clefRight + gap * .15f);
+        int right = Math.round(Math.min(firstHead - gap * .7f, clefRight + gap * 4.25f));
+        int top = Math.round(staffBottom - gap * 4);
+        int middle = Math.round(staffBottom - gap * 2), bottom = Math.round(staffBottom);
+        if (left < 0 || right >= width || top < gap || bottom + gap >= height || right <= left)
+            return false;
+        int upperLeft = right + 1, upperRight = -1, lowerLeft = right + 1, lowerRight = -1;
+        int upperInk = 0, lowerInk = 0;
+        for (int y = top; y <= bottom; y++) {
+            if (staffRule(staffBottom, gap, y)) continue;
+            for (int x = left; x <= right; x++) {
+                int pixel = y * width + x;
+                if (labels[pixel] != OmrMeasurePostProcessor.SYMBOL || (gray[pixel] & 255) >= 155)
+                    continue;
+                if (y < middle) {
+                    upperLeft = Math.min(upperLeft, x);
+                    upperRight = Math.max(upperRight, x);
+                    upperInk++;
+                } else {
+                    lowerLeft = Math.min(lowerLeft, x);
+                    lowerRight = Math.max(lowerRight, x);
+                    lowerInk++;
+                }
+            }
+        }
+        int upperSpan = upperRight - upperLeft + 1, lowerSpan = lowerRight - lowerLeft + 1;
+        if (upperSpan < gap * 1.85f || upperSpan > gap * 3
+                || lowerSpan < gap * .8f || lowerSpan > gap * 1.7f
+                || upperSpan < lowerSpan * 1.45f
+                || Math.abs(upperLeft + upperRight - lowerLeft - lowerRight) > gap * .6f
+                || upperInk < gap * gap * .95f || lowerInk < gap * gap * .55f
+                || upperLeft - left < gap * .50f || upperRight >= right - gap * .15f) return false;
+        if (!WholeHeadPocketEvidence.hasEnclosedOpening(gray, width, height,
+                lowerLeft, middle + 1, lowerRight, bottom, (lowerLeft + lowerRight) * .5f,
+                (middle + bottom) * .5f, gap, Math.round(gap * gap * .045f), 3)) return false;
+
+        // Keep column extrema of both slots even when they differ; real key ink cannot be
+        // hidden by using only the inset lower numeral as the meter's left edge.
+        int blankRight = Math.min(upperLeft, lowerLeft) - Math.max(2, Math.round(gap * .13f));
+        int ink = 0;
+        for (int y = Math.round(top - gap * .75f); y <= Math.round(bottom + gap * .55f); y++) {
+            if (staffRule(staffBottom, gap, y)) continue;
+            for (int x = left; x <= blankRight; x++)
+                if ((gray[y * width + x] & 255) < 150 && ++ink > 4) return false;
+        }
+        return true;
+    }
+
+    private static boolean staffRule(float bottom, float gap, int y) {
+        float phase = (bottom - y) / gap;
+        int line = Math.round(phase);
+        return line >= 0 && line <= 4 && Math.abs(phase - line) <= .19f;
+    }
+
     /** Open fours have a left arm falling away from a stable right spine,
      * followed by a full crossbar. Both stacked copies must prove that shape. */
     private static int openFourPairLeft(

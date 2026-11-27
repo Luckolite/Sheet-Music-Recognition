@@ -31,6 +31,59 @@ public class MeterFontMatcherTest {
         assertEquals("", matcher.read(pixels, 16, 73, 36, 3, 16.5f).text());
     }
 
+    @Test
+    public void serifMeterNeedsACompleteStackAndMatchingWrittenRhythm() throws Exception {
+        var shortMeter = new ScoreMeterChange(0, 3, 8);
+        assertTrue(serifScene("3", "8", 3, false).contains(shortMeter));
+        assertFalse(serifScene("3", "8", 2, false).contains(shortMeter));
+        assertFalse(serifScene("3", "8", 3, true).contains(shortMeter));
+        assertFalse(serifScene("1", "4", 6, false).contains(new ScoreMeterChange(0, 1, 4)));
+    }
+
+    private static java.util.List<ScoreMeterChange> serifScene(
+            String numerator, String denominator, int attacks, boolean removeLower) throws Exception {
+        int width = 560, height = 250, first = 67, gap = 19, left = 177, body = 40;
+        var stamp = new BufferedImage(body, 4 * gap + 1, BufferedImage.TYPE_INT_ARGB);
+        var graphics = stamp.createGraphics();
+        graphics.setColor(Color.WHITE);
+        graphics.fillRect(0, 0, stamp.getWidth(), stamp.getHeight());
+        var font = Font.createFont(Font.TRUETYPE_FONT, new File("training/fonts/NotoSerif.ttf"))
+                .deriveFont(Font.BOLD, 39f);
+        graphics.setFont(font);
+        graphics.setColor(Color.BLACK);
+        graphics.setRenderingHint(
+                RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+        print(graphics, numerator, body, 0, 2 * gap);
+        if (!removeLower) print(graphics, denominator, body, 2 * gap, 4 * gap + 1);
+        graphics.dispose();
+        var gray = new byte[width * height];
+        var labels = new byte[gray.length];
+        java.util.Arrays.fill(gray, (byte) 255);
+        for (int k = 0; k < 5; k++) {
+            int y = first + k * gap;
+            for (int x = 15; x < width - 15; x++) {
+                gray[y * width + x] = 0;
+                labels[y * width + x] = OmrMeasurePostProcessor.STAFF;
+            }
+        }
+        for (int y = 0; y < stamp.getHeight(); y++) {
+            for (int x = 0; x < body; x++) {
+                int ink = stamp.getRGB(x, y) & 255;
+                if (ink >= 190) continue;
+                int at = (first + y) * width + left + x;
+                gray[at] = (byte) ink;
+                labels[at] = OmrMeasurePostProcessor.SYMBOL;
+            }
+        }
+        var measure = new MeasureRegion(left / (float) width, .94f, .15f, .68f);
+        var notes = new java.util.ArrayList<ScoreNoteEvent>();
+        for (int i = 0; i < attacks; i++) {
+            notes.add(new ScoreNoteEvent(
+                    0, .25f + .10f * i, 1, 0, 1, .4f, false, 0, 1, 0, 0f));
+        }
+        return MeterFontMatcher.standaloneReadings(labels, gray, width, height, java.util.List.of(measure), notes);
+    }
+
     private static int[] signature(String numerator, String denominator, int width)
             throws Exception {
         BufferedImage image = new BufferedImage(width, 73, BufferedImage.TYPE_INT_ARGB);

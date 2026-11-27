@@ -7,6 +7,32 @@ import java.util.*;
 import static org.junit.Assert.*;
 
 public class TablatureDecoderTest {
+    @Test
+    public void anAboveRailMeasureNumberDoesNotSoundAsAnUpperStringFret() {
+        var line = TablatureDecoder.detect(page(6, false, false), W, H);
+        var number = new TablatureDecoder.Word("17", 88f / W, 122f / H, 112f / W, 140f / H);
+        var shiftedTopFret = new TablatureDecoder.Word("12", 158f / W, 129f / H, 174f / W, 145f / H);
+        var frets = TablatureDecoder.withWords(line, List.of(number, shiftedTopFret, word("4", 198, 1)), W, H)
+                .get(0).frets();
+        assertEquals(List.of(12, 4), frets.stream().map(TablatureDecoder.Fret::fret).toList());
+    }
+
+    @Test
+    public void detachedInstrumentLabelCannotMoveTheExtentOfACompletePaleTabRow() {
+        byte[] image = new byte[W * H];
+        Arrays.fill(image, (byte) 255);
+        for (int y = 140; y <= 240; y += 20)
+            Arrays.fill(image, y * W + 100, y * W + 481, (byte) 230);
+        Arrays.fill(image, 220 * W + 225, 220 * W + 256, (byte) 255);
+        Arrays.fill(image, 200 * W + 8, 200 * W + 30, (byte) 55);
+        for (int x : new int[]{100, 300, 480})
+            for (int y = 140; y <= 240; y++) image[y * W + x] = (byte) 170;
+        var rows = TablatureDecoder.detect(image, W, H);
+        assertEquals(1, rows.size());
+        assertEquals(140, rows.get(0).top(), 0);
+        assertEquals(List.of(100f, 300f, 480f), rows.get(0).bars());
+    }
+
     static final int W = 500, H = 400;
 
     byte[] page(int lines, boolean paired, boolean second) {

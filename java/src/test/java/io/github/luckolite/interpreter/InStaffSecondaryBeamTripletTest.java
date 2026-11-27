@@ -145,6 +145,45 @@ public class InStaffSecondaryBeamTripletTest {
     }
 
     @Test
+    public void quarterRestBoxAroundOwnedSixteenthTripletNumeralIsDiscarded() {
+        var bars = List.of(new MeasureRegion(0, 1, 108f / H, 236f / H));
+        byte[] gray = new byte[W * H];
+        Arrays.fill(gray, (byte) 255);
+        for (int y = 132; y <= 196; y += 16)
+            Arrays.fill(gray, y * W + 20, y * W + 370, (byte) 0);
+        var notes = new ArrayList<ScoreNoteEvent>();
+        int[] attacks = {100, 132, 164};
+        for (int x : attacks) {
+            notes.add(new ScoreNoteEvent(0, x / (float) W, 0, 0, 1, 196f / H,
+                    false, 0, 2, 2, 0).withStemDirection(1));
+            for (int y = 147; y <= 196; y++)
+                for (int col = x + 5; col <= x + 7; col++) gray[y * W + col] = 0;
+        }
+        for (int y : new int[] {147, 148, 149, 155, 156, 157})
+            Arrays.fill(gray, y * W + 105, y * W + 172, (byte) 0);
+        var rest = new ScoreRestEvent(0, 146f / W, 99f / H, 48f / H, 0, 1, 1);
+        var distinct = new ScoreRestEvent(0, 146f / W, 112f / H, 48f / H, 0, 1, 1);
+        notes.set(1, notes.get(1).withFollowingRest(1));
+
+        for (int y = 0; y < THREE.length; y++)
+            for (int x = 0; x < THREE[y].length(); x++)
+                if (THREE[y].charAt(x) == '#') gray[(101 + y) * W + 138 + x] = 0;
+        var result = TripletRhythmDetector.withRests(notes, List.of(rest), bars, gray, W, H);
+        assertTrue(result.rests().isEmpty());
+        for (var note : result.notes()) {
+            assertEquals(1.0 / 6, ScoreNoteTiming.writtenDurationBeats(note), 1e-8);
+            assertEquals(0, note.followingRestBeats(), 1e-8);
+        }
+        assertEquals(List.of(distinct),
+                TripletRhythmDetector.withRests(notes, List.of(distinct), bars, gray, W, H).rests());
+
+        for (int y = 101; y < 101 + THREE.length; y++)
+            Arrays.fill(gray, y * W + 138, y * W + 138 + THREE[0].length(), (byte) 255);
+        assertEquals(List.of(rest),
+                TripletRhythmDetector.withRests(notes, List.of(rest), bars, gray, W, H).rests());
+    }
+
+    @Test
     public void finalSourceRetryNeedsTheTwoHooksOnAMixedTriplet() {
         var bars = List.of(new MeasureRegion(0, 1, .4f, .8f));
         byte[] gray = new byte[W * H];

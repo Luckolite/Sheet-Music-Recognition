@@ -18,6 +18,13 @@ final class BowDirectionDetector {
             List<PlayingTechniqueDetector.Staff> staffs,
             List<MeasureRegion> measures,
             List<ScoreNoteEvent> notes) {
+        return detect(labels,gray,width,height,staffs,measures,notes,List.of());
+    }
+
+    static List<ScoreTechniqueChange> detect(
+            byte[] labels, byte[] gray, int width, int height,
+            List<PlayingTechniqueDetector.Staff> staffs, List<MeasureRegion> measures,
+            List<ScoreNoteEvent> notes, List<PlayingTechniqueDetector.Word> words) {
         if (staffs == null || staffs.isEmpty() || measures == null
                 || notes == null || notes.isEmpty() || notes.size() > 4096)
             return List.of();
@@ -51,7 +58,7 @@ final class BowDirectionDetector {
         List<ScoreTechniqueChange> result = new ArrayList<>();
         for (var mark :
                 NoteArticulationDetector.bowMarks(
-                        labels, gray, width, height, anchors, notes, staffs)) {
+                        labels, gray, width, height, anchors, notes, staffs, words)) {
             var n = notes.get(mark.owner());
             result.add(
                     new ScoreTechniqueChange(

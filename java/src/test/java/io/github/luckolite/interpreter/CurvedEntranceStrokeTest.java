@@ -117,6 +117,30 @@ public class CurvedEntranceStrokeTest {
         assertEquals(2, OmrScoreInterpreter.analyze(p.labels, null, W, H, M).notes().size());
     }
 
+    private static Page entranceWithRailFringe(int thickness) {
+        var p = new Page(true, false);
+        for (int x = 291; x <= 315; x++) {
+            double t = (x - 291) / 24.;
+            int center = (int) Math.round(178 - 25 * t * t * t);
+            for (int dy = -1; dy <= 1; dy++) p.gray[(center + dy) * W + x] = 0;
+        }
+        for (int dy = 0; dy < thickness; dy++) p.gray[(157 + dy) * W + 315] = 0;
+        return p;
+    }
+
+    @Test
+    public void railFringePreservesTheRiseOnItsPrincipalWithoutAddingAPitch() {
+        var notes = entranceWithRailFringe(1).read().notes();
+        assertEquals(1, notes.size());
+        assertEquals(2, notes.get(0).staffStep());
+        assertEquals(NoteOrnament.SLIDE, notes.get(0).articulations() & NoteOrnament.ALL);
+    }
+
+    @Test
+    public void separateSubstantialTerminalTraceStillBlocksTheScoopProof() {
+        assertTrue(entranceWithRailFringe(2).hasSmall());
+    }
+
     @Test
     public void sourceArraysRemainUnchanged() {
         var p = new Page(true, true);

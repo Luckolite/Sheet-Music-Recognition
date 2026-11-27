@@ -14,7 +14,7 @@ final class OpeningPartTempo {
         return value != null && value.length() <= 80 && INSTRUMENT.matcher(value.strip()).matches();
     }
 
-    private static boolean valid(PlayingTechniqueDetector.Word w) {
+    static boolean valid(PlayingTechniqueDetector.Word w) {
         return w != null
                 && w.text() != null
                 && w.text().length() <= 300
@@ -25,6 +25,81 @@ final class OpeningPartTempo {
                 && w.bottom() <= 1
                 && w.left() < w.right()
                 && w.top() < w.bottom();
+    }
+
+    record TitledMeter(ScoreMeterChange change, PlayingTechniqueDetector.Word upper,
+                       PlayingTechniqueDetector.Word lower) {
+        List<ScoreNoteEvent> withoutMeterHeads(List<ScoreNoteEvent> notes, MeasureRegion first) {
+            return notes.stream().filter(note -> {
+                if (note.measureIndex() != 0 || note.staffIndex() != 0 || note.staffCount() != 1)
+                    return true;
+                float x = first.left() + (first.right() - first.left()) * note.positionInMeasure();
+                return !owns(upper, x, note.pageY()) && !owns(lower, x, note.pageY());
+            }).toList();
+        }
+
+        private static boolean owns(PlayingTechniqueDetector.Word word, float x, float y) {
+            return x >= word.left() && x <= word.right() && y >= word.top() && y <= word.bottom();
+        }
+    }
+
+    /** Recover a stacked meter from two bounded, ink-backed OCR words on a titled solo entry. */
+    static TitledMeter titledMeter(
+            List<PlayingTechniqueDetector.Word> words, byte[] gray, int width, int height,
+            List<MeasureRegion> measures, List<PlayingTechniqueDetector.Staff> staffs,
+            List<ScoreNoteEvent> notes) {
+        if (!ScorePageTimeline.hasTitledOpening(words, gray, width, height, measures)) return null;
+        var first = measures.get(0);
+        var staff = staffs.stream().filter(s -> s.count() == 1 && s.index() == 0 && s.gap() >= 8
+                        && s.top() >= first.top() * height
+                        && s.bottom() <= first.bottom() * height)
+                .min(Comparator.comparingDouble(PlayingTechniqueDetector.Staff::top)).orElse(null);
+        if (staff == null) return null;
+        float gap = staff.gap();
+        float mid = (staff.top() + staff.bottom()) * .5f;
+        var candidates = new ArrayList<PlayingTechniqueDetector.Word>();
+        for (var word : words) {
+            if (!valid(word) || !word.text().strip().matches("[0-9]{1,2}")
+                    || word.left() * width < first.left() * width - gap
+                    || word.right() * width > first.left() * width + gap * 4
+                    || word.top() * height < staff.top() - gap * .55f
+                    || word.bottom() * height > staff.bottom() + gap * .55f) continue;
+            int value = Integer.parseInt(word.text().strip());
+            if (value >= 1 && value <= 24
+                    && HeaderMeterTokenGeometry.digitSized(value, (word.right() - word.left()) * width,
+                            (word.bottom() - word.top()) * height, gap)
+                    && printedWord(word, gray, width, height)) candidates.add(word);
+        }
+        TitledMeter result = null;
+        for (var upper : candidates) {
+            if ((upper.top() + upper.bottom()) * height * .5f >= mid) continue;
+            for (var lower : candidates) {
+                int denominator = Integer.parseInt(lower.text().strip());
+                if ((denominator & (denominator - 1)) != 0
+                        || denominator < 2 || denominator > 16
+                        || (lower.top() + lower.bottom()) * height * .5f <= mid
+                        || upper.bottom() * height > lower.top() * height + gap * .3f
+                        || lower.top() * height - upper.bottom() * height > gap
+                        || Math.min(upper.right(), lower.right()) - Math.max(upper.left(), lower.left())
+                                < Math.min(upper.right() - upper.left(), lower.right() - lower.left()) * .60f)
+                    continue;
+                float right = Math.max(upper.right(), lower.right());
+                float left = Math.min(upper.left(), lower.left());
+                boolean nextHead = false;
+                for (var note : notes) {
+                    if (note.measureIndex() != 0 || note.staffIndex() != 0 || note.staffCount() != 1
+                            || note.kind() != ScoreNoteEvent.Kind.PITCHED) continue;
+                    float pos = first.left() + (first.right() - first.left()) * note.positionInMeasure();
+                    if (pos < left - gap * .25f / width) return null;
+                    if (pos > right && (pos - right) * width <= gap * 3) nextHead = true;
+                }
+                if (!nextHead) continue;
+                if (result != null) return null;
+                int numerator = Integer.parseInt(upper.text().strip());
+                result = new TitledMeter(new ScoreMeterChange(0, numerator, denominator), upper, lower);
+            }
+        }
+        return result;
     }
 
     static boolean equationWord(
@@ -48,7 +123,7 @@ final class OpeningPartTempo {
                         .matches("[\u2669\u266a\u266b\u266c\u221aJ.]?\\h*=\\h*" + token.value());
     }
 
-    private static boolean printedWord(
+    static boolean printedWord(
             PlayingTechniqueDetector.Word word, byte[] gray, int width, int height) {
         int left = Math.round(word.left() * width),
                 right = Math.min(width - 1, Math.round(word.right() * width));

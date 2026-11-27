@@ -80,4 +80,17 @@ public class GlissandoPerformanceTest {
         assertEquals(1, GlissandoPerformance.approachRatio(.5, .06, .1, true), 0);
     }
 
+
+    @Test public void onlyQualifiedGlissCanCrossOneBarWithoutACompetingNoteOrSilence() {
+        var source = new ScoreNoteEvent(0, .6f, 8, 0, 1, .3f, false, 0, 0)
+                .withArticulations(NoteOrnament.GLISSANDO | NoteOrnament.GLISSANDO_NEXT_BAR);
+        var target = new ScoreNoteEvent(1, .1f, 11, 0, 1, .2f, false, 0, 0);
+        assertSame(target, GlissPitchTarget.next(source, List.of(source, target)));
+        var legacy = source.withArticulations(NoteOrnament.GLISSANDO);
+        assertNull(GlissPitchTarget.next(legacy, List.of(legacy, target)));
+        assertNull(GlissPitchTarget.next(source, List.of(source, source, target)));
+        assertNull(GlissPitchTarget.next(source, List.of(source, target.withLeadingRest(.25f))));
+        var earlier = new ScoreNoteEvent(1, .03f, 9, 0, 1, .25f, false, 0, 0);
+        assertSame(earlier, GlissPitchTarget.next(source, List.of(source, target, earlier)));
+    }
 }

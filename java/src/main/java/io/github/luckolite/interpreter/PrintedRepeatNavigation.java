@@ -12,6 +12,67 @@ final class PrintedRepeatNavigation {
 
     private PrintedRepeatNavigation() {}
 
+    static final String CAPTION_ID = "unresolved-repeat-caption:";
+    static final String CAPTION_SOURCE = "printed-repeat-caption:v1:";
+    private static final java.util.regex.Pattern CAPTION_SPACES = java.util.regex.Pattern.compile("\\s+");
+
+    static ScorePlaybackDirection.Kind captionKind(String text) {
+        if (text == null) return null;
+        return switch (CAPTION_SPACES.matcher(text.strip()).replaceAll(" ").toUpperCase(Locale.ROOT)) {
+            case "REPEAT START" -> ScorePlaybackDirection.Kind.REPEAT_START;
+            case "REPEAT END" -> ScorePlaybackDirection.Kind.REPEAT_END;
+            case "ENDING" -> ScorePlaybackDirection.Kind.ENDING;
+            default -> null;
+        };
+    }
+
+    private record Caption(int measure,
+            PlayingTechniqueDetector.Word word, PlayingTechniqueDetector.Staff staff, float inset) {}
+
+    private static List<ScoreExpressiveEvent> captions(
+            List<PlayingTechniqueDetector.Word> words, List<PlayingTechniqueDetector.Staff> staffs,
+            List<MeasureRegion> measures, int width, int height, int page) {
+        if (words == null || staffs == null || width <= 0 || height <= 0) return List.of();
+        var captions = new LinkedHashMap<String, Caption>();
+        for (var word : words) {
+            var kind = captionKind(word.text());
+            if (kind == null || word.left() < 0 || word.right() > 1 || word.top() < 0
+                    || word.bottom() > 1 || word.left() >= word.right() || word.top() >= word.bottom())
+                continue;
+            PlayingTechniqueDetector.Staff owner = null;
+            float distance = Float.POSITIVE_INFINITY;
+            for (var staff : staffs) {
+                float relative = (staff.top() - word.bottom() * height) / staff.gap();
+                if (relative >= -.2f && relative <= 6 && Math.abs(relative) < distance) {
+                    owner = staff;
+                    distance = Math.abs(relative);
+                }
+            }
+            if (owner == null || owner.index() != 0) continue;
+            for (int bar = 0; bar < measures.size(); bar++) {
+                var region = measures.get(bar);
+                float inset = Math.abs(word.left() - region.left()) * width / owner.gap();
+                if (owner.top() < region.top() * height - owner.gap() * .5f
+                        || owner.top() >= region.bottom() * height || inset > 1.35f
+                        || word.right() > region.right() + .25f * owner.gap() / width) continue;
+                var caption = new Caption(bar, word, owner, inset);
+                String key = kind.name() + ":" + bar;
+                var existing = captions.get(key);
+                if (existing == null || inset < existing.inset()) captions.put(key, caption);
+            }
+        }
+        var result = new ArrayList<ScoreExpressiveEvent>();
+        for (var entry : captions.entrySet()) {
+            var caption = entry.getValue();
+            var staff = caption.staff();
+            var word = caption.word();
+            String id = CAPTION_ID + page + ":" + entry.getKey();
+            result.add(unresolved(id, word.text(), caption.measure(), -1, CAPTION_SOURCE,
+                    evidence(id, page, word.left(), staff.index(), staff.count(), word.text())));
+        }
+        return List.copyOf(result);
+    }
+
     static ScorePageInterpretation apply(
             ScorePageInterpretation score,
             List<PlayingTechniqueDetector.Word> words,
@@ -50,10 +111,12 @@ final class PrintedRepeatNavigation {
                         && e.staffCount() == alternate.staffCount())) endings.add(alternate);
             if (endings.size() != before) found = assemble(repeats, endings, pageIndex, scoreBeginning);
         }
-        if (found.directions().isEmpty() && found.unresolved().isEmpty()) return score;
+        var captions = captions(words, staffs, score.measures(), width, height, pageIndex);
+        if (found.directions().isEmpty() && found.unresolved().isEmpty() && captions.isEmpty()) return score;
         var directions = new ArrayList<>(score.playbackDirections());
         directions.addAll(found.directions());
         var expressions = new ArrayList<>(score.expressiveEvents());
+        for (var caption : captions) addUnresolved(expressions, caption);
         for (var mark : repeats) {
             var kind =
                     mark.outgoing()
@@ -190,6 +253,27 @@ final class PrintedRepeatNavigation {
     private static ScoreExpressiveEvent.Evidence evidence(
             String id, int page, float x, int staff, int count, String text) {
         return new ScoreExpressiveEvent.Evidence(id, Math.max(0, page), x, staff, count, text);
+    }
+
+    private static boolean completeInteriorEndings(
+            List<PrintedEndingBrackets.Mark> interior, int plays) {
+        var group = new HashSet<Integer>();
+        int previousEnd = -1;
+        int count = 0;
+        for (var ending : interior) {
+            if (ending.start() < previousEnd || !group.isEmpty() && ending.start() != previousEnd)
+                return false;
+            for (int pass : ending.passes())
+                if (pass < 1 || pass > plays || !group.add(pass)) return false;
+            previousEnd = ending.end();
+            count++;
+            if (group.size() == plays) {
+                if (count < 2) return false;
+                group.clear();
+                count = 0;
+            }
+        }
+        return group.isEmpty();
     }
 
     static Result assemble(
@@ -334,15 +418,16 @@ final class PrintedRepeatNavigation {
                 plays = passes.stream().mapToInt(Integer::intValue).max().orElse(0);
                 for (int pass = 1; pass <= plays; pass++)
                     if (!passes.contains(pass)) conflict = true;
-                if (plays < 2
-                        || owned.size() < 2
-                        || !owned.get(owned.size() - 1).passes().contains(plays)) conflict = true;
+                var finalPasses = owned.get(owned.size() - 1).passes();
+                if (plays < 2 || owned.size() < 2 || !finalPasses.contains(plays)
+                        || Collections.min(finalPasses) != plays - finalPasses.size() + 1)
+                    conflict = true;
                 var edges = closingEdges.get(region.id());
                 if (edges.size() != owned.size() - 1) conflict = true;
                 for (int i = 0; i < owned.size(); i++) {
                     var ending = owned.get(i);
                     if (i == owned.size() - 1) {
-                        if (!ending.passes().equals(List.of(plays)) || edges.contains(ending.end()))
+                        if (edges.contains(ending.end()))
                             conflict = true;
                     } else if (!edges.contains(ending.end()) || ending.passes().contains(plays))
                         conflict = true;
@@ -351,6 +436,18 @@ final class PrintedRepeatNavigation {
                     unresolved.add("Incomplete or conflicting ending coverage for " + region.id());
                     continue;
                 }
+                // Adjacent interior alternatives must rejoin before the closing ending.
+                int terminalStart = owned.get(0).start();
+                var interior = uniqueEndings.stream()
+                        .filter(e -> !used.contains(e) && e.start() > region.start()
+                                && e.end() <= terminalStart)
+                        .sorted(Comparator.comparingInt(PrintedEndingBrackets.Mark::start))
+                        .toList();
+                if (!completeInteriorEndings(interior, plays)) {
+                    unresolved.add("Incomplete interior ending coverage for " + region.id());
+                    continue;
+                }
+                owned.addAll(interior);
             } else if (uniqueEndings.stream()
                     .anyMatch(
                             e ->

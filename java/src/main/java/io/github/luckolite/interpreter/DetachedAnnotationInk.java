@@ -10,12 +10,18 @@ final class DetachedAnnotationInk {
 
     static boolean accent(
             byte[] gray, int width, int height, int minX, int minY, int maxX, int maxY, float gap) {
-        return matches(gray, width, height, minX, minY, maxX, maxY, gap, false);
+        return matches(gray, width, height, minX, minY, maxX, maxY, gap, false, false);
     }
 
     static boolean downBow(
             byte[] gray, int width, int height, int minX, int minY, int maxX, int maxY, float gap) {
-        return matches(gray, width, height, minX, minY, maxX, maxY, gap, true);
+        return matches(gray, width, height, minX, minY, maxX, maxY, gap, true, false);
+    }
+
+    /** The raised rest box contains the cap and both legs of one detached down-bow. */
+    static boolean downBowRest(
+            byte[] gray, int width, int height, int minX, int minY, int maxX, int maxY, float gap) {
+        return matches(gray, width, height, minX, minY, maxX, maxY, gap, true, true);
     }
 
     private static boolean matches(
@@ -27,7 +33,8 @@ final class DetachedAnnotationInk {
             int maxX,
             int maxY,
             float gap,
-            boolean bow) {
+            boolean bow,
+            boolean restBox) {
         if (gray == null
                 || width <= 0
                 || height <= 0
@@ -65,7 +72,7 @@ final class DetachedAnnotationInk {
                     int seed = (sy - top) * w + sx - left;
                     if (seen[seed]
                             || rules[sy - top]
-                            || !ink(gray, width, height, sx, sy, threshold, bow)) continue;
+                            || !ink(gray, width, height, sx, sy, threshold, bow && !restBox)) continue;
                     int size = 1, take = 0;
                     queue[0] = seed;
                     seen[seed] = true;
@@ -84,7 +91,7 @@ final class DetachedAnnotationInk {
                                 if (!seen[next]
                                         && ink(
                                                 gray, width, height, left + xx, top + yy, threshold,
-                                                bow)) {
+                                                bow && !restBox)) {
                                     seen[next] = true;
                                     queue[size++] = next;
                                 }
@@ -97,20 +104,28 @@ final class DetachedAnnotationInk {
                             || b == h - 1
                             || gw < gap * .65f
                             || gw > gap * (bow ? 4.2f : 2.4f)
-                            || gh < gap * (bow ? 1.2f : .25f)
+                            || gh < gap * (restBox ? .85f : bow ? 1.2f : .25f)
                             || gh > gap * (bow ? 4.8f : 1.25f)) continue;
                     if (bow) {
-                        if ((minY + maxY) * .5f - top < t + gh * .75f) continue;
+                        if (restBox) {
+                            float pad = gap * .22f;
+                            if (l + left < minX - pad || r + left > maxX + pad
+                                    || t + top < minY - pad || b + top > maxY + pad
+                                    || Math.abs((l + r) * .5f + left - (minX + maxX) * .5f) > pad
+                                    || gw < (maxX - minX + 1) * .75f
+                                    || gh < (maxY - minY + 1) * .55f) continue;
+                        } else if ((minY + maxY) * .5f - top < t + gh * .75f) continue;
                         int hits = 0, interior = 0;
                         boolean[] cap = new boolean[10],
                                 legL = new boolean[10],
                                 legR = new boolean[10];
+                        float capDepth = restBox ? .38f : .2f;
                         for (int i = 0; i < size; i++) {
                             float x = (queue[i] % w - l) / Math.max(1, gw - 1),
                                     y = (queue[i] / w - t) / Math.max(1, gh - 1);
-                            if (y < .2f || x < .22f || x > .78f) hits++;
+                            if (y < capDepth || x < .22f || x > .78f) hits++;
                             else interior++;
-                            if (y < .2f) cap[Math.min(9, (int) (x * 10))] = true;
+                            if (y < capDepth) cap[Math.min(9, (int) (x * 10))] = true;
                             if (x < .22f) legL[Math.min(9, (int) (y * 10))] = true;
                             if (x > .78f) legR[Math.min(9, (int) (y * 10))] = true;
                         }

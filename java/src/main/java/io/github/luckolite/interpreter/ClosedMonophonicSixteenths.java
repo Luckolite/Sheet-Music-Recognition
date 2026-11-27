@@ -193,6 +193,64 @@ final class ClosedMonophonicSixteenths {
         return true;
     }
 
+    /** Reconcile a shortened inferred rail when both image planes prove a complete printed quartet. */
+    static ScorePageInterpretation restoreOwnedSecondaryRails(
+            ScorePageInterpretation score, byte[] gray, byte[] raw, int width, int height) {
+        if (gray == null || raw == null || gray.length != (long) width * height || raw.length != gray.length
+                || score.beamSource().groups().isEmpty()) return score;
+        var notes = score.notes();
+        List<ScoreNoteEvent> repaired = null;
+        for (var group : score.beamSource().resolve().groups()) {
+            if (!group.source().bridges().equals(List.of(3, 3, 3)) || !group.source().hooks().isEmpty()
+                    || group.columns().stream().anyMatch(c -> !c.usable()
+                            || c.source().members().size() != 1)) continue;
+            var owners = group.columns().stream().map(c -> c.owners().get(0)).toList();
+            var music = owners.stream().map(notes::get).toList();
+            var first = music.get(0);
+            if (music.stream().noneMatch(n -> n.beamCount() == 1)
+                    || music.stream().noneMatch(n -> n.beamCount() == 2)
+                    || music.stream().anyMatch(n -> n.beamCount() < 1 || n.beamCount() > 2
+                            || !regularBeamHead(n, n.beamCount()) || n.stemDirection() != first.stemDirection()
+                            || n.measureIndex() != first.measureIndex() || n.tupletDivisor() != 1
+                            || n.tupletNormalNotes() != 1 || n.augmentationDots() != 0 || n.tiedFromPrevious()))
+                continue;
+            var bar = score.measures().get(first.measureIndex());
+            if (!provesOwnedSecondaryRails(raw, width, height, bar, music)
+                    || !provesOwnedSecondaryRails(gray, width, height, bar, music)) continue;
+            if (repaired == null) repaired = new ArrayList<>(notes);
+            for (int owner : owners) {
+                var note = notes.get(owner);
+                if (note.beamCount() == 1) repaired.set(owner, note.withBeamAndStem(2, note.stemDirection()));
+            }
+        }
+        return repaired == null ? score : score.withNotes(repaired,
+                java.util.stream.IntStream.range(0, notes.size()).boxed().toList());
+    }
+
+    private static boolean provesOwnedSecondaryRails(byte[] ink, int width, int height,
+            MeasureRegion bar, List<ScoreNoteEvent> music) {
+        float gap = (bar.bottom() - bar.top()) * height / 8.2f;
+        if (gap < 8 || gap > 26) return false;
+        float floor = bar.bottom() * height - 2.1f * gap;
+        var staff = StaffPitchTrack.linear(width, floor, gap, 0);
+        var budget = new PrintedBeamShafts.Budget(180_000);
+        PrintedBeamShafts.Shaft previous = null;
+        float previousX = 0;
+        for (var note : music) {
+            float x = (bar.left() + (bar.right() - bar.left()) * note.positionInMeasure()) * width;
+            if (previous != null && (x - previousX < 1.5f * gap || x - previousX > 6.0f * gap)) return false;
+            var shafts = PrintedBeamShafts.at(ink, width, height, x, note.pageY() * height, gap, budget);
+            if (shafts.size() != 1 || shafts.get(0).direction() != -note.stemDirection()) return false;
+            var shaft = shafts.get(0);
+            if (previous != null && !WrappedEighthTriplets.matchesExactlyTwoBeamRails(
+                    ink, width, height, previous, shaft, gap, staff)) return false;
+            previous = shaft;
+            previousX = x;
+        }
+        return !budget.refused();
+    }
+
+
     static boolean cadenceHalf(ScoreNoteEvent n) {
         return n.kind() == ScoreNoteEvent.Kind.PITCHED && n.visualSize() == ScoreNoteEvent.VisualSize.FULL
                 && n.staffIndex() == 0 && n.staffCount() == 1 && Math.abs(n.stemDirection()) == 1

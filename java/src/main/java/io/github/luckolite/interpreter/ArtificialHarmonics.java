@@ -62,6 +62,117 @@ final class ArtificialHarmonics {
         return result;
     }
 
+    private record WholePart(int measure, int staff, int count) {}
+
+    static ScorePageInterpretation applyStemlessWholeFourths(
+            ScorePageInterpretation score, byte[] gray, byte[] source, int width, int height) {
+        if (gray == null || source == null || gray.length != (long) width * height
+                || source.length != gray.length) return score;
+        var notes = score.notes();
+        var groups = new HashMap<WholePart, List<Integer>>();
+        for (int index = 0; index < notes.size(); index++) {
+            var note = notes.get(index);
+            if (note.kind() != ScoreNoteEvent.Kind.PITCHED || note.measureIndex() >= score.measures().size()
+                    || note.unbeamedDurationBeats() != ScoreNoteEvent.DURATION_WHOLE
+                    || note.beamCount() != 0 || note.stemDirection() != 0 || note.augmentationDots() != 0
+                    || note.tupletDivisor() != 1 || note.octaveShift() != 0 || note.harmonicSemitones() != 0
+                    || note.openStringTouch() != null) continue;
+            var part = new WholePart(note.measureIndex(), note.staffIndex(), note.staffCount());
+            groups.computeIfAbsent(part, ignored -> new ArrayList<>(2)).add(index);
+        }
+        var changed = new HashMap<Integer, ScoreNoteEvent>();
+        var observedGaps = new HashMap<WholePart, Float>();
+        var removed = new BitSet();
+        for (var entry : groups.entrySet()) {
+            var owners = entry.getValue();
+            if (owners.size() != 2) continue;
+            int a = owners.get(0), b = owners.get(1);
+            int lower = notes.get(a).staffStep() < notes.get(b).staffStep() ? a : b;
+            int upper = lower == a ? b : a;
+            var stop = notes.get(lower);
+            var touch = notes.get(upper);
+            if (stop.clefBottomDiatonic() != touch.clefBottomDiatonic()
+                    || touch.staffStep() - stop.staffStep() != 3
+                    || stop.tiedFromPrevious() || touch.tiedFromPrevious()
+                    || stop.boundaryTies() != 0 || touch.boundaryTies() != 0
+                    || !provedWholeFourth(score.keyChanges(), stop, touch)) continue;
+            var bar = score.measures().get(stop.measureIndex());
+            float left = bar.left() * width, span = (bar.right() - bar.left()) * width;
+            float x = left + stop.positionInMeasure() * span, y = stop.pageY() * height;
+            float tx = left + touch.positionInMeasure() * span, ty = touch.pageY() * height;
+            float gap = (y - ty) / 1.5f;
+            if (gap < 10 || gap > 26 || Math.abs(x - tx) > gap * .32f
+                    || x - gap * 4 < 0 || x + gap * 5 >= width
+                    || ty - gap * 5 < 0 || y + gap * 3 >= height) continue;
+            float staffBottom = ty + touch.staffStep() * gap * .5f;
+            if (!wholeFourthInk(gray, width, height, x, y, tx, ty, gap, staffBottom)
+                    || source != gray && !wholeFourthInk(source, width, height, x, y, tx, ty, gap, staffBottom))
+                continue;
+            changed.put(lower, stop.withHarmonicSemitones(24));
+            observedGaps.put(entry.getKey(), gap);
+            removed.set(upper);
+        }
+        if (removed.isEmpty()) return score;
+        for (var entry : groups.entrySet()) {
+            if (entry.getValue().size() != 1) continue;
+            WholePart part = entry.getKey();
+            Float before = observedGaps.get(new WholePart(part.measure() - 1, part.staff(), part.count()));
+            Float after = observedGaps.get(new WholePart(part.measure() + 1, part.staff(), part.count()));
+            if (before == null || after == null || Math.abs(before - after) > 1) continue;
+            int owner = entry.getValue().get(0);
+            var stop = notes.get(owner);
+            if (stop.tiedFromPrevious() || stop.boundaryTies() != 0
+                    || !provedWholeFourth(score.keyChanges(), stop, null)) continue;
+            var bar = score.measures().get(part.measure());
+            float x = (bar.left() + stop.positionInMeasure() * (bar.right() - bar.left())) * width;
+            float y = stop.pageY() * height;
+            float gap = (before + after) * .5f, ty = y - gap * 1.5f;
+            if (x - gap * 4 < 0 || x + gap * 5 >= width
+                    || ty - gap * 5 < 0 || y + gap * 3 >= height) continue;
+            float staffBottom = y + stop.staffStep() * gap * .5f;
+            if (wholeFourthInk(gray, width, height, x, y, x, ty, gap, staffBottom)
+                    && (source == gray || wholeFourthInk(source, width, height, x, y, x, ty, gap, staffBottom)))
+                changed.put(owner, stop.withHarmonicSemitones(24));
+        }
+        var edited = new ArrayList<ScoreNoteEvent>();
+        var owners = new ArrayList<Integer>();
+        for (int index = 0; index < notes.size(); index++) {
+            if (removed.get(index)) continue;
+            edited.add(changed.getOrDefault(index, notes.get(index)));
+            owners.add(index);
+        }
+        return score.withNotes(edited, owners);
+    }
+
+    private static boolean provedWholeFourth(
+            List<ScoreKeyChange> keys, ScoreNoteEvent stop, ScoreNoteEvent touch) {
+        ScoreKeyChange key = null;
+        for (var change : keys)
+            if (change.measureIndex() <= stop.measureIndex()
+                    && (key == null || change.measureIndex() >= key.measureIndex())) key = change;
+        if (key == null) return false;
+        int stopped = ScoreTiePitchGuard.writtenMidi(
+                stop.diatonicPitchIdentity(), stop.writtenAccidental(), key.fifths());
+        int touched = ScoreTiePitchGuard.writtenMidi(
+                touch == null ? stop.diatonicPitchIdentity() + 3 : touch.diatonicPitchIdentity(),
+                touch == null ? ScoreNoteEvent.ACCIDENTAL_FROM_KEY : touch.writtenAccidental(),
+                key.fifths());
+        return touched - stopped == 5 && stopped + 24 <= 127;
+    }
+
+    private static boolean wholeFourthInk(
+            byte[] gray, int width, int height, float x, float y, float tx, float ty,
+            float gap, float staffBottom) {
+        var rails = PrintedDirectionStaff.printedRules(gray, width, height, tx + gap * 3, staffBottom, gap);
+        if (rails == null)
+            rails = PrintedDirectionStaff.printedRules(gray, width, height, tx - gap * 3, staffBottom, gap);
+        return rails != null && Math.abs(rails[0] - staffBottom) <= gap * .30f
+                && enclosedCounter(gray, width, height, x, y, gap * .82f, gap * .32f)
+                && !diamond(gray, width, height, x, y, gap, true)
+                && (diamond(gray, width, height, tx, ty, gap, true)
+                        || diamond(gray, width, height, tx, ty, gap * 1.06f, true));
+    }
+
     private static boolean provedMajorThird(
             List<ScoreKeyChange> keys, ScoreNoteEvent stop, int touchAccidental) {
         ScoreKeyChange local = null;
@@ -431,6 +542,8 @@ final class ArtificialHarmonics {
                             && pairedTouch.beamCount() == 0
                             && pairedTouch.unbeamedDurationBeats() >= ScoreNoteEvent.DURATION_HALF))
                 continue;
+            if (pairedTouch != null && sharedStemHalfChord(n, pairedTouch, notes, m,
+                    original == null ? gray : original, w, h, x, y, gap)) continue;
             replacements.put(n, n.withOctaveShift(2));
             if (shaftPairedTouch) remove.add(shaftTouch);
             for (var upper : notes)
@@ -453,6 +566,42 @@ final class ArtificialHarmonics {
         OctaveAccidentalCarry.restoreStoppedPitches(notes, accidentalCarries, removedAccidentalOwners, replacements);
         for (var n : notes) if (!remove.contains(n)) result.add(replacements.getOrDefault(n, n));
         return List.copyOf(result);
+    }
+
+    /** Shared-stem hollow chord heads can give a false fourth-diamond contour. */
+    private static boolean sharedStemHalfChord(
+            ScoreNoteEvent lower, ScoreNoteEvent upper, List<ScoreNoteEvent> notes,
+            MeasureRegion bar, byte[] ink, int width, int height, float x, float y, float gap) {
+        if (lower.staffCount() < 2 || lower.stemDirection() == 0 || lower.beamCount() != 0
+                || lower.unbeamedDurationBeats() != ScoreNoteEvent.DURATION_HALF
+                || lower.augmentationDots() != 0 || !sameHalfChordHead(lower, upper))
+            return false;
+        float span = (bar.right() - bar.left()) * width;
+        if (Math.abs(upper.positionInMeasure() - lower.positionInMeasure()) * span > gap * .22f)
+            return false;
+        int siblings = 0;
+        for (var note : notes) {
+            if (note == lower || note == upper || note.staffStep() == lower.staffStep()
+                    || note.staffStep() == upper.staffStep() || !sameHalfChordHead(lower, note)
+                    || Math.abs(note.positionInMeasure() - lower.positionInMeasure()) * span > gap * .22f)
+                continue;
+            if (++siblings == 2)
+                // A stopped filled note can carry a real harmonic next to other chord tones.
+                return ink.length == (long) width * height
+                        && enclosedCounter(ink, width, height, x, y, gap * .9f, gap * .3f);
+        }
+        return false;
+    }
+
+    private static boolean sameHalfChordHead(ScoreNoteEvent lower, ScoreNoteEvent other) {
+        return other.kind() == ScoreNoteEvent.Kind.PITCHED
+                && other.measureIndex() == lower.measureIndex()
+                && other.staffIndex() == lower.staffIndex()
+                && other.staffCount() == lower.staffCount()
+                && other.clefBottomDiatonic() == lower.clefBottomDiatonic()
+                && other.stemDirection() == lower.stemDirection()
+                && other.beamCount() == 0 && other.augmentationDots() == 0
+                && other.unbeamedDurationBeats() == ScoreNoteEvent.DURATION_HALF;
     }
 
     /** Confirm a ledger-filled fourth on the stopped head's own downstem in both rasters. */

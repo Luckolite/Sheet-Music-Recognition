@@ -256,4 +256,25 @@ public class TripletNumeralHeadTest {
         var timed = TripletRhythmDetector.apply(score.notes(), regions, gray, 400, 240);
         assertTrue(timed.stream().allMatch(n -> n.tupletDivisor() == 3));
     }
+
+    @Test public void aBeamOwnedThreeCannotAlsoOwnTheCentralFinger() {
+        byte[] gray = image(three(), 157);
+        for (int x : new int[] {92, 117, 142})
+            for (int y = 94; y <= 142; y++)
+                Arrays.fill(gray, y * 400 + x - 1, y * 400 + x + 2, (byte) 0);
+        for (int y = 139; y <= 143; y++)
+            Arrays.fill(gray, y * 400 + 92, y * 400 + 144, (byte) 0);
+        var notes = List.of(.25f, .3125f, .375f).stream().map(x ->
+                moving(x, 2).withStemDirection(-1).withTupletRatio(3, 2)).toList();
+        var score = new ScorePageInterpretation(
+                List.of(new MeasureRegion(0, 1, 32 / 240f, 144 / 240f)), notes);
+        assertTrue(TripletRhythmDetector.ownsTripletFingeringBox(
+                gray, 400, 240, score, 1, 118, 156, 132, 180));
+        assertFalse(TripletRhythmDetector.ownsTripletFingeringBox(
+                gray, 400, 240, score, 1, 118, 185, 132, 209));
+        for (int y = 139; y <= 143; y++)
+            Arrays.fill(gray, y * 400 + 98, y * 400 + 115, (byte) 255);
+        assertFalse(TripletRhythmDetector.ownsTripletFingeringBox(
+                gray, 400, 240, score, 1, 118, 156, 132, 180));
+    }
 }

@@ -21,6 +21,14 @@ multiple fonts and scales, attached intrinsic 15, ordinary measure-number 15,
 tempo/fingering context, other digit pairs, isolated 8, tight 28, incomplete
 components, cross-baseline components, noise and blocked white corridors.
 
+## Meter recognition
+
+The standalone meter reader also scales the existing Noto Serif bold masks.
+It tries them for stacked measure headers with no standard music-font reading
+and checks the digit scores against competing values. Lower-confidence readings
+and headers of one quarter beat or less require agreement with the written
+rhythm. No additional font or mask files are distributed.
+
 ## Verified generation environment
 
 ```text

@@ -45,6 +45,27 @@ public class ClippedFlatRecoveryTest {
     }
 
     @Test
+    public void theWholeBowlRejectsTheClippedNaturalAlias() throws Exception {
+        assertTrue(completeBowlOwnsAlias(64));
+        assertFalse(completeBowlOwnsAlias(60));
+        ink(34, 41, 48, 64, 255);
+        assertFalse(completeBowlOwnsAlias(64));
+    }
+
+    private boolean completeBowlOwnsAlias(int wholeBottom) throws Exception {
+        var clipped = make("AccidentalCandidate",
+                make("Component", 160, 30, 41, 25, 59, 33f, 47f), (byte) 3);
+        var whole = make("AccidentalCandidate",
+                make("Component", 180, 30, 41, 25, wholeBottom, 33f, 47f), (byte) 3);
+        var head = make("Component", 120, 46, 62, 49, 61, 54f, 55f);
+        var method = OmrScoreInterpreter.class.getDeclaredMethod(
+                "croppedFlatBowlOwnsNaturalCandidate", byte[].class, int.class, int.class, List.class,
+                clipped.getClass(), head.getClass(), float.class);
+        method.setAccessible(true);
+        return (boolean) method.invoke(null, gray, W, H, List.of(clipped, whole), clipped, head, 16f);
+    }
+
+    @Test
     public void completeFlatStillRecovers() throws Exception {
         assertTrue(detect());
     }

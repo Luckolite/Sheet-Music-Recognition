@@ -392,6 +392,8 @@ public final class SheetInterpreter {
         measures = InterruptedStaffHeader.discard(
                 measures, labels, gray, annotationGray, width, height);
         measures = InterruptedClosingDyadBoundary.recover(measures, labels, gray, annotationGray, width, height);
+        measures = BracketedGraceBarlines.recover(measures, labels, gray, annotationGray, width, height);
+        measures = ParenthesizedSecondPass.join(measures, words, gray, annotationGray, width, height);
         recognizedRests.reindexed(measures);
         var numberingAnchors =
                 rejectedAnchorTops.isEmpty()
@@ -553,6 +555,14 @@ public final class SheetInterpreter {
             for (var meter : inferredMeters)
                 if (occupiedMeasures.add(meter.measureIndex())) meters.add(meter);
         }
+        if (firstMeasureNumber == 0 && meters.stream().noneMatch(m -> m.measureIndex() == 0)) {
+            var titled = OpeningPartTempo.titledMeter(
+                    words, annotationGray, width, height, measures, physicalStaffs, notes);
+            if (titled != null) {
+                meters.add(titled.change());
+                notes = titled.withoutMeterHeads(notes, measures.get(0));
+            }
+        }
         meters.sort(java.util.Comparator.comparingInt(ScoreMeterChange::measureIndex));
         notes =
                 SixteenthBeamRailAlias.removeClosedOctaveAliases(
@@ -594,6 +604,11 @@ public final class SheetInterpreter {
                         height,
                         measures, beatGlyphs);
         notes = TempoChangeDetector.withoutBeatGlyphs(notes, measures, beatGlyphs, width, height);
+        firstMeasureNumber = ScorePageTimeline.firstMeasureAfterTitledOpening(
+                firstMeasureNumber, words, annotationGray, width, height, measures, meters);
+        notes = PrintedTapRhythm.recover(
+                notes, words, staffs, measures, meters,
+                annotationGray, width, height);
         var decoded =
                 TablatureDecoder.apply(
                         new ScorePageInterpretation(
@@ -638,6 +653,7 @@ public final class SheetInterpreter {
                 PrintedPageEvidence.rejectStafflessPage(
                         TabMeter.apply(decoded, tabs, tabWords, width, height),
                         gray,
+                        annotationGray,
                         width,
                         height,
                         !tabs.isEmpty());
@@ -671,7 +687,8 @@ public final class SheetInterpreter {
                                 finalScore.meterChanges(),
                                 annotationGray,
                                 width,
-                                height),
+                                height,
+                                finalScore.openingPickup()),
                         java.util.stream.IntStream.range(0, finalScore.notes().size())
                                 .boxed()
                                 .toList());
@@ -1113,8 +1130,12 @@ public final class SheetInterpreter {
                     finalInterpretation, labels, gray, width, height, staffs, physicalPage);
         finalInterpretation = ClosedOctaveRailRun.completePrintedBeamQuartets(
                 finalInterpretation, gray, annotationGray, width, height, staffs, physicalPage);
+        finalInterpretation = ClosedMonophonicSixteenths.restoreOwnedSecondaryRails(
+                finalInterpretation, gray, annotationGray, width, height);
         finalInterpretation = PrintedMeasureRepeatGlyphs.apply(
                 finalInterpretation, annotationGray, width, height, physicalPage);
+        finalInterpretation = ArtificialHarmonics.applyStemlessWholeFourths(
+                finalInterpretation, gray, annotationGray, width, height);
         finalInterpretation =
                 finalInterpretation.withClockContextSource(
                         ScoreClockContextCapture.capture(
@@ -1230,10 +1251,15 @@ public final class SheetInterpreter {
                 terminalCadence, gray, annotationGray, width, height);
         terminalCadence = PrintedTripletTransitionSlurs.recoverLongPhrases(
                 terminalCadence, annotationGray, gray, width, height);
+        terminalCadence = ParenthesizedSecondPass.capture(terminalCadence, words, gray,
+                annotationGray, width, height, physicalPage);
+        terminalCadence = PrintedQuarterTriplets.recover(terminalCadence, words, gray, annotationGray, width, height);
         var phrasing = PrintedStaccatoSlurs.apply(
                 terminalCadence, physicalPage, labels, gray, annotationGray, width, height);
         var finalPage = OpeningPortatoSixteenths.restore(phrasing, gray, annotationGray, width, height);
         var continued = RepeatedBeamedTriplets.apply(finalPage, labels, annotationGray, width, height, inheritedMeter);
+        continued = PrintedTabCapo.capture(continued, tabs, tabWords, width, height, physicalPage);
+        continued = CenteredWholeMeasureRest.recover(continued, gray, annotationGray, width, height);
         return new AnalyzedPage(
                 PrintedCadenceDurations.restoreCompoundAfterCadenza(
                         TerminalCutTime.apply(continued, gray, width, height), words),

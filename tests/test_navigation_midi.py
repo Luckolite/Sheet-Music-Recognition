@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Original decoded logical notes, testing the actual Java route and emitted MIDI."""
 import copy
+import struct
 import tempfile
 import unittest
 from pathlib import Path
@@ -70,6 +71,28 @@ def note_intervals(data):
 
 
 class NavigationMidiTest(unittest.TestCase):
+    def test_second_pass_only_lower_heads_keep_both_upper_attacks(self):
+        notes = [dict(note(beat, midi, .5), measureIndex=0, sourceNoteIndex=i)
+                 for i, (beat, midi) in enumerate(((0, 69), (0, 72), (2, 69), (2, 72)))]
+        score = document([4], notes, [direction(0, 4), direction(1, 5)])
+        raw = score['pages'][0]['score']
+        raw['notes'] = [dict(measureIndex=0, staffIndex=0, staffCount=1,
+                             positionInMeasure=position, staffStep=step)
+                        for position in (.1, .6) for step in (3, 5)]
+        source = 'printed-bottom-note-second-pass:v1'
+        positions = [struct.unpack('>i', struct.pack('>f', x))[0] for x in (.1, .6)]
+        raw['expressiveEvents'] = [dict(
+            eventId=source+':0:0:0', kind='UNRESOLVED_DIRECTION', scope='NOTE',
+            start=dict(measureIndex=0, quarterBeatOffset=0), end=dict(measureIndex=1, quarterBeatOffset=0),
+            staffIndex=0, staffCount=1, targetEventId=','.join(f'{x}:3' for x in positions),
+            evidence=[dict(sourceId=source)])]
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'lower-heads.mid'
+            write_midi(score, path)
+            self.assertEqual([(72, 0, 240), (72, 960, 1200), (69, 1920, 2160),
+                              (72, 1920, 2160), (69, 2880, 3120), (72, 2880, 3120)],
+                             note_intervals(path.read_bytes()))
+
     def test_repeat_preserves_fractional_pickup_and_closing_spans(self):
         for first, last, intervals in (
             (1 / 3, 4, [(60, 0, 160), (62, 160, 2080), (60, 2080, 2240), (62, 2240, 4160)]),
@@ -135,6 +158,59 @@ class NavigationMidiTest(unittest.TestCase):
                 path=Path(folder)/f'extent-{index}.mid';write_midi(doc,path)
                 self.assertEqual(expected,final_tick(path.read_bytes()))
 
+    def test_unlabeled_word_endings_use_the_same_engraved_passage(self):
+        def evidence(identity, page, label):
+            return dict(sourceId=identity, pageIndex=page, visualX=.2,
+                        staffIndex=0, staffCount=1, printedText=label)
+
+        def printed(bar, kind, label='', passes=(), end=None):
+            group = 'printed-repeat:0:0:3'
+            identity = f'{group}:{kind}:{bar}'
+            return dict(measureBoundary=bar, kind=kind, details=dict(
+                eventId=identity, repeatGroupId=group, totalPlays=3, passes=list(passes),
+                end=None if end is None else dict(measureIndex=end, quarterBeatOffset=0),
+                printedText=label, evidence=[evidence(identity, 0, label)]))
+
+        def caption(bar, label):
+            identity = f'unresolved-repeat-caption:1:{label}:{bar}'
+            proof = 'printed-repeat-caption:v1:' + identity
+            return dict(eventId=identity, kind='UNRESOLVED_DIRECTION', scope='UNRESOLVED',
+                        start=dict(measureIndex=bar, quarterBeatOffset=0), end=None,
+                        staffIndex=0, staffCount=1, strength='UNSPECIFIED', targetEventId=None,
+                        qualifierText=label, evidence=[evidence(proof, 1, label)])
+
+        pitches = [(0, 1, -1), (-3, -2, -1), (3, -1), (-2, -4)]
+        notes = [dict(note(3 * bar + offset, 64 + pitch),
+                      measureIndex=bar, sourceNoteIndex=index)
+                 for index, (bar, offset, pitch) in enumerate(
+                     (bar, offset, pitch)
+                     for bar, cluster in enumerate(pitches)
+                     for offset, pitch in enumerate(cluster))]
+        roster = [dict(measureIndex=bar, staffStep=pitch, clefBottomDiatonic=30)
+                  for bar, cluster in enumerate(pitches) for pitch in cluster]
+        scan = document([3]*4, notes, [
+            printed(0, 4), printed(3, 5),
+            printed(2, 6, '1., 2.', (1, 2), 3), printed(3, 6, '3.', (3,), 4)
+        ])['pages'][0]
+        target = document([3]*4, notes, [])['pages'][0]
+        scan['score'].update(firstMeasureNumber=1, notes=roster)
+        target['score'].update(firstMeasureNumber=1, notes=roster, expressiveEvents=[
+            caption(0, 'Repeat Start'), caption(2, 'Ending'),
+            caption(3, 'Repeat End'), caption(3, 'Ending')])
+        doc = dict(pages=[scan, target])
+        routed = project_navigation(doc)
+        expected = [0, 1, 2, 0, 1, 2, 0, 1, 3]
+        for rank in (0, 1):
+            self.assertEqual(expected, [row['start']['measureIndex']
+                                        for row in routed['navigationOccurrences']
+                                        if row['arrangementIndex'] == rank])
+        self.assertEqual([], target['score']['playbackDirections'])
+
+        incomplete = copy.deepcopy(doc)
+        incomplete['pages'][1]['score']['expressiveEvents'].pop()
+        unrouted = project_navigation(incomplete)
+        self.assertEqual(12, unrouted['pages'][1]['totalBeats'])
+
     def test_alternate_arrangements_do_not_jump_into_each_other(self):
         first=document([4],[note(0,60)],[direction(1,7)])['pages'][0]
         second=document([4],[note(0,72)],[direction(1,7)])['pages'][0]
@@ -198,3 +274,43 @@ class NavigationMidiTest(unittest.TestCase):
 
 
 if __name__=='__main__': unittest.main()
+
+class PrintedSecondPassMidiTest(unittest.TestCase):
+    def test_cross_page_repeat_mutes_only_the_enclosed_first_visit(self):
+        import struct
+
+        def express(i, first, last, source, label='', positions=None):
+            anchor = lambda measure: dict(measureIndex=measure, quarterBeatOffset=0)
+            name = 'unresolved-printed-ending:' if 'ending' in source else 'unresolved-printed-repeat:'
+            if positions is not None:
+                name = source + ':'
+            identity = f'{name}{i}:{first}'
+            proof = source if positions is not None else source+identity
+            return dict(eventId=identity, kind='UNRESOLVED_DIRECTION', scope='UNRESOLVED',
+                        start=anchor(first), end=anchor(last) if last is not None else None,
+                        staffIndex=0, staffCount=1, targetEventId=positions, strength='UNSPECIFIED',
+                        qualifierText='', evidence=[dict(sourceId=proof, pageIndex=i,
+                        visualX=.5, staffIndex=0, staffCount=1, printedText=label)])
+
+        pos = (.125, .25, .75)
+        bits = lambda x: str(struct.unpack('>i', struct.pack('>f', x))[0])
+        owned = express(0, 1, 2, 'printed-second-pass-only:v1', 'second time only',
+                        ','.join(map(bits, pos[:2])))
+        events = [dict(note(4+i, 60+i), measureIndex=1, sourceNoteIndex=i) for i in range(3)]
+        roster = [dict(measureIndex=1, staffIndex=0, staffCount=1, positionInMeasure=x) for x in pos]
+        first = document([4]*4, events, [])['pages'][0]
+        first['sourcePage'] = 0
+        first['score'].update(firstMeasureNumber=1, notes=roster, expressiveEvents=[
+            express(0, 1, None, 'printed-repeat-start:v1:'),
+            express(0, 3, 4, 'printed-ending-span:v1:true:false:', '1.'), owned])
+        second = document([4]*4, [], [])['pages'][0]
+        second['sourcePage'] = 1
+        second['score'].update(firstMeasureNumber=5, expressiveEvents=[
+            express(1, 2, None, 'printed-repeat-end:v1:'),
+            express(1, 2, 3, 'printed-ending-span:v1:true:true:', '2.')])
+        result = project_navigation(dict(pages=[first, second]))
+        self.assertEqual([(e['midi'], e['startBeat']) for e in result['pages'][0]['events']],
+                         [(62, 6.), (60, 24.), (61, 25.), (62, 26.)])
+        self.assertEqual(result['pages'][0]['totalBeats'], 40.)
+        missing_page = project_navigation(dict(pages=[first, dict(second, sourcePage=2)]))
+        self.assertEqual(missing_page['pages'][0]['events'], events)

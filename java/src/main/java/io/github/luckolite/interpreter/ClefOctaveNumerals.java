@@ -14,6 +14,8 @@ final class ClefOctaveNumerals {
         }
     }
 
+    private static final int NOTO_SERIF_BOLD = 20;
+
     // Original 24pt SIL-OFL Bravura and Noto Serif regular/bold rasterizations, 16x24 at175.
     private static final Numeral[] NUMERALS = {
         new Numeral(
@@ -76,6 +78,32 @@ final class ClefOctaveNumerals {
         new Numeral(
                 9, 0.6666667f, "8A/wD/g/fHw8eDx4P3g/+D/4P/g/+D/4/P/8//j/wPgAeAB4AHgMfAw/DD/8D/gH"),
     };
+
+    /** Scale the existing OFL Noto Serif bold digit masks for a meter slot. */
+    static MeterGlyphMatcher.Glyph serifMeterGlyph(String glyphs, int size) {
+        int height = Math.max(1, Math.round(size * .72f));
+        int space = Math.max(1, Math.round(size * .07f));
+        int totalWidth = -space;
+        for (int i = 0; i < glyphs.length(); i++) {
+            var digit = NUMERALS[NOTO_SERIF_BOLD + glyphs.charAt(i) - 0xe080];
+            totalWidth += Math.round(height * digit.aspect()) + space;
+        }
+        var ink = new boolean[totalWidth * height];
+        int left = 0;
+        for (int i = 0; i < glyphs.length(); i++) {
+            var digit = NUMERALS[NOTO_SERIF_BOLD + glyphs.charAt(i) - 0xe080];
+            int width = Math.round(height * digit.aspect());
+            for (int y = 0; y < height; y++) {
+                int row = (2 * y + 1) * 24 / (2 * height);
+                for (int x = 0; x < width; x++) {
+                    int bit = 16 * row + (2 * x + 1) * 16 / (2 * width);
+                    ink[y * totalWidth + left + x] = (digit.bits()[bit / 8] & (1 << (bit % 8))) != 0;
+                }
+            }
+            left += width + space;
+        }
+        return new MeterGlyphMatcher.Glyph(totalWidth, height, ink);
+    }
 
     private record Body(int left, int top, int right, int bottom, int pixels) {
         int width() {

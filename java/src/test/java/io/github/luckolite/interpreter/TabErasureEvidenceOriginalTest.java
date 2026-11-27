@@ -50,6 +50,34 @@ public class TabErasureEvidenceOriginalTest {
     }
 
     @Test
+    public void rejectsHalfSpacedTabOverIndependentStandardRules() {
+        byte[] gray = new byte[W * H];
+        Arrays.fill(gray, (byte) 255);
+        for (int y : new int[] {80, 94, 108})
+            Arrays.fill(gray, y * W + 20, y * W + 480, (byte) 0);
+        for (int y : new int[] {87, 101, 115})
+            Arrays.fill(gray, y * W + 20, y * W + 480, (byte) 190);
+        for (int y : new int[] {122, 136})
+            Arrays.fill(gray, y * W + 120, y * W + 380, (byte) 0);
+        for (int y = 80; y <= 115; y++)
+            for (int x : new int[] {20, 479}) gray[y * W + x] = 0;
+        for (int y = 248; y <= 308; y += 12)
+            Arrays.fill(gray, y * W + 20, y * W + 480, (byte) 0);
+        for (int y = 248; y <= 308; y++)
+            for (int x : new int[] {20, 479}) gray[y * W + x] = 0;
+
+        var tabs = TablatureDecoder.detect(gray, W, H);
+        assertEquals(1, tabs.size());
+        assertEquals(248, tabs.get(0).top(), 0);
+        assertEquals(List.of(20f, 479f), tabs.get(0).bars());
+        byte[] notation = TablatureDecoder.withoutTabs(gray, W, H, tabs, true);
+        assertEquals(0, notation[108 * W + 320]);
+        assertEquals(255, notation[272 * W + 320] & 255);
+    }
+
+
+
+    @Test
     public void nearbyStandardStaffDoesNotByItselfAuthorizeErasure() {
         byte[] data = raster(true);
         assertArrayEquals(

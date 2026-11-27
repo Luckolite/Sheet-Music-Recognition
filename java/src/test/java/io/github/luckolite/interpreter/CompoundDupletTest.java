@@ -69,7 +69,7 @@ public class CompoundDupletTest {
         var bars = List.of(new MeasureRegion(0, 1, .05f, .37f));
         var simple = List.of(new ScoreMeterChange(0, 2, 2));
         var marked = TripletRhythmDetector.neutralPrintedPairs(
-                notes, bars, simple, ink(true, true, false), W, H);
+                notes, bars, simple, ink(true, true, false), W, H, false);
         assertEquals(notes.get(0).withTupletRatio(2, 2), marked.get(0));
         assertEquals(notes.get(1).withTupletRatio(2, 2), marked.get(1));
         assertEquals(notes.get(2), marked.get(2));
@@ -77,9 +77,41 @@ public class CompoundDupletTest {
             assertEquals(ScoreNoteTiming.writtenPlacement(notes.get(i), notes, 4),
                     ScoreNoteTiming.writtenPlacement(marked.get(i), marked, 4));
         assertEquals(notes, TripletRhythmDetector.neutralPrintedPairs(
-                notes, bars, meter(), ink(true, true, false), W, H));
+                notes, bars, meter(), ink(true, true, false), W, H, false));
         assertEquals(notes, TripletRhythmDetector.neutralPrintedPairs(
-                notes, bars, simple, ink(true, false, false), W, H));
+                notes, bars, simple, ink(true, false, false), W, H, false));
+    }
+
+    @Test
+    public void ownedEighthsCanWaitForInheritedCompoundMeter() {
+        var notes = notes();
+        var bars = List.of(new MeasureRegion(0, 1, .05f, .37f));
+        var raw = ink(true, true, false);
+        var marked = TripletRhythmDetector.neutralPrintedPairs(
+                notes, bars, List.of(), raw, W, H, false);
+        assertEquals(List.of(notes.get(0).withTupletRatio(2, 2),
+                             notes.get(1).withTupletRatio(2, 2), notes.get(2)), marked);
+        var expected = run(notes, raw, meter());
+        assertEquals(expected, TripletRhythmDetector.contextualTuplets(marked, meter(), false));
+        assertEquals(marked, TripletRhythmDetector.contextualTuplets(marked, meter(), true));
+        assertEquals(marked, TripletRhythmDetector.neutralPrintedPairs(
+                notes, bars, meter(), raw, W, H, true));
+        assertEquals(notes, TripletRhythmDetector.neutralPrintedPairs(
+                notes, bars, List.of(), ink(false, true, false), W, H, false));
+    }
+
+    @Test
+    public void adjacentPairsResolveTogetherOnlyWhenAllCloseTheMeasure() {
+        var notes = new ArrayList<ScoreNoteEvent>();
+        for (int i = 1; i <= 6; i++) notes.add(eighth(i / 8f).withTupletRatio(2, 2));
+        notes.add(new ScoreNoteEvent(0, .9f, 2, 0, 1, .2f, false, 1, 0, 2, 1, 1));
+        var compound = List.of(new ScoreMeterChange(0, 12, 8));
+        var fixed = BracketedDuplets.resolve(notes, compound, false);
+        assertEquals(List.of(3, 3, 3, 3, 3, 3, 1),
+                fixed.stream().map(ScoreNoteEvent::tupletNormalNotes).toList());
+        assertEquals(6, fixed.stream().mapToDouble(ScoreNoteTiming::writtenDurationBeats).sum(), 0);
+        notes.set(5, notes.get(5).withTupletRatio(1, 1));
+        assertEquals(notes, BracketedDuplets.resolve(notes, compound, false));
     }
 
     @Test
