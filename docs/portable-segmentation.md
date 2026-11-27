@@ -76,3 +76,10 @@ The companion artifact SHA-256 is
 `fbd4c8a767538ff53eca8c10507d68ab81e60bd584a54cb2321f60101b3ba282`.
 The retry threshold is empirical. Qualify a device and workload against the
 stock Java segmentation before enabling this provider in a host application.
+
+Hosts can also start `directml_worker.py --segmentation-service MODEL ROOT
+--adapter INDEX` to reuse the session for up to two pages. Create one private
+subdirectory per request under `ROOT`, save its input as `page.npy`, and
+write the directory's 32 lowercase hexadecimal characters followed by a
+newline to stdin. The helper publishes `labels.npy` by atomic rename. Hosts
+should enforce a deadline and close stdin when they finish using the session.
