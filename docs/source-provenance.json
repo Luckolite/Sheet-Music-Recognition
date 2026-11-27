@@ -6072,20 +6072,23 @@
     },
     "OctaveClefDigit.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/OctaveClefDigit.java",
-      "source_sha256": "ae3b046392a537d5bd57190136b43bbe81894c21135eaa7bf02008a9436e3ade",
-      "reviewed_app_commit": "7c1bf385dc2974fcdf2dd5de6584df9cc3e33a7c",
-      "source_normalized_sha256": "ae3b046392a537d5bd57190136b43bbe81894c21135eaa7bf02008a9436e3ade",
-      "standalone_sha256": "e1c1c3dd439c304ca8ce5128c5bc36c9d01e83e858b1e8b0c42acd5b03b9c300",
-      "reviewed_source_state": "working-tree",
+      "source_sha256": "793bda0d89cd4f2610c2bc93978b855221573ceec97b6a6aa3eb3889ef3d7182",
+      "reviewed_app_commit": "a12bb7fda6748008e88a8f70a09926ff28b38b85",
+      "source_normalized_sha256": "793bda0d89cd4f2610c2bc93978b855221573ceec97b6a6aa3eb3889ef3d7182",
+      "standalone_sha256": "6eac5b921a4308e5fe1d8c984c6c1f25e01867117439682abb0e9b69f5c37ce2",
+      "reviewed_source_state": "committed",
       "review_note": "Intrinsic octave bass clefs, complete contested ledger ownership, grace accidentals, independently rooted beam/slur separation, and below-staff full octave-word ownership. Original procedural/licensed-font regressions; no private score pixels, model changes or song-specific rules.",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/OctaveClefDigit.java",
       "license": "Apache-2.0",
       "complete_clef_review": "Whole connected two-counter prefix with exact integer-cell waist supplements existing dimensions; complete in-row raw-connected authenticated clef cohort uses unchanged full-G authority and rejects head/key/accidental rivals. Original OFL fonts only. Known legacy narrow-route B limitation explicitly retained/ignored, not claimed fixed.",
       "clef_system_number_ownership_review": {
         "reviewed_app_commit": "9ffde872c3e0ddd953de0a88437737958b11d25d",
-        "scope": "Identical left-edge number exclusion in octave-eight recognition for app, worker and standalone.",
-        "shared_delta_lf_sha256": "83fa3f5b2764690352b58e5fb104858a6abda927aafb3179ce3d82cbe268709b"
-      }
+        "scope": "Exact standalone source copied into the shared app and worker decoder after the package declaration was rewritten.",
+        "shared_delta_lf_sha256": "83fa3f5b2764690352b58e5fb104858a6abda927aafb3179ce3d82cbe268709b",
+        "prior_app_source_sha256": "ae3b046392a537d5bd57190136b43bbe81894c21135eaa7bf02008a9436e3ade",
+        "verification": "Six focused tests including isolated system numbers and an aligned clef digit. Same-JVM paired timing of four unchanged controls showed no increase in median thread CPU time or elapsed time."
+      },
+      "standalone_normalized_sha256": "6eac5b921a4308e5fe1d8c984c6c1f25e01867117439682abb0e9b69f5c37ce2"
     },
     "OctaveMarkDetector.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/OctaveMarkDetector.java",
