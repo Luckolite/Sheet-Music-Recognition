@@ -5746,6 +5746,14 @@ final class SixteenthRestDetector {
             FaintQuarterRestInk.Budget quarterBudget) {
         if (quarterBudget != null) FaintQuarterRestInk.charge(quarterBudget, 1, 0);
 
+        if (quarterBudget == null) {
+            // Contrast requires the original height to fit, and trimming can only
+            // shrink it. An oversized body is rejected before any trimming.
+            int bodyHeight = maxY - minY + 1;
+            float gap = staff.gap();
+            if (bodyHeight < gap * 2.1f || bodyHeight > gap * 3.6f) return false;
+        }
+
         if (quarterRestMasked(
                 gray,
                 width,
