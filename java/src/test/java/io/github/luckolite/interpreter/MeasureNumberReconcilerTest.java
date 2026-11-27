@@ -11,6 +11,41 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
 public final class MeasureNumberReconcilerTest {
+
+    @Test public void splitsAnUnnumberedOpeningBoxAtIndependentlyNumberedBarlines() {
+        int width = 1200, height = 1000;
+        byte[] gray = new byte[width * height];
+        java.util.Arrays.fill(gray, (byte) 255);
+        int firstLine = 221, gap = 10, lastLine = firstLine + 4 * gap;
+        for (int y = firstLine; y <= lastLine; y += gap)
+            java.util.Arrays.fill(gray, y * width + 110, y * width + 1080, (byte) 30);
+        var detected = new ArrayList<MeasureRegion>();
+        detected.add(new MeasureRegion(.12f, .58f, .20f, .282f));
+        detected.add(new MeasureRegion(.60f, .74f, .20f, .282f));
+        detected.add(new MeasureRegion(.76f, .90f, .20f, .282f));
+        detected.addAll(row(.36f, 5));
+        detected.addAll(row(.51f, 5));
+        var numbers = List.of(
+                new MeasureNumberReconciler.NumberToken(2, .276f, .200f, .284f, .212f),
+                new MeasureNumberReconciler.NumberToken(3, .426f, .200f, .434f, .212f),
+                number(6, .36f), number(11, .51f));
+        int firstBar = 336, secondBar = 516;
+        for (int y = firstLine; y <= lastLine; y++) gray[y * width + firstBar] = 30;
+        var missingSecondBar = MeasureNumberReconciler.reconcile(
+                detected, numbers, List.of(), null, gray, width, height);
+        assertEquals(detected, missingSecondBar);
+        for (int y = firstLine; y <= lastLine; y++) gray[y * width + secondBar] = 30;
+
+        var corrected = MeasureNumberReconciler.reconcile(
+                detected, numbers, List.of(), null, gray, width, height);
+
+        assertEquals(5, corrected.stream().filter(item -> item.top() == .20f).count());
+        assertEquals(detected.subList(1, detected.size()), corrected.subList(3, corrected.size()));
+        assertEquals(.28f, (corrected.get(0).right() + corrected.get(1).left()) / 2, .002f);
+        assertEquals(.43f, (corrected.get(1).right() + corrected.get(2).left()) / 2, .002f);
+        assertEquals(1, MeasureNumberReconciler.firstMeasureNumber(corrected, numbers));
+    }
+
     @Test
     public void pageFolioBeforeARealOpeningAnchorCannotInventMeasures() {
         List<MeasureRegion> detected = new ArrayList<>();

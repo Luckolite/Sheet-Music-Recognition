@@ -5208,6 +5208,11 @@
       "optimization_port_review": "Reuses bounded row membership and keeps the existing barline witness."
     },
     "MeasureNumberReconciler.java": {
+      "numbered_opening_barlines_review": {
+        "reviewed_app_commit": "8de28e276f5a33ac47d6444ce951535f281a9915",
+        "shared_block_sha256": "22a9ce6c13dd2e3dfdd52eebbb20c9746c5d1bf69a5ab01116f7ca1435b62e0b",
+        "scope": "Matching opening-barline recovery, ingress wiring and original positive and negative raster regression. Existing whole-file drift remains outside this scoped review."
+      },
       "unanchored_split_review": {
         "reviewed_app_commit": "5bebe8ff6a799eaaeb6919f937f64741bb71d6e2",
         "app_blob_sha256": {

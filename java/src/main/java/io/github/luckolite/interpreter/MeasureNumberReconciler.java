@@ -113,6 +113,7 @@ final class MeasureNumberReconciler {
         // returning early for an empty detection list made that recovery path unreachable.
         List<Row> rows = augmentedRows(safeDetected, anchors);
         assignAnchors(rows, anchors);
+        restoreNumberedOpeningBars(rows, tokens, multiMeasureRests, gray, width, height);
         for (Row row : rows)
             for (NumberToken rest : assignedRestTokens(row, rows, multiMeasureRests))
                 row.restExtras += rest.value - 1;
@@ -182,6 +183,68 @@ final class MeasureNumberReconciler {
         // In Legendary Guardian, 72 -> 77 proves that the narrow whole-note system has five bars;
         // running dominant-count cleanup afterward collapsed it back to the common three-bar row.
         return List.copyOf(result);
+    }
+
+    /** Restore a lost opening run only when consecutive printed numbers own raw barlines. */
+    private static void restoreNumberedOpeningBars(
+            List<Row> rows, List<NumberToken> tokens, List<NumberToken> rests,
+            byte[] gray, int width, int height) {
+        if (width <= 0 || height <= 0 || gray == null
+                || gray.length != (long) width * height || rows.size() < 2) return;
+        var opening = rows.get(0);
+        var next = rows.get(1).anchor;
+        if (opening.anchor != null || next == null || opening.measures.isEmpty()
+                || !tokensInside(opening, rests).isEmpty()) return;
+        var merged = opening.measures.get(0);
+        float gap = (merged.bottom() - merged.top()) * height / 8.2f;
+        if (gap < 6 || gap > width / 35f) return;
+        float hint = (merged.top() + merged.bottom()) * .5f * height + 2 * gap;
+        record Cut(int number, int x) {}
+        var cuts = new ArrayList<Cut>();
+        for (var token : tokens) {
+            float cx = (token.left + token.right) * .5f * width;
+            float foot = token.bottom * height;
+            if (token.value < 2 || token.value >= next.value
+                    || cx <= merged.left() * width + gap * 3
+                    || cx >= merged.right() * width - gap * 2
+                    || foot < hint - gap * 6 || foot > hint - gap * 3.5f) continue;
+            var rails = PrintedDirectionStaff.printedRules(gray, width, height, cx, hint, gap);
+            if (rails == null || Math.abs(rails[1] - gap) > gap * .25f) continue;
+            int bottom = Math.round(rails[0]), top = Math.round(rails[0] - 4 * rails[1]);
+            if (top < 0 || bottom >= height || foot > top + rails[1] * .18f
+                    || foot < top - rails[1] * 1.25f) continue;
+            int nearest = -1;
+            int offset = Math.round(gap * .65f);
+            int left = Math.max(0, Math.round(cx) - offset);
+            int right = Math.min(width - 1, Math.round(cx) + offset);
+            for (int x = left; x <= right; x++) {
+                int ink = 0;
+                for (int y = top; y <= bottom; y++)
+                    if ((gray[y * width + x] & 255) < 165) ink++;
+                if (ink >= (bottom - top + 1) * .92f
+                        && (nearest < 0 || Math.abs(x - cx) < Math.abs(nearest - cx))) nearest = x;
+            }
+            if (nearest >= 0) {
+                var cut = new Cut(token.value, nearest);
+                if (!cuts.contains(cut)) cuts.add(cut);
+            }
+        }
+        if (cuts.size() < 2) return;
+        cuts.sort(Comparator.comparingInt(Cut::x));
+        int first = next.value - opening.measures.size() - cuts.size();
+        if (first != 1) return;
+        float left = merged.left(), inset = gap * .55f / width;
+        var restored = new ArrayList<MeasureRegion>();
+        for (var cut : cuts) {
+            float x = cut.x / (float) width;
+            if (cut.number != first + restored.size() + 1 || (x - left) * width < gap * 2) return;
+            restored.add(new MeasureRegion(left, x - inset, merged.top(), merged.bottom()));
+            left = x + inset;
+        }
+        if ((merged.right() - left) * width < gap * 2) return;
+        restored.add(new MeasureRegion(left, merged.right(), merged.top(), merged.bottom()));
+        opening.measures.remove(0);
+        opening.measures.addAll(0, restored);
     }
 
     private static boolean trailingRestAddsVisualSlot(
