@@ -87,6 +87,9 @@ public final class LongClosedDottedOctaveTest {
         float end = (float) closure.invoke(null, page, W, H, eight, 16f);
         assertTrue("The printed return should end the octave span: " + end,
                 end > 560 && end < 575);
+        var missing = page.clone();
+        ink(missing, 64, 73, 91, 82, 255);
+        assertEquals(-1f, (float) closure.invoke(null, missing, W, H, eight, 16f), 0f);
         ink(page, 553, 84, 563, 106, 255);
         assertEquals(-1f, (float) closure.invoke(null, page, W, H, eight, 16f), 0f);
     }

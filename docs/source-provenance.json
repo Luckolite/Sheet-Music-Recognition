@@ -6110,18 +6110,18 @@
     },
     "OctaveMarkDetector.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/OctaveMarkDetector.java",
-      "source_sha256": "9b1b81d8f9ed8f1aacc11e722a1921a5e976b152b56afe52ac4fc2bc8c6a8ca2",
-      "source_normalized_sha256": "9b1b81d8f9ed8f1aacc11e722a1921a5e976b152b56afe52ac4fc2bc8c6a8ca2",
+      "source_sha256": "5aebf9ea8f430f77dc8834b33335277fd41f4ee0f1e1f0d25d0c97bda8e85605",
+      "source_normalized_sha256": "5aebf9ea8f430f77dc8834b33335277fd41f4ee0f1e1f0d25d0c97bda8e85605",
       "review_note": "Intrinsic octave bass clefs, complete contested ledger ownership, grace accidentals, independently rooted beam/slur separation, and below-staff full octave-word ownership. Original procedural/licensed-font regressions; no private score pixels, model changes or song-specific rules.",
       "reviewed_source_state": "committed",
-      "standalone_sha256": "4266e0a5c744389b1635152e7437beeee1b84e5a91afbc65ce0535d1c583aeec",
+      "standalone_sha256": "b18c6386a1770fcfe7c0564395ad600b771e04b7906daadc6e08efcb4331bf98",
       "reviewed_app_commit": "c872f51b626cf24b6687a07c5c7e1b491d6a70f9",
       "scoped_reviewed_app_commit": "18fc7383d4cbf646494ee2b9496137b4a59c3b5c",
       "standalone_path": "java/src/main/java/io/github/luckolite/interpreter/OctaveMarkDetector.java",
       "license": "Apache-2.0",
       "staff_expression_review": "Printed adjacent staff rules resolve interstaff accent ownership; exact accepted octave-leader ink cannot also be tenuto. Missing/ambiguous evidence preserves prior behavior. Original procedural and previously licensed generated glyph fixtures; no commercial score assets.",
       "dotted_bracket_review": "A dotted end hook establishes the owning staff. A thin attached first dash can be trimmed when testing the numeral shape. The remaining dash chain and both enclosed counters are required. Both namespaces use equivalent source. Procedural regressions contain no private score pixels.",
-      "standalone_normalized_sha256": "8885d05c2e6743bbaadfa55cad13f11fc8d7dfba1cd3e105e12c0c4a12da01e2",
+      "standalone_normalized_sha256": "b18c6386a1770fcfe7c0564395ad600b771e04b7906daadc6e08efcb4331bf98",
       "app_optimization_port_review": "Classifies raw bands with the shared ink helper while preserving attached ledger ownership.",
       "november_24_flesch_app_review": {
         "app_commit": "d0622b051dfaa40ad1ac76a2cd1ed7072186bb90",
@@ -6133,6 +6133,14 @@
         "app_lf_sha256": "9b1b81d8f9ed8f1aacc11e722a1921a5e976b152b56afe52ac4fc2bc8c6a8ca2",
         "standalone_lf_sha256": "8885d05c2e6743bbaadfa55cad13f11fc8d7dfba1cd3e105e12c0c4a12da01e2",
         "scope": "Matching numeral and hook proof, same-shaft octave dyads, two double beams, and independent space between those groups."
+      },
+      "first_window_review": {
+        "app_commit": "3bf25e49d20698f651d53346deb5fea2c9eb3a3c",
+        "scope": "A later window cannot supply a missing allowable first dot after its ownership lower bound passes the start limit. Existing platform-specific octave paths and limits are preserved.",
+        "app_test": "DottedOctaveStartWindowTest.java",
+        "app_test_lf_sha256": "5b9494fd59f5b9671e582993757c00942efb5713c5a94269661a40160401f9c0",
+        "standalone_test": "LongClosedDottedOctaveTest.java",
+        "standalone_test_lf_sha256": "e2d29151f5f01c26d9011d21f475c7b5e44465cd69ceb3f338540a8fcb14721f"
       }
     },
     "OctaveWordShapes.java": {

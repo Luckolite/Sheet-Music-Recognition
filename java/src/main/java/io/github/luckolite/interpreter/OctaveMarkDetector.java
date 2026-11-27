@@ -3768,13 +3768,17 @@ final class OctaveMarkDetector {
                 if (x > left && dotX(dot) < x + gap * .5f) continue;
                 dots.add(dot);
             }
+            // Later windows discard dots left of their ownership boundary. Once
+            // that boundary is past the last possible start, a rail cannot begin.
+            if (x == left && edge < right && x + step + gap * .5f > left + gap * 1.45f
+                    && dots.stream().noneMatch(dot -> canStartDottedRail(dot, eight, gap))) return -1;
         }
         dots.sort(Comparator.comparingDouble(OctaveMarkDetector::dotX));
         float end = -1;
         for (var first : dots) {
-            float startX = dotX(first), startY = dotY(first);
+            float startX = dotX(first);
             if (startX > left + gap * 1.45f) break;
-            if (startY < eight.top + gap * .10f || startY > eight.top + gap * .85f) continue;
+            if (!canStartDottedRail(first, eight, gap)) continue;
             var last = first;
             int count = 1, consecutive = 1, bridges = 0;
             for (var dot : dots) {
@@ -3799,6 +3803,12 @@ final class OctaveMarkDetector {
                         end = Math.max(end, last.right + gap * .42f);
         }
         return end;
+    }
+
+    private static boolean canStartDottedRail(RawNumeralComponents.Component dot, InkBox eight, float gap) {
+        float y = dotY(dot);
+        return dotX(dot) <= eight.right + gap * 1.45f
+                && y >= eight.top + gap * .10f && y <= eight.top + gap * .85f;
     }
 
     private static boolean crossesDottedLine(
