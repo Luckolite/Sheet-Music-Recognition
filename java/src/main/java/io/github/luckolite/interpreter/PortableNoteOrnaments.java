@@ -10,6 +10,7 @@ final class PortableNoteOrnaments {
     static final class Bounds {
         int left, top, right, bottom;
         int trillWaveRight;
+        boolean connectedTrillNeedsPeer;
 
         Bounds(int left, int top, int right, int bottom) {
             this.left = left;
@@ -21,6 +22,7 @@ final class PortableNoteOrnaments {
         Bounds(Bounds other) {
             this(other.left, other.top, other.right, other.bottom);
             trillWaveRight = other.trillWaveRight;
+            connectedTrillNeedsPeer = other.connectedTrillNeedsPeer;
         }
 
         int width() {
@@ -373,7 +375,7 @@ final class PortableNoteOrnaments {
                 }
             if (noteInk) continue;
             var match =
-                    textTrills.contains(box) || repeatedTrills.confirmed(box)
+                    box.connectedTrillNeedsPeer || textTrills.contains(box) || repeatedTrills.confirmed(box)
                             ? new PortableOrnamentGlyphs.Match(NoteOrnament.TRILL, 1, 1)
                             : recognizer.match(gray, width, box, query);
             if (!match.accepted() && repeatedTrills.recognizes(gray, width, box, match, query))
@@ -564,6 +566,7 @@ final class PortableNoteOrnaments {
             PortableOrnamentGlyphs recognizer) {
         if (staffs.isEmpty()) return new ArrayList<>();
         List<Bounds> parts = new ArrayList<>();
+        List<Bounds> peerCandidates = new ArrayList<>();
         new PrintedInkComponents().scan(gray, w, 0, 0, w, h, 149, (l, t, endX, endY, count) -> {
             if (count < 5) return true;
             int r = endX - 1, b = endY - 1;
@@ -589,12 +592,16 @@ final class PortableNoteOrnaments {
                 var head = connectedTrillHead(gray, w, new Bounds(l, t, endX, endY),
                         s.gap(), recognizer);
                 if (head != null) {
-                    parts.add(head);
+                    if (!head.connectedTrillNeedsPeer) parts.add(head);
+                    else if (s.count() == 2 && s.index() == 0) peerCandidates.add(head);
+                    else continue;
                     break;
                 }
             }
             return true;
         });
+        for (var head : peerCandidates)
+            if (hasMatchingTrillPrefix(gray, w, head, peerCandidates)) parts.add(head);
         // The letters in tr may be separate components. Merge only letters on the same
         // baseline; dots and vertically placed auxiliary accidentals remain separate.
         parts.sort(Comparator.comparingInt(r -> r.left));
@@ -685,21 +692,45 @@ final class PortableNoteOrnaments {
                 new Bounds(tailStart, tail.top, component.right, tail.bottom), component.right);
         if (waveRight == 0 || waveRight - tailStart < gap * 3) return null;
 
-        Bounds best = null;
-        float score = 0;
+        Bounds best = null, weak = null;
+        float score = 0, weakScore = 0;
         int last = left + Math.round(gap * 2.6f);
         for (int cut = left + Math.max(2, Math.round(gap * .95f)); cut <= last;
                 cut += Math.max(1, Math.round(gap * .08f))) {
             var head = inkBounds(gray, width, new Bounds(left, component.top, cut, component.bottom));
             if (head == null || tail.height() * 2 > head.height()) continue;
             var match = recognizer.templateMatch(gray, width, head);
-            if (match.kind() == NoteOrnament.TRILL && match.accepted() && match.score() > score) {
+            if (match.kind() != NoteOrnament.TRILL) continue;
+            if (match.accepted() && match.score() > score) {
                 best = head;
                 score = match.score();
+            } else if (match.score() >= .43f && match.margin() >= .11f && match.score() > weakScore) {
+                weak = head;
+                weakScore = match.score();
             }
+        }
+        if (best == null && weak != null) {
+            best = weak;
+            best.connectedTrillNeedsPeer = true;
         }
         if (best != null) best.trillWaveRight = waveRight;
         return best;
+    }
+
+    /** A less common italic prefix needs a second matching print on a different system. */
+    private static boolean hasMatchingTrillPrefix(byte[] gray, int width, Bounds head, List<Bounds> peers) {
+        var sample = new PortableOrnamentGlyphs();
+        byte[] crop = new byte[head.width() * head.height()];
+        for (int row = 0; row < head.height(); row++)
+            System.arraycopy(gray, (head.top + row) * width + head.left,
+                    crop, row * head.width(), head.width());
+        sample.add(crop, head.width(), head.height(), NoteOrnament.TRILL, false);
+        for (var peer : peers) {
+            if (Math.abs(peer.top - head.top) < Math.max(head.height(), peer.height()) * 3
+                    || Math.abs(peer.height() - head.height()) > head.height() * .15f) continue;
+            if (sample.templateMatch(gray, width, peer).score() >= .80f) return true;
+        }
+        return false;
     }
 
     /** Keep a proved trill head intact and trace only the directly supported printed wave. */
