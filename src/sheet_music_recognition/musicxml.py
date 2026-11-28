@@ -1951,11 +1951,20 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
             if cue_caption.owns(mark):
                 mark['start'], mark['end'], mark['scope'] = None, None, 'UNRESOLVED'
             mark['identity'] = f'page:{page_index}/'+mark['eventId']
-            mark['startTick'], mark['endTick'] = absolute(mark.get('start')), absolute(mark.get('end'))
             members = _column_members(mark, page)
             mark['ownerIds'] = [first_event+i for i in members]
             owned = [events[first_event+i] for i in members]
-            if owned and all(not n.get('durationFallback', False) and n['start'] == owned[0]['start'] and (mark['kind'] == 'TEMPO_MARKING' or n['end'] == owned[0]['end']) for n in owned):
+            exact_column = owned and all(
+                not n.get('durationFallback', False) and n['start'] == owned[0]['start']
+                and (mark['kind'] == 'TEMPO_MARKING' or n['end'] == owned[0]['end']) for n in owned)
+            if exact_column and mark['kind'] == 'FERMATA':
+                # A pickup can shorten the decoded measure after the cached
+                # fermata coordinates were calculated. The proved head owns both edges.
+                mark['startTick'], mark['endTick'] = owned[0]['start'], owned[0]['end']
+                expressions.append(mark)
+                continue
+            mark['startTick'], mark['endTick'] = absolute(mark.get('start')), absolute(mark.get('end'))
+            if exact_column:
                 mark['startTick'] = owned[0]['end'] if mark['kind'] in ('BREATH', 'CAESURA') else owned[0]['start']
                 if cue_caption.owns(mark):
                     mark['scope'] = 'PART'
@@ -1965,8 +1974,6 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
                 resolved_start = _anchor((mark['startTick'] - offset) / DIVISIONS, local_starts)
                 if mark['kind'] in GRADUAL:
                     mark['endTick'] = absolute(preserve_end(mark, resolved_start, page))
-                if mark['kind'] == 'FERMATA':
-                    mark['endTick'] = owned[0]['end']
             elif mark.get('scope') == 'UNRESOLVED':
                 mark['startTick'] = None
             if mark['startTick'] is not None:

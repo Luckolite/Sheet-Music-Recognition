@@ -50,6 +50,25 @@ class MusicXmlExpressionTests(unittest.TestCase):
             self.assertIsNotNone(notes[0].find('.//'+tag));self.assertIsNone(notes[1].find('.//'+tag))
             self.assertEqual(2,len(notes));self.assertEqual([],root.findall('.//words'))
 
+    def test_owned_pickup_fermata_uses_the_written_note_instead_of_cached_anchors(self):
+        mark = fermata()
+        mark.update(start=dict(measureIndex=0, quarterBeatOffset=1.25),
+                    end=dict(measureIndex=0, quarterBeatOffset=2.25))
+        doc = document([mark])
+        doc['initialMeter'] = [4, 4]
+        page = doc['pages'][0]
+        page.update(measureBeats=[1], totalBeats=1)
+        page['events'] = [dict(page['events'][0], durationBeats=1)]
+        page['score']['notes'] = page['score']['notes'][:1]
+        root = self.export(doc)
+        measure = root.find('part/measure')
+        self.assertEqual('yes', measure.get('implicit'))
+        self.assertEqual(str(DIVISIONS), measure.findtext('note/duration'))
+        self.assertIsNotNone(measure.find('note/notations/fermata'))
+        page['events'][0]['durationFallback'] = True
+        with self.assertRaisesRegex(ValueError, 'Expression anchor outside MusicXML measure'):
+            self.export(doc)
+
     def test_cross_bar_breath_is_only_on_final_tied_slice(self):
         doc=document([expression('BREATH',6,scope='PART')]);page=doc['pages'][0]
         page['measureBeats']=[4,4];page['totalBeats']=8;page['events']=page['events'][:1]
