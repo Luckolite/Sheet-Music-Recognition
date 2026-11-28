@@ -51,10 +51,19 @@ class WrittenColumn:
     voice: int
     start: int
     end: int
+    grace_position: tuple[int, bool, int] | None = None
 
     @property
     def levels(self):
         return _BEAM_LEVELS.get(self.node.findtext('type'), 0)
+
+    def precedes(self, other):
+        if self.end != other.start:
+            return False
+        if self.grace_position is None:
+            return other.grace_position is None
+        principal, after, position = self.grace_position
+        return other.grace_position == (principal, after, position + 1)
 
 
 def write(groups, rendered_columns):
@@ -64,7 +73,7 @@ def write(groups, rendered_columns):
         for mask, left, right in zip(bridges, columns, columns[1:]):
             if (left is None or right is None or left.part != right.part
                     or left.bar != right.bar or left.voice != right.voice
-                    or left.end != right.start):
+                    or not left.precedes(right)):
                 joins.append(0)
                 continue
             joins.append(mask & ((1 << min(left.levels, right.levels)) - 1))

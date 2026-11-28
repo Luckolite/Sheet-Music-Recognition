@@ -2235,17 +2235,23 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
                     raise ValueError('Grace principal is outside exported part')
                 n['voice'] = owner['voice']
                 grace_groups[n['principalSourceIdentity'], n['afterGrace']].append(n)
-        def emit_graces(measure, chord, after, anchor, flats):
+        def emit_graces(measure, bar_index, chord, after, anchor, flats):
             pending = [g for n in chord if anchor == (n['end'] if after else n['start'])
                        for g in grace_groups.get((n['sourceIdentity'], after), ())]
-            for g in sorted(pending, key=lambda g: (g['graceOrdinal'], g['sourceIdentity'])):
+            pending.sort(key=lambda g: (g['graceOrdinal'], g['sourceIdentity']))
+            for position, g in enumerate(pending):
                 emitted = emit_note(measure, g['graceWrittenDuration'], g['voice'], g, flats=flats,
                                     articulation_flags=g['retainedArticulations'], grace=g, bow_direction=g.get('retainedBow'))
                 octave_owned[emitted] = 0 if event_kind(g) == 'UNPITCHED' else g.get('octaveShift', 0)
                 if g['hasSourceAccidental']:
                     accidental_source_marks.add(emitted)
-                if g['sourceIdentity'] in requested_slur_owners:
-                    slur_attacks[g['sourceIdentity']] = emitted
+                owner = g['sourceIdentity']
+                if owner in requested_slur_owners:
+                    slur_attacks[owner] = emitted
+                if owner in beamed_owners:
+                    rendered_beam_columns[frozenset({owner})] = beam_export.WrittenColumn(
+                        emitted, part_id, bar_index, g['voice'], anchor, anchor,
+                        (g['principalSourceIdentity'], after, position))
         sounding = [n for n in notes if not n.get('grace', False)]
         next_note = 0
         present = []
@@ -2360,7 +2366,7 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
                         if any(fragment_start == n['start'] for n in chord) and start in clef_changes and start not in emitted_clefs:
                             clef_export.write(element(measure, 'attributes'), clef_changes[start])
                             emitted_clefs.add(start)
-                        emit_graces(measure, chord, False, fragment_start, bar['key']<0)
+                        emit_graces(measure, index, chord, False, fragment_start, bar['key']<0)
                         articulation_flags = articulation_export.chord_marks(chord, fragment_start)
                         bow_directions = bow_export.chord_marks(chord, fragment_start)
                         for ci, n in enumerate(chord):
@@ -2418,7 +2424,7 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
                                 owners = frozenset(head['sourceIdentity'] for head in chord)
                                 rendered_beam_columns[owners] = beam_export.WrittenColumn(
                                     emitted, part_id, index, voice, start, end)
-                        emit_graces(measure, chord, True, fragment_end, bar['key']<0)
+                        emit_graces(measure, index, chord, True, fragment_end, bar['key']<0)
                         fragment_start = fragment_end
                     cursor = end
                 if cursor < b:

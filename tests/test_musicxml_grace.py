@@ -45,6 +45,23 @@ class MusicXmlGraceTests(unittest.TestCase):
         self.assertEqual(['D','C','C'],[n.findtext('pitch/step') for n in notes])
         self.assertEqual(['3.125','3.125'],[n.find('grace').get('steal-time-previous') for n in notes[1:]])
 
+    def test_printed_grace_pair_retains_only_proved_beam_levels(self):
+        for after in (False, True):
+            with self.subTest(after=after):
+                doc = document(after)
+                page = doc['pages'][0]
+                origins = [dict(pageIndex=0, noteIndex=i) for i in range(3)]
+                for i, event in enumerate(page['events']):
+                    event['sourceNoteIndex'] = i
+                page['score']['beamSource'] = dict(noteOrigins=origins, detachedColumns=[], groups=[dict(
+                    id='paired-graces', columns=[dict(members=[origin]) for origin in origins[:2]],
+                    bridges=[3], hooks=[])])
+                root = self.export(doc)
+                graces = root.findall('.//note[grace]')
+                self.assertEqual([None, None], [n.find('duration') for n in graces])
+                self.assertEqual([[('1', 'begin'), ('2', 'begin')], [('1', 'end'), ('2', 'end')]],
+                                 [[(b.get('number'), b.text) for b in n.findall('beam')] for n in graces])
+
     def test_playback_clocks_are_never_overwritten(self):
         doc=document();before=copy.deepcopy(doc['pages'][0]['events']);self.export(doc)
         self.assertEqual(before,doc['pages'][0]['events'])
