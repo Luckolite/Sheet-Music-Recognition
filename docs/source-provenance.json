@@ -6161,7 +6161,10 @@
         "app_blob_sha256": "4fb5371266128fbc6ebe11dd613c411fd52c77e629bf3a88c2b774d9ad497976",
         "shared_patch_lf_sha256": "60a1ed195d4b937a8d3b4e3d23c2b21166eabf417e1e6400c49fb4e6565c65ae",
         "original_regression": "AntialiasedStemBarlineTest.java",
-        "scope": "Identical stroke-ownership patch on both readers. Only physically joined neighboring shaft columns in staff spaces can extend the head check. Earlier unrelated drift remains tracked."
+        "scope": "Identical stroke-ownership patch on both readers. Only physically joined neighboring shaft columns in staff spaces can extend the head check. Earlier unrelated drift remains tracked.",
+        "integrated_app_commit": "9e771d1b81851fd5fc409bb8ccc4f91d9b9ae14e",
+        "integrated_app_normalized_sha256": "aa6b576832e8d74f95a0656470908b516edb7ef8027c09b045440b5fea5d51b5",
+        "integration_note": "The Android worker preserves its existing wide search at semantic candidates and uses the proved axis for raw columns. The standalone candidate retains its existing raw-column selection."
       },
       "opening_two_over_four_review": {
         "reviewed_app_commit": "2aec089b",
@@ -11351,7 +11354,9 @@
         "reviewed_app_commit": "58033678dd38d8c9bed41abe2e53cab0325ecba5",
         "app_lf_sha256": "84319283259a55b412031a94b759c4803e7b4c9f03552a4bea586973d403ca1e",
         "standalone_lf_sha256": "9e77bf5252a80b0ec75a3209ac293fbc2170ed8a3c34705826ac30be75c61352",
-        "scope": "Matched repeated-three recognition in both readers. A slightly wider beam is allowed only at the written accidental; the other interval, both raster proofs and beam ownership remain required. Focused synthetic controls and exact playback passed. Earlier mapped drift remains visible."
+        "scope": "Matched repeated-three recognition in both readers. A slightly wider beam is allowed only at the written accidental; the other interval, both raster proofs and beam ownership remain required. Focused synthetic controls and exact playback passed. Earlier mapped drift remains visible.",
+        "integrated_app_commit": "9e771d1b81851fd5fc409bb8ccc4f91d9b9ae14e",
+        "integrated_app_normalized_sha256": "821fa7e9ac4f4c29bd00821cc39c86648178705533281574dadf7db6c70e37bc"
       },
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/TripletRhythmDetector.java",
       "source_sha256": "51f3a0d78790850c3231567d30e97e3ebb6c6e643107d9291c1193ce884c2537",
