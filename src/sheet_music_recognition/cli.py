@@ -79,7 +79,7 @@ def main():
             raise ValueError("Annotations must be a JSON list, one object per selected page")
         outputs = [p for p in (args.output, args.midi, args.mp3, args.musicxml, args.sheet_pdf) if p]
         if len({p.resolve() for p in outputs}) != len(outputs):
-            raise ValueError("Output files must have different paths")
+            raise ValueError("Outputs must use different files")
         for output in outputs:
             if output and output.resolve() == args.input.resolve():
                 raise ValueError("Output must not overwrite the input score")
