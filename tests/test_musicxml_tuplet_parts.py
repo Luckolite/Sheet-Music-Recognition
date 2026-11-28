@@ -29,6 +29,21 @@ class CompositeTupletTests(unittest.TestCase):
             self.assertEqual(str(actual),note.findtext('time-modification/actual-notes'))
             self.assertEqual(str(normal),note.findtext('time-modification/normal-notes'))
 
+    def test_complete_mixed_value_groups_export_visual_endpoints(self):
+        root = self.export([event(5/3), event(1, 5, 4, 62, 2)])
+        notes = root.findall('.//note')
+        self.assertEqual([13440, 3360, 3360, 8064, 2016, 10080],
+                         [int(note.findtext('duration')) for note in notes])
+        self.assertEqual(['start', 'stop', 'start', 'stop'],
+                         [tie.get('type') for tie in root.findall('.//tie')])
+        self.assertEqual(['start', None, 'stop', 'start', 'stop', None], [
+            mark.get('type') if (mark := note.find('notations/tuplet')) is not None else None
+            for note in notes])
+        self.assertEqual(['actual', 'actual'],
+                         [mark.get('show-number') for mark in root.findall('.//tuplet[@type="start"]')])
+        self.assertEqual(['quarter', 'quarter', 'quarter', '16th', None, None],
+                         [note.findtext('time-modification/normal-type') for note in notes])
+
     def test_neutral_pairs_keep_the_printed_twos_and_exact_clock(self):
         events = [event(.5, 2, 2, midi=60+i, start=.5*i) for i in range(4)]
         events.append(event(2, 1, 1, midi=72, start=2))

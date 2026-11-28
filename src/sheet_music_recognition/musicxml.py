@@ -1353,6 +1353,54 @@ def emit_rest_gap(measure, start, end, voice, symbols, literal_edges=()):
             emit_note(measure, duration, voice, fragment_end=cursor, rest_symbols=symbols)
 
 
+def _write_inferred_tuplets(elements, eligible):
+    """Give complete, contiguous ratio groups explicit visual endpoints."""
+    group = []
+    ratio = None
+    elapsed = 0
+    printed = False
+    for note in elements:
+        if note.tag == 'note' and (note.find('chord') is not None or note.find('grace') is not None):
+            continue
+        mark = note.find('notations/tuplet')
+        modification = note.find('time-modification')
+        candidate = None
+        if mark is not None:
+            printed = mark.get('type') == 'start'
+        elif (note.tag == 'note' and not printed and modification is not None
+              and (note in eligible or note.find('rest') is not None)):
+            actual = int(modification.findtext('actual-notes'))
+            normal = int(modification.findtext('normal-notes'))
+            if actual != normal:
+                candidate = actual, normal
+        if candidate != ratio or candidate is None:
+            group.clear()
+            elapsed = 0
+            ratio = candidate
+        if candidate is None:
+            continue
+        group.append(note)
+        elapsed += int(note.findtext('duration'))
+        denominator, remainder = divmod(DIVISIONS * 4 * candidate[1], elapsed)
+        # Require an exact binary base unit. Mixed written values may add up to
+        # that unit, including tied fragments and rests.
+        if (len(group) >= 2 and not remainder and denominator in (1, 2, 4, 8, 16, 32, 64)
+                and any(member in eligible for member in group)):
+            normal_type = ('whole', 'half', 'quarter', 'eighth', '16th', '32nd',
+                           '64th')[denominator.bit_length() - 1]
+            for member in group:
+                if member.findtext('type') != normal_type or member.find('dot') is not None:
+                    element(member.find('time-modification'), 'normal-type', normal_type)
+            for endpoint, kind in ((group[0], 'start'), (group[-1], 'stop')):
+                notations = endpoint.find('notations')
+                if notations is None:
+                    notations = element(endpoint, 'notations')
+                attrs = {'bracket': 'yes', 'show-number': 'actual'} if kind == 'start' else {}
+                element(notations, 'tuplet', type=kind, number=1, **attrs)
+            group.clear()
+            elapsed = 0
+
+
 def _join_printed_measures(bars, continuations, full_rests, rest_groups):
     """Project verified system fragments after resolving their physical source anchors."""
     full = {rest['barIndex'] for rest in full_rests}
@@ -1617,6 +1665,13 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
                                retainedOrnamentFlags=ornament_export.retained(page, note_index),
                                retainedTremolo=paired_tremolos.get(note_index), retainedArpeggio=False, retainedNaturalHarmonic=False))
             owner = n.get('sourceNoteIndex')
+            actual, normal = n.get('tupletActualNotes'), n.get('tupletNormalNotes', 1)
+            tuplet_source = source_notes[owner] if type(owner) is int and 0 <= owner < len(source_notes) else {}
+            events[-1]['retainedTupletRatio'] = (
+                actual in (2, 3, 4, 5, 6, 7) and actual != normal
+                and (tuplet_source.get('tupletDivisor', actual), tuplet_source.get('tupletNormalNotes', normal))
+                == (actual, normal)
+                and not n.get('durationFallback') and note_index not in paired_tremolos)
             third = n.get('artificialHarmonicThird') is True
             beamed_fourth = n.get('beamedArtificialHarmonicFourth') is True
             if beamed_fourth and n.get('artificialHarmonicFourth') is not True:
@@ -2262,6 +2317,8 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
                     emit_note(measure, bar['length'], voice, fragment_end=b,
                               rest_symbols=row['releaseSymbols'], full_measure=True)
                     continue
+                first_voice_element = len(measure)
+                eligible_tuplets = set()
                 cursor = a
                 segments = defaultdict(list)
                 for n in present:
@@ -2330,6 +2387,11 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
                                 elif edge == 'start' and tuplet_mark == 'UNNUMBERED':
                                     tuplet.set('show-number', 'none')
                                     tuplet.set('bracket', 'no')
+                            if ci == 0 and n['retainedTupletRatio'] and all(head['retainedTupletRatio']
+                                               and (head['tupletActualNotes'], head.get('tupletNormalNotes', 1))
+                                               == (n['tupletActualNotes'], n.get('tupletNormalNotes', 1))
+                                               for head in chord[1:]):
+                                eligible_tuplets.add(emitted)
                             octave_owned[emitted] = 0 if event_kind(n) == 'UNPITCHED' else n.get('octaveShift', 0)
                             if fragment_start == n['start'] and n['sourceIdentity'] in requested_slur_owners:
                                 slur_attacks[n['sourceIdentity']] = emitted
@@ -2359,6 +2421,8 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
                         element(forward, 'voice', voice)
                     else:
                         emit_rest_gap(measure, cursor, b, voice, rest_symbols, literal_edges)
+                if eligible_tuplets:
+                    _write_inferred_tuplets(measure[first_voice_element:], eligible_tuplets)
             if bar.get('rightBarline'):
                 element(element(measure, 'barline', location='right'), 'bar-style', bar['rightBarline'])
         if staff_spans:
