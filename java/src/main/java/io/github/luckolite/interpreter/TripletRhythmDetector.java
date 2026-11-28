@@ -1675,13 +1675,15 @@ final class TripletRhythmDetector {
             order = metricalOrder;
         }
         var groups = onsets(notes, Integer.MAX_VALUE, order);
+        boolean completedPartialBeams = recoverPartialSourceBeams(
+                score, result, groups, decoderGray, gray, width, height);
         var withRest = new java.util.BitSet();
         for (var rest : score.rests()) withRest.set(rest.measureIndex());
         var withPrintedThree = new java.util.BitSet();
         for (var note : notes)
             if (note.tupletDivisor() == 3 && note.tupletNormalNotes() == 2)
                 withPrintedThree.set(note.measureIndex());
-        boolean changed = false;
+        boolean changed = completedPartialBeams;
         for (int i = 0; i + 1 < groups.size(); i++) {
             var a = groups.get(i);
             var b = groups.get(i + 1);
@@ -1810,6 +1812,103 @@ final class TripletRhythmDetector {
 
     private static float sourceX(MeasureRegion bar, int width, Onset onset) {
         return (bar.left() + onset.position() * (bar.right() - bar.left())) * width;
+    }
+
+    /**
+     * Preserve one rhythm within a finite printed three-head eighth beam when
+     * the numeral was assigned to only part of that group on a multistaff system.
+     */
+    private static boolean recoverPartialSourceBeams(
+            ScorePageInterpretation score, List<ScoreNoteEvent> notes, List<Onset> groups,
+            byte[] decoderGray, byte[] gray, int width, int height) {
+        List<RawStaffLineDetector.StaffLines> sourceStaffs = null;
+        boolean changed = false;
+        // Work from right to left so a proved following figure can supply the
+        // printed shape when a staff rule touches the preceding numeral.
+        for (int i = groups.size() - 3; i >= 0; i--) {
+            var a = groups.get(i);
+            var b = groups.get(i + 1);
+            var c = groups.get(i + 2);
+            if (a.indices().size() != 1 || b.indices().size() != 1 || c.indices().size() != 1) continue;
+            int ai = a.indices().get(0), bi = b.indices().get(0), ci = c.indices().get(0);
+            var first = notes.get(ai);
+            var middle = notes.get(bi);
+            var last = notes.get(ci);
+            int measure = first.measureIndex();
+            if (first.staffCount() < 2 || measure < 0 || measure >= score.measures().size()
+                    || !sameVoice(first, middle) || !sameVoice(first, last)
+                    || !eligiblePartialBeamHead(first) || !eligiblePartialBeamHead(middle)
+                    || !eligiblePartialBeamHead(last)) continue;
+            int marked = (first.tupletDivisor() == 3 ? 1 : 0)
+                    + (middle.tupletDivisor() == 3 ? 1 : 0) + (last.tupletDivisor() == 3 ? 1 : 0);
+            if (marked != 1 && marked != 2) continue;
+            if (score.rests().stream().anyMatch(rest -> rest.measureIndex() == measure
+                    && rest.staffIndex() == first.staffIndex() && rest.staffCount() == first.staffCount()
+                    && rest.positionInMeasure() > a.position() && rest.positionInMeasure() < c.position()))
+                continue;
+
+            var bar = score.measures().get(measure);
+            if (sourceStaffs == null) sourceStaffs = RawStaffLineDetector.detect(gray, width, height);
+            var localStaffs = sourceStaffs.stream()
+                    .filter(staff -> staff.center() >= bar.top() * height
+                            && staff.center() <= bar.bottom() * height).toList();
+            if (localStaffs.size() != first.staffCount()
+                    || first.staffIndex() < 0 || first.staffIndex() >= localStaffs.size()) continue;
+            float gap = Math.round(localStaffs.get(first.staffIndex()).gap());
+            float x1 = sourceX(bar, width, a), x3 = sourceX(bar, width, c);
+            if (x3 - x1 < gap * 2 || x3 - x1 > gap * 9) continue;
+            var group = groups.subList(i, i + 3);
+            if (!completePrintedThree(group, notes, notes.size(), bar, gray, width, height, gap)
+                    || connectsOutsidePartialBeam(groups, notes, i - 1, first,
+                            bar, gray, width, height, gap)
+                    || connectsOutsidePartialBeam(groups, notes, i + 3, last,
+                            bar, gray, width, height, gap)) continue;
+
+            float top = Math.min(a.top(), Math.min(b.top(), c.top())) * height;
+            float bottom = Math.max(a.bottom(), Math.max(b.bottom(), c.bottom())) * height;
+            Glyph mark = findOwnedNumeral(gray, width, height, x1, x3, top, bottom, gap,
+                    true, Float.NaN, Float.NaN, 3, true, false, first, notes, bar, score.measures());
+            if (mark != null && !beamOwnsNumeral(mark, first, notes, bar, gray, width, height, x1, x3, gap))
+                mark = null;
+            if (mark == null) {
+                mark = repeatNeighborThree(decoderGray, gray, width, height, groups, i, notes, bar, gap);
+                if (mark == null || repeatNeighborThree(gray, decoderGray, width, height,
+                        groups, i, notes, bar, gap) == null) continue;
+            }
+            if (insideOtherSystem(mark, bar, score.measures(), width, height)) continue;
+            notes.set(ai, first.withTupletRatio(3, 2));
+            notes.set(bi, middle.withTupletRatio(3, 2));
+            notes.set(ci, last.withTupletRatio(3, 2));
+            changed = true;
+        }
+        return changed;
+    }
+
+    private static boolean eligiblePartialBeamHead(ScoreNoteEvent note) {
+        return (eligibleSourceTriplet(note) || note.tupletDivisor() == 3 && note.tupletNormalNotes() == 2)
+                && note.kind() == ScoreNoteEvent.Kind.PITCHED && note.beamCount() == 1
+                && note.augmentationDots() == 0 && !note.crossStaffBeam()
+                && note.leadingRestBeats() == 0 && note.followingRestBeats() == 0
+                && (note.articulations() & NoteOrnament.GRACE) == 0;
+    }
+
+    private static boolean connectsOutsidePartialBeam(
+            List<Onset> groups, List<ScoreNoteEvent> notes, int outside, ScoreNoteEvent edge,
+            MeasureRegion bar, byte[] gray, int width, int height, float gap) {
+        if (outside < 0 || outside >= groups.size()) return false;
+        for (int index : groups.get(outside).indices()) {
+            var n = notes.get(index);
+            if (!sameVoice(n, edge) || n.stemDirection() != edge.stemDirection()) continue;
+            float x = (bar.left() + n.positionInMeasure() * (bar.right() - bar.left())) * width;
+            float edgeX = (bar.left() + edge.positionInMeasure() * (bar.right() - bar.left())) * width;
+            if (x < edgeX ? PrintedTupletBeamOwner.connectedHeads(
+                            gray, width, height, x, n.pageY() * height, edgeX, edge.pageY() * height,
+                            gap, edge.stemDirection())
+                    : PrintedTupletBeamOwner.connectedHeads(
+                            gray, width, height, edgeX, edge.pageY() * height, x, n.pageY() * height,
+                            gap, edge.stemDirection())) return true;
+        }
+        return false;
     }
 
     private static Glyph hookedMixedPair(
