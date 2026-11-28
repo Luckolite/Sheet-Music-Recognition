@@ -1216,6 +1216,8 @@ def emit_note(measure, duration, voice, event=None, chord=False, stop=False, sta
         element(node, 'notehead', 'x')
     effect = event.get('guitarEffect') if event and attack_fragment else None
     ornament_flags = event.get('retainedOrnamentFlags', 0) if event and attack_fragment else 0
+    trill_wave_start = event.get('trillWaveStart') if event and attack_fragment else None
+    trill_wave_stop = event.get('trillWaveStop') if event and fragment_end == event['end'] else None
     symbols = [mark for mark in (event.get('releaseSymbols', []) if event else rest_symbols)
                if mark['release'] == fragment_end]
     paired = event.get('retainedTremolo') if event else None
@@ -1227,7 +1229,7 @@ def emit_note(measure, duration, voice, event=None, chord=False, stop=False, sta
                          if event and event.get('retainedParenthesisStop') and grace is None
                          and fragment_end == event['end'] else None)
     fingering = event.get('retainedFingering') if event and attack_fragment and grace is None else None
-    if stop or start or effect or symbols or gliss_start or gliss_stop or slide_start or slide_stop or articulation_flags or ornament_flags or paired or arpeggio or natural_harmonic or fall_off or parenthesis_left or parenthesis_right or bow_direction is not None or fingering is not None:
+    if stop or start or effect or symbols or gliss_start or gliss_stop or slide_start or slide_stop or articulation_flags or ornament_flags or trill_wave_start or trill_wave_stop or paired or arpeggio or natural_harmonic or fall_off or parenthesis_left or parenthesis_right or bow_direction is not None or fingering is not None:
         notation = element(node, 'notations')
         if arpeggio:
             element(notation, 'arpeggiate')
@@ -1272,8 +1274,8 @@ def emit_note(measure, duration, voice, event=None, chord=False, stop=False, sta
             bow_export.write(notation, bow_direction)
         if fingering is not None:
             fingering_export.write(notation, fingering)
-        if ornament_flags:
-            ornament_export.write(notation, ornament_flags)
+        if ornament_flags or trill_wave_start or trill_wave_stop:
+            ornament_export.write(notation, ornament_flags, trill_wave_start, trill_wave_stop)
         for symbol in symbols:
             kind = symbol['kind']
             if kind == 'FERMATA':
@@ -2171,11 +2173,13 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
         tie_rows = [dict(start=n['start'], end=n['end'], lane=(staff, n.get('midi')),
                          tied=n.get('tiedFromPrevious', False),
                          eligible=not n.get('grace', False) and event_kind(n) == 'PITCHED') for n in notes]
-        for current, earlier in releasing_links(tie_rows, lambda row: [(row['lane'], 2)]).items():
+        tie_links = releasing_links(tie_rows, lambda row: [(row['lane'], 2)])
+        for current, earlier in tie_links.items():
             prior, n = notes[earlier], notes[current]
             prior['tie_start'] = True
             n['tie_stop'] = True
             retained_slur_ties.add((prior['sourceIdentity'], n['sourceIdentity']))
+        ornament_export.bind_trill_waves(notes, tie_links)
         groups = defaultdict(list)
         for n in notes:
             if not n.get('grace', False):

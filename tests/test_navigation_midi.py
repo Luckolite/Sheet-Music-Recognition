@@ -71,6 +71,30 @@ def note_intervals(data):
 
 
 class NavigationMidiTest(unittest.TestCase):
+    def test_trill_uses_key_sharps_and_held_tie_with_independent_chord_tone(self):
+        notes = [dict(note(at, pitch, duration, tied), measureIndex=bar, sourceNoteIndex=index)
+                 for index, (at, pitch, duration, tied, bar) in enumerate(
+                     ((0, 64, 2, False, 0), (0, 60, 2, False, 0), (2, 64, 1, True, 1)))]
+        doc = document([2, 2], notes, [])
+        doc['initialKeyFifths'] = 1
+        doc['pages'][0]['score']['notes'] = [dict(
+            measureIndex=n['measureIndex'], staffIndex=0, staffCount=1, staffStep=step,
+            clefBottomDiatonic=30, positionInMeasure=0, writtenAccidental=2, articulations=flags)
+            for n, step, flags in zip(notes, (0, -2, 0), (32, 0, 32), strict=True)]
+        before = copy.deepcopy(doc)
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'trill.mid'
+            write_midi(doc, path)
+            data = path.read_bytes()
+        intervals = note_intervals(data)
+        self.assertEqual([(60, 0, 960)], [row for row in intervals if row[0] == 60])
+        pulses = [row for row in intervals if row[0] != 60]
+        self.assertEqual([64, 66] * 9 + [64], [row[0] for row in pulses])
+        self.assertEqual((0, 1440), (pulses[0][1], pulses[-1][2]))
+        self.assertEqual([row[2] for row in pulses[:-1]], [row[1] for row in pulses[1:]])
+        self.assertEqual(1920, final_tick(data))
+        self.assertEqual(before, doc)
+
     def test_second_pass_only_lower_heads_keep_both_upper_attacks(self):
         notes = [dict(note(beat, midi, .5), measureIndex=0, sourceNoteIndex=i)
                  for i, (beat, midi) in enumerate(((0, 69), (0, 72), (2, 69), (2, 72)))]

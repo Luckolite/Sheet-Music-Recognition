@@ -21,6 +21,9 @@ public final class NoteOrnament {
     /** Type-specific GLISSANDO qualifier for a proved connector across a printed barline. */
     public static final int GLISSANDO_NEXT_BAR = 1 << 8;
 
+    /** Type-specific TRILL qualifier for a proved printed wave attached to the trill sign. */
+    public static final int TRILL_WAVE = 1 << 8;
+
     /** Small printed grace heads borrow playback time from their principal note. */
     public static final int GRACE = 1 << 15;
 

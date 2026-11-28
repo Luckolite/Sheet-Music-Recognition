@@ -98,6 +98,27 @@ class MusicXmlOrnamentTests(unittest.TestCase):
         self.assertEqual(1,len(root.findall('.//turn')))
         self.assertEqual(3,len(root.findall('.//note[pitch]')))
 
+    def test_proved_wave_starts_once_and_closes_on_tied_continuation(self):
+        doc = document([32 | 256, 32], duration=4)
+        page = doc['pages'][0]
+        page['measureBeats'].append(4)
+        page['events'][1].update(measureIndex=1, midi=60, startBeat=4, tiedFromPrevious=True)
+        page['score']['notes'][1]['measureIndex'] = 1
+        root = self.export(doc)
+        first, last = root.findall('.//note[pitch]')
+        self.assertEqual('main', first.find('.//trill-mark').get('start-note'))
+        self.assertIsNone(last.find('.//trill-mark'))
+        begin, end = root.findall('.//wavy-line')
+        self.assertEqual(('start', 'stop'), (begin.get('type'), end.get('type')))
+        self.assertEqual(begin.get('number'), end.get('number'))
+        self.assertEqual(['start', 'stop'], [node.get('type') for node in root.findall('.//tie')])
+
+    def test_single_note_proved_wave_and_bare_trill_have_distinct_notation(self):
+        wave = self.export(document([32 | 256])).findall('.//wavy-line')
+        self.assertEqual(['start', 'stop'], [node.get('type') for node in wave])
+        self.assertGreater(float(wave[1].get('relative-x')), 0)
+        self.assertEqual([], self.export(document([32])).findall('.//wavy-line'))
+
     def test_source_context_mismatch_cannot_supply_ornament(self):
         doc=document([1<<5]);doc['pages'][0]['events'][0]['sourceNoteIndex']=7
         self.assertEqual([],self.export(doc).findall('.//ornaments'))

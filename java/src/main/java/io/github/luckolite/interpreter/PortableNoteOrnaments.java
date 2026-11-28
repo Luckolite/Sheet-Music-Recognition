@@ -439,6 +439,8 @@ final class PortableNoteOrnaments {
                 owner = upperTrillUnison(notes, owner, box);
             var anchor = notes.get(owner);
             int marks = match.kind() | (delayed ? NoteOrnament.DELAYED : 0);
+            if (NoteOrnament.type(marks) == NoteOrnament.TRILL && box.trillWaveRight > 0)
+                marks |= NoteOrnament.TRILL_WAVE;
             // Accidentals beside/above/below an ornament modify its auxiliary pitch only.
             for (Bounds other : boxes) {
                 if (other == box
@@ -671,7 +673,7 @@ final class PortableNoteOrnaments {
                 var note = notes.get(j);
                 if (note.staff == lead.staff && note.stemDirection > 0 && note.staffStep == lead.staffStep
                         && note.x > lead.x + lead.gap * .8f && note.x < end && !owned.get(j)) {
-                    found.add(new Found(mark.bounds(), mark.marks(), j));
+                      found.add(new Found(mark.bounds(), mark.marks() & ~NoteOrnament.TRILL_WAVE, j));
                     owned.set(j);
                 }
             }

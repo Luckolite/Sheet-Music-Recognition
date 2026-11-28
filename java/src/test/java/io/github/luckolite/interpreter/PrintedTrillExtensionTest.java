@@ -49,8 +49,11 @@ public final class PrintedTrillExtensionTest {
                 new PortableNoteOrnaments.Anchor(220, 174, 16, 0, 1, 1, 4),
                 new PortableNoteOrnaments.Anchor(220, 194, 16, 0, 1, -1, 1),
                 new PortableNoteOrnaments.Anchor(310, 174, 16, 0, 2, 1, 4));
-        assertEquals(List.of(0, 2), detect(page(true, true), voices).stream()
+        var trills = detect(page(true, true), voices);
+        assertEquals(List.of(0, 2), trills.stream()
                 .map(PortableNoteOrnaments.Found::noteIndex).toList());
+        assertEquals(NoteOrnament.TRILL | NoteOrnament.TRILL_WAVE, trills.get(0).marks());
+        assertEquals(NoteOrnament.TRILL, trills.get(1).marks());
     }
 
     private static List<PortableNoteOrnaments.Found> detect(byte[] ink) {

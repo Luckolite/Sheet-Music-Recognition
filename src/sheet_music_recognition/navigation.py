@@ -502,6 +502,8 @@ def _project_one(document, bpm=120, source_page_offset=0, *, reset_tempo=False):
             output_notes.append(dict(note, measureIndex=index, startBeat=performed+a-source_start,
                 durationBeats=b-a, tiedFromPrevious=tied, boundaryTies=0,
                 occurrenceId=occurrence['occurrenceId']))
+            if onset < a and not tied:
+                output_notes[-1].pop('_trillUpperMidi', None)
             if note.get('_slideOrigins'):
                 output_notes[-1]['_slideContext'] = dict(
                     visitId=f'navigation:{source_page_offset}:{slide_run_visit}',

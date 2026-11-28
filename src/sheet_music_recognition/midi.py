@@ -19,6 +19,7 @@ from .continuous_slide_curve import SlideClock
 from .slide_performance import prepare_slides, resolve_slides
 from .articulation_export import bind_performance_gates
 from .rhythmic_feel import realize as realize_rhythmic_feel
+from . import trill_performance
 
 
 @dataclass(frozen=True)
@@ -84,7 +85,7 @@ def variable_length(value):
 def performed_document(document, bpm=120):
     """Resolve the existing source/Java clocks without assigning a backend identity."""
     from .cue_caption import playback_document
-    document = prepare_slides(bind_performance_gates(apply_capo(playback_document(document))))
+    document = prepare_slides(trill_performance.bind(bind_performance_gates(apply_capo(playback_document(document)))))
     unpitched_intervals(document)
     document = resolve_boundary_ties(document)
     document = realize_rhythmic_feel(document)
@@ -193,7 +194,8 @@ def _performance_events_prepared(document, bpm, expressive_document, unpitched_p
         else:
             tone = [row['start'], row['end'], row['lane'][2], row['step'], row['effect'], row['gliss'],
                     row['note'].get('performanceAttack'), row['note']['staffCount'], row['continuous'],
-                    row['note'].get('_articulationGate', 1.), row['note'].get('_printedCueSilent', False)]
+                    row['note'].get('_articulationGate', 1.), row['note'].get('_printedCueSilent', False),
+                    row['note'].get('_trillUpperMidi')]
             tones.append(tone)
             owners[index] = tone
     active = {}
@@ -217,7 +219,7 @@ def _performance_events_prepared(document, bpm, expressive_document, unpitched_p
     performed = []
     gated_written_end = 0
     slide_clock = SlideClock(tuple(events), ppq)
-    for start, end, pitch, step, effect, gliss, attack, part, continuous, gate, silent in tones:
+    for start, end, pitch, step, effect, gliss, attack, part, continuous, gate, silent, trill_upper in tones:
         if silent:
             continue
         if continuous is not None:
@@ -230,6 +232,9 @@ def _performance_events_prepared(document, bpm, expressive_document, unpitched_p
                              white_key_gliss(start, end, pitch, gliss["targetMidi"]))
         elif step:
             performed.extend((tick, min(end, tick + step), pitch, effect, attack if tick == start else None, part, None) for tick in range(start, end, step))
+        elif trill_upper is not None and continuous is None and not effect:
+            performed.extend((a, b, midi, effect, attack if a == start else None, part, None)
+                             for a, b, midi in trill_performance.windows(start, end, pitch, trill_upper, slide_clock.timing))
         else:
             performed.append((start, end, pitch, effect, attack, part, continuous))
     spread = []
