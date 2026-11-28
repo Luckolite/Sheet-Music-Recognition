@@ -6156,6 +6156,13 @@
     },
     "OmrMeasurePostProcessor.java": {
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/OmrMeasurePostProcessor.java",
+      "antialiased_stem_barline_review": {
+        "reviewed_app_commit": "163abfaff0ccbddc59c581206dec8e43a6dda6c3",
+        "app_blob_sha256": "4fb5371266128fbc6ebe11dd613c411fd52c77e629bf3a88c2b774d9ad497976",
+        "shared_patch_lf_sha256": "60a1ed195d4b937a8d3b4e3d23c2b21166eabf417e1e6400c49fb4e6565c65ae",
+        "original_regression": "AntialiasedStemBarlineTest.java",
+        "scope": "Identical stroke-ownership patch on both readers. Only physically joined neighboring shaft columns in staff spaces can extend the head check. Earlier unrelated drift remains tracked."
+      },
       "opening_two_over_four_review": {
         "reviewed_app_commit": "2aec089b",
         "app_blob_sha256": "7d4ee5d245a52e340600bffd4de48a9157d1dd14d3ac94b9bb944ae2316bc816",

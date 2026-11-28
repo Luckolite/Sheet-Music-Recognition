@@ -1878,7 +1878,7 @@ final class OmrMeasurePostProcessor {
                         && gray != null
                         && isolatedFullHeightRule(gray, width, height, x, rows, gap, shift))
                     attachedHead =
-                            headTouchesColumn(
+                            headTouchesPrintedStroke(
                                     labels,
                                     gray,
                                     width,
@@ -1914,13 +1914,28 @@ final class OmrMeasurePostProcessor {
                 int headTop = Math.round(top - gap * 1.5f), headBottom = Math.round(bottom + gap * 1.5f);
                 attachedHead =
                         distantHeadOnSameStem(
-                                labels, gray, width, height, rawColumn, top, bottom, gap)
-                                || countLabel(labels, width, height, NOTEHEAD,
-                                        Math.round(rawColumn - gap * .88f),
-                                        Math.round(rawColumn + gap * .88f), headTop, headBottom)
-                                        >= Math.max(3, Math.round(gap * .65f))
-                                && headTouchesColumn(labels, gray, width, height, rawColumn,
-                                        headTop, headBottom, rows, gap, shift);
+                                        labels, gray, width, height, rawColumn, top, bottom, gap)
+                                || countLabel(
+                                                        labels,
+                                                        width,
+                                                        height,
+                                                        NOTEHEAD,
+                                                        Math.round(rawColumn - gap * .88f),
+                                                        Math.round(rawColumn + gap * .88f),
+                                                        headTop,
+                                                        headBottom)
+                                                >= Math.max(3, Math.round(gap * .65f))
+                                        && headTouchesPrintedStroke(
+                                                labels,
+                                                gray,
+                                                width,
+                                                height,
+                                                rawColumn,
+                                                headTop,
+                                                headBottom,
+                                                rows,
+                                                gap,
+                                                shift);
             }
             if (semanticBar
                     && !attachedHead
@@ -2225,6 +2240,47 @@ final class OmrMeasurePostProcessor {
         return hit >= (bottom - top + 1) * .95f && outside <= samples * .15f;
     }
 
+    /** Check the attached head at the solid part of the same antialiased shaft. */
+    private static boolean headTouchesPrintedStroke(
+            byte[] labels,
+            byte[] gray,
+            int width,
+            int height,
+            int x,
+            int top,
+            int bottom,
+            int[] rows,
+            float gap,
+            float shift) {
+        if (headTouchesColumn(labels, gray, width, height, x, top, bottom, rows, gap, shift))
+            return true;
+        for (int side = -1; side <= 1; side += 2) {
+            for (int offset = 1; offset <= 2; offset++) {
+                int axis = x + side * offset;
+                if (axis < 0 || axis >= width) break;
+                int joined = 0;
+                // Staff-line crossings join unrelated strokes. Sample the centers of the spaces.
+                for (int line = 1; line < rows.length; line++) {
+                    int y = Math.round((rows[line - 1] + rows[line]) * .5f + shift);
+                    if (y < 0 || y >= height) continue;
+                    boolean continuous = true;
+                    for (int step = 0; step <= offset; step++) {
+                        if ((gray[y * width + x + side * step] & 255) > RAW_BARLINE_DARK) {
+                            continuous = false;
+                            break;
+                        }
+                    }
+                    if (continuous) joined++;
+                }
+                if (joined < 3) break;
+                if (headTouchesColumn(
+                        labels, gray, width, height, axis, top, bottom, rows, gap, shift, 0))
+                    return true;
+            }
+        }
+        return false;
+    }
+
     /** Dense engraving can put an unrelated head inside the old broad stem-veto box.
      * Require an actual ink connection, ignoring the staff lines that join everything. */
     private static boolean headTouchesColumn(
@@ -2238,6 +2294,21 @@ final class OmrMeasurePostProcessor {
             int[] rows,
             float gap,
             float shift) {
+        return headTouchesColumn(labels, gray, width, height, x, top, bottom, rows, gap, shift, 2);
+    }
+
+    private static boolean headTouchesColumn(
+            byte[] labels,
+            byte[] gray,
+            int width,
+            int height,
+            int x,
+            int top,
+            int bottom,
+            int[] rows,
+            float gap,
+            float shift,
+            int originRadius) {
         float[] printedRows = connectionStaffRows(gray, width, height, x, rows, gap, shift, false);
         float[] roundedRows =
                 printedRows == null
@@ -2260,7 +2331,7 @@ final class OmrMeasurePostProcessor {
             boolean fringe = verifiedPrintedRows && nearestRule <= Math.max(1, gap * .25f);
             // Semantic candidates include the two-pixel halo around a thin column.
             // Start from each real column, or its white halo falsely looks disconnected.
-            for (int origin = x - 2; origin <= x + 2; origin++)
+            for (int origin = x - originRadius; origin <= x + originRadius; origin++)
                 for (int direction : new int[] {-1, 1})
                     for (int distance = 0; distance <= gap * .88f; distance++) {
                         int xx = origin + direction * distance;
