@@ -20,6 +20,7 @@ final class PortableNoteOrnaments {
 
         Bounds(Bounds other) {
             this(other.left, other.top, other.right, other.bottom);
+            trillWaveRight = other.trillWaveRight;
         }
 
         int width() {
@@ -570,13 +571,25 @@ final class PortableNoteOrnaments {
             for (int staffIndex = 0; staffIndex < staffs.size(); staffIndex++) {
                 var s = staffs.get(staffIndex);
                 float gap = s.gap();
-                if (!(horizontalSpan <= gap * 4.8
+                boolean ordinary = horizontalSpan <= gap * 4.8
                         && verticalSpan <= gap * 2.8
-                        && verticalSpan >= gap * .3
-                        && horizontalSpan >= gap * .15)) continue;
-                float top = ornamentTop(s, tracks.get(staffIndex), (l + r) * .5f);
-                if (b <= top + gap * .1 && b >= top - gap * 7) {
-                    parts.add(new Bounds(l, t, r + 1, b + 1));
+                        && verticalSpan >= gap * .3 && horizontalSpan >= gap * .15;
+                if (ordinary) {
+                    float top = ornamentTop(s, tracks.get(staffIndex), (l + r) * .5f);
+                    if (b <= top + gap * .1 && b >= top - gap * 7) {
+                        parts.add(new Bounds(l, t, r + 1, b + 1));
+                        break;
+                    }
+                    continue;
+                }
+                if (recognizer == null || horizontalSpan < s.gap() * 6
+                        || verticalSpan < s.gap() * .8f || verticalSpan > s.gap() * 2.3f) continue;
+                float prefixTop = ornamentTop(s, tracks.get(staffIndex), l);
+                if (b > prefixTop + s.gap() * .1 || b < prefixTop - s.gap() * 5.5f) continue;
+                var head = connectedTrillHead(gray, w, new Bounds(l, t, endX, endY),
+                        s.gap(), recognizer);
+                if (head != null) {
+                    parts.add(head);
                     break;
                 }
             }
@@ -597,7 +610,7 @@ final class PortableNoteOrnaments {
         for (var b : parts) {
             Bounds prior = null;
             for (var a : joined)
-                if (a.trillWaveRight == 0
+                if (a.trillWaveRight == 0 && b.trillWaveRight == 0
                         && !completeMordents.contains(a)
                         && !completeMordents.contains(b)
                         && b.left >= a.left
@@ -658,6 +671,37 @@ final class PortableNoteOrnaments {
         }
     }
 
+    /** Split one connected trill component only when its thin tail really oscillates. */
+    private static Bounds connectedTrillHead(byte[] gray, int width, Bounds component, float gap,
+            PortableOrnamentGlyphs recognizer) {
+        int left = component.left;
+        int tailStart = left + Math.round(gap * 3);
+        int tailProbeEnd = left + Math.round(gap * 5.6f);
+        if (tailProbeEnd >= component.right) return null;
+        var tail = inkBounds(gray, width,
+                new Bounds(tailStart, component.top, tailProbeEnd, component.bottom));
+        if (tail == null || tail.height() < 3 || tail.height() * 2 > component.height()) return null;
+        int waveRight = traceTrillWave(gray, width,
+                new Bounds(tailStart, tail.top, component.right, tail.bottom), component.right);
+        if (waveRight == 0 || waveRight - tailStart < gap * 3) return null;
+
+        Bounds best = null;
+        float score = 0;
+        int last = left + Math.round(gap * 2.6f);
+        for (int cut = left + Math.max(2, Math.round(gap * .95f)); cut <= last;
+                cut += Math.max(1, Math.round(gap * .08f))) {
+            var head = inkBounds(gray, width, new Bounds(left, component.top, cut, component.bottom));
+            if (head == null || tail.height() * 2 > head.height()) continue;
+            var match = recognizer.templateMatch(gray, width, head);
+            if (match.kind() == NoteOrnament.TRILL && match.accepted() && match.score() > score) {
+                best = head;
+                score = match.score();
+            }
+        }
+        if (best != null) best.trillWaveRight = waveRight;
+        return best;
+    }
+
     /** Keep a proved trill head intact and trace only the directly supported printed wave. */
     private static int trillExtensionAfter(
             byte[] gray, int width, Bounds head, Bounds firstWave,
@@ -668,11 +712,16 @@ final class PortableNoteOrnaments {
                 || firstWave.left < head.right - 1) return 0;
         var match = recognizer.templateMatch(gray, width, head);
         if (match.kind() != NoteOrnament.TRILL || !match.accepted()) return 0;
+        return traceTrillWave(gray, width, firstWave, width);
+    }
+
+    private static int traceTrillWave(byte[] gray, int width, Bounds firstWave, int rightLimit) {
+        int waveHeight = firstWave.height();
         float minimumTravel = Math.max(1.5f, waveHeight * .22f);
         float extremum = Float.NaN;
         int direction = 0, reversals = 0, blank = 0;
         int lastTurn = firstWave.left, right = firstWave.left;
-        for (int x = firstWave.left; x < width && x - lastTurn <= waveHeight * 7; x++) {
+        for (int x = firstWave.left; x < rightLimit && x - lastTurn <= waveHeight * 7; x++) {
             int sum = 0, count = 0;
             for (int y = firstWave.top; y < firstWave.bottom; y++) {
                 if ((gray[y * width + x] & 255) < 149) {
