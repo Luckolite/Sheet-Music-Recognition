@@ -26,6 +26,7 @@ classifiers = ["Development Status :: 3 - Alpha", "Topic :: Multimedia :: Sound/
 inference = []
 pdf = ["pypdfium2>=4.30,<5"]
 audio = ["imageio-ffmpeg>=0.5,<0.7"]
+sheet = ["score-reader-lilypond==2.26.0"]
 
 [project.scripts]
 score-reader = "score_reader.cli:main"

@@ -1,6 +1,6 @@
 # Copyright 2026 Luckolite
 # SPDX-License-Identifier: Apache-2.0
-"""Local image/PDF to JSON, with optional MIDI, MP3 and MusicXML exports."""
+"""Local image/PDF to JSON, MIDI, MP3, MusicXML or engraved PDF."""
 import argparse
 import json
 from pathlib import Path
@@ -42,6 +42,7 @@ def main():
     parser.add_argument("--ffmpeg", type=Path, help="FFmpeg executable for MP3 export")
     parser.add_argument("--mp3-bitrate", type=int, default=192, choices=(64, 96, 128, 160, 192, 256, 320))
     parser.add_argument("--musicxml", type=Path, help="Optional concert-pitch MusicXML export")
+    parser.add_argument("--sheet-pdf", type=Path, help="Optional engraved PDF (requires the sheet extra)")
     parser.add_argument("--meter", default="4/4", help="Initial meter; read by the caller (default: 4/4)")
     parser.add_argument("--bpm", type=float, default=120, help="Initial quarter-note BPM for exports")
     parser.add_argument("--key-fifths", type=int, default=0, help="Fallback key: sharps positive, flats negative")
@@ -66,9 +67,9 @@ def main():
         annotations = json.loads(args.annotations.read_text(encoding="utf-8")) if args.annotations else None
         if annotations is not None and not isinstance(annotations, list):
             raise ValueError("Annotations must be a JSON list, one object per selected page")
-        outputs = [p for p in (args.output, args.midi, args.mp3, args.musicxml) if p]
+        outputs = [p for p in (args.output, args.midi, args.mp3, args.musicxml, args.sheet_pdf) if p]
         if len({p.resolve() for p in outputs}) != len(outputs):
-            raise ValueError("JSON, MIDI, MP3 and MusicXML outputs must be different files")
+            raise ValueError("Output files must have different paths")
         for output in outputs:
             if output and output.resolve() == args.input.resolve():
                 raise ValueError("Output must not overwrite the input score")
@@ -77,6 +78,9 @@ def main():
         if args.mp3:
             from .audio import find_ffmpeg
             find_ffmpeg(args.ffmpeg)  # Fail before expensive recognition if unavailable.
+        if args.sheet_pdf:
+            from .sheet_pdf import require_runtime, write_sheet_pdf
+            require_runtime()
         pages = [int(number) for number in args.pages.split(",")] if args.pages else None
         # Initialize the bundled model alongside OCR preparation on the first page.
         use_deferred_model = args.model is None and annotations is None
@@ -101,6 +105,8 @@ def main():
         if args.musicxml:
             args.musicxml.parent.mkdir(parents=True, exist_ok=True)
             write_musicxml(document, args.musicxml)
+        if args.sheet_pdf:
+            write_sheet_pdf(document, args.sheet_pdf, musicxml=args.musicxml)
         if args.mp3:
             from .audio import write_mp3
             write_mp3(document, args.mp3, args.bpm, ffmpeg=args.ffmpeg, bitrate=args.mp3_bitrate)

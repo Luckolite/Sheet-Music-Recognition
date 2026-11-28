@@ -1,6 +1,6 @@
 # Sheet-Music-Recognition — Optical Music Recognition
 
-Convert sheet-music images and scanned PDFs to **MusicXML, MIDI, JSON and MP3**
+Convert sheet-music images and scanned PDFs to **MusicXML, MIDI, JSON, MP3 and engraved PDF**
 with offline optical music recognition (OMR). Sheet-Music-Recognition includes downloadable
 model weights, a Java decoder and a Python API and command-line tool, available
 as **`score-reader`** (PyPI package and command) and **`score_reader`** (Python import).
@@ -26,6 +26,19 @@ Requires **Python 3.10 or 3.11** and **Java 17+** on your PATH (or via `JAVA_HOM
 ```sh
 python -m pip install "score-reader[pdf,audio]"
 ```
+
+For engraved PDFs, add the optional LilyPond runtime at install time:
+
+```sh
+python -m pip install "score-reader[audio,pdf,sheet]"
+score-reader input.png --output notes.json --sheet-pdf engraved.pdf
+```
+
+The renderer runs locally from the first export. Runtime wheels target Windows
+x86-64, Linux x86-64 with glibc 2.28 or newer, and macOS on Intel and Apple Silicon. To install without
+internet access, download the matching wheels and their dependencies in advance
+and install with `--no-index --find-links wheelhouse`. LilyPond and its bundled
+components have their own licenses. [Runtime packaging](packaging/lilypond/README.md)
 
 | Input image | Recognized score |
 | --- | --- |
