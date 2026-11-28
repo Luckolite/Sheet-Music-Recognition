@@ -19,7 +19,7 @@ def require_runtime():
     return ARCHIVE
 
 
-def write_sheet_pdf(document, path, *, musicxml=None):
+def write_sheet_pdf(document, path, *, musicxml=None, layout='original'):
     """Engrave the decoded score locally and replace the destination on success."""
     archive = require_runtime()
     path = Path(path).resolve()
@@ -34,6 +34,9 @@ def write_sheet_pdf(document, path, *, musicxml=None):
             musicxml = work / 'score.musicxml'
             write_musicxml(document, musicxml)
         source = Path(musicxml).resolve()
+        if layout != 'original':
+            from score_reader_lilypond.layouts import prepare
+            source = prepare(source, work / 'layout.musicxml', layout)
         lily_file = work / 'score.ly'
         if sys.platform == 'win32':
             converter = [binary / 'python.exe', binary / 'musicxml2ly.py']

@@ -39,6 +39,7 @@ def main():
     source = ROOT / 'packaging' / 'lilypond'
     with WheelFile(path, 'w') as wheel:
         wheel.write(source / PACKAGE / '__init__.py', f'{PACKAGE}/__init__.py')
+        wheel.write(source / PACKAGE / 'layouts.py', f'{PACKAGE}/layouts.py')
         payload = 'runtime.zip' if suffix.endswith('.zip') else 'runtime.tar.gz'
         wheel.write(args.archive, f'{PACKAGE}/{payload}')
         wheel.write(source / 'README.md', f'{PACKAGE}/README.md')

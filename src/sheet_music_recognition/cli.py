@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import sys
 import logging
+from importlib.util import find_spec
 from contextlib import contextmanager
 from .document import interpret_document
 from .reader import Interpreter
@@ -34,15 +35,19 @@ def _ocr_diagnostics():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("input", type=Path, nargs="?", help="Image or PDF to recognize")
+    has_sheet = find_spec("score_reader_lilypond") is not None
+    parser.add_argument("input", type=Path, nargs="?", help="Image or PDF to recognize, or MusicXML to engrave")
     parser.add_argument("--demo", action="store_true", help="Recognize the bundled sample score")
-    parser.add_argument("--output", "-o", required=True, type=Path)
+    parser.add_argument("--output", "-o", required=not has_sheet, type=Path)
     parser.add_argument("--midi", type=Path)
     parser.add_argument("--mp3", type=Path, help="Optional synthesized audio preview")
     parser.add_argument("--ffmpeg", type=Path, help="FFmpeg executable for MP3 export")
     parser.add_argument("--mp3-bitrate", type=int, default=192, choices=(64, 96, 128, 160, 192, 256, 320))
     parser.add_argument("--musicxml", type=Path, help="Optional concert-pitch MusicXML export")
     parser.add_argument("--sheet-pdf", type=Path, help="Optional engraved PDF (requires the sheet extra)")
+    if has_sheet and find_spec("score_reader_lilypond.layouts") is not None:
+        from score_reader_lilypond.layouts import LAYOUTS
+        parser.add_argument("--layout", choices=LAYOUTS, help="Sheet PDF layout (default: original)")
     parser.add_argument("--meter", default="4/4", help="Initial meter; read by the caller (default: 4/4)")
     parser.add_argument("--bpm", type=float, default=120, help="Initial quarter-note BPM for exports")
     parser.add_argument("--key-fifths", type=int, default=0, help="Fallback key: sharps positive, flats negative")
@@ -54,6 +59,11 @@ def main():
     parser.add_argument("--pages", help="One-based comma-separated PDF pages, in reading order")
     parser.add_argument("--annotations", type=Path, help="JSON list of annotation objects, one per selected page")
     args = parser.parse_args()
+    layout = getattr(args, "layout", None)
+    if layout and not args.sheet_pdf:
+        parser.error("--layout requires --sheet-pdf")
+    if args.output is None and not args.sheet_pdf:
+        parser.error("--output is required unless exporting a sheet PDF")
     if args.demo == (args.input is not None):
         parser.error("Provide an input file or use --demo")
     if args.demo:
@@ -81,6 +91,11 @@ def main():
         if args.sheet_pdf:
             from .sheet_pdf import require_runtime, write_sheet_pdf
             require_runtime()
+            if args.input.suffix.lower() in (".xml", ".musicxml", ".mxl"):
+                if any((args.output, args.midi, args.mp3, args.musicxml, args.pages, args.annotations, args.model)):
+                    raise ValueError("MusicXML input supports sheet PDF output only")
+                write_sheet_pdf(None, args.sheet_pdf, musicxml=args.input, layout=layout or "original")
+                return
         pages = [int(number) for number in args.pages.split(",")] if args.pages else None
         # Initialize the bundled model alongside OCR preparation on the first page.
         use_deferred_model = args.model is None and annotations is None
@@ -97,8 +112,9 @@ def main():
                 _release_after_prediction=use_deferred_model,
             )
         results = document["pages"]
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(json.dumps(document, indent=2, allow_nan=False) + "\n", encoding="utf-8")
+        if args.output:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(json.dumps(document, indent=2, allow_nan=False) + "\n", encoding="utf-8")
         if args.midi:
             args.midi.parent.mkdir(parents=True, exist_ok=True)
             write_midi(document, args.midi, args.bpm)
@@ -106,11 +122,11 @@ def main():
             args.musicxml.parent.mkdir(parents=True, exist_ok=True)
             write_musicxml(document, args.musicxml)
         if args.sheet_pdf:
-            write_sheet_pdf(document, args.sheet_pdf, musicxml=args.musicxml)
+            write_sheet_pdf(document, args.sheet_pdf, musicxml=args.musicxml, layout=layout or "original")
         if args.mp3:
             from .audio import write_mp3
             write_mp3(document, args.mp3, args.bpm, ffmpeg=args.ffmpeg, bitrate=args.mp3_bitrate)
-        print(f"Wrote {len(results)} page(s), {sum(len(p['events']) for p in results)} detected notes to {args.output}", file=sys.stderr)
+        print(f"Wrote {len(results)} page(s), {sum(len(p['events']) for p in results)} detected notes to {args.output or args.sheet_pdf}", file=sys.stderr)
     except (ValueError, RuntimeError, OSError, KeyError, TypeError) as error:
         parser.exit(1, str(error) + "\n")
 

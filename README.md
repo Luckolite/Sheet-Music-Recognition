@@ -31,8 +31,14 @@ For engraved PDFs, add the optional LilyPond runtime at install time:
 
 ```sh
 python -m pip install "score-reader[audio,pdf,sheet]"
-score-reader input.png --output notes.json --sheet-pdf engraved.pdf
+score-reader sheet.png --sheet-pdf sheet.pdf --layout single-staff
+score-reader score.musicxml --sheet-pdf score.pdf --layout guitar
 ```
+
+Use `--layout original` or omit the flag to preserve the MusicXML's parts,
+staves and voices during engraving. `guitar` uses standard six-string tuning.
+`single-staff` combines compatible parts into one staff and keeps separate voices.
+Layout changes apply only to the engraved PDF.
 
 The renderer runs locally from the first export. Runtime wheels target Windows
 x86-64, Linux x86-64 with glibc 2.28 or newer, and macOS on Intel and Apple Silicon. To install without
