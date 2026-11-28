@@ -11340,6 +11340,12 @@
       "current_source_review": "Package-only equivalent source and original regression reviewed. No recognition model, clock policy, serialization layout, native API or decoder source selection changes."
     },
     "TripletRhythmDetector.java": {
+      "repeated_triplet_accidental_spacing_review": {
+        "reviewed_app_commit": "58033678dd38d8c9bed41abe2e53cab0325ecba5",
+        "app_lf_sha256": "84319283259a55b412031a94b759c4803e7b4c9f03552a4bea586973d403ca1e",
+        "standalone_lf_sha256": "9e77bf5252a80b0ec75a3209ac293fbc2170ed8a3c34705826ac30be75c61352",
+        "scope": "Matched repeated-three recognition in both readers. A slightly wider beam is allowed only at the written accidental; the other interval, both raster proofs and beam ownership remain required. Focused synthetic controls and exact playback passed. Earlier mapped drift remains visible."
+      },
       "source_path": "app/src/main/java/com/musicsheets/app/pdf/TripletRhythmDetector.java",
       "source_sha256": "51f3a0d78790850c3231567d30e97e3ebb6c6e643107d9291c1193ce884c2537",
       "source_normalized_sha256": "25f326afd6110343f8cac3dbe9dabccb99bfb7f6098844a0a8229854e967122c",

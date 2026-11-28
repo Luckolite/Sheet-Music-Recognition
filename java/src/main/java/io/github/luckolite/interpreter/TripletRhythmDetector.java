@@ -1784,7 +1784,13 @@ final class TripletRhythmDetector {
             float refX1 = sourceX(bar, width, refFirst), refX3 = sourceX(bar, width, refLast);
             float refTop = Math.min(refFirst.top(), Math.min(refMiddle.top(), refLast.top())) * height;
             float refBottom = Math.max(refFirst.bottom(), Math.max(refMiddle.bottom(), refLast.bottom())) * height;
-            if (Math.abs(top - refTop) > gap || Math.abs((refX3 - refX1) - (x3 - x1)) > gap) continue;
+            if (Math.abs(top - refTop) > gap) continue;
+            float x2 = sourceX(bar, width, b), refX2 = sourceX(bar, width, refMiddle);
+            float firstIntervalChange = (x2 - x1) - (refX2 - refX1);
+            float secondIntervalChange = (x3 - x2) - (refX3 - refX2);
+            if (!matchingRepeatedThreeSpacing(firstIntervalChange, secondIntervalChange, gap,
+                    notes.get(b.indices().get(0)).writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_FROM_KEY,
+                    notes.get(c.indices().get(0)).writtenAccidental() != ScoreNoteEvent.ACCIDENTAL_FROM_KEY)) continue;
             var refNote = notes.get(refFirst.indices().get(0));
             var reference = findPrintedThree(decoderGray, width, height, refX1, refX3, refTop, refBottom, gap, true, Float.NaN, Float.NaN);
             if (reference == null || !beamOwnsNumeral(reference, refNote, notes, bar, decoderGray,
@@ -1802,6 +1808,16 @@ final class TripletRhythmDetector {
             if (match != null) return new Glyph(match[0], match[1], match[2], match[3]);
         }
         return null;
+    }
+
+    static boolean matchingRepeatedThreeSpacing(float firstChange, float secondChange, float gap,
+            boolean middleAccidental, boolean finalAccidental) {
+        float extentChange = firstChange + secondChange;
+        if (Math.abs(extentChange) <= gap) return true;
+        if (extentChange < 0 || extentChange > 1.25f * gap) return false;
+        // Give a printed accidental extra space immediately before its head.
+        return middleAccidental && firstChange > 0 && Math.abs(secondChange) <= .35f * gap
+                || finalAccidental && secondChange > 0 && Math.abs(firstChange) <= .35f * gap;
     }
 
     private static boolean eligibleSourceTriplet(ScoreNoteEvent note) {

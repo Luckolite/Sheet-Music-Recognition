@@ -72,4 +72,14 @@ public class PartialSourceBeamTripletTest {
     public void sameStaffRestPreventsAThreeAttackBeam() throws Exception {
         assertEquals(List.of(1, 1, 3), ratios(score(0), page(true, true)));
     }
+    @Test
+    public void accidentalSpacingAllowanceRequiresTheWidenedIntervalBeforeThatHead() {
+        assertEquals(true, TripletRhythmDetector.matchingRepeatedThreeSpacing(11, 0.2f, 11, true, false));
+        assertEquals(true, TripletRhythmDetector.matchingRepeatedThreeSpacing(0.2f, 11, 11, false, true));
+        assertEquals(false, TripletRhythmDetector.matchingRepeatedThreeSpacing(11, 0.2f, 11, false, false));
+        assertEquals(false, TripletRhythmDetector.matchingRepeatedThreeSpacing(11, 0.2f, 11, false, true));
+        assertEquals(false, TripletRhythmDetector.matchingRepeatedThreeSpacing(6, 6, 11, true, true));
+        assertEquals(false, TripletRhythmDetector.matchingRepeatedThreeSpacing(14, 0.2f, 11, true, false));
+        assertEquals(true, TripletRhythmDetector.matchingRepeatedThreeSpacing(5, 4, 11, false, false));
+    }
 }
