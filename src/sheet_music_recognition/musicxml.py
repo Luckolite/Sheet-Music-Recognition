@@ -1217,7 +1217,9 @@ def emit_note(measure, duration, voice, event=None, chord=False, stop=False, sta
     effect = event.get('guitarEffect') if event and attack_fragment else None
     ornament_flags = event.get('retainedOrnamentFlags', 0) if event and attack_fragment else 0
     trill_wave_start = event.get('trillWaveStart') if event and attack_fragment else None
-    trill_wave_stop = event.get('trillWaveStop') if event and fragment_end == event['end'] else None
+    trill_wave_stop = event.get('trillWaveStop') if event else None
+    if trill_wave_stop and fragment_end != event['end']:
+        trill_wave_stop = None
     symbols = [mark for mark in (event.get('releaseSymbols', []) if event else rest_symbols)
                if mark['release'] == fragment_end]
     paired = event.get('retainedTremolo') if event else None
