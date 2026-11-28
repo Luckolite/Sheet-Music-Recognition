@@ -1,6 +1,9 @@
 # Copyright 2026 Luckolite
 # SPDX-License-Identifier: Apache-2.0
 """Source spelling for concert-pitch XML, only while its sounding identity agrees."""
+from collections import defaultdict
+import xml.etree.ElementTree as ET
+
 from .clef_export import LAYOUT
 from .typed_events import event_kind
 
@@ -8,6 +11,7 @@ PRINTED_ACCIDENTALS = {
     -2: (-2, 'flat-flat'), -1: (-1, 'flat'), 0: (0, 'natural'),
     1: (1, 'sharp'), 3: (2, 'double-sharp'),
 }
+ACCIDENTAL_NAMES = dict(PRINTED_ACCIDENTALS.values())
 
 
 def printed_accidentals(page):
@@ -44,6 +48,60 @@ def printed_mark(rows, index, spelling, prefixed_accidentals=()):
     if spelling[1] != alter:
         return None
     return 'natural-' + mark if mark in ('flat', 'sharp') and index in prefixed_accidentals else mark
+
+
+def fill_required_accidentals(root, source_marks, octave_shifts):
+    """Supply visible signs for reconstructed attacks in written time order."""
+    for measure in root.findall('part/measure'):
+        fifths = int(measure.findtext('attributes/key/fifths', '0'))
+        order = 'FCGDAEB' if fifths >= 0 else 'BEADGCF'
+        key = dict.fromkeys(order[:abs(fifths)], 1 if fifths >= 0 else -1)
+        groups = defaultdict(lambda: defaultdict(list))
+        grace_counts = defaultdict(int)
+        cursor = onset = 0
+        for note in measure:
+            if note.tag in ('backup', 'forward'):
+                cursor += int(note.findtext('duration')) * (-1 if note.tag == 'backup' else 1)
+            if note.tag != 'note':
+                continue
+            grace = note.find('grace')
+            if note.find('chord') is None:
+                onset = cursor
+                cursor += int(note.findtext('duration', '0'))
+            pitch = note.find('pitch')
+            if pitch is None or note.get('print-object') == 'no':
+                continue
+            mark = note.find('accidental')
+            if mark is None and (note in source_marks or note.find('cue') is not None
+                                 or note.find('tie[@type="stop"]') is not None):
+                continue
+            position = onset, 2, 0
+            if grace is not None:
+                phase = 0 if 'steal-time-previous' in grace.attrib else 1
+                grace_key = onset, phase, note.findtext('voice')
+                position = onset, phase, grace_counts[grace_key]
+                grace_counts[grace_key] += 1
+            letter = pitch.findtext('step')
+            written_octave = int(pitch.findtext('octave')) - octave_shifts.get(note, 0)
+            alteration = int(pitch.findtext('alter', '0'))
+            groups[position][letter, written_octave].append((note, alteration, mark is not None))
+        carried = {}
+        for position in sorted(groups):
+            for slot, heads in groups[position].items():
+                previous = carried.get(slot, key.get(slot[0], 0))
+                alterations = {alter for _, alter, _ in heads}
+                printed = {alter for _, alter, marked in heads if marked}
+                for note, alter, _ in heads:
+                    if (alter in ACCIDENTAL_NAMES and alter not in printed
+                            and (alter != previous or len(alterations) > 1)):
+                        # MusicXML orders the accidental after type/dots and before time modification.
+                        index = max(i for i, child in enumerate(note) if child.tag in ('voice', 'type', 'dot'))
+                        mark = ET.Element('accidental')
+                        mark.text = ACCIDENTAL_NAMES[alter]
+                        note.insert(index + 1, mark)
+                        printed.add(alter)
+                # When simultaneous voices disagree, the next attack must restate its sign.
+                carried[slot] = next(iter(alterations)) if len(alterations) == 1 else None
 
 
 def retained(page, index, key, printed=None):

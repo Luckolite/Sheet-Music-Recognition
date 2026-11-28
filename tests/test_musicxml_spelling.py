@@ -19,6 +19,12 @@ def document(diatonic=29, accidental=-1, midi=61, shift=0, bottom=30):
     return dict(pages=[dict(measureBeats=[4], events=[event], score=dict(notes=[head]))])
 
 
+def reconstructed(events, beats=(4,)):
+    return dict(pages=[dict(measureBeats=beats, score={}, events=[
+        dict(midi=pitch, startBeat=start, durationBeats=duration)
+        for pitch, start, duration in events])])
+
+
 class MusicXmlSpellingTests(unittest.TestCase):
     def export(self, doc):
         before = copy.deepcopy(doc)
@@ -52,7 +58,7 @@ class MusicXmlSpellingTests(unittest.TestCase):
         doc['pages'][0]['score']['keyChanges'] = [dict(measureIndex=0,fifths=1)]
         self.assertEqual(('F',0,4), self.pitch(doc))
 
-    def test_only_printed_marks_are_written_even_when_pitch_is_carried(self):
+    def test_source_accidental_is_written_once_on_a_tied_attack(self):
         doc = document(31, 0, 65)
         page = doc['pages'][0]
         page['score']['keyChanges'] = [dict(measureIndex=0, fifths=1)]
@@ -62,6 +68,35 @@ class MusicXmlSpellingTests(unittest.TestCase):
         notes = self.export(doc).findall('.//note[pitch]')
         self.assertEqual(['natural', None], [n.findtext('accidental') for n in notes])
         self.assertEqual(['start', 'stop'], [n.find('tie').get('type') for n in notes])
+
+    def test_reconstructed_accidentals_carry_and_reset_per_octave_and_measure(self):
+        score = reconstructed([(61, 0, 1), (61, 1, 1), (73, 2, 1), (60, 3, 1),
+                               (61, 4, 1), (72, 5, 1)], (4, 4))
+        notes = self.export(score).findall('.//note[pitch]')
+        self.assertEqual(['sharp', None, 'sharp', 'natural', 'sharp', None],
+                         [note.findtext('accidental') for note in notes])
+        self.assertEqual(['1', '1', '1', None, '1', None],
+                         [note.findtext('pitch/alter') for note in notes])
+
+    def test_key_signature_change_sets_new_accidental_default(self):
+        score = reconstructed([(66, 0, 1), (65, 1, 1), (65, 2, 1), (66, 3, 1),
+                               (66, 4, 1)], (4, 4))
+        score['pages'][0]['score']['keyChanges'] = [dict(measureIndex=0, fifths=1),
+                                                   dict(measureIndex=1, fifths=0)]
+        notes = self.export(score).findall('.//note[pitch]')
+        self.assertEqual([None, 'natural', None, 'sharp', 'sharp'],
+                         [note.findtext('accidental') for note in notes])
+
+    def test_reconstructed_accidentals_follow_time_across_voices(self):
+        score = reconstructed([(60, 0, 2), (61, 1, 1), (60, 2, 2)])
+        notes = self.export(score).findall('.//note[pitch]')
+        self.assertEqual([('1', None), ('1', 'natural'), ('2', 'sharp')],
+                         [(note.findtext('voice'), note.findtext('accidental')) for note in notes])
+
+    def test_tied_continuation_does_not_carry_to_a_new_measure(self):
+        score = reconstructed([(61, 3, 2), (61, 5, 1)], (4, 4))
+        notes = self.export(score).findall('.//note[pitch]')
+        self.assertEqual(['sharp', None, 'sharp'], [note.findtext('accidental') for note in notes])
 
     def test_printed_mark_is_placed_before_tuplet_and_not_repeated_on_split(self):
         doc = document()

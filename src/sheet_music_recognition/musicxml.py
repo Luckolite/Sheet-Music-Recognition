@@ -1492,6 +1492,7 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
     printed_beams = []
     continuations = set()
     octave_owned = {}
+    accidental_source_marks = set()
     from . import octave_shift_export
     octave_measure_pages = {}
     printed_octaves = []
@@ -1661,6 +1662,7 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
                                retainedPrintedString=printed_strings.get(note_index),
                                retainedVisualSize=visual_size.retained(page, note_index),
                                retainedSpelling=spelling,
+                               hasSourceAccidental=note_index in printed_accidentals,
                                retainedAccidental=spelling_export.printed_mark(printed_accidentals, note_index, spelling, prefixed_accidentals),
                                retainedOrnamentFlags=ornament_export.retained(page, note_index),
                                retainedTremolo=paired_tremolos.get(note_index), retainedArpeggio=False, retainedNaturalHarmonic=False))
@@ -2233,6 +2235,8 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
                 emitted = emit_note(measure, g['graceWrittenDuration'], g['voice'], g, flats=flats,
                                     articulation_flags=g['retainedArticulations'], grace=g, bow_direction=g.get('retainedBow'))
                 octave_owned[emitted] = 0 if event_kind(g) == 'UNPITCHED' else g.get('octaveShift', 0)
+                if g['hasSourceAccidental']:
+                    accidental_source_marks.add(emitted)
                 if g['sourceIdentity'] in requested_slur_owners:
                     slur_attacks[g['sourceIdentity']] = emitted
         sounding = [n for n in notes if not n.get('grace', False)]
@@ -2393,6 +2397,8 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
                                                for head in chord[1:]):
                                 eligible_tuplets.add(emitted)
                             octave_owned[emitted] = 0 if event_kind(n) == 'UNPITCHED' else n.get('octaveShift', 0)
+                            if n['hasSourceAccidental']:
+                                accidental_source_marks.add(emitted)
                             if fragment_start == n['start'] and n['sourceIdentity'] in requested_slur_owners:
                                 slur_attacks[n['sourceIdentity']] = emitted
                             if (ci == 0 and n['sourceIdentity'] in beamed_owners
@@ -2451,5 +2457,6 @@ def write_musicxml(document, path, *, meter=(4, 4), key_fifths=0, bpm=None):
         printed_string_export.write(note, mark)
     for measure, chords in open_harmonic_measures:
         _write_open_harmonics(measure, chords)
+    spelling_export.fill_required_accidentals(root, accidental_source_marks, octave_owned)
     ET.indent(root)
     ET.ElementTree(root).write(Path(path), encoding='utf-8', xml_declaration=True)
