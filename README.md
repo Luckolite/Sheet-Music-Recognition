@@ -27,25 +27,6 @@ Requires **Python 3.10 or 3.11** and **Java 17+** on your PATH (or via `JAVA_HOM
 python -m pip install "score-reader[pdf,audio]"
 ```
 
-For engraved PDFs, add the optional LilyPond runtime at install time:
-
-```sh
-python -m pip install "score-reader[audio,pdf,sheet]"
-score-reader sheet.png --sheet-pdf sheet.pdf --layout single-staff
-score-reader score.musicxml --sheet-pdf score.pdf --layout guitar
-```
-
-Use `--layout original` or omit the flag to preserve the MusicXML's parts,
-staves and voices during engraving. `guitar` uses standard six-string tuning.
-`single-staff` combines compatible parts into one staff and keeps separate voices.
-Layout changes apply only to the engraved PDF.
-
-The renderer runs locally from the first export. Runtime wheels target Windows
-x86-64, Linux x86-64 with glibc 2.28 or newer, and macOS on Intel and Apple Silicon. To install without
-internet access, download the matching wheels and their dependencies in advance
-and install with `--no-index --find-links wheelhouse`. LilyPond and its bundled
-components have their own licenses. [Runtime packaging](packaging/lilypond/README.md)
-
 | Input image | Recognized score |
 | --- | --- |
 | ![Original two-measure scale](https://raw.githubusercontent.com/Luckolite/Sheet-Music-Recognition/main/examples/scale.png) | ![Engraved MusicXML from the conversion](https://raw.githubusercontent.com/Luckolite/Sheet-Music-Recognition/main/examples/review/scale-rendered.png) |
@@ -62,7 +43,7 @@ score-reader score.png -o score.json --musicxml score.musicxml --midi score.mid
 score-reader score.pdf -o score.json --mp3 score.mp3
 ```
 
-Processing runs locally. Every conversion writes JSON. Add `--musicxml`,
+Processing runs locally. Recognition writes JSON when you supply `--output`. Add `--musicxml`,
 `--midi`, or `--mp3` for the exports you need. MP3 uses a synthesized tone
 and requires FFmpeg, which the `audio` extra supplies.
 
@@ -83,6 +64,30 @@ Run `score-reader --help` for all options. [API and output details](https://gith
 - **Playback.** MIDI and synthesized MP3 previews can follow recognized ritardandos, fermatas, tremolos, and piano pedal brackets. [Playback details](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/docs/expressive-performance.md)
 - **Guitar tab.** Six- and seven-string tab with tuning headers, written rhythms including triplets, and effects such as hammer-ons, pull-offs, slides, bends, and vibrato. When rhythm is missing, the reader estimates it. [Tab details](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/docs/guitar-tabs.md) · [Guitar effects](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/docs/tab-gestures.md)
 - **Exports.** MusicXML reconstructs an editable concert-pitch score and leaves out the original page layout and tab placement. JSON includes note events and page geometry. [Export formats](https://github.com/Luckolite/Sheet-Music-Recognition/blob/main/docs/integration.md)
+
+### Optional engraved PDF
+
+The `[sheet]` extra uses bundled LilyPond to engrave an image, scanned PDF,
+or existing MusicXML as a PDF. The first export runs offline after installation.
+This feature is available in source builds with a matching runtime wheel.
+See the [runtime wheel build instructions](packaging/lilypond/README.md).
+
+```sh
+python -m pip install --find-links wheelhouse ".[audio,pdf,sheet]"
+score-reader sheet.png --sheet-pdf sheet.pdf --layout single-staff
+score-reader score.musicxml --sheet-pdf score.pdf --layout guitar
+```
+
+| Layout | What it does |
+| --- | --- |
+| `original` (default) | Preserves the MusicXML parts, staves, and voices. LilyPond engraves new spacing and page breaks. |
+| `guitar` | Engraves pitched music in standard six-string guitar tab. |
+| `single-staff` | Combines parts with matching measure numbers, divisions, key, meter, and transposition while retaining separate voices. |
+
+Layout changes apply only to the engraved PDF. The separate `[pdf]` extra
+enables scanned PDF input. Runtime wheels target Windows x86-64,
+Linux x86-64 with glibc 2.28 or newer, and macOS on Intel and Apple Silicon.
+LilyPond and its bundled components retain their own licenses.
 
 ## Integration and model
 
